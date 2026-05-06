@@ -24,13 +24,15 @@ ASSETS_DIR ?= assets
 default: all
 
 # Verify environment, and define PLUGIN_ID, PLUGIN_VERSION, HAS_SERVER and HAS_WEBAPP as needed.
-include build/setup.mk
+ifneq ($(MAKECMDGOALS),openapi-validate)
+	include build/setup.mk
 
 # The public/ directory contains the bridgeclient Go module for external consumption,
 # not HTTP assets. Override HAS_PUBLIC to prevent bundling these files.
 # TODO: Move bridgeclient to a top-level client/ directory for a cleaner import path.
 HAS_PUBLIC :=
 $(info Note: public/ directory contains Go modules, not HTTP assets - skipping bundle)
+endif
 
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
 
@@ -195,6 +197,11 @@ ifneq ($(HAS_SERVER),)
 	$(GOBIN)/golangci-lint run ./...
 	$(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 ./...
 endif
+
+.PHONY: openapi-validate
+openapi-validate: ## Validate the Agents plugin OpenAPI spec and route coverage.
+	npx -y swagger-cli@4.0.4 validate api/openapi.yaml
+	node scripts/check_openapi_routes.js
 
 ## Runs all style checks but fixes anything it can.
 .PHONY: check-style-fix

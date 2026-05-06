@@ -1,0 +1,2709 @@
+---
+openapi: 3.0.0
+info:
+  version: 0.1.0
+  title: Agents Plugin API
+  description: HTTP API for the Mattermost Agents plugin.
+  contact:
+    name: Mattermost
+    url: https://mattermost.com/
+    email: support@mattermost.com
+servers:
+  - url: http://localhost:8065/plugins/mattermost-ai
+tags:
+  - name: AgentsPluginAgents
+    description: User-created AI agents
+  - name: AgentsPluginBridge
+    description: Inter-plugin LLM bridge endpoints
+  - name: AgentsPluginChannels
+    description: Channel analysis endpoints
+  - name: AgentsPluginConversations
+    description: Conversation history endpoints
+  - name: AgentsPluginCustomPrompts
+    description: Custom prompt endpoints
+  - name: AgentsPluginMCP
+    description: Model Context Protocol endpoints
+  - name: AgentsPluginAdmin
+    description: System administrator endpoints
+  - name: AgentsPluginPosts
+    description: Post action endpoints
+  - name: AgentsPluginSearch
+    description: Semantic search endpoints
+paths:
+  /plugins/mattermost-ai/bridge/v1/agents:
+    get:
+      tags:
+        - AgentsPluginBridge
+      summary: List bridge agents
+      description: Returns the Agents plugin bots available through the inter-plugin LLM bridge.
+      operationId: agentsPluginBridgeListAgents
+      security:
+        - AgentsPluginInterPluginAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginUserIDQuery"
+      responses:
+        "200":
+          description: Agents returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginBridgeAgentsResponse"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/bridge/v1/services:
+    get:
+      tags:
+        - AgentsPluginBridge
+      summary: List bridge services
+      description: Returns the LLM services available through the inter-plugin LLM bridge.
+      operationId: agentsPluginBridgeListServices
+      security:
+        - AgentsPluginInterPluginAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginUserIDQuery"
+      responses:
+        "200":
+          description: Services returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginBridgeServicesResponse"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/bridge/v1/completion/agent/{agent}:
+    post:
+      tags:
+        - AgentsPluginBridge
+      summary: Stream a bridge completion from an agent
+      description: Starts an LLM completion for the specified agent and streams Server-Sent Events.
+      operationId: agentsPluginBridgeCompleteAgentStream
+      security:
+        - AgentsPluginInterPluginAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginAgentPath"
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginBridgeCompletionRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginSSEStream"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "404":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "500":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+  /plugins/mattermost-ai/bridge/v1/completion/agent/{agent}/nostream:
+    post:
+      tags:
+        - AgentsPluginBridge
+      summary: Complete from an agent without streaming
+      description: Runs an LLM completion for the specified agent and returns the final text.
+      operationId: agentsPluginBridgeCompleteAgentNoStream
+      security:
+        - AgentsPluginInterPluginAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginAgentPath"
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginBridgeCompletionRequest"
+      responses:
+        "200":
+          description: Completion returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginCompletionResponse"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "404":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "500":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+  /plugins/mattermost-ai/bridge/v1/completion/service/{service}:
+    post:
+      tags:
+        - AgentsPluginBridge
+      summary: Stream a bridge completion from a service
+      description: Starts an LLM completion using a bot backed by the specified service and streams Server-Sent Events.
+      operationId: agentsPluginBridgeCompleteServiceStream
+      security:
+        - AgentsPluginInterPluginAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginServicePath"
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginBridgeCompletionRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginSSEStream"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "404":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "500":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+  /plugins/mattermost-ai/bridge/v1/completion/service/{service}/nostream:
+    post:
+      tags:
+        - AgentsPluginBridge
+      summary: Complete from a service without streaming
+      description: Runs an LLM completion using a bot backed by the specified service and returns the final text.
+      operationId: agentsPluginBridgeCompleteServiceNoStream
+      security:
+        - AgentsPluginInterPluginAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginServicePath"
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginBridgeCompletionRequest"
+      responses:
+        "200":
+          description: Completion returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginCompletionResponse"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "404":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+        "500":
+          $ref: "#/components/responses/AgentsPluginBridgeError"
+  /plugins/mattermost-ai/mcp-server/.well-known/oauth-protected-resource:
+    get:
+      tags:
+        - AgentsPluginMCP
+      summary: Get MCP OAuth protected resource metadata
+      description: Returns OAuth protected resource metadata for the plugin-hosted MCP server when it is enabled.
+      operationId: agentsPluginGetMCPProtectedResourceMetadata
+      responses:
+        "200":
+          description: OAuth protected resource metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          $ref: "#/components/responses/AgentsPluginNotFound"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/mcp-server/mcp:
+    get:
+      tags:
+        - AgentsPluginMCP
+      summary: Open an MCP server stream
+      description: Handles the GET side of the plugin-hosted MCP Streamable HTTP transport.
+      operationId: agentsPluginMCPServerGet
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginSSEStream"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    post:
+      tags:
+        - AgentsPluginMCP
+      summary: Send an MCP message
+      description: Handles the POST side of the plugin-hosted MCP Streamable HTTP transport.
+      operationId: agentsPluginMCPServerPost
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: MCP response.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "202":
+          description: MCP message accepted.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    delete:
+      tags:
+        - AgentsPluginMCP
+      summary: Close an MCP server stream
+      description: Handles the DELETE side of the plugin-hosted MCP Streamable HTTP transport.
+      operationId: agentsPluginMCPServerDelete
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: MCP stream closed.
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/conversations/{conversationid}:
+    get:
+      tags:
+        - AgentsPluginConversations
+      summary: Get a conversation
+      description: Returns a conversation and its turns, filtering sensitive content when the requester is not the conversation owner.
+      operationId: agentsPluginGetConversation
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginConversationIDPath"
+      responses:
+        "200":
+          description: Conversation returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginConversationResponse"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNotFound"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/oauth/callback:
+    get:
+      tags:
+        - AgentsPluginMCP
+      summary: Complete an MCP OAuth callback
+      description: Completes a user-scoped MCP OAuth flow and returns a small HTML page that closes the OAuth window.
+      operationId: agentsPluginOAuthCallback
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error_description
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginHTMLPage"
+        "400":
+          $ref: "#/components/responses/AgentsPluginHTMLPage"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginHTMLPage"
+  /plugins/mattermost-ai/ai_threads:
+    get:
+      tags:
+        - AgentsPluginConversations
+      summary: List AI thread summaries
+      description: Returns recent conversation summaries for the authenticated user.
+      operationId: agentsPluginListAIThreads
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Thread summaries returned successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentsPluginAIThread"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/ai_bots:
+    get:
+      tags:
+        - AgentsPluginAgents
+      summary: List AI bots visible to the user
+      description: Returns bot metadata and feature flags used by the webapp.
+      operationId: agentsPluginListAIBots
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Bots returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginAIBotsResponse"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/mcp/tools:
+    get:
+      tags:
+        - AgentsPluginMCP
+      summary: List user MCP tools
+      description: Returns MCP tool providers and tools visible to the authenticated user.
+      operationId: agentsPluginListUserMCPTools
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: MCP tools returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginUserMCPToolsResponse"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/mcp/oauth/{serverName}/start:
+    get:
+      tags:
+        - AgentsPluginMCP
+      summary: Start MCP OAuth
+      description: Starts an OAuth flow for the named MCP server and redirects the user to the provider.
+      operationId: agentsPluginStartMCPOAuth
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginServerNamePath"
+        - name: resource_metadata
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the MCP authorization URL.
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/AgentsPluginHTMLPage"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "404":
+          $ref: "#/components/responses/AgentsPluginHTMLPage"
+        "500":
+          $ref: "#/components/responses/AgentsPluginHTMLPage"
+  /plugins/mattermost-ai/mcp/user-preferences:
+    get:
+      tags:
+        - AgentsPluginMCP
+      summary: Get MCP user preferences
+      description: Returns the authenticated user's MCP tool provider preferences.
+      operationId: agentsPluginGetMCPUserPreferences
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Preferences returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginMCPUserPreferences"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    put:
+      tags:
+        - AgentsPluginMCP
+      summary: Replace MCP user preferences
+      description: Replaces the authenticated user's MCP tool provider preferences.
+      operationId: agentsPluginPutMCPUserPreferences
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginMCPUserPreferences"
+      responses:
+        "200":
+          description: Preferences saved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginMCPUserPreferences"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "413":
+          $ref: "#/components/responses/AgentsPluginTooLarge"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/mcp/oauth/{serverName}:
+    delete:
+      tags:
+        - AgentsPluginMCP
+      summary: Disconnect MCP OAuth
+      description: Deletes the authenticated user's stored OAuth token for the named MCP server.
+      operationId: agentsPluginDisconnectMCPOAuth
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginServerNamePath"
+      responses:
+        "200":
+          description: OAuth token disconnected.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/agents:
+    post:
+      tags:
+        - AgentsPluginAgents
+      summary: Create an agent
+      description: Creates a user-managed AI agent and its backing bot account.
+      operationId: agentsPluginCreateAgent
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginCreateAgentRequest"
+      responses:
+        "201":
+          description: Agent created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginBotConfig"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "409":
+          $ref: "#/components/responses/AgentsPluginConflict"
+        "413":
+          $ref: "#/components/responses/AgentsPluginTooLarge"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    get:
+      tags:
+        - AgentsPluginAgents
+      summary: List agents
+      description: Returns the agents the authenticated user may access.
+      operationId: agentsPluginListAgents
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Agents returned successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentsPluginBotConfig"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/agents/models/fetch:
+    post:
+      tags:
+        - AgentsPluginAgents
+      summary: Fetch models for a configured service
+      description: Fetches available model IDs using credentials already stored in the plugin configuration.
+      operationId: agentsPluginFetchModelsForService
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginFetchModelsForServiceRequest"
+      responses:
+        "200":
+          description: Models returned successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/agents/{agentid}:
+    get:
+      tags:
+        - AgentsPluginAgents
+      summary: Get an agent
+      description: Returns one agent if it exists and is visible to the authenticated user.
+      operationId: agentsPluginGetAgent
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginAgentIDPath"
+      responses:
+        "200":
+          description: Agent returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginBotConfig"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNotFound"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    put:
+      tags:
+        - AgentsPluginAgents
+      summary: Update an agent
+      description: Fully replaces mutable fields on an existing agent.
+      operationId: agentsPluginUpdateAgent
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginAgentIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginUpdateAgentRequest"
+      responses:
+        "200":
+          description: Agent updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginBotConfig"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNotFound"
+        "413":
+          $ref: "#/components/responses/AgentsPluginTooLarge"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    delete:
+      tags:
+        - AgentsPluginAgents
+      summary: Delete an agent
+      description: Soft-deletes an agent and deactivates its backing bot account.
+      operationId: agentsPluginDeleteAgent
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginAgentIDPath"
+      responses:
+        "200":
+          description: Agent deleted successfully.
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNotFound"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/agents/{agentid}/avatar:
+    post:
+      tags:
+        - AgentsPluginAgents
+      summary: Upload an agent avatar
+      description: Uploads a profile image for an agent's backing bot account.
+      operationId: agentsPluginUploadAgentAvatar
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginAgentIDPath"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - image
+              properties:
+                image:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Avatar uploaded successfully.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNotFound"
+        "413":
+          $ref: "#/components/responses/AgentsPluginTooLarge"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/services:
+    get:
+      tags:
+        - AgentsPluginAgents
+      summary: List configurable AI services
+      description: Returns non-secret fields for configured AI services.
+      operationId: agentsPluginListServices
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Services returned successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentsPluginServiceInfo"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/search/raw:
+    post:
+      tags:
+        - AgentsPluginSearch
+      summary: Run raw semantic search
+      description: Returns enriched semantic search results without LLM processing.
+      operationId: agentsPluginRawSearch
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginRawSearchRequest"
+      responses:
+        "200":
+          description: Search results returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginRawSearchResponse"
+        "400":
+          $ref: "#/components/responses/AgentsPluginJSONError"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "503":
+          $ref: "#/components/responses/AgentsPluginJSONError"
+        "500":
+          $ref: "#/components/responses/AgentsPluginJSONError"
+  /plugins/mattermost-ai/custom-prompts:
+    post:
+      tags:
+        - AgentsPluginCustomPrompts
+      summary: Create a custom prompt
+      description: Creates a custom prompt for the authenticated user.
+      operationId: agentsPluginCreateCustomPrompt
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginCustomPrompt"
+      responses:
+        "201":
+          description: Custom prompt created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginCustomPrompt"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    get:
+      tags:
+        - AgentsPluginCustomPrompts
+      summary: List custom prompts
+      description: Returns all custom prompts visible to the authenticated user.
+      operationId: agentsPluginListCustomPrompts
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Custom prompts returned successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentsPluginCustomPrompt"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/custom-prompts/{id}:
+    put:
+      tags:
+        - AgentsPluginCustomPrompts
+      summary: Update a custom prompt
+      description: Updates an existing custom prompt owned by the authenticated user.
+      operationId: agentsPluginUpdateCustomPrompt
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPromptIDPath"
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginCustomPrompt"
+      responses:
+        "204":
+          description: Custom prompt updated successfully.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNotFound"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    delete:
+      tags:
+        - AgentsPluginCustomPrompts
+      summary: Delete a custom prompt
+      description: Soft-deletes an existing custom prompt owned by the authenticated user.
+      operationId: agentsPluginDeleteCustomPrompt
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPromptIDPath"
+      responses:
+        "204":
+          description: Custom prompt deleted successfully.
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNotFound"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/custom-prompts/pins:
+    get:
+      tags:
+        - AgentsPluginCustomPrompts
+      summary: Get pinned custom prompts
+      description: Returns the IDs of prompts pinned by the authenticated user.
+      operationId: agentsPluginGetCustomPromptPins
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Pinned prompt IDs returned successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    put:
+      tags:
+        - AgentsPluginCustomPrompts
+      summary: Set a custom prompt pin
+      description: Pins or unpins a custom prompt for the authenticated user.
+      operationId: agentsPluginSetCustomPromptPin
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginSetPinRequest"
+      responses:
+        "200":
+          description: Pin state updated successfully.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/custom-prompts/{id}/render:
+    post:
+      tags:
+        - AgentsPluginCustomPrompts
+      summary: Render a custom prompt
+      description: Renders a custom prompt template with the authenticated user's context.
+      operationId: agentsPluginRenderCustomPrompt
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPromptIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginRenderPromptRequest"
+      responses:
+        "200":
+          description: Prompt rendered successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginRenderPromptResponse"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNotFound"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/post/{postid}/react:
+    post:
+      tags:
+        - AgentsPluginPosts
+      summary: Add an AI-selected reaction
+      description: Adds a reaction selected by the configured AI bot to the target post as the authenticated user.
+      operationId: agentsPluginReactToPost
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPostIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      responses:
+        "200":
+          description: Reaction added successfully.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/post/{postid}/analyze:
+    post:
+      tags:
+        - AgentsPluginPosts
+      summary: Analyze a thread
+      description: Starts a thread summary, action item, or open question analysis and streams the result to a direct message.
+      operationId: agentsPluginAnalyzeThread
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPostIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginThreadAnalysisRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginPostLocation"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/post/{postid}/transcribe/file/{fileid}:
+    post:
+      tags:
+        - AgentsPluginPosts
+      summary: Transcribe an attached file
+      description: Starts transcription for the specified file on a meeting-related post.
+      operationId: agentsPluginTranscribeFile
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPostIDPath"
+        - $ref: "#/components/parameters/AgentsPluginFileIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      responses:
+        "200":
+          description: Transcription result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/post/{postid}/summarize_transcription:
+    post:
+      tags:
+        - AgentsPluginPosts
+      summary: Summarize a transcription
+      description: Summarizes a meeting transcription referenced by the target post.
+      operationId: agentsPluginSummarizeTranscription
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPostIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      responses:
+        "200":
+          description: Summarization result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/post/{postid}/stop:
+    post:
+      tags:
+        - AgentsPluginPosts
+      summary: Stop a streaming response
+      description: Stops an in-progress AI stream for a post owned by the authenticated user.
+      operationId: agentsPluginStopPostStream
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPostIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      responses:
+        "200":
+          description: Stream stopped successfully.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/post/{postid}/regenerate:
+    post:
+      tags:
+        - AgentsPluginPosts
+      summary: Regenerate a response
+      description: Regenerates an AI response for a post owned by the authenticated user.
+      operationId: agentsPluginRegeneratePost
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPostIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      responses:
+        "200":
+          description: Regeneration started successfully.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/post/{postid}/tool_call:
+    post:
+      tags:
+        - AgentsPluginPosts
+      summary: Approve or reject tool calls
+      description: Applies the user's decision for pending tool calls on an AI response.
+      operationId: agentsPluginHandleToolCallApproval
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPostIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginToolApproval"
+      responses:
+        "200":
+          description: Tool call decision handled successfully.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/post/{postid}/tool_result:
+    post:
+      tags:
+        - AgentsPluginPosts
+      summary: Approve or reject tool results
+      description: Applies the user's decision for pending tool results on an AI response.
+      operationId: agentsPluginHandleToolResultApproval
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPostIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginToolApproval"
+      responses:
+        "200":
+          description: Tool result decision handled successfully.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/post/{postid}/postback_summary:
+    post:
+      tags:
+        - AgentsPluginPosts
+      summary: Post back a meeting summary
+      description: Posts a generated meeting summary back to the source context.
+      operationId: agentsPluginPostbackSummary
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginPostIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      responses:
+        "200":
+          description: Postback result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/channel/{channelid}/analyze:
+    post:
+      tags:
+        - AgentsPluginChannels
+      summary: Analyze a channel
+      description: Starts channel analysis and streams the result to a direct message.
+      operationId: agentsPluginAnalyzeChannel
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginChannelIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginChannelAnalysisRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginPostLocation"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/channel/{channelid}/interval:
+    post:
+      tags:
+        - AgentsPluginChannels
+      summary: Summarize a channel interval
+      description: Summarizes unread or selected channel messages over a bounded interval.
+      operationId: agentsPluginSummarizeChannelInterval
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginChannelIDPath"
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginChannelIntervalRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginPostLocation"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/admin/reindex:
+    post:
+      tags:
+        - AgentsPluginAdmin
+      summary: Start a full reindex job
+      description: Starts a background semantic search reindex job.
+      operationId: agentsPluginAdminStartReindex
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginReindexRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginJobStatus"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "409":
+          $ref: "#/components/responses/AgentsPluginJobStatus"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/admin/reindex/status:
+    get:
+      tags:
+        - AgentsPluginAdmin
+      summary: Get reindex job status
+      description: Returns the current or most recent semantic search reindex job status.
+      operationId: agentsPluginAdminGetReindexStatus
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginJobStatus"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNoJob"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/admin/reindex/cancel:
+    post:
+      tags:
+        - AgentsPluginAdmin
+      summary: Cancel a reindex job
+      description: Requests cancellation of the running semantic search reindex job.
+      operationId: agentsPluginAdminCancelReindex
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginJobStatus"
+        "400":
+          $ref: "#/components/responses/AgentsPluginNoJob"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "404":
+          $ref: "#/components/responses/AgentsPluginNoJob"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/admin/reindex/catchup:
+    post:
+      tags:
+        - AgentsPluginAdmin
+      summary: Start a catch-up indexing job
+      description: Starts a catch-up semantic search indexing job from the saved cursor.
+      operationId: agentsPluginAdminStartCatchUpIndex
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentsPluginJobStatus"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "409":
+          $ref: "#/components/responses/AgentsPluginJobStatus"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/admin/reindex/health-check:
+    get:
+      tags:
+        - AgentsPluginAdmin
+      summary: Check search index health
+      description: Returns semantic search index health and embedding model compatibility.
+      operationId: agentsPluginAdminCheckIndexHealth
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Health check returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginHealthCheckResult"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/admin/mcp/tools:
+    get:
+      tags:
+        - AgentsPluginAdmin
+        - AgentsPluginMCP
+      summary: Discover configured MCP tools
+      description: Discovers MCP tools for configured remote servers and the embedded server.
+      operationId: agentsPluginAdminListMCPTools
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: MCP tools returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginMCPToolsResponse"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/admin/mcp/vetted-tool-seed:
+    get:
+      tags:
+        - AgentsPluginAdmin
+        - AgentsPluginMCP
+      summary: Get vetted MCP tool defaults
+      description: Returns the default vetted tool configuration for a base URL.
+      operationId: agentsPluginAdminGetVettedToolSeed
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - name: base_url
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Vetted tool seed returned successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tool_configs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AgentsPluginMCPToolConfig"
+        "400":
+          $ref: "#/components/responses/AgentsPluginJSONError"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+  /plugins/mattermost-ai/admin/mcp/tools/cache/clear:
+    post:
+      tags:
+        - AgentsPluginAdmin
+        - AgentsPluginMCP
+      summary: Clear MCP tools cache
+      description: Clears cached MCP tool discovery results.
+      operationId: agentsPluginAdminClearMCPToolsCache
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Cache cleared successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginClearMCPToolsCacheResponse"
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/admin/models/fetch:
+    post:
+      tags:
+        - AgentsPluginAdmin
+      summary: Fetch models for service credentials
+      description: Fetches available model IDs using service credentials supplied in the request body.
+      operationId: agentsPluginAdminFetchModels
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginFetchModelsRequest"
+      responses:
+        "200":
+          description: Models returned successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/admin/config:
+    get:
+      tags:
+        - AgentsPluginAdmin
+      summary: Get plugin configuration
+      description: Returns the persisted plugin configuration for system administrators.
+      operationId: agentsPluginAdminGetConfig
+      security:
+        - AgentsPluginBearerAuth: []
+      responses:
+        "200":
+          description: Configuration returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsPluginConfig"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+    put:
+      tags:
+        - AgentsPluginAdmin
+      summary: Save plugin configuration
+      description: Saves plugin configuration, updates the local node, and notifies other cluster nodes.
+      operationId: agentsPluginAdminSaveConfig
+      security:
+        - AgentsPluginBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentsPluginConfig"
+      responses:
+        "200":
+          description: Configuration saved successfully.
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentsPluginForbidden"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/search:
+    post:
+      tags:
+        - AgentsPluginSearch
+      summary: Search with AI answer generation
+      description: Runs semantic search and returns search results for AI-assisted display.
+      operationId: agentsPluginSearchQuery
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginSearch"
+      responses:
+        "200":
+          description: Search response.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+  /plugins/mattermost-ai/search/run:
+    post:
+      tags:
+        - AgentsPluginSearch
+      summary: Run search and respond in a direct message
+      description: Runs semantic search and starts an AI-authored direct-message response.
+      operationId: agentsPluginRunSearch
+      security:
+        - AgentsPluginBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AgentsPluginBotUsernameQuery"
+      requestBody:
+        $ref: "#/components/requestBodies/AgentsPluginSearch"
+      responses:
+        "200":
+          description: Search run response.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/AgentsPluginBadRequest"
+        "401":
+          $ref: "#/components/responses/AgentsPluginUnauthorized"
+        "500":
+          $ref: "#/components/responses/AgentsPluginInternalServerError"
+components:
+  securitySchemes:
+    AgentsPluginBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: token
+    AgentsPluginInterPluginAuth:
+      type: apiKey
+      in: header
+      name: Mattermost-Plugin-ID
+  parameters:
+    AgentsPluginAgentPath:
+      name: agent
+      in: path
+      required: true
+      description: Mattermost user ID of the agent bot.
+      schema:
+        type: string
+    AgentsPluginServicePath:
+      name: service
+      in: path
+      required: true
+      description: Service ID or service name.
+      schema:
+        type: string
+    AgentsPluginAgentIDPath:
+      name: agentid
+      in: path
+      required: true
+      description: Agent ID.
+      schema:
+        type: string
+    AgentsPluginChannelIDPath:
+      name: channelid
+      in: path
+      required: true
+      description: Mattermost channel ID.
+      schema:
+        type: string
+    AgentsPluginConversationIDPath:
+      name: conversationid
+      in: path
+      required: true
+      description: Conversation ID.
+      schema:
+        type: string
+    AgentsPluginFileIDPath:
+      name: fileid
+      in: path
+      required: true
+      description: Mattermost file ID.
+      schema:
+        type: string
+    AgentsPluginPostIDPath:
+      name: postid
+      in: path
+      required: true
+      description: Mattermost post ID.
+      schema:
+        type: string
+    AgentsPluginPromptIDPath:
+      name: id
+      in: path
+      required: true
+      description: Custom prompt ID.
+      schema:
+        type: string
+    AgentsPluginServerNamePath:
+      name: serverName
+      in: path
+      required: true
+      description: Configured MCP server name.
+      schema:
+        type: string
+    AgentsPluginBotUsernameQuery:
+      name: botUsername
+      in: query
+      required: false
+      description: Optional bot username. Defaults to the configured default bot.
+      schema:
+        type: string
+    AgentsPluginUserIDQuery:
+      name: user_id
+      in: query
+      required: false
+      description: Optional Mattermost user ID used for access filtering.
+      schema:
+        type: string
+  requestBodies:
+    AgentsPluginBridgeCompletionRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginCompletionRequest"
+    AgentsPluginCustomPrompt:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginCustomPrompt"
+    AgentsPluginSearch:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginSearchRequest"
+    AgentsPluginToolApproval:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginToolApprovalRequest"
+  responses:
+    AgentsPluginBadRequest:
+      description: Invalid or missing request parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginError"
+    AgentsPluginBridgeError:
+      description: Bridge error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginBridgeError"
+    AgentsPluginConflict:
+      description: Request conflicts with the current resource state.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginError"
+    AgentsPluginForbidden:
+      description: The authenticated user does not have permission to perform the action.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginError"
+    AgentsPluginHTMLPage:
+      description: HTML page returned by a browser-oriented OAuth endpoint.
+      content:
+        text/html:
+          schema:
+            type: string
+    AgentsPluginInternalServerError:
+      description: An internal server error occurred.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginError"
+    AgentsPluginJobStatus:
+      description: Reindex job status.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginJobStatus"
+    AgentsPluginJSONError:
+      description: JSON error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginJSONError"
+    AgentsPluginNoJob:
+      description: No reindex job is available.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                example: no_job
+    AgentsPluginNotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginError"
+    AgentsPluginPostLocation:
+      description: A generated post location.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginPostLocation"
+    AgentsPluginSSEStream:
+      description: Server-Sent Events stream.
+      content:
+        text/event-stream:
+          schema:
+            type: string
+    AgentsPluginTooLarge:
+      description: Request body or uploaded content is too large.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginError"
+    AgentsPluginUnauthorized:
+      description: Authentication is required.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginError"
+  schemas:
+    AgentsPluginAIThread:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        channel_id:
+          type: string
+          nullable: true
+        bot_id:
+          type: string
+        root_post_id:
+          type: string
+          nullable: true
+        turn_count:
+          type: integer
+        update_at:
+          type: integer
+          format: int64
+    AgentsPluginAIBotInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        username:
+          type: string
+        lastIconUpdate:
+          type: integer
+          format: int64
+        dmChannelID:
+          type: string
+        channelAccessLevel:
+          type: integer
+        channelIDs:
+          type: array
+          items:
+            type: string
+        userAccessLevel:
+          type: integer
+        userIDs:
+          type: array
+          items:
+            type: string
+        enabledMCPTools:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginEnabledMCPTool"
+        autoEnableNewMCPTools:
+          type: boolean
+    AgentsPluginAIBotsResponse:
+      type: object
+      properties:
+        bots:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginAIBotInfo"
+        searchEnabled:
+          type: boolean
+        allowUnsafeLinks:
+          type: boolean
+    AgentsPluginBotConfig:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        customInstructions:
+          type: string
+        serviceID:
+          type: string
+        model:
+          type: string
+        service:
+          allOf:
+            - $ref: "#/components/schemas/AgentsPluginServiceConfig"
+          nullable: true
+        enableVision:
+          type: boolean
+        disableTools:
+          type: boolean
+        channelAccessLevel:
+          type: integer
+          enum:
+            - 0
+            - 1
+            - 2
+            - 3
+        channelIDs:
+          type: array
+          items:
+            type: string
+        userAccessLevel:
+          type: integer
+          enum:
+            - 0
+            - 1
+            - 2
+            - 3
+        userIDs:
+          type: array
+          items:
+            type: string
+        teamIDs:
+          type: array
+          items:
+            type: string
+        maxFileSize:
+          type: integer
+          format: int64
+        enabledNativeTools:
+          type: array
+          items:
+            type: string
+        enabledMCPTools:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginEnabledMCPTool"
+        autoEnableNewMCPTools:
+          type: boolean
+        reasoningEnabled:
+          type: boolean
+        reasoningEffort:
+          type: string
+        thinkingBudget:
+          type: integer
+        structuredOutputEnabled:
+          type: boolean
+        botUserID:
+          type: string
+        creatorID:
+          type: string
+        adminUserIDs:
+          type: array
+          items:
+            type: string
+        createAt:
+          type: integer
+          format: int64
+        updateAt:
+          type: integer
+          format: int64
+        deleteAt:
+          type: integer
+          format: int64
+    AgentsPluginBridgeAgentInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        username:
+          type: string
+        service_id:
+          type: string
+        service_type:
+          type: string
+        is_default:
+          type: boolean
+    AgentsPluginBridgeAgentsResponse:
+      type: object
+      properties:
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginBridgeAgentInfo"
+    AgentsPluginBridgeError:
+      type: object
+      properties:
+        error:
+          type: string
+    AgentsPluginBridgeServiceInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+    AgentsPluginBridgeServicesResponse:
+      type: object
+      properties:
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginBridgeServiceInfo"
+    AgentsPluginChannelAnalysisRequest:
+      type: object
+      required:
+        - analysis_type
+      properties:
+        analysis_type:
+          type: string
+        since:
+          type: string
+        until:
+          type: string
+        days:
+          type: integer
+          minimum: 0
+          maximum: 14
+        prompt:
+          type: string
+        team_id:
+          type: string
+    AgentsPluginChannelIntervalRequest:
+      type: object
+      properties:
+        start_time:
+          type: integer
+          format: int64
+        end_time:
+          type: integer
+          format: int64
+          description: Zero means until present.
+        preset_prompt:
+          type: string
+          enum:
+            - summarize_unreads
+            - summarize_range
+            - action_items
+            - open_questions
+        prompt:
+          type: string
+    AgentsPluginClearMCPToolsCacheResponse:
+      type: object
+      properties:
+        cleared_servers:
+          type: integer
+        message:
+          type: string
+    AgentsPluginCompletionPost:
+      type: object
+      required:
+        - role
+        - message
+      properties:
+        role:
+          type: string
+          enum:
+            - user
+            - assistant
+            - bot
+            - system
+        message:
+          type: string
+        file_ids:
+          type: array
+          items:
+            type: string
+    AgentsPluginCompletionRequest:
+      type: object
+      required:
+        - posts
+      properties:
+        posts:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/AgentsPluginCompletionPost"
+        max_generated_tokens:
+          type: integer
+        json_output_format:
+          type: object
+          additionalProperties: true
+        operation:
+          type: string
+        operation_subtype:
+          type: string
+        user_id:
+          type: string
+        channel_id:
+          type: string
+    AgentsPluginCompletionResponse:
+      type: object
+      properties:
+        completion:
+          type: string
+    AgentsPluginConfig:
+      type: object
+      properties:
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginServiceConfig"
+        bots:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginBotConfig"
+        defaultBotName:
+          type: string
+        transcriptBackend:
+          type: string
+        enableLLMTrace:
+          type: boolean
+        enableTokenUsageLogging:
+          type: boolean
+        enableCallSummary:
+          type: boolean
+        enableTokenUsageLogToPlugin:
+          type: boolean
+        enableTokenUsageLogToFile:
+          type: boolean
+        allowedUpstreamHostnames:
+          type: string
+        allowUnsafeLinks:
+          type: boolean
+        enableChannelMentionToolCalling:
+          type: boolean
+        allowNativeWebSearchInChannels:
+          type: boolean
+        embeddingSearchConfig:
+          $ref: "#/components/schemas/AgentsPluginEmbeddingSearchConfig"
+        mcp:
+          $ref: "#/components/schemas/AgentsPluginMCPConfig"
+        webSearch:
+          $ref: "#/components/schemas/AgentsPluginWebSearchConfig"
+    AgentsPluginCreateAgentRequest:
+      type: object
+      required:
+        - displayName
+        - username
+        - serviceID
+      properties:
+        displayName:
+          type: string
+        username:
+          type: string
+        serviceID:
+          type: string
+        customInstructions:
+          type: string
+        channelAccessLevel:
+          type: integer
+        channelIDs:
+          type: array
+          items:
+            type: string
+        userAccessLevel:
+          type: integer
+        userIDs:
+          type: array
+          items:
+            type: string
+        teamIDs:
+          type: array
+          items:
+            type: string
+        adminUserIDs:
+          type: array
+          items:
+            type: string
+        enabledMCPTools:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginEnabledMCPTool"
+        autoEnableNewMCPTools:
+          type: boolean
+        model:
+          type: string
+        enableVision:
+          type: boolean
+        disableTools:
+          type: boolean
+        enabledNativeTools:
+          type: array
+          items:
+            type: string
+        reasoningEnabled:
+          type: boolean
+        reasoningEffort:
+          type: string
+        thinkingBudget:
+          type: integer
+        structuredOutputEnabled:
+          type: boolean
+    AgentsPluginCustomPrompt:
+      type: object
+      properties:
+        id:
+          type: string
+        creator_id:
+          type: string
+        name:
+          type: string
+          maxLength: 64
+        description:
+          type: string
+        template:
+          type: string
+        is_shared:
+          type: boolean
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+        deleted_at:
+          type: integer
+          format: int64
+    AgentsPluginEmbeddingSearchConfig:
+      type: object
+      properties:
+        type:
+          type: string
+        vectorStore:
+          $ref: "#/components/schemas/AgentsPluginUpstreamConfig"
+        embeddingProvider:
+          $ref: "#/components/schemas/AgentsPluginUpstreamConfig"
+        parameters:
+          type: object
+          additionalProperties: true
+        dimensions:
+          type: integer
+        chunkingOptions:
+          type: object
+          additionalProperties: true
+    AgentsPluginEnabledMCPTool:
+      type: object
+      properties:
+        server_origin:
+          type: string
+        tool_name:
+          type: string
+    AgentsPluginError:
+      type: object
+      description: Error returned by Gin/Mattermost handlers. The exact shape may vary by caller.
+      additionalProperties: true
+    AgentsPluginFetchModelsForServiceRequest:
+      type: object
+      required:
+        - serviceID
+      properties:
+        serviceID:
+          type: string
+    AgentsPluginFetchModelsRequest:
+      type: object
+      properties:
+        serviceType:
+          type: string
+        apiKey:
+          type: string
+          writeOnly: true
+        apiURL:
+          type: string
+        orgID:
+          type: string
+        region:
+          type: string
+        vertexProjectID:
+          type: string
+        vertexProjectNumber:
+          type: string
+        vertexAuthCredentials:
+          type: string
+          writeOnly: true
+    AgentsPluginHealthCheckResult:
+      type: object
+      properties:
+        db_post_count:
+          type: integer
+          format: int64
+        indexed_post_count:
+          type: integer
+          format: int64
+        missing_posts:
+          type: integer
+          format: int64
+        status:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+        model_compatible:
+          type: boolean
+        model_needs_reindex:
+          type: boolean
+        model_compat_reason:
+          type: string
+        stored_provider_type:
+          type: string
+        stored_dimensions:
+          type: integer
+        stored_model_name:
+          type: string
+    AgentsPluginJobStatus:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum:
+            - running
+            - cancel_requested
+            - completed
+            - failed
+            - canceled
+        error:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        processed_rows:
+          type: integer
+          format: int64
+        total_rows:
+          type: integer
+          format: int64
+        resumable:
+          type: boolean
+        error_count:
+          type: integer
+        node_id:
+          type: string
+        cutoff_at:
+          type: integer
+          format: int64
+        last_updated_at:
+          type: string
+          format: date-time
+        is_stale:
+          type: boolean
+    AgentsPluginJSONError:
+      type: object
+      properties:
+        error:
+          type: string
+    AgentsPluginMCPConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        enablePluginServer:
+          type: boolean
+        servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginMCPServerConfig"
+        embeddedServer:
+          $ref: "#/components/schemas/AgentsPluginMCPEmbeddedServerConfig"
+        idleTimeoutMinutes:
+          type: integer
+    AgentsPluginMCPEmbeddedServerConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        tool_configs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginMCPToolConfig"
+    AgentsPluginMCPServerConfig:
+      type: object
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+        baseURL:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        clientID:
+          type: string
+        clientSecret:
+          type: string
+          writeOnly: true
+        tool_configs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginMCPToolConfig"
+    AgentsPluginMCPToolConfig:
+      type: object
+      properties:
+        name:
+          type: string
+        policy:
+          type: string
+          enum:
+            - ask
+            - auto_run_in_dm
+            - auto_run_everywhere
+        enabled:
+          type: boolean
+    AgentsPluginMCPToolInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        inputSchema:
+          type: object
+          additionalProperties: true
+    AgentsPluginMCPServerInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginMCPToolInfo"
+        needsOAuth:
+          type: boolean
+        oauthURL:
+          type: string
+        error:
+          type: string
+          nullable: true
+    AgentsPluginMCPToolsResponse:
+      type: object
+      properties:
+        servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginMCPServerInfo"
+    AgentsPluginMCPUserPreferences:
+      type: object
+      properties:
+        disabled_servers:
+          type: array
+          maxItems: 256
+          items:
+            type: string
+            maxLength: 512
+    AgentsPluginPostLocation:
+      type: object
+      properties:
+        postid:
+          type: string
+        channelid:
+          type: string
+    AgentsPluginRawSearchRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          maxLength: 4000
+        team_id:
+          type: string
+        channel_id:
+          type: string
+        limit:
+          type: integer
+          maximum: 50
+        offset:
+          type: integer
+          minimum: 0
+    AgentsPluginRawSearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginRawSearchResult"
+    AgentsPluginRawSearchResult:
+      type: object
+      properties:
+        post_id:
+          type: string
+        channel_id:
+          type: string
+        channel_name:
+          type: string
+        user_id:
+          type: string
+        username:
+          type: string
+        content:
+          type: string
+        score:
+          type: number
+          format: float
+    AgentsPluginReindexRequest:
+      type: object
+      properties:
+        clearIndex:
+          type: boolean
+          nullable: true
+    AgentsPluginRenderPromptRequest:
+      type: object
+      properties:
+        channel_id:
+          type: string
+        bot_username:
+          type: string
+    AgentsPluginRenderPromptResponse:
+      type: object
+      properties:
+        rendered:
+          type: string
+    AgentsPluginSearchRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          maxLength: 4000
+        teamId:
+          type: string
+        channelId:
+          type: string
+        maxResults:
+          type: integer
+          maximum: 100
+    AgentsPluginServiceConfig:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        apiKey:
+          type: string
+          writeOnly: true
+        orgId:
+          type: string
+        defaultModel:
+          type: string
+        apiURL:
+          type: string
+        region:
+          type: string
+        awsAccessKeyID:
+          type: string
+          writeOnly: true
+        awsSecretAccessKey:
+          type: string
+          writeOnly: true
+        vertexProjectID:
+          type: string
+        vertexProjectNumber:
+          type: string
+        vertexAuthCredentials:
+          type: string
+          writeOnly: true
+        tokenLimit:
+          type: integer
+        streamingTimeoutSeconds:
+          type: integer
+        sendUserID:
+          type: boolean
+        outputTokenLimit:
+          type: integer
+        useResponsesAPI:
+          type: boolean
+    AgentsPluginServiceInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        defaultModel:
+          type: string
+        outputTokenLimit:
+          type: integer
+        useResponsesAPI:
+          type: boolean
+    AgentsPluginSetPinRequest:
+      type: object
+      required:
+        - prompt_id
+      properties:
+        prompt_id:
+          type: string
+        pinned:
+          type: boolean
+    AgentsPluginThreadAnalysisRequest:
+      type: object
+      required:
+        - analysis_type
+      properties:
+        analysis_type:
+          type: string
+          enum:
+            - summarize_thread
+            - action_items
+            - open_questions
+    AgentsPluginToolApprovalRequest:
+      type: object
+      required:
+        - accepted_tool_ids
+      properties:
+        accepted_tool_ids:
+          type: array
+          items:
+            type: string
+    AgentsPluginTurnResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        post_id:
+          type: string
+          nullable: true
+        role:
+          type: string
+        content:
+          oneOf:
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
+            - type: object
+              additionalProperties: true
+        tokens_in:
+          type: integer
+          format: int64
+        tokens_out:
+          type: integer
+          format: int64
+        sequence:
+          type: integer
+        approval_state:
+          type: string
+          enum:
+            - call
+            - result
+            - done
+    AgentsPluginConversationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        bot_id:
+          type: string
+        channel_id:
+          type: string
+          nullable: true
+        root_post_id:
+          type: string
+          nullable: true
+        title:
+          type: string
+        operation:
+          type: string
+        turns:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginTurnResponse"
+    AgentsPluginUpstreamConfig:
+      type: object
+      properties:
+        type:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+    AgentsPluginUserMCPToolInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        policy:
+          type: string
+    AgentsPluginUserMCPServerInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        serverOrigin:
+          type: string
+        authenticated:
+          type: boolean
+        needsOAuth:
+          type: boolean
+        authEmail:
+          type: string
+        authURL:
+          type: string
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginUserMCPToolInfo"
+    AgentsPluginUserMCPToolsResponse:
+      type: object
+      properties:
+        servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginUserMCPServerInfo"
+    AgentsPluginWebSearchBraveConfig:
+      type: object
+      properties:
+        apiKey:
+          type: string
+          writeOnly: true
+        apiURL:
+          type: string
+        resultLimit:
+          type: integer
+        pollTimeout:
+          type: integer
+        pollInterval:
+          type: integer
+    AgentsPluginWebSearchConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        provider:
+          type: string
+        google:
+          $ref: "#/components/schemas/AgentsPluginWebSearchGoogleConfig"
+        brave:
+          $ref: "#/components/schemas/AgentsPluginWebSearchBraveConfig"
+        domainDenylist:
+          type: array
+          items:
+            type: string
+    AgentsPluginWebSearchGoogleConfig:
+      type: object
+      properties:
+        apiKey:
+          type: string
+          writeOnly: true
+        searchEngineId:
+          type: string
+        resultLimit:
+          type: integer
+        apiURL:
+          type: string
+    AgentsPluginUpdateAgentRequest:
+      allOf:
+        - $ref: "#/components/schemas/AgentsPluginCreateAgentRequest"
+        - type: object
+          properties:
+            username:
+              type: string
+              description: Username must match the existing agent username when provided.
