@@ -176,34 +176,36 @@ check-shards: e2e/node_modules
 ## user-facing strings.
 .PHONY: check-i18n
 check-i18n: webapp/node_modules
-	@PREV=$$(mktemp); cp webapp/src/i18n/en.json "$$PREV"; \
+	@set -e; \
+	PREV=$$(mktemp); \
+	trap "rm -f $$PREV" EXIT; \
+	cp webapp/src/i18n/en.json "$$PREV"; \
 	$(MAKE) --no-print-directory i18n-extract >/dev/null; \
 	if ! diff -q "$$PREV" webapp/src/i18n/en.json >/dev/null 2>&1; then \
 		echo "" >&2; \
 		echo "*** webapp/src/i18n/en.json is out of sync with webapp source." >&2; \
 		echo "*** It has been regenerated; review the diff and commit:" >&2; \
 		echo "    git diff -- webapp/src/i18n/en.json" >&2; \
-		rm "$$PREV"; \
 		exit 1; \
-	fi; \
-	rm "$$PREV"
+	fi
 
 ## Verify webapp/ and e2e/ package-lock.json files match package.json.
 ## Fails (and leaves regenerated lockfiles in place) when package.json was
 ## edited without running `npm install`.
 .PHONY: check-locks
 check-locks:
-	@PREV_W=$$(mktemp); PREV_E=$$(mktemp); \
+	@set -e; \
+	PREV_W=$$(mktemp); PREV_E=$$(mktemp); \
+	trap "rm -f $$PREV_W $$PREV_E" EXIT; \
 	cp webapp/package-lock.json "$$PREV_W"; \
 	cp e2e/package-lock.json "$$PREV_E"; \
-	(cd webapp && $(NPM) install --package-lock-only --silent --no-audit --no-fund) && \
+	(cd webapp && $(NPM) install --package-lock-only --silent --no-audit --no-fund); \
 	(cd e2e && $(NPM) install --package-lock-only --silent --no-audit --no-fund); \
 	drift=0; \
 	if ! diff -q "$$PREV_W" webapp/package-lock.json >/dev/null 2>&1; then drift=1; \
 	  echo "*** webapp/package-lock.json is out of sync with webapp/package.json." >&2; fi; \
 	if ! diff -q "$$PREV_E" e2e/package-lock.json >/dev/null 2>&1; then drift=1; \
 	  echo "*** e2e/package-lock.json is out of sync with e2e/package.json." >&2; fi; \
-	rm "$$PREV_W" "$$PREV_E"; \
 	if [ $$drift -ne 0 ]; then \
 		echo "*** Lockfile(s) regenerated; commit the result." >&2; \
 		exit 1; \

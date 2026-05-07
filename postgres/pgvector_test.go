@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,11 @@ var rootDSN string
 
 func TestMain(m *testing.M) {
 	if dsn := os.Getenv("PGVECTOR_TEST_DSN"); dsn != "" {
+		if !strings.Contains(dsn, "://") {
+			fmt.Println("PGVECTOR_TEST_DSN must be a URL-style DSN (e.g. postgres://user:pass@host:5432/db?sslmode=disable).")
+			fmt.Println("libpq key=value DSNs are not supported by this test harness.")
+			os.Exit(1)
+		}
 		rootDSN = dsn
 		os.Exit(m.Run())
 	}
