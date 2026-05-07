@@ -190,7 +190,7 @@ func TestGetServerOrigin(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store := NewToolStore(nil, false)
+			store := NewToolStore()
 			store.AddTools(tc.tools)
 			result := store.GetServerOrigin(tc.lookupName)
 			assert.Equal(t, tc.expectedURL, result)
@@ -275,6 +275,29 @@ func TestWithBoundParamsPreservesServerOrigin(t *testing.T) {
 	assert.Equal(t, original.Name, bound.Name)
 }
 
+func TestWithCallMetadata(t *testing.T) {
+	original := Tool{
+		Name:         "test_tool",
+		ServerOrigin: "https://mcp.example.com",
+	}
+
+	bound := original.WithCallMetadata(map[string]any{"hook": "value"})
+	assert.Nil(t, original.CallMetadata, "WithCallMetadata must not mutate the receiver")
+	assert.Equal(t, map[string]any{"hook": "value"}, bound.CallMetadata)
+	assert.Equal(t, original.Name, bound.Name)
+	assert.Equal(t, original.ServerOrigin, bound.ServerOrigin)
+
+	// Mutating the source map after binding must not affect the bound copy.
+	src := map[string]any{"hook": "value"}
+	bound = original.WithCallMetadata(src)
+	src["hook"] = "tampered"
+	assert.Equal(t, "value", bound.CallMetadata["hook"])
+
+	// Empty/nil meta clears the field.
+	cleared := bound.WithCallMetadata(nil)
+	assert.Nil(t, cleared.CallMetadata)
+}
+
 func TestRemoveToolsByServerOrigin(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -350,7 +373,7 @@ func TestRemoveToolsByServerOrigin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var store *ToolStore
 			if tc.tools != nil {
-				store = NewToolStore(nil, false)
+				store = NewToolStore()
 				store.AddTools(tc.tools)
 			}
 
@@ -481,7 +504,7 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 				return
 			}
 
-			s := NewToolStore(nil, false)
+			s := NewToolStore()
 			s.AddTools(tt.tools)
 			s.RetainOnlyMCPTools(tt.allowlist)
 

@@ -19,6 +19,8 @@ Access AI features in one of the following ways:
 - Use the **Ask AI** option in channels with unread messages (see [license requirements](admin_guide.md#license-requirements))
 - Use **Ask Agents about this channel** in a channel header to summarize recent activity, focus on a date range, or ask a question about the current channel. See [Channel Summaries](features/channel_summaries.md).
 
+![AI Actions menu in the message composer, including the Custom prompts entry.](img/ai-actions-menu-composer.png)
+
 ### Mobile
 
 Start or open a direct message with the Agent bot. If your system admin has configured multiple bots, switch between them by starting or opening each bot by name.
@@ -33,7 +35,9 @@ You can have conversations with Agents in several ways:
 
 **Direct messages**: Start a direct message with an Agent bot to have a private conversation. Chat privately with an Agent in direct message threads like you would any other Mattermost user.
 
-**Channel mentions**: [@mention](https://docs.mattermost.com/collaborate/mention-people.html) Agent bots by their username, such as `@copilot`, in any thread to bring Agents capabilities to your conversation. The bot responds in a thread to keep channels organized, and other team members can view and contribute to the conversation. An Agent can help extract information quickly or transform discussions into charts, resources, documentation, and more, and can find action items and open questions in new messages.
+**Channel mentions**: [@mention](https://docs.mattermost.com/collaborate/mention-people.html) Agent bots by their username, such as `@copilot`, in any thread to bring Agents capabilities to your conversation. The bot responds in a thread to keep channels organized, and other team members can view and contribute to the conversation. An Agent can help extract information quickly or transform discussions into charts, resources, documentation, and more, and can find action items and open questions in new messages. When you @mention an Agent in a thread, it uses earlier thread context up to that mention, including earlier posts in the thread. Later replies posted after that mention, and temporary placeholder bot posts, aren't included in that request.
+
+When you attach files in the Agents pane, direct messages, or channel @mentions, Agents can use them as conversation context. Images are included only when vision is enabled for the bot. Other files contribute text only when Mattermost can read text from them, such as plain-text files or files with extracted text. Very large attachment text may be shortened, and if one attachment can't be read, that attachment is skipped while the conversation continues.
 
 > **Note:** Whether AI-generated links are clickable depends on your system admin configuration. Treat links in AI responses with caution and verify destinations before opening them.
 
@@ -141,7 +145,9 @@ Contact your system admin if this feature isn't available for your Mattermost in
 
 ## Analyze images
 
-For AI models with vision capabilities, attach an image file to your message when chatting with an Agent to ask questions about the image or request analysis. The Agent responds based on the visual content.
+For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content.
+
+In channel threads, a later @mention can also include image attachments from earlier posts in the same thread when those posts are part of the thread context.
 
 Your system admin must enable vision capabilities for your bot, and the underlying AI model must support vision features.
 

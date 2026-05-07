@@ -27,8 +27,6 @@ type Metrics interface {
 	IncrementHTTPRequests()
 	IncrementHTTPErrors()
 
-	GetMetricsForAIService(llmName string) *llmMetrics
-
 	ObserveTokenUsage(botName, teamID, userID string, inputTokens, outputTokens int)
 }
 
@@ -49,8 +47,6 @@ type metrics struct {
 
 	httpRequestsTotal prometheus.Counter
 	httpErrorsTotal   prometheus.Counter
-
-	llmRequestsTotal *prometheus.CounterVec
 
 	llmInputTokensTotal  *prometheus.CounterVec
 	llmOutputTokensTotal *prometheus.CounterVec
@@ -125,15 +121,6 @@ func NewMetrics(info InstanceInfo) Metrics {
 	})
 	m.registry.MustRegister(m.httpErrorsTotal)
 
-	m.llmRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace:   MetricsNamespace,
-		Subsystem:   MetricsSubsystemLLM,
-		Name:        "requests_total",
-		Help:        "The total number of LLM requests.",
-		ConstLabels: additionalLabels,
-	}, []string{"llm_name"})
-	m.registry.MustRegister(m.llmRequestsTotal)
-
 	m.llmInputTokensTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace:   MetricsNamespace,
 		Subsystem:   MetricsSubsystemLLM,
@@ -174,30 +161,6 @@ func (m *metrics) IncrementHTTPRequests() {
 func (m *metrics) IncrementHTTPErrors() {
 	if m != nil {
 		m.httpErrorsTotal.Inc()
-	}
-}
-
-func (m *metrics) GetMetricsForAIService(llmName string) *llmMetrics {
-	if m == nil {
-		return nil
-	}
-
-	return &llmMetrics{
-		llmRequestsTotal: m.llmRequestsTotal.MustCurryWith(prometheus.Labels{"llm_name": llmName}),
-	}
-}
-
-type LLMetrics interface {
-	IncrementLLMRequests()
-}
-
-type llmMetrics struct {
-	llmRequestsTotal *prometheus.CounterVec
-}
-
-func (m *llmMetrics) IncrementLLMRequests() {
-	if m != nil {
-		m.llmRequestsTotal.With(prometheus.Labels{}).Inc()
 	}
 }
 

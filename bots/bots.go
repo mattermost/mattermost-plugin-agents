@@ -28,7 +28,6 @@ type Config interface {
 	GetBots() []llm.BotConfig
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
 	GetDefaultBotName() string
-	EnableLLMLogging() bool
 	EnableTokenUsageLogging() bool
 	EnableTokenUsageLogToPlugin() bool
 	EnableTokenUsageLogToFile() bool
@@ -437,11 +436,6 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	// Structured output fallback
 	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
 
-	// Logging
-	if b.config.EnableLLMLogging() {
-		result = llm.NewLanguageModelLogWrapper(b.pluginAPI.Log, result)
-	}
-
 	return result, nil
 }
 
@@ -552,6 +546,17 @@ func (b *MMBots) GetBotByID(botID string) *Bot {
 	}
 
 	return nil
+}
+
+// GetBotConfigByID returns the bot's EnableVision and MaxFileSize. ok is
+// false when botID is unknown.
+func (b *MMBots) GetBotConfigByID(botID string) (bool, int64, bool) {
+	bot := b.GetBotByID(botID)
+	if bot == nil {
+		return false, 0, false
+	}
+	cfg := bot.GetConfig()
+	return cfg.EnableVision, cfg.MaxFileSize, true
 }
 
 // GetBotForDMChannel returns the bot for the given DM channel.

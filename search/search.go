@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -283,8 +284,11 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 		return nil, fmt.Errorf("failed to create question post: %w", err)
 	}
 
-	// Start processing the search asynchronously
-	go s.processSearch(bot, userID, query, teamID, channelID, maxResults, questionPost)
+	// Start processing the search asynchronously. processSearch owns the
+	// "run search" span lifecycle since the work happens after RunSearch
+	// returns; ending the span here would orphan any child spans created
+	// inside the goroutine.
+	go s.processSearch(telemetry.DetachContext(ctx), bot, userID, query, teamID, channelID, maxResults, questionPost)
 
 	return map[string]string{
 		"postid":    questionPost.Id,
@@ -292,8 +296,10 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 	}, nil
 }
 
-// processSearch handles the async portion of RunSearch
-func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID string, maxResults int, questionPost *model.Post) {
+// processSearch handles the async portion of RunSearch.
+func (s *Search) processSearch(ctx context.Context, bot *bots.Bot, userID, query, teamID, channelID string, maxResults int, questionPost *model.Post) {
+	ctx, span := telemetry.Tracer().Start(ctx, "run search")
+	defer span.End()
 	// Create response post as a reply
 	responsePost := &model.Post{
 		RootId: questionPost.Id,
@@ -317,7 +323,7 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 	}()
 
 	// Execute search
-	results, err := s.executeSearch(context.Background(), query, Options{
+	results, err := s.executeSearch(ctx, query, Options{
 		Limit:     maxResults,
 		TeamID:    teamID,
 		ChannelID: channelID,
@@ -408,14 +414,14 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 		s.mmclient.LogError("Error updating post with search results", "error", updateErr)
 	}
 
-	resultStream, err := bot.LLM().ChatCompletion(completionReq, llm.WithToolsDisabled())
+	resultStream, err := bot.LLM().ChatCompletion(ctx, completionReq, llm.WithToolsDisabled())
 	if err != nil {
 		s.mmclient.LogError("Error generating answer", "error", err)
 		processingError = err
 		return
 	}
 
-	streamContext, err := s.streamingService.GetStreamingContext(context.Background(), responsePost.Id)
+	streamContext, err := s.streamingService.GetStreamingContext(ctx, responsePost.Id)
 	if err != nil {
 		s.mmclient.LogError("Error getting post streaming context", "error", err)
 		processingError = err
@@ -427,6 +433,9 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 
 // SearchQuery performs a search and returns results immediately
 func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (Response, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "search query")
+	defer span.End()
+
 	results, err := s.executeSearch(ctx, query, Options{
 		Limit:     maxResults,
 		TeamID:    teamID,
@@ -478,7 +487,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 		}
 		req.OperationSubType = llm.SubTypeNoStream
 
-		answer, llmErr := bot.LLM().ChatCompletionNoStream(*req, llm.WithToolsDisabled())
+		answer, llmErr := bot.LLM().ChatCompletionNoStream(ctx, *req, llm.WithToolsDisabled())
 		if llmErr != nil {
 			return Response{}, fmt.Errorf("failed to generate answer: %w", llmErr)
 		}
@@ -501,7 +510,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 	}
 
 	// Fallback: direct LLM call without conversation tracking
-	answer, err := bot.LLM().ChatCompletionNoStream(prompt)
+	answer, err := bot.LLM().ChatCompletionNoStream(ctx, prompt)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to generate answer: %w", err)
 	}

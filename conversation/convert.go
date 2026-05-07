@@ -5,10 +5,14 @@ package conversation
 
 import (
 	"encoding/json"
+	"io"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 )
+
+const DefaultMaxFileSize = int64(5 * 1024 * 1024)
 
 // UnsharedToolResultRedaction replaces tool_result content the requester has
 // not shared, preserving the tool_use/tool_result pairing required by LLM
@@ -25,12 +29,25 @@ var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
 // true is replaced with UnsharedToolResultRedaction, and tool_use arguments
 // whose Shared flag is not true are replaced with an empty JSON object so the
 // LLM cannot paraphrase private tool parameters into a channel-visible reply.
-func BlocksToPost(blocks []ContentBlock, role string, redactUnshared bool) llm.Post {
+func BlocksToPost(
+	blocks []ContentBlock,
+	role string,
+	redactUnshared bool,
+	mmClient mmapi.Client,
+	enableVision bool,
+	maxFileSize int64,
+) llm.Post {
 	post := llm.Post{
 		Role: RoleFromString(role),
 	}
 
+	effectiveMax := maxFileSize
+	if effectiveMax <= 0 {
+		effectiveMax = DefaultMaxFileSize
+	}
+
 	var textParts []string
+	var fileContents []string
 
 	for _, block := range blocks {
 		switch block.Type {
@@ -76,13 +93,76 @@ func BlocksToPost(blocks []ContentBlock, role string, redactUnshared bool) llm.P
 				})
 			}
 
-		case BlockTypeFile, BlockTypeImage, BlockTypeAnnotations:
+		case BlockTypeImage:
+			if !enableVision {
+				continue
+			}
+			if mmClient == nil {
+				continue
+			}
+			fileInfo, err := mmClient.GetFileInfo(block.FileID)
+			if err != nil {
+				mmClient.LogError("failed to get file info for image attachment", "error", err)
+				continue
+			}
+			reader, err := mmClient.GetFile(block.FileID)
+			if err != nil {
+				mmClient.LogError("failed to get file for image attachment", "error", err)
+				continue
+			}
+			post.Files = append(post.Files, llm.File{
+				MimeType: fileInfo.MimeType,
+				Size:     fileInfo.Size,
+				Reader:   reader,
+			})
+
+		case BlockTypeFile:
+			if mmClient == nil {
+				continue
+			}
+			fileInfo, err := mmClient.GetFileInfo(block.FileID)
+			if err != nil {
+				mmClient.LogError("failed to get file info for file attachment", "error", err)
+				continue
+			}
+
+			var content string
+			if trimmed := strings.TrimSpace(fileInfo.Content); trimmed != "" {
+				if int64(len(trimmed)) >= effectiveMax {
+					trimmed = trimmed[:effectiveMax] + "\n... (content truncated due to size limit)"
+				}
+				content = trimmed
+			} else if strings.HasPrefix(fileInfo.MimeType, "text/") {
+				reader, err := mmClient.GetFile(block.FileID)
+				if err != nil {
+					mmClient.LogError("failed to get file for file attachment", "error", err)
+					continue
+				}
+				body, err := io.ReadAll(io.LimitReader(reader, effectiveMax))
+				if err != nil {
+					mmClient.LogError("failed to read file content", "error", err)
+					continue
+				}
+				content = string(body)
+				if int64(len(body)) >= effectiveMax {
+					content += "\n... (content truncated due to size limit)"
+				}
+			} else {
+				continue
+			}
+
+			fileContents = append(fileContents, "File Name: "+fileInfo.Name+"\nContent: "+content)
+
+		case BlockTypeAnnotations:
 			// Not mapped to llm.Post
 		}
 	}
 
 	if len(textParts) > 0 {
 		post.Message = strings.Join(textParts, "\n")
+	}
+	if len(fileContents) > 0 {
+		post.Message += "\nAttached File Contents:\n" + strings.Join(fileContents, "\n\n")
 	}
 
 	return post

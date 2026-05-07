@@ -552,45 +552,45 @@ func (s *Indexer) isJobStale(jobStatus *JobStatus) bool {
 	return time.Since(lastUpdate) > StaleJobThreshold
 }
 
-// MarkOrphanedJobAsFailed marks a non-terminal job owned by this node as failed.
-// Intended to run at plugin startup so a crashed run (including one stuck in
-// cancel_requested) does not block future Starts.
+// MarkOrphanedJobAsFailed reclaims any non-terminal reindex job whose
+// heartbeat is older than StaleJobThreshold, on any node. Keying on
+// staleness (not the original NodeID) lets containerized deploys —
+// where the hostname changes on restart — and clustered deploys — where
+// the original node may be gone — recover after a crash. Resumable=true
+// preserves the cursor so the admin can resume from where the wedged
+// run left off.
 func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	var jobStatus JobStatus
 	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
 	if err != nil {
 		if mmapi.IsKVNotFound(err) {
-			return nil // No job exists, nothing to do
+			return nil
 		}
 		return err
 	}
 
-	if jobStatus.Status != JobStatusRunning && jobStatus.Status != JobStatusCancelRequested {
-		return nil
-	}
-
-	currentNodeID := s.getNodeID()
-	if jobStatus.NodeID != currentNodeID {
+	if !s.isJobStale(&jobStatus) {
 		return nil
 	}
 
 	newStatus := jobStatus
 	newStatus.Status = JobStatusFailed
-	newStatus.Error = fmt.Sprintf("Job orphaned: plugin restarted on node %s while job was running", currentNodeID)
+	newStatus.Resumable = true
+	newStatus.Error = fmt.Sprintf("Job orphaned: heartbeat older than %s on node %q",
+		StaleJobThreshold, jobStatus.NodeID)
 	newStatus.CompletedAt = time.Now()
 
-	s.pluginAPI.LogWarn("Marking orphaned reindex job as failed",
-		"node_id", currentNodeID,
+	s.pluginAPI.LogWarn("Reclaiming stale reindex job",
+		"job_id", jobStatus.JobID,
+		"previous_status", jobStatus.Status,
+		"node_id", jobStatus.NodeID,
 		"processed_rows", jobStatus.ProcessedRows)
 
-	// CAS-gate the write so a fresh run that has already claimed the row on
-	// another node is not clobbered.
-	ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, jobStatus, newStatus)
-	if casErr != nil {
+	// CAS so a fresh run that has already claimed the row on another
+	// node is not clobbered. We don't care if the CAS loses — that just
+	// means someone else already moved the row.
+	if _, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, jobStatus, newStatus); casErr != nil {
 		return casErr
-	}
-	if !ok {
-		return nil
 	}
 	return nil
 }

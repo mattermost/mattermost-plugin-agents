@@ -4,6 +4,7 @@
 package react
 
 import (
+	stdcontext "context"
 	"fmt"
 	"strings"
 
@@ -29,7 +30,7 @@ func New(
 	}
 }
 
-func (r *React) Resolve(message string, context *llm.Context) (string, error) {
+func (r *React) Resolve(ctx stdcontext.Context, message string, context *llm.Context) (string, error) {
 	context.Parameters = map[string]any{"Message": message}
 
 	// Format prompt for emoji selection
@@ -57,7 +58,7 @@ func (r *React) Resolve(message string, context *llm.Context) (string, error) {
 	// Get emoji from LLM
 	// Note: Using 1000 tokens to accommodate OpenAI Responses API overhead
 	// which can consume tokens for internal processing before generating output
-	emojiName, err := r.llm.ChatCompletionNoStream(completionRequest, llm.WithMaxGeneratedTokens(500), llm.WithReasoningDisabled(), llm.WithToolsDisabled())
+	emojiName, err := r.llm.ChatCompletionNoStream(ctx, completionRequest, llm.WithMaxGeneratedTokens(500), llm.WithReasoningDisabled(), llm.WithToolsDisabled())
 	if err != nil {
 		return "", fmt.Errorf("failed to get emoji from LLM: %w", err)
 	}

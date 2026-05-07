@@ -60,6 +60,9 @@ Their name is{{if .RequestingUser.FirstName}} {{.RequestingUser.FirstName}}{{end
 {{- if .RequestingUser.Position}}
 Their position is '{{.RequestingUser.Position}}'.
 {{- end}}
+{{- if .RequestingUser.IsSystemAdmin}}
+Their system role is System Administrator.
+{{- end}}
 {{- end}}
 
 {{- if and .Channel (ne .Channel.Type "D")}}

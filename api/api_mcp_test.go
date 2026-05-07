@@ -121,6 +121,12 @@ func TestHandleGetUserMCPToolsStaticOAuthCredentialsNeedOAuthWhenUnauthenticated
 			*token = oauth2.Token{}
 		}).
 		Return(nil)
+	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*mcp.OAuthNeededState)
+			*state = mcp.OAuthNeededState{}
+		}).
+		Return(nil)
 
 	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
 		if serverID == server.Name {
@@ -165,6 +171,12 @@ func TestHandleGetUserMCPToolsStoredTokenMarksZeroToolServerAuthenticated(t *tes
 		Run(func(args mock.Arguments) {
 			token := args.Get(1).(*oauth2.Token)
 			*token = oauth2.Token{AccessToken: "stored-token"}
+		}).
+		Return(nil)
+	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*mcp.OAuthNeededState)
+			*state = mcp.OAuthNeededState{}
 		}).
 		Return(nil)
 
@@ -214,6 +226,12 @@ func TestHandleGetUserMCPToolsAuthErrorsOverrideStoredTokensForZeroToolServers(t
 		}).
 		Return(nil).
 		Maybe()
+	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*mcp.OAuthNeededState)
+			*state = mcp.OAuthNeededState{}
+		}).
+		Return(nil)
 
 	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
 		if serverID == server.Name {
@@ -246,6 +264,68 @@ func TestHandleGetUserMCPToolsAuthErrorsOverrideStoredTokensForZeroToolServers(t
 	require.Equal(t, "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start", response.Servers[0].AuthURL)
 }
 
+func TestHandleGetUserMCPToolsAuthErrorWithoutURLFallsBackToPersistedAuthNeededState(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := mcp.ServerConfig{
+		Name:    "OAuth Server",
+		Enabled: true,
+		BaseURL: "https://oauth.example.com",
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*oauth2.Token")).
+		Run(func(args mock.Arguments) {
+			token := args.Get(1).(*oauth2.Token)
+			*token = oauth2.Token{}
+		}).
+		Return(nil)
+	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*mcp.OAuthNeededState)
+			*state = mcp.OAuthNeededState{
+				AuthURL: "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start?resource_metadata=https%3A%2F%2Foauth.example.com%2Fmetadata",
+			}
+		}).
+		Return(nil)
+
+	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
+		if serverID == server.Name {
+			return server, true
+		}
+		return mcp.ServerConfig{}, false
+	})
+
+	e.api.mcpClientManager = &mockMCPClientManager{
+		oauthManager: oauthManager,
+		mcpErrors: &mcp.Errors{
+			ToolAuthErrors: []llm.ToolAuthError{
+				{
+					ServerName:   server.Name,
+					ServerOrigin: server.BaseURL,
+					Error:        errors.New("oauth needed"),
+				},
+			},
+		},
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, server.Name, response.Servers[0].Name)
+	require.False(t, response.Servers[0].Authenticated)
+	require.True(t, response.Servers[0].NeedsOAuth)
+	require.Equal(t, "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start?resource_metadata=https%3A%2F%2Foauth.example.com%2Fmetadata", response.Servers[0].AuthURL)
+}
+
 func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -274,6 +354,67 @@ func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	require.Empty(t, response.Servers[0].AuthURL)
 }
 
+func TestHandleGetUserMCPToolsAuthNeededStateOverridesDiscoveredTools(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := mcp.ServerConfig{
+		Name:    "GitHub",
+		Enabled: true,
+		BaseURL: "https://api.githubcopilot.com/mcp",
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*oauth2.Token")).
+		Run(func(args mock.Arguments) {
+			token := args.Get(1).(*oauth2.Token)
+			*token = oauth2.Token{}
+		}).
+		Return(nil)
+	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*mcp.OAuthNeededState)
+			*state = mcp.OAuthNeededState{
+				AuthURL: "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start?resource_metadata=https%3A%2F%2Fapi.githubcopilot.com%2F.well-known%2Foauth-protected-resource%2Fmcp",
+			}
+		}).
+		Return(nil)
+
+	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
+		if serverID == server.Name {
+			return server, true
+		}
+		return mcp.ServerConfig{}, false
+	})
+
+	e.api.mcpClientManager = &mockMCPClientManager{
+		oauthManager: oauthManager,
+		tools: []llm.Tool{
+			{
+				Name:         "get_me",
+				Description:  "Get current user",
+				ServerOrigin: server.BaseURL,
+			},
+		},
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, server.Name, response.Servers[0].Name)
+	require.False(t, response.Servers[0].Authenticated)
+	require.True(t, response.Servers[0].NeedsOAuth)
+	require.Equal(t, "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start?resource_metadata=https%3A%2F%2Fapi.githubcopilot.com%2F.well-known%2Foauth-protected-resource%2Fmcp", response.Servers[0].AuthURL)
+	require.Len(t, response.Servers[0].Tools, 1)
+}
+
 func getUserMCPToolsResponse(t *testing.T, api *API) UserMCPToolsResponse {
 	t.Helper()
 
@@ -299,6 +440,8 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 
 	mcpMock := &mockMCPClientManager{}
 	e.api.mcpClientManager = mcpMock
+	clusterNotifier := &fakeMCPOAuthClusterNotifier{}
+	e.api.mcpOAuthNotifier = clusterNotifier
 
 	const testServerOrigin = "https://mcp.test/"
 	e.config.mcpConfig = mcp.Config{
@@ -327,12 +470,57 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.Equal(t, []mcpDisconnectCall{{userID: testUserID, serverName: "TestServer"}}, mcpMock.disconnectCalls)
+	require.Equal(t, []string{testUserID}, clusterNotifier.calls)
 	require.Equal(t, WebsocketEventMCPConnectionUpdated, gotEvent)
 	require.Equal(t, "disconnected", gotPayload["status"])
 	require.Equal(t, "TestServer", gotPayload["serverName"])
 	require.Equal(t, testServerOrigin, gotPayload["serverOrigin"])
 	require.NotNil(t, gotBroadcast)
 	require.Equal(t, testUserID, gotBroadcast.UserId)
+}
+
+func TestHandleDeleteUserMCPOAuthClusterPublishFailureStillSucceeds(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.api.mcpClientManager = &mockMCPClientManager{}
+	clusterNotifier := &fakeMCPOAuthClusterNotifier{err: errors.New("cluster publish failed")}
+	e.api.mcpOAuthNotifier = clusterNotifier
+	e.mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	request := httptest.NewRequest(http.MethodDelete, "/mcp/oauth/TestServer", nil)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	require.Equal(t, []string{testUserID}, clusterNotifier.calls)
+}
+
+func TestHandleDeleteUserMCPOAuthDoesNotNotifyOnDisconnectFailure(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.api.mcpClientManager = &mockMCPClientManager{disconnectErr: errors.New("delete token failed")}
+	clusterNotifier := &fakeMCPOAuthClusterNotifier{}
+	e.api.mcpOAuthNotifier = clusterNotifier
+	e.mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+	request := httptest.NewRequest(http.MethodDelete, "/mcp/oauth/TestServer", nil)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Result().StatusCode)
+	require.Empty(t, clusterNotifier.calls)
 }
 
 func TestHandleDeleteUserMCPOAuthMissingServerName(t *testing.T) {
@@ -343,6 +531,8 @@ func TestHandleDeleteUserMCPOAuthMissingServerName(t *testing.T) {
 	defer e.Cleanup(t)
 
 	e.api.mcpClientManager = &mockMCPClientManager{}
+	clusterNotifier := &fakeMCPOAuthClusterNotifier{}
+	e.api.mcpOAuthNotifier = clusterNotifier
 
 	request := httptest.NewRequest(http.MethodDelete, "/mcp/oauth/", nil)
 	request.Header.Add("Mattermost-User-Id", testUserID)
@@ -351,6 +541,7 @@ func TestHandleDeleteUserMCPOAuthMissingServerName(t *testing.T) {
 	e.api.ServeHTTP(nil, recorder, request)
 
 	require.Equal(t, http.StatusNotFound, recorder.Result().StatusCode)
+	require.Empty(t, clusterNotifier.calls)
 }
 
 func TestHandleOAuthStartRedirectsToProviderAuthorizeURL(t *testing.T) {
@@ -523,6 +714,50 @@ func TestPublishMCPConnectionUpdatedNoOpWhenMMClientMissing(t *testing.T) {
 		ServerURL: "https://test.example.com",
 	}
 	e.api.publishMCPConnectionUpdated(testUserID, session)
+}
+
+func TestHandleOAuthCallbackPublishesClusterInvalidationAndWebsocket(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	session := &mcp.OAuthSession{
+		UserID:    testUserID,
+		ServerID:  "AtlassianMCP",
+		ServerURL: "https://mcp.atlassian.com/v1/sse",
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{processOAuthSession: session}
+	clusterNotifier := &fakeMCPOAuthClusterNotifier{}
+	e.api.mcpOAuthNotifier = clusterNotifier
+
+	mmClient := mmapimocks.NewMockClient(t)
+	var gotEvent string
+	var gotPayload map[string]interface{}
+	var gotBroadcast *model.WebsocketBroadcast
+	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
+		Run(func(args mock.Arguments) {
+			gotEvent = args.String(0)
+			gotPayload, _ = args.Get(1).(map[string]interface{})
+			gotBroadcast, _ = args.Get(2).(*model.WebsocketBroadcast)
+		}).Return()
+	e.api.mmClient = mmClient
+
+	request := httptest.NewRequest(http.MethodGet, "/oauth/callback?state=state&code=code", nil)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	require.Equal(t, []string{testUserID}, clusterNotifier.calls)
+	require.Equal(t, WebsocketEventMCPConnectionUpdated, gotEvent)
+	require.Equal(t, "connected", gotPayload["status"])
+	require.Equal(t, "AtlassianMCP", gotPayload["serverName"])
+	require.Equal(t, "https://mcp.atlassian.com/v1/sse", gotPayload["serverOrigin"])
+	require.NotNil(t, gotBroadcast)
+	require.Equal(t, testUserID, gotBroadcast.UserId)
 }
 
 func TestHandleOAuthStartAcceptsResourceMetadataMatchingOrigin(t *testing.T) {

@@ -67,7 +67,6 @@ func fullTestConfig() config.Config {
 		},
 		DefaultBotName:          "ai",
 		TranscriptGenerator:     "openai",
-		EnableLLMTrace:          true,
 		EnableTokenUsageLogging: true,
 		EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 			Type: "openai",
@@ -147,7 +146,6 @@ func TestConfigStore(t *testing.T) {
 				// Top-level fields
 				assert.Equal(t, expected.DefaultBotName, cfg.DefaultBotName)
 				assert.Equal(t, expected.TranscriptGenerator, cfg.TranscriptGenerator)
-				assert.Equal(t, expected.EnableLLMTrace, cfg.EnableLLMTrace)
 				assert.Equal(t, expected.EnableTokenUsageLogging, cfg.EnableTokenUsageLogging)
 
 				// MCP
