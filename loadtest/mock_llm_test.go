@@ -491,8 +491,8 @@ func TestCountTokens(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			m := NewMockLLM(fastTestProfile())
-			require.Equal(t, tt.want, m.CountTokens(tt.input))
+			mock := NewMockLLM(fastTestProfile())
+			require.Equal(t, tt.want, mock.CountTokens(tt.input))
 		})
 	}
 	require.Equal(t, 100000, m.InputTokenLimit())
