@@ -93,6 +93,26 @@ func TestParseProfileInvalidLatencyRange(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestParseProfilePartialLatencyProfileInheritsDefaults(t *testing.T) {
+	t.Parallel()
+	raw := json.RawMessage(`{"latency_profiles":{"realistic_default":{"ttft_ms":[42,84]}}}`)
+	p, err := ParseProfile(raw)
+	require.NoError(t, err)
+
+	lp := p.LatencyProfiles["realistic_default"]
+	require.Equal(t, [2]int{42, 84}, lp.TTFTMs)
+	require.Equal(t, [2]int{150, 400}, lp.ChunkCount)
+	require.Equal(t, [2]int{30, 80}, lp.ChunkIntervalMs)
+	require.Equal(t, [2]int{15000, 25000}, lp.TotalWallTimeMsPerRequest)
+}
+
+func TestParseProfileNewLatencyProfileRequiresAllFields(t *testing.T) {
+	t.Parallel()
+	_, err := ParseProfile(json.RawMessage(`{"latency_profiles":{"custom":{"ttft_ms":[1,2]}}}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must define all latency fields")
+}
+
 func TestParseProfileDisallowUnknownTopLevel(t *testing.T) {
 	t.Parallel()
 	_, err := ParseProfile(json.RawMessage(`{"name":"x","extra_field":true}`))

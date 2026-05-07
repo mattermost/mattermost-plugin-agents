@@ -41,6 +41,10 @@ type MockLLM struct {
 
 // NewMockLLM constructs a mock LLM using the given profile (must be validated).
 func NewMockLLM(profile MockProfile) *MockLLM {
+	if err := profile.Validate(); err != nil {
+		panic(fmt.Sprintf("invalid loadtest mock profile: %v", err))
+	}
+	profile = cloneMockProfile(profile)
 	return &MockLLM{
 		profile: profile,
 		rg:      rand.New(rand.NewSource(profile.Seed)),
@@ -192,17 +196,12 @@ func (m *MockLLM) sampleRequest(req llm.CompletionRequest, cfg llm.LanguageModel
 	var tool llm.Tool
 	var targs []byte
 	if wantTools {
-		chosen, ok := chooseWeightedTool(tools, m.profile.ToolWeights, rng)
-		if ok {
-			args, ok2 := buildToolArguments(m.profile, chosen, req.Context, rng)
-			if ok2 {
-				tool = chosen
-				targs = append([]byte(nil), args...)
-			} else {
-				wantTools = false
-			}
-		} else {
+		chosen, args, ok := chooseWeightedBuildableTool(m.profile, tools, m.profile.ToolWeights, req.Context, rng)
+		if !ok {
 			wantTools = false
+		} else {
+			tool = chosen
+			targs = append([]byte(nil), args...)
 		}
 	}
 

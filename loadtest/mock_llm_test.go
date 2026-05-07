@@ -4,6 +4,7 @@
 package loadtest
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -17,6 +18,20 @@ import (
 func TestLanguageModelAssertion(t *testing.T) {
 	t.Parallel()
 	var _ llm.LanguageModel = (*MockLLM)(nil)
+}
+
+func TestNewMockLLMValidatesAndCopiesProfile(t *testing.T) {
+	t.Parallel()
+	p := fastTestProfile()
+	m := NewMockLLM(p)
+
+	p.ProfileWeights["realistic_default"] = 0
+	p.ToolArgumentProfiles["read_channel"] = ToolArgumentProfile{PostLimits: []int{999}}
+	p.FinalResponseTemplates[0] = "mutated %d"
+
+	require.NotZero(t, m.profile.ProfileWeights["realistic_default"])
+	require.NotEqual(t, []int{999}, m.profile.ToolArgumentProfiles["read_channel"].PostLimits)
+	require.NotEqual(t, "mutated %d", m.profile.FinalResponseTemplates[0])
 }
 
 func TestDeterministicRepeatNewInstances(t *testing.T) {
@@ -108,6 +123,41 @@ func TestToolCallStreamTyping(t *testing.T) {
 		}
 	}
 	require.True(t, found)
+}
+
+func TestMockLLMSkipsUnbuildableWeightedTool(t *testing.T) {
+	t.Parallel()
+	store := llm.NewToolStore(nil, false)
+	store.AddTools([]llm.Tool{
+		{Name: "group_message"},
+		{Name: "read_channel"},
+	})
+	ctx := &llm.Context{
+		Channel: &model.Channel{Id: model.NewId()},
+		Tools:   store,
+	}
+	p := fastTestProfile()
+	p.ToolUseProbability = 1.0
+	p.ReasoningSkipProbability = 1.0
+	p.ToolWeights = map[string]float64{
+		"group_message": 1000,
+		"read_channel":  1,
+	}
+	delete(p.ToolArgumentProfiles, "group_message")
+	m := NewMockLLM(p)
+	res, err := m.ChatCompletion(llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
+	require.NoError(t, err)
+
+	for ev := range res.Stream {
+		if ev.Type != llm.EventTypeToolCalls {
+			continue
+		}
+		tcs := ev.Value.([]llm.ToolCall)
+		require.Len(t, tcs, 1)
+		require.Equal(t, "read_channel", tcs[0].Name)
+		return
+	}
+	require.Fail(t, "expected eligible tool call")
 }
 
 func TestToolsDisabledForcesTextOnly(t *testing.T) {
@@ -283,18 +333,23 @@ func TestToolArgumentsVaryBySeed(t *testing.T) {
 	p.ToolUseProbability = 1.0
 	p.ReasoningSkipProbability = 1.0
 	args := map[string]struct{}{}
+	limits := map[int]struct{}{}
+	m := NewMockLLM(p)
 	for i := 0; i < 20; i++ {
-		m := NewMockLLM(p)
 		res, err := m.ChatCompletion(llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
 		require.NoError(t, err)
 		for ev := range res.Stream {
 			if ev.Type == llm.EventTypeToolCalls {
 				tcs := ev.Value.([]llm.ToolCall)
 				args[string(tcs[0].Arguments)] = struct{}{}
+				var decoded map[string]any
+				require.NoError(t, json.Unmarshal(tcs[0].Arguments, &decoded))
+				limits[int(decoded["limit"].(float64))] = struct{}{}
 			}
 		}
 	}
-	require.GreaterOrEqual(t, len(args), 1)
+	require.GreaterOrEqual(t, len(args), 2)
+	require.GreaterOrEqual(t, len(limits), 2)
 }
 
 func TestCountTokens(t *testing.T) {

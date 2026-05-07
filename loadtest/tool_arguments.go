@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -54,6 +55,24 @@ func chooseWeightedTool(tools []llm.Tool, weights map[string]float64, rng *rand.
 	return sorted[len(sorted)-1], true
 }
 
+func chooseWeightedBuildableTool(profile MockProfile, tools []llm.Tool, weights map[string]float64, ctx *llm.Context, rng *rand.Rand) (llm.Tool, json.RawMessage, bool) {
+	eligible := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if canBuildToolArguments(profile, tool, ctx) {
+			eligible = append(eligible, tool)
+		}
+	}
+	chosen, ok := chooseWeightedTool(eligible, weights, rng)
+	if !ok {
+		return llm.Tool{}, nil, false
+	}
+	args, ok := buildToolArguments(profile, chosen, ctx, rng)
+	if !ok {
+		return llm.Tool{}, nil, false
+	}
+	return chosen, args, true
+}
+
 func pickInt(rng *rand.Rand, vals []int, fallback []int) int {
 	src := vals
 	if len(src) == 0 {
@@ -70,6 +89,98 @@ func pickString(rng *rand.Rand, vals []string, fallback string) string {
 		return fallback
 	}
 	return vals[rng.Intn(len(vals))]
+}
+
+func pickValidID(rng *rand.Rand, vals []string) string {
+	var valid []string
+	for _, v := range vals {
+		if model.IsValidId(v) {
+			valid = append(valid, v)
+		}
+	}
+	if len(valid) == 0 {
+		return ""
+	}
+	return valid[rng.Intn(len(valid))]
+}
+
+func hasValidID(vals []string) bool {
+	for _, v := range vals {
+		if model.IsValidId(v) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRequiredSchema(tool llm.Tool) bool {
+	if tool.Schema == nil {
+		return false
+	}
+	switch schema := tool.Schema.(type) {
+	case *jsonschema.Schema:
+		return schema != nil && len(schema.Required) > 0
+	case jsonschema.Schema:
+		return len(schema.Required) > 0
+	case map[string]any:
+		return requiredFieldCount(schema["required"]) > 0
+	case json.RawMessage:
+		return rawSchemaHasRequired(schema)
+	case []byte:
+		return rawSchemaHasRequired(schema)
+	default:
+		raw, err := json.Marshal(schema)
+		if err != nil {
+			return false
+		}
+		return rawSchemaHasRequired(raw)
+	}
+}
+
+func requiredFieldCount(raw any) int {
+	switch required := raw.(type) {
+	case []string:
+		return len(required)
+	case []any:
+		return len(required)
+	default:
+		return 0
+	}
+}
+
+func rawSchemaHasRequired(raw []byte) bool {
+	var decoded struct {
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return false
+	}
+	return len(decoded.Required) > 0
+}
+
+func canBuildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context) bool {
+	tap := profile.ToolArgumentProfiles[tool.Name]
+
+	switch tool.Name {
+	case "read_channel":
+		return (ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id)) || hasValidID(tap.ChannelIDs)
+	case "read_post":
+		return hasValidID(tap.PostIDs)
+	case "search_posts", "search_users", "dm", "get_user_channels", "WebSearch", "WebSearchFetchSource":
+		return true
+	case "get_channel_info":
+		return (ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id)) ||
+			hasValidID(tap.ChannelIDs) ||
+			len(tap.ChannelNames) > 0
+	case "get_channel_members":
+		return (ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id)) || hasValidID(tap.ChannelIDs)
+	case "create_post":
+		return (ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id)) || hasValidID(tap.ChannelIDs)
+	case "group_message":
+		return len(tap.Usernames) >= 2
+	default:
+		return !hasRequiredSchema(tool)
+	}
 }
 
 func deterministicMessage(rng *rand.Rand, length int, tag string) string {
@@ -110,7 +221,7 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 		if ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id) {
 			chID = ctx.Channel.Id
 		} else if len(tap.ChannelIDs) > 0 {
-			chID = pickString(rng, tap.ChannelIDs, "")
+			chID = pickValidID(rng, tap.ChannelIDs)
 		}
 		if !model.IsValidId(chID) {
 			return nil, false
@@ -123,7 +234,7 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 		return raw, true
 
 	case "read_post":
-		postID := pickString(rng, tap.PostIDs, "")
+		postID := pickValidID(rng, tap.PostIDs)
 		if !model.IsValidId(postID) {
 			return nil, false
 		}
@@ -151,7 +262,7 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 		if ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id) {
 			arg["channel_id"] = ctx.Channel.Id
 		} else if len(tap.ChannelIDs) > 0 {
-			cid := pickString(rng, tap.ChannelIDs, "")
+			cid := pickValidID(rng, tap.ChannelIDs)
 			if model.IsValidId(cid) {
 				arg["channel_id"] = cid
 			}
@@ -174,7 +285,7 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 			return raw, true
 		}
 		if len(tap.ChannelIDs) > 0 {
-			cid := pickString(rng, tap.ChannelIDs, "")
+			cid := pickValidID(rng, tap.ChannelIDs)
 			if model.IsValidId(cid) {
 				raw, _ := json.Marshal(map[string]any{"channel_id": cid})
 				return raw, true
@@ -191,7 +302,7 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 		if ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id) {
 			chID = ctx.Channel.Id
 		} else if len(tap.ChannelIDs) > 0 {
-			chID = pickString(rng, tap.ChannelIDs, "")
+			chID = pickValidID(rng, tap.ChannelIDs)
 		}
 		if !model.IsValidId(chID) {
 			return nil, false
@@ -213,7 +324,7 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 		if ctx != nil && ctx.Team != nil && model.IsValidId(ctx.Team.Id) {
 			arg["team_id"] = ctx.Team.Id
 		} else if len(tap.TeamIDs) > 0 {
-			tid := pickString(rng, tap.TeamIDs, "")
+			tid := pickValidID(rng, tap.TeamIDs)
 			if model.IsValidId(tid) {
 				arg["team_id"] = tid
 			}
@@ -228,6 +339,8 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 				chID = ctx.Channel.Id
 			}
 			chDisplay = ctx.Channel.DisplayName
+		} else if len(tap.ChannelIDs) > 0 {
+			chID = pickValidID(rng, tap.ChannelIDs)
 		}
 		if ctx != nil && ctx.Team != nil {
 			teamDisplay = ctx.Team.DisplayName
@@ -295,6 +408,9 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 		return raw, true
 
 	default:
+		if hasRequiredSchema(tool) {
+			return nil, false
+		}
 		raw, _ := json.Marshal(map[string]any{})
 		return raw, true
 	}

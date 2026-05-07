@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
@@ -124,6 +125,78 @@ func TestSkipCreatePostWithoutChannelContext(t *testing.T) {
 	tool := llm.Tool{Name: "create_post"}
 	rng := rand.New(rand.NewSource(3))
 	_, ok := buildToolArguments(profile, tool, ctx, rng)
+	require.False(t, ok)
+}
+
+func TestChooseWeightedBuildableToolSkipsUnbuildableTools(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	delete(profile.ToolArgumentProfiles, "group_message")
+	ctx := &llm.Context{Channel: &model.Channel{Id: model.NewId()}}
+	tools := []llm.Tool{
+		{Name: "group_message"},
+		{Name: "read_channel"},
+	}
+	weights := map[string]float64{
+		"group_message": 1000,
+		"read_channel":  1,
+	}
+	tool, args, ok := chooseWeightedBuildableTool(profile, tools, weights, ctx, rand.New(rand.NewSource(11)))
+	require.True(t, ok)
+	require.Equal(t, "read_channel", tool.Name)
+	var readArgs map[string]any
+	require.NoError(t, json.Unmarshal(args, &readArgs))
+	require.Equal(t, ctx.Channel.Id, readArgs["channel_id"])
+}
+
+func TestChooseWeightedBuildableToolHonorsEligibleWeights(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	delete(profile.ToolArgumentProfiles, "group_message")
+	ctx := &llm.Context{Channel: &model.Channel{Id: model.NewId()}}
+	tools := []llm.Tool{
+		{Name: "group_message"},
+		{Name: "read_channel"},
+		{Name: "search_posts"},
+	}
+	weights := map[string]float64{
+		"group_message": 1000,
+		"read_channel":  0,
+		"search_posts":  1,
+	}
+	for seed := int64(0); seed < 20; seed++ {
+		tool, args, ok := chooseWeightedBuildableTool(profile, tools, weights, ctx, rand.New(rand.NewSource(seed)))
+		require.True(t, ok)
+		require.Equal(t, "search_posts", tool.Name)
+		var searchArgs map[string]any
+		require.NoError(t, json.Unmarshal(args, &searchArgs))
+		require.NotEmpty(t, searchArgs["query"])
+		require.Equal(t, ctx.Channel.Id, searchArgs["channel_id"])
+	}
+}
+
+func TestUnknownToolSchemaRequiredControlsEligibility(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	rng := rand.New(rand.NewSource(12))
+
+	raw, ok := buildToolArguments(profile, llm.Tool{Name: "schema_less_unknown"}, nil, rng)
+	require.True(t, ok)
+	require.JSONEq(t, `{}`, string(raw))
+
+	raw, ok = buildToolArguments(profile, llm.Tool{
+		Name:   "optional_unknown",
+		Schema: &jsonschema.Schema{},
+	}, nil, rng)
+	require.True(t, ok)
+	require.JSONEq(t, `{}`, string(raw))
+
+	_, ok = buildToolArguments(profile, llm.Tool{
+		Name: "required_unknown",
+		Schema: &jsonschema.Schema{
+			Required: []string{"query"},
+		},
+	}, nil, rng)
 	require.False(t, ok)
 }
 

@@ -146,17 +146,47 @@ func DefaultReadSearchHeavyProfile() MockProfile {
 }
 
 type profileOverlay struct {
-	Name                     *string                        `json:"name,omitempty"`
-	Seed                     *int64                         `json:"seed,omitempty"`
-	LatencyProfiles          map[string]LatencyProfile      `json:"latency_profiles,omitempty"`
-	ProfileWeights           map[string]float64             `json:"profile_weights,omitempty"`
-	ReasoningSkipProbability *float64                       `json:"reasoning_skip_probability,omitempty"`
-	StreamingEnabled         *bool                          `json:"streaming_enabled,omitempty"`
-	ToolUseProbability       *float64                       `json:"tool_use_probability,omitempty"`
-	ToolWeights              map[string]float64             `json:"tool_weights,omitempty"`
-	MaxToolRounds            *int                           `json:"max_tool_rounds,omitempty"`
-	ToolArgumentProfiles     map[string]ToolArgumentProfile `json:"tool_argument_profiles,omitempty"`
-	FinalResponseTemplates   []string                       `json:"final_response_templates,omitempty"`
+	Name                     *string                          `json:"name,omitempty"`
+	Seed                     *int64                           `json:"seed,omitempty"`
+	LatencyProfiles          map[string]latencyProfileOverlay `json:"latency_profiles,omitempty"`
+	ProfileWeights           map[string]float64               `json:"profile_weights,omitempty"`
+	ReasoningSkipProbability *float64                         `json:"reasoning_skip_probability,omitempty"`
+	StreamingEnabled         *bool                            `json:"streaming_enabled,omitempty"`
+	ToolUseProbability       *float64                         `json:"tool_use_probability,omitempty"`
+	ToolWeights              map[string]float64               `json:"tool_weights,omitempty"`
+	MaxToolRounds            *int                             `json:"max_tool_rounds,omitempty"`
+	ToolArgumentProfiles     map[string]ToolArgumentProfile   `json:"tool_argument_profiles,omitempty"`
+	FinalResponseTemplates   []string                         `json:"final_response_templates,omitempty"`
+}
+
+type latencyProfileOverlay struct {
+	TTFTMs                    *[2]int `json:"ttft_ms,omitempty"`
+	ChunkCount                *[2]int `json:"chunk_count,omitempty"`
+	ChunkIntervalMs           *[2]int `json:"chunk_interval_ms,omitempty"`
+	TotalWallTimeMsPerRequest *[2]int `json:"total_wall_time_ms_per_request,omitempty"`
+}
+
+func (o latencyProfileOverlay) isComplete() bool {
+	return o.TTFTMs != nil &&
+		o.ChunkCount != nil &&
+		o.ChunkIntervalMs != nil &&
+		o.TotalWallTimeMsPerRequest != nil
+}
+
+func (o latencyProfileOverlay) applyTo(base LatencyProfile) LatencyProfile {
+	if o.TTFTMs != nil {
+		base.TTFTMs = *o.TTFTMs
+	}
+	if o.ChunkCount != nil {
+		base.ChunkCount = *o.ChunkCount
+	}
+	if o.ChunkIntervalMs != nil {
+		base.ChunkIntervalMs = *o.ChunkIntervalMs
+	}
+	if o.TotalWallTimeMsPerRequest != nil {
+		base.TotalWallTimeMsPerRequest = *o.TotalWallTimeMsPerRequest
+	}
+	return base
 }
 
 // ParseProfile merges operator JSON on top of the default profile. Nil, empty, or whitespace-only raw returns the default.
@@ -185,7 +215,11 @@ func ParseProfile(raw json.RawMessage) (MockProfile, error) {
 			base.LatencyProfiles = map[string]LatencyProfile{}
 		} else {
 			for k, v := range ov.LatencyProfiles {
-				base.LatencyProfiles[k] = v
+				existing, ok := base.LatencyProfiles[k]
+				if !ok && !v.isComplete() {
+					return MockProfile{}, fmt.Errorf("latency_profiles[%s] must define all latency fields for new profiles", k)
+				}
+				base.LatencyProfiles[k] = v.applyTo(existing)
 			}
 		}
 	}
@@ -385,4 +419,65 @@ func (p MockProfile) Summary() string {
 	}
 	b.WriteByte('\n')
 	return b.String()
+}
+
+func cloneMockProfile(p MockProfile) MockProfile {
+	p.LatencyProfiles = cloneLatencyProfiles(p.LatencyProfiles)
+	p.ProfileWeights = cloneFloatMap(p.ProfileWeights)
+	p.ToolWeights = cloneFloatMap(p.ToolWeights)
+	p.ToolArgumentProfiles = cloneToolArgumentProfiles(p.ToolArgumentProfiles)
+	p.FinalResponseTemplates = cloneStringSlice(p.FinalResponseTemplates)
+	return p
+}
+
+func cloneLatencyProfiles(in map[string]LatencyProfile) map[string]LatencyProfile {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]LatencyProfile, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneFloatMap(in map[string]float64) map[string]float64 {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]float64, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneToolArgumentProfiles(in map[string]ToolArgumentProfile) map[string]ToolArgumentProfile {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]ToolArgumentProfile, len(in))
+	for k, v := range in {
+		out[k] = ToolArgumentProfile{
+			PostLimits:     cloneIntSlice(v.PostLimits),
+			SearchQueries:  cloneStringSlice(v.SearchQueries),
+			SearchLimits:   cloneIntSlice(v.SearchLimits),
+			MessageLengths: cloneIntSlice(v.MessageLengths),
+			Usernames:      cloneStringSlice(v.Usernames),
+			ChannelIDs:     cloneStringSlice(v.ChannelIDs),
+			ChannelNames:   cloneStringSlice(v.ChannelNames),
+			TeamIDs:        cloneStringSlice(v.TeamIDs),
+			TeamNames:      cloneStringSlice(v.TeamNames),
+			PostIDs:        cloneStringSlice(v.PostIDs),
+		}
+	}
+	return out
+}
+
+func cloneIntSlice(in []int) []int {
+	return append([]int(nil), in...)
+}
+
+func cloneStringSlice(in []string) []string {
+	return append([]string(nil), in...)
 }
