@@ -240,44 +240,75 @@ func TestReasoningSkipProbabilityAllOrNothing(t *testing.T) {
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{Tools: store, Channel: &model.Channel{Id: model.NewId()}}
 
-	pSkip := fastTestProfile()
-	pSkip.ToolUseProbability = 1.0
-	pSkip.ReasoningSkipProbability = 1.0
-	mSkip := NewMockLLM(pSkip)
-	res, err := mSkip.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx})
-	require.NoError(t, err)
-	for ev := range res.Stream {
-		require.NotEqual(t, llm.EventTypeReasoning, ev.Type)
-		require.NotEqual(t, llm.EventTypeReasoningEnd, ev.Type)
+	tests := []struct {
+		name         string
+		setupProfile func(*MockProfile)
+		options      []llm.LanguageModelOption
+		assertEvents func(*testing.T, []llm.EventType)
+	}{
+		{
+			name: "skips reasoning when skip probability is one",
+			setupProfile: func(p *MockProfile) {
+				p.ToolUseProbability = 1.0
+				p.ReasoningSkipProbability = 1.0
+			},
+			assertEvents: func(t *testing.T, events []llm.EventType) {
+				for _, eventType := range events {
+					require.NotEqual(t, llm.EventTypeReasoning, eventType)
+					require.NotEqual(t, llm.EventTypeReasoningEnd, eventType)
+				}
+			},
+		},
+		{
+			name: "emits reasoning and end when skip probability is zero",
+			setupProfile: func(p *MockProfile) {
+				p.ToolUseProbability = 1.0
+				p.ReasoningSkipProbability = 0.0
+			},
+			assertEvents: func(t *testing.T, events []llm.EventType) {
+				hasR := false
+				hasREnd := false
+				for _, eventType := range events {
+					if eventType == llm.EventTypeReasoning {
+						hasR = true
+					}
+					if eventType == llm.EventTypeReasoningEnd {
+						hasREnd = true
+					}
+				}
+				require.True(t, hasR)
+				require.True(t, hasREnd)
+			},
+		},
+		{
+			name: "omits reasoning when reasoning is disabled",
+			setupProfile: func(p *MockProfile) {
+				p.ToolUseProbability = 0
+				p.ReasoningSkipProbability = 0.0
+			},
+			options: []llm.LanguageModelOption{llm.WithReasoningDisabled()},
+			assertEvents: func(t *testing.T, events []llm.EventType) {
+				for _, eventType := range events {
+					require.NotEqual(t, llm.EventTypeReasoning, eventType)
+				}
+			},
+		},
 	}
 
-	pAll := fastTestProfile()
-	pAll.ToolUseProbability = 1.0
-	pAll.ReasoningSkipProbability = 0.0
-	mAll := NewMockLLM(pAll)
-	res2, err := mAll.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx})
-	require.NoError(t, err)
-	hasR := false
-	hasREnd := false
-	for ev := range res2.Stream {
-		if ev.Type == llm.EventTypeReasoning {
-			hasR = true
-		}
-		if ev.Type == llm.EventTypeReasoningEnd {
-			hasREnd = true
-		}
-	}
-	require.True(t, hasR)
-	require.True(t, hasREnd)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := fastTestProfile()
+			tt.setupProfile(&p)
+			m := NewMockLLM(p)
+			res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx}, tt.options...)
+			require.NoError(t, err)
 
-	pAll2 := fastTestProfile()
-	pAll2.ToolUseProbability = 0
-	pAll2.ReasoningSkipProbability = 0.0
-	mAll2 := NewMockLLM(pAll2)
-	res3, err := mAll2.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
-	require.NoError(t, err)
-	for ev := range res3.Stream {
-		require.NotEqual(t, llm.EventTypeReasoning, ev.Type)
+			var events []llm.EventType
+			for ev := range res.Stream {
+				events = append(events, ev.Type)
+			}
+			tt.assertEvents(t, events)
+		})
 	}
 }
 
@@ -447,9 +478,23 @@ func TestToolArgumentsVaryBySeed(t *testing.T) {
 func TestCountTokens(t *testing.T) {
 	t.Parallel()
 	m := NewMockLLM(fastTestProfile())
-	require.Equal(t, 0, m.CountTokens(""))
-	require.Equal(t, 1, m.CountTokens("abc"))
-	require.Equal(t, 2, m.CountTokens("abcde"))
+	tests := []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{name: "empty string", input: "", want: 0},
+		{name: "three characters", input: "abc", want: 1},
+		{name: "five characters", input: "abcde", want: 2},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := NewMockLLM(fastTestProfile())
+			require.Equal(t, tt.want, m.CountTokens(tt.input))
+		})
+	}
 	require.Equal(t, 100000, m.InputTokenLimit())
 }
 
