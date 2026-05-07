@@ -67,6 +67,11 @@ export async function RunToolConfigContainerWithPolicies(): Promise<MattermostCo
                 serviceID: 'mock-service',
                 customInstructions: '',
                 disableTools: false,
+                // This suite asserts legacy per-tool approval behavior using
+                // direct mocked business-tool calls (no search/load prelude).
+                // Keep dynamic loading off here so the strict JIT registry
+                // does not hide the tools under test.
+                mcpDynamicToolLoading: false,
                 enabledNativeTools: [],
             },
         ],
