@@ -199,8 +199,8 @@ check-locks:
 	trap "rm -f $$PREV_W $$PREV_E" EXIT; \
 	cp webapp/package-lock.json "$$PREV_W"; \
 	cp e2e/package-lock.json "$$PREV_E"; \
-	(cd webapp && $(NPM) install --package-lock-only --silent --no-audit --no-fund); \
-	(cd e2e && $(NPM) install --package-lock-only --silent --no-audit --no-fund); \
+	(cd webapp && $(NPM) install --package-lock-only --loglevel=error --no-audit --no-fund); \
+	(cd e2e && $(NPM) install --package-lock-only --loglevel=error --no-audit --no-fund); \
 	drift=0; \
 	if ! diff -q "$$PREV_W" webapp/package-lock.json >/dev/null 2>&1; then drift=1; \
 	  echo "*** webapp/package-lock.json is out of sync with webapp/package.json." >&2; fi; \
