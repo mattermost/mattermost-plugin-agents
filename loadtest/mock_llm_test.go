@@ -467,7 +467,11 @@ func TestToolArgumentsVaryBySeed(t *testing.T) {
 				args[string(tcs[0].Arguments)] = struct{}{}
 				var decoded map[string]any
 				require.NoError(t, json.Unmarshal(tcs[0].Arguments, &decoded))
-				limits[int(decoded["limit"].(float64))] = struct{}{}
+				limit, ok := decoded["limit"]
+				require.True(t, ok)
+				limitFloat, ok := limit.(float64)
+				require.True(t, ok)
+				limits[int(limitFloat)] = struct{}{}
 			}
 		}
 	}
