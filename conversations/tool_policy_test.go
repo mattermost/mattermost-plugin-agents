@@ -84,13 +84,15 @@ func TestShouldAutoExecuteToolMetaToolDoesNotAuthorizeBusinessTool(t *testing.T)
 
 type countingPolicyChecker struct {
 	calls        int
+	lastOrigin   string
 	lastToolName string
 	policy       string
 	enabled      bool
 }
 
-func (c *countingPolicyChecker) GetToolPolicy(_ string, toolName string) (string, bool) {
+func (c *countingPolicyChecker) GetToolPolicy(origin, toolName string) (string, bool) {
 	c.calls++
+	c.lastOrigin = origin
 	c.lastToolName = toolName
 	return c.policy, c.enabled
 }
@@ -132,6 +134,39 @@ func TestShouldAutoExecuteToolDenormalizesNamespacedTool(t *testing.T) {
 
 	assert.True(t, got)
 	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, "get_issue", checker.lastToolName)
+}
+
+func TestShouldAutoExecuteToolFailsClosedOnAmbiguousBareName(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{
+		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
+		{Name: "github__get_issue", ServerOrigin: "https://github.example.com"},
+	})
+
+	got := c.shouldAutoExecuteTool(llmCtx, false)(llm.ToolCall{Name: "get_issue"})
+
+	assert.False(t, got)
+	assert.Zero(t, checker.calls)
+}
+
+func TestShouldAutoExecuteToolUsesServerOriginToDisambiguateBareName(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://github.example.com"
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{
+		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
+		{Name: "github__get_issue", ServerOrigin: origin},
+	})
+
+	got := c.shouldAutoExecuteTool(llmCtx, false)(llm.ToolCall{Name: "get_issue", ServerOrigin: origin})
+
+	assert.True(t, got)
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, origin, checker.lastOrigin)
 	assert.Equal(t, "get_issue", checker.lastToolName)
 }
 
@@ -238,5 +273,40 @@ func TestAllToolsAutoRunEverywhereDenormalizesNamespacedTool(t *testing.T) {
 
 	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
 	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, "get_issue", checker.lastToolName)
+}
+
+func TestAllToolsAutoRunEverywhereFailsClosedOnAmbiguousBareName(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{
+		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
+		{Name: "github__get_issue", ServerOrigin: "https://github.example.com"},
+	})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: "get_issue"}},
+	}}
+
+	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Zero(t, checker.calls)
+}
+
+func TestAllToolsAutoRunEverywhereUsesServerOriginToDisambiguateBareName(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://github.example.com"
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{
+		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
+		{Name: "github__get_issue", ServerOrigin: origin},
+	})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: "get_issue", ServerOrigin: origin}},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, origin, checker.lastOrigin)
 	assert.Equal(t, "get_issue", checker.lastToolName)
 }

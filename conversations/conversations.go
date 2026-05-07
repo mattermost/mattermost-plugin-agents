@@ -234,9 +234,9 @@ func llmToolsFromContext(llmCtx *llm.Context) *llm.ToolStore {
 }
 
 // resolveToolStoreLookupName returns a name recognized by the store for the
-// given tool call name, preferring an exact match then any tool with the same
-// bare MCP name.
-func resolveToolStoreLookupName(store *llm.ToolStore, name string) string {
+// given tool call name, preferring an exact match and otherwise only falling
+// back to a unique bare MCP name match.
+func resolveToolStoreLookupName(store *llm.ToolStore, name, serverOrigin string) string {
 	if store == nil || name == "" {
 		return ""
 	}
@@ -244,13 +244,20 @@ func resolveToolStoreLookupName(store *llm.ToolStore, name string) string {
 		return name
 	}
 	wantBare := llm.BareMCPToolName(name)
+	match := ""
 	for _, tool := range store.GetTools() {
 		if llm.BareMCPToolName(tool.Name) != wantBare {
 			continue
 		}
-		return tool.Name
+		if serverOrigin != "" && tool.ServerOrigin != serverOrigin {
+			continue
+		}
+		if match != "" {
+			return ""
+		}
+		match = tool.Name
 	}
-	return ""
+	return match
 }
 
 // shouldAutoExecuteTool returns a callback that decides whether a tool call
@@ -268,7 +275,7 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 			return false
 		}
 		toolStore := llmToolsFromContext(llmCtx)
-		storeName := resolveToolStoreLookupName(toolStore, tc.Name)
+		storeName := resolveToolStoreLookupName(toolStore, tc.Name, tc.ServerOrigin)
 		if llmCtx == nil || toolStore == nil || storeName == "" {
 			return false
 		}
@@ -302,7 +309,7 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 				return false
 			}
 			toolStore := llmToolsFromContext(llmCtx)
-			storeName := resolveToolStoreLookupName(toolStore, tc.Name)
+			storeName := resolveToolStoreLookupName(toolStore, tc.Name, tc.ServerOrigin)
 			if llmCtx == nil || toolStore == nil || storeName == "" {
 				return false
 			}
