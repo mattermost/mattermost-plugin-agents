@@ -25,6 +25,7 @@ Comprehensive documentation is available in the `/docs` directory:
 
 - [User Guide](docs/user_guide.md): Learn how to interact with AI features
 - [Admin Guide](docs/admin_guide.md): Detailed installation and configuration instructions
+- [Load Testing](docs/load-testing.md): Configure the in-process mock LLM and load-test-ng Agents controller
 - [Provider Setup](docs/providers.md): Configuration for supported LLM providers
 - [Feature Documentation](docs/features/): Detailed guides for individual features
   - [Channel Summaries](docs/features/channel_summaries.md): Use the **Ask Agents about this channel** button to summarize and analyze channel activity
