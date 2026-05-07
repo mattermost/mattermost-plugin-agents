@@ -15,6 +15,8 @@ const password = 'regularuser';
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
+test.describe.configure({ timeout: 120000 });
+
 const noActionItemsResponse = `
 data: {"id":"chatcmpl-ai-3","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
 data: {"id":"chatcmpl-ai-3","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"There"},"logprobs":null,"finish_reason":null}]}
@@ -30,7 +32,6 @@ data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
 test.beforeAll(async () => {
-    test.setTimeout(120000);
     mattermost = await RunContainer();
     openAIMock = await RunOpenAIMocks(mattermost.network);
 });

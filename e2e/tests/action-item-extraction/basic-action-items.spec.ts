@@ -16,6 +16,8 @@ const password = 'regularuser';
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
+test.describe.configure({ timeout: 120000 });
+
 // Mock response for action items
 const actionItemsResponse = `
 data: {"id":"chatcmpl-ai-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
@@ -47,7 +49,6 @@ const actionItemsResponseText = "Based on the conversation, here are the action 
 
 // Setup for all tests in the file
 test.beforeAll(async () => {
-    test.setTimeout(120000);
     mattermost = await RunContainer();
     openAIMock = await RunOpenAIMocks(mattermost.network);
 });
