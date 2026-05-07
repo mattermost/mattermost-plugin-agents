@@ -25,7 +25,7 @@ default: all
 
 # Verify environment, and define PLUGIN_ID, PLUGIN_VERSION, HAS_SERVER and HAS_WEBAPP as needed.
 ifeq (,$(filter openapi-validate,$(MAKECMDGOALS)))
-	include build/setup.mk
+include build/setup.mk
 
 # The public/ directory contains the bridgeclient Go module for external consumption,
 # not HTTP assets. Override HAS_PUBLIC to prevent bundling these files.
