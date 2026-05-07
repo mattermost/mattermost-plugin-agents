@@ -60,6 +60,7 @@ type MCPClientManager interface {
 	GetHTTPClient() *http.Client
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 	DisconnectUserOAuth(userID, serverName string) error
+	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
@@ -107,6 +108,11 @@ type ClusterAgentNotifier interface {
 	PublishAgentUpdate() error
 }
 
+// MCPOAuthClusterNotifier broadcasts MCP OAuth updates to other cluster nodes.
+type MCPOAuthClusterNotifier interface {
+	PublishMCPOAuthUpdate(userID string) error
+}
+
 // API represents the HTTP API functionality for the plugin
 type API struct {
 	bots                  *bots.MMBots
@@ -127,12 +133,14 @@ type API struct {
 	i18nBundle            *i18n.Bundle
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
+	beforeHookStore       *mcp.BeforeHookStore
 	llmUpstreamHTTPClient *http.Client
 	configStore           ConfigStore
 	agentStore            AgentStore
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
 	clusterAgentNotifier  ClusterAgentNotifier
+	mcpOAuthNotifier      MCPOAuthClusterNotifier
 	conversationStore     ConversationStore
 	convService           *conversation.Service
 	getSearchInitError    func() string
@@ -164,6 +172,7 @@ func New(
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
 	clusterAgentNotifier ClusterAgentNotifier,
+	mcpOAuthNotifier MCPOAuthClusterNotifier,
 	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
@@ -187,12 +196,14 @@ func New(
 		i18nBundle:            i18nBundle,
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
+		beforeHookStore:       mcp.NewBeforeHookStore(&pluginAPI.KV),
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
 		configStore:           configStore,
 		agentStore:            agentStore,
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
 		clusterAgentNotifier:  clusterAgentNotifier,
+		mcpOAuthNotifier:      mcpOAuthNotifier,
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
@@ -216,13 +227,14 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	llmBridgeRoute.Use(a.interPluginAuthorizationRequired)
 
 	// Discovery endpoints
-	llmBridgeRoute.GET("/agents", a.handleGetAgents)
-	llmBridgeRoute.GET("/services", a.handleGetServices)
+	llmBridgeRoute.GET("/agents", a.validateUserIDQuery, a.handleGetAgents)
+	llmBridgeRoute.GET("/agents/:agent/tools", a.validateAgentParam, a.validateUserIDQuery, a.handleGetAgentTools)
+	llmBridgeRoute.GET("/services", a.validateUserIDQuery, a.handleGetServices)
 
 	// Completion endpoints
 	completionRoute := llmBridgeRoute.Group("/completion")
-	completionRoute.POST("/agent/:agent", a.handleAgentCompletionStreaming)
-	completionRoute.POST("/agent/:agent/nostream", a.handleAgentCompletionNoStream)
+	completionRoute.POST("/agent/:agent", a.validateAgentParam, a.handleAgentCompletionStreaming)
+	completionRoute.POST("/agent/:agent/nostream", a.validateAgentParam, a.handleAgentCompletionNoStream)
 	completionRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
 	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
 
