@@ -69,18 +69,69 @@ const expected = [
     ['POST', '/plugins/mattermost-ai/search/run'],
 ];
 
+const PLUGIN_ROUTE_PREFIX = '/plugins/mattermost-ai';
+
+/**
+ * HTTP verbs supported as OpenAPI operation keys (lowercase).
+ */
+const HTTP_METHODS = new Set(['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace']);
+
+/**
+ * Non-operation keys allowed directly under a path item (lower-case comparison).
+ */
+const ALLOWED_PATH_ITEM_KEYS = new Set([
+    ...HTTP_METHODS,
+    'parameters',
+    'servers',
+    'summary',
+    'description',
+    'externaldocs',
+    '$ref',
+    'callbacks',
+]);
+
 const documented = new Set();
+let inPathsSection = false;
 let currentPath = '';
 for (const line of spec.split(/\r?\n/)) {
-    const pathMatch = line.match(/^  (\/plugins\/mattermost-ai\/[^:]+):$/);
-    if (pathMatch) {
-        currentPath = pathMatch[1];
+    if (line === 'paths:') {
+        inPathsSection = true;
         continue;
     }
 
-    const methodMatch = line.match(/^    (get|post|put|delete):$/);
-    if (methodMatch && currentPath) {
-        documented.add(`${methodMatch[1].toUpperCase()} ${currentPath}`);
+    // Everything after `components:` uses similar indentation; stop scanning paths here.
+    if (line === 'components:') {
+        inPathsSection = false;
+        currentPath = '';
+        continue;
+    }
+
+    if (!inPathsSection) {
+        continue;
+    }
+
+    const pathMatch = line.match(/^  (\/[^:]+):$/);
+    if (pathMatch) {
+        currentPath = pathMatch[1];
+        if (!currentPath.startsWith(PLUGIN_ROUTE_PREFIX)) {
+            console.error(`OpenAPI path must start with ${PLUGIN_ROUTE_PREFIX}: ${currentPath}`);
+            process.exit(1);
+        }
+        continue;
+    }
+
+    const pathChildMatch = line.match(/^    ([a-zA-Z0-9.$_-]+):$/);
+    if (pathChildMatch && currentPath) {
+        const key = pathChildMatch[1];
+        const kl = key.toLowerCase();
+        if (HTTP_METHODS.has(kl)) {
+            documented.add(`${kl.toUpperCase()} ${currentPath}`);
+        } else if (key.startsWith('x-')) {
+            // vendor extension field on the path item
+        } else if (!ALLOWED_PATH_ITEM_KEYS.has(kl)) {
+            console.error(`Unexpected OpenAPI path-item field "${key}" for ${currentPath}`);
+            process.exit(1);
+        }
     }
 }
 
