@@ -151,52 +151,67 @@ func TestToolGetAgentsAndGetCustomPromptsUsePluginRoutes(t *testing.T) {
 	mcpContext := newTestMCPToolContext(server.URL)
 
 	tests := []struct {
-		name    string
-		tool    func(*MCPToolContext, llm.ToolArgumentGetter) (string, error)
-		args    any
-		want    []string
-		notWant []string
+		name     string
+		tool     func(*MCPToolContext, llm.ToolArgumentGetter) (string, error)
+		args     any
+		validate func(*testing.T, string)
 	}{
 		{
 			name: "list all agents",
 			tool: provider.toolGetAgents,
 			args: GetAgentsToolArgs{},
-			want: []string{
-				"\"id\": \"agent-1\"",
-				"\"name\": \"release-bot\"",
-				"\"id\": \"agent-2\"",
+			validate: func(t *testing.T, result string) {
+				t.Helper()
+
+				var listedAgents []llm.BotConfig
+				require.NoError(t, json.Unmarshal([]byte(result), &listedAgents))
+				require.Len(t, listedAgents, 2)
+				assert.Equal(t, "agent-1", listedAgents[0].ID)
+				assert.Equal(t, "release-bot", listedAgents[0].Name)
+				assert.Equal(t, "agent-2", listedAgents[1].ID)
 			},
 		},
 		{
 			name: "list all prompts",
 			tool: provider.toolGetCustomPrompts,
 			args: GetCustomPromptToolArgs{},
-			want: []string{
-				"\"id\": \"prompt-1\"",
-				"\"id\": \"prompt-2\"",
-				"\"name\": \"Incident Report\"",
+			validate: func(t *testing.T, result string) {
+				t.Helper()
+
+				var listedPrompts []customprompts.CustomPrompt
+				require.NoError(t, json.Unmarshal([]byte(result), &listedPrompts))
+				require.Len(t, listedPrompts, 2)
+				assert.Equal(t, "prompt-1", listedPrompts[0].ID)
+				assert.Equal(t, "prompt-2", listedPrompts[1].ID)
+				assert.Equal(t, "Incident Report", listedPrompts[1].Name)
 			},
 		},
 		{
 			name: "filter agent by username",
 			tool: provider.toolGetAgents,
 			args: GetAgentsToolArgs{AgentUsername: "release-bot"},
-			want: []string{
-				"\"id\": \"agent-1\"",
-			},
-			notWant: []string{
-				"\"id\": \"agent-2\"",
+			validate: func(t *testing.T, result string) {
+				t.Helper()
+
+				var listedAgents []llm.BotConfig
+				require.NoError(t, json.Unmarshal([]byte(result), &listedAgents))
+				require.Len(t, listedAgents, 1)
+				assert.Equal(t, "agent-1", listedAgents[0].ID)
+				assert.Equal(t, "release-bot", listedAgents[0].Name)
 			},
 		},
 		{
 			name: "filter prompt by name",
 			tool: provider.toolGetCustomPrompts,
 			args: GetCustomPromptToolArgs{PromptName: "Incident Report"},
-			want: []string{
-				"\"id\": \"prompt-2\"",
-			},
-			notWant: []string{
-				"\"id\": \"prompt-1\"",
+			validate: func(t *testing.T, result string) {
+				t.Helper()
+
+				var listedPrompts []customprompts.CustomPrompt
+				require.NoError(t, json.Unmarshal([]byte(result), &listedPrompts))
+				require.Len(t, listedPrompts, 1)
+				assert.Equal(t, "prompt-2", listedPrompts[0].ID)
+				assert.Equal(t, "Incident Report", listedPrompts[0].Name)
 			},
 		},
 	}
@@ -206,13 +221,7 @@ func TestToolGetAgentsAndGetCustomPromptsUsePluginRoutes(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			result, err := testCase.tool(mcpContext, jsonArgsGetter(t, testCase.args))
 			require.NoError(t, err)
-
-			for _, expected := range testCase.want {
-				assert.Contains(t, result, expected)
-			}
-			for _, unexpected := range testCase.notWant {
-				assert.NotContains(t, result, unexpected)
-			}
+			testCase.validate(t, result)
 		})
 	}
 }
