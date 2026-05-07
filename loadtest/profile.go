@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner/limits"
 )
 
 // LatencyProfile describes one named latency mix for mock streaming.
@@ -345,8 +345,8 @@ func (p MockProfile) Validate() error {
 	if p.MaxToolRounds < 0 {
 		return fmt.Errorf("max_tool_rounds must be non-negative, got %d", p.MaxToolRounds)
 	}
-	if p.MaxToolRounds > toolrunner.MaxToolRounds {
-		return fmt.Errorf("max_tool_rounds must be <= %d (toolrunner limit), got %d", toolrunner.MaxToolRounds, p.MaxToolRounds)
+	if p.MaxToolRounds > limits.MaxToolRounds {
+		return fmt.Errorf("max_tool_rounds must be <= %d (toolrunner limit), got %d", limits.MaxToolRounds, p.MaxToolRounds)
 	}
 	if len(p.FinalResponseTemplates) == 0 {
 		return fmt.Errorf("final_response_templates must be non-empty")

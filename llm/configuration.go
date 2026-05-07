@@ -4,7 +4,6 @@
 package llm
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -237,11 +236,7 @@ func IsValidService(service ServiceConfig) bool {
 		}
 		return json.Valid([]byte(service.VertexAuthCredentials))
 	case ServiceTypeLoadTestMock:
-		raw := service.LoadTestMockConfig
-		if len(bytes.TrimSpace(raw)) == 0 {
-			return true
-		}
-		return json.Valid(raw)
+		return isValidLoadTestMockConfig(service.LoadTestMockConfig)
 	default:
 		return false
 	}

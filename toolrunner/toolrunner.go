@@ -11,13 +11,14 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner/limits"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // MaxToolRounds is the maximum number of tool-call-execute-recall iterations
 // before the runner gives up and returns whatever it has. This prevents
 // infinite loops from models that keep requesting tools.
-const MaxToolRounds = 10
+const MaxToolRounds = limits.MaxToolRounds
 
 // ToolRunner manages the call-execute-recall loop for LLM tool use.
 // It calls the LLM, checks for tool calls in the stream, executes

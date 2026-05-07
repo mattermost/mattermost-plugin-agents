@@ -557,6 +557,24 @@ func TestIsValidService(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "Invalid loadtest mock service unknown profile field",
+			service: ServiceConfig{
+				ID:                 "loadtest",
+				Type:               ServiceTypeLoadTestMock,
+				LoadTestMockConfig: json.RawMessage(`{"unknown_top_level":true}`),
+			},
+			want: false,
+		},
+		{
+			name: "Invalid loadtest mock service unknown latency profile weight",
+			service: ServiceConfig{
+				ID:                 "loadtest",
+				Type:               ServiceTypeLoadTestMock,
+				LoadTestMockConfig: json.RawMessage(`{"profile_weights":{"does_not_exist":1}}`),
+			},
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
