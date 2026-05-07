@@ -103,25 +103,40 @@ func TestCreatePostMessageLengths(t *testing.T) {
 
 func TestDMAndGroupMessageLengths(t *testing.T) {
 	t.Parallel()
-	profile := DefaultReadSearchHeavyProfile()
-	ctx := &llm.Context{}
-	rng := deterministicTestRand(2)
+	tests := []struct {
+		name   string
+		tool   string
+		assert func(*testing.T, map[string]any)
+	}{
+		{
+			name: "dm",
+			tool: "dm",
+			assert: func(t *testing.T, args map[string]any) {
+				require.NotEmpty(t, args["message"])
+				require.NotEmpty(t, args["username"])
+			},
+		},
+		{
+			name: "group_message",
+			tool: "group_message",
+			assert: func(t *testing.T, args map[string]any) {
+				require.NotEmpty(t, args["message"])
+				require.Len(t, args["usernames"].([]any), 2)
+			},
+		},
+	}
 
-	dmTool := llm.Tool{Name: "dm"}
-	dmRaw, ok := buildToolArguments(profile, dmTool, ctx, rng)
-	require.True(t, ok)
-	var dm map[string]any
-	require.NoError(t, json.Unmarshal(dmRaw, &dm))
-	require.NotEmpty(t, dm["message"])
-	require.NotEmpty(t, dm["username"])
-
-	gmTool := llm.Tool{Name: "group_message"}
-	gmRaw, ok := buildToolArguments(profile, gmTool, ctx, rng)
-	require.True(t, ok)
-	var gm map[string]any
-	require.NoError(t, json.Unmarshal(gmRaw, &gm))
-	us := gm["usernames"].([]any)
-	require.Len(t, us, 2)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw, ok := buildToolArguments(DefaultReadSearchHeavyProfile(), llm.Tool{Name: tt.tool}, &llm.Context{}, deterministicTestRand(2))
+			require.True(t, ok)
+			var args map[string]any
+			require.NoError(t, json.Unmarshal(raw, &args))
+			tt.assert(t, args)
+		})
+	}
 }
 
 func TestDMSkipsWithoutRecipient(t *testing.T) {
@@ -166,6 +181,41 @@ func TestDMSkipsWithoutRecipient(t *testing.T) {
 	}
 }
 
+func TestGroupMessageFiltersEmptyRecipients(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	profile.ToolArgumentProfiles["group_message"] = ToolArgumentProfile{
+		MessageLengths: []int{20},
+		Usernames:      []string{"", " alice ", " \t\n ", "bob"},
+	}
+	tool := llm.Tool{Name: "group_message"}
+	require.True(t, canBuildToolArguments(profile, tool, nil))
+
+	raw, ok := buildToolArguments(profile, tool, nil, deterministicTestRand(4))
+	require.True(t, ok)
+	var args map[string]any
+	require.NoError(t, json.Unmarshal(raw, &args))
+	rawUsers := args["usernames"].([]any)
+	require.Len(t, rawUsers, 2)
+	usernames := []string{rawUsers[0].(string), rawUsers[1].(string)}
+	require.ElementsMatch(t, []string{"alice", "bob"}, usernames)
+}
+
+func TestGroupMessageSkipsWithoutTwoRecipients(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	profile.ToolArgumentProfiles["group_message"] = ToolArgumentProfile{
+		MessageLengths: []int{20},
+		Usernames:      []string{"alice", "", " \t\n "},
+	}
+	tool := llm.Tool{Name: "group_message"}
+	require.False(t, canBuildToolArguments(profile, tool, nil))
+
+	raw, ok := buildToolArguments(profile, tool, nil, deterministicTestRand(4))
+	require.False(t, ok)
+	require.Nil(t, raw)
+}
+
 func TestSkipCreatePostWithoutChannelContext(t *testing.T) {
 	t.Parallel()
 	profile := DefaultReadSearchHeavyProfile()
@@ -174,6 +224,30 @@ func TestSkipCreatePostWithoutChannelContext(t *testing.T) {
 	rng := deterministicTestRand(3)
 	_, ok := buildToolArguments(profile, tool, ctx, rng)
 	require.False(t, ok)
+}
+
+func TestCreatePostFallsBackFromInvalidContextChannelID(t *testing.T) {
+	t.Parallel()
+	fallbackID := model.NewId()
+	profile := DefaultReadSearchHeavyProfile()
+	profile.ToolArgumentProfiles["create_post"] = ToolArgumentProfile{
+		ChannelIDs:     []string{fallbackID},
+		MessageLengths: []int{20},
+	}
+	ctx := &llm.Context{
+		Channel: &model.Channel{Id: "invalid", DisplayName: "Context Channel"},
+		Team:    &model.Team{DisplayName: "Context Team"},
+	}
+	tool := llm.Tool{Name: "create_post"}
+	require.True(t, canBuildToolArguments(profile, tool, ctx))
+
+	raw, ok := buildToolArguments(profile, tool, ctx, deterministicTestRand(3))
+	require.True(t, ok)
+	var args map[string]any
+	require.NoError(t, json.Unmarshal(raw, &args))
+	require.Equal(t, fallbackID, args["channel_id"])
+	require.Equal(t, "Context Channel", args["channel_display_name"])
+	require.Equal(t, "Context Team", args["team_display_name"])
 }
 
 func TestChooseWeightedBuildableToolSkipsUnbuildableTools(t *testing.T) {

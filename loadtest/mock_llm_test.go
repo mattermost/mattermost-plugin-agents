@@ -364,6 +364,58 @@ func TestChatCompletionNoStreamBlocksAndText(t *testing.T) {
 	require.NotEmpty(t, txt)
 }
 
+func TestChatCompletionClosesStreamOnContextCancellation(t *testing.T) {
+	t.Parallel()
+	p := fastTestProfile()
+	for k := range p.LatencyProfiles {
+		p.LatencyProfiles[k] = LatencyProfile{
+			TTFTMs:                    [2]int{1000, 1000},
+			ChunkCount:                [2]int{1, 1},
+			ChunkIntervalMs:           [2]int{0, 0},
+			TotalWallTimeMsPerRequest: [2]int{1000, 1000},
+		}
+	}
+	p.ToolUseProbability = 0
+	p.ReasoningSkipProbability = 1.0
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m := NewMockLLM(p)
+	res, err := m.ChatCompletion(ctx, llm.CompletionRequest{}, llm.WithReasoningDisabled())
+	require.NoError(t, err)
+	cancel()
+
+	select {
+	case _, ok := <-res.Stream:
+		require.False(t, ok)
+	case <-time.After(200 * time.Millisecond):
+		require.Fail(t, "stream did not close after context cancellation")
+	}
+}
+
+func TestChatCompletionNoStreamHonorsContextCancellation(t *testing.T) {
+	t.Parallel()
+	p := fastTestProfile()
+	for k := range p.LatencyProfiles {
+		p.LatencyProfiles[k] = LatencyProfile{
+			TTFTMs:                    [2]int{0, 0},
+			ChunkCount:                [2]int{1, 1},
+			ChunkIntervalMs:           [2]int{0, 0},
+			TotalWallTimeMsPerRequest: [2]int{1000, 1000},
+		}
+	}
+	p.ToolUseProbability = 0
+	p.ReasoningSkipProbability = 1.0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	m := NewMockLLM(p)
+	start := time.Now()
+	txt, err := m.ChatCompletionNoStream(ctx, llm.CompletionRequest{}, llm.WithReasoningDisabled())
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Empty(t, txt)
+	require.Less(t, time.Since(start), 200*time.Millisecond)
+}
+
 func TestToolArgumentsVaryBySeed(t *testing.T) {
 	t.Parallel()
 	store := llm.NewToolStore()

@@ -213,7 +213,7 @@ func canBuildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context)
 	case "create_post":
 		return (ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id)) || hasValidID(tap.ChannelIDs)
 	case "group_message":
-		return len(tap.Usernames) >= 2
+		return len(nonEmptyStrings(tap.Usernames)) >= 2
 	default:
 		return !hasRequiredSchema(tool)
 	}
@@ -375,7 +375,8 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 				chID = ctx.Channel.Id
 			}
 			chDisplay = ctx.Channel.DisplayName
-		} else if len(tap.ChannelIDs) > 0 {
+		}
+		if !model.IsValidId(chID) && len(tap.ChannelIDs) > 0 {
 			chID = pickValidID(rng, tap.ChannelIDs)
 		}
 		if ctx != nil && ctx.Team != nil {
@@ -418,7 +419,7 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 		return raw, true
 
 	case "group_message":
-		pool := tap.Usernames
+		pool := nonEmptyStrings(tap.Usernames)
 		if len(pool) < 2 {
 			return nil, false
 		}

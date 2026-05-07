@@ -134,14 +134,32 @@ func TestParseProfileUnknownLatencyNameRejected(t *testing.T) {
 
 func TestParseProfileInvalidWeights(t *testing.T) {
 	t.Parallel()
-	_, err := ParseProfile(json.RawMessage(`{"tool_weights":{"read_channel":-0.1}}`))
-	require.Error(t, err)
+	tests := []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{
+			name: "negative tool weight",
+			raw:  json.RawMessage(`{"tool_weights":{"read_channel":-0.1}}`),
+		},
+		{
+			name: "empty profile weights",
+			raw:  json.RawMessage(`{"profile_weights":{}}`),
+		},
+		{
+			name: "reasoning skip probability out of range",
+			raw:  json.RawMessage(`{"reasoning_skip_probability":1.5}`),
+		},
+	}
 
-	_, err = ParseProfile(json.RawMessage(`{"profile_weights":{}}`))
-	require.Error(t, err)
-
-	_, err = ParseProfile(json.RawMessage(`{"reasoning_skip_probability":1.5}`))
-	require.Error(t, err)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseProfile(tt.raw)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestParseProfileInvalidLatencyRange(t *testing.T) {
