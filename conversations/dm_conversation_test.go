@@ -4,6 +4,7 @@
 package conversations_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -216,7 +217,7 @@ func newDMTestLLM(responses ...*llm.TextStreamResult) *dmTestLLM {
 	return &dmTestLLM{responses: responses}
 }
 
-func (f *dmTestLLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (f *dmTestLLM) ChatCompletion(_ context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, request)
@@ -228,7 +229,7 @@ func (f *dmTestLLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.La
 	return resp, nil
 }
 
-func (f *dmTestLLM) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (f *dmTestLLM) ChatCompletionNoStream(_ context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
 	return "Test Title", nil
 }
 
@@ -420,6 +421,7 @@ func TestDMNewConversation_CreatesConversationAndTurns(t *testing.T) {
 	require.True(t, convResult.IsNew)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil, // llmContext
@@ -480,6 +482,7 @@ func TestDMContinueConversation_ReadsTurnsNotPosts(t *testing.T) {
 	require.NotNil(t, convResult)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,
@@ -560,6 +563,7 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 	require.NotEmpty(t, convResult.ConversationID)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		llmCtx,
@@ -648,6 +652,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 	require.NotNil(t, convResult)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		llmCtx,
@@ -705,6 +710,7 @@ func TestDMUnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 	require.NotNil(t, convResult)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		llmCtx,
@@ -939,6 +945,7 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 	require.NoError(t, err)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		&llm.Context{Tools: toolStore},
@@ -1004,6 +1011,7 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 	assert.Equal(t, createResult.ConversationID, convResult.ConversationID)
 
 	_, err = env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,

@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -156,7 +157,7 @@ func TestResolveToolUnknownWarnsWithoutTrace(t *testing.T) {
 	log := &captureToolLog{}
 	store := NewToolStore(log, false)
 
-	_, err := store.ResolveTool("ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
+	_, err := store.ResolveTool(context.Background(), "ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
 
 	require.EqualError(t, err, "unknown tool ghost_tool")
 	require.Len(t, log.warns, 1)
@@ -172,7 +173,7 @@ func TestResolveToolUnknownPreservesTrace(t *testing.T) {
 	log := &captureToolLog{}
 	store := NewToolStore(log, true)
 
-	_, err := store.ResolveTool("ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
+	_, err := store.ResolveTool(context.Background(), "ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
 
 	require.EqualError(t, err, "unknown tool ghost_tool")
 	require.Len(t, log.warns, 1)
@@ -186,7 +187,7 @@ func TestResolveToolUnknownWithInfoOnlyLoggerStillTracesWhenEnabled(t *testing.T
 	log := &infoOnlyToolLog{}
 	store := NewToolStore(log, true)
 
-	_, err := store.ResolveTool("ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
+	_, err := store.ResolveTool(context.Background(), "ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
 
 	require.EqualError(t, err, "unknown tool ghost_tool")
 	require.Len(t, log.infos, 1)
@@ -198,7 +199,7 @@ func TestResolveToolUnknownLogsArgumentGetterError(t *testing.T) {
 	store := NewToolStore(log, true)
 	argsErr := errors.New("bad arguments")
 
-	_, err := store.ResolveTool("ghost_tool", func(any) error { return argsErr }, &Context{})
+	_, err := store.ResolveTool(context.Background(), "ghost_tool", func(any) error { return argsErr }, &Context{})
 
 	require.EqualError(t, err, "unknown tool ghost_tool")
 	require.Len(t, log.warns, 1)

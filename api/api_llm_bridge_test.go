@@ -1654,6 +1654,30 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
+func TestPrepareAgentBridgeCompletionAllowedToolsRequiresUserID(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		testBotUserID,
+		bridgeclient.CompletionRequest{
+			Posts: []bridgeclient.Post{
+				{Role: "user", Message: "Hi"},
+			},
+			AllowedTools: []string{"eligible_tool"},
+		},
+		"",
+		llm.OperationBridgeAgent,
+		llm.SubTypeNoStream,
+	)
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, statusCode)
+	require.Contains(t, err.Error(), "allowed_tools requires user_id")
+}
+
 func TestPrepareAgentBridgeCompletionToolHooksRequiresPluginID(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

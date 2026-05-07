@@ -45,12 +45,12 @@ func (p *noToolsTestMCPProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Error
 
 type noToolsTestContextConfigProvider struct{}
 
-func (p *noToolsTestContextConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (p *noToolsTestContextConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
+}
+
+func (p *noToolsTestContextConfigProvider) GetEnableLLMTrace() bool {
+	return false
 }
 
 type noToolsStreamingService struct {

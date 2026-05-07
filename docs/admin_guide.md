@@ -335,6 +335,104 @@ Post indexing occurs automatically during initial setup and when changing embedd
    - Trigger reindexing when changing embedding providers.
    - Check indexing status.
 
+### OpenTelemetry tracing
+
+The plugin supports distributed tracing via [OpenTelemetry](https://opentelemetry.io/) to provide visibility into request latency, LLM call performance, tool execution, and error diagnosis.
+
+#### What gets traced
+
+When enabled, the plugin creates spans for:
+
+- **HTTP requests**: Every API call to the plugin, with method, route, and status code (via otelgin middleware)
+- **LLM completions**: Provider, model, operation type, streaming status, input/output token counts, and errors
+- **Tool execution**: Tool name, ID, resolution status, and errors for both built-in and MCP tools
+- **MCP tool calls**: Remote MCP server and tool name
+- **Semantic search**: Search queries and result retrieval
+- **Web search**: Brave and Google search API calls
+- **Post streaming**: Duration and context for streaming LLM responses to posts
+
+Spans are organized in a parent-child hierarchy that follows the request flow, so a single user message produces a trace like:
+
+```text
+HTTP POST /post/:postid/react
+  └── process user request
+       ├── llm chat completion (provider=openai, model=gpt-4o, tokens=150/42)
+       ├── resolve tool (tool=web_search)
+       └── stream to post
+```
+
+#### Enabling tracing
+
+The plugin offers three trace output modes, configurable via **Trace Output** in the System Console:
+
+- **Off** — tracing disabled, zero overhead.
+- **Server Logs** — finished spans are written to the Mattermost server log via the standard plugin logger. No collector required; pick this if you don't run Tempo, Jaeger, or another OTLP backend.
+- **OTLP Endpoint** — spans are exported over OTLP gRPC to the endpoint configured in **OpenTelemetry Endpoint** (e.g. `localhost:4317`). Use this for full distributed tracing with a backend like Grafana Tempo or Jaeger.
+
+The setting can also be configured directly in the plugin configuration JSON:
+
+```json
+{
+  "telemetryOutput": "otlp",
+  "openTelemetryEndpoint": "your-collector:4317"
+}
+```
+
+Valid values for `telemetryOutput` are `off`, `logs`, and `otlp`. When set to `off` (or omitted), the plugin uses a no-op tracer with zero overhead. The `openTelemetryEndpoint` field is only consulted when the mode is `otlp`.
+
+#### Local development with Grafana Tempo
+
+For local development and debugging, use the included Docker Compose file to run [Grafana Tempo](https://grafana.com/oss/tempo/) and Grafana:
+
+```bash
+docker compose -f dev/docker-compose.otel.yml up -d
+```
+
+This starts:
+- **Tempo** with OTLP gRPC on port `4317` and OTLP HTTP on port `4318`
+- **Grafana** at `http://localhost:3001` with the Tempo datasource preprovisioned (anonymous Admin, no login required)
+
+Configure the plugin with endpoint `localhost:4317`, then interact with the bot. Open Grafana → **Explore** → **Tempo** and search by service name `mattermost-ai-agents`, or paste a trace ID directly.
+
+Grafana is mapped to port `3001` (not the default `3000`) so it does not collide with Mattermost's webapp dev server or the `mattermost-server` build/docker-compose stack.
+
+To stop the stack:
+
+```bash
+docker compose -f dev/docker-compose.otel.yml down
+```
+
+Add `-v` to also discard accumulated traces.
+
+#### Production deployment
+
+For production, send traces to your existing OpenTelemetry Collector or directly to a backend:
+
+- **OpenTelemetry Collector**: Point the endpoint to your collector's OTLP gRPC address. The collector can then export to Jaeger, Zipkin, Datadog, Grafana Tempo, AWS X-Ray, or any other supported backend.
+- **Direct export**: Point the endpoint directly to a backend that supports OTLP gRPC (e.g., Grafana Tempo at `tempo:4317`).
+
+The connection currently uses insecure (non-TLS) gRPC. For TLS-terminated endpoints, route through an OpenTelemetry Collector with TLS configured.
+
+#### Custom span attributes
+
+Traces include these semantic attributes for filtering and analysis:
+
+| Attribute | Description | Example |
+|-----------|-------------|---------|
+| `agents.llm.provider` | LLM provider name | `openai`, `anthropic` |
+| `agents.llm.model` | Model identifier | `gpt-4o`, `claude-3-opus` |
+| `agents.llm.operation` | Operation type | `conversation`, `title_generation` |
+| `agents.llm.input_tokens` | Input token count | `150` |
+| `agents.llm.output_tokens` | Output token count | `42` |
+| `agents.tool.name` | Tool being called | `web_search`, `read_channel` |
+| `agents.tool.id` | Tool call identifier | `call_abc123` |
+| `agents.mcp.server` | MCP server name | `github-server` |
+| `agents.mcp.tool` | MCP tool name | `search_issues` |
+| `agents.user.id` | Requesting user ID | `abc123def456` |
+| `agents.channel.id` | Channel ID | `abc123def456` |
+| `agents.post.id` | Post ID | `abc123def456` |
+| `agents.thread.root_post.id` | Root post ID for thread correlation | `abc123def456` |
+
 ### Backup and restore
 
 The plugin stores agent data across both plugin configuration and plugin database tables. To backup:

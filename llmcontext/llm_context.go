@@ -40,8 +40,8 @@ type LoadedMCPToolStore interface {
 
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
-	GetEnableLLMTrace() bool
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
+	GetEnableLLMTrace() bool
 }
 
 // Builder builds contexts for LLM requests
@@ -270,7 +270,11 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	}
 
 	// Create a tool store that requires user approval for tool calls
-	store := llm.NewToolStore(&b.pluginAPI.Log, b.configProvider.GetEnableLLMTrace())
+	enableTrace := false
+	if b.configProvider != nil {
+		enableTrace = b.configProvider.GetEnableLLMTrace()
+	}
+	store := llm.NewToolStore(&b.pluginAPI.Log, enableTrace)
 	botCfg := bot.GetConfig()
 
 	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)

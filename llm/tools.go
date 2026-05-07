@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,10 @@ import (
 	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 )
 
 // Tool represents a function that can be called by the language model during a conversation.
@@ -368,16 +373,28 @@ func (s *ToolStore) AddTools(tools []Tool) {
 	}
 }
 
-func (s *ToolStore) ResolveTool(name string, argsGetter ToolArgumentGetter, context *Context) (string, error) {
+func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
+	_, span := telemetry.Tracer().Start(ctx, "resolve tool",
+		trace.WithAttributes(telemetry.ToolName.String(name)),
+	)
+	defer span.End()
+
 	tool, ok := s.tools[name]
 	if !ok {
 		s.LogUnknownToolWarning(name, argsGetter)
 		s.TraceUnknown(name, argsGetter)
-		return "", errors.New("unknown tool " + name)
+		err := errors.New("unknown tool " + name)
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+		return "", err
 	}
-	results, err := tool.Resolver(context, argsGetter)
-	s.TraceResolved(name, argsGetter, results, err)
-	return results, err
+	result, err := tool.Resolver(llmCtx, argsGetter)
+	s.TraceResolved(name, argsGetter, result, err)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+	}
+	return result, err
 }
 
 func (s *ToolStore) GetTools() []Tool {

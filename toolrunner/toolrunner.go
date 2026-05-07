@@ -4,12 +4,15 @@
 package toolrunner
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // MaxToolRounds is the maximum number of tool-call-execute-recall iterations
@@ -103,6 +106,7 @@ type ToolResult struct {
 //   - error if the initial LLM call fails. Errors from subsequent LLM calls
 //     (after tool execution) are delivered through the stream as EventTypeError.
 func (r *ToolRunner) Run(
+	ctx context.Context,
 	request llm.CompletionRequest,
 	shouldExecute func(llm.ToolCall) bool,
 	onToolTurns func([]ToolTurn),
@@ -112,7 +116,7 @@ func (r *ToolRunner) Run(
 
 	// Make the first LLM call synchronously so initialization errors
 	// (auth failures, rate limits, etc.) are returned directly.
-	firstStream, err := r.llm.ChatCompletion(request, currentOpts...)
+	firstStream, err := r.llm.ChatCompletion(ctx, request, currentOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("llm completion failed: %w", err)
 	}
@@ -124,7 +128,7 @@ func (r *ToolRunner) Run(
 
 	go func() {
 		defer close(output)
-		r.runLoop(firstStream, request, shouldExecute, onToolTurns, result, output, currentOpts)
+		r.runLoop(ctx, firstStream, request, shouldExecute, onToolTurns, result, output, currentOpts)
 	}()
 
 	return result, nil
@@ -134,6 +138,7 @@ func (r *ToolRunner) Run(
 // It forwards events to the output channel in real-time while handling
 // tool call detection and execution internally.
 func (r *ToolRunner) runLoop(
+	ctx context.Context,
 	firstStream *llm.TextStreamResult,
 	request llm.CompletionRequest,
 	shouldExecute func(llm.ToolCall) bool,
@@ -148,7 +153,7 @@ func (r *ToolRunner) runLoop(
 		// For round > 0, make a new LLM call.
 		if round > 0 {
 			var err error
-			stream, err = r.llm.ChatCompletion(request, currentOpts...)
+			stream, err = r.llm.ChatCompletion(ctx, request, currentOpts...)
 			if err != nil {
 				r.deliverToolTurns(result, onToolTurns)
 				output <- llm.TextStreamEvent{
@@ -257,7 +262,7 @@ func (r *ToolRunner) runLoop(
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 
 		// Execute each tool call.
-		toolResults := r.executeTools(toolCalls, request)
+		toolResults := r.executeTools(ctx, toolCalls, request)
 		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
 		resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
@@ -285,7 +290,7 @@ func (r *ToolRunner) deliverToolTurns(result *ToolRunResult, onToolTurns func([]
 }
 
 // executeTools runs each tool call and returns results.
-func (r *ToolRunner) executeTools(toolCalls []llm.ToolCall, request llm.CompletionRequest) []ToolResult {
+func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall, request llm.CompletionRequest) []ToolResult {
 	toolResults := make([]ToolResult, len(toolCalls))
 	for i, tc := range toolCalls {
 		var result string
@@ -298,11 +303,24 @@ func (r *ToolRunner) executeTools(toolCalls []llm.ToolCall, request llm.Completi
 		case request.Context.Tools.GetTool(tc.Name) == nil:
 			resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
 		default:
+			toolCtx, span := telemetry.Tracer().Start(ctx, "resolve tool",
+				trace.WithAttributes(
+					telemetry.ToolName.String(tc.Name),
+					telemetry.ToolID.String(tc.ID),
+				),
+			)
 			result, resolveErr = request.Context.Tools.ResolveTool(
+				toolCtx,
 				tc.Name,
 				func(args any) error { return json.Unmarshal(tc.Arguments, args) },
 				request.Context,
 			)
+			if resolveErr != nil {
+				span.SetAttributes(telemetry.ToolStatus.String("error"))
+			} else {
+				span.SetAttributes(telemetry.ToolStatus.String("success"))
+			}
+			span.End()
 		}
 
 		if resolveErr != nil {

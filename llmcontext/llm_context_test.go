@@ -132,12 +132,12 @@ func loadedMCPToolRow(toolName string) storepkg.LoadedMCPTool {
 
 type contextTestConfigProvider struct{}
 
-func (p *contextTestConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (p *contextTestConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
+}
+
+func (p *contextTestConfigProvider) GetEnableLLMTrace() bool {
+	return false
 }
 
 func newTestBot() *bots.Bot {

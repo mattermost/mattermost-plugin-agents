@@ -58,7 +58,6 @@ async function setupToolCallingContainer(provider: ProviderBundle): Promise<Matt
         config: {
             allowPrivateChannels: true,
             disableFunctionCalls: false,
-            enableLLMTrace: true,
             enableUserRestrictions: false,
             defaultBotName: botConfig.name,
             enableVectorIndex: true,

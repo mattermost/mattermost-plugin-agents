@@ -4,6 +4,7 @@
 package toolrunner
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -72,7 +73,7 @@ func testLogFields(entry testLogEntry) map[string]any {
 	return fields
 }
 
-func (m *testLLM) ChatCompletion(req llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (m *testLLM) ChatCompletion(_ context.Context, req llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -95,8 +96,8 @@ func (m *testLLM) ChatCompletion(req llm.CompletionRequest, _ ...llm.LanguageMod
 	return &llm.TextStreamResult{Stream: stream}, nil
 }
 
-func (m *testLLM) ChatCompletionNoStream(req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
-	result, err := m.ChatCompletion(req, opts...)
+func (m *testLLM) ChatCompletionNoStream(ctx context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	result, err := m.ChatCompletion(ctx, req, opts...)
 	if err != nil {
 		return "", err
 	}
@@ -143,13 +144,13 @@ type optCapturingLLM struct {
 	capturedOpts *[][]llm.LanguageModelOption
 }
 
-func (c *optCapturingLLM) ChatCompletion(req llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (c *optCapturingLLM) ChatCompletion(ctx context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	*c.capturedOpts = append(*c.capturedOpts, opts)
-	return c.inner.ChatCompletion(req, opts...)
+	return c.inner.ChatCompletion(ctx, req, opts...)
 }
 
-func (c *optCapturingLLM) ChatCompletionNoStream(req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
-	return c.inner.ChatCompletionNoStream(req, opts...)
+func (c *optCapturingLLM) ChatCompletionNoStream(ctx context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	return c.inner.ChatCompletionNoStream(ctx, req, opts...)
 }
 
 func (c *optCapturingLLM) CountTokens(text string) int { return c.inner.CountTokens(text) }
@@ -173,7 +174,7 @@ func TestToolRunner_NoToolCalls(t *testing.T) {
 		Context: &llm.Context{Tools: llm.NewNoTools()},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -216,7 +217,7 @@ func TestToolRunner_SingleToolRound(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	text, readErr := result.Stream.ReadAll()
@@ -290,7 +291,7 @@ func TestToolRunner_MultipleToolRounds(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	text, _ := result.Stream.ReadAll()
@@ -324,7 +325,7 @@ func TestToolRunner_PartialApproval_NoneExecuted(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, neverExecute, nil)
+	result, err := runner.Run(context.Background(), request, neverExecute, nil)
 	require.NoError(t, err)
 
 	// Stream should still contain text AND the tool call events.
@@ -375,7 +376,7 @@ func TestToolRunner_MixedBatch_AllOrNothing(t *testing.T) {
 	}
 
 	// Only approve read_tool, not write_tool.
-	result, err := runner.Run(request, func(tc llm.ToolCall) bool {
+	result, err := runner.Run(context.Background(), request, func(tc llm.ToolCall) bool {
 		return tc.Name == "read_tool"
 	}, nil)
 	require.NoError(t, err)
@@ -419,7 +420,7 @@ func TestToolRunner_UnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 	}
 
 	shouldExecuteCalls := 0
-	result, err := runner.Run(request, func(llm.ToolCall) bool {
+	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
 		shouldExecuteCalls++
 		t.Fatal("shouldExecute must not be called for unknown tools")
 		return true
@@ -466,7 +467,7 @@ func TestToolRunner_UnknownToolWithNilContextReturnsError(t *testing.T) {
 		Context: nil,
 	}
 
-	result, err := runner.Run(request, func(llm.ToolCall) bool {
+	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
 		t.Fatal("shouldExecute must not be called for unknown tools")
 		return true
 	}, nil)
@@ -541,7 +542,7 @@ func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
 			}
 
 			runner := New(inner)
-			result, err := runner.Run(llm.CompletionRequest{
+			result, err := runner.Run(context.Background(), llm.CompletionRequest{
 				Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run tool"}},
 				Context: tt.context,
 			}, func(llm.ToolCall) bool {
@@ -593,7 +594,7 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, func(llm.ToolCall) bool {
+	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
 		t.Fatal("shouldExecute must not be called for batches with unknown tools")
 		return true
 	}, nil)
@@ -636,7 +637,7 @@ func TestToolRunner_UnknownToolLogsWarningBeforeApprovalRouting(t *testing.T) {
 	log := &testWarnLog{}
 	store := llm.NewToolStore(log, false)
 	runner := New(inner)
-	result, err := runner.Run(llm.CompletionRequest{
+	result, err := runner.Run(context.Background(), llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run ghost"}},
 		Context: &llm.Context{Tools: store},
 	}, func(llm.ToolCall) bool {
@@ -683,7 +684,7 @@ func TestToolRunner_ToolExecutionError(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err) // runner itself doesn't fail
 
 	text, _ := result.Stream.ReadAll()
@@ -715,7 +716,7 @@ func TestToolRunner_LLMError(t *testing.T) {
 		Context: &llm.Context{Tools: llm.NewNoTools()},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	assert.Nil(t, result)
 	assert.ErrorContains(t, err, "rate limit exceeded")
 }
@@ -737,7 +738,7 @@ func TestToolRunner_LLMStreamError(t *testing.T) {
 		Context: &llm.Context{Tools: llm.NewNoTools()},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err, "first ChatCompletion succeeds, stream error comes through stream")
 	require.NotNil(t, result)
 
@@ -769,7 +770,7 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 		Context: &llm.Context{Tools: llm.NewNoTools()},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	var eventTypes []llm.EventType
@@ -807,7 +808,7 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	// Should have exactly MaxToolRounds tool turns.
@@ -849,7 +850,7 @@ func TestToolRunner_ReasoningPreservedInToolTurn(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 	_, _ = result.Stream.ReadAll()
 
@@ -892,7 +893,7 @@ func TestToolRunner_MultipleToolCallsInOneBatch(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	text, _ := result.Stream.ReadAll()
@@ -922,7 +923,7 @@ func TestToolRunner_NilContext(t *testing.T) {
 		Context: nil,
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 	text, _ := result.Stream.ReadAll()
 	assert.Equal(t, "Hello", text)
@@ -958,7 +959,7 @@ func TestToolRunner_OptsPassedThrough(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil, llm.WithReasoningDisabled())
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil, llm.WithReasoningDisabled())
 	require.NoError(t, err)
 	_, _ = result.Stream.ReadAll()
 
@@ -995,7 +996,7 @@ func TestToolRunner_ServerOriginPreserved(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, nil)
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 	_, _ = result.Stream.ReadAll()
 
@@ -1045,7 +1046,7 @@ func TestToolRunner_ApprovalAfterToolRound(t *testing.T) {
 	}
 
 	// Only approve safe_tool.
-	result, err := runner.Run(request, func(tc llm.ToolCall) bool {
+	result, err := runner.Run(context.Background(), request, func(tc llm.ToolCall) bool {
 		return tc.Name == "safe_tool"
 	}, nil)
 	require.NoError(t, err)
@@ -1099,7 +1100,7 @@ func TestToolRunner_OnToolTurnsCallback(t *testing.T) {
 
 	var callbackTurns []ToolTurn
 	var callbackCalled bool
-	result, err := runner.Run(request, alwaysExecute, func(turns []ToolTurn) {
+	result, err := runner.Run(context.Background(), request, alwaysExecute, func(turns []ToolTurn) {
 		callbackCalled = true
 		callbackTurns = turns
 	})
@@ -1130,7 +1131,7 @@ func TestToolRunner_OnToolTurnsNotCalledWithoutToolUse(t *testing.T) {
 	}
 
 	callbackCalled := false
-	result, err := runner.Run(request, alwaysExecute, func(_ []ToolTurn) {
+	result, err := runner.Run(context.Background(), request, alwaysExecute, func(_ []ToolTurn) {
 		callbackCalled = true
 	})
 	require.NoError(t, err)
@@ -1158,7 +1159,7 @@ func TestToolRunner_UnloadedMCPToolReturnsLoadFirstError(t *testing.T) {
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 
 	shouldExecuteCalls := 0
-	result, err := New(inner).Run(llm.CompletionRequest{
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "get issue"}},
 		Context: &llm.Context{Tools: store},
 	}, func(llm.ToolCall) bool {
@@ -1204,7 +1205,7 @@ func TestToolRunnerUnloadedToolErrorTelemetry(t *testing.T) {
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 	telemetry := &fakeMCPDynamicTelemetry{}
 
-	result, err := New(inner).Run(llm.CompletionRequest{
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
 		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "get issue"}},
 		Context: &llm.Context{
 			BotUsername:             "matty",
@@ -1235,17 +1236,17 @@ func TestToolRunnerSearchLoadCallSuccessTelemetry(t *testing.T) {
 		},
 	}
 	telemetry := &fakeMCPDynamicTelemetry{}
-	context := &llm.Context{
+	llmCtx := &llm.Context{
 		BotUsername:             "matty",
 		Tools:                   newTestToolStore(testToolDef{name: "jira__get_issue", result: "issue"}),
 		MCPDynamicToolTelemetry: telemetry,
 	}
-	context.MarkMCPDynamicToolSearch()
-	context.MarkMCPDynamicToolLoaded("jira__get_issue")
+	llmCtx.MarkMCPDynamicToolSearch()
+	llmCtx.MarkMCPDynamicToolLoaded("jira__get_issue")
 
-	result, err := New(inner).Run(llm.CompletionRequest{
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "get issue"}},
-		Context: context,
+		Context: llmCtx,
 	}, alwaysExecute, nil)
 	require.NoError(t, err)
 
@@ -1276,17 +1277,17 @@ func TestToolRunnerSearchLoadCallSuccessTelemetryOnlyOnce(t *testing.T) {
 		},
 	}
 	telemetry := &fakeMCPDynamicTelemetry{}
-	context := &llm.Context{
+	llmCtx := &llm.Context{
 		BotUsername:             "matty",
 		Tools:                   newTestToolStore(testToolDef{name: "jira__get_issue", result: "issue"}),
 		MCPDynamicToolTelemetry: telemetry,
 	}
-	context.MarkMCPDynamicToolSearch()
-	context.MarkMCPDynamicToolLoaded("jira__get_issue")
+	llmCtx.MarkMCPDynamicToolSearch()
+	llmCtx.MarkMCPDynamicToolLoaded("jira__get_issue")
 
-	result, err := New(inner).Run(llm.CompletionRequest{
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "get issue"}},
-		Context: context,
+		Context: llmCtx,
 	}, alwaysExecute, nil)
 	require.NoError(t, err)
 
@@ -1323,7 +1324,7 @@ func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {
 	}})
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 
-	result, err := New(inner).Run(llm.CompletionRequest{
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run tools"}},
 		Context: &llm.Context{Tools: store},
 	}, func(llm.ToolCall) bool {
@@ -1371,7 +1372,7 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 		},
 	}})
 
-	result, err := New(inner).Run(llm.CompletionRequest{
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "create issue"}},
 		Context: &llm.Context{Tools: store},
 	}, neverExecute, nil)
@@ -1395,7 +1396,7 @@ func TestExecuteToolsDefensiveUnloadedGuard(t *testing.T) {
 	store := llm.NewNoTools()
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 
-	results := New(nil).executeTools([]llm.ToolCall{{
+	results := New(nil).executeTools(context.Background(), []llm.ToolCall{{
 		ID:        "tc1",
 		Name:      "jira__get_issue",
 		Arguments: json.RawMessage(`{}`),

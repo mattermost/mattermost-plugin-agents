@@ -4,6 +4,7 @@
 package channels
 
 import (
+	stdcontext "context"
 	"fmt"
 	"slices"
 
@@ -53,6 +54,7 @@ func New(
 // It creates a conversation entity, runs the ToolRunner loop for tool execution,
 // persists tool turns, and returns the final stream for the streaming layer.
 func (c *Channels) AnalyzeChannel(
+	ctx stdcontext.Context,
 	context *llm.Context,
 	channelID string,
 	userID string,
@@ -109,7 +111,7 @@ func (c *Channels) AnalyzeChannel(
 		return nil, fmt.Errorf("failed to format system prompt: %w", err)
 	}
 
-	return c.AnalyzeChannelWithRequest(context, userID, botID, systemPrompt, userPrompt, operationSubType)
+	return c.AnalyzeChannelWithRequest(ctx, context, userID, botID, systemPrompt, userPrompt, operationSubType)
 }
 
 func requiredEmbeddedToolByExactOrBareName(store *llm.ToolStore, name string) (llm.Tool, bool) {
@@ -146,6 +148,7 @@ func requiredEmbeddedToolByExactOrBareName(store *llm.ToolStore, name string) (l
 // testability without needing real prompt formatting infrastructure.
 // The context must have Tools set to a ToolStore containing the tools to use.
 func (c *Channels) AnalyzeChannelWithRequest(
+	ctx stdcontext.Context,
 	context *llm.Context,
 	userID string,
 	botID string,
@@ -183,6 +186,7 @@ func (c *Channels) AnalyzeChannelWithRequest(
 	// Run the ToolRunner loop: always approve bound tools.
 	runner := toolrunner.New(c.llm)
 	runResult, err := runner.Run(
+		ctx,
 		*completionRequest,
 		func(_ llm.ToolCall) bool { return true },
 		func(turns []toolrunner.ToolTurn) {
@@ -206,6 +210,7 @@ func (c *Channels) AnalyzeChannelWithRequest(
 // Interval fetches posts for a time range and creates a conversation entity
 // for the analysis. No tools are used.
 func (c *Channels) Interval(
+	ctx stdcontext.Context,
 	context *llm.Context,
 	channelID string,
 	userID string,
@@ -250,13 +255,14 @@ func (c *Channels) Interval(
 		return nil, err
 	}
 
-	return c.IntervalWithRequest(context, userID, botID, systemPrompt, userPrompt, promptName)
+	return c.IntervalWithRequest(ctx, context, userID, botID, systemPrompt, userPrompt, promptName)
 }
 
 // IntervalWithRequest creates a conversation and runs the LLM with pre-formatted
 // prompts. This is the core of Interval, split out for testability without
 // needing real post-fetching infrastructure.
 func (c *Channels) IntervalWithRequest(
+	ctx stdcontext.Context,
 	context *llm.Context,
 	userID string,
 	botID string,
@@ -288,7 +294,7 @@ func (c *Channels) IntervalWithRequest(
 	}
 	completionRequest.OperationSubType = promptName
 
-	resultStream, err := c.llm.ChatCompletion(*completionRequest, llm.WithToolsDisabled())
+	resultStream, err := c.llm.ChatCompletion(ctx, *completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}

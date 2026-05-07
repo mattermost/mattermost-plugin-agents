@@ -36,11 +36,6 @@ func (m *NoopMetrics) IncrementHTTPErrors() {
 	// No-op
 }
 
-// GetMetricsForAIService returns a no-op implementation of LLMetrics.
-func (m *NoopMetrics) GetMetricsForAIService(llmName string) *llmMetrics { //nolint:revive
-	return &llmMetrics{}
-}
-
 // ObserveTokenUsage is a no-op implementation.
 func (m *NoopMetrics) ObserveTokenUsage(botName, teamID, userID string, inputTokens, outputTokens int) {
 	// No-op

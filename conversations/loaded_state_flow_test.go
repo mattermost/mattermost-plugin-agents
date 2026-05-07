@@ -173,14 +173,14 @@ type loadedStateLLM struct {
 	requests []llm.CompletionRequest
 }
 
-func (l *loadedStateLLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (l *loadedStateLLM) ChatCompletion(_ context.Context, request llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	l.mu.Lock()
 	l.requests = append(l.requests, request)
 	l.mu.Unlock()
 	return llm.NewStreamFromString("done"), nil
 }
 
-func (l *loadedStateLLM) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (l *loadedStateLLM) ChatCompletionNoStream(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) (string, error) {
 	return "title", nil
 }
 
@@ -266,7 +266,7 @@ func TestProcessDMRequestThreadsConversationIDIntoContext(t *testing.T) {
 	c := &Conversations{convService: convService}
 	llmContext := &llm.Context{Tools: llm.NewNoTools()}
 
-	streamResult, err := c.ProcessDMRequest("conv-id", lm, llmContext)
+	streamResult, err := c.ProcessDMRequest(context.Background(), "conv-id", lm, llmContext)
 	require.NoError(t, err)
 	_, readErr := streamResult.Stream.ReadAll()
 	require.NoError(t, readErr)
@@ -324,7 +324,7 @@ func TestHandleToolCallRestoresLoadedToolForApprovalExecution(t *testing.T) {
 	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolCall("user-id", approvalPost, channel, []string{"tool-use-1"}))
+	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}))
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
@@ -387,7 +387,7 @@ func TestHandleToolCallFailsSafelyWhenLoadedToolRevoked(t *testing.T) {
 	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolCall("user-id", approvalPost, channel, []string{"tool-use-1"}))
+	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}))
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
@@ -453,7 +453,7 @@ func TestHandleToolCallDoesNotUseNameOnlyMismatchedTool(t *testing.T) {
 	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolCall("user-id", approvalPost, channel, []string{"tool-use-1"}))
+	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}))
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
@@ -481,6 +481,7 @@ func TestStreamToolFollowUpRestoresLoadedTool(t *testing.T) {
 	}
 
 	err := c.streamToolFollowUp(
+		context.Background(),
 		bot,
 		&model.User{Id: "user-id", Username: "user"},
 		&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
@@ -510,6 +511,7 @@ func TestRegenerateViaConversationRestoresLoadedTool(t *testing.T) {
 	post.AddProp(streaming.ConversationIDProp, conv.ID)
 
 	streamResult, err := c.regenerateViaConversation(
+		context.Background(),
 		bot,
 		&model.User{Id: "user-id", Username: "user"},
 		&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},

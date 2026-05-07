@@ -4,6 +4,7 @@
 package conversation
 
 import (
+	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -141,6 +142,58 @@ func (s *Service) GetConversation(id string) (*store.Conversation, error) {
 // GetTurns returns all turns for a conversation, ordered by sequence.
 func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 	return s.store.GetTurnsForConversation(conversationID)
+}
+
+// GetInitiatingUserTurn returns the user turn that started the agent run
+// whose assistant turn produced postID. Used to derive the run's deterministic
+// TraceID at resume time so spans started on a different node still land in
+// the original trace. Returns nil if no matching assistant turn or no
+// preceding user turn is found.
+func (s *Service) GetInitiatingUserTurn(conversationID, postID string) (*store.Turn, error) {
+	turns, err := s.store.GetTurnsForConversation(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	assistantSeq := -1
+	for i := range turns {
+		if turns[i].Role == "assistant" && turns[i].PostID != nil && *turns[i].PostID == postID {
+			assistantSeq = turns[i].Sequence
+			break
+		}
+	}
+	if assistantSeq < 0 {
+		return nil, nil
+	}
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == "user" && turns[i].Sequence < assistantSeq {
+			return &turns[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// GetPreviousUserTurn returns the user turn that came immediately before
+// currentUserTurnID in the conversation, or nil if currentUserTurnID is the
+// first user turn. Used to attach a span link from a new run to the previous
+// run's trace, so consecutive invocations in the same conversation are
+// navigable in Tempo.
+func (s *Service) GetPreviousUserTurn(conversationID, currentUserTurnID string) (*store.Turn, error) {
+	turns, err := s.store.GetTurnsForConversation(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	var prev *store.Turn
+	for i := range turns {
+		if turns[i].Role != "user" {
+			continue
+		}
+		if turns[i].ID == currentUserTurnID {
+			return prev, nil
+		}
+		t := turns[i]
+		prev = &t
+	}
+	return nil, nil
 }
 
 // UpdateTurnContent updates the content JSON of a turn.
@@ -531,7 +584,7 @@ func (s *Service) GenerateTitle(
 		OperationSubType: llm.SubTypeNoStream,
 	}
 
-	title, err := lm.ChatCompletionNoStream(req,
+	title, err := lm.ChatCompletionNoStream(stdcontext.Background(), req,
 		llm.WithMaxGeneratedTokens(25),
 		llm.WithReasoningDisabled(),
 		llm.WithToolsDisabled(),

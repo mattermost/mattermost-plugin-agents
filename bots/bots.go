@@ -28,7 +28,6 @@ type Config interface {
 	GetBots() []llm.BotConfig
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
 	GetDefaultBotName() string
-	EnableLLMLogging() bool
 	EnableTokenUsageLogging() bool
 	EnableTokenUsageLogToPlugin() bool
 	EnableTokenUsageLogToFile() bool
@@ -436,11 +435,6 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 
 	// Structured output fallback
 	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
-
-	// Logging
-	if b.config.EnableLLMLogging() {
-		result = llm.NewLanguageModelLogWrapper(b.pluginAPI.Log, result)
-	}
 
 	return result, nil
 }

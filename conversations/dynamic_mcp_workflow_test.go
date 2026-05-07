@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 	"testing"
@@ -22,7 +23,7 @@ type dynamicWorkflowLLM struct {
 	requests []llm.CompletionRequest
 }
 
-func (l *dynamicWorkflowLLM) ChatCompletion(request llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (l *dynamicWorkflowLLM) ChatCompletion(_ context.Context, request llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -53,8 +54,8 @@ func (l *dynamicWorkflowLLM) ChatCompletion(request llm.CompletionRequest, _ ...
 	}
 }
 
-func (l *dynamicWorkflowLLM) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
-	result, err := l.ChatCompletion(request, opts...)
+func (l *dynamicWorkflowLLM) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	result, err := l.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return "", err
 	}
@@ -117,7 +118,7 @@ func TestDynamicMCPStrictSearchLoadCallHappyPath(t *testing.T) {
 		},
 	}
 
-	streamResult, err := c.ProcessDMRequest(conv.ID, lm, llmContext)
+	streamResult, err := c.ProcessDMRequest(context.Background(), conv.ID, lm, llmContext)
 	require.NoError(t, err)
 	text, readErr := streamResult.Stream.ReadAll()
 	require.NoError(t, readErr)
@@ -201,7 +202,7 @@ func TestDynamicMCPLoadedToolStillRequiresApprovalWhenPolicyAsks(t *testing.T) {
 		},
 	}
 
-	streamResult, err := c.ProcessDMRequest(conv.ID, lm, llmContext)
+	streamResult, err := c.ProcessDMRequest(context.Background(), conv.ID, lm, llmContext)
 	require.NoError(t, err)
 
 	foundPendingBusinessTool := false
