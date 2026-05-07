@@ -84,6 +84,20 @@ func TestSearchToolsEmptyQueryReturnsEmptyList(t *testing.T) {
 	}
 }
 
+func TestSearchToolsNilContextStillReturnsResults(t *testing.T) {
+	searchTool := metaToolByName(t, NewMetaTools(NewToolRegistry([]llm.Tool{
+		testRegistryTool("jira__get_issue", "Get issue", "https://jira.example.com"),
+	})), SearchToolsName)
+
+	resultJSON, err := searchTool.Resolver(nil, metaToolArgs(`{"query":"issue"}`))
+	require.NoError(t, err)
+
+	var result SearchToolsResult
+	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
+	require.Len(t, result.Tools, 1)
+	require.Equal(t, "jira__get_issue", result.Tools[0].Name)
+}
+
 func TestSearchToolsUsesFilteredRegistryOnly(t *testing.T) {
 	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("jira__get_issue", "Get a Jira issue", "https://jira.example.com"),
@@ -276,7 +290,7 @@ func TestMetaToolsNilRegistryResolvers(t *testing.T) {
 	var loadResult LoadToolResult
 	require.NoError(t, json.Unmarshal([]byte(loadJSON), &loadResult))
 	require.False(t, loadResult.Loaded)
-	require.Equal(t, "tool not found", loadResult.Error)
+	require.Equal(t, "tool registry is unavailable", loadResult.Error)
 	require.Empty(t, loadResult.Matches)
 }
 

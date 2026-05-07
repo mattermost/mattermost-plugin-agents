@@ -19,11 +19,58 @@ import (
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
 const testListToolsMethod = "tools/list"
+
+type fixedPluginAPI struct {
+	plugintest.API
+	kvGet       func(string) ([]byte, *model.AppError)
+	sessionByID map[string]*model.Session
+	userByID    map[string]*model.User
+}
+
+func (f *fixedPluginAPI) LogDebug(string, ...interface{}) {}
+
+func (f *fixedPluginAPI) LogInfo(string, ...interface{}) {}
+
+func (f *fixedPluginAPI) LogWarn(string, ...interface{}) {}
+
+func (f *fixedPluginAPI) LogError(string, ...interface{}) {}
+
+func (f *fixedPluginAPI) KVGet(key string) ([]byte, *model.AppError) {
+	if f.kvGet != nil {
+		return f.kvGet(key)
+	}
+	return nil, nil
+}
+
+func (f *fixedPluginAPI) KVSet(string, []byte) *model.AppError {
+	return nil
+}
+
+func (f *fixedPluginAPI) KVSetWithOptions(string, []byte, model.PluginKVSetOptions) (bool, *model.AppError) {
+	return true, nil
+}
+
+func (f *fixedPluginAPI) KVDelete(string) *model.AppError {
+	return nil
+}
+
+func (f *fixedPluginAPI) GetSession(sessionID string) (*model.Session, *model.AppError) {
+	if f.sessionByID == nil {
+		return nil, nil
+	}
+	return f.sessionByID[sessionID], nil
+}
+
+func (f *fixedPluginAPI) GetUser(userID string) (*model.User, *model.AppError) {
+	if f.userByID == nil {
+		return nil, nil
+	}
+	return f.userByID[userID], nil
+}
 
 type fakeEmbeddedMCPServer struct {
 	ctx    context.Context
@@ -135,53 +182,42 @@ func newTestOAuthManager() *OAuthManager {
 }
 
 func newTestPluginAPIWithSession(sessionID string) *pluginapi.Client {
-	mockAPI := &plugintest.API{}
-	args := make([]interface{}, 20)
-	for i := range args {
-		args[i] = mock.Anything
+	fakeAPI := &fixedPluginAPI{
+		sessionByID: map[string]*model.Session{
+			sessionID: {
+				Id:     sessionID,
+				UserId: "test-user",
+				Token:  "test-token",
+			},
+		},
 	}
-	mockAPI.On("LogDebug", args...).Maybe()
-	mockAPI.On("LogInfo", args...).Maybe()
-	mockAPI.On("LogWarn", args...).Maybe()
-	mockAPI.On("LogError", args...).Maybe()
-	mockAPI.On("KVGet", mock.AnythingOfType("string")).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
-	mockAPI.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
-	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.Anything, mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, (*model.AppError)(nil)).Maybe()
-	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return((*model.AppError)(nil)).Maybe()
-	mockAPI.On("GetSession", sessionID).Return(&model.Session{
-		Id:     sessionID,
-		UserId: "test-user",
-		Token:  "test-token",
-	}, (*model.AppError)(nil)).Maybe()
-	return pluginapi.NewClient(mockAPI, nil)
+	return pluginapi.NewClient(fakeAPI, nil)
 }
 
 func newTestPluginAPIForEmbeddedManager(userID, sessionID string) *pluginapi.Client {
-	mockAPI := &plugintest.API{}
-	args := make([]interface{}, 20)
-	for i := range args {
-		args[i] = mock.Anything
+	fakeAPI := &fixedPluginAPI{
+		kvGet: func(key string) ([]byte, *model.AppError) {
+			if key == buildEmbeddedSessionKey(userID) {
+				return []byte(sessionID), nil
+			}
+			return nil, nil
+		},
+		sessionByID: map[string]*model.Session{
+			sessionID: {
+				Id:        sessionID,
+				UserId:    userID,
+				Token:     "test-token",
+				ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
+			},
+		},
+		userByID: map[string]*model.User{
+			userID: {
+				Id:    userID,
+				Roles: "system_user",
+			},
+		},
 	}
-	mockAPI.On("LogDebug", args...).Maybe()
-	mockAPI.On("LogInfo", args...).Maybe()
-	mockAPI.On("LogWarn", args...).Maybe()
-	mockAPI.On("LogError", args...).Maybe()
-	mockAPI.On("KVGet", buildEmbeddedSessionKey(userID)).Return([]byte(sessionID), (*model.AppError)(nil))
-	mockAPI.On("KVGet", mock.AnythingOfType("string")).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
-	mockAPI.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
-	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.Anything, mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, (*model.AppError)(nil)).Maybe()
-	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return((*model.AppError)(nil)).Maybe()
-	mockAPI.On("GetUser", userID).Return(&model.User{
-		Id:    userID,
-		Roles: "system_user",
-	}, (*model.AppError)(nil))
-	mockAPI.On("GetSession", sessionID).Return(&model.Session{
-		Id:        sessionID,
-		UserId:    userID,
-		Token:     "test-token",
-		ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
-	}, (*model.AppError)(nil))
-	return pluginapi.NewClient(mockAPI, nil)
+	return pluginapi.NewClient(fakeAPI, nil)
 }
 
 func requireToolNames(t *testing.T, tools []llm.Tool, expectedNames ...string) {

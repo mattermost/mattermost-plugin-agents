@@ -1449,6 +1449,17 @@ func TestNormalizeMCPServerOrigin(t *testing.T) {
 	assert.Equal(t, "https://example.com", normalizeMCPServerOrigin("  https://example.com/  "))
 }
 
+func TestFilterMCPToolsByDisabledOriginsNormalizesOrigins(t *testing.T) {
+	tools := []llm.Tool{
+		{Name: "jira__search", ServerOrigin: "https://jira.example.com"},
+		{Name: "github__list_prs", ServerOrigin: "https://github.example.com"},
+	}
+
+	filtered := filterMCPToolsByDisabledOrigins(tools, []string{"  https://jira.example.com/  "})
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "github__list_prs", filtered[0].Name)
+}
+
 func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {
 	allowlist := []llm.EnabledMCPTool{
 		{ServerOrigin: "https://allowed.example/", ToolName: "t1"},

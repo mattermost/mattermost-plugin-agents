@@ -155,8 +155,14 @@ func setupChannelAnalysisAPI(t *testing.T, dynamicLoading bool) (*TestEnvironmen
 }
 
 func TestHandleChannelAnalysisPreloadsRequiredMCPTools(t *testing.T) {
+	prevMode := gin.Mode()
+	prevWriter := gin.DefaultWriter
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
+	t.Cleanup(func() {
+		gin.SetMode(prevMode)
+		gin.DefaultWriter = prevWriter
+	})
 
 	tests := []struct {
 		name           string

@@ -550,12 +550,12 @@ func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.
 
 	disabledSet := make(map[string]bool, len(disabled))
 	for _, origin := range disabled {
-		disabledSet[origin] = true
+		disabledSet[normalizeMCPServerOrigin(origin)] = true
 	}
 
 	filtered := make([]llm.Tool, 0, len(tools))
 	for _, tool := range tools {
-		if disabledSet[tool.ServerOrigin] {
+		if disabledSet[normalizeMCPServerOrigin(tool.ServerOrigin)] {
 			continue
 		}
 		filtered = append(filtered, tool)
