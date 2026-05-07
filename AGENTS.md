@@ -10,7 +10,7 @@ Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go 1.2
 
 `make help` lists every documented target with a one-line description.
 
-- Pre-PR aggregate (lint + unit tests + e2e shard coverage; **recommended**): `make check`
+- Pre-PR aggregate (lint + unit tests + e2e shard coverage + i18n/lockfile drift; **recommended**): `make check`
 - Lint with auto-fix (also re-extracts i18n strings): `make check-style-fix`
 - Lint only: `make check-style`
 - All unit tests: `make test`
@@ -24,7 +24,7 @@ Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go 1.2
   Model: `ANTHROPIC_MODEL=claude-sonnet-4-5-20250929 make evals-ci`
 - Streaming benchmarks: `go test -bench=. -benchmem ./llm/... ./streaming/...`
 
-When `make check` fails, run the underlying targets individually (`make check-style`, `make test`, `make check-shards`) to isolate which step broke.
+When `make check` fails, run the underlying targets individually (`make check-style`, `make test`, `make check-shards`, `make check-i18n`, `make check-locks`) to isolate which step broke. CI runs the same drift checks; if i18n or a lockfile is out of sync, those targets regenerate the file in place — review and commit.
 
 ## Repository layout
 

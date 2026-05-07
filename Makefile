@@ -159,16 +159,55 @@ major-rc: ## to bump major release candidate version (semver)
 .PHONY: all
 all: check-style test dist
 
-## Pre-PR aggregate: lint, unit tests, e2e shard coverage. Skips the slow
-## `make e2e` run (deferred to CI). Each underlying target is still runnable
-## individually so you can drill into a single failure.
+## Pre-PR aggregate: lint, unit tests, e2e shard coverage, i18n/lockfile
+## drift. Skips the slow `make e2e` run (deferred to CI). Each underlying
+## target is still runnable individually so you can drill into a single
+## failure.
 .PHONY: check
-check: check-style test check-shards
+check: check-style test check-shards check-i18n check-locks
 
 ## Validates that every spec under e2e/tests/ is assigned to a CI shard group.
 .PHONY: check-shards
 check-shards: e2e/node_modules
 	cd e2e && node scripts/ci-test-groups.mjs validate
+
+## Verify webapp/src/i18n/en.json is in sync with source. Fails (and leaves
+## the regenerated file in place for inspection) when source has unextracted
+## user-facing strings.
+.PHONY: check-i18n
+check-i18n: webapp/node_modules
+	@PREV=$$(mktemp); cp webapp/src/i18n/en.json "$$PREV"; \
+	$(MAKE) --no-print-directory i18n-extract >/dev/null; \
+	if ! diff -q "$$PREV" webapp/src/i18n/en.json >/dev/null 2>&1; then \
+		echo "" >&2; \
+		echo "*** webapp/src/i18n/en.json is out of sync with webapp source." >&2; \
+		echo "*** It has been regenerated; review the diff and commit:" >&2; \
+		echo "    git diff -- webapp/src/i18n/en.json" >&2; \
+		rm "$$PREV"; \
+		exit 1; \
+	fi; \
+	rm "$$PREV"
+
+## Verify webapp/ and e2e/ package-lock.json files match package.json.
+## Fails (and leaves regenerated lockfiles in place) when package.json was
+## edited without running `npm install`.
+.PHONY: check-locks
+check-locks:
+	@PREV_W=$$(mktemp); PREV_E=$$(mktemp); \
+	cp webapp/package-lock.json "$$PREV_W"; \
+	cp e2e/package-lock.json "$$PREV_E"; \
+	(cd webapp && $(NPM) install --package-lock-only --silent --no-audit --no-fund) && \
+	(cd e2e && $(NPM) install --package-lock-only --silent --no-audit --no-fund); \
+	drift=0; \
+	if ! diff -q "$$PREV_W" webapp/package-lock.json >/dev/null 2>&1; then drift=1; \
+	  echo "*** webapp/package-lock.json is out of sync with webapp/package.json." >&2; fi; \
+	if ! diff -q "$$PREV_E" e2e/package-lock.json >/dev/null 2>&1; then drift=1; \
+	  echo "*** e2e/package-lock.json is out of sync with e2e/package.json." >&2; fi; \
+	rm "$$PREV_W" "$$PREV_E"; \
+	if [ $$drift -ne 0 ]; then \
+		echo "*** Lockfile(s) regenerated; commit the result." >&2; \
+		exit 1; \
+	fi
 
 ## Ensures the plugin manifest is valid
 .PHONY: manifest-check
