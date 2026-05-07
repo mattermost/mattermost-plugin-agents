@@ -226,7 +226,7 @@ Bifrost uses `https://generativelanguage.googleapis.com/v1beta`. Egress proxies 
 
 ### Native Google tools
 
-Native Google tools are **off by default** for Gemini, matching the same posture as Cohere, Mistral, and Bedrock. Enable them per agent in the **Config** tab under **Native Google Tools**.
+For new Gemini agents, the Agents UI starts with **Web Search** enabled under **Native Google Tools** and **Reasoning** enabled. Agents migrated during upgrade do not automatically gain native web search; migration 000006 leaves `EnabledNativeTools = '[]'`, so enable **Web Search** per agent in the **Config** tab when needed.
 
 | Tool | What it does | Notes |
 |------|--------------|-------|
@@ -252,7 +252,7 @@ Reasoning:                Enabled
 Thinking Budget (tokens): 4096           # optional; wins over effort
 Reasoning Effort:         medium         # used when budget is blank
 Native Google Tools:
-  Web Search:             Enabled        # off by default
+  Web Search:             Enabled        # default for new agents; migrated agents remain off until enabled
 ```
 
 ## Google Vertex AI
@@ -316,7 +316,7 @@ For Gemini models running on Vertex AI, reasoning is configured the same way as 
 
 ### Native Google tools
 
-Native Google tools are **off by default** for Vertex AI, matching the same posture as Cohere, Mistral, and Bedrock. Enable per agent under **Native Google Tools**.
+For new Vertex AI agents, the Agents UI starts with **Web Search** enabled under **Native Google Tools** and **Reasoning** enabled. Agents migrated during upgrade do not automatically gain native web search; migration 000006 leaves `EnabledNativeTools = '[]'`, so enable **Web Search** per agent when needed.
 
 | Tool | What it does | Notes |
 |------|--------------|-------|
@@ -343,7 +343,7 @@ Reasoning:                Enabled
 Thinking Budget (tokens): 4096           # optional; wins over effort on Gemini
 Reasoning Effort:         medium         # mapped to thinkingLevel on Gemini 3.0+
 Native Google Tools:
-  Web Search:             Enabled        # off by default
+  Web Search:             Enabled        # default for new agents; migrated agents remain off until enabled
 ```
 
 ### Troubleshooting
