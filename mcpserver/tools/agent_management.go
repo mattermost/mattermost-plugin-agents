@@ -257,6 +257,9 @@ func (p *MattermostToolProvider) toolUpdateAgent(mcpContext *MCPToolContext, arg
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool update_agent: %w", err)
 	}
+	if strings.TrimSpace(args.AgentID) == "" && strings.TrimSpace(args.AgentUsername) == "" {
+		return "agent_id or agent_username is required", fmt.Errorf("agent_id or agent_username is required")
+	}
 
 	currentAgent, err := resolveAgent(mcpContext, args.AgentID, args.AgentUsername)
 	if err != nil {
@@ -393,11 +396,15 @@ func (p *MattermostToolProvider) toolUpdateCustomPrompt(mcpContext *MCPToolConte
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool update_custom_prompt: %w", err)
 	}
+	if strings.TrimSpace(args.PromptID) == "" && strings.TrimSpace(args.PromptName) == "" {
+		return "prompt_id or prompt_name is required", fmt.Errorf("prompt_id or prompt_name is required")
+	}
 
 	currentPrompt, err := resolveCustomPrompt(mcpContext, args.PromptID, args.PromptName)
 	if err != nil {
 		return "failed to resolve custom prompt", err
 	}
+	fallbackPrompt := currentPrompt
 
 	body := map[string]any{
 		"name":        currentPrompt.Name,
@@ -407,15 +414,19 @@ func (p *MattermostToolProvider) toolUpdateCustomPrompt(mcpContext *MCPToolConte
 	}
 	if args.Name != nil {
 		body["name"] = *args.Name
+		fallbackPrompt.Name = *args.Name
 	}
 	if args.Description != nil {
 		body["description"] = *args.Description
+		fallbackPrompt.Description = *args.Description
 	}
 	if args.Template != nil {
 		body["template"] = *args.Template
+		fallbackPrompt.Template = *args.Template
 	}
 	if args.IsShared != nil {
 		body["is_shared"] = *args.IsShared
+		fallbackPrompt.IsShared = *args.IsShared
 	}
 
 	err = doPluginNoContent(mcpContext, http.MethodPut, "/custom-prompts/"+currentPrompt.ID, body)
@@ -425,7 +436,7 @@ func (p *MattermostToolProvider) toolUpdateCustomPrompt(mcpContext *MCPToolConte
 
 	updatedPrompt, err := resolveCustomPrompt(mcpContext, currentPrompt.ID, "")
 	if err != nil {
-		return "custom prompt updated but could not be reloaded", err
+		return marshalToolResult(fallbackPrompt)
 	}
 
 	return marshalToolResult(updatedPrompt)
@@ -521,15 +532,15 @@ func pluginRequestError(method, route string, response *http.Response) error {
 }
 
 func resolveServiceID(mcpContext *MCPToolContext, serviceID, serviceName string) (string, error) {
-	services, err := doPluginJSON[[]serviceInfoResponse](mcpContext, http.MethodGet, "/services", nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to list services: %w", err)
-	}
-
 	trimmedID := strings.TrimSpace(serviceID)
 	trimmedName := strings.TrimSpace(serviceName)
 	if trimmedID == "" && trimmedName == "" {
 		return "", fmt.Errorf("service_id or service_name is required")
+	}
+
+	services, err := doPluginJSON[[]serviceInfoResponse](mcpContext, http.MethodGet, "/services", nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to list services: %w", err)
 	}
 
 	var matchedByID *serviceInfoResponse

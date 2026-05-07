@@ -150,31 +150,71 @@ func TestToolGetAgentsAndGetCustomPromptsUsePluginRoutes(t *testing.T) {
 	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
 	mcpContext := newTestMCPToolContext(server.URL)
 
-	getAgentsResult, err := provider.toolGetAgents(mcpContext, jsonArgsGetter(t, GetAgentsToolArgs{}))
-	require.NoError(t, err)
-	assert.Contains(t, getAgentsResult, "\"id\": \"agent-1\"")
-	assert.Contains(t, getAgentsResult, "\"name\": \"release-bot\"")
-	assert.Contains(t, getAgentsResult, "\"id\": \"agent-2\"")
+	tests := []struct {
+		name    string
+		tool    func(*MCPToolContext, llm.ToolArgumentGetter) (string, error)
+		args    any
+		want    []string
+		notWant []string
+	}{
+		{
+			name: "list all agents",
+			tool: provider.toolGetAgents,
+			args: GetAgentsToolArgs{},
+			want: []string{
+				"\"id\": \"agent-1\"",
+				"\"name\": \"release-bot\"",
+				"\"id\": \"agent-2\"",
+			},
+		},
+		{
+			name: "list all prompts",
+			tool: provider.toolGetCustomPrompts,
+			args: GetCustomPromptToolArgs{},
+			want: []string{
+				"\"id\": \"prompt-1\"",
+				"\"id\": \"prompt-2\"",
+				"\"name\": \"Incident Report\"",
+			},
+		},
+		{
+			name: "filter agent by username",
+			tool: provider.toolGetAgents,
+			args: GetAgentsToolArgs{AgentUsername: "release-bot"},
+			want: []string{
+				"\"id\": \"agent-1\"",
+			},
+			notWant: []string{
+				"\"id\": \"agent-2\"",
+			},
+		},
+		{
+			name: "filter prompt by name",
+			tool: provider.toolGetCustomPrompts,
+			args: GetCustomPromptToolArgs{PromptName: "Incident Report"},
+			want: []string{
+				"\"id\": \"prompt-2\"",
+			},
+			notWant: []string{
+				"\"id\": \"prompt-1\"",
+			},
+		},
+	}
 
-	getPromptsResult, err := provider.toolGetCustomPrompts(mcpContext, jsonArgsGetter(t, GetCustomPromptToolArgs{}))
-	require.NoError(t, err)
-	assert.Contains(t, getPromptsResult, "\"id\": \"prompt-1\"")
-	assert.Contains(t, getPromptsResult, "\"id\": \"prompt-2\"")
-	assert.Contains(t, getPromptsResult, "\"name\": \"Incident Report\"")
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			result, err := testCase.tool(mcpContext, jsonArgsGetter(t, testCase.args))
+			require.NoError(t, err)
 
-	getAgentResult, err := provider.toolGetAgents(mcpContext, jsonArgsGetter(t, GetAgentsToolArgs{
-		AgentUsername: "release-bot",
-	}))
-	require.NoError(t, err)
-	assert.Contains(t, getAgentResult, "\"id\": \"agent-1\"")
-	assert.NotContains(t, getAgentResult, "\"id\": \"agent-2\"")
-
-	getPromptResult, err := provider.toolGetCustomPrompts(mcpContext, jsonArgsGetter(t, GetCustomPromptToolArgs{
-		PromptName: "Incident Report",
-	}))
-	require.NoError(t, err)
-	assert.Contains(t, getPromptResult, "\"id\": \"prompt-2\"")
-	assert.NotContains(t, getPromptResult, "\"id\": \"prompt-1\"")
+			for _, expected := range testCase.want {
+				assert.Contains(t, result, expected)
+			}
+			for _, unexpected := range testCase.notWant {
+				assert.NotContains(t, result, unexpected)
+			}
+		})
+	}
 }
 
 func TestToolUpdateAgentMergesExistingState(t *testing.T) {
@@ -370,6 +410,129 @@ func TestToolCreateAndUpdateCustomPromptUsePluginRoutes(t *testing.T) {
 	assert.Equal(t, "", updatedPromptBody["description"])
 	assert.Equal(t, "Updated template", updatedPromptBody["template"])
 	assert.Equal(t, true, updatedPromptBody["is_shared"])
+}
+
+func TestToolUpdateMutationsRequireIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request to %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
+	mcpContext := newTestMCPToolContext(server.URL)
+
+	tests := []struct {
+		name        string
+		tool        func(*MCPToolContext, llm.ToolArgumentGetter) (string, error)
+		args        any
+		wantMessage string
+		wantError   string
+	}{
+		{
+			name:        "agent update requires identifier",
+			tool:        provider.toolUpdateAgent,
+			args:        UpdateAgentToolArgs{},
+			wantMessage: "agent_id or agent_username is required",
+			wantError:   "agent_id or agent_username is required",
+		},
+		{
+			name:        "custom prompt update requires identifier",
+			tool:        provider.toolUpdateCustomPrompt,
+			args:        UpdateCustomPromptToolArgs{},
+			wantMessage: "prompt_id or prompt_name is required",
+			wantError:   "prompt_id or prompt_name is required",
+		},
+	}
+
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			message, err := testCase.tool(mcpContext, jsonArgsGetter(t, testCase.args))
+			require.Error(t, err)
+			assert.Equal(t, testCase.wantMessage, message)
+			assert.Contains(t, err.Error(), testCase.wantError)
+		})
+	}
+}
+
+func TestResolveServiceIDRequiresIdentifierBeforeFetch(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		t.Fatalf("unexpected request to %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	serviceID, err := resolveServiceID(newTestMCPToolContext(server.URL), "", "")
+	require.Error(t, err)
+	assert.Empty(t, serviceID)
+	assert.Equal(t, 0, requests)
+	assert.Contains(t, err.Error(), "service_id or service_name is required")
+}
+
+func TestToolUpdateCustomPromptReturnsFallbackWhenReloadFails(t *testing.T) {
+	t.Parallel()
+
+	var updatedPromptBody map[string]any
+	listCalls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "BEARER test-token", r.Header.Get(model.HeaderAuth))
+
+		switch r.URL.Path {
+		case "/plugins/mattermost-ai/custom-prompts":
+			require.Equal(t, http.MethodGet, r.Method)
+			listCalls++
+			if listCalls == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				require.NoError(t, json.NewEncoder(w).Encode([]customprompts.CustomPrompt{{
+					ID:          "prompt-1",
+					CreatorID:   "user-1",
+					Name:        "Daily Summary",
+					Description: "Original description",
+					Template:    "Original template",
+					IsShared:    false,
+				}}))
+				return
+			}
+			http.Error(w, "reload failed", http.StatusInternalServerError)
+		case "/plugins/mattermost-ai/custom-prompts/prompt-1":
+			require.Equal(t, http.MethodPut, r.Method)
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&updatedPromptBody))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request to %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
+	mcpContext := newTestMCPToolContext(server.URL)
+
+	updatedTemplate := "Updated template"
+	updatedDescription := ""
+	shared := true
+
+	result, err := provider.toolUpdateCustomPrompt(mcpContext, jsonArgsGetter(t, UpdateCustomPromptToolArgs{
+		PromptID:    "prompt-1",
+		Template:    &updatedTemplate,
+		Description: &updatedDescription,
+		IsShared:    &shared,
+	}))
+	require.NoError(t, err)
+
+	var updatedPrompt customprompts.CustomPrompt
+	require.NoError(t, json.Unmarshal([]byte(result), &updatedPrompt))
+	assert.Equal(t, "prompt-1", updatedPrompt.ID)
+	assert.Equal(t, "Daily Summary", updatedPrompt.Name)
+	assert.Equal(t, "", updatedPrompt.Description)
+	assert.Equal(t, "Updated template", updatedPrompt.Template)
+	assert.True(t, updatedPrompt.IsShared)
+	assert.Equal(t, "Updated template", updatedPromptBody["template"])
 }
 
 func TestToolGetAgentsRequiresVisibleMatch(t *testing.T) {
