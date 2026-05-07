@@ -473,6 +473,21 @@ jobs:
           go-version-file: 'go.mod'
       - uses: mattermost/actions/plugin-ci/lint@main
 
+  verify-no-drift:
+    name: Verify webapp i18n + package-lock are in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - name: Install webapp dependencies
+        run: cd webapp && npm ci
+      - name: Check webapp i18n catalog drift
+        run: make check-i18n
+      - name: Check package-lock.json drift
+        run: make check-locks
+
   build:
     runs-on: ubuntu-latest
     steps:

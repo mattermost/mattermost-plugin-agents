@@ -159,6 +159,58 @@ major-rc: ## to bump major release candidate version (semver)
 .PHONY: all
 all: check-style test dist
 
+## Pre-PR aggregate: lint, unit tests, e2e shard coverage, i18n/lockfile
+## drift. Skips the slow `make e2e` run (deferred to CI). Each underlying
+## target is still runnable individually so you can drill into a single
+## failure.
+.PHONY: check
+check: check-style test check-shards check-i18n check-locks
+
+## Validates that every spec under e2e/tests/ is assigned to a CI shard group.
+.PHONY: check-shards
+check-shards: e2e/node_modules
+	cd e2e && node scripts/ci-test-groups.mjs validate
+
+## Verify webapp/src/i18n/en.json is in sync with source. Fails (and leaves
+## the regenerated file in place for inspection) when source has unextracted
+## user-facing strings.
+.PHONY: check-i18n
+check-i18n: webapp/node_modules
+	@set -e; \
+	PREV=$$(mktemp); \
+	trap "rm -f $$PREV" EXIT; \
+	cp webapp/src/i18n/en.json "$$PREV"; \
+	$(MAKE) --no-print-directory i18n-extract >/dev/null; \
+	if ! diff -q "$$PREV" webapp/src/i18n/en.json >/dev/null 2>&1; then \
+		echo "" >&2; \
+		echo "*** webapp/src/i18n/en.json is out of sync with webapp source." >&2; \
+		echo "*** It has been regenerated; review the diff and commit:" >&2; \
+		echo "    git diff -- webapp/src/i18n/en.json" >&2; \
+		exit 1; \
+	fi
+
+## Verify webapp/ and e2e/ package-lock.json files match package.json.
+## Fails (and leaves regenerated lockfiles in place) when package.json was
+## edited without running `npm install`.
+.PHONY: check-locks
+check-locks:
+	@set -e; \
+	PREV_W=$$(mktemp); PREV_E=$$(mktemp); \
+	trap "rm -f $$PREV_W $$PREV_E" EXIT; \
+	cp webapp/package-lock.json "$$PREV_W"; \
+	cp e2e/package-lock.json "$$PREV_E"; \
+	(cd webapp && $(NPM) install --package-lock-only --loglevel=error --no-audit --no-fund); \
+	(cd e2e && $(NPM) install --package-lock-only --loglevel=error --no-audit --no-fund); \
+	drift=0; \
+	if ! diff -q "$$PREV_W" webapp/package-lock.json >/dev/null 2>&1; then drift=1; \
+	  echo "*** webapp/package-lock.json is out of sync with webapp/package.json." >&2; fi; \
+	if ! diff -q "$$PREV_E" e2e/package-lock.json >/dev/null 2>&1; then drift=1; \
+	  echo "*** e2e/package-lock.json is out of sync with e2e/package.json." >&2; fi; \
+	if [ $$drift -ne 0 ]; then \
+		echo "*** Lockfile(s) regenerated; commit the result." >&2; \
+		exit 1; \
+	fi
+
 ## Ensures the plugin manifest is valid
 .PHONY: manifest-check
 manifest-check:
@@ -169,12 +221,26 @@ manifest-check:
 apply:
 	./build/bin/manifest apply
 
-## Install go tools
+# Pinned tool versions. Bump these here, not at the install site — keeping the
+# pins in one place lets contributors update a tool with a single edit and
+# makes Go-version-skew fixes obvious.
+GOLANGCI_LINT_VERSION    ?= v2.0.2
+GOTESTSUM_VERSION        ?= v1.7.0
+MATTERMOST_GOVET_VERSION ?= 3f08281c344327ac09364f196b15f9a81c7eff08
+
+## Install go tools.
 install-go-tools:
 	@echo Installing go tools
-	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.0.2
-	$(GO) install gotest.tools/gotestsum@v1.7.0
-	$(GO) install github.com/mattermost/mattermost-govet/v2@3f08281c344327ac09364f196b15f9a81c7eff08
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	$(GO) install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
+	@if ! $(GO) install github.com/mattermost/mattermost-govet/v2@$(MATTERMOST_GOVET_VERSION); then \
+		echo "" >&2; \
+		echo "*** Failed to install mattermost-govet@$(MATTERMOST_GOVET_VERSION)." >&2; \
+		echo "*** This is usually Go toolchain skew: the pinned commit does not" >&2; \
+		echo "*** build against $$($(GO) version | awk '{print $$3}'). Bump" >&2; \
+		echo "*** MATTERMOST_GOVET_VERSION in the Makefile to a newer commit." >&2; \
+		exit 1; \
+	fi
 
 ## Runs eslint and golangci-lint
 .PHONY: check-style
@@ -196,9 +262,12 @@ ifneq ($(HAS_SERVER),)
 	$(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 ./...
 endif
 
-## Runs all style checks but fixes anything it can.
+## Runs all style checks but fixes anything it can. Also re-extracts webapp
+## i18n strings so manually-edited translation JSON gets regenerated rather
+## than drifting silently. (Server-side i18n in i18n/en.json is hand-curated
+## and intentionally not auto-extracted.)
 .PHONY: check-style-fix
-check-style-fix: manifest-check apply webapp/node_modules
+check-style-fix: manifest-check apply webapp/node_modules install-go-tools i18n-extract
 	goimports -w .
 	./scripts/fix_license_headers.sh 2023
 	cd webapp && npm run fix
@@ -301,9 +370,16 @@ dist: apply server webapp bundle
 .PHONY: dist-ci
 dist-ci: apply server-ci webapp bundle
 
-## Builds and installs the plugin to a server.
+## Builds and installs the plugin to a server. Builds linux-amd64 only by
+## default (the platform of most Mattermost server deployments). Set
+## MAKE_ALL_PLATFORMS=1 to build all supported OS/arch combinations — needed
+## when deploying to a Mac- or Windows-native Mattermost.
 .PHONY: deploy
+ifeq ($(MAKE_ALL_PLATFORMS),)
+deploy: dist-ci
+else
 deploy: dist
+endif
 	./build/bin/pluginctl deploy $(PLUGIN_ID) dist/$(BUNDLE_NAME)
 
 ## Builds the MCP server binary.
@@ -439,17 +515,13 @@ ifneq ($(HAS_SERVER),)
 	$(GO) tool cover -html=server/coverage.txt
 endif
 
-## Extract strings for translation from the source code.
-i18n-extract: i18n-extract-webapp i18n-extract-server
-
-.PHONY: i18n-extract-webapp
-i18n-extract-webapp:
+## Extract i18n strings from webapp source. The server-side i18n catalog
+## (i18n/en.json) uses nicksnyder/go-i18n directly with a hand-curated bundle
+## and is intentionally not auto-extracted — mmgotool's T()-call scanner
+## doesn't apply here.
+.PHONY: i18n-extract
+i18n-extract:
 	cd webapp && $(NPM) run i18n-extract -- --out-file src/i18n/en.json --id-interpolation-pattern '[sha512:contenthash:base64:8]' --format simple src/index.tsx 'src/components/**/*.{ts,tsx}'
-
-.PHONY: i18n-extract-server
-i18n-extract-server:
-	$(GO) install -modfile=go.tools.mod github.com/mattermost/mattermost-utilities/mmgotool
-	cd server && $(GOBIN)/mmgotool i18n extract --portal-dir="" --skip-dynamic
 
 ## Disable the plugin.
 .PHONY: disable
@@ -508,8 +580,27 @@ logs-watch:
 	./build/bin/pluginctl logs-watch $(PLUGIN_ID)
 
 # Help documentation à la https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
+## Show this help: list every documented target with a one-line description.
+.PHONY: help
 help:
-	@cat Makefile build/*.mk | grep -v '\.PHONY' |  grep -v '\help:' | grep -B1 -E '^[a-zA-Z0-9_.-]+:.*' | sed -e "s/:.*//" | sed -e "s/^## //" |  grep -v '\-\-' | sed '1!G;h;$$!d' | awk 'NR%2{printf "\033[36m%-30s\033[0m",$$0;next;}1' | sort
+	@printf "\nUsage: make \033[36m<target>\033[0m\n\nMost-used targets first; run 'make help | sort' for alphabetical:\n\n"
+	@printf "  \033[36m%-22s\033[0m %s\n" "check" "Lint + unit tests + e2e shard coverage (recommended pre-PR)"
+	@printf "  \033[36m%-22s\033[0m %s\n" "check-style" "Lint Go and webapp"
+	@printf "  \033[36m%-22s\033[0m %s\n" "check-style-fix" "Lint and auto-fix what's fixable; re-extracts i18n strings"
+	@printf "  \033[36m%-22s\033[0m %s\n" "test" "Run all unit tests"
+	@printf "  \033[36m%-22s\033[0m %s\n" "e2e" "Run Playwright e2e suite (slow, defer to CI when possible)"
+	@printf "  \033[36m%-22s\033[0m %s\n" "deploy" "Build linux-amd64 and deploy to a running Mattermost"
+	@printf "\nAll documented targets:\n\n"
+	@awk '/^## / { sub(/^## /, "", $$0); if (doc == "") doc=$$0; next } \
+	      /^## *$$/ { next } \
+	      /^\.PHONY:/ { next } \
+	      /^(ifeq|ifneq|ifdef|ifndef|else|endif)/ { next } \
+	      /^[a-zA-Z][a-zA-Z0-9_.-]*:/ && doc { \
+	          target=$$1; sub(/:.*/, "", target); \
+	          printf "  \033[36m%-22s\033[0m %s\n", target, doc; \
+	          doc="" \
+	      } \
+	      /^[[:space:]]*$$/ { doc="" }' Makefile build/*.mk | sort -u
 
 
 ## Install NPM dependencies for 2e2 tests

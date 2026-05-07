@@ -6,40 +6,84 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/mattermost/mattermost-plugin-agents/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/testcontainers/testcontainers-go"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-// These tests require PostgreSQL with pgvector extension installed.
-// Tests will fail if the database connection fails or if pgvector is not available.
+// rootDSN points to a Postgres instance with the pgvector extension available.
+// By default, TestMain starts a pgvector/pgvector container and writes the
+// connection string here. Set PGVECTOR_TEST_DSN to point at an existing
+// pgvector-enabled Postgres instead — useful for fast local iteration.
+var rootDSN string
 
-// testDB creates a test database and returns a connection to it.
-// This function will automatically create a temporary database for testing.
-// If PG_ROOT_DSN environment variable is set, it will be used as the root connection.
-// Default: "postgres://root:mostest@localhost:5432/postgres?sslmode=disable"
-var rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
+func TestMain(m *testing.M) {
+	if dsn := os.Getenv("PGVECTOR_TEST_DSN"); dsn != "" {
+		if !strings.Contains(dsn, "://") {
+			fmt.Println("PGVECTOR_TEST_DSN must be a URL-style DSN (e.g. postgres://user:pass@host:5432/db?sslmode=disable).")
+			fmt.Println("libpq key=value DSNs are not supported by this test harness.")
+			os.Exit(1)
+		}
+		rootDSN = dsn
+		os.Exit(m.Run())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	container, err := tcpostgres.Run(ctx,
+		"pgvector/pgvector:pg17",
+		tcpostgres.WithDatabase("postgres"),
+		tcpostgres.WithUsername("mmuser"),
+		tcpostgres.WithPassword("mostest"),
+		tcpostgres.BasicWaitStrategies(),
+	)
+	cancel()
+	if err != nil {
+		fmt.Printf("Failed to start pgvector container: %v\n", err)
+		os.Exit(1)
+	}
+
+	rootDSN, err = container.ConnectionString(context.Background(), "sslmode=disable")
+	if err != nil {
+		_ = testcontainers.TerminateContainer(container)
+		fmt.Printf("Failed to get container connection string: %v\n", err)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+
+	if err := testcontainers.TerminateContainer(container); err != nil {
+		fmt.Printf("Failed to terminate pgvector container: %v\n", err)
+	}
+
+	os.Exit(code)
+}
+
+// dsnForDatabase rewrites rootDSN to point at a different database name.
+func dsnForDatabase(dbName string) (string, error) {
+	u, err := url.Parse(rootDSN)
+	if err != nil {
+		return "", fmt.Errorf("parse rootDSN: %w", err)
+	}
+	u.Path = "/" + dbName
+	return u.String(), nil
+}
 
 func testDB(t *testing.T) *sqlx.DB {
 	rootDB, err := sqlx.Connect("postgres", rootDSN)
-	require.NoError(t, err, "Failed to connect to PostgreSQL. Is PostgreSQL running?")
+	require.NoError(t, err, "Failed to connect to test Postgres")
 	defer rootDB.Close()
-
-	// Check if pgvector extension is available
-	var hasVector bool
-	err = rootDB.Get(&hasVector, "SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'vector')")
-	require.NoError(t, err, "Failed to check for vector extension")
-	if !hasVector {
-		t.Skip("pgvector extension not available in PostgreSQL. Skipping pgvector-dependent tests.")
-	}
 
 	// Create a unique database name with a timestamp
 	dbName := fmt.Sprintf("pgvector_test_%d", model.GetMillis())
@@ -50,7 +94,8 @@ func testDB(t *testing.T) *sqlx.DB {
 	t.Logf("Created test database: %s", dbName)
 
 	// Connect to the new database
-	testDSN := fmt.Sprintf("postgres://mmuser:mostest@localhost:5432/%s?sslmode=disable", dbName)
+	testDSN, err := dsnForDatabase(dbName)
+	require.NoError(t, err, "Failed to compute test database DSN")
 	db, err := sqlx.Connect("postgres", testDSN)
 	if err != nil {
 		// Try to clean up the database even if connection fails
