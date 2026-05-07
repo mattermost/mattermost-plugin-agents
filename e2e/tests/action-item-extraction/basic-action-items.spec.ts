@@ -47,13 +47,16 @@ const actionItemsResponseText = "Based on the conversation, here are the action 
 
 // Setup for all tests in the file
 test.beforeAll(async () => {
+    test.setTimeout(120000);
     mattermost = await RunContainer();
     openAIMock = await RunOpenAIMocks(mattermost.network);
-}, { timeout: 120000 });
+});
 
 test.beforeEach(async () => {
     // Reset mocks before each test to prevent cross-contamination
-    await openAIMock.resetMocks();
+    if (openAIMock) {
+        await openAIMock.resetMocks();
+    }
 });
 
 // Cleanup after all tests
@@ -68,6 +71,10 @@ test.afterAll(async () => {
 
 // Common test setup
 async function setupTestPage(page) {
+    if (!mattermost) {
+        throw new Error('Mattermost test container was not initialized');
+    }
+
     const mmPage = new MattermostPage(page);
     const aiPlugin = new AIPlugin(page);
     const url = mattermost.url();

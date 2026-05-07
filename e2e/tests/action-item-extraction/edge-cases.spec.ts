@@ -30,13 +30,16 @@ data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
 test.beforeAll(async () => {
+    test.setTimeout(120000);
     mattermost = await RunContainer();
     openAIMock = await RunOpenAIMocks(mattermost.network);
-}, { timeout: 120000 });
+});
 
 test.beforeEach(async () => {
     // Reset mocks before each test to prevent cross-contamination
-    await openAIMock.resetMocks();
+    if (openAIMock) {
+        await openAIMock.resetMocks();
+    }
 });
 
 test.afterAll(async () => {
@@ -49,6 +52,10 @@ test.afterAll(async () => {
 });
 
 async function setupTestPage(page) {
+    if (!mattermost) {
+        throw new Error('Mattermost test container was not initialized');
+    }
+
     const mmPage = new MattermostPage(page);
     const aiPlugin = new AIPlugin(page);
     const url = mattermost.url();
