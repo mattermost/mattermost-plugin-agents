@@ -48,10 +48,6 @@ func (p *staticMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors
 
 type contextTestConfigProvider struct{}
 
-func (p *contextTestConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (p *contextTestConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }

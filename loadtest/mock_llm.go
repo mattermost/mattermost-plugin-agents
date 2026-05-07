@@ -4,6 +4,7 @@
 package loadtest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -47,7 +48,7 @@ func NewMockLLM(profile MockProfile) *MockLLM {
 	profile = cloneMockProfile(profile)
 	return &MockLLM{
 		profile: profile,
-		rg:      rand.New(rand.NewSource(profile.Seed)),
+		rg:      rand.New(rand.NewSource(profile.Seed)), // #nosec G404 -- deterministic load simulation uses seeded math/rand.
 	}
 }
 
@@ -80,7 +81,14 @@ func applyOptions(opts []llm.LanguageModelOption) llm.LanguageModelConfig {
 
 func countToolRounds(posts []llm.Post) int {
 	var n int
-	for _, p := range posts {
+	start := 0
+	for i := len(posts) - 1; i >= 0; i-- {
+		if posts[i].Role == llm.PostRoleUser {
+			start = i + 1
+			break
+		}
+	}
+	for _, p := range posts[start:] {
 		if p.Role != llm.PostRoleBot {
 			continue
 		}
@@ -229,8 +237,33 @@ func (m *MockLLM) sampleRequest(req llm.CompletionRequest, cfg llm.LanguageModel
 	}
 }
 
+func contextOrBackground(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // ChatCompletion streams a synthetic response.
-func (m *MockLLM) ChatCompletion(req llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (m *MockLLM) ChatCompletion(ctx context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	ctx = contextOrBackground(ctx)
 	cfg := applyOptions(opts)
 	sr := m.sampleRequest(req, cfg)
 
@@ -240,14 +273,25 @@ func (m *MockLLM) ChatCompletion(req llm.CompletionRequest, opts ...llm.Language
 		defer close(stream)
 
 		start := time.Now()
-		sleep := func(d time.Duration) {
-			if d > 0 {
-				time.Sleep(d)
+		sleep := func(d time.Duration) bool {
+			return sleepContext(ctx, d)
+		}
+		send := func(ev llm.TextStreamEvent) bool {
+			if ctx.Err() != nil {
+				return false
+			}
+			select {
+			case <-ctx.Done():
+				return false
+			case stream <- ev:
+				return true
 			}
 		}
 		elapsed := func() time.Duration { return time.Since(start) }
 
-		sleep(time.Duration(sr.TTFTMs) * time.Millisecond)
+		if !sleep(time.Duration(sr.TTFTMs) * time.Millisecond) {
+			return
+		}
 
 		if sr.EmitReasoning {
 			toolName := sr.SelectedTool.Name
@@ -255,24 +299,30 @@ func (m *MockLLM) ChatCompletion(req llm.CompletionRequest, opts ...llm.Language
 				toolName = "(none)"
 			}
 			rText := fmt.Sprintf("reasoning block for seq %d category=%s", sr.Seq, toolCategory(toolName))
-			rc := max(1, sr.ChunkCount/20)
+			rc := maxInt(1, sr.ChunkCount/20)
 			chunks := splitIntoChunks(rText, rc)
 			var full strings.Builder
 			for _, ch := range chunks {
 				full.WriteString(ch)
-				stream <- llm.TextStreamEvent{Type: llm.EventTypeReasoning, Value: ch}
+				if !send(llm.TextStreamEvent{Type: llm.EventTypeReasoning, Value: ch}) {
+					return
+				}
 			}
-			stream <- llm.TextStreamEvent{
+			if !send(llm.TextStreamEvent{
 				Type: llm.EventTypeReasoningEnd,
 				Value: llm.ReasoningData{
 					Text:      full.String(),
 					Signature: "loadtest-reasoning-sig",
 				},
+			}) {
+				return
 			}
 		}
 
 		if sr.WantTools {
-			stream <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: fmt.Sprintf("tool preamble %d", sr.Seq)}
+			if !send(llm.TextStreamEvent{Type: llm.EventTypeText, Value: fmt.Sprintf("tool preamble %d", sr.Seq)}) {
+				return
+			}
 			tc := llm.ToolCall{
 				ID:           fmt.Sprintf("loadtest-tool-%d-0", sr.Seq),
 				Name:         sr.SelectedTool.Name,
@@ -280,19 +330,25 @@ func (m *MockLLM) ChatCompletion(req llm.CompletionRequest, opts ...llm.Language
 				Status:       llm.ToolCallStatusPending,
 				ServerOrigin: sr.SelectedTool.ServerOrigin,
 			}
-			stream <- llm.TextStreamEvent{
+			if !send(llm.TextStreamEvent{
 				Type:  llm.EventTypeToolCalls,
 				Value: []llm.ToolCall{tc},
+			}) {
+				return
 			}
-			padWallTime(start, sr.WallTimeMs, elapsed, sleep)
-			stream <- llm.TextStreamEvent{
+			if !padWallTime(start, sr.WallTimeMs, elapsed, sleep) {
+				return
+			}
+			if !send(llm.TextStreamEvent{
 				Type: llm.EventTypeUsage,
 				Value: llm.TokenUsage{
 					InputTokens:  int64(len(sr.FinalText) / 4),
 					OutputTokens: int64(len(sr.FinalText) / 4),
 				},
+			}) {
+				return
 			}
-			stream <- llm.TextStreamEvent{Type: llm.EventTypeEnd, Value: nil}
+			send(llm.TextStreamEvent{Type: llm.EventTypeEnd, Value: nil})
 			return
 		}
 
@@ -316,37 +372,49 @@ func (m *MockLLM) ChatCompletion(req llm.CompletionRequest, opts ...llm.Language
 			}
 		}
 		for i, ch := range chunks {
-			stream <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: ch}
+			if !send(llm.TextStreamEvent{Type: llm.EventTypeText, Value: ch}) {
+				return
+			}
 			if i < len(chunks)-1 {
-				sleep(gap)
+				if !sleep(gap) {
+					return
+				}
 			}
 		}
-		padWallTime(start, sr.WallTimeMs, elapsed, sleep)
+		if !padWallTime(start, sr.WallTimeMs, elapsed, sleep) {
+			return
+		}
 
-		stream <- llm.TextStreamEvent{
+		if !send(llm.TextStreamEvent{
 			Type: llm.EventTypeUsage,
 			Value: llm.TokenUsage{
 				InputTokens:  int64(len(text) / 4),
 				OutputTokens: int64(len(text) / 4),
 			},
+		}) {
+			return
 		}
-		stream <- llm.TextStreamEvent{Type: llm.EventTypeEnd, Value: nil}
+		send(llm.TextStreamEvent{Type: llm.EventTypeEnd, Value: nil})
 	}(sr)
 
 	return &llm.TextStreamResult{Stream: stream}, nil
 }
 
-func padWallTime(start time.Time, wallMs int, elapsed func() time.Duration, sleep func(time.Duration)) {
+func padWallTime(start time.Time, wallMs int, elapsed func() time.Duration, sleep func(time.Duration) bool) bool {
 	target := time.Duration(wallMs) * time.Millisecond
 	if d := target - elapsed(); d > 0 {
-		sleep(d)
+		return sleep(d)
 	}
+	return true
 }
 
 // ChatCompletionNoStream returns the final mock text after honoring wall-clock pacing.
-func (m *MockLLM) ChatCompletionNoStream(req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (m *MockLLM) ChatCompletionNoStream(ctx context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	ctx = contextOrBackground(ctx)
 	sr := m.sampleRequest(req, applyOptions(opts))
-	time.Sleep(time.Duration(sr.WallTimeMs) * time.Millisecond)
+	if !sleepContext(ctx, time.Duration(sr.WallTimeMs)*time.Millisecond) {
+		return "", ctx.Err()
+	}
 	return sr.FinalText, nil
 }
 
@@ -367,7 +435,7 @@ func (m *MockLLM) InputTokenLimit() int {
 	return 100000
 }
 
-func max(a, b int) int {
+func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}

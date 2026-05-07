@@ -27,7 +27,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 	require.NoError(t, err)
 
 	buildToolStore := func(name string) *llm.ToolStore {
-		store := llm.NewToolStore(nil, false)
+		store := llm.NewToolStore()
 		store.AddTools([]llm.Tool{{
 			Name:        name,
 			Description: "test tool",
@@ -122,7 +122,7 @@ func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiAndVertexOn
 	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
 
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
 		{
 			Name:        "search_users",

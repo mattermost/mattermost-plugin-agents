@@ -5,6 +5,7 @@ package conversations_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -50,10 +51,6 @@ func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.
 }
 
 type mockConfigProvider struct{}
-
-func (m *mockConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
 
 func (m *mockConfigProvider) GetServiceByID(id string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
@@ -166,7 +163,7 @@ func TestConversationMentionHandling(t *testing.T) {
 				{Role: llm.PostRoleSystem, Message: systemPrompt},
 				{Role: llm.PostRoleUser, Message: threadData.LatestPost().Message},
 			}
-			textStream, err := llmInstance.ChatCompletion(llm.CompletionRequest{
+			textStream, err := llmInstance.ChatCompletion(context.Background(), llm.CompletionRequest{
 				Posts:     posts,
 				Context:   llmContext,
 				Operation: llm.OperationConversation,

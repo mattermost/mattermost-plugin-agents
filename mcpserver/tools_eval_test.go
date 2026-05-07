@@ -37,7 +37,7 @@ func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.
 	}
 
 	runner := toolrunner.New(setup.llm)
-	runResult, err := runner.Run(llm.CompletionRequest{
+	runResult, err := runner.Run(context.Background(), llm.CompletionRequest{
 		Posts:     posts,
 		Context:   setup.llmContext,
 		Operation: llm.OperationConversation,

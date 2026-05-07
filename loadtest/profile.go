@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strings"
@@ -203,6 +204,13 @@ func ParseProfile(raw json.RawMessage) (MockProfile, error) {
 	if err := dec.Decode(&ov); err != nil {
 		return MockProfile{}, fmt.Errorf("loadtest profile: %w", err)
 	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return MockProfile{}, fmt.Errorf("loadtest profile: unexpected trailing JSON value")
+		}
+		return MockProfile{}, fmt.Errorf("loadtest profile: %w", err)
+	}
 
 	if ov.Name != nil {
 		base.Name = *ov.Name
@@ -361,11 +369,66 @@ func validateLatencyRange(field string, b [2]int) error {
 	return nil
 }
 
+const summaryDefaultsSource = "spikes/llm-latency-benchmark"
+
+func formatIntList(xs []int) string {
+	if len(xs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, v := range xs {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "%d", v)
+	}
+	return b.String()
+}
+
+func formatStringList(xs []string) string {
+	if len(xs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, v := range xs {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(v)
+	}
+	return b.String()
+}
+
+func appendToolArgumentProfileLines(b *strings.Builder, tool string, tap ToolArgumentProfile) {
+	fmt.Fprintf(b, "  %s:\n", tool)
+	wrote := false
+	write := func(label, value string) {
+		if value == "" {
+			return
+		}
+		fmt.Fprintf(b, "    %s=%s\n", label, value)
+		wrote = true
+	}
+	write("post_limits", formatIntList(tap.PostLimits))
+	write("search_queries", formatStringList(tap.SearchQueries))
+	write("search_limits", formatIntList(tap.SearchLimits))
+	write("message_lengths", formatIntList(tap.MessageLengths))
+	write("usernames", formatStringList(tap.Usernames))
+	write("channel_ids", formatStringList(tap.ChannelIDs))
+	write("channel_names", formatStringList(tap.ChannelNames))
+	write("team_ids", formatStringList(tap.TeamIDs))
+	write("team_names", formatStringList(tap.TeamNames))
+	write("post_ids", formatStringList(tap.PostIDs))
+	if !wrote {
+		fmt.Fprintf(b, "    (no argument distributions)\n")
+	}
+}
+
 // Summary returns a compact operator-facing description for logging.
 func (p MockProfile) Summary() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "name=%s seed=%d streaming=%v reasoning_skip_p=%.4f tool_use_p=%.4f max_tool_rounds=%d\n",
-		p.Name, p.Seed, p.StreamingEnabled, p.ReasoningSkipProbability, p.ToolUseProbability, p.MaxToolRounds)
+	fmt.Fprintf(&b, "name=%s seed=%d streaming=%v reasoning_skip_p=%.4f tool_use_p=%.4f max_tool_rounds=%d defaults_source=%s\n",
+		p.Name, p.Seed, p.StreamingEnabled, p.ReasoningSkipProbability, p.ToolUseProbability, p.MaxToolRounds, summaryDefaultsSource)
 
 	names := make([]string, 0, len(p.LatencyProfiles))
 	for n := range p.LatencyProfiles {
@@ -375,7 +438,7 @@ func (p MockProfile) Summary() string {
 	fmt.Fprintf(&b, "latency_profiles:\n")
 	for _, n := range names {
 		lp := p.LatencyProfiles[n]
-		fmt.Fprintf(&b, "  %s: ttft_ms=[%d,%d] chunk_count=[%d,%d] chunk_interval_ms=[%d,%d] wall_ms=[%d,%d]\n",
+		fmt.Fprintf(&b, "  %s: ttft_ms=[%d,%d] chunk_count=[%d,%d] chunk_interval_ms=[%d,%d] total_wall_time_ms_per_request=[%d,%d]\n",
 			n, lp.TTFTMs[0], lp.TTFTMs[1], lp.ChunkCount[0], lp.ChunkCount[1],
 			lp.ChunkIntervalMs[0], lp.ChunkIntervalMs[1], lp.TotalWallTimeMsPerRequest[0], lp.TotalWallTimeMsPerRequest[1])
 	}
@@ -402,9 +465,9 @@ func (p MockProfile) Summary() string {
 	}
 	b.WriteByte('\n')
 
-	fmt.Fprintf(&b, "tool_argument_profiles:")
+	fmt.Fprintf(&b, "tool_argument_profiles:\n")
 	if len(p.ToolArgumentProfiles) == 0 {
-		b.WriteString(" (defaults only)")
+		fmt.Fprintf(&b, "  (none configured)\n")
 	} else {
 		argKeys := make([]string, 0, len(p.ToolArgumentProfiles))
 		for k := range p.ToolArgumentProfiles {
@@ -412,12 +475,9 @@ func (p MockProfile) Summary() string {
 		}
 		slices.Sort(argKeys)
 		for _, k := range argKeys {
-			tap := p.ToolArgumentProfiles[k]
-			fmt.Fprintf(&b, " %s{posts=%d searches=%d users=%d msgs=%d}", k,
-				len(tap.PostLimits), len(tap.SearchQueries), len(tap.Usernames), len(tap.MessageLengths))
+			appendToolArgumentProfileLines(&b, k, p.ToolArgumentProfiles[k])
 		}
 	}
-	b.WriteByte('\n')
 	return b.String()
 }
 

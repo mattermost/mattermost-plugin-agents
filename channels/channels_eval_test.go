@@ -5,6 +5,7 @@ package channels_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"path/filepath"
@@ -87,7 +88,7 @@ func TestChannelSummarization(t *testing.T) {
 			if threadData.RequestingUser() != nil {
 				userID = threadData.RequestingUser().Id
 			}
-			result, err := channelService.Interval(ctx, threadData.Channel.Id, userID, "eval-bot", fixedStart, 0, prompts.PromptSummarizeChannelRangeSystem)
+			result, err := channelService.Interval(context.Background(), ctx, threadData.Channel.Id, userID, "eval-bot", fixedStart, 0, prompts.PromptSummarizeChannelRangeSystem)
 			require.NoError(t, err, "Failed to summarize channel")
 			require.NotNil(t, result, "Expected a non-nil result")
 			textStream := result.Stream
@@ -215,6 +216,10 @@ type evalBotLookup struct {
 
 func (b *evalBotLookup) IsAnyBot(userID string) bool {
 	return b.botUserIDs[userID]
+}
+
+func (b *evalBotLookup) GetBotConfigByID(string) (bool, int64, bool) {
+	return false, 0, false
 }
 
 func setupChannelMocksFromThreadData(mmClient *mocks.MockClient, threadData *evals.ThreadExport) {

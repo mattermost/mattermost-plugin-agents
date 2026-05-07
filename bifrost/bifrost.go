@@ -20,12 +20,15 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 )
 
 const (
 	DefaultMaxTokens        = 8192
+	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
 )
 
@@ -475,16 +478,22 @@ func toFloat64(value interface{}) (float64, bool) {
 }
 
 // ChatCompletion performs a streaming chat completion request.
-func (b *LLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (b *LLM) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	cfg := b.createConfig(opts)
+
+	ctx, span := telemetry.Tracer().Start(ctx, "llm chat completion",
+		telemetry.WithLLMAttributes(string(b.provider), cfg.Model, request.Operation, true),
+	)
+
 	eventStream := make(chan llm.TextStreamEvent)
 
 	go func() {
 		defer close(eventStream)
+		defer span.End()
 		if b.shouldUseResponsesAPI(cfg) {
-			b.streamResponses(request, cfg, eventStream)
+			b.streamResponses(ctx, request, cfg, eventStream)
 		} else {
-			b.streamChat(request, cfg, eventStream)
+			b.streamChat(ctx, request, cfg, eventStream)
 		}
 	}()
 
@@ -492,8 +501,8 @@ func (b *LLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.Language
 }
 
 // ChatCompletionNoStream performs a non-streaming chat completion request.
-func (b *LLM) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
-	result, err := b.ChatCompletion(request, opts...)
+func (b *LLM) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	result, err := b.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return "", err
 	}
@@ -526,8 +535,9 @@ func (b *LLM) InputTokenLimit() int {
 }
 
 // streamChat handles the streaming chat completion.
-func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), b.streamingTimeout*10)
+func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	span := telemetry.SpanFromContext(ctx)
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost request
@@ -536,9 +546,12 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
+			Value: err,
 		}
 		return
 	}
@@ -588,9 +601,12 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 		}
 
 		if chunk.BifrostError != nil {
+			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
+				Value: err,
 			}
 			return
 		}
@@ -707,6 +723,10 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 					OutputTokens: int64(resp.Usage.CompletionTokens),
 				}
 				if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+					span.SetAttributes(
+						telemetry.LLMInputTokens.Int64(usage.InputTokens),
+						telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
+					)
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeUsage,
 						Value: usage,
@@ -1506,8 +1526,9 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 }
 
 // streamResponses handles the streaming Responses API completion.
-func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), b.streamingTimeout*10)
+func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	span := telemetry.SpanFromContext(ctx)
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost Responses API request
@@ -1523,9 +1544,12 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
+			Value: err,
 		}
 		return
 	}
@@ -1533,7 +1557,13 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Process stream
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
-	var currentFuncCallID string // tracks the active function call for argument deltas
+	// outputIndexToFuncCallID maps a Responses-API output_index to the function
+	// call_id that we accepted via OutputItemAdded for that index. Argument
+	// deltas are routed through this map so deltas from non-function output
+	// items (e.g. Anthropic native server tools like code_execution that
+	// bifrost does not surface as OutputItemAdded events) do not bleed into
+	// an unrelated function call's argument buffer.
+	outputIndexToFuncCallID := make(map[int]string)
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -1581,9 +1611,12 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 		}
 
 		if chunk.BifrostError != nil {
+			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
+				Value: err,
 			}
 			return
 		}
@@ -1670,9 +1703,20 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				blockStartPos = textLen
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
-				// Tool call arguments delta.
-				// Bifrost often does not populate resp.Item on delta events; the call ID
-				// may come from the preceding OutputItemAdded event (currentFuncCallID).
+				// Tool call arguments delta. Bifrost does not always populate
+				// resp.Item on delta events, so the call_id is recovered via
+				// the OutputIndex map populated by the preceding
+				// OutputItemAdded event.
+				//
+				// Routing strictly by OutputIndex matters because providers
+				// like Anthropic emit native server-tool blocks (e.g.
+				// code_execution) for which Bifrost does not surface an
+				// OutputItemAdded of type FunctionCall, but it still emits
+				// FunctionCallArgumentsDelta events for them. Without this
+				// guard, those orphan deltas were appended to whatever
+				// function call most recently started, producing concatenated
+				// JSON like `{"team_id":"…"}{"code":"…"}` that later failed
+				// to marshal as a tool_use.input json.RawMessage.
 				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
 					tm := resp.Item.ResponsesToolMessage
 					callID := ""
@@ -1690,15 +1734,19 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 						}
 					}
-				} else if currentFuncCallID != "" && resp.Delta != nil {
-					if toolCallsBuffer[currentFuncCallID] == nil {
-						toolCallsBuffer[currentFuncCallID] = &responsesToolCallBuffer{id: currentFuncCallID}
+				} else if resp.OutputIndex != nil && resp.Delta != nil {
+					if callID, ok := outputIndexToFuncCallID[*resp.OutputIndex]; ok {
+						if toolCallsBuffer[callID] == nil {
+							toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
+						}
+						toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 					}
-					toolCallsBuffer[currentFuncCallID].arguments.WriteString(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
-				// New output item added - could be function call
+				// New output item added - register function calls so their
+				// argument deltas can be routed back to the right buffer by
+				// OutputIndex.
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
 						tm := resp.Item.ResponsesToolMessage
@@ -1707,7 +1755,9 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							callID = *tm.CallID
 						}
 						if callID != "" {
-							currentFuncCallID = callID
+							if resp.OutputIndex != nil {
+								outputIndexToFuncCallID[*resp.OutputIndex] = callID
+							}
 							if toolCallsBuffer[callID] == nil {
 								toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
 							}
@@ -1798,6 +1848,10 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						OutputTokens: int64(resp.Response.Usage.OutputTokens),
 					}
 					if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+						span.SetAttributes(
+							telemetry.LLMInputTokens.Int64(usage.InputTokens),
+							telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
+						)
 						output <- llm.TextStreamEvent{
 							Type:  llm.EventTypeUsage,
 							Value: usage,

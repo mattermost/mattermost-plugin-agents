@@ -5,7 +5,6 @@ package mcpserver_test
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -469,22 +468,6 @@ func seedTeamBroadcastScenario(t *testing.T, serverURL, adminToken string) *eval
 	}
 }
 
-// testTraceLog implements llm.TraceLog and routes tool resolution traces to t.Log.
-// This enables ToolStore.TraceResolved to log tool name, args, result, and error.
-type testTraceLog struct {
-	t *testing.T
-}
-
-func (l *testTraceLog) Info(message string, keyValuePairs ...any) {
-	l.t.Helper()
-	var sb strings.Builder
-	sb.WriteString(message)
-	for i := 0; i+1 < len(keyValuePairs); i += 2 {
-		sb.WriteString(fmt.Sprintf(" %v=%v", keyValuePairs[i], keyValuePairs[i+1]))
-	}
-	l.t.Log(sb.String())
-}
-
 // evalStreamLogger wraps a LanguageModel to log intermediate LLM text and tool call
 // requests between tool loop iterations. It wraps the LLM for eval logging so it
 // captures each re-invocation of the LLM.
@@ -505,8 +488,8 @@ func (w *evalStreamLogger) CalledTools() []string {
 	return out
 }
 
-func (w *evalStreamLogger) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
-	result, err := w.inner.ChatCompletion(request, opts...)
+func (w *evalStreamLogger) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	result, err := w.inner.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -547,8 +530,8 @@ func (w *evalStreamLogger) ChatCompletion(request llm.CompletionRequest, opts ..
 	return &llm.TextStreamResult{Stream: output}, nil
 }
 
-func (w *evalStreamLogger) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
-	return w.inner.ChatCompletionNoStream(request, opts...)
+func (w *evalStreamLogger) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	return w.inner.ChatCompletionNoStream(ctx, request, opts...)
 }
 
 func (w *evalStreamLogger) CountTokens(text string) int {
@@ -580,7 +563,7 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requesting
 		allToolNames[i] = tool.Name
 	}
 
-	toolStore := llm.NewToolStore(&testTraceLog{t: t}, true)
+	toolStore := llm.NewToolStore()
 	toolStore.AddTools(mcpTools)
 
 	llmContext := llm.NewContext()

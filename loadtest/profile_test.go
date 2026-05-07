@@ -14,17 +14,43 @@ import (
 func TestParseProfileNilAndEmpty(t *testing.T) {
 	t.Parallel()
 	d := DefaultReadSearchHeavyProfile()
-	p, err := ParseProfile(nil)
-	require.NoError(t, err)
-	require.Equal(t, d.LatencyProfiles["realistic_default"], p.LatencyProfiles["realistic_default"])
+	tests := []struct {
+		name   string
+		raw    json.RawMessage
+		assert func(*testing.T, MockProfile)
+	}{
+		{
+			name: "nil",
+			raw:  nil,
+			assert: func(t *testing.T, p MockProfile) {
+				require.Equal(t, d.LatencyProfiles["realistic_default"], p.LatencyProfiles["realistic_default"])
+			},
+		},
+		{
+			name: "empty",
+			raw:  json.RawMessage(""),
+			assert: func(t *testing.T, p MockProfile) {
+				require.Equal(t, d.ProfileWeights, p.ProfileWeights)
+			},
+		},
+		{
+			name: "whitespace",
+			raw:  json.RawMessage("   \n\t  "),
+			assert: func(t *testing.T, p MockProfile) {
+				require.Equal(t, 0.10, p.ReasoningSkipProbability)
+			},
+		},
+	}
 
-	p2, err := ParseProfile(json.RawMessage(""))
-	require.NoError(t, err)
-	require.Equal(t, d.ProfileWeights, p2.ProfileWeights)
-
-	p3, err := ParseProfile(json.RawMessage("   \n\t  "))
-	require.NoError(t, err)
-	require.Equal(t, 0.10, p3.ReasoningSkipProbability)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := ParseProfile(tt.raw)
+			require.NoError(t, err)
+			tt.assert(t, p)
+		})
+	}
 }
 
 func TestDefaultLatencyMix(t *testing.T) {
@@ -57,14 +83,45 @@ func TestDefaultLatencyMix(t *testing.T) {
 func TestSummaryIncludesCriticalFields(t *testing.T) {
 	t.Parallel()
 	s := DefaultReadSearchHeavyProfile().Summary()
+	require.Contains(t, s, "defaults_source=spikes/llm-latency-benchmark")
+	require.Contains(t, s, "name=read_search_heavy_default")
+	require.Contains(t, s, "seed=1")
+	require.Contains(t, s, "streaming=true")
 	require.Contains(t, s, "profile_weights:")
-	require.Contains(t, s, "realistic_default")
-	require.Contains(t, s, "0.7000")
+	require.Contains(t, s, "realistic_default=0.7000")
+	require.Contains(t, s, "realistic_fast=0.2000")
+	require.Contains(t, s, "realistic_slow=0.1000")
 	require.Contains(t, s, "tool_weights:")
 	require.Contains(t, s, "read_channel")
+	require.Contains(t, s, "search_posts")
+	require.Contains(t, s, "create_post")
 	require.Contains(t, s, "reasoning_skip_p=0.1000")
 	require.Contains(t, s, "max_tool_rounds=5")
 	require.Contains(t, s, "latency_profiles:")
+	require.Contains(t, s, "realistic_default: ttft_ms=[3000,12000]")
+	require.Contains(t, s, "chunk_count=[150,400]")
+	require.Contains(t, s, "chunk_interval_ms=[30,80]")
+	require.Contains(t, s, "total_wall_time_ms_per_request=[15000,25000]")
+	require.Contains(t, s, "realistic_fast: ttft_ms=[600,2500]")
+	require.Contains(t, s, "total_wall_time_ms_per_request=[5000,10000]")
+	require.Contains(t, s, "realistic_slow: ttft_ms=[12000,22000]")
+	require.Contains(t, s, "total_wall_time_ms_per_request=[28000,40000]")
+	require.Contains(t, s, "tool_argument_profiles:")
+	require.Contains(t, s, "read_channel:")
+	require.Contains(t, s, "post_limits=10,25,50,100")
+	require.Contains(t, s, "search_posts:")
+	require.Contains(t, s, "status update")
+	require.Contains(t, s, "create_post:")
+	require.Contains(t, s, "message_lengths=12,200,3500")
+	require.Contains(t, s, "dm:")
+	require.Contains(t, s, "usernames=alice,bob")
+}
+
+func TestSummaryDeterministic(t *testing.T) {
+	t.Parallel()
+	a := DefaultReadSearchHeavyProfile().Summary()
+	b := DefaultReadSearchHeavyProfile().Summary()
+	require.Equal(t, a, b)
 }
 
 func TestParseProfileUnknownLatencyNameRejected(t *testing.T) {
@@ -77,14 +134,32 @@ func TestParseProfileUnknownLatencyNameRejected(t *testing.T) {
 
 func TestParseProfileInvalidWeights(t *testing.T) {
 	t.Parallel()
-	_, err := ParseProfile(json.RawMessage(`{"tool_weights":{"read_channel":-0.1}}`))
-	require.Error(t, err)
+	tests := []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{
+			name: "negative tool weight",
+			raw:  json.RawMessage(`{"tool_weights":{"read_channel":-0.1}}`),
+		},
+		{
+			name: "empty profile weights",
+			raw:  json.RawMessage(`{"profile_weights":{}}`),
+		},
+		{
+			name: "reasoning skip probability out of range",
+			raw:  json.RawMessage(`{"reasoning_skip_probability":1.5}`),
+		},
+	}
 
-	_, err = ParseProfile(json.RawMessage(`{"profile_weights":{}}`))
-	require.Error(t, err)
-
-	_, err = ParseProfile(json.RawMessage(`{"reasoning_skip_probability":1.5}`))
-	require.Error(t, err)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseProfile(tt.raw)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestParseProfileInvalidLatencyRange(t *testing.T) {
@@ -117,6 +192,13 @@ func TestParseProfileDisallowUnknownTopLevel(t *testing.T) {
 	t.Parallel()
 	_, err := ParseProfile(json.RawMessage(`{"name":"x","extra_field":true}`))
 	require.Error(t, err)
+}
+
+func TestParseProfileRejectsTrailingTopLevelJSON(t *testing.T) {
+	t.Parallel()
+	_, err := ParseProfile(json.RawMessage(`{"name":"x"} {"seed":2}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unexpected trailing JSON value")
 }
 
 func TestParseProfileMergeOverrides(t *testing.T) {

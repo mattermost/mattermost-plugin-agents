@@ -4,6 +4,7 @@
 package loadtest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -43,7 +44,7 @@ func TestDeterministicRepeatNewInstances(t *testing.T) {
 	var first []llm.EventType
 	for i := 0; i < 2; i++ {
 		m := NewMockLLM(base)
-		res, err := m.ChatCompletion(llm.CompletionRequest{}, llm.WithReasoningDisabled())
+		res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{}, llm.WithReasoningDisabled())
 		require.NoError(t, err)
 		var types []llm.EventType
 		for ev := range res.Stream {
@@ -68,7 +69,7 @@ func TestTextOnlyStreamEvents(t *testing.T) {
 		p.LatencyProfiles[k] = lp
 	}
 	m := NewMockLLM(p)
-	res, err := m.ChatCompletion(llm.CompletionRequest{}, llm.WithReasoningDisabled())
+	res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{}, llm.WithReasoningDisabled())
 	require.NoError(t, err)
 	var types []llm.EventType
 	for ev := range res.Stream {
@@ -88,7 +89,7 @@ func TestStreamingDisabledOneChunk(t *testing.T) {
 	p.ToolUseProbability = 0
 	p.ReasoningSkipProbability = 1.0
 	m := NewMockLLM(p)
-	res, err := m.ChatCompletion(llm.CompletionRequest{}, llm.WithReasoningDisabled())
+	res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{}, llm.WithReasoningDisabled())
 	require.NoError(t, err)
 	textChunks := 0
 	for ev := range res.Stream {
@@ -101,7 +102,7 @@ func TestStreamingDisabledOneChunk(t *testing.T) {
 
 func TestToolCallStreamTyping(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{
 		Channel: &model.Channel{Id: model.NewId()},
@@ -111,7 +112,7 @@ func TestToolCallStreamTyping(t *testing.T) {
 	p.ToolUseProbability = 1.0
 	p.ReasoningSkipProbability = 1.0
 	m := NewMockLLM(p)
-	res, err := m.ChatCompletion(llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
+	res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
 	require.NoError(t, err)
 	found := false
 	for ev := range res.Stream {
@@ -127,7 +128,7 @@ func TestToolCallStreamTyping(t *testing.T) {
 
 func TestMockLLMSkipsUnbuildableWeightedTool(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
 		{Name: "group_message"},
 		{Name: "read_channel"},
@@ -145,7 +146,7 @@ func TestMockLLMSkipsUnbuildableWeightedTool(t *testing.T) {
 	}
 	delete(p.ToolArgumentProfiles, "group_message")
 	m := NewMockLLM(p)
-	res, err := m.ChatCompletion(llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
+	res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
 	require.NoError(t, err)
 
 	for ev := range res.Stream {
@@ -162,7 +163,7 @@ func TestMockLLMSkipsUnbuildableWeightedTool(t *testing.T) {
 
 func TestToolsDisabledForcesTextOnly(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{
 		Channel: &model.Channel{Id: model.NewId()},
@@ -171,7 +172,7 @@ func TestToolsDisabledForcesTextOnly(t *testing.T) {
 	p := fastTestProfile()
 	p.ToolUseProbability = 1.0
 	m := NewMockLLM(p)
-	res, err := m.ChatCompletion(llm.CompletionRequest{Context: ctx}, llm.WithToolsDisabled())
+	res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx}, llm.WithToolsDisabled())
 	require.NoError(t, err)
 	for ev := range res.Stream {
 		require.NotEqual(t, llm.EventTypeToolCalls, ev.Type)
@@ -180,7 +181,7 @@ func TestToolsDisabledForcesTextOnly(t *testing.T) {
 
 func TestMaxToolRoundsBlocksTools(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{
 		Channel: &model.Channel{Id: model.NewId()},
@@ -196,57 +197,118 @@ func TestMaxToolRoundsBlocksTools(t *testing.T) {
 		{Role: llm.PostRoleBot, ToolUse: []llm.ToolCall{{ID: "y"}}},
 	}
 	m := NewMockLLM(p)
-	res, err := m.ChatCompletion(llm.CompletionRequest{Context: ctx, Posts: posts}, llm.WithReasoningDisabled())
+	res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx, Posts: posts}, llm.WithReasoningDisabled())
 	require.NoError(t, err)
 	for ev := range res.Stream {
 		require.NotEqual(t, llm.EventTypeToolCalls, ev.Type)
 	}
 }
 
+func TestHistoricalToolRoundsDoNotBlockNewRequest(t *testing.T) {
+	t.Parallel()
+	store := llm.NewToolStore()
+	store.AddTools([]llm.Tool{{Name: "read_channel"}})
+	ctx := &llm.Context{
+		Channel: &model.Channel{Id: model.NewId()},
+		Tools:   store,
+	}
+	p := fastTestProfile()
+	p.ToolUseProbability = 1.0
+	p.MaxToolRounds = 2
+	p.ReasoningSkipProbability = 1.0
+
+	posts := []llm.Post{
+		{Role: llm.PostRoleBot, ToolUse: []llm.ToolCall{{ID: "historical-1"}}},
+		{Role: llm.PostRoleBot, ToolUse: []llm.ToolCall{{ID: "historical-2"}}},
+		{Role: llm.PostRoleUser, Message: "new request"},
+	}
+	m := NewMockLLM(p)
+	res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx, Posts: posts}, llm.WithReasoningDisabled())
+	require.NoError(t, err)
+	for ev := range res.Stream {
+		if ev.Type == llm.EventTypeToolCalls {
+			require.NotEmpty(t, ev.Value)
+			return
+		}
+	}
+	require.Fail(t, "expected current request to remain eligible for tool calls")
+}
+
 func TestReasoningSkipProbabilityAllOrNothing(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{Tools: store, Channel: &model.Channel{Id: model.NewId()}}
 
-	pSkip := fastTestProfile()
-	pSkip.ToolUseProbability = 1.0
-	pSkip.ReasoningSkipProbability = 1.0
-	mSkip := NewMockLLM(pSkip)
-	res, err := mSkip.ChatCompletion(llm.CompletionRequest{Context: ctx})
-	require.NoError(t, err)
-	for ev := range res.Stream {
-		require.NotEqual(t, llm.EventTypeReasoning, ev.Type)
-		require.NotEqual(t, llm.EventTypeReasoningEnd, ev.Type)
+	tests := []struct {
+		name         string
+		setupProfile func(*MockProfile)
+		options      []llm.LanguageModelOption
+		assertEvents func(*testing.T, []llm.EventType)
+	}{
+		{
+			name: "skips reasoning when skip probability is one",
+			setupProfile: func(p *MockProfile) {
+				p.ToolUseProbability = 1.0
+				p.ReasoningSkipProbability = 1.0
+			},
+			assertEvents: func(t *testing.T, events []llm.EventType) {
+				for _, eventType := range events {
+					require.NotEqual(t, llm.EventTypeReasoning, eventType)
+					require.NotEqual(t, llm.EventTypeReasoningEnd, eventType)
+				}
+			},
+		},
+		{
+			name: "emits reasoning and end when skip probability is zero",
+			setupProfile: func(p *MockProfile) {
+				p.ToolUseProbability = 1.0
+				p.ReasoningSkipProbability = 0.0
+			},
+			assertEvents: func(t *testing.T, events []llm.EventType) {
+				hasR := false
+				hasREnd := false
+				for _, eventType := range events {
+					if eventType == llm.EventTypeReasoning {
+						hasR = true
+					}
+					if eventType == llm.EventTypeReasoningEnd {
+						hasREnd = true
+					}
+				}
+				require.True(t, hasR)
+				require.True(t, hasREnd)
+			},
+		},
+		{
+			name: "omits reasoning when reasoning is disabled",
+			setupProfile: func(p *MockProfile) {
+				p.ToolUseProbability = 0
+				p.ReasoningSkipProbability = 0.0
+			},
+			options: []llm.LanguageModelOption{llm.WithReasoningDisabled()},
+			assertEvents: func(t *testing.T, events []llm.EventType) {
+				for _, eventType := range events {
+					require.NotEqual(t, llm.EventTypeReasoning, eventType)
+				}
+			},
+		},
 	}
 
-	pAll := fastTestProfile()
-	pAll.ToolUseProbability = 1.0
-	pAll.ReasoningSkipProbability = 0.0
-	mAll := NewMockLLM(pAll)
-	res2, err := mAll.ChatCompletion(llm.CompletionRequest{Context: ctx})
-	require.NoError(t, err)
-	hasR := false
-	hasREnd := false
-	for ev := range res2.Stream {
-		if ev.Type == llm.EventTypeReasoning {
-			hasR = true
-		}
-		if ev.Type == llm.EventTypeReasoningEnd {
-			hasREnd = true
-		}
-	}
-	require.True(t, hasR)
-	require.True(t, hasREnd)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := fastTestProfile()
+			tt.setupProfile(&p)
+			m := NewMockLLM(p)
+			res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx}, tt.options...)
+			require.NoError(t, err)
 
-	pAll2 := fastTestProfile()
-	pAll2.ToolUseProbability = 0
-	pAll2.ReasoningSkipProbability = 0.0
-	mAll2 := NewMockLLM(pAll2)
-	res3, err := mAll2.ChatCompletion(llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
-	require.NoError(t, err)
-	for ev := range res3.Stream {
-		require.NotEqual(t, llm.EventTypeReasoning, ev.Type)
+			var events []llm.EventType
+			for ev := range res.Stream {
+				events = append(events, ev.Type)
+			}
+			tt.assertEvents(t, events)
+		})
 	}
 }
 
@@ -272,7 +334,7 @@ func TestProfileWeightConvergence(t *testing.T) {
 	hist := map[int]int{}
 	m := NewMockLLM(p)
 	for i := 0; i < 4000; i++ {
-		res, err := m.ChatCompletion(llm.CompletionRequest{}, llm.WithReasoningDisabled())
+		res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{}, llm.WithReasoningDisabled())
 		require.NoError(t, err)
 		n := 0
 		for ev := range res.Stream {
@@ -294,17 +356,26 @@ func TestConcurrentChatCompletionRace(t *testing.T) {
 	p.ReasoningSkipProbability = 1.0
 	m := NewMockLLM(p)
 	var wg sync.WaitGroup
+	errCh := make(chan error, 64)
 	for i := 0; i < 64; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res, err := m.ChatCompletion(llm.CompletionRequest{}, llm.WithReasoningDisabled())
-			require.NoError(t, err)
-			for range res.Stream {
+			res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{}, llm.WithReasoningDisabled())
+			if err != nil {
+				errCh <- err
+				return
+			}
+			for event := range res.Stream {
+				_ = event
 			}
 		}()
 	}
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
 }
 
 func TestChatCompletionNoStreamBlocksAndText(t *testing.T) {
@@ -318,15 +389,67 @@ func TestChatCompletionNoStreamBlocksAndText(t *testing.T) {
 	p.ReasoningSkipProbability = 1.0
 	m := NewMockLLM(p)
 	start := time.Now()
-	txt, err := m.ChatCompletionNoStream(llm.CompletionRequest{}, llm.WithReasoningDisabled())
+	txt, err := m.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{}, llm.WithReasoningDisabled())
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, time.Since(start), 40*time.Millisecond)
 	require.NotEmpty(t, txt)
 }
 
+func TestChatCompletionClosesStreamOnContextCancellation(t *testing.T) {
+	t.Parallel()
+	p := fastTestProfile()
+	for k := range p.LatencyProfiles {
+		p.LatencyProfiles[k] = LatencyProfile{
+			TTFTMs:                    [2]int{1000, 1000},
+			ChunkCount:                [2]int{1, 1},
+			ChunkIntervalMs:           [2]int{0, 0},
+			TotalWallTimeMsPerRequest: [2]int{1000, 1000},
+		}
+	}
+	p.ToolUseProbability = 0
+	p.ReasoningSkipProbability = 1.0
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m := NewMockLLM(p)
+	res, err := m.ChatCompletion(ctx, llm.CompletionRequest{}, llm.WithReasoningDisabled())
+	require.NoError(t, err)
+	cancel()
+
+	select {
+	case _, ok := <-res.Stream:
+		require.False(t, ok)
+	case <-time.After(200 * time.Millisecond):
+		require.Fail(t, "stream did not close after context cancellation")
+	}
+}
+
+func TestChatCompletionNoStreamHonorsContextCancellation(t *testing.T) {
+	t.Parallel()
+	p := fastTestProfile()
+	for k := range p.LatencyProfiles {
+		p.LatencyProfiles[k] = LatencyProfile{
+			TTFTMs:                    [2]int{0, 0},
+			ChunkCount:                [2]int{1, 1},
+			ChunkIntervalMs:           [2]int{0, 0},
+			TotalWallTimeMsPerRequest: [2]int{1000, 1000},
+		}
+	}
+	p.ToolUseProbability = 0
+	p.ReasoningSkipProbability = 1.0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	m := NewMockLLM(p)
+	start := time.Now()
+	txt, err := m.ChatCompletionNoStream(ctx, llm.CompletionRequest{}, llm.WithReasoningDisabled())
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Empty(t, txt)
+	require.Less(t, time.Since(start), 200*time.Millisecond)
+}
+
 func TestToolArgumentsVaryBySeed(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{Channel: &model.Channel{Id: model.NewId()}, Tools: store}
 	p := fastTestProfile()
@@ -336,7 +459,7 @@ func TestToolArgumentsVaryBySeed(t *testing.T) {
 	limits := map[int]struct{}{}
 	m := NewMockLLM(p)
 	for i := 0; i < 20; i++ {
-		res, err := m.ChatCompletion(llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
+		res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
 		require.NoError(t, err)
 		for ev := range res.Stream {
 			if ev.Type == llm.EventTypeToolCalls {
@@ -344,7 +467,11 @@ func TestToolArgumentsVaryBySeed(t *testing.T) {
 				args[string(tcs[0].Arguments)] = struct{}{}
 				var decoded map[string]any
 				require.NoError(t, json.Unmarshal(tcs[0].Arguments, &decoded))
-				limits[int(decoded["limit"].(float64))] = struct{}{}
+				limit, ok := decoded["limit"]
+				require.True(t, ok)
+				limitFloat, ok := limit.(float64)
+				require.True(t, ok)
+				limits[int(limitFloat)] = struct{}{}
 			}
 		}
 	}
@@ -355,15 +482,29 @@ func TestToolArgumentsVaryBySeed(t *testing.T) {
 func TestCountTokens(t *testing.T) {
 	t.Parallel()
 	m := NewMockLLM(fastTestProfile())
-	require.Equal(t, 0, m.CountTokens(""))
-	require.Equal(t, 1, m.CountTokens("abc"))
-	require.Equal(t, 2, m.CountTokens("abcde"))
+	tests := []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{name: "empty string", input: "", want: 0},
+		{name: "three characters", input: "abc", want: 1},
+		{name: "five characters", input: "abcde", want: 2},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockLLM(fastTestProfile())
+			require.Equal(t, tt.want, mock.CountTokens(tt.input))
+		})
+	}
 	require.Equal(t, 100000, m.InputTokenLimit())
 }
 
 func TestCountToolRoundsExportedViaBehavior(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{
 		Channel: &model.Channel{Id: model.NewId()},
@@ -382,7 +523,7 @@ func TestCountToolRoundsExportedViaBehavior(t *testing.T) {
 		}
 	}
 	m := NewMockLLM(p)
-	res, err := m.ChatCompletion(llm.CompletionRequest{Context: ctx, Posts: posts}, llm.WithReasoningDisabled())
+	res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx, Posts: posts}, llm.WithReasoningDisabled())
 	require.NoError(t, err)
 	for ev := range res.Stream {
 		require.NotEqual(t, llm.EventTypeToolCalls, ev.Type)

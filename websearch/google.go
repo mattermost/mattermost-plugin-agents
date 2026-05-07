@@ -11,6 +11,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
+	"go.opentelemetry.io/otel/codes"
 )
 
 const defaultGoogleSearchEndpoint = "https://www.googleapis.com/customsearch/v1"
@@ -40,6 +43,9 @@ func NewGoogleProvider(apiKey, searchEngineID, apiURL string, httpClient *http.C
 
 // Search performs a Google Custom Search and returns the results.
 func (g *GoogleProvider) Search(ctx context.Context, query string, limit int) (*SearchResponse, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "google web search")
+	defer span.End()
+
 	endpoint := strings.TrimSpace(g.apiURL)
 	if endpoint == "" {
 		endpoint = defaultGoogleSearchEndpoint
@@ -78,6 +84,8 @@ func (g *GoogleProvider) Search(ctx context.Context, query string, limit int) (*
 		if g.logger != nil {
 			g.logger.Error("web search request failed", "error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("web search request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()

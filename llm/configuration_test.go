@@ -537,8 +537,8 @@ func TestIsValidService(t *testing.T) {
 		{
 			name: "Valid loadtest mock service with profile JSON",
 			service: ServiceConfig{
-				ID:   "loadtest",
-				Type: ServiceTypeLoadTestMock,
+				ID:                 "loadtest",
+				Type:               ServiceTypeLoadTestMock,
 				LoadTestMockConfig: json.RawMessage(`{"profile_weights":{"realistic_default":1,"realistic_fast":0,"realistic_slow":0}}`),
 			},
 			want: true,

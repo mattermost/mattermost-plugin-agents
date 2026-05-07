@@ -66,6 +66,10 @@ func (b *channelMentionBotLookup) IsAnyBot(userID string) bool {
 	return b.botIDs[userID]
 }
 
+func (b *channelMentionBotLookup) GetBotConfigByID(botID string) (bool, int64, bool) {
+	return false, 0, false
+}
+
 func setupChannelMentionService(t *testing.T) (*conversation.Service, *store.Store) {
 	t.Helper()
 

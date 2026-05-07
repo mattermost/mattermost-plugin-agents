@@ -160,14 +160,27 @@ func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {
 	cfg := &mockConfig{}
 	mmBots := newTestMMBots(t, cfg)
 
-	_, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
-	require.Contains(t, err.Error(), "loadtest profile")
+	tests := []struct {
+		name    string
+		profile json.RawMessage
+	}{
+		{
+			name:    "malformed object",
+			profile: json.RawMessage(`{`),
+		},
+		{
+			name:    "unknown top level field",
+			profile: json.RawMessage(`{"unknown_top_level":true}`),
+		},
+	}
 
-	_, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := mmBots.getLLM(loadTestService(tt.profile), loadTestBot())
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "failed to parse load-test mock profile")
+		})
+	}
 }
 
 func TestGetBaseLLMLoadTestMockEmptyConfigUsesDefaultProfile(t *testing.T) {

@@ -89,27 +89,28 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 	return mcpErrors
 }
 
-// ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided
+// ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
+// If a connection already exists, it is reused.
 func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
 	if !embeddedConfig.Enabled || embeddedClient == nil {
 		return nil
 	}
 
-	// Check if we already have an embedded server connection
 	if _, exists := c.clients[EmbeddedClientKey]; exists {
-		return nil // Already connected
+		return nil
 	}
 
-	// Connect if session ID is provided
-	if sessionID != "" {
-		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := c.connectToEmbeddedServerWithClient(ctxWithTimeout, c.userID, sessionID, embeddedClient); err != nil {
-			c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
-			return fmt.Errorf("failed to connect to embedded server: %w", err)
-		}
-		c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
+	if sessionID == "" {
+		return nil
 	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.connectToEmbeddedServerWithClient(ctxWithTimeout, c.userID, sessionID, embeddedClient); err != nil {
+		c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
+		return fmt.Errorf("failed to connect to embedded server: %w", err)
+	}
+	c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
 
 	return nil
 }
@@ -185,23 +186,82 @@ func (c *UserClients) GetTools() []llm.Tool {
 	return tools
 }
 
-// prepareToolCallMetadata prepares metadata to be sent with MCP tool calls
-// This is where we inject context-specific information that tools need but shouldn't be in arguments
-func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Context) map[string]any {
-	// Only add metadata if we have a valid context
+// prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.
+// Per-call metadata is sourced from the tool itself (set at scope-time via
+// llm.Tool.WithCallMetadata) so callers can plumb runtime info — like before-hook
+// keys — without leaking it into the LLM-visible schema or onto llm.Context.
+// bot_user_id is sourced from llm.Context because it is identity, not per-call config.
+func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, llmContext *llm.Context) map[string]any {
 	if llmContext == nil {
 		return nil
 	}
 
-	var metadata map[string]any
+	// Only inject metadata for the embedded server.
+	if client.config.Name != EmbeddedClientKey {
+		return nil
+	}
 
-	// For embedded server, inject Bot UserID for AI-generated content tracking
-	if client.config.Name == EmbeddedClientKey && llmContext.BotUserID != "" {
-		metadata = make(map[string]any)
+	var metadata map[string]any
+	if llmContext.Tools != nil {
+		if tool := llmContext.Tools.GetTool(toolName); tool != nil && len(tool.CallMetadata) > 0 {
+			metadata = make(map[string]any, len(tool.CallMetadata)+1)
+			for k, v := range tool.CallMetadata {
+				metadata[k] = v
+			}
+		}
+	}
+
+	if llmContext.BotUserID != "" {
+		if metadata == nil {
+			metadata = make(map[string]any, 1)
+		}
 		metadata["bot_user_id"] = llmContext.BotUserID
 	}
 
 	return metadata
+}
+
+func (c *UserClients) clearOAuthNeededForServer(client *Client) {
+	if c.oauthManager == nil || client == nil || client.config.Name == "" {
+		return
+	}
+	if err := c.oauthManager.DeleteAuthNeededState(c.userID, client.config.Name); err != nil {
+		c.log.Debug("Failed to clear MCP OAuth-needed state after successful tool call",
+			"userID", c.userID,
+			"serverID", client.config.Name,
+			"error", err)
+	}
+}
+
+func (c *UserClients) rememberOAuthNeededForToolCall(client *Client, err error) {
+	if c.oauthManager == nil || client == nil || client.config.Name == "" || err == nil {
+		return
+	}
+
+	oauthErr := client.oauthNeededError(err)
+	if oauthErr == nil {
+		return
+	}
+
+	var needed *OAuthNeededError
+	if !errors.As(oauthErr, &needed) {
+		return
+	}
+
+	authURL := needed.AuthURL()
+	if authURL == "" {
+		authURL = c.oauthManager.StartURL(client.config.Name)
+	}
+	if authURL == "" {
+		return
+	}
+
+	if storeErr := c.oauthManager.StoreAuthNeededState(c.userID, client.config.Name, authURL); storeErr != nil {
+		c.log.Warn("Failed to persist MCP OAuth-needed state after tool call",
+			"userID", c.userID,
+			"serverID", client.config.Name,
+			"error", storeErr)
+	}
 }
 
 // createToolResolver creates a resolver function for the given tool
@@ -212,9 +272,15 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
 		}
 
-		// Prepare metadata for the tool call
-		metadata := c.prepareToolCallMetadata(client, llmContext)
+		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
 
-		return client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
+		result, err := client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
+		if err != nil {
+			c.rememberOAuthNeededForToolCall(client, err)
+			return result, err
+		}
+
+		c.clearOAuthNeededForServer(client)
+		return result, nil
 	}
 }

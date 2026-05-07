@@ -18,7 +18,6 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 	  "config": {
 		  "allowPrivateChannels": true,
 		  "disableFunctionCalls": false,
-		  "enableLLMTrace": true,
 		  "enableUserRestrictions": false,
 		  "allowUnsafeLinks": true,
 		  "defaultBotName": "mock",
