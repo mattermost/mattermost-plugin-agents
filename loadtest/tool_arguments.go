@@ -5,7 +5,6 @@ package loadtest
 
 import (
 	"encoding/json"
-	"fmt"
 	"math/rand"
 	"slices"
 	"strings"
@@ -91,6 +90,17 @@ func pickString(rng *rand.Rand, vals []string, fallback string) string {
 	return vals[rng.Intn(len(vals))]
 }
 
+func nonEmptyStrings(vals []string) []string {
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func pickValidID(rng *rand.Rand, vals []string) string {
 	var valid []string
 	for _, v := range vals {
@@ -111,6 +121,28 @@ func hasValidID(vals []string) bool {
 		}
 	}
 	return false
+}
+
+func webSearchAllowedURLs(ctx *llm.Context) []string {
+	if ctx == nil || ctx.Parameters == nil {
+		return nil
+	}
+	raw, ok := ctx.Parameters["mm_web_search_allowed_urls"]
+	if !ok {
+		return nil
+	}
+	urls, ok := raw.([]string)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(urls))
+	for _, u := range urls {
+		u = strings.TrimSpace(u)
+		if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 func hasRequiredSchema(tool llm.Tool) bool {
@@ -166,8 +198,12 @@ func canBuildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context)
 		return (ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id)) || hasValidID(tap.ChannelIDs)
 	case "read_post":
 		return hasValidID(tap.PostIDs)
-	case "search_posts", "search_users", "dm", "get_user_channels", "WebSearch", "WebSearchFetchSource":
+	case "search_posts", "search_users", "get_user_channels", "WebSearch":
 		return true
+	case "dm":
+		return len(nonEmptyStrings(tap.Usernames)) > 0
+	case "WebSearchFetchSource":
+		return len(webSearchAllowedURLs(ctx)) > 0
 	case "get_channel_info":
 		return (ctx != nil && ctx.Channel != nil && model.IsValidId(ctx.Channel.Id)) ||
 			hasValidID(tap.ChannelIDs) ||
@@ -368,11 +404,15 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 		return raw, true
 
 	case "dm":
+		usernames := nonEmptyStrings(tap.Usernames)
+		if len(usernames) == 0 {
+			return nil, false
+		}
 		mlen := pickInt(rng, tap.MessageLengths, []int{12, 100, 2000})
 		msg := deterministicMessage(rng, mlen, "dm:")
-		arg := map[string]any{"message": msg}
-		if len(tap.Usernames) > 0 {
-			arg["username"] = pickString(rng, tap.Usernames, "")
+		arg := map[string]any{
+			"username": pickString(rng, usernames, ""),
+			"message":  msg,
 		}
 		raw, _ := json.Marshal(arg)
 		return raw, true
@@ -403,7 +443,11 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 		return raw, true
 
 	case "WebSearchFetchSource":
-		u := "https://example.com/page-" + fmt.Sprintf("%d", rng.Intn(10000))
+		urls := webSearchAllowedURLs(ctx)
+		if len(urls) == 0 {
+			return nil, false
+		}
+		u := pickString(rng, urls, "")
 		raw, _ := json.Marshal(map[string]string{"URL": u})
 		return raw, true
 

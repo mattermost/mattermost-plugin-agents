@@ -4,6 +4,7 @@
 package loadtest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -80,7 +81,14 @@ func applyOptions(opts []llm.LanguageModelOption) llm.LanguageModelConfig {
 
 func countToolRounds(posts []llm.Post) int {
 	var n int
-	for _, p := range posts {
+	start := 0
+	for i := len(posts) - 1; i >= 0; i-- {
+		if posts[i].Role == llm.PostRoleUser {
+			start = i + 1
+			break
+		}
+	}
+	for _, p := range posts[start:] {
 		if p.Role != llm.PostRoleBot {
 			continue
 		}
@@ -230,7 +238,7 @@ func (m *MockLLM) sampleRequest(req llm.CompletionRequest, cfg llm.LanguageModel
 }
 
 // ChatCompletion streams a synthetic response.
-func (m *MockLLM) ChatCompletion(req llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (m *MockLLM) ChatCompletion(_ context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	cfg := applyOptions(opts)
 	sr := m.sampleRequest(req, cfg)
 
@@ -344,7 +352,7 @@ func padWallTime(start time.Time, wallMs int, elapsed func() time.Duration, slee
 }
 
 // ChatCompletionNoStream returns the final mock text after honoring wall-clock pacing.
-func (m *MockLLM) ChatCompletionNoStream(req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (m *MockLLM) ChatCompletionNoStream(_ context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
 	sr := m.sampleRequest(req, applyOptions(opts))
 	time.Sleep(time.Duration(sr.WallTimeMs) * time.Millisecond)
 	return sr.FinalText, nil

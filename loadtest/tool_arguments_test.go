@@ -4,6 +4,7 @@
 package loadtest
 
 import (
+	"context"
 	"encoding/json"
 	"math/rand"
 	"testing"
@@ -108,6 +109,7 @@ func TestDMAndGroupMessageLengths(t *testing.T) {
 	var dm map[string]any
 	require.NoError(t, json.Unmarshal(dmRaw, &dm))
 	require.NotEmpty(t, dm["message"])
+	require.NotEmpty(t, dm["username"])
 
 	gmTool := llm.Tool{Name: "group_message"}
 	gmRaw, ok := buildToolArguments(profile, gmTool, ctx, rng)
@@ -116,6 +118,48 @@ func TestDMAndGroupMessageLengths(t *testing.T) {
 	require.NoError(t, json.Unmarshal(gmRaw, &gm))
 	us := gm["usernames"].([]any)
 	require.Len(t, us, 2)
+}
+
+func TestDMSkipsWithoutRecipient(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		usernames []string
+	}{
+		{
+			name: "missing",
+		},
+		{
+			name:      "empty",
+			usernames: []string{""},
+		},
+		{
+			name:      "whitespace only",
+			usernames: []string{" \t\n "},
+		},
+		{
+			name:      "empty and whitespace only",
+			usernames: []string{"", " \t "},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			profile := DefaultReadSearchHeavyProfile()
+			profile.ToolArgumentProfiles["dm"] = ToolArgumentProfile{
+				MessageLengths: []int{20},
+				Usernames:      tt.usernames,
+			}
+			tool := llm.Tool{Name: "dm"}
+			require.False(t, canBuildToolArguments(profile, tool, nil))
+
+			raw, ok := buildToolArguments(profile, tool, nil, rand.New(rand.NewSource(4)))
+			require.False(t, ok)
+			require.Nil(t, raw)
+		})
+	}
 }
 
 func TestSkipCreatePostWithoutChannelContext(t *testing.T) {
@@ -178,26 +222,78 @@ func TestChooseWeightedBuildableToolHonorsEligibleWeights(t *testing.T) {
 func TestUnknownToolSchemaRequiredControlsEligibility(t *testing.T) {
 	t.Parallel()
 	profile := DefaultReadSearchHeavyProfile()
-	rng := rand.New(rand.NewSource(12))
-
-	raw, ok := buildToolArguments(profile, llm.Tool{Name: "schema_less_unknown"}, nil, rng)
-	require.True(t, ok)
-	require.JSONEq(t, `{}`, string(raw))
-
-	raw, ok = buildToolArguments(profile, llm.Tool{
-		Name:   "optional_unknown",
-		Schema: &jsonschema.Schema{},
-	}, nil, rng)
-	require.True(t, ok)
-	require.JSONEq(t, `{}`, string(raw))
-
-	_, ok = buildToolArguments(profile, llm.Tool{
-		Name: "required_unknown",
-		Schema: &jsonschema.Schema{
-			Required: []string{"query"},
+	tests := []struct {
+		name string
+		tool llm.Tool
+		ok   bool
+	}{
+		{
+			name: "schema-less unknown is eligible",
+			tool: llm.Tool{Name: "schema_less_unknown"},
+			ok:   true,
 		},
-	}, nil, rng)
+		{
+			name: "optional unknown is eligible",
+			tool: llm.Tool{
+				Name:   "optional_unknown",
+				Schema: &jsonschema.Schema{},
+			},
+			ok: true,
+		},
+		{
+			name: "required unknown is skipped",
+			tool: llm.Tool{
+				Name: "required_unknown",
+				Schema: &jsonschema.Schema{
+					Required: []string{"query"},
+				},
+			},
+			ok: false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw, ok := buildToolArguments(profile, tt.tool, nil, rand.New(rand.NewSource(12)))
+			require.Equal(t, tt.ok, ok)
+			if tt.ok {
+				require.JSONEq(t, `{}`, string(raw))
+			} else {
+				require.Nil(t, raw)
+			}
+		})
+	}
+}
+
+func TestWebSearchFetchSourceUsesAllowedContextURL(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	ctx := &llm.Context{
+		Parameters: map[string]interface{}{
+			"mm_web_search_allowed_urls": []string{
+				"https://mattermost.com/blog/page",
+				"https://docs.mattermost.com/agents",
+			},
+		},
+	}
+
+	raw, ok := buildToolArguments(profile, llm.Tool{Name: "WebSearchFetchSource"}, ctx, rand.New(rand.NewSource(1)))
+	require.True(t, ok)
+
+	var args map[string]string
+	require.NoError(t, json.Unmarshal(raw, &args))
+	require.Contains(t, ctx.Parameters["mm_web_search_allowed_urls"], args["URL"])
+	require.NotContains(t, args["URL"], "example.com")
+}
+
+func TestWebSearchFetchSourceSkipsWithoutAllowedURL(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	raw, ok := buildToolArguments(profile, llm.Tool{Name: "WebSearchFetchSource"}, &llm.Context{}, rand.New(rand.NewSource(1)))
 	require.False(t, ok)
+	require.Nil(t, raw)
 }
 
 func TestServerOriginPreservedInStream(t *testing.T) {
@@ -218,7 +314,7 @@ func TestServerOriginPreservedInStream(t *testing.T) {
 
 	m := NewMockLLM(p)
 	req := llm.CompletionRequest{Context: ctx}
-	res, err := m.ChatCompletion(req)
+	res, err := m.ChatCompletion(context.Background(), req)
 	require.NoError(t, err)
 	for ev := range res.Stream {
 		if ev.Type == llm.EventTypeToolCalls {
