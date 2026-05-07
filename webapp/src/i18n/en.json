@@ -104,7 +104,6 @@
   "C3m9hkE2": "Stop Generating",
   "C9POHlEj": "Server URL",
   "Ckzx8y/w": "Expose search and load helper tools first, then load MCP tool schemas only when the agent needs them. Disable this to use the full MCP tool list for this agent.",
-  "Cubv8M+8": "The reindex job has not updated in over 10 minutes. The node running it ({nodeId}) may have crashed. You can start a new reindex to resume from where it left off.",
   "Cz/D1/Vt": "The number of dimensions for the vector embeddings. Common values are 768, 1024, or 1536 depending on the model.",
   "D0La/m5Z": "Organization ID",
   "D7U9ZoTL": "Custom instructions",

@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,7 +41,7 @@ type channelAnalysisSequenceLLM struct {
 	callIdx  int
 }
 
-func (f *channelAnalysisSequenceLLM) ChatCompletion(request llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (f *channelAnalysisSequenceLLM) ChatCompletion(_ context.Context, request llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	if f.callIdx >= len(f.calls) {
 		return nil, fmt.Errorf("unexpected call #%d to ChatCompletion", f.callIdx)
 	}
@@ -56,7 +57,7 @@ func (f *channelAnalysisSequenceLLM) ChatCompletion(request llm.CompletionReques
 	return &llm.TextStreamResult{Stream: ch}, nil
 }
 
-func (f *channelAnalysisSequenceLLM) ChatCompletionNoStream(llm.CompletionRequest, ...llm.LanguageModelOption) (string, error) {
+func (f *channelAnalysisSequenceLLM) ChatCompletionNoStream(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) (string, error) {
 	return "", fmt.Errorf("not implemented")
 }
 
