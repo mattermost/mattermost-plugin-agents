@@ -18,12 +18,7 @@ import (
 
 func TestLanguageModelAssertion(t *testing.T) {
 	t.Parallel()
-	var _ interface {
-		ChatCompletion(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) (*llm.TextStreamResult, error)
-		ChatCompletionNoStream(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) (string, error)
-		CountTokens(string) int
-		InputTokenLimit() int
-	} = (*MockLLM)(nil)
+	var _ llm.LanguageModel = (*MockLLM)(nil)
 }
 
 func TestNewMockLLMValidatesAndCopiesProfile(t *testing.T) {
@@ -107,7 +102,7 @@ func TestStreamingDisabledOneChunk(t *testing.T) {
 
 func TestToolCallStreamTyping(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{
 		Channel: &model.Channel{Id: model.NewId()},
@@ -133,7 +128,7 @@ func TestToolCallStreamTyping(t *testing.T) {
 
 func TestMockLLMSkipsUnbuildableWeightedTool(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
 		{Name: "group_message"},
 		{Name: "read_channel"},
@@ -168,7 +163,7 @@ func TestMockLLMSkipsUnbuildableWeightedTool(t *testing.T) {
 
 func TestToolsDisabledForcesTextOnly(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{
 		Channel: &model.Channel{Id: model.NewId()},
@@ -186,7 +181,7 @@ func TestToolsDisabledForcesTextOnly(t *testing.T) {
 
 func TestMaxToolRoundsBlocksTools(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{
 		Channel: &model.Channel{Id: model.NewId()},
@@ -211,7 +206,7 @@ func TestMaxToolRoundsBlocksTools(t *testing.T) {
 
 func TestHistoricalToolRoundsDoNotBlockNewRequest(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{
 		Channel: &model.Channel{Id: model.NewId()},
@@ -241,7 +236,7 @@ func TestHistoricalToolRoundsDoNotBlockNewRequest(t *testing.T) {
 
 func TestReasoningSkipProbabilityAllOrNothing(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{Tools: store, Channel: &model.Channel{Id: model.NewId()}}
 
@@ -370,7 +365,7 @@ func TestChatCompletionNoStreamBlocksAndText(t *testing.T) {
 
 func TestToolArgumentsVaryBySeed(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{Channel: &model.Channel{Id: model.NewId()}, Tools: store}
 	p := fastTestProfile()
@@ -407,7 +402,7 @@ func TestCountTokens(t *testing.T) {
 
 func TestCountToolRoundsExportedViaBehavior(t *testing.T) {
 	t.Parallel()
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{Name: "read_channel"}})
 	ctx := &llm.Context{
 		Channel: &model.Channel{Id: model.NewId()},

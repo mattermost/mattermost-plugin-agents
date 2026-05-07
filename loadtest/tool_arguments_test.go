@@ -16,7 +16,7 @@ import (
 )
 
 func makeStore(names ...string) *llm.ToolStore {
-	s := llm.NewToolStore(nil, false)
+	s := llm.NewToolStore()
 	var tools []llm.Tool
 	for _, n := range names {
 		tools = append(tools, llm.Tool{Name: n, ServerOrigin: "origin-" + n})
@@ -299,7 +299,7 @@ func TestWebSearchFetchSourceSkipsWithoutAllowedURL(t *testing.T) {
 func TestServerOriginPreservedInStream(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, DefaultReadSearchHeavyProfile().Validate())
-	store := llm.NewToolStore(nil, false)
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
 		{Name: "read_channel", ServerOrigin: "https://mcp.example"},
 	})
