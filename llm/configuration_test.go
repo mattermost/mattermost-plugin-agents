@@ -526,6 +526,39 @@ func TestIsValidService(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "Valid loadtest mock service minimal",
+			service: ServiceConfig{
+				ID:   "loadtest",
+				Type: ServiceTypeLoadTestMock,
+			},
+			want: true,
+		},
+		{
+			name: "Valid loadtest mock service with profile JSON",
+			service: ServiceConfig{
+				ID:   "loadtest",
+				Type: ServiceTypeLoadTestMock,
+				LoadTestMockConfig: json.RawMessage(`{"profile_weights":{"realistic_default":1,"realistic_fast":0,"realistic_slow":0}}`),
+			},
+			want: true,
+		},
+		{
+			name: "Invalid loadtest mock service missing ID",
+			service: ServiceConfig{
+				Type: ServiceTypeLoadTestMock,
+			},
+			want: false,
+		},
+		{
+			name: "Invalid loadtest mock service malformed JSON config",
+			service: ServiceConfig{
+				ID:                 "loadtest",
+				Type:               ServiceTypeLoadTestMock,
+				LoadTestMockConfig: json.RawMessage(`{`),
+			},
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
