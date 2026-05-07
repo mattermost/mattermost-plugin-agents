@@ -6,21 +6,18 @@ package conversations
 import (
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
 	"testing"
-	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -453,16 +450,16 @@ func TestChannelFollowUpStrictRegistryConfirmedActivateAIFiltersAutoEverywhere(t
 	require.NotContains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
 }
 
-func TestUserMCPPreferenceContextOptionsPassesDisabledServersBeforeBuild(t *testing.T) {
+func TestUserMCPPreferenceContextOptionsNormalizesDisabledServersBeforeBuild(t *testing.T) {
 	origin := "https://mcp.example.com"
-	mmClient := &prefsKVStubMMClient{
-		onKVGet: func(key string, value interface{}) error {
-			require.Equal(t, "user_tool_providers_user-id", key)
-			prefs := value.(*mcp.UserToolProviderPreferences)
-			prefs.DisabledServers = []string{origin}
-			return nil
-		},
-	}
+	mmClient := mocks.NewMockClient(t)
+	mmClient.On("KVGet", "user_tool_providers_user-id", mock.AnythingOfType("*mcp.UserToolProviderPreferences")).
+		Run(func(args mock.Arguments) {
+			prefs := args.Get(1).(*mcp.UserToolProviderPreferences)
+			prefs.DisabledServers = []string{"  " + origin + "/  "}
+		}).
+		Return(nil).
+		Once()
 
 	c := &Conversations{
 		mmClient:       mmClient,
@@ -477,62 +474,3 @@ func TestUserMCPPreferenceContextOptionsPassesDisabledServersBeforeBuild(t *test
 
 	require.Equal(t, []string{origin}, llmContext.DisabledMCPServerOrigins)
 }
-
-// prefsKVStubMMClient is a minimal mmapi.Client used when tests only exercise KV-backed preferences.
-type prefsKVStubMMClient struct {
-	onKVGet func(key string, value interface{}) error
-}
-
-var _ mmapi.Client = (*prefsKVStubMMClient)(nil)
-
-func (s *prefsKVStubMMClient) KVGet(key string, value interface{}) error {
-	if s == nil || s.onKVGet == nil {
-		return errors.New("KVGet not stubbed")
-	}
-	return s.onKVGet(key, value)
-}
-
-func (*prefsKVStubMMClient) GetUser(string) (*model.User, error)                  { return nil, nil }
-func (*prefsKVStubMMClient) GetPost(string) (*model.Post, error)                  { return nil, nil }
-func (*prefsKVStubMMClient) AddReaction(*model.Reaction) error                    { return nil }
-func (*prefsKVStubMMClient) GetPostThread(string) (*model.PostList, error)        { return nil, nil }
-func (*prefsKVStubMMClient) GetPostsSince(string, int64) (*model.PostList, error) { return nil, nil }
-func (*prefsKVStubMMClient) GetPostsBefore(string, string, int, int) (*model.PostList, error) {
-	return nil, nil
-}
-func (*prefsKVStubMMClient) CreatePost(*model.Post) error                            { return nil }
-func (*prefsKVStubMMClient) UpdatePost(*model.Post) error                            { return nil }
-func (*prefsKVStubMMClient) DM(string, string, *model.Post) error                    { return nil }
-func (*prefsKVStubMMClient) GetTeam(string) (*model.Team, error)                     { return nil, nil }
-func (*prefsKVStubMMClient) GetChannel(string) (*model.Channel, error)               { return nil, nil }
-func (*prefsKVStubMMClient) GetDirectChannel(string, string) (*model.Channel, error) { return nil, nil }
-func (*prefsKVStubMMClient) PublishWebSocketEvent(string, map[string]interface{}, *model.WebsocketBroadcast) {
-}
-func (*prefsKVStubMMClient) GetConfig() *model.Config        { return &model.Config{} }
-func (*prefsKVStubMMClient) LogError(string, ...interface{}) {}
-func (*prefsKVStubMMClient) LogWarn(string, ...interface{})  {}
-func (*prefsKVStubMMClient) KVSet(string, interface{}) error { return nil }
-func (*prefsKVStubMMClient) KVSetWithExpiry(string, interface{}, time.Duration) error {
-	return nil
-}
-func (*prefsKVStubMMClient) KVCompareAndSet(string, interface{}, interface{}) (bool, error) {
-	return false, nil
-}
-func (*prefsKVStubMMClient) KVDelete(string) error                          { return nil }
-func (*prefsKVStubMMClient) GetUserByUsername(string) (*model.User, error)  { return nil, nil }
-func (*prefsKVStubMMClient) GetUserStatus(string) (*model.Status, error)    { return nil, nil }
-func (*prefsKVStubMMClient) HasPermissionTo(string, *model.Permission) bool { return false }
-func (*prefsKVStubMMClient) GetPluginStatus(string) (*model.PluginStatus, error) {
-	return nil, nil
-}
-func (*prefsKVStubMMClient) PluginHTTP(*http.Request) *http.Response { return nil }
-func (*prefsKVStubMMClient) LogDebug(string, ...interface{})         {}
-func (*prefsKVStubMMClient) GetChannelByName(string, string, bool) (*model.Channel, error) {
-	return nil, nil
-}
-func (*prefsKVStubMMClient) HasPermissionToChannel(string, string, *model.Permission) bool {
-	return false
-}
-func (*prefsKVStubMMClient) GetFileInfo(string) (*model.FileInfo, error) { return nil, nil }
-func (*prefsKVStubMMClient) GetFile(string) (io.ReadCloser, error)       { return nil, nil }
-func (*prefsKVStubMMClient) SendEphemeralPost(string, *model.Post)       {}

@@ -471,6 +471,15 @@ func TestRemoveToolsByServerOrigin(t *testing.T) {
 			expectedTools:   []string{"builtin_tool"},
 		},
 		{
+			name: "normalizes disabled origins before removal",
+			tools: []Tool{
+				{Name: "tool_a", ServerOrigin: "https://server-a.com/"},
+				{Name: "tool_b", ServerOrigin: "https://server-b.com"},
+			},
+			disabledOrigins: []string{"  https://server-a.com  "},
+			expectedTools:   []string{"tool_b"},
+		},
+		{
 			name: "all tools removed when all origins are disabled",
 			tools: []Tool{
 				{Name: "tool_a", ServerOrigin: "https://server-a.com"},

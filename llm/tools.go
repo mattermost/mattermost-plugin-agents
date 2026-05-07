@@ -463,16 +463,25 @@ func (s *ToolStore) KeepToolsIf(keep func(Tool) bool) {
 // RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches
 // any of the provided origins. This is used for user-disabled provider
 // filtering in Copilot DM contexts.
+func normalizeToolServerOrigin(origin string) string {
+	return strings.TrimRight(strings.TrimSpace(origin), "/")
+}
+
 func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 	if s == nil || len(disabledOrigins) == 0 {
 		return
 	}
+
 	disabledSet := make(map[string]bool, len(disabledOrigins))
 	for _, origin := range disabledOrigins {
+		origin = normalizeToolServerOrigin(origin)
+		if origin == "" {
+			continue
+		}
 		disabledSet[origin] = true
 	}
 	for name, tool := range s.tools {
-		if disabledSet[tool.ServerOrigin] {
+		if disabledSet[normalizeToolServerOrigin(tool.ServerOrigin)] {
 			delete(s.tools, name)
 		}
 	}

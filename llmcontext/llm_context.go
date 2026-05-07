@@ -160,6 +160,28 @@ func normalizeMCPServerOrigin(s string) string {
 	return strings.TrimRight(strings.TrimSpace(s), "/")
 }
 
+func normalizeMCPServerOrigins(origins []string) []string {
+	if len(origins) == 0 {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(origins))
+	seen := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		origin = normalizeMCPServerOrigin(origin)
+		if origin == "" {
+			continue
+		}
+		if _, ok := seen[origin]; ok {
+			continue
+		}
+		seen[origin] = struct{}{}
+		normalized = append(normalized, origin)
+	}
+
+	return normalized
+}
+
 // toolAuthErrorMatchesAllowlist reports whether authErr refers to a server that still
 // appears in the per-agent MCP allowlist (by ServerOrigin).
 func toolAuthErrorMatchesAllowlist(authErr llm.ToolAuthError, allowlist []llm.EnabledMCPTool) bool {
@@ -180,10 +202,11 @@ func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []ll
 
 func (b *Builder) WithLLMContextDisabledMCPServers(origins []string) llm.ContextOption {
 	return func(c *llm.Context) {
-		if len(origins) == 0 {
+		normalized := normalizeMCPServerOrigins(origins)
+		if len(normalized) == 0 {
 			return
 		}
-		c.DisabledMCPServerOrigins = slices.Clone(origins)
+		c.DisabledMCPServerOrigins = normalized
 	}
 }
 
@@ -548,9 +571,14 @@ func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.
 		return tools
 	}
 
-	disabledSet := make(map[string]bool, len(disabled))
-	for _, origin := range disabled {
-		disabledSet[normalizeMCPServerOrigin(origin)] = true
+	normalizedDisabled := normalizeMCPServerOrigins(disabled)
+	if len(normalizedDisabled) == 0 {
+		return tools
+	}
+
+	disabledSet := make(map[string]bool, len(normalizedDisabled))
+	for _, origin := range normalizedDisabled {
+		disabledSet[origin] = true
 	}
 
 	filtered := make([]llm.Tool, 0, len(tools))

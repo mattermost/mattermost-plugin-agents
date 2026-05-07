@@ -159,6 +159,81 @@ func TestDynamicMCPStrictSearchLoadCallHappyPath(t *testing.T) {
 	require.Equal(t, conversation.StatusSuccess, businessResultBlocks[0].Status)
 }
 
+func TestDynamicMCPLoadedToolStillRequiresApprovalWhenPolicyAsks(t *testing.T) {
+	const origin = "https://jira.example.com"
+
+	convStore, conv := loadedStateConversationStore()
+	loadedStore := &loadedStateStore{}
+	resolverCalls := 0
+	jiraTool := llm.Tool{
+		Name:         "jira__get_issue",
+		Description:  "fetch Jira issue details",
+		ServerOrigin: origin,
+		Schema: llm.NewJSONSchemaFromStruct[struct {
+			Key string `json:"key"`
+		}](),
+		Resolver: func(_ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+			resolverCalls++
+			var args struct {
+				Key string `json:"key"`
+			}
+			require.NoError(t, argsGetter(&args))
+			return "JIRA-1 details", nil
+		},
+	}
+
+	builder := newChannelFollowUpTestBuilder(t, []llm.Tool{jiraTool}, &channelFollowUpTestConfig{})
+	builder.SetLoadedMCPToolStore(loadedStore)
+	lm := &dynamicWorkflowLLM{}
+	bot := loadedStateBot(lm)
+	llmContext := builder.BuildLLMContextUserRequest(
+		bot,
+		&model.User{Id: "user-id", Username: "user", Locale: "en"},
+		&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
+		builder.WithLLMContextDefaultTools(bot),
+	)
+	c := &Conversations{
+		convService: conversation.NewService(convStore, nil, nil, nil),
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				"get_issue": {policy: mcp.ToolPolicyAsk, enabled: true},
+			},
+		},
+	}
+
+	streamResult, err := c.ProcessDMRequest(conv.ID, lm, llmContext)
+	require.NoError(t, err)
+
+	foundPendingBusinessTool := false
+	for event := range streamResult.Stream.Stream {
+		if event.Type != llm.EventTypeToolCalls {
+			continue
+		}
+		toolCalls, ok := event.Value.([]llm.ToolCall)
+		require.True(t, ok)
+		require.Len(t, toolCalls, 1)
+		if toolCalls[0].Name == "jira__get_issue" {
+			foundPendingBusinessTool = true
+		}
+	}
+
+	require.True(t, foundPendingBusinessTool, "loaded business tool should still surface for approval when policy is ask")
+	require.Zero(t, resolverCalls, "approval-only tools must not execute during the dynamic load flow")
+	require.Len(t, loadedStore.rows, 1, "load_tool should still persist the newly loaded tool")
+	require.Len(t, lm.requests, 3)
+	require.NotNil(t, lm.requests[2].Context.Tools.GetTool("jira__get_issue"), "load_tool must materialize the schema before the approval-gated business call")
+
+	turns, err := convStore.GetTurnsForConversation(conv.ID)
+	require.NoError(t, err)
+	require.Len(t, turns, 4)
+
+	var loadResultBlocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turns[3].Content, &loadResultBlocks))
+	require.Len(t, loadResultBlocks, 1)
+	require.Contains(t, loadResultBlocks[0].Content, `"loaded":true`)
+	require.Contains(t, loadResultBlocks[0].Content, `"name":"jira__get_issue"`)
+}
+
 func TestDynamicMCPMetaToolsBypassApproval(t *testing.T) {
 	store := llm.NewNoTools()
 	store.AddTools([]llm.Tool{

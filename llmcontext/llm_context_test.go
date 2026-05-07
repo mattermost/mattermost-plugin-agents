@@ -926,7 +926,7 @@ func TestStrictRestoresAfterUserDisabledFilter(t *testing.T) {
 		builder,
 		bot,
 		builder.WithLLMContextConversationID("conv-id"),
-		builder.WithLLMContextDisabledMCPServers([]string{githubOrigin}),
+		builder.WithLLMContextDisabledMCPServers([]string{"  " + githubOrigin + "/  "}),
 	)
 
 	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
@@ -1174,6 +1174,7 @@ func TestStrictRegistryAfterBotAllowlist(t *testing.T) {
 
 func TestStrictRegistryAfterDisabledServerOrigins(t *testing.T) {
 	githubOrigin := "https://github.example.com"
+	disabledOrigin := "  " + githubOrigin + "/  "
 	mcpProvider := &staticMCPToolProvider{tools: []llm.Tool{
 		testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
 		testMCPTool("github__search", githubOrigin, "search GitHub code"),
@@ -1197,11 +1198,11 @@ func TestStrictRegistryAfterDisabledServerOrigins(t *testing.T) {
 		MCPDynamicToolLoading: false,
 	})
 
-	strictContext := buildToolsContext(builder, strictBot, builder.WithLLMContextDisabledMCPServers([]string{githubOrigin}))
+	strictContext := buildToolsContext(builder, strictBot, builder.WithLLMContextDisabledMCPServers([]string{disabledOrigin}))
 	require.Empty(t, searchToolNames(t, strictContext.Tools, "github"))
 	require.Contains(t, searchToolNames(t, strictContext.Tools, "jira"), "jira__get_issue")
 
-	flagOffContext := buildToolsContext(builder, flagOffBot, builder.WithLLMContextDisabledMCPServers([]string{githubOrigin}))
+	flagOffContext := buildToolsContext(builder, flagOffBot, builder.WithLLMContextDisabledMCPServers([]string{disabledOrigin}))
 	require.ElementsMatch(t, []string{"builtin", "jira__get_issue"}, toolNames(flagOffContext.Tools))
 }
 
@@ -1449,15 +1450,9 @@ func TestNormalizeMCPServerOrigin(t *testing.T) {
 	assert.Equal(t, "https://example.com", normalizeMCPServerOrigin("  https://example.com/  "))
 }
 
-func TestFilterMCPToolsByDisabledOriginsNormalizesOrigins(t *testing.T) {
-	tools := []llm.Tool{
-		{Name: "jira__search", ServerOrigin: "https://jira.example.com"},
-		{Name: "github__list_prs", ServerOrigin: "https://github.example.com"},
-	}
-
-	filtered := filterMCPToolsByDisabledOrigins(tools, []string{"  https://jira.example.com/  "})
-	require.Len(t, filtered, 1)
-	assert.Equal(t, "github__list_prs", filtered[0].Name)
+func TestNormalizeMCPServerOrigins(t *testing.T) {
+	assert.Equal(t, []string{"https://example.com", "https://other.example.com"},
+		normalizeMCPServerOrigins([]string{" https://example.com/ ", "", "https://example.com", "https://other.example.com///"}))
 }
 
 func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {
