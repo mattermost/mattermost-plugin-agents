@@ -437,7 +437,7 @@ func buildToolArguments(profile MockProfile, tool llm.Tool, ctx *llm.Context, rn
 	case "WebSearch":
 		q := pickString(rng, tap.SearchQueries, "mattermost roadmap")
 		if len([]rune(q)) < 3 {
-			q = q + " abc"
+			q += " abc"
 		}
 		raw, _ := json.Marshal(map[string]string{"Query": q})
 		return raw, true

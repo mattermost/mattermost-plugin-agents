@@ -25,9 +25,13 @@ func makeStore(names ...string) *llm.ToolStore {
 	return s
 }
 
+func deterministicTestRand(seed int64) *rand.Rand {
+	return rand.New(rand.NewSource(seed)) // #nosec G404 -- deterministic test randomness uses seeded math/rand.
+}
+
 func TestChooseWeightedIgnoresUnavailableTools(t *testing.T) {
 	t.Parallel()
-	rng := rand.New(rand.NewSource(42))
+	rng := deterministicTestRand(42)
 	tools := []llm.Tool{{Name: "read_channel"}, {Name: "search_posts"}}
 	weights := map[string]float64{"read_channel": 1.0, "missing": 50.0}
 	ch, ok := chooseWeightedTool(tools, weights, rng)
@@ -37,7 +41,7 @@ func TestChooseWeightedIgnoresUnavailableTools(t *testing.T) {
 
 func TestChooseWeightedUniformFallback(t *testing.T) {
 	t.Parallel()
-	rng := rand.New(rand.NewSource(7))
+	rng := deterministicTestRand(7)
 	tools := []llm.Tool{{Name: "a"}, {Name: "b"}}
 	ch, ok := chooseWeightedTool(tools, map[string]float64{}, rng)
 	require.True(t, ok)
@@ -53,7 +57,7 @@ func TestReadChannelArgsChannelID(t *testing.T) {
 		Tools:   makeStore("read_channel"),
 	}
 	tool := llm.Tool{Name: "read_channel"}
-	rng := rand.New(rand.NewSource(1))
+	rng := deterministicTestRand(1)
 	raw, ok := buildToolArguments(profile, tool, ctx, rng)
 	require.True(t, ok)
 	var m map[string]any
@@ -71,7 +75,7 @@ func TestSearchPostsValidJSON(t *testing.T) {
 		Channel: &model.Channel{Id: model.NewId()},
 	}
 	tool := llm.Tool{Name: "search_posts"}
-	rng := rand.New(rand.NewSource(99))
+	rng := deterministicTestRand(99)
 	raw, ok := buildToolArguments(profile, tool, ctx, rng)
 	require.True(t, ok)
 	var m map[string]any
@@ -88,7 +92,7 @@ func TestCreatePostMessageLengths(t *testing.T) {
 		Team:    &model.Team{Id: model.NewId(), DisplayName: "Team Co"},
 	}
 	tool := llm.Tool{Name: "create_post"}
-	rng := rand.New(rand.NewSource(1000))
+	rng := deterministicTestRand(1000)
 	raw, ok := buildToolArguments(profile, tool, ctx, rng)
 	require.True(t, ok)
 	var m map[string]any
@@ -101,7 +105,7 @@ func TestDMAndGroupMessageLengths(t *testing.T) {
 	t.Parallel()
 	profile := DefaultReadSearchHeavyProfile()
 	ctx := &llm.Context{}
-	rng := rand.New(rand.NewSource(2))
+	rng := deterministicTestRand(2)
 
 	dmTool := llm.Tool{Name: "dm"}
 	dmRaw, ok := buildToolArguments(profile, dmTool, ctx, rng)
@@ -155,7 +159,7 @@ func TestDMSkipsWithoutRecipient(t *testing.T) {
 			tool := llm.Tool{Name: "dm"}
 			require.False(t, canBuildToolArguments(profile, tool, nil))
 
-			raw, ok := buildToolArguments(profile, tool, nil, rand.New(rand.NewSource(4)))
+			raw, ok := buildToolArguments(profile, tool, nil, deterministicTestRand(4))
 			require.False(t, ok)
 			require.Nil(t, raw)
 		})
@@ -167,7 +171,7 @@ func TestSkipCreatePostWithoutChannelContext(t *testing.T) {
 	profile := DefaultReadSearchHeavyProfile()
 	ctx := &llm.Context{Channel: &model.Channel{DisplayName: "x"}} // no id
 	tool := llm.Tool{Name: "create_post"}
-	rng := rand.New(rand.NewSource(3))
+	rng := deterministicTestRand(3)
 	_, ok := buildToolArguments(profile, tool, ctx, rng)
 	require.False(t, ok)
 }
@@ -185,7 +189,7 @@ func TestChooseWeightedBuildableToolSkipsUnbuildableTools(t *testing.T) {
 		"group_message": 1000,
 		"read_channel":  1,
 	}
-	tool, args, ok := chooseWeightedBuildableTool(profile, tools, weights, ctx, rand.New(rand.NewSource(11)))
+	tool, args, ok := chooseWeightedBuildableTool(profile, tools, weights, ctx, deterministicTestRand(11))
 	require.True(t, ok)
 	require.Equal(t, "read_channel", tool.Name)
 	var readArgs map[string]any
@@ -209,7 +213,7 @@ func TestChooseWeightedBuildableToolHonorsEligibleWeights(t *testing.T) {
 		"search_posts":  1,
 	}
 	for seed := int64(0); seed < 20; seed++ {
-		tool, args, ok := chooseWeightedBuildableTool(profile, tools, weights, ctx, rand.New(rand.NewSource(seed)))
+		tool, args, ok := chooseWeightedBuildableTool(profile, tools, weights, ctx, deterministicTestRand(seed))
 		require.True(t, ok)
 		require.Equal(t, "search_posts", tool.Name)
 		var searchArgs map[string]any
@@ -256,7 +260,7 @@ func TestUnknownToolSchemaRequiredControlsEligibility(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			raw, ok := buildToolArguments(profile, tt.tool, nil, rand.New(rand.NewSource(12)))
+			raw, ok := buildToolArguments(profile, tt.tool, nil, deterministicTestRand(12))
 			require.Equal(t, tt.ok, ok)
 			if tt.ok {
 				require.JSONEq(t, `{}`, string(raw))
@@ -279,7 +283,7 @@ func TestWebSearchFetchSourceUsesAllowedContextURL(t *testing.T) {
 		},
 	}
 
-	raw, ok := buildToolArguments(profile, llm.Tool{Name: "WebSearchFetchSource"}, ctx, rand.New(rand.NewSource(1)))
+	raw, ok := buildToolArguments(profile, llm.Tool{Name: "WebSearchFetchSource"}, ctx, deterministicTestRand(1))
 	require.True(t, ok)
 
 	var args map[string]string
@@ -291,7 +295,7 @@ func TestWebSearchFetchSourceUsesAllowedContextURL(t *testing.T) {
 func TestWebSearchFetchSourceSkipsWithoutAllowedURL(t *testing.T) {
 	t.Parallel()
 	profile := DefaultReadSearchHeavyProfile()
-	raw, ok := buildToolArguments(profile, llm.Tool{Name: "WebSearchFetchSource"}, &llm.Context{}, rand.New(rand.NewSource(1)))
+	raw, ok := buildToolArguments(profile, llm.Tool{Name: "WebSearchFetchSource"}, &llm.Context{}, deterministicTestRand(1))
 	require.False(t, ok)
 	require.Nil(t, raw)
 }

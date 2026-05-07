@@ -48,7 +48,7 @@ func NewMockLLM(profile MockProfile) *MockLLM {
 	profile = cloneMockProfile(profile)
 	return &MockLLM{
 		profile: profile,
-		rg:      rand.New(rand.NewSource(profile.Seed)),
+		rg:      rand.New(rand.NewSource(profile.Seed)), // #nosec G404 -- deterministic load simulation uses seeded math/rand.
 	}
 }
 
@@ -263,7 +263,7 @@ func (m *MockLLM) ChatCompletion(_ context.Context, req llm.CompletionRequest, o
 				toolName = "(none)"
 			}
 			rText := fmt.Sprintf("reasoning block for seq %d category=%s", sr.Seq, toolCategory(toolName))
-			rc := max(1, sr.ChunkCount/20)
+			rc := maxInt(1, sr.ChunkCount/20)
 			chunks := splitIntoChunks(rText, rc)
 			var full strings.Builder
 			for _, ch := range chunks {
@@ -375,7 +375,7 @@ func (m *MockLLM) InputTokenLimit() int {
 	return 100000
 }
 
-func max(a, b int) int {
+func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}

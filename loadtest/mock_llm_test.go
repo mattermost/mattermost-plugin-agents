@@ -335,7 +335,8 @@ func TestConcurrentChatCompletionRace(t *testing.T) {
 				errCh <- err
 				return
 			}
-			for range res.Stream {
+			for event := range res.Stream {
+				_ = event
 			}
 		}()
 	}
