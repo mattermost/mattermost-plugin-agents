@@ -528,9 +528,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PLUGIN_FILE=$(ls dist/*.tar.gz)
-          # Get the commit message and hash
-          COMMIT_MSG=$(git log -1 --pretty=%B)
           COMMIT_HASH=$(git rev-parse --short HEAD)
+          COMMIT_SHA=$(git rev-parse HEAD)
 
           # Delete the old release if it exists
           gh release delete latest-master --yes || true
@@ -539,11 +538,10 @@ jobs:
           git tag -d latest-master || true
           git push origin :refs/tags/latest-master || true
 
-          # Create new tag and release
-          git tag latest-master
-          git push origin latest-master
-
+          # Let GitHub create the tag from the target commit to avoid
+          # racing release creation against tag propagation after push.
           gh release create latest-master \
+            --target "$COMMIT_SHA" \
             --title "Latest Master Build" \
             --notes "Latest build from master branch - ${COMMIT_HASH}" \
             --prerelease \
