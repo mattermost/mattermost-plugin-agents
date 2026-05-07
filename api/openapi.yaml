@@ -9,7 +9,7 @@ info:
     url: https://mattermost.com/
     email: support@mattermost.com
 servers:
-  - url: http://localhost:8065/plugins/mattermost-ai
+  - url: http://localhost:8065
 tags:
   - name: AgentsPluginAgents
     description: User-created AI agents
@@ -571,7 +571,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: string
+                  $ref: "#/components/schemas/AgentsPluginModelInfo"
         "400":
           $ref: "#/components/responses/AgentsPluginBadRequest"
         "401":
@@ -762,7 +762,7 @@ paths:
       security:
         - AgentsPluginBearerAuth: []
       requestBody:
-        $ref: "#/components/requestBodies/AgentsPluginCustomPrompt"
+        $ref: "#/components/requestBodies/AgentsPluginCustomPromptCreate"
       responses:
         "201":
           description: Custom prompt created successfully.
@@ -809,7 +809,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/AgentsPluginPromptIDPath"
       requestBody:
-        $ref: "#/components/requestBodies/AgentsPluginCustomPrompt"
+        $ref: "#/components/requestBodies/AgentsPluginCustomPromptUpdate"
       responses:
         "204":
           description: Custom prompt updated successfully.
@@ -1431,7 +1431,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: string
+                  $ref: "#/components/schemas/AgentsPluginModelInfo"
         "400":
           $ref: "#/components/responses/AgentsPluginBadRequest"
         "401":
@@ -1636,12 +1636,18 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/AgentsPluginCompletionRequest"
-    AgentsPluginCustomPrompt:
+    AgentsPluginCustomPromptCreate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AgentsPluginCustomPrompt"
+            $ref: "#/components/schemas/AgentsPluginCustomPromptRequest"
+    AgentsPluginCustomPromptUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentsPluginCustomPromptUpdateRequest"
     AgentsPluginSearch:
       required: true
       content:
@@ -2127,6 +2133,36 @@ components:
           type: integer
         structuredOutputEnabled:
           type: boolean
+    AgentsPluginCustomPromptRequest:
+      type: object
+      required:
+        - name
+        - template
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        description:
+          type: string
+        template:
+          type: string
+        is_shared:
+          type: boolean
+    AgentsPluginCustomPromptUpdateRequest:
+      type: object
+      required:
+        - name
+        - template
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        description:
+          type: string
+        template:
+          type: string
+        is_shared:
+          type: boolean
     AgentsPluginCustomPrompt:
       type: object
       properties:
@@ -2208,6 +2244,14 @@ components:
         vertexAuthCredentials:
           type: string
           writeOnly: true
+    AgentsPluginModelInfo:
+      type: object
+      description: Available model identifier and human-readable label returned by model listing endpoints.
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
     AgentsPluginHealthCheckResult:
       type: object
       properties:
@@ -2700,10 +2744,62 @@ components:
         apiURL:
           type: string
     AgentsPluginUpdateAgentRequest:
-      allOf:
-        - $ref: "#/components/schemas/AgentsPluginCreateAgentRequest"
-        - type: object
-          properties:
-            username:
-              type: string
-              description: Username must match the existing agent username when provided.
+      type: object
+      description: Full replacement payload for PUT /agents/{agentid}. Matches server validation; username is optional and cannot be changed after creation.
+      required:
+        - displayName
+        - serviceID
+      properties:
+        displayName:
+          type: string
+        username:
+          type: string
+          description: Optional. When provided, must match the existing agent username; usernames cannot be changed after creation.
+        serviceID:
+          type: string
+        customInstructions:
+          type: string
+        channelAccessLevel:
+          type: integer
+        channelIDs:
+          type: array
+          items:
+            type: string
+        userAccessLevel:
+          type: integer
+        userIDs:
+          type: array
+          items:
+            type: string
+        teamIDs:
+          type: array
+          items:
+            type: string
+        adminUserIDs:
+          type: array
+          items:
+            type: string
+        enabledMCPTools:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentsPluginEnabledMCPTool"
+        autoEnableNewMCPTools:
+          type: boolean
+        model:
+          type: string
+        enableVision:
+          type: boolean
+        disableTools:
+          type: boolean
+        enabledNativeTools:
+          type: array
+          items:
+            type: string
+        reasoningEnabled:
+          type: boolean
+        reasoningEffort:
+          type: string
+        thinkingBudget:
+          type: integer
+        structuredOutputEnabled:
+          type: boolean

@@ -84,16 +84,26 @@ for (const line of spec.split(/\r?\n/)) {
     }
 }
 
+const expectedSet = new Set(expected.map(([method, route]) => `${method} ${route}`));
 const missing = expected.
     map(([method, route]) => `${method} ${route}`).
     filter((route) => !documented.has(route));
+const unexpected = [...documented].filter((route) => !expectedSet.has(route));
 
-if (missing.length > 0) {
-    console.error('OpenAPI spec is missing documented routes:');
-    for (const route of missing) {
-        console.error(`  - ${route}`);
+if (missing.length > 0 || unexpected.length > 0) {
+    if (missing.length > 0) {
+        console.error('OpenAPI spec is missing documented routes:');
+        for (const route of missing) {
+            console.error(`  - ${route}`);
+        }
+    }
+    if (unexpected.length > 0) {
+        console.error('OpenAPI spec documents unexpected routes:');
+        for (const route of unexpected) {
+            console.error(`  - ${route}`);
+        }
     }
     process.exit(1);
 }
 
-console.log(`OpenAPI route coverage OK (${expected.length} operations).`);
+console.log(`OpenAPI route coverage OK (${documented.size} operations, matches core routes).`);

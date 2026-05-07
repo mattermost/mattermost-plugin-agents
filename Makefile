@@ -24,7 +24,7 @@ ASSETS_DIR ?= assets
 default: all
 
 # Verify environment, and define PLUGIN_ID, PLUGIN_VERSION, HAS_SERVER and HAS_WEBAPP as needed.
-ifneq ($(MAKECMDGOALS),openapi-validate)
+ifeq (,$(filter openapi-validate,$(MAKECMDGOALS)))
 	include build/setup.mk
 
 # The public/ directory contains the bridgeclient Go module for external consumption,
