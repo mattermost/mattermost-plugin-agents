@@ -677,6 +677,7 @@ func TestRunSearch(t *testing.T) {
 	t.Run("successful RunSearch returns post info", func(t *testing.T) {
 		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 		mockClient := mmapimocks.NewMockClient(t)
+		searchComplete := make(chan struct{})
 
 		// First DM is for question post (synchronous)
 		mockClient.On("DM", "user1", "bot1", mock.Anything).
@@ -687,18 +688,19 @@ func TestRunSearch(t *testing.T) {
 			}).
 			Return(nil).Once()
 
-		// Second DM is for response post (async in goroutine) - use Maybe since test may finish before goroutine
-		mockClient.On("DM", "bot1", "user1", mock.Anything).Return(nil).Maybe()
+		// Second DM is for response post created in the async goroutine.
+		mockClient.On("DM", "bot1", "user1", mock.Anything).Return(nil).Once()
 
-		// The goroutine may call LogError if the search fails - use Maybe to handle both cases
+		// Empty results keep the async path deterministic for this test.
 		mockClient.On("LogError", mock.Anything, mock.Anything).Maybe()
-
-		// The goroutine may call Search - set up to return empty results to avoid further processing
 		mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).
-			Return([]embeddings.SearchResult{}, nil).Maybe()
+			Return([]embeddings.SearchResult{}, nil).Once()
 
-		// If zero results, UpdatePost is called
-		mockClient.On("UpdatePost", mock.Anything).Return(nil).Maybe()
+		mockClient.On("UpdatePost", mock.Anything).
+			Run(func(mock.Arguments) {
+				close(searchComplete)
+			}).
+			Return(nil).Once()
 
 		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
 		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
@@ -708,6 +710,14 @@ func TestRunSearch(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "question_post_id", result["postid"])
 		require.Equal(t, "dm_channel_id", result["channelid"])
+		require.Eventually(t, func() bool {
+			select {
+			case <-searchComplete:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, 5*time.Millisecond, "expected async search goroutine to finish within the test")
 	})
 }
 
