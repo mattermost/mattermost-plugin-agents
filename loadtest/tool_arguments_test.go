@@ -1,0 +1,174 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+package loadtest
+
+import (
+	"encoding/json"
+	"math/rand"
+	"testing"
+
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/stretchr/testify/require"
+)
+
+func makeStore(names ...string) *llm.ToolStore {
+	s := llm.NewToolStore(nil, false)
+	var tools []llm.Tool
+	for _, n := range names {
+		tools = append(tools, llm.Tool{Name: n, ServerOrigin: "origin-" + n})
+	}
+	s.AddTools(tools)
+	return s
+}
+
+func TestChooseWeightedIgnoresUnavailableTools(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewSource(42))
+	tools := []llm.Tool{{Name: "read_channel"}, {Name: "search_posts"}}
+	weights := map[string]float64{"read_channel": 1.0, "missing": 50.0}
+	ch, ok := chooseWeightedTool(tools, weights, rng)
+	require.True(t, ok)
+	require.Equal(t, "read_channel", ch.Name)
+}
+
+func TestChooseWeightedUniformFallback(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewSource(7))
+	tools := []llm.Tool{{Name: "a"}, {Name: "b"}}
+	ch, ok := chooseWeightedTool(tools, map[string]float64{}, rng)
+	require.True(t, ok)
+	require.Contains(t, []string{"a", "b"}, ch.Name)
+}
+
+func TestReadChannelArgsChannelID(t *testing.T) {
+	t.Parallel()
+	cid := model.NewId()
+	profile := DefaultReadSearchHeavyProfile()
+	ctx := &llm.Context{
+		Channel: &model.Channel{Id: cid},
+		Tools:   makeStore("read_channel"),
+	}
+	tool := llm.Tool{Name: "read_channel"}
+	rng := rand.New(rand.NewSource(1))
+	raw, ok := buildToolArguments(profile, tool, ctx, rng)
+	require.True(t, ok)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(raw, &m))
+	require.Equal(t, cid, m["channel_id"])
+	limit := int(m["limit"].(float64))
+	require.Contains(t, []int{10, 25, 50, 100}, limit)
+}
+
+func TestSearchPostsValidJSON(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	ctx := &llm.Context{
+		Team:    &model.Team{Id: model.NewId()},
+		Channel: &model.Channel{Id: model.NewId()},
+	}
+	tool := llm.Tool{Name: "search_posts"}
+	rng := rand.New(rand.NewSource(99))
+	raw, ok := buildToolArguments(profile, tool, ctx, rng)
+	require.True(t, ok)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(raw, &m))
+	require.NotEmpty(t, m["query"])
+}
+
+func TestCreatePostMessageLengths(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	chID := model.NewId()
+	ctx := &llm.Context{
+		Channel: &model.Channel{Id: chID, DisplayName: "Town"},
+		Team:    &model.Team{Id: model.NewId(), DisplayName: "Team Co"},
+	}
+	tool := llm.Tool{Name: "create_post"}
+	rng := rand.New(rand.NewSource(1000))
+	raw, ok := buildToolArguments(profile, tool, ctx, rng)
+	require.True(t, ok)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(raw, &m))
+	msg := m["message"].(string)
+	require.GreaterOrEqual(t, len(msg), 12)
+}
+
+func TestDMAndGroupMessageLengths(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	ctx := &llm.Context{}
+	rng := rand.New(rand.NewSource(2))
+
+	dmTool := llm.Tool{Name: "dm"}
+	dmRaw, ok := buildToolArguments(profile, dmTool, ctx, rng)
+	require.True(t, ok)
+	var dm map[string]any
+	require.NoError(t, json.Unmarshal(dmRaw, &dm))
+	require.NotEmpty(t, dm["message"])
+
+	gmTool := llm.Tool{Name: "group_message"}
+	gmRaw, ok := buildToolArguments(profile, gmTool, ctx, rng)
+	require.True(t, ok)
+	var gm map[string]any
+	require.NoError(t, json.Unmarshal(gmRaw, &gm))
+	us := gm["usernames"].([]any)
+	require.Len(t, us, 2)
+}
+
+func TestSkipCreatePostWithoutChannelContext(t *testing.T) {
+	t.Parallel()
+	profile := DefaultReadSearchHeavyProfile()
+	ctx := &llm.Context{Channel: &model.Channel{DisplayName: "x"}} // no id
+	tool := llm.Tool{Name: "create_post"}
+	rng := rand.New(rand.NewSource(3))
+	_, ok := buildToolArguments(profile, tool, ctx, rng)
+	require.False(t, ok)
+}
+
+func TestServerOriginPreservedInStream(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, DefaultReadSearchHeavyProfile().Validate())
+	store := llm.NewToolStore(nil, false)
+	store.AddTools([]llm.Tool{
+		{Name: "read_channel", ServerOrigin: "https://mcp.example"},
+	})
+	ctx := &llm.Context{
+		Channel: &model.Channel{Id: model.NewId()},
+		Tools:   store,
+	}
+	p := fastTestProfile()
+	p.ToolUseProbability = 1.0
+	p.MaxToolRounds = 10
+	p.ReasoningSkipProbability = 1.0
+
+	m := NewMockLLM(p)
+	req := llm.CompletionRequest{Context: ctx}
+	res, err := m.ChatCompletion(req)
+	require.NoError(t, err)
+	for ev := range res.Stream {
+		if ev.Type == llm.EventTypeToolCalls {
+			tcs := ev.Value.([]llm.ToolCall)
+			require.Len(t, tcs, 1)
+			require.Equal(t, "https://mcp.example", tcs[0].ServerOrigin)
+			return
+		}
+	}
+	require.Fail(t, "expected tool calls")
+}
+
+// fastTestProfile returns a valid profile with instant timings for tests.
+func fastTestProfile() MockProfile {
+	p := DefaultReadSearchHeavyProfile()
+	for k := range p.LatencyProfiles {
+		p.LatencyProfiles[k] = LatencyProfile{
+			TTFTMs:                    [2]int{0, 0},
+			ChunkCount:                [2]int{1, 2},
+			ChunkIntervalMs:           [2]int{0, 0},
+			TotalWallTimeMsPerRequest: [2]int{0, 0},
+		}
+	}
+	p.StreamingEnabled = true
+	return p
+}
