@@ -13,6 +13,33 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// AgentInfo holds display fields for formatting an AI agent list (e.g. MCP tool output).
+type AgentInfo struct {
+	ID          string
+	DisplayName string
+	Username    string
+}
+
+// AgentList formats discovered agents as a numbered list for LLM-facing text.
+// When currentBotUserID matches an agent's ID, a marker line is added for that row.
+func AgentList(agents []AgentInfo, currentBotUserID string) string {
+	if len(agents) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Found %d agent(s):\n\n", len(agents)))
+	for i, a := range agents {
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, a.DisplayName))
+		b.WriteString(fmt.Sprintf("   ID: %s\n", a.ID))
+		b.WriteString(fmt.Sprintf("   Username: @%s\n", a.Username))
+		if currentBotUserID != "" && a.ID == currentBotUserID {
+			b.WriteString("   ** This is YOU (the current agent) **\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func ThreadData(data *mmapi.ThreadData) string {
 	result := ""
 	for _, post := range data.Posts {
@@ -225,6 +252,7 @@ type ChannelEntry struct {
 	TeamName    string         // resolved team display name
 	TeamID      string         // team ID (shown when TeamName is empty but TeamID is set)
 	MemberCount int64          // -1 means don't show
+	Role        string         // requesting user's role: "admin" | "member" | "guest" | "not_member" | "" (omit)
 }
 
 // WriteChannel writes a formatted channel entry to the builder.
@@ -258,6 +286,10 @@ func WriteChannel(w *strings.Builder, entry ChannelEntry) {
 
 	if entry.MemberCount >= 0 {
 		fmt.Fprintf(w, "Member Count: %d\n", entry.MemberCount)
+	}
+
+	if entry.Role != "" {
+		fmt.Fprintf(w, "Your role: %s\n", entry.Role)
 	}
 
 	w.WriteString("\n")

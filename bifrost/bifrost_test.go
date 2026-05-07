@@ -888,7 +888,6 @@ func TestConvertToBifrostRequestStructuredOutput(t *testing.T) {
 
 			if tt.expectFormat {
 				require.NotNil(t, req.Params.ResponseFormat)
-				// Verify the structure
 				data, err := json.Marshal(*req.Params.ResponseFormat)
 				require.NoError(t, err)
 				var format map[string]interface{}
@@ -1070,6 +1069,7 @@ func TestChatCompletionNoStreamReturnsErrorForUnsupportedResponsesSchema(t *test
 	}
 
 	_, err := b.ChatCompletionNoStream(
+		context.Background(),
 		llm.CompletionRequest{},
 		func(cfg *llm.LanguageModelConfig) {
 			cfg.Model = "gpt-4"
@@ -1150,7 +1150,7 @@ func TestEnvProxyRouting(t *testing.T) {
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
 
-	result, err := llmClient.ChatCompletionNoStream(llm.CompletionRequest{
+	result, err := llmClient.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
 		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
 	})
 	require.NoError(t, err)

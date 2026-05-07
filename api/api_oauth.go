@@ -87,8 +87,22 @@ func (a *API) handleOAuthCallback(c *gin.Context) {
 		return
 	}
 
+	a.publishMCPOAuthClusterInvalidation(userID)
 	a.publishMCPConnectionUpdated(userID, session)
 	a.renderOAuthWindowClosePage(c, http.StatusOK, "Authorization Successful")
+}
+
+// publishMCPOAuthClusterInvalidation notifies peer nodes to drop stale per-user MCP clients.
+func (a *API) publishMCPOAuthClusterInvalidation(userID string) {
+	if a.mcpOAuthNotifier == nil || userID == "" {
+		return
+	}
+
+	if err := a.mcpOAuthNotifier.PublishMCPOAuthUpdate(userID); err != nil {
+		if a.pluginAPI != nil {
+			a.pluginAPI.Log.Warn("Failed to publish MCP OAuth cluster invalidation", "userID", userID, "error", err)
+		}
+	}
 }
 
 // publishMCPConnectionUpdated notifies the webapp that the user connected an MCP server (OAuth callback).

@@ -48,7 +48,7 @@ func TestShouldAutoExecuteTool(t *testing.T) {
 					},
 				},
 			}
-			llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 			callback := c.shouldAutoExecuteTool(llmCtx, tc.isDM)
 			got := callback(llm.ToolCall{Name: toolName, ServerOrigin: origin})
 			assert.Equal(t, tc.want, got)
@@ -60,7 +60,7 @@ func TestShouldAutoExecuteTool(t *testing.T) {
 // no policy checker wired up, no tool should ever auto-execute.
 func TestShouldAutoExecuteTool_NilChecker(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: nil}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	for _, isDM := range []bool{true, false} {
 		got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: "x", ServerOrigin: "y"})
 		assert.False(t, got, "isDM=%v", isDM)
@@ -83,7 +83,7 @@ func TestAllToolsAutoRunEverywhere_RespectsEnabledFlag(t *testing.T) {
 			},
 		},
 	}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 
 	turns := []toolrunner.ToolTurn{{
 		AssistantToolCalls: []llm.ToolCall{{Name: toolName, ServerOrigin: origin}},

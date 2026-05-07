@@ -10,7 +10,6 @@ import MattermostContainer from './mmcontainer';
 export interface SystemConsolePluginConfig {
     allowPrivateChannels?: boolean;
     disableFunctionCalls?: boolean;
-    enableLLMTrace?: boolean;
     enableUserRestrictions?: boolean;
     enableVectorIndex?: boolean;
     enableTokenUsageLogging?: boolean;
@@ -99,7 +98,6 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
         config: {
             allowPrivateChannels: config.allowPrivateChannels ?? true,
             disableFunctionCalls: config.disableFunctionCalls ?? false,
-            enableLLMTrace: config.enableLLMTrace ?? true,
             enableUserRestrictions: config.enableUserRestrictions ?? false,
             enableVectorIndex: config.enableVectorIndex ?? false,
             enableTokenUsageLogging: config.enableTokenUsageLogging,

@@ -5,6 +5,7 @@ package conversations_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -167,7 +168,7 @@ func TestDirectMessageConversations(t *testing.T) {
 				{Role: llm.PostRoleSystem, Message: systemPrompt},
 				{Role: llm.PostRoleUser, Message: threadData.LatestPost().Message},
 			}
-			textStream, err := llmInstance.ChatCompletion(llm.CompletionRequest{
+			textStream, err := llmInstance.ChatCompletion(context.Background(), llm.CompletionRequest{
 				Posts:     dmPosts,
 				Context:   llmContext,
 				Operation: llm.OperationConversation,

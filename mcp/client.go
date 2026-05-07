@@ -14,8 +14,11 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -119,8 +122,8 @@ func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService,
 	}
 }
 
-// CreateClient creates an embedded MCP client using session ID for authentication
-// If sessionID is empty, creates an unauthenticated client (used for tool discovery)
+// CreateClient creates an embedded MCP client using session ID for authentication.
+// If sessionID is empty, creates an unauthenticated client (used for tool discovery).
 func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, sessionID string) (*Client, error) {
 	// Validate session exists before creating transport (unless empty for tool discovery)
 	if sessionID != "" {
@@ -130,6 +133,9 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		}
 		if mmSession == nil {
 			return nil, fmt.Errorf("session not found")
+		}
+		if mmSession.UserId != userID {
+			return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, mmSession.UserId)
 		}
 	}
 
@@ -429,8 +435,19 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 
 // CallToolWithMetadata calls a tool on this MCP server with optional metadata
 func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "mcp call tool",
+		trace.WithAttributes(
+			telemetry.MCPTool.String(toolName),
+			telemetry.MCPServer.String(c.config.Name),
+		),
+	)
+	defer span.End()
+
 	if c.session == nil {
-		return "", fmt.Errorf("MCP client not connected")
+		err := fmt.Errorf("MCP client not connected")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return "", err
 	}
 
 	// Call the tool using new SDK

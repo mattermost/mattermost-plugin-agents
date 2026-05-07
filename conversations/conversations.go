@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	stdcontext "context"
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
@@ -18,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -50,7 +52,7 @@ type Conversations struct {
 // MeetingsService defines the interface for meetings functionality needed by conversations
 type MeetingsService interface {
 	GetCaptionsFileIDFromProps(post *model.Post) (fileID string, err error)
-	SummarizeTranscription(bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error)
+	SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error)
 }
 
 func New(
@@ -99,6 +101,7 @@ func (c *Conversations) SetConversationService(svc *conversation.Service) {
 type DMConversationResult struct {
 	ConversationID string
 	IsNew          bool
+	UserTurnID     string
 }
 
 // CreateOrGetDMConversation creates or retrieves a conversation for a DM.
@@ -151,7 +154,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 		if err != nil {
 			return nil, fmt.Errorf("failed to create conversation: %w", err)
 		}
-		return &DMConversationResult{ConversationID: result.ConversationID, IsNew: true}, nil
+		return &DMConversationResult{ConversationID: result.ConversationID, IsNew: true, UserTurnID: result.UserTurnID}, nil
 	}
 
 	result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
@@ -168,7 +171,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get or create conversation: %w", err)
 	}
-	return &DMConversationResult{ConversationID: result.Conversation.ID, IsNew: result.IsNew}, nil
+	return &DMConversationResult{ConversationID: result.Conversation.ID, IsNew: result.IsNew, UserTurnID: result.UserTurnID}, nil
 }
 
 // DMStreamResult is the return value of ProcessDMRequest.
@@ -180,10 +183,14 @@ type DMStreamResult struct {
 // runs the tool loop, returning the final stream. The conversation must
 // already exist (created via CreateOrGetDMConversation).
 func (c *Conversations) ProcessDMRequest(
+	ctx stdcontext.Context,
 	convID string,
 	lm llm.LanguageModel,
 	llmCtx *llm.Context,
 ) (*DMStreamResult, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "process dm request")
+	defer span.End()
+
 	if c.convService == nil {
 		return nil, fmt.Errorf("conversation service not configured")
 	}
@@ -201,7 +208,7 @@ func (c *Conversations) ProcessDMRequest(
 	}
 
 	runner := toolrunner.New(lm)
-	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
+	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)
 		}

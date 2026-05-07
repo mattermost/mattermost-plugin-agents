@@ -45,10 +45,6 @@ func (p *noToolsTestMCPProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Error
 
 type noToolsTestContextConfigProvider struct{}
 
-func (p *noToolsTestContextConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (p *noToolsTestContextConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
@@ -158,13 +154,13 @@ func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient
 	require.NoError(t, err)
 
 	e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-	e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+	e.OverrideLicense(&model.License{SkuShortName: "advanced"})
 	siteName := "Mattermost"
 	siteURL := "https://example.com"
-	e.mockAPI.On("GetConfig").Return(&model.Config{
+	e.OverrideConfig(&model.Config{
 		TeamSettings:    model.TeamSettings{SiteName: &siteName},
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
-	}).Maybe()
+	})
 
 	e.api.prompts = promptsObj
 	e.api.mmClient = mmClient

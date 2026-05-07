@@ -1,0 +1,19 @@
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    type: tempo
+    access: proxy
+    orgId: 1
+    uid: tempo
+    url: http://tempo:3200
+    isDefault: true
+    version: 1
+    editable: false
+    jsonData:
+      httpMethod: GET
+      # Show service-graph node labels in trace view; the metrics generator
+      # is disabled, so the service graph itself stays empty — that's fine
+      # for a local dev stack.
+      serviceMap:
+        datasourceUid: ""

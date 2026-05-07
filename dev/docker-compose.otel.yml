@@ -1,0 +1,48 @@
+# Local OpenTelemetry trace stack for the Agents plugin.
+#
+# Brings up:
+#   - Grafana Tempo:   OTLP receiver on :4317 (gRPC) and :4318 (HTTP), trace store on :3200
+#   - Grafana:         UI on :3001 with Tempo provisioned as the default datasource
+#
+# Plugin endpoint: localhost:4317 (matches the existing default)
+# Grafana UI:      http://localhost:3001  (anonymous Admin, no login)
+#
+# Grafana is mapped to :3001 (not :3000) to avoid collisions with Mattermost's
+# webapp dev server and the mattermost-server build/docker-compose stack.
+
+services:
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: agents-tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "4317:4317"  # OTLP gRPC (plugin sends here)
+      - "4318:4318"  # OTLP HTTP
+      - "3200:3200"  # Tempo HTTP API (used by Grafana datasource)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:3200/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: agents-grafana
+    depends_on:
+      tempo:
+        condition: service_healthy
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+
+volumes:
+  tempo-data:

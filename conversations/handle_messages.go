@@ -17,9 +17,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -80,8 +82,17 @@ func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUse
 	return !isAutomatedInvoker(post, postingUser)
 }
 
-func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Post) {
-	if err := c.handleMessages(post); err != nil {
+func (c *Conversations) MessageHasBeenPosted(_ *plugin.Context, post *model.Post) {
+	ctx, span := telemetry.Tracer().Start(context.Background(), "message has been posted",
+		trace.WithAttributes(
+			telemetry.PostID.String(post.Id),
+			telemetry.ChannelID.String(post.ChannelId),
+			telemetry.UserID.String(post.UserId),
+		),
+	)
+	defer span.End()
+
+	if err := c.handleMessages(ctx, post); err != nil {
 		if errors.Is(err, ErrNoResponse) {
 			c.mmClient.LogDebug(err.Error())
 		} else {
@@ -90,7 +101,7 @@ func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Po
 	}
 }
 
-func (c *Conversations) handleMessages(post *model.Post) error {
+func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) error {
 	// Don't respond to ourselves
 	if c.bots.IsAnyBot(post.UserId) {
 		return fmt.Errorf("not responding to ourselves: %w", ErrNoResponse)
@@ -133,18 +144,18 @@ func (c *Conversations) handleMessages(post *model.Post) error {
 
 	// Check we are mentioned like @ai
 	if bot := c.bots.GetBotMentioned(post.Message); bot != nil {
-		return c.handleMentions(bot, post, postingUser, channel)
+		return c.handleMentions(ctx, bot, post, postingUser, channel)
 	}
 
 	// Check if this is post in the DM channel with any bot
 	if bot := c.bots.GetBotForDMChannel(channel); bot != nil {
-		return c.handleDMs(bot, channel, postingUser, post)
+		return c.handleDMs(ctx, bot, channel, postingUser, post)
 	}
 
 	return nil
 }
 
-func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) error {
+func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) error {
 	if err := c.bots.CheckUsageRestrictions(postingUser.Id, bot, channel); err != nil {
 		return err
 	}
@@ -160,7 +171,7 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		responseRootID = post.RootId
 	}
 
-	return c.handleMentionViaConversation(bot, post, postingUser, channel, allowToolsInChannel, channelToolsAutoRunEverywhereOnly, responseRootID)
+	return c.handleMentionViaConversation(ctx, bot, post, postingUser, channel, allowToolsInChannel, channelToolsAutoRunEverywhereOnly, responseRootID)
 }
 
 // handleMentionViaConversation processes a channel mention using the conversation entity model.
@@ -169,6 +180,7 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 // When channelToolsAutoRunEverywhereOnly is true (bot activate_ai), only MCP tools with
 // auto_run_everywhere policy are kept.
 func (c *Conversations) handleMentionViaConversation(
+	ctx context.Context,
 	bot *bots.Bot,
 	post *model.Post,
 	postingUser *model.User,
@@ -215,6 +227,19 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
 	}
 
+	// Anchor this run's trace to the user turn ID so cross-node resumes can
+	// reproduce the same TraceID. Link to the previous user turn so Tempo
+	// renders a clickable jump from this trace back to the prior invocation.
+	ctx = telemetry.WithTurnID(ctx, convResult.UserTurnID)
+	runOpts := []trace.SpanStartOption{trace.WithNewRoot()}
+	if prev, prevErr := c.convService.GetPreviousUserTurn(convResult.Conversation.ID, convResult.UserTurnID); prevErr == nil && prev != nil {
+		runOpts = append(runOpts, trace.WithLinks(trace.Link{
+			SpanContext: telemetry.SpanContextForTurn(prev.ID),
+		}))
+	}
+	ctx, runSpan := telemetry.Tracer().Start(ctx, "agent run", runOpts...)
+	defer runSpan.End()
+
 	responsePost := &model.Post{
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
@@ -256,7 +281,7 @@ func (c *Conversations) handleMentionViaConversation(
 	runner := toolrunner.New(bot.LLM())
 	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
 	autoExec := c.shouldAutoExecuteTool(llmContext, false)
-	result, runErr := runner.Run(*completionRequest, func(tc llm.ToolCall) bool {
+	result, runErr := runner.Run(ctx, *completionRequest, func(tc llm.ToolCall) bool {
 		if !allowToolsInChannel {
 			return false
 		}
@@ -278,7 +303,7 @@ func (c *Conversations) handleMentionViaConversation(
 		stream = mmtools.DecorateStreamWithAnnotations(stream, webSearchData, nil)
 	}
 
-	if streamErr := c.streamResponseToExistingPost(stream, responsePost, postingUser, channel); streamErr != nil {
+	if streamErr := c.streamResponseToExistingPost(ctx, stream, responsePost, postingUser, channel); streamErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
@@ -299,16 +324,16 @@ func (c *Conversations) handleMentionViaConversation(
 	return nil
 }
 
-func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
+func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
 	if err := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); err != nil {
 		return err
 	}
 
-	return c.handleDMViaConversation(bot, channel, postingUser, post)
+	return c.handleDMViaConversation(ctx, bot, channel, postingUser, post)
 }
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
-func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
+func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextTools(bot),
 	}
@@ -347,6 +372,18 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
 
+	// Anchor this run's trace to the user turn ID. Link to the previous user
+	// turn (if any) so consecutive DMs are navigable in Tempo.
+	ctx = telemetry.WithTurnID(ctx, convResult.UserTurnID)
+	runOpts := []trace.SpanStartOption{trace.WithNewRoot()}
+	if prev, prevErr := c.convService.GetPreviousUserTurn(convResult.ConversationID, convResult.UserTurnID); prevErr == nil && prev != nil {
+		runOpts = append(runOpts, trace.WithLinks(trace.Link{
+			SpanContext: telemetry.SpanContextForTurn(prev.ID),
+		}))
+	}
+	ctx, runSpan := telemetry.Tracer().Start(ctx, "agent run", runOpts...)
+	defer runSpan.End()
+
 	responsePost := &model.Post{
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
@@ -356,13 +393,13 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 
-	dmStream, err := c.ProcessDMRequest(convResult.ConversationID, bot.LLM(), llmContext)
+	dmStream, err := c.ProcessDMRequest(ctx, convResult.ConversationID, bot.LLM(), llmContext)
 	if err != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to process DM request: %w", err)
 	}
 
-	if streamErr := c.streamResponseToExistingPost(dmStream.Stream, responsePost, postingUser, channel); streamErr != nil {
+	if streamErr := c.streamResponseToExistingPost(ctx, dmStream.Stream, responsePost, postingUser, channel); streamErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
@@ -383,8 +420,8 @@ func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string,
 	return c.mmClient.CreatePost(post)
 }
 
-func (c *Conversations) streamResponseToExistingPost(stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel) error {
-	ctx, err := c.streamingService.GetStreamingContext(context.Background(), post.Id)
+func (c *Conversations) streamResponseToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel) error {
+	streamCtx, err := c.streamingService.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return err
 	}
@@ -392,7 +429,7 @@ func (c *Conversations) streamResponseToExistingPost(stream *llm.TextStreamResul
 	locale := c.responseLocale(postingUser, channel)
 	go func() {
 		defer c.streamingService.FinishStreaming(post.Id)
-		c.streamingService.StreamToPost(ctx, stream, post, locale, postingUser.Id)
+		c.streamingService.StreamToPost(streamCtx, stream, post, locale, postingUser.Id)
 	}()
 
 	return nil

@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -20,13 +21,13 @@ type MockLanguageModel struct {
 	mock.Mock
 }
 
-func (m *MockLanguageModel) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
-	args := m.Called(request, opts)
+func (m *MockLanguageModel) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+	args := m.Called(ctx, request, opts)
 	return args.Get(0).(*TextStreamResult), args.Error(1)
 }
 
-func (m *MockLanguageModel) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
-	args := m.Called(request, opts)
+func (m *MockLanguageModel) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+	args := m.Called(ctx, request, opts)
 	return args.String(0), args.Error(1)
 }
 
@@ -279,9 +280,9 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 			sinks := makeTestTokenUsageSinks(true, pluginLogger, nil)
 			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, metrics)
 
-			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything).Return(tc.stream, nil).Once()
+			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(tc.stream, nil).Once()
 
-			result, err := wrapper.ChatCompletion(tc.request, tc.opts...)
+			result, err := wrapper.ChatCompletion(context.Background(), tc.request, tc.opts...)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -369,7 +370,7 @@ func TestTokenTrackingWrapper_DefaultOperationSubType(t *testing.T) {
 			name:            "ChatCompletion defaults to streaming subtype",
 			expectedSubType: SubTypeStreaming,
 			invokeAndDrainFunc: func(wrapper *TokenUsageLoggingWrapper, request CompletionRequest) error {
-				result, err := wrapper.ChatCompletion(request)
+				result, err := wrapper.ChatCompletion(context.Background(), request)
 				if err != nil {
 					return err
 				}
@@ -381,7 +382,7 @@ func TestTokenTrackingWrapper_DefaultOperationSubType(t *testing.T) {
 			name:            "ChatCompletionNoStream defaults to nostream subtype",
 			expectedSubType: SubTypeNoStream,
 			invokeAndDrainFunc: func(wrapper *TokenUsageLoggingWrapper, request CompletionRequest) error {
-				_, err := wrapper.ChatCompletionNoStream(request)
+				_, err := wrapper.ChatCompletionNoStream(context.Background(), request)
 				return err
 			},
 		},
@@ -394,7 +395,7 @@ func TestTokenTrackingWrapper_DefaultOperationSubType(t *testing.T) {
 			sinks := makeTestTokenUsageSinks(true, pluginLogger, nil)
 			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, nil)
 
-			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything).Return(
+			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(
 				makeStream(
 					TextStreamEvent{Type: EventTypeText, Value: "hello"},
 					TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 2, OutputTokens: 3}},
@@ -432,10 +433,10 @@ func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 		close(mockStream)
 
 		mockResult := &TextStreamResult{Stream: mockStream}
-		mockLLM.On("ChatCompletion", mock.Anything, mock.Anything).Return(mockResult, nil)
+		mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(mockResult, nil)
 
 		request := CompletionRequest{Context: &Context{}}
-		result, err := wrapper.ChatCompletionNoStream(request)
+		result, err := wrapper.ChatCompletionNoStream(context.Background(), request)
 		require.NoError(t, err)
 		assert.Equal(t, "Hello world", result)
 

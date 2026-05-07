@@ -37,7 +37,6 @@ export async function RunRealAPIContainer(config: ContainerConfig): Promise<Matt
     "config": {
       "allowPrivateChannels": true,
       "disableFunctionCalls": false,
-      "enableLLMTrace": true,
       "enableUserRestrictions": false,
       "defaultBotName": config.bot.name,
       "enableVectorIndex": true,

@@ -17,8 +17,10 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ErrStaleToolClick is returned when a tool-approval click cannot be resolved
@@ -41,7 +43,17 @@ var ErrNotRequester = errors.New("only the original requester can approve/reject
 // HandleToolCall handles user approval/rejection of pending tool calls via conversation entities.
 // It looks up pending tool_use blocks in the conversation turns, executes approved tools,
 // writes results back as turns, and streams a follow-up LLM response.
-func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+	// Resume: chain into the originating run's trace if we can find it. If
+	// the post or its assistant turn is missing, fall back to a fresh trace.
+	ctx = c.rehydrateRunTrace(ctx, post)
+
+	ctx, span := telemetry.Tracer().Start(ctx, "handle tool call",
+		trace.WithNewRoot(),
+		trace.WithAttributes(telemetry.PostID.String(post.Id)),
+	)
+	defer span.End()
+
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -113,9 +125,21 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		}
 
 		if slices.Contains(acceptedToolIDs, block.ID) {
-			result, resolveErr := llmContext.Tools.ResolveTool(block.Name, func(args any) error {
+			toolCtx, toolSpan := telemetry.Tracer().Start(ctx, "resolve tool",
+				trace.WithAttributes(
+					telemetry.ToolName.String(block.Name),
+					telemetry.ToolID.String(block.ID),
+				),
+			)
+			result, resolveErr := llmContext.Tools.ResolveTool(toolCtx, block.Name, func(args any) error {
 				return json.Unmarshal(block.Input, args)
 			}, llmContext)
+			if resolveErr != nil {
+				toolSpan.SetAttributes(telemetry.ToolStatus.String("error"))
+			} else {
+				toolSpan.SetAttributes(telemetry.ToolStatus.String("success"))
+			}
+			toolSpan.End()
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -214,14 +238,22 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return nil
 	}
 
-	return c.streamToolFollowUp(bot, user, channel, post, conv, isDM)
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM)
 }
 
 // HandleToolResult handles user approval of the second-stage tool-result sharing.
 // It flips shared flags for accepted results and, in channels, streams the LLM
 // follow-up with unshared content redacted so private tool output cannot leak
 // into the channel-visible reply.
-func (c *Conversations) HandleToolResult(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+func (c *Conversations) HandleToolResult(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+	ctx = c.rehydrateRunTrace(ctx, post)
+
+	ctx, span := telemetry.Tracer().Start(ctx, "handle tool result",
+		trace.WithNewRoot(),
+		trace.WithAttributes(telemetry.PostID.String(post.Id)),
+	)
+	defer span.End()
+
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -368,7 +400,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("unable to get user: %w", err)
 	}
 
-	return c.streamToolFollowUp(bot, user, channel, post, conv, false)
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, false)
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
@@ -378,6 +410,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 // privacy guarantee that keeps unshared tool output from leaking into a
 // channel-visible reply.
 func (c *Conversations) streamToolFollowUp(
+	ctx context.Context,
 	bot *bots.Bot,
 	user *model.User,
 	channel *model.Channel,
@@ -385,6 +418,9 @@ func (c *Conversations) streamToolFollowUp(
 	conv *store.Conversation,
 	isDM bool,
 ) error {
+	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
+	defer span.End()
+
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
 	}
@@ -435,7 +471,7 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	runner := toolrunner.New(bot.LLM())
-	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
+	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns on follow-up", "error", writeErr)
@@ -451,7 +487,7 @@ func (c *Conversations) streamToolFollowUp(
 		RootId:    responseRootIDFromPost(post),
 	}
 	responsePost.AddProp(streaming.ConversationIDProp, conv.ID)
-	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, runResult.Stream, responsePost, post.Id); err != nil {
+	if err := c.streamingService.StreamToNewPost(ctx, bot.GetMMBot().UserId, user.Id, runResult.Stream, responsePost, post.Id); err != nil {
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}
 
@@ -492,4 +528,23 @@ func responseRootIDFromPost(post *model.Post) string {
 		return post.RootId
 	}
 	return post.Id
+}
+
+// rehydrateRunTrace stamps ctx with the user-turn ID that initiated the run
+// associated with post, so a span started under WithNewRoot lands in the
+// originating run's deterministic trace. Best-effort: any lookup miss leaves
+// ctx unchanged and the resume gets a fresh trace.
+func (c *Conversations) rehydrateRunTrace(ctx context.Context, post *model.Post) context.Context {
+	if post == nil || c.convService == nil {
+		return ctx
+	}
+	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
+	if !ok || convID == "" {
+		return ctx
+	}
+	userTurn, err := c.convService.GetInitiatingUserTurn(convID, post.Id)
+	if err != nil || userTurn == nil {
+		return ctx
+	}
+	return telemetry.WithTurnID(ctx, userTurn.ID)
 }

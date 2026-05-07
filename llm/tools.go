@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,10 @@ import (
 	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 )
 
 // Tool represents a function that can be called by the language model during a conversation.
@@ -31,6 +36,13 @@ type Tool struct {
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
+
+	// CallMetadata is forwarded to the tool implementation as MCP CallToolParams.Meta.
+	// It is invisible to the LLM, not part of the input schema, and not parsed from the
+	// model's arguments. Set it at scope-time via WithCallMetadata when callers need to
+	// plumb runtime/protocol info (e.g. before-hook keys) that the underlying server
+	// needs but the model shouldn't see or be able to manipulate.
+	CallMetadata map[string]any
 }
 
 type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string, error)
@@ -40,13 +52,27 @@ type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string,
 // - Removed from the schema (LLM cannot see or manipulate them)
 // - Automatically injected when the resolver is called
 func (t Tool) WithBoundParams(params map[string]interface{}) Tool {
-	return Tool{
-		Name:         t.Name,
-		Description:  t.Description,
-		Schema:       removeSchemaProperties(t.Schema, params),
-		Resolver:     wrapResolverWithBoundParams(t.Resolver, params),
-		ServerOrigin: t.ServerOrigin,
+	cloned := t
+	cloned.Schema = removeSchemaProperties(t.Schema, params)
+	cloned.Resolver = wrapResolverWithBoundParams(t.Resolver, params)
+	return cloned
+}
+
+// WithCallMetadata returns a copy of the tool with CallMetadata set. Use this to attach
+// per-call MCP metadata (like before-hook keys) at scope-time without leaking it into
+// the LLM-visible schema or making the resolver fish it out of llm.Context. Passing an
+// empty map clears the field.
+func (t Tool) WithCallMetadata(meta map[string]any) Tool {
+	cloned := t
+	if len(meta) == 0 {
+		cloned.CallMetadata = nil
+		return cloned
 	}
+	cloned.CallMetadata = make(map[string]any, len(meta))
+	for k, v := range meta {
+		cloned.CallMetadata[k] = v
+	}
+	return cloned
 }
 
 // removeSchemaProperties removes the specified properties from a JSON schema.
@@ -293,13 +319,7 @@ type ToolAuthError struct {
 
 type ToolStore struct {
 	tools      map[string]Tool
-	log        TraceLog
-	doTrace    bool
 	authErrors []ToolAuthError
-}
-
-type TraceLog interface {
-	Info(message string, keyValuePairs ...any)
 }
 
 // NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using generics
@@ -316,17 +336,13 @@ func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
 func NewNoTools() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
-		log:        nil,
-		doTrace:    false,
 		authErrors: []ToolAuthError{},
 	}
 }
 
-func NewToolStore(log TraceLog, doTrace bool) *ToolStore {
+func NewToolStore() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
-		log:        log,
-		doTrace:    doTrace,
 		authErrors: []ToolAuthError{},
 	}
 }
@@ -337,15 +353,25 @@ func (s *ToolStore) AddTools(tools []Tool) {
 	}
 }
 
-func (s *ToolStore) ResolveTool(name string, argsGetter ToolArgumentGetter, context *Context) (string, error) {
+func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
+	_, span := telemetry.Tracer().Start(ctx, "resolve tool",
+		trace.WithAttributes(telemetry.ToolName.String(name)),
+	)
+	defer span.End()
+
 	tool, ok := s.tools[name]
 	if !ok {
-		s.TraceUnknown(name, argsGetter)
-		return "", errors.New("unknown tool " + name)
+		err := errors.New("unknown tool " + name)
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+		return "", err
 	}
-	results, err := tool.Resolver(context, argsGetter)
-	s.TraceResolved(name, argsGetter, results, err)
-	return results, err
+	result, err := tool.Resolver(llmCtx, argsGetter)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+	}
+	return result, err
 }
 
 func (s *ToolStore) GetTools() []Tool {
@@ -454,37 +480,12 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 	result := make([]ToolInfo, 0, len(s.tools))
 	for _, tool := range s.tools {
 		result = append(result, ToolInfo{
-			Name:        tool.Name,
-			Description: tool.Description,
+			Name:         tool.Name,
+			Description:  tool.Description,
+			ServerOrigin: tool.ServerOrigin,
 		})
 	}
 	return result
-}
-
-func (s *ToolStore) TraceUnknown(name string, argsGetter ToolArgumentGetter) {
-	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if err := argsGetter(&raw); err != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", err)
-		} else {
-			args = string(raw)
-		}
-		s.log.Info("unknown tool called", "name", name, "args", args)
-	}
-}
-
-func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, result string, err error) {
-	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if getArgsErr := argsGetter(&raw); getArgsErr != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", getArgsErr)
-		} else {
-			args = string(raw)
-		}
-		s.log.Info("tool resolved", "name", name, "args", args, "result", result, "error", err)
-	}
 }
 
 // AddAuthError adds an authentication error to the tool store

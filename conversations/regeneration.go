@@ -4,7 +4,7 @@
 package conversations
 
 import (
-	"context"
+	stdcontext "context"
 	"errors"
 	"fmt"
 
@@ -15,9 +15,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/threads"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -26,7 +28,16 @@ const (
 )
 
 // HandleRegenerate handles post regeneration requests
-func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channel *model.Channel) error {
+func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, post *model.Post, channel *model.Channel) error {
+	// Resume into the originating run's trace so the regenerated work shows
+	// up alongside the original invocation.
+	ctx = c.rehydrateRunTrace(ctx, post)
+	ctx, span := telemetry.Tracer().Start(ctx, "handle regenerate",
+		trace.WithNewRoot(),
+		trace.WithAttributes(telemetry.PostID.String(post.Id)),
+	)
+	defer span.End()
+
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -66,7 +77,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		return fmt.Errorf("unable to get user to regen post: %w", err)
 	}
 
-	ctx, err := c.streamingService.GetStreamingContext(context.Background(), post.Id)
+	ctx, err = c.streamingService.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return fmt.Errorf("unable to get post streaming context: %w", err)
 	}
@@ -101,11 +112,11 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		var analyzeResult *threads.AnalyzeResult
 		switch analysisType {
 		case "summarize_thread":
-			analyzeResult, err = analyzer.Summarize(threadID, llmContext, bot.GetMMBot().UserId, userID)
+			analyzeResult, err = analyzer.Summarize(ctx, threadID, llmContext, bot.GetMMBot().UserId, userID)
 		case "action_items":
-			analyzeResult, err = analyzer.FindActionItems(threadID, llmContext, bot.GetMMBot().UserId, userID)
+			analyzeResult, err = analyzer.FindActionItems(ctx, threadID, llmContext, bot.GetMMBot().UserId, userID)
 		case "open_questions":
-			analyzeResult, err = analyzer.FindOpenQuestions(threadID, llmContext, bot.GetMMBot().UserId, userID)
+			analyzeResult, err = analyzer.FindOpenQuestions(ctx, threadID, llmContext, bot.GetMMBot().UserId, userID)
 		default:
 			return fmt.Errorf("invalid analysis type: %s", analysisType)
 		}
@@ -148,7 +159,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			c.contextBuilder.WithLLMContextNoTools(),
 		)
 		var summaryErr error
-		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
+		result, summaryErr = c.meetingsService.SummarizeTranscription(ctx, bot, transcription, context)
 		if summaryErr != nil {
 			return fmt.Errorf("could not summarize transcription on regen: %w", summaryErr)
 		}
@@ -181,7 +192,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			c.contextBuilder.WithLLMContextNoTools(),
 		)
 		var summaryErr error
-		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
+		result, summaryErr = c.meetingsService.SummarizeTranscription(ctx, bot, transcription, context)
 		if summaryErr != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", summaryErr)
 		}
@@ -196,7 +207,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 
 		// Use the conversation entity path for regeneration.
 		if c.convService != nil {
-			regenResult, regenErr := c.regenerateViaConversation(bot, user, channel, post, respondingToPostID)
+			regenResult, regenErr := c.regenerateViaConversation(ctx, bot, user, channel, post, respondingToPostID)
 			if regenErr != nil {
 				return fmt.Errorf("could not regenerate via conversation: %w", regenErr)
 			}
@@ -222,6 +233,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 // regenerateViaConversation rebuilds the completion request from the conversation entity
 // and runs the ToolRunner to produce a new response stream.
 func (c *Conversations) regenerateViaConversation(
+	ctx stdcontext.Context,
 	bot *bots.Bot,
 	user *model.User,
 	channel *model.Channel,
@@ -288,7 +300,7 @@ func (c *Conversations) regenerateViaConversation(
 	}
 
 	runner := toolrunner.New(bot.LLM())
-	runResult, runErr := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
+	runResult, runErr := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns on regen", "error", writeErr)

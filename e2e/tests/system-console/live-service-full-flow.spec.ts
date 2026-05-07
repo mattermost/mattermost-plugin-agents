@@ -109,7 +109,6 @@ async function installPlugin(mattermostInstance: MattermostContainer): Promise<v
         config: {
             allowPrivateChannels: true,
             disableFunctionCalls: false,
-            enableLLMTrace: true,
             enableUserRestrictions: false,
             enableVectorIndex: false,
             services: [],

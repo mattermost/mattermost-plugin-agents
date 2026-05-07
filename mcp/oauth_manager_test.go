@@ -320,6 +320,108 @@ func TestStaticCredsHelpers(t *testing.T) {
 	}
 }
 
+func TestOAuthNeededStateLifecycle(t *testing.T) {
+	manager, mockClient := setupTestOAuthManager(t)
+
+	const userID = "user123"
+	const serverID = "GitHub"
+	const authURL = "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start?resource_metadata=https%3A%2F%2Fapi.githubcopilot.com%2F.well-known%2Foauth-protected-resource%2Fmcp"
+
+	mockClient.On("KVSetWithExpiry", buildAuthNeededKey(userID, serverID), mock.AnythingOfType("*mcp.OAuthNeededState"), oauthNeededStateTTL).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*OAuthNeededState)
+			require.Equal(t, authURL, state.AuthURL)
+			require.False(t, state.SeenAt.IsZero())
+		}).
+		Return(nil).
+		Once()
+
+	require.NoError(t, manager.StoreAuthNeededState(userID, serverID, authURL))
+
+	mockClient.On("KVGet", buildAuthNeededKey(userID, serverID), mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*OAuthNeededState)
+			*state = OAuthNeededState{
+				AuthURL: authURL,
+				SeenAt:  time.Now(),
+			}
+		}).
+		Return(nil).
+		Once()
+
+	state, err := manager.LoadAuthNeededState(userID, serverID)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, authURL, state.AuthURL)
+
+	mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
+		Return(nil).
+		Once()
+
+	require.NoError(t, manager.DeleteAuthNeededState(userID, serverID))
+}
+
+func TestDeleteUserTokenCleanup(t *testing.T) {
+	const userID = "user123"
+	const serverID = "GitHub"
+
+	tokenErr := model.NewAppError("test", "token_delete_failed", nil, "token delete failed", http.StatusInternalServerError)
+	authNeededErr := model.NewAppError("test", "auth_needed_delete_failed", nil, "auth-needed delete failed", http.StatusInternalServerError)
+
+	testCases := []struct {
+		name                string
+		tokenDeleteErr      error
+		authNeededDeleteErr error
+		expectedErr         error
+	}{
+		{
+			name:           "returns token delete error after auth-needed cleanup",
+			tokenDeleteErr: tokenErr,
+			expectedErr:    tokenErr,
+		},
+		{
+			name:                "returns auth-needed cleanup error",
+			authNeededDeleteErr: authNeededErr,
+			expectedErr:         authNeededErr,
+		},
+		{
+			name:                "joins both cleanup errors",
+			tokenDeleteErr:      tokenErr,
+			authNeededDeleteErr: authNeededErr,
+			expectedErr:         tokenErr,
+		},
+		{
+			name:        "succeeds when both deletes succeed",
+			expectedErr: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, mockClient := setupTestOAuthManager(t)
+
+			mockClient.On("KVDelete", buildTokenKey(userID, serverID)).
+				Return(tc.tokenDeleteErr).
+				Once()
+			mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
+				Return(tc.authNeededDeleteErr).
+				Once()
+
+			err := manager.DeleteUserToken(userID, serverID)
+
+			if tc.expectedErr == nil {
+				require.NoError(t, err)
+				return
+			}
+
+			require.ErrorIs(t, err, tc.expectedErr)
+			if tc.authNeededDeleteErr != nil {
+				require.ErrorIs(t, err, tc.authNeededDeleteErr)
+			}
+		})
+	}
+}
+
 func TestProcessCallback_InvalidSession(t *testing.T) {
 	manager, mockClient := setupTestOAuthManager(t)
 
@@ -409,6 +511,87 @@ func TestProcessCallback_UserIDValidation(t *testing.T) {
 	require.Contains(t, err.Error(), correctUserID)
 	require.Contains(t, err.Error(), wrongUserID)
 	mockClient.AssertCalled(t, "KVDelete", mock.AnythingOfType("string"))
+}
+
+func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
+	userID := "user123"
+	serverID := "server456"
+	state := "test-state"
+	code := "auth-code"
+
+	var authServer *httptest.Server
+	authServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			http.NotFound(w, r)
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(AuthorizationServerMetadata{
+				Issuer:                authServer.URL,
+				AuthorizationEndpoint: authServer.URL + "/authorize",
+				TokenEndpoint:         authServer.URL + "/token",
+			}))
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-token",
+				"token_type":   "Bearer",
+				"expires_in":   3600,
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer authServer.Close()
+
+	lookup := func(id string) (ServerConfig, bool) {
+		if id == serverID {
+			return ServerConfig{
+				Name:         serverID,
+				BaseURL:      authServer.URL,
+				ClientID:     "client-id",
+				ClientSecret: "client-secret",
+			}, true
+		}
+		return ServerConfig{}, false
+	}
+	manager, mockClient := setupTestOAuthManagerFull(t, lookup, authServer.Client())
+
+	session := &OAuthSession{
+		UserID:         userID,
+		ServerID:       serverID,
+		ServerURL:      authServer.URL,
+		CodeVerifier:   "test-verifier",
+		State:          state,
+		StaticClientID: "client-id",
+		CreatedAt:      time.Now(),
+	}
+	clearErr := model.NewAppError("test", "auth_needed_delete_failed", nil, "auth-needed delete failed", http.StatusInternalServerError)
+
+	mockClient.On("KVGet", buildSessionKey(userID, state), mock.AnythingOfType("*mcp.OAuthSession")).
+		Run(func(args mock.Arguments) {
+			sess := args.Get(1).(*OAuthSession)
+			*sess = *session
+		}).
+		Return(nil).
+		Once()
+	mockClient.On("KVSet", buildTokenKey(userID, serverID), mock.Anything).
+		Return(nil).
+		Once()
+	mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
+		Return(clearErr).
+		Once()
+	mockClient.On("KVDelete", buildSessionKey(userID, state)).
+		Return(nil).
+		Once()
+	mockClient.On("LogWarn", "Failed to clear OAuth-needed state after successful callback", mock.Anything).
+		Return().
+		Once()
+
+	gotSession, err := manager.ProcessCallback(context.Background(), userID, state, code)
+
+	require.NoError(t, err)
+	require.Equal(t, session, gotSession)
 }
 
 func TestProcessCallback_RederivesStaticCredsFromConfig(t *testing.T) {

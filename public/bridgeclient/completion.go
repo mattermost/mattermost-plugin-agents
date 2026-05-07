@@ -16,23 +16,40 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
+func requestFailedError(statusCode int, responseBody []byte) error {
+	var errResp ErrorResponse
+	if err := json.Unmarshal(responseBody, &errResp); err == nil {
+		errMessage := strings.TrimSpace(errResp.Error)
+		if errMessage != "" {
+			return fmt.Errorf("request failed with status %d: %s", statusCode, errMessage)
+		}
+	}
+
+	bodyText := strings.TrimSpace(string(responseBody))
+	if bodyText == "" {
+		return fmt.Errorf("request failed with status %d", statusCode)
+	}
+
+	return fmt.Errorf("request failed with status %d: %s", statusCode, bodyText)
+}
+
 // AgentCompletion makes a non-streaming completion request to a specific agent by Bot ID.
 // The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
 func (c *Client) AgentCompletion(agent string, request CompletionRequest) (string, error) {
-	if err := ValidateID(agent); err != nil {
-		return "", fmt.Errorf("invalid agent ID: %w", err)
+	requestURL, err := buildAgentCompletionURL(agent, false)
+	if err != nil {
+		return "", err
 	}
-	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s/nostream", aiPluginID, agent)
-	return c.doCompletionRequest(url, request)
+	return c.doCompletionRequest(requestURL, request)
 }
 
 // ServiceCompletion makes a non-streaming completion request to a specific service.
 // The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
 func (c *Client) ServiceCompletion(service string, request CompletionRequest) (string, error) {
-	if service == "" {
-		return "", fmt.Errorf("service cannot be empty")
+	requestURL, err := buildServiceCompletionURL(service, false)
+	if err != nil {
+		return "", err
 	}
-	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s/nostream", aiPluginID, url.PathEscape(service))
 	return c.doCompletionRequest(requestURL, request)
 }
 
@@ -40,40 +57,30 @@ func (c *Client) ServiceCompletion(service string, request CompletionRequest) (s
 // The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
 // Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	if err := ValidateID(agent); err != nil {
-		return nil, fmt.Errorf("invalid agent ID: %w", err)
+	requestURL, err := buildAgentCompletionURL(agent, true)
+	if err != nil {
+		return nil, err
 	}
-	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
-	return c.doStreamingRequest(url, request)
+	return c.doStreamingRequest(requestURL, request)
 }
 
 // ServiceCompletionStream makes a streaming completion request to a specific service.
 // The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
 // Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) ServiceCompletionStream(service string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	if service == "" {
-		return nil, fmt.Errorf("service cannot be empty")
+	requestURL, err := buildServiceCompletionURL(service, true)
+	if err != nil {
+		return nil, err
 	}
-	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(service))
 	return c.doStreamingRequest(requestURL, request)
 }
 
 // doCompletionRequest performs a non-streaming completion request
-func (c *Client) doCompletionRequest(url string, request CompletionRequest) (string, error) {
-	// Marshal the request body
-	body, err := json.Marshal(request)
+func (c *Client) doCompletionRequest(requestURL string, request CompletionRequest) (string, error) {
+	req, err := buildCompletionHTTPRequest(requestURL, request, false)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", err
 	}
-
-	// Create the HTTP request
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
 
 	// Make the request
 	resp, err := c.httpClient.Do(req)
@@ -90,11 +97,7 @@ func (c *Client) doCompletionRequest(url string, request CompletionRequest) (str
 
 	// Check for error status codes
 	if resp.StatusCode != http.StatusOK {
-		var errResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errResp); err != nil {
-			return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-		}
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
+		return "", requestFailedError(resp.StatusCode, respBody)
 	}
 
 	// Parse the success response
@@ -107,22 +110,11 @@ func (c *Client) doCompletionRequest(url string, request CompletionRequest) (str
 }
 
 // doStreamingRequest performs a streaming completion request and returns a TextStreamResult
-func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	// Marshal the request body
-	body, err := json.Marshal(request)
+func (c *Client) doStreamingRequest(requestURL string, request CompletionRequest) (*llm.TextStreamResult, error) {
+	req, err := buildCompletionHTTPRequest(requestURL, request, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, err
 	}
-
-	// Create the HTTP request
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
 
 	// Make the request
 	resp, err := c.httpClient.Do(req)
@@ -144,11 +136,7 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 		if err != nil {
 			return nil, fmt.Errorf("request failed with status %d", resp.StatusCode)
 		}
-		var errResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errResp); err != nil {
-			return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-		}
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
+		return nil, requestFailedError(resp.StatusCode, respBody)
 	}
 
 	// Create a channel for the stream
@@ -210,4 +198,53 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 	return &llm.TextStreamResult{
 		Stream: stream,
 	}, nil
+}
+
+func buildCompletionHTTPRequest(requestURL string, request CompletionRequest, isStreaming bool) (*http.Request, error) {
+	if requestURL == "" {
+		return nil, fmt.Errorf("request URL cannot be empty")
+	}
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if isStreaming {
+		req.Header.Set("Accept", "text/event-stream")
+	}
+
+	return req, nil
+}
+
+func buildServiceCompletionURL(service string, isStreaming bool) (string, error) {
+	if service == "" {
+		return "", fmt.Errorf("service cannot be empty")
+	}
+
+	path := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(service))
+	if !isStreaming {
+		path = fmt.Sprintf("%s/nostream", path)
+	}
+
+	return path, nil
+}
+
+func buildAgentCompletionURL(agent string, isStreaming bool) (string, error) {
+	if err := ValidateID(agent); err != nil {
+		return "", fmt.Errorf("invalid agent ID: %w", err)
+	}
+
+	path := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
+	if !isStreaming {
+		path = fmt.Sprintf("%s/nostream", path)
+	}
+
+	return path, nil
 }

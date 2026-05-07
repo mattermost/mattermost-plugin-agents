@@ -21,8 +21,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/metrics"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	prompttemplates "github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost-plugin-agents/store"
@@ -80,6 +83,24 @@ func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
 }
 
+type testLLMContextToolProvider struct {
+	tools []llm.Tool
+}
+
+func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
+	return p.tools
+}
+
+type testLLMContextConfigProvider struct{}
+
+func (p *testLLMContextConfigProvider) GetEnableLLMTrace() bool {
+	return false
+}
+
+func (p *testLLMContextConfigProvider) GetServiceByID(_ string) (llm.ServiceConfig, bool) {
+	return llm.ServiceConfig{}, false
+}
+
 type mcpDisconnectCall struct {
 	userID     string
 	serverName string
@@ -87,12 +108,25 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager    *mcp.OAuthManager
-	tools           []llm.Tool
-	mcpErrors       *mcp.Errors
-	config          mcp.Config
-	embeddedServer  mcp.EmbeddedMCPServer
-	disconnectCalls []mcpDisconnectCall
+	oauthManager        *mcp.OAuthManager
+	tools               []llm.Tool
+	mcpErrors           *mcp.Errors
+	config              mcp.Config
+	embeddedServer      mcp.EmbeddedMCPServer
+	processOAuthSession *mcp.OAuthSession
+	processOAuthErr     error
+	disconnectErr       error
+	disconnectCalls     []mcpDisconnectCall
+	oauthNeededCalls    []mcpDisconnectCall
+}
+
+func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
+	t.Helper()
+	mockClient := mmapimocks.NewMockClient(t)
+	mockClient.EXPECT().KVGet(mock.Anything, mock.Anything).Return(nil).Maybe()
+	return &mockMCPClientManager{
+		oauthManager: mcp.NewOAuthManager(mockClient, "", &http.Client{}, nil),
+	}
 }
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
@@ -104,11 +138,19 @@ func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 }
 
 func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
-	return nil, nil
+	return m.processOAuthSession, m.processOAuthErr
 }
 
 func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
 	m.disconnectCalls = append(m.disconnectCalls, mcpDisconnectCall{
+		userID:     userID,
+		serverName: serverName,
+	})
+	return m.disconnectErr
+}
+
+func (m *mockMCPClientManager) MarkOAuthNeeded(userID, serverName, authURL string) error {
+	m.oauthNeededCalls = append(m.oauthNeededCalls, mcpDisconnectCall{
 		userID:     userID,
 		serverName: serverName,
 	})
@@ -133,6 +175,16 @@ func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
 	return m.config
+}
+
+type fakeMCPOAuthClusterNotifier struct {
+	calls []string
+	err   error
+}
+
+func (f *fakeMCPOAuthClusterNotifier) PublishMCPOAuthUpdate(userID string) error {
+	f.calls = append(f.calls, userID)
+	return f.err
 }
 
 // mockConversationStore is a simple in-memory implementation of ConversationStore for API-layer tests.
@@ -314,6 +366,34 @@ func (e *TestEnvironment) Cleanup(t *testing.T) {
 	}
 }
 
+// OverrideLicense replaces the default GetLicense mock registered by
+// SetupTestEnvironment so that tests can control the license value.
+// Testify matches the first registered expectation, so simply adding
+// a new On("GetLicense") does not override the default.
+func (e *TestEnvironment) OverrideLicense(license *model.License) {
+	filtered := make([]*mock.Call, 0, len(e.mockAPI.ExpectedCalls))
+	for _, call := range e.mockAPI.ExpectedCalls {
+		if call.Method != "GetLicense" {
+			filtered = append(filtered, call)
+		}
+	}
+	e.mockAPI.ExpectedCalls = filtered
+	e.mockAPI.On("GetLicense").Return(license).Maybe()
+}
+
+// OverrideConfig replaces the default GetConfig mock registered by
+// SetupTestEnvironment so that tests can control the config value.
+func (e *TestEnvironment) OverrideConfig(config *model.Config) {
+	filtered := make([]*mock.Call, 0, len(e.mockAPI.ExpectedCalls))
+	for _, call := range e.mockAPI.ExpectedCalls {
+		if call.Method != "GetConfig" {
+			filtered = append(filtered, call)
+		}
+	}
+	e.mockAPI.ExpectedCalls = filtered
+	e.mockAPI.On("GetConfig").Return(config).Maybe()
+}
+
 // CreateBridgeClient creates a bridge client that uses the test API
 func (e *TestEnvironment) CreateBridgeClient() *bridgeclient.Client {
 	// Create a plugin API wrapper that routes to our test API
@@ -372,6 +452,15 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	noopMetrics := &metrics.NoopMetrics{}
 
 	client := pluginapi.NewClient(mockAPI, nil)
+	llmPrompts, err := llm.NewPrompts(prompttemplates.PromptsFolder)
+	require.NoError(t, err)
+
+	contextBuilder := llmcontext.NewLLMContextBuilder(
+		client,
+		&testLLMContextToolProvider{},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
 
 	// Create test bots instance
 	testBots := createTestBots(mockAPI, client)
@@ -383,7 +472,51 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mockConvStore := newMockConversationStore()
 	agentStore := newMockAgentStore()
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, agentStore, nil, nil, nil, mockConvStore, nil, nil)
+	// Allow arbitrary log calls from subsystems used in tests (e.g. MCP discovery).
+	for i := 1; i <= 20; i++ {
+		args := make([]interface{}, i)
+		for j := range args {
+			args[j] = mock.Anything
+		}
+		mockAPI.On("LogDebug", args...).Maybe()
+		mockAPI.On("LogInfo", args...).Maybe()
+		mockAPI.On("LogWarn", args...).Maybe()
+		mockAPI.On("LogError", args...).Maybe()
+	}
+
+	// Mock GetConfig and GetLicense for WithLLMContextServerInfo used in bridge context building.
+	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+
+	api := New(
+		testBots,
+		conversationsService,
+		nil,
+		nil,
+		nil,
+		client,
+		noopMetrics,
+		contextBuilder,
+		cfg,
+		llmPrompts,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		&mockMCPClientManager{},
+		nil,
+		nil,
+		nil,
+		agentStore,
+		nil,
+		nil,
+		nil,
+		nil,
+		mockConvStore,
+		nil,
+		nil,
+	)
 
 	return &TestEnvironment{
 		api:               api,
@@ -903,8 +1036,7 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
 
 			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-			e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+			e.OverrideLicense(&model.License{SkuShortName: "advanced"})
 
 			post := &model.Post{
 				Id:        "postid",
