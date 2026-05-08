@@ -42,13 +42,28 @@ function fetchConversation(id: string): Promise<ConversationResponse> {
     if (existing) {
         return existing;
     }
-    const promise = getConversation(id).then((data) => {
+
+    // Capture the promise reference so a later resolution can detect that
+    // invalidateConversation evicted us mid-flight and skip writing stale
+    // data into the cache. Without this, two close-together invalidations
+    // (e.g. 'continue' then 'end' on a tool-approval continuation stream)
+    // can race: the older fetch resolves AFTER the newer fetch has updated
+    // the cache, overwriting fresh data with the pre-finalize snapshot —
+    // leaving the post visually stuck on the prior round.
+    const settle = (data: ConversationResponse) => {
+        if (inflightRequests.get(id) !== promise) {
+            return data;
+        }
         conversationCache.set(id, data);
         errorCache.delete(id);
         inflightRequests.delete(id);
         notifySubscribers();
         return data;
-    }).catch((err) => {
+    };
+    const fail = (err: Error): never => {
+        if (inflightRequests.get(id) !== promise) {
+            throw err;
+        }
         errorCache.set(id, err);
         inflightRequests.delete(id);
 
@@ -57,7 +72,8 @@ function fetchConversation(id: string): Promise<ConversationResponse> {
         // loading=true since the dedup path made them skip their own fetch.
         notifySubscribers();
         throw err;
-    });
+    };
+    const promise: Promise<ConversationResponse> = getConversation(id).then(settle, fail);
     inflightRequests.set(id, promise);
     return promise;
 }

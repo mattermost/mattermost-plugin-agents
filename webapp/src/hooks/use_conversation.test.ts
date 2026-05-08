@@ -268,6 +268,50 @@ describe('useConversation', () => {
         });
         expect(result.current.error).toBeNull();
     });
+
+    // Regression: a tool-approval continuation triggers two close-together
+    // invalidates ('continue' then 'end'). Without the inflight-identity
+    // guard, the older fetch can resolve AFTER the newer one and overwrite
+    // the freshly-finalized conversation with its pre-finalize snapshot,
+    // leaving the post visually stuck on the prior round.
+    test('a stale fetch resolving after a newer fetch must not overwrite cache', async () => {
+        const stale = makeConversation({title: 'stale'});
+        const fresh = makeConversation({title: 'fresh'});
+
+        let resolveStale: (data: ConversationResponse) => void;
+        let resolveFresh: (data: ConversationResponse) => void;
+        getConversation.
+            mockReturnValueOnce(new Promise<ConversationResponse>((r) => {
+                resolveStale = r;
+            })).
+            mockReturnValueOnce(new Promise<ConversationResponse>((r) => {
+                resolveFresh = r;
+            }));
+
+        const {result} = renderHook(() => useConversation('conv_123'));
+        expect(result.current.loading).toBe(true);
+
+        // Drop the first inflight, kick a second fetch.
+        act(() => {
+            invalidateConversation('conv_123');
+        });
+
+        // Resolve the FRESH (second) fetch first — cache should pick this up.
+        await act(async () => {
+            resolveFresh!(fresh);
+        });
+        await waitFor(() => {
+            expect(result.current.conversation).toEqual(fresh);
+        });
+
+        // Stale (first) fetch resolves later; its result must be discarded so
+        // the cache stays on the fresh data.
+        await act(async () => {
+            resolveStale!(stale);
+        });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(result.current.conversation).toEqual(fresh);
+    });
 });
 
 describe('useTurnForPost', () => {
