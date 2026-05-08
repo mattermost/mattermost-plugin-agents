@@ -5,6 +5,8 @@
 package mocks
 
 import (
+	"context"
+
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -37,12 +39,12 @@ func (_m *MockLanguageModel) EXPECT() *MockLanguageModel_Expecter {
 }
 
 // ChatCompletion provides a mock function for the type MockLanguageModel
-func (_mock *MockLanguageModel) ChatCompletion(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (_mock *MockLanguageModel) ChatCompletion(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	var tmpRet mock.Arguments
 	if len(opts) > 0 {
-		tmpRet = _mock.Called(conversation, opts)
+		tmpRet = _mock.Called(ctx, conversation, opts)
 	} else {
-		tmpRet = _mock.Called(conversation)
+		tmpRet = _mock.Called(ctx, conversation)
 	}
 	ret := tmpRet
 
@@ -52,18 +54,18 @@ func (_mock *MockLanguageModel) ChatCompletion(conversation llm.CompletionReques
 
 	var r0 *llm.TextStreamResult
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(llm.CompletionRequest, ...llm.LanguageModelOption) (*llm.TextStreamResult, error)); ok {
-		return returnFunc(conversation, opts...)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) (*llm.TextStreamResult, error)); ok {
+		return returnFunc(ctx, conversation, opts...)
 	}
-	if returnFunc, ok := ret.Get(0).(func(llm.CompletionRequest, ...llm.LanguageModelOption) *llm.TextStreamResult); ok {
-		r0 = returnFunc(conversation, opts...)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) *llm.TextStreamResult); ok {
+		r0 = returnFunc(ctx, conversation, opts...)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*llm.TextStreamResult)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(llm.CompletionRequest, ...llm.LanguageModelOption) error); ok {
-		r1 = returnFunc(conversation, opts...)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) error); ok {
+		r1 = returnFunc(ctx, conversation, opts...)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -76,17 +78,18 @@ type MockLanguageModel_ChatCompletion_Call struct {
 }
 
 // ChatCompletion is a helper method to define mock.On call
+//   - ctx
 //   - conversation
 //   - opts
-func (_e *MockLanguageModel_Expecter) ChatCompletion(conversation interface{}, opts ...interface{}) *MockLanguageModel_ChatCompletion_Call {
+func (_e *MockLanguageModel_Expecter) ChatCompletion(ctx interface{}, conversation interface{}, opts ...interface{}) *MockLanguageModel_ChatCompletion_Call {
 	return &MockLanguageModel_ChatCompletion_Call{Call: _e.mock.On("ChatCompletion",
-		append([]interface{}{conversation}, opts...)...)}
+		append([]interface{}{ctx, conversation}, opts...)...)}
 }
 
-func (_c *MockLanguageModel_ChatCompletion_Call) Run(run func(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption)) *MockLanguageModel_ChatCompletion_Call {
+func (_c *MockLanguageModel_ChatCompletion_Call) Run(run func(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption)) *MockLanguageModel_ChatCompletion_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		variadicArgs := args[1].([]llm.LanguageModelOption)
-		run(args[0].(llm.CompletionRequest), variadicArgs...)
+		variadicArgs := args[2].([]llm.LanguageModelOption)
+		run(args[0].(context.Context), args[1].(llm.CompletionRequest), variadicArgs...)
 	})
 	return _c
 }
@@ -96,18 +99,18 @@ func (_c *MockLanguageModel_ChatCompletion_Call) Return(textStreamResult *llm.Te
 	return _c
 }
 
-func (_c *MockLanguageModel_ChatCompletion_Call) RunAndReturn(run func(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error)) *MockLanguageModel_ChatCompletion_Call {
+func (_c *MockLanguageModel_ChatCompletion_Call) RunAndReturn(run func(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error)) *MockLanguageModel_ChatCompletion_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // ChatCompletionNoStream provides a mock function for the type MockLanguageModel
-func (_mock *MockLanguageModel) ChatCompletionNoStream(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (_mock *MockLanguageModel) ChatCompletionNoStream(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
 	var tmpRet mock.Arguments
 	if len(opts) > 0 {
-		tmpRet = _mock.Called(conversation, opts)
+		tmpRet = _mock.Called(ctx, conversation, opts)
 	} else {
-		tmpRet = _mock.Called(conversation)
+		tmpRet = _mock.Called(ctx, conversation)
 	}
 	ret := tmpRet
 
@@ -117,16 +120,16 @@ func (_mock *MockLanguageModel) ChatCompletionNoStream(conversation llm.Completi
 
 	var r0 string
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(llm.CompletionRequest, ...llm.LanguageModelOption) (string, error)); ok {
-		return returnFunc(conversation, opts...)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) (string, error)); ok {
+		return returnFunc(ctx, conversation, opts...)
 	}
-	if returnFunc, ok := ret.Get(0).(func(llm.CompletionRequest, ...llm.LanguageModelOption) string); ok {
-		r0 = returnFunc(conversation, opts...)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) string); ok {
+		r0 = returnFunc(ctx, conversation, opts...)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
-	if returnFunc, ok := ret.Get(1).(func(llm.CompletionRequest, ...llm.LanguageModelOption) error); ok {
-		r1 = returnFunc(conversation, opts...)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, llm.CompletionRequest, ...llm.LanguageModelOption) error); ok {
+		r1 = returnFunc(ctx, conversation, opts...)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -139,17 +142,18 @@ type MockLanguageModel_ChatCompletionNoStream_Call struct {
 }
 
 // ChatCompletionNoStream is a helper method to define mock.On call
+//   - ctx
 //   - conversation
 //   - opts
-func (_e *MockLanguageModel_Expecter) ChatCompletionNoStream(conversation interface{}, opts ...interface{}) *MockLanguageModel_ChatCompletionNoStream_Call {
+func (_e *MockLanguageModel_Expecter) ChatCompletionNoStream(ctx interface{}, conversation interface{}, opts ...interface{}) *MockLanguageModel_ChatCompletionNoStream_Call {
 	return &MockLanguageModel_ChatCompletionNoStream_Call{Call: _e.mock.On("ChatCompletionNoStream",
-		append([]interface{}{conversation}, opts...)...)}
+		append([]interface{}{ctx, conversation}, opts...)...)}
 }
 
-func (_c *MockLanguageModel_ChatCompletionNoStream_Call) Run(run func(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption)) *MockLanguageModel_ChatCompletionNoStream_Call {
+func (_c *MockLanguageModel_ChatCompletionNoStream_Call) Run(run func(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption)) *MockLanguageModel_ChatCompletionNoStream_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		variadicArgs := args[1].([]llm.LanguageModelOption)
-		run(args[0].(llm.CompletionRequest), variadicArgs...)
+		variadicArgs := args[2].([]llm.LanguageModelOption)
+		run(args[0].(context.Context), args[1].(llm.CompletionRequest), variadicArgs...)
 	})
 	return _c
 }
@@ -159,7 +163,7 @@ func (_c *MockLanguageModel_ChatCompletionNoStream_Call) Return(s string, err er
 	return _c
 }
 
-func (_c *MockLanguageModel_ChatCompletionNoStream_Call) RunAndReturn(run func(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error)) *MockLanguageModel_ChatCompletionNoStream_Call {
+func (_c *MockLanguageModel_ChatCompletionNoStream_Call) RunAndReturn(run func(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error)) *MockLanguageModel_ChatCompletionNoStream_Call {
 	_c.Call.Return(run)
 	return _c
 }

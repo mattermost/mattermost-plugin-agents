@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -73,15 +74,15 @@ func CreateTokenLogger() (*mlog.Logger, error) {
 }
 
 // ChatCompletion intercepts the streaming response to extract and log token usage
-func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	if !w.shouldTrackTokenUsage() {
-		return w.wrapped.ChatCompletion(request, opts...)
+		return w.wrapped.ChatCompletion(ctx, request, opts...)
 	}
 	if request.OperationSubType == "" {
 		request.OperationSubType = SubTypeStreaming
 	}
 
-	result, err := w.wrapped.ChatCompletion(request, opts...)
+	result, err := w.wrapped.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -306,12 +307,12 @@ func int64ToInt(value int64) int {
 
 // ChatCompletionNoStream uses the streaming method internally, so token usage
 // logging happens automatically when ReadAll() processes the intercepted stream
-func (w *TokenUsageLoggingWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+func (w *TokenUsageLoggingWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
 	if request.OperationSubType == "" {
 		request.OperationSubType = SubTypeNoStream
 	}
 
-	result, err := w.ChatCompletion(request, opts...)
+	result, err := w.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return "", err
 	}

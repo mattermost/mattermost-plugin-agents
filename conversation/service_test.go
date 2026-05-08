@@ -95,11 +95,11 @@ type testLLM struct {
 	noStreamErr      error
 }
 
-func (t *testLLM) ChatCompletion(_ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (t *testLLM) ChatCompletion(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	return nil, fmt.Errorf("not implemented in test")
 }
 
-func (t *testLLM) ChatCompletionNoStream(_ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
+func (t *testLLM) ChatCompletionNoStream(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
 	return t.noStreamResponse, t.noStreamErr
 }
 
@@ -2227,5 +2227,103 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		assert.Equal(t, "image/png", rootPost.Files[0].MimeType)
 		assert.Contains(t, rootPost.Message, "@alice")
 		assert.Contains(t, rootPost.Message, "I noticed this")
+	})
+}
+
+func TestGetInitiatingUserTurn(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	botID := model.NewId()
+	userID := model.NewId()
+	rootPost := "rp"
+
+	// First invocation: user msg → assistant turn (with PostID = "post-A").
+	r1, err := svc.CreateConversation(CreateConversationParams{
+		UserID: userID, BotID: botID, RootPostID: &rootPost,
+		Operation: "conversation", SystemPrompt: "p", UserMessage: "msg1",
+	})
+	require.NoError(t, err)
+	convID := r1.ConversationID
+	user1ID := r1.UserTurnID
+
+	postA := "post-A"
+	assistantContent, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "resp1"}})
+	require.NoError(t, s.CreateTurnAutoSequence(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "assistant",
+		PostID: &postA, Content: assistantContent, CreatedAt: model.GetMillis(),
+	}))
+
+	// Second invocation in the same conversation: user msg → assistant ("post-B").
+	r2, err := svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID: userID, BotID: botID, ChannelID: "chan", RootPostID: rootPost,
+		Operation: "conversation", UserMessage: "msg2",
+	})
+	require.NoError(t, err)
+	user2ID := r2.UserTurnID
+
+	postB := "post-B"
+	require.NoError(t, s.CreateTurnAutoSequence(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "assistant",
+		PostID: &postB, Content: assistantContent, CreatedAt: model.GetMillis(),
+	}))
+
+	t.Run("first invocation: post-A maps to user1", func(t *testing.T) {
+		got, err := svc.GetInitiatingUserTurn(convID, postA)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, user1ID, got.ID)
+	})
+
+	t.Run("second invocation: post-B maps to user2", func(t *testing.T) {
+		got, err := svc.GetInitiatingUserTurn(convID, postB)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, user2ID, got.ID)
+	})
+
+	t.Run("unknown post ID returns nil", func(t *testing.T) {
+		got, err := svc.GetInitiatingUserTurn(convID, "no-such-post")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+}
+
+func TestGetPreviousUserTurn(t *testing.T) {
+	svc, _ := setupTestService(t)
+
+	botID := model.NewId()
+	userID := model.NewId()
+	rootPost := "rp"
+
+	r1, err := svc.CreateConversation(CreateConversationParams{
+		UserID: userID, BotID: botID, RootPostID: &rootPost,
+		Operation: "conversation", SystemPrompt: "p", UserMessage: "msg1",
+	})
+	require.NoError(t, err)
+	convID := r1.ConversationID
+
+	r2, err := svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID: userID, BotID: botID, ChannelID: "chan", RootPostID: rootPost,
+		Operation: "conversation", UserMessage: "msg2",
+	})
+	require.NoError(t, err)
+
+	t.Run("first user turn has no predecessor", func(t *testing.T) {
+		got, err := svc.GetPreviousUserTurn(convID, r1.UserTurnID)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("second user turn returns first", func(t *testing.T) {
+		got, err := svc.GetPreviousUserTurn(convID, r2.UserTurnID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, r1.UserTurnID, got.ID)
+	})
+
+	t.Run("unknown turn ID returns nil", func(t *testing.T) {
+		got, err := svc.GetPreviousUserTurn(convID, "unknown")
+		require.NoError(t, err)
+		assert.Nil(t, got)
 	})
 }

@@ -45,10 +45,6 @@ func (m *mockConfig) GetDefaultBotName() string {
 	return "testbot"
 }
 
-func (m *mockConfig) EnableLLMLogging() bool {
-	return false
-}
-
 func (m *mockConfig) EnableTokenUsageLogging() bool {
 	return false
 }

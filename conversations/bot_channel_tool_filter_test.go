@@ -41,7 +41,7 @@ func TestApplyBotChannelAutoEverywhereToolFilter(t *testing.T) {
 	}
 
 	llmContext := &llm.Context{
-		Tools: llm.NewToolStore(nil, false),
+		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
 		{Name: "builtin", ServerOrigin: "", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
@@ -70,7 +70,7 @@ func TestApplyToolAvailabilityBeforeBotChannelFilterPreservesDisabledToolsInfo(t
 	}
 
 	llmContext := &llm.Context{
-		Tools: llm.NewToolStore(nil, false),
+		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
 		{Name: "builtin", Description: "builtin tool", ServerOrigin: "", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
@@ -99,7 +99,7 @@ func TestApplyBotChannelAutoEverywhereToolFilter_nilCheckerFailClosed(t *testing
 	c := &Conversations{toolPolicyChecker: nil}
 
 	llmContext := &llm.Context{
-		Tools: llm.NewToolStore(nil, false),
+		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
 		{Name: "builtin", ServerOrigin: "", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},

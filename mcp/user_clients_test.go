@@ -135,7 +135,7 @@ func TestConnectToPluginServer_NilAPI(t *testing.T) {
 func TestPrepareToolCallMetadata_EmbeddedMergesCallMetadataAndBotUserID(t *testing.T) {
 	llmContext := llm.NewContext()
 	llmContext.BotUserID = "bot-user-id"
-	llmContext.Tools = llm.NewToolStore(nil, false)
+	llmContext.Tools = llm.NewToolStore()
 	llmContext.Tools.AddTools([]llm.Tool{
 		llm.Tool{Name: "search_posts"}.WithCallMetadata(map[string]any{
 			"tool_hooks": map[string]any{

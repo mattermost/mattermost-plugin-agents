@@ -265,7 +265,7 @@ func TestSearchQueryCreatesConversation(t *testing.T) {
 
 			if len(tc.searchResults) > 0 {
 				answer := tc.llmAnswer
-				mockLLM.On("ChatCompletionNoStream", mock.Anything, mock.Anything).
+				mockLLM.On("ChatCompletionNoStream", mock.Anything, mock.Anything, mock.Anything).
 					Return(answer, tc.llmErr)
 			}
 
@@ -316,10 +316,10 @@ func TestSearchQueryToolsAlwaysDisabled(t *testing.T) {
 
 	// Capture the options passed to ChatCompletionNoStream
 	var capturedOpts []llm.LanguageModelOption
-	mockLLM.On("ChatCompletionNoStream", mock.Anything, mock.Anything).
+	mockLLM.On("ChatCompletionNoStream", mock.Anything, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
-			if len(args) > 1 {
-				capturedOpts = args[1].([]llm.LanguageModelOption)
+			if len(args) > 2 {
+				capturedOpts = args[2].([]llm.LanguageModelOption)
 			}
 		}).
 		Return("answer", nil)
@@ -366,9 +366,9 @@ func TestSearchQueryUsesConversationCompletionRequest(t *testing.T) {
 
 	// Capture the CompletionRequest passed to the LLM
 	var capturedReq llm.CompletionRequest
-	mockLLM.On("ChatCompletionNoStream", mock.Anything, mock.Anything).
+	mockLLM.On("ChatCompletionNoStream", mock.Anything, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
-			capturedReq = args[0].(llm.CompletionRequest)
+			capturedReq = args[1].(llm.CompletionRequest)
 		}).
 		Return("answer", nil)
 
@@ -412,7 +412,7 @@ func TestSearchQueryNilConversationServiceFallsBack(t *testing.T) {
 			makeSearchResult("post1", "channel1", "user1", "content", 0.9),
 		}, nil)
 
-	mockLLM.On("ChatCompletionNoStream", mock.Anything).
+	mockLLM.On("ChatCompletionNoStream", mock.Anything, mock.Anything, mock.Anything).
 		Return("fallback answer", nil)
 
 	// No conversation service (nil)

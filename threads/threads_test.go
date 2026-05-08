@@ -4,6 +4,7 @@
 package threads_test
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -37,7 +38,7 @@ func runThreadAnalysisEval(t *evals.EvalT, threadData *evals.ThreadExport, promp
 
 	// Do the thread analysis
 	threadService := threads.New(t.LLM, ts.prompts, mockClient, ts.convService)
-	result, err := threadService.Analyze(threadData.RootPost.Id, llmContext, promptName, model.NewId(), model.NewId())
+	result, err := threadService.Analyze(context.Background(), threadData.RootPost.Id, llmContext, promptName, model.NewId(), model.NewId())
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	output, err := result.Stream.ReadAll()

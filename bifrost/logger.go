@@ -29,6 +29,7 @@ func newBifrostClient(account schemas.Account, apiKey string) (*bifrostcore.Bifr
 	return bifrostcore.Init(context.Background(), schemas.BifrostConfig{
 		Account: account,
 		Logger:  newSanitizingLogger(bifrostcore.NewDefaultLogger(schemas.LogLevelInfo), apiKey),
+		Tracer:  newOTelTracer(),
 	})
 }
 

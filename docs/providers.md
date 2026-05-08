@@ -176,63 +176,179 @@ For more details about integrating with Microsoft Azure's OpenAI services, see t
 
 ## Google Gemini
 
-Google Gemini uses the Generative Language API (AI Studio), which authenticates with a single API key. If you need enterprise GCP authentication, project/region scoping, or VPC-SC, use **Google Vertex AI** instead.
+Google Gemini uses the Generative Language API (AI Studio), which authenticates with a single API key. Both Gemini and Vertex AI route through Bifrost, the plugin's unified LLM gateway. If you need enterprise GCP authentication, project/region scoping, or VPC-SC, use **Google Vertex AI** instead.
 
-### Authentication
+### When to choose Gemini vs. Vertex AI
 
-Obtain a [Gemini API key](https://aistudio.google.com/apikey), then select **Google Gemini** in the **Service** dropdown and enter your API key. Specify a model name in the **Default Model** field (e.g., `gemini-2.5-pro`, `gemini-2.0-flash`).
+| Use **Google Gemini** when… | Use **Google Vertex AI** when… |
+|-----------------------------|--------------------------------|
+| You want the simplest setup — single API key from AI Studio | You need GCP-scoped billing, IAM, or audit logging |
+| You're testing models or running a small team | You need region pinning, VPC-SC, or private connectivity |
+| You don't have a GCP project | You already have a GCP project and want to centralize spend |
+| Fine to call `generativelanguage.googleapis.com` directly | You need Anthropic Claude models served through Vertex |
+
+### Setup
+
+1. Sign in to [Google AI Studio](https://aistudio.google.com/) and create an API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+2. In Mattermost, open **System Console > Agents > LLM Services** and add a new service (or open an existing Gemini service).
+3. Select **Google Gemini** in the **Service** dropdown.
+4. Paste your AI Studio key into the **API Key** field.
+5. Enter a model identifier in the **Default Model** field (for example, `gemini-2.5-pro` or `gemini-2.5-flash`). Use [Google's model catalog](https://ai.google.dev/gemini-api/docs/models) to confirm the exact ID.
+6. Save the service. There is no API URL field in the System Console for the Gemini service type. The underlying `apiURL` config field is accepted by the API and forwarded to Bifrost as the base URL if non-empty, enabling egress-proxy use cases for operators who configure services programmatically.
 
 ### Configuration Options
 
 | Setting | Required | Description |
 |---------|----------|-------------|
-| **API Key** | Yes | Your Gemini API key from AI Studio |
-| **Default Model** | Yes | The model to use by default (see [Gemini model documentation](https://ai.google.dev/gemini-api/docs/models)) |
+| **API Key** | Yes | Your Gemini API key from AI Studio. Stored as a secret. |
+| **Default Model** | Yes | The model to use by default (see [Gemini model documentation](https://ai.google.dev/gemini-api/docs/models)). Common choices: `gemini-2.5-pro`, `gemini-2.5-flash`. |
+| **Input Token Limit** | No | Optional override for the maximum input context size, in tokens. Leave blank to use the model's default. |
+| **Output Token Limit** | No | Optional override for the maximum output (`max_tokens`) the plugin will request. |
 
-### Reasoning and native web search
+> The **Send User ID** and **Use Responses API** toggles are not exposed for the **Google Gemini** service type. Bifrost automatically switches to the Responses API path when you enable a native Google tool or when an agent or feature requires native web search; in all other cases the Chat path is used.
 
-Gemini supports provider-native capabilities through Bifrost:
+### Reasoning (thinking) and model-version mapping
 
-- **Reasoning / thinking** — enable **Reasoning** on the agent. Bifrost maps the
-  **Thinking Budget** to `thinkingConfig.thinkingBudget`, and the **Reasoning
-  Effort** selector to `thinkingConfig.thinkingLevel` on Gemini 3.0+ (or an
-  estimated budget on Gemini 2.5). If both are provided, the explicit thinking
-  budget wins.
-- **Native web search** — enable **Web Search** under **Native Google Tools**.
-  This is routed through Bifrost's Responses API and grounded with Google
-  Search, so Gemini can answer with up-to-date information and citations.
+Gemini supports provider-native reasoning ("thinking") through Bifrost. Enable **Reasoning** on the agent (System Console > Agents > select agent > **Config** tab) to turn it on. The configuration controls behave differently across model generations:
+
+| Model generation | What **Thinking Budget** does | What **Reasoning Effort** does |
+|------------------|-------------------------------|--------------------------------|
+| Gemini 2.5 (Pro, Flash, …) | Sets `thinkingConfig.thinkingBudget` directly (token count). | Translated into an *estimated* `thinkingBudget` — the effort selector ("minimal" / "low" / "medium" / "high") is not natively supported on 2.5, so Bifrost maps it to a budget. |
+| Gemini 3.0+ | Sets `thinkingConfig.thinkingBudget` directly. | Sets `thinkingConfig.thinkingLevel` (the native 3.0+ field) using the same minimal/low/medium/high values. |
+
+When **both** Thinking Budget and Reasoning Effort are set, the explicit thinking budget wins for both Chat and Responses API paths. The default effort when nothing is set is `"medium"`.
+
+Reasoning works on both the Chat Completions and Responses API paths; on the Responses path Bifrost also enables a reasoning summary so the provider streams reasoning text back as `reasoning_summary` events.
+
+Bifrost detects thinking support by model name: any model containing 'thinking', any `gemini-2.5-*` model, or any Gemini 3.0+ model. Earlier 2.0 non-thinking models are silently skipped — `thinkingConfig` is not sent for them.
+
+Bifrost uses `https://generativelanguage.googleapis.com/v1beta`. Egress proxies must whitelist paths starting with `/v1beta/models/`.
+
+### Native Google tools
+
+Native Google tools are **off by default** for Gemini, matching the same posture as Cohere, Mistral, and Bedrock. Enable them per agent in the **Config** tab under **Native Google Tools**.
+
+| Tool | What it does | Notes |
+|------|--------------|-------|
+| **Web Search** | Grounds responses in Google Search results (web search + citations) via Bifrost's Responses API. | When enabled, Bifrost auto-switches the request to the Responses API path. The agent's other function tools and MCP tools continue to work. Grounding citations are normalized to the same `url_citation` annotation format used by OpenAI and Anthropic providers — the webapp renders them identically. |
+
+Other native tools advertised by OpenAI (file search, code interpreter) are not available in the System Console for Google providers — only Web Search is offered.
+
+If a feature surface uses **NativeWebSearchAllowed** at request time (for example, the in-product web-search shortcut), Bifrost adds web search to the Gemini Responses request even if the agent has not explicitly checked **Web Search** under Native Google Tools. This is how the plugin lets a single feature toggle web search on without forcing every agent to enable it manually.
+
+### Example service configuration
+
+```yaml
+# System Console > Agents > LLM Services > Add Service
+Service:           Google Gemini
+API Key:           ABcDef...   # from https://aistudio.google.com/apikey
+Default Model:     gemini-2.5-pro
+Output Token Limit: 8192       # optional
+```
+
+```yaml
+# Per-agent (System Console > Agents > <agent> > Config)
+Reasoning:                Enabled
+Thinking Budget (tokens): 4096           # optional; wins over effort
+Reasoning Effort:         medium         # used when budget is blank
+Native Google Tools:
+  Web Search:             Enabled        # off by default
+```
 
 ## Google Vertex AI
 
-Vertex AI provides access to Gemini and other Google models through Google Cloud's enterprise AI platform, with project-scoped billing, regional deployment, and IAM-based access control.
+Vertex AI provides access to Gemini and other Google models through Google Cloud's enterprise AI platform, with project-scoped billing, regional deployment, and IAM-based access control. Like the direct Gemini integration, Vertex AI is routed through Bifrost.
+
+### Prerequisites
+
+Before configuring the service in Mattermost, complete this in GCP:
+
+1. **Have or create a Google Cloud project.** Note the **Project ID** (slug, e.g., `my-project-123`) and the **Project Number** (numeric, e.g., `123456789012`).
+2. **Enable the Vertex AI API** for that project: `gcloud services enable aiplatform.googleapis.com --project <PROJECT_ID>` or the equivalent in the GCP Console.
+3. **Choose a region** that has the Vertex models you need (for example, `us-central1`, `us-east5`, `europe-west4`). Model availability varies by region — check [Vertex AI model availability](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations) before committing.
+4. **Decide your authentication mode** — see below.
 
 ### Authentication
 
-The plugin supports two authentication modes:
+The plugin supports two authentication modes via Bifrost:
 
-- **Application Default Credentials (ADC)** — recommended when the plugin runs on GCP (GKE, GCE) with an attached service account, or when `GOOGLE_APPLICATION_CREDENTIALS` points at a service account key file on the server. Leave the **Service Account JSON** field blank.
-- **Service Account JSON** — paste the full contents of a service account key JSON into the **Service Account JSON** field. The account needs the `roles/aiplatform.user` role (or a role with the `aiplatform.endpoints.predict` permission) in your project.
+- **Application Default Credentials (ADC)** — recommended when the plugin runs on GCP (GKE, GCE, Cloud Run) with an attached service account, or when the host's `GOOGLE_APPLICATION_CREDENTIALS` environment variable points at a service-account key file. Leave the **Service Account JSON** field blank to use ADC.
+- **Service Account JSON** — paste the full contents of a service-account key JSON into the **Service Account JSON** field. The plugin validates that the field contains valid JSON before saving. The service account needs `roles/aiplatform.user` (or a custom role with the `aiplatform.endpoints.predict` permission) in your project.
+
+To create a service-account key for the JSON path:
+
+1. In the GCP Console, go to **IAM & Admin > Service Accounts** and create a service account (or pick an existing one).
+2. Grant the account `roles/aiplatform.user` on the project.
+3. Open the service account, go to **Keys > Add Key > Create new key**, choose **JSON**, and download the file.
+4. Open the downloaded file, copy its full contents (including braces), and paste into the **Service Account JSON** field in Mattermost. Treat this file as a secret — anyone with it can call Vertex against your project.
+
+> Bifrost stores the JSON as a credential. When **Service Account JSON** is empty, Bifrost falls back to ADC at request time — no key material is held in plugin config.
+
+### Setup
+
+1. Complete the prerequisites above.
+2. In Mattermost, open **System Console > Agents > LLM Services** and add a new service.
+3. Select **Google Vertex AI** in the **Service** dropdown.
+4. Fill in **GCP Project ID**, **GCP Region**, and (optionally) **GCP Project Number**.
+5. For ADC: leave **Service Account JSON** blank. For key-based auth: paste the full JSON.
+6. Enter a model identifier in **Default Model** (for example, `gemini-2.5-pro`). Use the [Vertex AI model catalog](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) to confirm the exact Vertex model ID for your region.
+7. Save the service.
 
 ### Configuration Options
 
 | Setting | Required | Description |
 |---------|----------|-------------|
-| **GCP Project ID** | Yes | Your Google Cloud project ID (e.g., `my-project-123`) |
-| **GCP Project Number** | No | Numeric project number — required by some Vertex endpoints, leave blank otherwise |
-| **GCP Region** | Yes | Vertex AI region (e.g., `us-central1`, `europe-west4`) |
-| **Service Account JSON** | No | Full service account JSON. Leave blank to use ADC or an attached IAM role. |
-| **Default Model** | Yes | The Vertex model ID to use (see [Vertex AI model documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models)) |
+| **GCP Project ID** | Yes | Your Google Cloud project ID slug (e.g., `my-project-123`). |
+| **GCP Project Number** | No | Numeric project number (e.g., `123456789012`). Project Number is required only when using a numeric endpoint ID for a fine-tuned model. For all standard publisher models (Gemini, Claude, Mistral), Project Number is not consumed and can be left blank. |
+| **GCP Region** | Yes | Vertex AI region (e.g., `us-central1`, `europe-west4`). Model availability is region-specific. |
+| **Service Account JSON** | No | Full service-account key JSON. Validated as JSON on save. Leave blank to use ADC or an attached IAM role. |
+| **Default Model** | Yes | The Vertex model ID to use (see [Vertex AI model documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models)). |
+| **Input Token Limit** | No | Optional override for the maximum input context size, in tokens. |
+| **Output Token Limit** | No | Optional override for the maximum output (`max_tokens`) the plugin will request. |
 
-### Reasoning and native web search
+> The **API Key**, **Send User ID**, and **Use Responses API** toggles do not apply to the **Google Vertex AI** service type. The Responses API path is auto-enabled when a native Google tool is in use; otherwise the Chat path is used.
 
-For Gemini models running on Vertex AI, Bifrost exposes the same reasoning and
-native web-search capabilities as direct Gemini:
+### Reasoning (thinking) and model-version mapping
 
-- **Reasoning / thinking** — enable **Reasoning** on the agent. The optional
-  **Thinking Budget** maps to `thinkingConfig.thinkingBudget`, and the
-  **Reasoning Effort** selector maps to `thinkingConfig.thinkingLevel` (3.0+).
-- **Native web search** — enable **Web Search** under **Native Google Tools**
-  to ground responses with Google Search via the Vertex Responses API.
+For Gemini models running on Vertex AI, reasoning is configured the same way as direct Gemini and follows the same model-version mapping (Gemini 2.5 vs. 3.0+). Enable **Reasoning** on the agent and set either **Thinking Budget** (tokens) or **Reasoning Effort** (minimal / low / medium / high). When both are set, the explicit budget wins.
 
-Anthropic models served through Vertex AI continue to use Anthropic-style
-extended thinking.
+> **Anthropic Claude on Vertex.** When you select an Anthropic model ID (for example, `claude-sonnet-4-6@20260101`) on a Vertex service, the agent uses Anthropic-style extended thinking instead of `thinkingConfig`. The **Thinking Budget** field still applies; the **Reasoning Effort** selector is ignored. Model IDs follow the format `{claude-model-name}@{YYYYMMDD}` where the date is the Anthropic snapshot version. Check the [Anthropic on Vertex AI documentation](https://docs.anthropic.com/claude/reference/claude-on-vertex-ai) for current versions.
+
+### Native Google tools
+
+Native Google tools are **off by default** for Vertex AI, matching the same posture as Cohere, Mistral, and Bedrock. Enable per agent under **Native Google Tools**.
+
+| Tool | What it does | Notes |
+|------|--------------|-------|
+| **Web Search** | Grounds responses with Google Search via the Vertex Responses API. | When enabled, Bifrost switches to the Responses API. Citations are returned alongside the response. If requests fail with grounding enabled, confirm the Vertex AI API is enabled, the selected model supports grounding, and your Google Cloud project satisfies Vertex AI grounding prerequisites. |
+
+OpenAI-style `file_search` and `code_interpreter` are not available in the System Console for Google providers — only Web Search is offered.
+
+### Example service configuration
+
+```yaml
+# System Console > Agents > LLM Services > Add Service
+Service:               Google Vertex AI
+GCP Project ID:        my-project-123
+GCP Project Number:    123456789012   # optional
+GCP Region:            us-central1
+Service Account JSON:  ""             # blank = ADC
+Default Model:         gemini-2.5-pro
+Output Token Limit:    8192           # optional
+```
+
+```yaml
+# Per-agent (System Console > Agents > <agent> > Config)
+Reasoning:                Enabled
+Thinking Budget (tokens): 4096           # optional; wins over effort on Gemini
+Reasoning Effort:         medium         # mapped to thinkingLevel on Gemini 3.0+
+Native Google Tools:
+  Web Search:             Enabled        # off by default
+```
+
+### Troubleshooting
+
+- **Saving fails with "invalid service account JSON".** The plugin validates that the **Service Account JSON** field contains valid JSON before saving. Re-copy the full contents of the key file, including the surrounding `{ }`, and check there are no truncated or escaped characters.
+- **Requests fail with `PERMISSION_DENIED`.** Confirm the service account has `roles/aiplatform.user` on the project, and that the Vertex AI API is enabled. For ADC deployments, confirm the bound principal (workload identity, instance SA, etc.) has the same role.
+- **Model not found in region.** Vertex model IDs are region-scoped. Check the model is available in your **GCP Region**, or switch to a region that has it.
+- **Web search returns no citations.** Confirm **Web Search** is checked under **Native Google Tools** for the agent, verify the selected model supports grounding, and make sure your Google Cloud project meets the current Vertex AI grounding prerequisites.

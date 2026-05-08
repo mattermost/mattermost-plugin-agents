@@ -15,7 +15,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Client defines the minimal client interface needed for streaming operations.
@@ -173,9 +175,7 @@ func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string,
 		return fmt.Errorf("unable to create post: %w", err)
 	}
 
-	// The callback is already set when creating the context
-
-	ctx, err := p.GetStreamingContext(context.Background(), post.Id)
+	ctx, err := p.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return err
 	}
@@ -215,9 +215,7 @@ func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, s
 		return fmt.Errorf("failed to post DM: %w", err)
 	}
 
-	// The callback is already set when creating the context
-
-	ctx, err := p.GetStreamingContext(context.Background(), post.Id)
+	ctx, err := p.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return err
 	}
@@ -439,6 +437,22 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 // requesterUserID is the user who initiated the request; tool call details
 // are scoped to this user while other channel members see redacted metadata.
 func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string) {
+	// Top-level posts are their own thread root, so falling back to post.Id
+	// keeps the attribute populated and makes "all spans for this thread"
+	// queries work uniformly for both replies and root posts.
+	rootPostID := post.RootId
+	if rootPostID == "" {
+		rootPostID = post.Id
+	}
+	ctx, span := telemetry.Tracer().Start(ctx, "stream to post",
+		trace.WithAttributes(
+			telemetry.PostID.String(post.Id),
+			telemetry.ChannelID.String(post.ChannelId),
+			telemetry.ThreadRootPostID.String(rootPostID),
+		),
+	)
+	defer span.End()
+
 	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId}
 	p.sendPostStreamingControlEventWithBroadcast(post, PostStreamingControlStart, broadcast)
 

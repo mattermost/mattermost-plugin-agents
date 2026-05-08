@@ -12,6 +12,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
+	"go.opentelemetry.io/otel/codes"
 )
 
 const defaultBraveSearchEndpoint = "https://api.search.brave.com"
@@ -51,6 +54,9 @@ func NewBraveProvider(apiKey, apiURL string, pollTimeout, pollInterval int, http
 
 // Search performs a Brave Search and returns the results with optional pre-formatted answer.
 func (b *BraveProvider) Search(ctx context.Context, query string, limit int) (*SearchResponse, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "brave web search")
+	defer span.End()
+
 	if limit <= 0 {
 		limit = 5
 	}
@@ -85,6 +91,8 @@ func (b *BraveProvider) Search(ctx context.Context, query string, limit int) (*S
 		if b.logger != nil {
 			b.logger.Error("brave web search request failed", "error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("brave web search request failed: %w", err)
 	}
 	defer resp.Body.Close()

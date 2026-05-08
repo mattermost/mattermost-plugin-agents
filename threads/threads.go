@@ -4,6 +4,7 @@
 package threads
 
 import (
+	stdcontext "context"
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
@@ -40,21 +41,21 @@ func New(
 	}
 }
 
-func (t *Threads) Summarize(threadRootID string, context *llm.Context, botID string, userID string) (*AnalyzeResult, error) {
-	return t.Analyze(threadRootID, context, prompts.PromptSummarizeThreadSystem, botID, userID)
+func (t *Threads) Summarize(ctx stdcontext.Context, threadRootID string, context *llm.Context, botID string, userID string) (*AnalyzeResult, error) {
+	return t.Analyze(ctx, threadRootID, context, prompts.PromptSummarizeThreadSystem, botID, userID)
 }
 
-func (t *Threads) FindActionItems(threadRootID string, context *llm.Context, botID string, userID string) (*AnalyzeResult, error) {
-	return t.Analyze(threadRootID, context, prompts.PromptFindActionItemsSystem, botID, userID)
+func (t *Threads) FindActionItems(ctx stdcontext.Context, threadRootID string, context *llm.Context, botID string, userID string) (*AnalyzeResult, error) {
+	return t.Analyze(ctx, threadRootID, context, prompts.PromptFindActionItemsSystem, botID, userID)
 }
 
-func (t *Threads) FindOpenQuestions(threadRootID string, context *llm.Context, botID string, userID string) (*AnalyzeResult, error) {
-	return t.Analyze(threadRootID, context, prompts.PromptFindOpenQuestionsSystem, botID, userID)
+func (t *Threads) FindOpenQuestions(ctx stdcontext.Context, threadRootID string, context *llm.Context, botID string, userID string) (*AnalyzeResult, error) {
+	return t.Analyze(ctx, threadRootID, context, prompts.PromptFindOpenQuestionsSystem, botID, userID)
 }
 
 // Analyze performs thread analysis by creating a conversation entity, building a
 // CompletionRequest from its turns, and calling the LLM with tools disabled.
-func (t *Threads) Analyze(postIDToAnalyze string, context *llm.Context, promptName string, botID string, userID string) (*AnalyzeResult, error) {
+func (t *Threads) Analyze(ctx stdcontext.Context, postIDToAnalyze string, context *llm.Context, promptName string, botID string, userID string) (*AnalyzeResult, error) {
 	// Fetch and format thread data.
 	threadData, err := mmapi.GetThreadData(t.client, postIDToAnalyze)
 	if err != nil {
@@ -101,7 +102,7 @@ func (t *Threads) Analyze(postIDToAnalyze string, context *llm.Context, promptNa
 	request.OperationSubType = promptName
 
 	// Call LLM with tools disabled.
-	stream, err := t.llm.ChatCompletion(*request, llm.WithToolsDisabled())
+	stream, err := t.llm.ChatCompletion(ctx, *request, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}

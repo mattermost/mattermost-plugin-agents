@@ -19,6 +19,8 @@ Access AI features in one of the following ways:
 - Use the **Ask AI** option in channels with unread messages (see [license requirements](admin_guide.md#license-requirements))
 - Use **Ask Agents about this channel** in a channel header to summarize recent activity, focus on a date range, or ask a question about the current channel. See [Channel Summaries](features/channel_summaries.md).
 
+![AI Actions menu in the message composer, including the Custom prompts entry.](img/ai-actions-menu-composer.png)
+
 ### Mobile
 
 Start or open a direct message with the Agent bot. If your system admin has configured multiple bots, switch between them by starting or opening each bot by name.

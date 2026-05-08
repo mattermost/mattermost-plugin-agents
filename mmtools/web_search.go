@@ -606,7 +606,7 @@ func (s *webSearchService) summarizeContent(bot *bots.Bot, content string) (stri
 	}
 
 	// Use a reasonable token limit for the summary (e.g. 4000 tokens)
-	return languageModel.ChatCompletionNoStream(req, llm.WithMaxGeneratedTokens(4000))
+	return languageModel.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(4000))
 }
 
 func (s *webSearchService) formatSummarizedContent(summary string, matchedResult *WebSearchResult) string {

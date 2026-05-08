@@ -190,7 +190,7 @@ func TestGetServerOrigin(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store := NewToolStore(nil, false)
+			store := NewToolStore()
 			store.AddTools(tc.tools)
 			result := store.GetServerOrigin(tc.lookupName)
 			assert.Equal(t, tc.expectedURL, result)
@@ -373,7 +373,7 @@ func TestRemoveToolsByServerOrigin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var store *ToolStore
 			if tc.tools != nil {
-				store = NewToolStore(nil, false)
+				store = NewToolStore()
 				store.AddTools(tc.tools)
 			}
 
@@ -504,7 +504,7 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 				return
 			}
 
-			s := NewToolStore(nil, false)
+			s := NewToolStore()
 			s.AddTools(tt.tools)
 			s.RetainOnlyMCPTools(tt.allowlist)
 
