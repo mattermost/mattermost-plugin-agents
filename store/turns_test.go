@@ -576,10 +576,11 @@ func TestUpdateTurnPostID(t *testing.T) {
 	}
 }
 
-// TestDeleteResponseTurns exercises the SQL DELETE that scrubs intermediate
-// turns of a prior generation when a post is regenerated. The anchor turn
-// stays (regen updates it in place); demoted assistants and tool_results
-// between the originating user turn and the anchor are removed.
+// TestDeleteResponseTurns exercises the SQL DELETE that scrubs every turn of
+// a prior generation when a post is regenerated — the anchor itself plus any
+// demoted assistants/tool_results between the originating user turn and the
+// anchor. After the delete the post has no DB state, so the next stream
+// creates fresh turns (no update-in-place special case).
 func TestDeleteResponseTurns(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -587,7 +588,7 @@ func TestDeleteResponseTurns(t *testing.T) {
 		validate func(t *testing.T, s *Store, convID, postID string)
 	}{
 		{
-			name: "removes demoted assistant + tool_result between user turn and anchor",
+			name: "removes anchor + demoted assistant + tool_result between user turn and anchor",
 			setup: func(t *testing.T, s *Store) (string, string) {
 				conv := makeConversation()
 				err := s.CreateConversation(conv)
@@ -624,11 +625,13 @@ func TestDeleteResponseTurns(t *testing.T) {
 
 				turns, err := s.GetTurnsForConversation(convID)
 				require.NoError(t, err)
-				require.Len(t, turns, 2, "user turn + anchor remain; demoted + tool_result deleted")
+				require.Len(t, turns, 1, "only the originating user turn remains; anchor + intermediates deleted")
 				assert.Equal(t, "user", turns[0].Role)
-				assert.Equal(t, "assistant", turns[1].Role)
-				require.NotNil(t, turns[1].PostID)
-				assert.Equal(t, postID, *turns[1].PostID)
+
+				// The anchor is gone — looking it up by post id returns nothing.
+				gone, err := s.GetTurnByPostID(postID)
+				require.NoError(t, err)
+				assert.Nil(t, gone, "anchor must be deleted, not just demoted")
 			},
 		},
 		{
@@ -666,12 +669,12 @@ func TestDeleteResponseTurns(t *testing.T) {
 
 				turns, err := s.GetTurnsForConversation(convID)
 				require.NoError(t, err)
-				// First user, first anchor, second user, second anchor.
-				require.Len(t, turns, 4)
+				// First user, first anchor, second user remain; the second
+				// anchor (post being regenerated) and its intermediates are gone.
+				require.Len(t, turns, 3)
 				assert.Equal(t, 1, turns[0].Sequence)
 				assert.Equal(t, 2, turns[1].Sequence)
 				assert.Equal(t, 3, turns[2].Sequence)
-				assert.Equal(t, 5, turns[3].Sequence)
 			},
 		},
 		{

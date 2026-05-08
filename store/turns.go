@@ -187,11 +187,12 @@ func (s *Store) UpdateTurnPostID(id string, postID *string) error {
 	return nil
 }
 
-// DeleteResponseTurns removes the assistant + tool_result turns that belong
-// to a response between the user turn that initiated it and the anchor turn
-// for the given post. The anchor itself stays — regen's stream updates it
-// in place. Used to scrub stale intermediate turns from a prior generation
-// so the regenerated response doesn't render alongside leftover content.
+// DeleteResponseTurns removes every turn that belongs to a response — the
+// anchor itself and any assistant/tool_result turns between the user turn
+// that initiated it and that anchor. After this, the post has no DB state
+// and a regen can stream a fresh response identically to a first stream.
+// Callers must build any completion request BEFORE this runs, since the
+// anchor used to walk back from is gone afterwards.
 func (s *Store) DeleteResponseTurns(conversationID, postID string) error {
 	const query = `
 DELETE FROM LLM_Turns
@@ -206,7 +207,7 @@ WHERE ConversationID = $1
         LIMIT 1
       )
   ), 0)
-  AND Sequence < (
+  AND Sequence <= (
     SELECT Sequence FROM LLM_Turns
     WHERE ConversationID = $1 AND Role = 'assistant' AND PostID = $2
     LIMIT 1

@@ -250,15 +250,6 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("failed to get conversation for regen: %w", err)
 	}
 
-	// Scrub the prior generation's intermediate turns (auto-run rounds and
-	// any tool_result turns) before streaming. Without this, the webapp's
-	// per-round renderer would replay the prior tool calls alongside the
-	// regenerated response after the post-end refetch. The anchor turn
-	// stays — finalize updates it in place.
-	if delErr := c.convService.DeleteResponseTurns(conv.ID, post.Id); delErr != nil {
-		c.mmClient.LogError("Failed to scrub prior response turns on regen", "error", delErr.Error(), "post_id", post.Id, "conversation_id", conv.ID)
-	}
-
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
 	}
@@ -287,7 +278,9 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	// BuildCompletionRequest redacts unshared tool output by default.
+	// Build the completion request BEFORE scrubbing — ExcludeAfterPostID
+	// walks back from the anchor turn that DeleteResponseTurns is about to
+	// remove. BuildCompletionRequest redacts unshared tool output by default.
 	// DMs opt in to the full content because their follow-up stream is
 	// scoped to the requester; DM tool_results are always shared=true so
 	// nothing would actually be redacted either way, this just documents
@@ -298,6 +291,17 @@ func (c *Conversations) regenerateViaConversation(
 	})
 	if buildErr != nil {
 		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)
+	}
+
+	// Scrub the prior generation entirely — the anchor turn AND any
+	// auto-run round / tool_result turns between it and the originating user
+	// turn. The streaming layer then runs identically to a first stream:
+	// WriteToolTurns appends new intermediates and finalize creates a fresh
+	// anchor at the end. No update-in-place special case, no sequence
+	// inversion that would hide the new tool turns from the webapp's
+	// back-walk renderer.
+	if delErr := c.convService.DeleteResponseTurns(conv.ID, post.Id); delErr != nil {
+		c.mmClient.LogError("Failed to scrub prior response turns on regen", "error", delErr.Error(), "post_id", post.Id, "conversation_id", conv.ID)
 	}
 
 	var opts []llm.LanguageModelOption
