@@ -199,9 +199,14 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'reasoning_summary' && data.reasoning) {
+                // Keep generating=true: the model is still actively producing
+                // reasoning chunks. Flipping it to false here would hide
+                // currentRound (the `generating && currentRound` gate in
+                // renderedRounds) and the thinking block wouldn't appear
+                // until text or a tool call arrived. isReasoningLoading
+                // separately drives the reasoning spinner state.
                 setReasoningSummary(data.reasoning);
                 setIsReasoningLoading(true);
-                setGenerating(false);
                 setPrecontent(false);
                 return;
             }
@@ -358,19 +363,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
             return out;
         }
-
-        // Always show currentRound when it has content. Don't gate on
-        // `generating`: reasoning_summary events flip generating=false while
-        // streaming reasoning chunks, so a `generating && currentRound`
-        // guard would hide the thinking block until text or tool calls
-        // arrive. After end+refetch, useLayoutEffect clears the live state
-        // so currentRound naturally falls back to null.
         const out: Round[] = [...stablePersisted, ...liveRounds];
-        if (currentRound) {
+        if (generating && currentRound) {
             out.push(currentRound);
         }
         return out;
-    }, [regenerating, stablePersisted, liveRounds, currentRound]);
+    }, [regenerating, stablePersisted, liveRounds, generating, currentRound]);
 
     const regnerate = () => {
         setMessage('');
