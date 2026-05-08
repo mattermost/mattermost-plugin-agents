@@ -1533,12 +1533,8 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Process stream
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
-	// outputIndexToFuncCallID maps a Responses-API output_index to the function
-	// call_id that we accepted via OutputItemAdded for that index. Argument
-	// deltas are routed through this map so deltas from non-function output
-	// items (e.g. Anthropic native server tools like code_execution that
-	// bifrost does not surface as OutputItemAdded events) do not bleed into
-	// an unrelated function call's argument buffer.
+	// Route argument deltas by output_index so native server-tool deltas do not
+	// bleed into unrelated function-call arguments.
 	outputIndexToFuncCallID := make(map[int]string)
 
 	// Reasoning buffers
@@ -1676,20 +1672,8 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				blockStartPos = textLen
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
-				// Tool call arguments delta. Bifrost does not always populate
-				// resp.Item on delta events, so the call_id is recovered via
-				// the OutputIndex map populated by the preceding
-				// OutputItemAdded event.
-				//
-				// Routing strictly by OutputIndex matters because providers
-				// like Anthropic emit native server-tool blocks (e.g.
-				// code_execution) for which Bifrost does not surface an
-				// OutputItemAdded of type FunctionCall, but it still emits
-				// FunctionCallArgumentsDelta events for them. Without this
-				// guard, those orphan deltas were appended to whatever
-				// function call most recently started, producing concatenated
-				// JSON like `{"team_id":"…"}{"code":"…"}` that later failed
-				// to marshal as a tool_use.input json.RawMessage.
+				// Bifrost often omits resp.Item on deltas; fall back to the
+				// output_index map populated by OutputItemAdded.
 				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
 					tm := resp.Item.ResponsesToolMessage
 					callID := ""
