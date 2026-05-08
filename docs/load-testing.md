@@ -84,7 +84,7 @@ Example `mattermost-ai-loadtest.json`:
 
 Optional `mockProfile` embeds the same JSON schema as `loadTestMockConfig` when your ng-side harness merges mock defaults with simulator config (validated via `loadtest.ParseProfile` on read).
 
-During development you may use temporary `replace` directives in a **local** `go.mod`; do **not** commit unstable replace pins aimed only at your laptop.
+During development, you may use temporary `replace` directives in a **local** `go.mod`; do **not** commit unstable replace pins aimed only at your laptop.
 
 ## Profile Defaults
 
