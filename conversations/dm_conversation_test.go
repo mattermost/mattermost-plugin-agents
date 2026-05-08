@@ -149,6 +149,36 @@ func (s *fakeConvStore) UpdateTurnContent(id string, content json.RawMessage) er
 	return nil
 }
 
+func (s *fakeConvStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.allTurns {
+		if t.PostID != nil && *t.PostID == postID {
+			c := *t
+			return &c, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *fakeConvStore) UpdateTurnPostID(id string, postID *string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.allTurns[id]
+	if !ok {
+		return fmt.Errorf("turn %s not found", id)
+	}
+	t.PostID = postID
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id {
+				s.turns[convID][i].PostID = postID
+			}
+		}
+	}
+	return nil
+}
+
 func (s *fakeConvStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

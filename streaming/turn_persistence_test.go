@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -19,12 +20,14 @@ import (
 )
 
 // fakeTurnStore implements TurnStore and records every created turn.
-// Streaming now creates its assistant turn exactly once, at finalize, so
-// there's no separate update path to mock.
+// Streaming creates its assistant turn at finalize; for continuation streams
+// it also looks up and demotes the prior anchor turn for the same post.
 type fakeTurnStore struct {
 	mu        sync.Mutex
 	turns     []*store.Turn
 	createErr error
+	lookupErr error
+	demoteErr error
 }
 
 func (f *fakeTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
@@ -42,6 +45,35 @@ func (f *fakeTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
 	}
 	turn.Sequence = maxSeq + 1
 	f.turns = append(f.turns, turn)
+	return nil
+}
+
+func (f *fakeTurnStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lookupErr != nil {
+		return nil, f.lookupErr
+	}
+	for _, t := range f.turns {
+		if t.PostID != nil && *t.PostID == postID {
+			return t, nil
+		}
+	}
+	return nil, nil
+}
+
+func (f *fakeTurnStore) UpdateTurnPostID(id string, postID *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.demoteErr != nil {
+		return f.demoteErr
+	}
+	for _, t := range f.turns {
+		if t.ID == id {
+			t.PostID = postID
+			return nil
+		}
+	}
 	return nil
 }
 
@@ -971,4 +1003,468 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, "I wasn't able to find that channel.", textBlock.Text,
 			"final placeholder turn must contain only the final round's text")
 	})
+
+	// Continuation: when StreamToPost runs against a post that already has an
+	// assistant turn anchored to it (the user just approved tool calls and we
+	// re-stream onto the SAME post), the prior anchor must be demoted at
+	// finalize so the webapp's post→anchor lookup still resolves to exactly
+	// one match.
+	t.Run("continuation stream demotes the prior anchor and emits continue control", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+
+		// Seed a prior anchor turn — analogous to one written by the first
+		// stream's finalize when it ended on pending tool_use blocks.
+		priorPostIDCopy := postID
+		priorContent, mErr := json.Marshal([]conversation.ContentBlock{
+			{Type: conversation.BlockTypeText, Text: "Let me search for that."},
+			{Type: conversation.BlockTypeToolUse, ID: "tc1", Name: "search", Status: conversation.StatusSuccess},
+		})
+		require.NoError(t, mErr)
+		ts.turns = append(ts.turns, &store.Turn{
+			ID:             "prior-anchor",
+			ConversationID: conversationID,
+			PostID:         &priorPostIDCopy,
+			Role:           "assistant",
+			Sequence:       2,
+			Content:        priorContent,
+		})
+
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID, Message: "Let me search for that."}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 2)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Found 5 channels."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+
+		// Prior anchor lost its post link.
+		var prior *store.Turn
+		for _, t := range ts.turns {
+			if t.ID == "prior-anchor" {
+				prior = t
+				break
+			}
+		}
+		require.NotNil(t, prior)
+		require.Nil(t, prior.PostID, "prior anchor must be demoted on continuation")
+
+		// New anchor turn carries the post link and the new round's content.
+		require.Len(t, ts.turns, 2)
+		var newAnchor *store.Turn
+		for _, t := range ts.turns {
+			if t.ID != "prior-anchor" {
+				newAnchor = t
+				break
+			}
+		}
+		require.NotNil(t, newAnchor)
+		require.NotNil(t, newAnchor.PostID)
+		require.Equal(t, postID, *newAnchor.PostID)
+		blocks := parseContentBlocks(t, newAnchor.Content)
+		require.Len(t, blocks, 1)
+		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
+		require.Equal(t, "Found 5 channels.", blocks[0].Text)
+
+		// Continue control event was sent instead of start.
+		var sawContinue, sawStart bool
+		for _, ev := range client.events {
+			if ev.event != "postupdate" {
+				continue
+			}
+			if ctrl, ok := ev.payload["control"].(string); ok {
+				switch ctrl {
+				case PostStreamingControlContinue:
+					sawContinue = true
+				case PostStreamingControlStart:
+					sawStart = true
+				}
+			}
+		}
+		require.True(t, sawContinue, "continuation must emit a continue control event")
+		require.False(t, sawStart, "continuation must not emit start (the webapp would clear tool cards)")
+	})
+
+	// Continuation detection must only fire on a prior ASSISTANT turn for
+	// THIS post. Each of these table cases would silently regress the
+	// detection guard if the role/post-id checks were removed.
+	t.Run("continuation detection guards", func(t *testing.T) {
+		userPostIDCopy := "user-post-id"
+		unrelatedPostIDCopy := "other-post-id"
+		ourPostCopy := postID
+
+		cases := []struct {
+			name string
+			seed []*store.Turn
+			want string
+		}{
+			{
+				name: "empty turn store",
+				seed: nil,
+				want: PostStreamingControlStart,
+			},
+			{
+				name: "user turn with the same post_id (must NOT trigger continue)",
+				seed: []*store.Turn{{
+					ID:             "u1",
+					ConversationID: conversationID,
+					PostID:         &ourPostCopy,
+					Role:           "user",
+					Sequence:       1,
+					Content:        json.RawMessage(`[]`),
+				}},
+				want: PostStreamingControlStart,
+			},
+			{
+				name: "assistant turn for an unrelated post (must NOT trigger continue)",
+				seed: []*store.Turn{{
+					ID:             "a1",
+					ConversationID: conversationID,
+					PostID:         &unrelatedPostIDCopy,
+					Role:           "assistant",
+					Sequence:       1,
+					Content:        json.RawMessage(`[]`),
+				}},
+				want: PostStreamingControlStart,
+			},
+			{
+				name: "user turn for a different post (must NOT trigger continue)",
+				seed: []*store.Turn{{
+					ID:             "u1",
+					ConversationID: conversationID,
+					PostID:         &userPostIDCopy,
+					Role:           "user",
+					Sequence:       1,
+					Content:        json.RawMessage(`[]`),
+				}},
+				want: PostStreamingControlStart,
+			},
+			{
+				name: "assistant turn anchored to this post (the only case that triggers continue)",
+				seed: []*store.Turn{{
+					ID:             "a1",
+					ConversationID: conversationID,
+					PostID:         &ourPostCopy,
+					Role:           "assistant",
+					Sequence:       1,
+					Content:        json.RawMessage(`[]`),
+				}},
+				want: PostStreamingControlContinue,
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				ts := &fakeTurnStore{}
+				ts.turns = append(ts.turns, tc.seed...)
+
+				client := &fakeStreamingClient{
+					channels: map[string]*model.Channel{
+						channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+					},
+				}
+				service := NewMMPostStreamService(client, i18n.Init())
+				service.SetTurnStore(ts)
+
+				post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+				post.AddProp(ConversationIDProp, conversationID)
+
+				streamChannel := make(chan llm.TextStreamEvent, 2)
+				streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Hi"}
+				streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+				close(streamChannel)
+
+				service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+				var control string
+				for _, ev := range client.events {
+					if ctrl, ok := ev.payload["control"].(string); ok {
+						switch ctrl {
+						case PostStreamingControlStart, PostStreamingControlContinue:
+							control = ctrl
+						}
+					}
+				}
+				require.Equal(t, tc.want, control)
+			})
+		}
+	})
+
+	// A lookup error must not crash StreamToPost or hang the stream — it
+	// should fall through to a normal start. Without this guard, a transient
+	// DB blip would corrupt every concurrent stream on the node.
+	t.Run("lookup error falls through to start without crashing", func(t *testing.T) {
+		ts := &fakeTurnStore{lookupErr: fmt.Errorf("transient db error")}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 2)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Hi"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		var sawStart bool
+		for _, ev := range client.events {
+			if ctrl, ok := ev.payload["control"].(string); ok && ctrl == PostStreamingControlStart {
+				sawStart = true
+			}
+		}
+		require.True(t, sawStart, "a lookup error must not silence the start control event — the webapp depends on it")
+	})
+
+	// On resolved tool calls the WS event ordering must let the webapp
+	// snapshot the round's preamble text BEFORE seeing the resolved
+	// tool_call event. Concretely: between the round's text events and the
+	// resolved tool_call event, no event may clear the message (next: "").
+	// The webapp's live round snapshot reads messageRef.current at the
+	// moment the resolved event arrives — so anything that mutates that
+	// state in between would drop the round's preamble.
+	t.Run("text events for a round are not erased before the resolved tool_call event", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 5)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Let me search."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+			{ID: "tc1", Name: "search", Status: llm.ToolCallStatusPending},
+		}}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+			{ID: "tc1", Name: "search", Status: llm.ToolCallStatusAutoApproved},
+		}}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Found 5."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		// Walk the broadcast events and find the resolved tool_call event.
+		// Verify (a) no `next: ""` is broadcast at any point in the stream,
+		// (b) the LAST `next` value before the resolved tool_call carries
+		// the round's preamble — proving the webapp's resolved-event
+		// snapshot would observe it.
+		resolvedIdx := -1
+		var lastNextBeforeResolved string
+		resolvedJSONNeedle := fmt.Sprintf(`"status":%d`, llm.ToolCallStatusAutoApproved)
+		for i, ev := range client.events {
+			if ev.event != "postupdate" {
+				continue
+			}
+			if next, ok := ev.payload["next"].(string); ok {
+				require.NotEqual(t, "", next,
+					"no postupdate may carry next: \"\" — that erases the round's text before the webapp can snapshot it on the resolved tool_call event")
+				if resolvedIdx == -1 {
+					lastNextBeforeResolved = next
+				}
+			}
+			if ctrl, ok := ev.payload["control"].(string); ok && ctrl == "tool_call" {
+				if tcJSON, ok := ev.payload["tool_call"].(string); ok && resolvedIdx == -1 {
+					if strings.Contains(tcJSON, resolvedJSONNeedle) {
+						resolvedIdx = i
+					}
+				}
+			}
+		}
+		require.NotEqual(t, -1, resolvedIdx, "expected a resolved tool_call event in the broadcast stream")
+		require.Equal(t, "Let me search.", lastNextBeforeResolved,
+			"the round's preamble must still be the broadcast post message at the moment the resolved tool_call event arrives — otherwise the webapp's snapshot has no text to attribute to this round")
+	})
+
+	// Cross-post isolation: a finalize against post B must not touch post A's
+	// anchor turn even though they share a conversation. The demote logic
+	// keys on post.Id, but a subtle regression (e.g. demoting the first
+	// assistant turn rather than the matching one) would silently break
+	// multi-post threads where each post is the anchor of its own response.
+	t.Run("finalize on one post leaves other posts' anchors intact", func(t *testing.T) {
+		const postA = "post-a"
+		const postB = "post-b"
+
+		ts := &fakeTurnStore{}
+
+		// Seed post A with its own anchor turn — analogous to a prior
+		// response in the same conversation thread.
+		postACopy := postA
+		anchorAContent, mErr := json.Marshal([]conversation.ContentBlock{
+			{Type: conversation.BlockTypeText, Text: "Post A's response."},
+		})
+		require.NoError(t, mErr)
+		ts.turns = append(ts.turns, &store.Turn{
+			ID:             "anchor-a",
+			ConversationID: conversationID,
+			PostID:         &postACopy,
+			Role:           "assistant",
+			Sequence:       2,
+			Content:        anchorAContent,
+		})
+
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		// Stream a response to post B. The streaming layer's lookup keys on
+		// post.Id, so finalize must demote nothing for post B (no prior
+		// anchor exists for B) and leave post A's anchor untouched.
+		postBPost := &model.Post{Id: postB, ChannelId: channelID, UserId: botID}
+		postBPost.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 2)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Post B's response."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, postBPost, "en", requesterID)
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		require.Len(t, ts.turns, 2, "expected post A's anchor + post B's new anchor — nothing else demoted")
+
+		// Post A's anchor must still carry its post link.
+		var aAfter, bAfter *store.Turn
+		for _, tr := range ts.turns {
+			if tr.ID == "anchor-a" {
+				aAfter = tr
+				continue
+			}
+			bAfter = tr
+		}
+		require.NotNil(t, aAfter)
+		require.NotNil(t, aAfter.PostID, "post A's anchor must NOT be demoted by an unrelated post's finalize")
+		require.Equal(t, postA, *aAfter.PostID)
+
+		require.NotNil(t, bAfter)
+		require.NotNil(t, bAfter.PostID)
+		require.Equal(t, postB, *bAfter.PostID, "post B's new anchor carries its own post link")
+	})
+
+	// Operation order: finalize must DEMOTE the prior anchor before creating
+	// the new one. If the order is wrong, two turns with the same post_id
+	// briefly exist; the webapp's findIndex(post_id == postId) lookup
+	// nondeterministically returns one of them, hiding either the new
+	// content or the resolved tool_use blocks. Catching this requires
+	// recording the call sequence into the store, not just the terminal
+	// state.
+	t.Run("finalize demotes the prior anchor before creating the new one", func(t *testing.T) {
+		ts := &fakeOrderingTurnStore{
+			fakeTurnStore: fakeTurnStore{},
+		}
+
+		// Seed a prior anchor.
+		priorPostIDCopy := postID
+		ts.turns = append(ts.turns, &store.Turn{
+			ID:             "prior",
+			ConversationID: conversationID,
+			PostID:         &priorPostIDCopy,
+			Role:           "assistant",
+			Sequence:       2,
+			Content:        json.RawMessage(`[]`),
+		})
+
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 2)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Continuation."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+
+		// At minimum: lookup, then demote (UpdateTurnPostID on prior), then
+		// create (CreateTurnAutoSequence) — in that order. The lookup at
+		// stream START is acceptable; what matters is that demote of the
+		// existing turn precedes the create of the new one.
+		demoteIdx, createIdx := -1, -1
+		for i, op := range ts.ops {
+			if op == "update:prior" && demoteIdx == -1 {
+				demoteIdx = i
+			}
+			if op == "create" && createIdx == -1 {
+				createIdx = i
+			}
+		}
+		require.NotEqual(t, -1, demoteIdx, "expected a demote (UpdateTurnPostID) on prior turn")
+		require.NotEqual(t, -1, createIdx, "expected a create (CreateTurnAutoSequence) of the new anchor")
+		require.Less(t, demoteIdx, createIdx, "demote of prior anchor must run BEFORE creating the new anchor")
+	})
+}
+
+// fakeOrderingTurnStore extends fakeTurnStore to record the sequence of
+// operations performed against it, so tests can assert on call ordering
+// (e.g. demote-before-create) rather than only terminal state.
+type fakeOrderingTurnStore struct {
+	fakeTurnStore
+	ops []string
+}
+
+func (f *fakeOrderingTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
+	if err := f.fakeTurnStore.CreateTurnAutoSequence(turn); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.ops = append(f.ops, "create")
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeOrderingTurnStore) UpdateTurnPostID(id string, postID *string) error {
+	if err := f.fakeTurnStore.UpdateTurnPostID(id, postID); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.ops = append(f.ops, "update:"+id)
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeOrderingTurnStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	turn, err := f.fakeTurnStore.GetTurnByPostID(postID)
+	f.mu.Lock()
+	f.ops = append(f.ops, "lookup")
+	f.mu.Unlock()
+	return turn, err
 }

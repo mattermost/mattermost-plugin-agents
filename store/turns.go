@@ -166,6 +166,27 @@ RETURNING Sequence`
 	return fmt.Errorf("failed to create turn after %d retries: %w", maxAutoSequenceRetries, lastErr)
 }
 
+// UpdateTurnPostID sets the PostID column for a turn. Pass nil to clear the
+// anchor — used when finalizing a continuation stream so the new turn becomes
+// the canonical anchor and prior rounds for the same response post lose their
+// post link. The webapp's anchor lookup relies on at most one assistant turn
+// per post_id.
+func (s *Store) UpdateTurnPostID(id string, postID *string) error {
+	query, args, err := s.builder.
+		Update("LLM_Turns").
+		Set("PostID", postID).
+		Where(sq.Eq{"ID": id}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build update turn post id query: %w", err)
+	}
+	_, err = s.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update turn post id: %w", err)
+	}
+	return nil
+}
+
 // UpdateTurnTokens updates the TokensIn and TokensOut fields on a turn.
 func (s *Store) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	query, args, err := s.builder.

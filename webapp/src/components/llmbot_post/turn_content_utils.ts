@@ -223,3 +223,77 @@ export function hasAutoApprovedToolsForPost(
         ),
     );
 }
+
+/**
+ * One round of the LLM's response — what was emitted between two tool
+ * boundaries (or between the user turn and the first tool boundary). The
+ * post is rendered as a vertical sequence of rounds so the user sees the
+ * back-and-forth: text → tools → text → tools → final text.
+ */
+export interface Round {
+
+    /** Stable React key. */
+    id: string;
+    text: string;
+    toolCalls: ToolCall[];
+    reasoning: {summary: string; signature: string};
+    annotations: Annotation[];
+}
+
+/**
+ * Build the per-round view from the persisted turns of a response. Each
+ * assistant turn in the response is one round; tool_use blocks are paired
+ * with their tool_result block by id (results may live in a tool_result turn
+ * later in the sequence — for the user-approval flow, results are written
+ * after the assistant turn that requested them).
+ */
+export function buildRoundsFromTurns(
+    conversation: ConversationResponse,
+    postId: string,
+): Round[] {
+    const turns = collectResponseTurns(conversation, postId);
+    if (turns.length === 0) {
+        return [];
+    }
+
+    const resultMap = new Map<string, ContentBlock>();
+    for (const t of conversation.turns) {
+        for (const block of t.content) {
+            if (block.type === BlockTypeToolResult && block.tool_use_id) {
+                resultMap.set(block.tool_use_id, block);
+            }
+        }
+    }
+
+    const rounds: Round[] = [];
+    for (const turn of turns) {
+        if (turn.role !== 'assistant') {
+            continue;
+        }
+        const text = turn.content.
+            filter((b) => b.type === BlockTypeText).
+            map((b) => b.text ?? '').
+            join('');
+        const toolCalls: ToolCall[] = turn.content.
+            filter((b) => b.type === BlockTypeToolUse).
+            map((block): ToolCall => {
+                const resultBlock = block.id ? resultMap.get(block.id) : undefined; // eslint-disable-line no-undefined
+                return {
+                    id: block.id ?? '',
+                    name: block.name ?? '',
+                    description: '',
+                    arguments: (block.input as ToolCall['arguments']) ?? undefined, // eslint-disable-line no-undefined
+                    result: resultBlock?.content ?? undefined, // eslint-disable-line no-undefined
+                    status: statusStringToEnum(block.status),
+                };
+            });
+        rounds.push({
+            id: turn.id,
+            text,
+            toolCalls,
+            reasoning: extractReasoningFromTurn(turn),
+            annotations: extractAnnotationsFromTurn(turn),
+        });
+    }
+    return rounds;
+}

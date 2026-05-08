@@ -38,6 +38,13 @@ const PostStreamingControlCancel = "cancel"
 const PostStreamingControlEnd = "end"
 const PostStreamingControlStart = "start"
 
+// PostStreamingControlContinue signals that a fresh stream is resuming on a
+// post that already carries content from an earlier round (typically the
+// follow-up after the user approved pending tool calls). The webapp clears
+// the visible message but keeps the resolved tool cards so the post combines
+// every round of one LLM conversation turn into a single post.
+const PostStreamingControlContinue = "continue"
+
 // WebSearchContextProp is still read by conversations/web_search_context.go when
 // extracting web search state from legacy thread posts.
 const WebSearchContextProp = "web_search_context"
@@ -60,8 +67,16 @@ type postStreamContext struct {
 // END of the stream, with the fully-accumulated content — that way the turn's
 // auto-assigned sequence lands after any tool-round turns that WriteToolTurns
 // persisted during the stream.
+//
+// GetTurnByPostID and UpdateTurnPostID support continuation streams: when an
+// agent turn that ended with pending tool calls is resumed (after the user
+// approves), the new round streams onto the SAME post. At finalize, the prior
+// anchor turn for that post is demoted (PostID cleared) so the webapp's
+// post→anchor lookup keeps finding exactly one match per post.
 type TurnStore interface {
 	CreateTurnAutoSequence(turn *store.Turn) error
+	GetTurnByPostID(postID string) (*store.Turn, error)
+	UpdateTurnPostID(id string, postID *string) error
 }
 
 // turnAccumulator collects stream state. The turn is not written to the
@@ -331,6 +346,12 @@ func newTurnAccumulator(conversationID, postID string, isDM bool) *turnAccumulat
 // start gives it the highest sequence in the conversation — ensuring the
 // final response sits after any tool-round turns WriteToolTurns persisted
 // during the stream.
+//
+// If a prior assistant turn is already anchored to this post (continuation
+// after user-approved tool calls), its PostID is cleared first so the new
+// turn becomes the canonical anchor. The prior turn keeps its content and
+// stays in sequence; the webapp's back-walk through non-anchor turns picks
+// it up alongside the newly-written tool_result rounds.
 func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 	blocks := acc.buildContentBlocks()
 
@@ -338,6 +359,14 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 	if err != nil {
 		p.mmClient.LogError("Failed to marshal turn content blocks", "error", err, "post_id", acc.postID)
 		return
+	}
+
+	if existing, lookupErr := p.turnStore.GetTurnByPostID(acc.postID); lookupErr != nil {
+		p.mmClient.LogError("Failed to look up prior anchor turn", "error", lookupErr, "post_id", acc.postID)
+	} else if existing != nil && existing.Role == "assistant" {
+		if demoteErr := p.turnStore.UpdateTurnPostID(existing.ID, nil); demoteErr != nil {
+			p.mmClient.LogError("Failed to demote prior anchor turn", "error", demoteErr, "post_id", acc.postID, "turn_id", existing.ID)
+		}
 	}
 
 	postIDCopy := acc.postID
@@ -454,7 +483,20 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 	defer span.End()
 
 	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId}
-	p.sendPostStreamingControlEventWithBroadcast(post, PostStreamingControlStart, broadcast)
+
+	// Continuation: a prior round on this same post already finalized an
+	// anchor turn (e.g., the user just approved pending tool calls). Send
+	// "continue" instead of "start" so the webapp keeps the resolved tool
+	// cards visible, and clear post.Message so the new round's text replaces
+	// the prior round's preamble rather than appending to it.
+	controlEvent := PostStreamingControlStart
+	if p.turnStore != nil {
+		if existing, lookupErr := p.turnStore.GetTurnByPostID(post.Id); lookupErr == nil && existing != nil && existing.Role == "assistant" {
+			controlEvent = PostStreamingControlContinue
+			post.Message = ""
+		}
+	}
+	p.sendPostStreamingControlEventWithBroadcast(post, controlEvent, broadcast)
 
 	// Create turn accumulator if turn persistence is enabled and a conversation_id is set
 	var acc *turnAccumulator
@@ -584,6 +626,13 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 						// the final round's content lands on the response post.
 						// On the pending event we retain the tool calls so a
 						// rejected-approval turn still carries them.
+						//
+						// We do NOT broadcast a `next: ""` event here. The
+						// webapp uses the resolved tool_call event itself to
+						// snapshot the just-completed round's text/tools into
+						// its rounds list. Sending an empty `next` first
+						// would clear the text before the snapshot ran,
+						// dropping the round's preamble.
 						if isResolvedToolCallsEvent(toolCalls) {
 							acc.text.Reset()
 							acc.reasoning.Reset()
@@ -592,7 +641,6 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 							acc.toolCalls = nil
 							messageBuilder.Reset()
 							post.Message = ""
-							p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 						} else {
 							acc.toolCalls = toolCalls
 						}

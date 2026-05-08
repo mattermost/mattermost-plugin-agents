@@ -451,6 +451,131 @@ func TestGetTurnByPostID(t *testing.T) {
 	}
 }
 
+// TestUpdateTurnPostID exercises the SQL UPDATE that demotes (or reassigns)
+// a turn's post anchor. The streaming layer relies on this to keep "exactly
+// one assistant turn anchored per post" — a typo'd column name or missing
+// WHERE clause would either silently fail or, worse, demote every turn in
+// the table. Mirrors the TestGetTurnByPostID pattern so the round trip
+// (write → read) is end-to-end.
+func TestUpdateTurnPostID(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store) (turnID string)
+		validate func(t *testing.T, s *Store, turnID string)
+	}{
+		{
+			name: "clears the post anchor when given nil",
+			setup: func(t *testing.T, s *Store) string {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				turn := makeTurn(conv.ID, 1, func(tu *Turn) {
+					tu.PostID = stringPtr("post-anchor")
+				})
+				err = s.CreateTurn(turn)
+				require.NoError(t, err)
+				return turn.ID
+			},
+			validate: func(t *testing.T, s *Store, turnID string) {
+				err := s.UpdateTurnPostID(turnID, nil)
+				require.NoError(t, err)
+
+				// Lookup by the old post id no longer finds it.
+				gone, err := s.GetTurnByPostID("post-anchor")
+				require.NoError(t, err)
+				assert.Nil(t, gone, "demoted turn must not be findable via its old post id")
+			},
+		},
+		{
+			name: "reassigns the post anchor to a new id",
+			setup: func(t *testing.T, s *Store) string {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				turn := makeTurn(conv.ID, 1, func(tu *Turn) {
+					tu.PostID = stringPtr("old-post")
+				})
+				err = s.CreateTurn(turn)
+				require.NoError(t, err)
+				return turn.ID
+			},
+			validate: func(t *testing.T, s *Store, turnID string) {
+				newPost := "new-post"
+				err := s.UpdateTurnPostID(turnID, &newPost)
+				require.NoError(t, err)
+
+				// Old anchor: gone.
+				oldHit, err := s.GetTurnByPostID("old-post")
+				require.NoError(t, err)
+				assert.Nil(t, oldHit)
+
+				// New anchor: present.
+				newHit, err := s.GetTurnByPostID("new-post")
+				require.NoError(t, err)
+				require.NotNil(t, newHit)
+				assert.Equal(t, turnID, newHit.ID)
+			},
+		},
+		{
+			name: "leaves OTHER rows untouched (WHERE clause is honored)",
+			setup: func(t *testing.T, s *Store) string {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				// The turn we'll demote.
+				targetTurn := makeTurn(conv.ID, 1, func(tu *Turn) {
+					tu.PostID = stringPtr("target-post")
+				})
+				err = s.CreateTurn(targetTurn)
+				require.NoError(t, err)
+
+				// A sibling turn that must NOT be touched.
+				sibling := makeTurn(conv.ID, 2, func(tu *Turn) {
+					tu.PostID = stringPtr("sibling-post")
+				})
+				err = s.CreateTurn(sibling)
+				require.NoError(t, err)
+
+				return targetTurn.ID
+			},
+			validate: func(t *testing.T, s *Store, turnID string) {
+				err := s.UpdateTurnPostID(turnID, nil)
+				require.NoError(t, err)
+
+				// The sibling's post anchor is unaffected.
+				sibling, err := s.GetTurnByPostID("sibling-post")
+				require.NoError(t, err)
+				require.NotNil(t, sibling, "demoting one turn must not clear unrelated turns' PostIDs")
+			},
+		},
+		{
+			name: "returns nil error for non-existent ID (no row updated)",
+			setup: func(t *testing.T, s *Store) string {
+				return ""
+			},
+			validate: func(t *testing.T, s *Store, _ string) {
+				err := s.UpdateTurnPostID("does-not-exist", nil)
+				assert.NoError(t, err, "demoting a non-existent turn is a no-op, not an error")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			turnID := tt.setup(t, s)
+			tt.validate(t, s, turnID)
+		})
+	}
+}
+
 func TestTurnCleanupWithConversation(t *testing.T) {
 	tests := []struct {
 		name     string

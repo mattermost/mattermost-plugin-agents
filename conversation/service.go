@@ -28,8 +28,10 @@ type Store interface {
 	CreateTurn(turn *store.Turn) error
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
+	UpdateTurnPostID(id string, postID *string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
 }
 
@@ -209,6 +211,20 @@ func (s *Service) CreateTurn(turn *store.Turn) error {
 // CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
 func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
 	return s.store.CreateTurnAutoSequence(turn)
+}
+
+// GetTurnByPostID retrieves the assistant turn anchored to the given post,
+// or nil if none exists. Used by the streaming layer to detect a continuation
+// stream and demote the prior anchor before creating the new one.
+func (s *Service) GetTurnByPostID(postID string) (*store.Turn, error) {
+	return s.store.GetTurnByPostID(postID)
+}
+
+// UpdateTurnPostID sets or clears the PostID on a turn. Streaming uses this to
+// demote a prior anchor turn (PostID = nil) when finalizing a continuation
+// turn for the same response post.
+func (s *Service) UpdateTurnPostID(id string, postID *string) error {
+	return s.store.UpdateTurnPostID(id, postID)
 }
 
 // UpdateConversationRootPostID sets the RootPostID on a conversation.
