@@ -107,7 +107,7 @@ func (a *API) convertLLMBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.
 	}, nil
 }
 
-// buildLLMBridgeContext builds the LLM context for bridge requests (service path).
+// buildLLMBridgeContext builds the LLM context for bridge completion requests (service and agent paths).
 func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRequest) (*llm.Context, error) {
 	var context *llm.Context
 	if a.contextBuilder != nil {
@@ -152,8 +152,10 @@ func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclien
 		return llm.CompletionRequest{}, err
 	}
 
-	bridgeContext := llm.NewContext()
-	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
+	bridgeContext, err := a.buildLLMBridgeContext(bot, req)
+	if err != nil {
+		return llm.CompletionRequest{}, err
+	}
 	if includeTools && a.contextBuilder != nil {
 		a.contextBuilder.WithLLMContextTools(bot)(bridgeContext)
 	}

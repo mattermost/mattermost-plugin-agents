@@ -1678,6 +1678,80 @@ func TestPrepareAgentBridgeCompletionAllowedToolsRequiresUserID(t *testing.T) {
 	require.Contains(t, err.Error(), "allowed_tools requires user_id")
 }
 
+func TestPrepareAgentBridgeCompletionIncludesAgentCustomInstructions(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const custom = "Use formal tone in every reply."
+
+	t.Run("without_allowed_tools", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		botConfig := llm.BotConfig{
+			Name:               "testbot",
+			DisplayName:        "Test Bot",
+			UserAccessLevel:    llm.UserAccessLevelAll,
+			CustomInstructions: custom,
+		}
+		e.setupTestBot(botConfig)
+
+		_, llmRequest, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+			testBotUserID,
+			bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hi"},
+				},
+				UserID: testUserID,
+			},
+			"",
+			llm.OperationBridgeAgent,
+			llm.SubTypeNoStream,
+		)
+		require.NoError(t, err)
+		require.Equal(t, 0, statusCode)
+		require.NotNil(t, llmRequest.Context)
+		require.Equal(t, custom, llmRequest.Context.CustomInstructions)
+		require.Equal(t, "Test Bot", llmRequest.Context.BotName)
+		require.Equal(t, "testbot", llmRequest.Context.BotUsername)
+	})
+
+	t.Run("with_allowed_tools", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+		defer server.Close()
+
+		botConfig := llm.BotConfig{
+			Name:               "testbot",
+			DisplayName:        "Test Bot",
+			UserAccessLevel:    llm.UserAccessLevelAll,
+			CustomInstructions: custom,
+		}
+		e.setupTestBot(botConfig)
+
+		_, llmRequest, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+			testBotUserID,
+			bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hi"},
+				},
+				UserID:       testUserID,
+				AllowedTools: []string{"eligible_tool"},
+			},
+			"",
+			llm.OperationBridgeAgent,
+			llm.SubTypeNoStream,
+		)
+		require.NoError(t, err)
+		require.Equal(t, 0, statusCode)
+		require.NotNil(t, llmRequest.Context)
+		require.Equal(t, custom, llmRequest.Context.CustomInstructions)
+		require.NotNil(t, llmRequest.Context.Tools.GetTool("eligible_tool"))
+	})
+}
+
 func TestPrepareAgentBridgeCompletionToolHooksRequiresPluginID(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
