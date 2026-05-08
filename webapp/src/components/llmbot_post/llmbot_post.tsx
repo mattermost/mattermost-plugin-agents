@@ -31,6 +31,10 @@ import {extractPermalinkData} from './permalink_data';
 
 const SearchResultsPropKey = 'search_results';
 
+// Sentinel id for the in-progress streaming round. Distinguishes the live
+// round from persisted (turn-id keyed) rounds in `renderedRounds`.
+const LIVE_ROUND_ID = 'live';
+
 // Types
 export interface PostUpdateWebsocketMessage {
     post_id: string
@@ -88,10 +92,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const isDM = channel?.type === 'D';
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
 
-    // Local streaming state. These describe the IN-PROGRESS round.
-    // Completed rounds within the current streaming session live in
-    // `liveRounds`; persisted rounds from prior sessions live in
-    // `persistedRounds` (derived from turns).
     const [message, setMessage] = useState(props.post.message);
     const [generating, setGenerating] = useState(false);
     const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
@@ -105,7 +105,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const stoppedRef = useRef(stopped);
     stoppedRef.current = stopped;
 
-    // Reasoning summary state for the IN-PROGRESS round.
     const [reasoningSummary, setReasoningSummary] = useState('');
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
@@ -122,16 +121,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // refetch becomes the trigger to clear local-state for completed rounds.
     const [pendingRefetch, setPendingRefetch] = useState(false);
 
-    // Refs let the WebSocket handler snapshot the current in-progress round
-    // into liveRounds without recreating the listener on every keystroke.
-    const messageRef = useRef(message);
-    const toolCallsRef = useRef(toolCalls);
-    const reasoningSummaryRef = useRef(reasoningSummary);
-    const annotationsRef = useRef(annotations);
-    messageRef.current = message;
-    toolCallsRef.current = toolCalls;
-    reasoningSummaryRef.current = reasoningSummary;
-    annotationsRef.current = annotations;
+    // A single ref mirrors the in-progress round so the WebSocket handler
+    // can snapshot it without rebuilding the listener on every keystroke.
+    const liveRef = useRef({message, toolCalls, reasoningSummary, annotations});
+    liveRef.current = {message, toolCalls, reasoningSummary, annotations};
 
     // Sync message from post.message changes (e.g. after post update)
     useEffect(() => {
@@ -166,19 +159,22 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // synchronously after the render that sees the new conversation,
     // before paint, so the user never sees a duplicated frame.
     useLayoutEffect(() => {
-        if (pendingRefetch && conversation) {
-            setLiveRounds([]);
-            setMessage('');
-            setToolCalls([]);
-            setReasoningSummary('');
-            setIsReasoningLoading(false);
-            setAnnotations([]);
-            setPendingRefetch(false);
+        if (!pendingRefetch || !conversation) {
+            return;
         }
+
+        // Reset only what's actually populated. Each setX([]) call would
+        // otherwise allocate a fresh empty array, causing the parent to
+        // re-render even when the round had no content to clear.
+        setLiveRounds((prev: Round[]) => (prev.length === 0 ? prev : []));
+        setToolCalls((prev: ToolCall[]) => (prev.length === 0 ? prev : []));
+        setAnnotations((prev: Annotation[]) => (prev.length === 0 ? prev : []));
+        setMessage((prev: string) => (prev === '' ? prev : ''));
+        setReasoningSummary((prev: string) => (prev === '' ? prev : ''));
+        setIsReasoningLoading(false);
+        setPendingRefetch(false);
     }, [conversation, pendingRefetch]);
 
-    // WebSocket handler. Refs above let us snapshot the in-progress round
-    // without recreating this listener on every state update.
     useEffect(() => {
         if (!props.websocketRegister || !props.websocketUnregister) {
             return undefined; // eslint-disable-line no-undefined
@@ -216,14 +212,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                         // round (text/reasoning/annotations + the resolved
                         // tools from this event) into liveRounds, then reset
                         // for the next round to begin streaming below it.
+                        const live = liveRef.current;
                         setLiveRounds((prev) => [
                             ...prev,
                             {
                                 id: `live-${prev.length}-${Date.now()}`,
-                                text: messageRef.current,
+                                text: live.message,
                                 toolCalls: parsedToolCalls,
-                                reasoning: {summary: reasoningSummaryRef.current, signature: ''},
-                                annotations: annotationsRef.current,
+                                reasoning: {summary: live.reasoningSummary, signature: ''},
+                                annotations: live.annotations,
                             },
                         ]);
                         setMessage('');
@@ -322,9 +319,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         };
     }, [props.post.id, conversationId]);
 
-    // The in-progress round, derived from local streaming state. Returns
-    // null when there is no live content yet so we don't render an empty
-    // section under the persisted rounds.
     const currentRound: Round | null = useMemo(() => {
         const hasContent = message !== '' ||
             toolCalls.length > 0 ||
@@ -334,7 +328,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             return null;
         }
         return {
-            id: 'live',
+            id: LIVE_ROUND_ID,
             text: message,
             toolCalls,
             reasoning: {summary: reasoningSummary, signature: ''},
@@ -447,7 +441,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 </MinimalReasoningContainer>
             )}
             {renderedRounds.map((round, idx) => {
-                const isLiveRound = round.id === 'live';
+                const isLiveRound = round.id === LIVE_ROUND_ID;
                 const showCursor = generating && isLiveRound && !precontent;
                 const reasoningLoading = isLiveRound && isReasoningLoading;
                 return (

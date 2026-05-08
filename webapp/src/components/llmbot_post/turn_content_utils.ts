@@ -79,6 +79,33 @@ function collectResponseTurns(
     return out;
 }
 
+// Results may land in any turn — most commonly the assistant turn that
+// requested them, but for the user-approval flow they land in a tool_result
+// turn AFTER the anchor. Indexing every turn keeps both shapes covered.
+function buildToolResultMap(conversation: ConversationResponse): Map<string, ContentBlock> {
+    const resultMap = new Map<string, ContentBlock>();
+    for (const t of conversation.turns) {
+        for (const block of t.content) {
+            if (block.type === BlockTypeToolResult && block.tool_use_id) {
+                resultMap.set(block.tool_use_id, block);
+            }
+        }
+    }
+    return resultMap;
+}
+
+function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, ContentBlock>): ToolCall {
+    const resultBlock = block.id ? resultMap.get(block.id) : undefined; // eslint-disable-line no-undefined
+    return {
+        id: block.id ?? '',
+        name: block.name ?? '',
+        description: '',
+        arguments: (block.input as ToolCall['arguments']) ?? undefined, // eslint-disable-line no-undefined
+        result: resultBlock?.content ?? undefined, // eslint-disable-line no-undefined
+        status: statusStringToEnum(block.status),
+    };
+}
+
 /**
  * Build a ToolCall[] from every tool_use block across the turns that belong
  * to a given post's response, pairing each with its matching tool_result by
@@ -107,29 +134,8 @@ export function extractToolCallsForPost(
         return [];
     }
 
-    // Results may land AFTER the anchor when the user just approved
-    // previously pending tool calls, so search every turn by tool_use_id
-    // rather than only the collected response range.
-    const resultMap = new Map<string, ContentBlock>();
-    for (const t of conversation.turns) {
-        for (const block of t.content) {
-            if (block.type === BlockTypeToolResult && block.tool_use_id) {
-                resultMap.set(block.tool_use_id, block);
-            }
-        }
-    }
-
-    return toolUseBlocks.map((block: ContentBlock): ToolCall => {
-        const resultBlock = block.id ? resultMap.get(block.id) : undefined; // eslint-disable-line no-undefined
-        return {
-            id: block.id ?? '',
-            name: block.name ?? '',
-            description: '',
-            arguments: (block.input as ToolCall['arguments']) ?? undefined, // eslint-disable-line no-undefined
-            result: resultBlock?.content ?? undefined, // eslint-disable-line no-undefined
-            status: statusStringToEnum(block.status),
-        };
-    });
+    const resultMap = buildToolResultMap(conversation);
+    return toolUseBlocks.map((block) => toolUseBlockToToolCall(block, resultMap));
 }
 
 /** Extract reasoning summary text and signature from thinking content blocks. */
@@ -256,15 +262,7 @@ export function buildRoundsFromTurns(
         return [];
     }
 
-    const resultMap = new Map<string, ContentBlock>();
-    for (const t of conversation.turns) {
-        for (const block of t.content) {
-            if (block.type === BlockTypeToolResult && block.tool_use_id) {
-                resultMap.set(block.tool_use_id, block);
-            }
-        }
-    }
-
+    const resultMap = buildToolResultMap(conversation);
     const rounds: Round[] = [];
     for (const turn of turns) {
         if (turn.role !== 'assistant') {
@@ -274,19 +272,9 @@ export function buildRoundsFromTurns(
             filter((b) => b.type === BlockTypeText).
             map((b) => b.text ?? '').
             join('');
-        const toolCalls: ToolCall[] = turn.content.
+        const toolCalls = turn.content.
             filter((b) => b.type === BlockTypeToolUse).
-            map((block): ToolCall => {
-                const resultBlock = block.id ? resultMap.get(block.id) : undefined; // eslint-disable-line no-undefined
-                return {
-                    id: block.id ?? '',
-                    name: block.name ?? '',
-                    description: '',
-                    arguments: (block.input as ToolCall['arguments']) ?? undefined, // eslint-disable-line no-undefined
-                    result: resultBlock?.content ?? undefined, // eslint-disable-line no-undefined
-                    status: statusStringToEnum(block.status),
-                };
-            });
+            map((block) => toolUseBlockToToolCall(block, resultMap));
         rounds.push({
             id: turn.id,
             text,

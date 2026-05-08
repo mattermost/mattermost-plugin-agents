@@ -86,6 +86,12 @@ type turnAccumulator struct {
 	postID         string
 	isDM           bool // true for DM channels; controls shared flag on tool_use blocks
 
+	// priorAnchorID is set when StreamToPost detected a continuation at start
+	// — the existing assistant turn anchored to this post. finalizeTurn uses
+	// it to demote that turn before creating the new anchor without an extra
+	// GetTurnByPostID round trip.
+	priorAnchorID string
+
 	// Accumulated content
 	text          strings.Builder
 	reasoning     strings.Builder
@@ -332,11 +338,14 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 }
 
 // newTurnAccumulator constructs an in-memory accumulator for a streaming
-// assistant response. Nothing is persisted until finalizeTurn runs.
-func newTurnAccumulator(conversationID, postID string, isDM bool) *turnAccumulator {
+// assistant response. priorAnchorID is the existing assistant turn anchored
+// to this post (set on continuation streams), or "" for first-time streams.
+// Nothing is persisted until finalizeTurn runs.
+func newTurnAccumulator(conversationID, postID, priorAnchorID string, isDM bool) *turnAccumulator {
 	return &turnAccumulator{
 		conversationID: conversationID,
 		postID:         postID,
+		priorAnchorID:  priorAnchorID,
 		isDM:           isDM,
 	}
 }
@@ -361,11 +370,9 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 		return
 	}
 
-	if existing, lookupErr := p.turnStore.GetTurnByPostID(acc.postID); lookupErr != nil {
-		p.mmClient.LogError("Failed to look up prior anchor turn", "error", lookupErr, "post_id", acc.postID)
-	} else if existing != nil && existing.Role == "assistant" {
-		if demoteErr := p.turnStore.UpdateTurnPostID(existing.ID, nil); demoteErr != nil {
-			p.mmClient.LogError("Failed to demote prior anchor turn", "error", demoteErr, "post_id", acc.postID, "turn_id", existing.ID)
+	if acc.priorAnchorID != "" {
+		if demoteErr := p.turnStore.UpdateTurnPostID(acc.priorAnchorID, nil); demoteErr != nil {
+			p.mmClient.LogError("Failed to demote prior anchor turn", "error", demoteErr, "post_id", acc.postID, "turn_id", acc.priorAnchorID)
 		}
 	}
 
@@ -488,11 +495,15 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 	// anchor turn (e.g., the user just approved pending tool calls). Send
 	// "continue" instead of "start" so the webapp keeps the resolved tool
 	// cards visible, and clear post.Message so the new round's text replaces
-	// the prior round's preamble rather than appending to it.
+	// the prior round's preamble rather than appending to it. The turn ID
+	// flows through to finalizeTurn so demote happens without a second
+	// GetTurnByPostID round trip.
 	controlEvent := PostStreamingControlStart
+	priorAnchorID := ""
 	if p.turnStore != nil {
 		if existing, lookupErr := p.turnStore.GetTurnByPostID(post.Id); lookupErr == nil && existing != nil && existing.Role == "assistant" {
 			controlEvent = PostStreamingControlContinue
+			priorAnchorID = existing.ID
 			post.Message = ""
 		}
 	}
@@ -509,7 +520,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 			if ch, chErr := p.mmClient.GetChannel(post.ChannelId); chErr == nil {
 				isDM = mmapi.IsDMWith(requesterUserID, ch)
 			}
-			acc = newTurnAccumulator(convID, post.Id, isDM)
+			acc = newTurnAccumulator(convID, post.Id, priorAnchorID, isDM)
 		}
 	}
 
