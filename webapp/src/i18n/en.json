@@ -265,6 +265,7 @@
   "aA+e4NGW": "Loading models...",
   "aKeIoYkm": "Use service default",
   "ah95aAGi": "Action Title",
+  "ai.rhs.tools.refresh_tool_providers": "Refresh tool providers",
   "ai.tool_call.accept_all": "Accept all",
   "ai.tool_call.approval_warning": "Approving lets Agents use this response in its next message. That message will be visible to everyone in the channel—only approve results you’re comfortable sharing.",
   "ai.tool_call.approve": "Accept",

@@ -20,6 +20,14 @@ jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
 
+jest.mock('react-intl', () => ({
+    FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+    IntlProvider: ({children}: {children: React.ReactNode}) => children,
+    useIntl: () => ({
+        formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+    }),
+}));
+
 jest.mock('@mattermost/compass-icons/components', () => ({
     ChevronDownIcon: () => <span data-testid='chevron-icon'/>,
     RefreshIcon: () => <span data-testid='refresh-icon'/>,

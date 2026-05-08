@@ -612,20 +612,20 @@ export async function getUserMCPTools(): Promise<{servers: any[]}> {
 }
 
 export async function refreshUserMCPTools(): Promise<{servers: any[]}> {
-	const url = `${baseRoute()}/mcp/tools/refresh`;
-	const response = await fetch(url, Client4.getOptions({
-		method: 'POST',
-	}));
+    const url = `${baseRoute()}/mcp/tools/refresh`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
 
-	if (response.ok) {
-		return response.json();
-	}
+    if (response.ok) {
+        return response.json();
+    }
 
-	throw new ClientError(Client4.url, {
-		message: '',
-		status_code: response.status,
-		url,
-	});
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
 }
 
 export async function getUserToolPreferences(): Promise<{disabled_servers: string[]}> {
