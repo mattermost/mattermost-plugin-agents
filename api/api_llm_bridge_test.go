@@ -1662,6 +1662,7 @@ func TestPrepareAgentBridgeCompletionAllowedToolsRequiresUserID(t *testing.T) {
 	defer e.Cleanup(t)
 
 	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
 			Posts: []bridgeclient.Post{
@@ -1696,6 +1697,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRequiresPluginID(t *testing.T) {
 	e.setupTestBot(botConfig)
 
 	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
 			Posts: []bridgeclient.Post{
@@ -1755,6 +1757,7 @@ func TestPrepareAgentBridgeCompletionStoresToolHookKeysInMCPMetadata(t *testing.
 	).Return(true, (*model.AppError)(nil)).Once()
 
 	_, llmRequest, _, _, beforeHookKeys, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
 			Posts: []bridgeclient.Post{
@@ -1821,6 +1824,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRequiresUserID(t *testing.T) {
 	e.setupTestBot(botConfig)
 
 	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
 			Posts: []bridgeclient.Post{
@@ -1858,6 +1862,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRequiresAllowedTools(t *testing.T)
 	e.setupTestBot(botConfig)
 
 	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
 			Posts: []bridgeclient.Post{

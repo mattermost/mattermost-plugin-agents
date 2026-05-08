@@ -18,6 +18,24 @@ const Client4 = new Client4Class();
 
 type MCPToolPolicy = 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
 type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
+export type UserMCPToolInfo = {
+    name: string;
+    description: string;
+    enabled: boolean;
+    policy: string;
+};
+export type UserMCPServerInfo = {
+    name: string;
+    serverOrigin: string;
+    authenticated: boolean;
+    needsOAuth: boolean;
+    authEmail?: string;
+    authURL?: string;
+    tools: UserMCPToolInfo[];
+};
+export type UserMCPToolsResponse = {
+    servers: UserMCPServerInfo[];
+};
 
 export function setSiteURL(siteURL: string) {
     Client4.setUrl(siteURL);
@@ -594,7 +612,7 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     });
 }
 
-export async function getUserMCPTools(): Promise<{servers: any[]}> {
+export async function getUserMCPTools(): Promise<UserMCPToolsResponse> {
     const url = `${baseRoute()}/mcp/tools`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
@@ -611,7 +629,7 @@ export async function getUserMCPTools(): Promise<{servers: any[]}> {
     });
 }
 
-export async function refreshUserMCPTools(): Promise<{servers: any[]}> {
+export async function refreshUserMCPTools(): Promise<UserMCPToolsResponse> {
     const url = `${baseRoute()}/mcp/tools/refresh`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',

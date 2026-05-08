@@ -6,7 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
-import {getUserMCPTools} from '@/client';
+import {getUserMCPTools, type UserMCPServerInfo} from '@/client';
 import {EnabledTool} from '@/types/agents';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 
@@ -14,24 +14,6 @@ import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 const MCPServerToolWildcard = '*';
 
 import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
-
-// Types matching the getUserMCPTools() response shape (from api/api_mcp.go)
-type UserMCPToolInfo = {
-    name: string;
-    description: string;
-    enabled: boolean; // admin-level enabled state
-    policy: string; // "auto_run" | "ask"
-}
-
-type UserMCPServerInfo = {
-    name: string;
-    serverOrigin: string;
-    authenticated: boolean;
-    needsOAuth: boolean;
-    authEmail: string;
-    authURL?: string;
-    tools: UserMCPToolInfo[];
-}
 
 type Props = {
     enabledTools: EnabledTool[];
@@ -317,7 +299,7 @@ const McpsTab = (props: Props) => {
                                                     <FormattedMessage defaultMessage='Connected'/>
                                                 </AuthBadge>
                                             )}
-                                            {!server.authenticated && server.authEmail === '' && server.tools.length === 0 && (
+                                            {!server.authenticated && !server.authEmail && server.tools.length === 0 && (
                                                 <NotConnectedBadge>
                                                     <FormattedMessage defaultMessage='Not connected'/>
                                                 </NotConnectedBadge>

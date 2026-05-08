@@ -47,8 +47,8 @@ func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuth
 	}
 }
 
-// ConnectToRemoteServers initializes connections to remote MCP servers
-func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
+// ConnectToRemoteServers initializes connections to remote MCP servers.
+func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []ServerConfig, forceRefresh bool) *Errors {
 	if len(servers) == 0 {
 		c.log.Debug("No remote MCP servers provided for user", "userID", c.userID)
 		return nil
@@ -63,7 +63,7 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 			continue
 		}
 
-		if err := c.connectToServer(context.TODO(), serverConfig.Name, serverConfig); err != nil {
+		if err := c.connectToServer(ctx, serverConfig.Name, serverConfig, forceRefresh); err != nil {
 			// Initialize errors struct if needed
 			if mcpErrors == nil {
 				mcpErrors = &Errors{}
@@ -91,7 +91,7 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 
 // ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
 // If a connection already exists, it is reused.
-func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
+func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
 	if !embeddedConfig.Enabled || embeddedClient == nil {
 		return nil
 	}
@@ -104,7 +104,7 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embed
 		return nil
 	}
 
-	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := c.connectToEmbeddedServerWithClient(ctxWithTimeout, c.userID, sessionID, embeddedClient); err != nil {
 		c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
@@ -116,8 +116,8 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embed
 }
 
 // connectToServer establishes a connection to a single server
-func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig) error {
-	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache)
+func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig, forceRefresh bool) error {
+	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache, forceRefresh)
 	if err != nil {
 		return err
 	}

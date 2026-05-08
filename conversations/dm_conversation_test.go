@@ -392,7 +392,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 // testMCPClientManager implements llmcontext.MCPClientManager for testing.
 type testMCPClientManager struct{}
 
-func (m *testMCPClientManager) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
+func (m *testMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
 	return nil, nil
 }
 

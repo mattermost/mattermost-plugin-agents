@@ -4,6 +4,7 @@
 package llmcontext
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
@@ -26,7 +27,7 @@ type countingMCPToolProvider struct {
 	calls int
 }
 
-func (p *countingMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
 	return []llm.Tool{
 		{
@@ -42,7 +43,7 @@ type staticMCPToolProvider struct {
 	errors *mcp.Errors
 }
 
-func (p *staticMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
+func (p *staticMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
 	return p.tools, p.errors
 }
 
@@ -86,7 +87,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		newTestBot(),
 		user,
 		channel,
-		builder.WithLLMContextDefaultTools(newTestBot()),
+		builder.WithLLMContextDefaultTools(context.Background(), newTestBot()),
 	)
 
 	require.Equal(t, 1, mcpProvider.calls)
@@ -161,7 +162,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 		bot,
 		user,
 		channel,
-		builder.WithLLMContextDefaultTools(bot),
+		builder.WithLLMContextDefaultTools(context.Background(), bot),
 	)
 
 	require.Empty(t, context.Tools.GetTools())

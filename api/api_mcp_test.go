@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -30,6 +31,8 @@ type stubEmbeddedServer struct{}
 func (s *stubEmbeddedServer) CreateClientTransport(string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, nil
 }
+
+type mcpRequestContextKey struct{}
 
 func TestHandleGetUserMCPToolsIncludesZeroToolConfiguredServers(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
@@ -96,6 +99,28 @@ func TestHandleGetUserMCPToolsIncludesZeroToolConfiguredServers(t *testing.T) {
 	require.False(t, response.Servers[1].NeedsOAuth)
 }
 
+func TestHandleGetUserMCPToolsPassesRequestContext(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mcpMock := &mockMCPClientManager{}
+	e.api.mcpClientManager = mcpMock
+
+	requestCtx := context.WithValue(context.Background(), mcpRequestContextKey{}, "request-context")
+	request := httptest.NewRequest(http.MethodGet, "/mcp/tools", nil).WithContext(requestCtx)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	require.Len(t, mcpMock.getContexts, 1)
+	require.Equal(t, "request-context", mcpMock.getContexts[0].Value(mcpRequestContextKey{}))
+}
+
 func TestHandleRefreshUserMCPToolsUsesForcedRefresh(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -130,6 +155,28 @@ func TestHandleRefreshUserMCPToolsUsesForcedRefresh(t *testing.T) {
 	require.Equal(t, server.Name, response.Servers[0].Name)
 	require.Len(t, response.Servers[0].Tools, 1)
 	require.Equal(t, "refreshed_tool", response.Servers[0].Tools[0].Name)
+}
+
+func TestHandleRefreshUserMCPToolsPassesRequestContext(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mcpMock := &mockMCPClientManager{}
+	e.api.mcpClientManager = mcpMock
+
+	requestCtx := context.WithValue(context.Background(), mcpRequestContextKey{}, "refresh-context")
+	request := httptest.NewRequest(http.MethodPost, "/mcp/tools/refresh", nil).WithContext(requestCtx)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	require.Len(t, mcpMock.refreshContexts, 1)
+	require.Equal(t, "refresh-context", mcpMock.refreshContexts[0].Value(mcpRequestContextKey{}))
 }
 
 func TestHandleRefreshUserMCPToolsRejectsRequestBody(t *testing.T) {

@@ -202,7 +202,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 }
 
 // NewClient creates a new MCP client for the given server and user and connects to the specified MCP server
-func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) (*Client, error) {
+func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, forceRefresh bool) (*Client, error) {
 	c := &Client{
 		session:      nil,
 		config:       serverConfig,
@@ -223,7 +223,7 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	serverID := serverConfig.Name
 
 	// Try to get tools from global cache first.
-	if toolsCache != nil && useSharedToolsCache {
+	if toolsCache != nil && useSharedToolsCache && !forceRefresh {
 		cachedTools := toolsCache.GetTools(serverID)
 		if len(cachedTools) > 0 {
 			// Cache hit - use cached tools

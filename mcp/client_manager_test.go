@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -171,7 +172,7 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 	}
 
 	before := time.Now()
-	userClients, mcpErrors := manager.createAndStoreUserClient("user-1")
+	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), "user-1")
 	after := time.Now()
 
 	require.NotNil(t, userClients)

@@ -42,7 +42,7 @@ type UserMCPToolInfo struct {
 // handleGetUserMCPTools returns the user-visible MCP tools grouped by server.
 func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(userID)
+	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(c.Request.Context(), userID)
 
 	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors))
 }
@@ -55,7 +55,7 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 	}
 
 	userID := c.GetHeader("Mattermost-User-Id")
-	tools, mcpErrors, err := a.mcpClientManager.RefreshToolsForUser(userID)
+	tools, mcpErrors, err := a.mcpClientManager.RefreshToolsForUser(c.Request.Context(), userID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to refresh MCP tools: %w", err))
 		return

@@ -4,6 +4,7 @@
 package llmcontext
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ type ToolProvider interface {
 
 // MCPToolProvider provides MCP tools for a user
 type MCPToolProvider interface {
-	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
+	GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors)
 }
 
 // ConfigProvider provides configuration access
@@ -168,7 +169,7 @@ func sanitizeUserProfileField(s string) string {
 
 // getToolsStoreForUser returns a tool store for a specific user, including MCP tools
 // Session information is extracted from the llm.Context
-func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID string) *llm.ToolStore {
+func (b *Builder) getToolsStoreForUser(ctx context.Context, c *llm.Context, bot *bots.Bot, userID string) *llm.ToolStore {
 	// Check for nil bot, which is unexpected
 	if bot == nil {
 		b.pluginAPI.Log.Error("Unexpected nil bot when getting tool store for user", "userID", userID)
@@ -198,7 +199,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	// Actual execution is controlled via WithToolsDisabled() based on channel type.
 	if b.mcpToolProvider != nil {
 		// Get tools from all connected servers
-		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID)
+		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(ctx, userID)
 
 		// Add tools from successfully connected servers even if some had errors
 		// These will be disabled in non-DM channels via WithToolsDisabled()
@@ -232,7 +233,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 // WithLLMContextTools adds tools to the LLM context the requester can access.
 // Tools are always added for LLM awareness; execution is controlled via WithToolsDisabled()
 // based on the context (e.g., DM vs channel).
-func (b *Builder) WithLLMContextTools(bot *bots.Bot) llm.ContextOption {
+func (b *Builder) WithLLMContextTools(ctx context.Context, bot *bots.Bot) llm.ContextOption {
 	return func(c *llm.Context) {
 		if c.RequestingUser == nil {
 			b.pluginAPI.Log.Error("Cannot add tools to context: RequestingUser is nil")
@@ -240,13 +241,13 @@ func (b *Builder) WithLLMContextTools(bot *bots.Bot) llm.ContextOption {
 		}
 
 		// Get tools using session info from llm.Context
-		c.Tools = b.getToolsStoreForUser(c, bot, c.RequestingUser.Id)
+		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id)
 	}
 }
 
 // WithLLMContextDefaultTools adds default tools to the LLM context for the requesting user
-func (b *Builder) WithLLMContextDefaultTools(bot *bots.Bot) llm.ContextOption {
-	return b.WithLLMContextTools(bot)
+func (b *Builder) WithLLMContextDefaultTools(ctx context.Context, bot *bots.Bot) llm.ContextOption {
+	return b.WithLLMContextTools(ctx, bot)
 }
 
 // WithLLMContextNoTools explicitly disables tools for this context session only,

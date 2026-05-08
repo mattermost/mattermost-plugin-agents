@@ -50,7 +50,7 @@ func DiscoverRemoteServerTools(
 	toolsCache *ToolsCache,
 ) ([]ToolInfo, error) {
 	// Create and connect to the remote server
-	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, httpClient, toolsCache)
+	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, httpClient, toolsCache, false)
 	if err != nil {
 		return nil, err
 	}

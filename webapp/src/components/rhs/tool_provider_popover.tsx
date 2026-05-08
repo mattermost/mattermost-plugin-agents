@@ -6,26 +6,14 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, RefreshIcon} from '@mattermost/compass-icons/components';
 
-import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences} from '@/client';
+import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
 import {EnabledMCPTool} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
 import {ToggleSwitch} from '../toggle_switch';
 
-export type UserMCPServerInfo = {
-    name: string;
-    serverOrigin: string;
-    authenticated: boolean;
-    needsOAuth: boolean;
-    authURL?: string;
-    tools: Array<{
-        name: string;
-        description: string;
-        enabled: boolean;
-        policy: string;
-    }>;
-};
+export type {UserMCPServerInfo};
 
 type ToolProviderPopoverProps = {
     disabledServers: string[];

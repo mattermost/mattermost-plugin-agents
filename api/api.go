@@ -63,8 +63,8 @@ type MCPClientManager interface {
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
-	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
-	RefreshToolsForUser(userID string) ([]llm.Tool, *mcp.Errors, error)
+	GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors)
+	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
 	GetConfig() mcp.Config
 }
 

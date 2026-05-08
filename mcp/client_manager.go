@@ -129,14 +129,18 @@ func (m *ClientManager) Close() {
 	m.activity = make(map[string]time.Time)
 }
 
-// createAndStoreUserClient creates a new UserClients instance and stores it in the manager
-func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *Errors) {
+// createAndStoreUserClient creates a new UserClients instance and stores it in the manager.
+func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string) (*UserClients, *Errors) {
+	return m.createAndStoreUserClientWithRefresh(ctx, userID, false)
+}
+
+func (m *ClientManager) createAndStoreUserClientWithRefresh(ctx context.Context, userID string, forceRefresh bool) (*UserClients, *Errors) {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
 	// Check again in case another goroutine created the client while we were waiting for the lock
 	client, exists := m.clients[userID]
-	if exists {
+	if exists && !forceRefresh {
 		m.activity[userID] = time.Now()
 		return client, client.initialRemoteConnectErrors
 	}
@@ -144,7 +148,7 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 
 	// Let user client connect to remote servers only
-	mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
+	mcpErrors := userClients.ConnectToRemoteServers(ctx, m.config.Servers, forceRefresh)
 	userClients.initialRemoteConnectErrors = mcpErrors
 
 	// Store the client even if some servers failed to connect
@@ -155,8 +159,8 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 	return userClients, mcpErrors
 }
 
-// getClientForUser gets or creates an MCP client for a specific user
-func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) {
+// getClientForUser gets or creates an MCP client for a specific user.
+func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*UserClients, *Errors) {
 	m.clientsMu.Lock()
 	client, exists := m.clients[userID]
 	if exists {
@@ -166,13 +170,13 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 	}
 	m.clientsMu.Unlock()
 
-	return m.createAndStoreUserClient(userID)
+	return m.createAndStoreUserClient(ctx, userID)
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
-func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
+func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
-	userClient, mcpErrors := m.getClientForUser(userID)
+	userClient, mcpErrors := m.getClientForUser(ctx, userID)
 
 	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
 	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
@@ -180,7 +184,7 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
 		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
+			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
 				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
 			}
 		}
@@ -193,18 +197,32 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 }
 
 // RefreshToolsForUser drops cached user clients and shared server tool lists before rediscovery.
-func (m *ClientManager) RefreshToolsForUser(userID string) ([]llm.Tool, *Errors, error) {
+func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors, error) {
 	if userID == "" {
 		return nil, nil, errors.New("userID is required")
 	}
 
-	if err := m.invalidateSharedToolsCacheForRefresh(); err != nil {
-		return nil, nil, err
+	refreshErr := m.invalidateSharedToolsCacheForRefresh()
+	if refreshErr != nil {
+		m.log.Warn("Failed to invalidate shared MCP tools cache during user refresh; bypassing cache for rediscovery", "userID", userID, "error", refreshErr)
+	}
+	m.InvalidateUserClients(userID)
+	userClient, mcpErrors := m.createAndStoreUserClientWithRefresh(ctx, userID, true)
+
+	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
+		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
+		if ensureErr != nil {
+			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
+		} else if ensuredSessionID != "" {
+			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
+				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
+			}
+		}
 	}
 
-	m.InvalidateUserClients(userID)
-	tools, mcpErrors := m.GetToolsForUser(userID)
-	return tools, mcpErrors, nil
+	rawTools := userClient.GetTools()
+	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient)
+	return filtered, mcpErrors, nil
 }
 
 func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
