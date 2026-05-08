@@ -53,67 +53,86 @@ func TestReadConfig_UnknownFields(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestConfigValidate_InvalidTriggerMode(t *testing.T) {
-	c := Config{
-		TriggerFrequencyChannelMention: 0.001,
-		TriggerFrequencyDM:             0.001,
-		AgentUsername:                  "bot",
-		TriggerMode:                    TriggerMode("nope"),
+func TestConfigValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Config
+		wantErr bool
+	}{
+		{
+			name: "invalid trigger mode",
+			config: Config{
+				TriggerFrequencyChannelMention: 0.001,
+				TriggerFrequencyDM:             0.001,
+				AgentUsername:                  "bot",
+				TriggerMode:                    TriggerMode("nope"),
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative frequency",
+			config: Config{
+				TriggerFrequencyChannelMention: -0.1,
+				TriggerFrequencyDM:             0.001,
+				AgentUsername:                  "bot",
+				TriggerMode:                    TriggerModeBoth,
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid mock profile",
+			config: Config{
+				TriggerFrequencyChannelMention: 0.001,
+				TriggerFrequencyDM:             0.001,
+				AgentUsername:                  "bot",
+				TriggerMode:                    TriggerModeBoth,
+				MockProfile:                    json.RawMessage(`{"not_a_profile":true}`),
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing agent when mention needed",
+			config: Config{
+				TriggerFrequencyChannelMention: 0.001,
+				TriggerFrequencyDM:             0,
+				AgentUsername:                  "",
+				AgentUserID:                    "",
+				TriggerMode:                    TriggerModeChannelMention,
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing agent when DM needed",
+			config: Config{
+				TriggerFrequencyChannelMention: 0,
+				TriggerFrequencyDM:             0.001,
+				AgentUsername:                  "",
+				AgentUserID:                    "",
+				TriggerMode:                    TriggerModeDM,
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero frequencies skip agent requirement",
+			config: Config{
+				TriggerFrequencyChannelMention: 0,
+				TriggerFrequencyDM:             0,
+				AgentUsername:                  "",
+				AgentUserID:                    "",
+				TriggerMode:                    TriggerModeBoth,
+			},
+			wantErr: false,
+		},
 	}
-	assert.Error(t, c.Validate())
-}
 
-func TestConfigValidate_NegativeFrequency(t *testing.T) {
-	c := Config{
-		TriggerFrequencyChannelMention: -0.1,
-		TriggerFrequencyDM:             0.001,
-		AgentUsername:                  "bot",
-		TriggerMode:                    TriggerModeBoth,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
 	}
-	assert.Error(t, c.Validate())
-}
-
-func TestConfigValidate_InvalidMockProfile(t *testing.T) {
-	raw := json.RawMessage(`{"not_a_profile":true}`)
-	c := Config{
-		TriggerFrequencyChannelMention: 0.001,
-		TriggerFrequencyDM:             0.001,
-		AgentUsername:                  "bot",
-		TriggerMode:                    TriggerModeBoth,
-		MockProfile:                    raw,
-	}
-	assert.Error(t, c.Validate())
-}
-
-func TestConfigValidate_MissingAgentWhenMentionNeeded(t *testing.T) {
-	c := Config{
-		TriggerFrequencyChannelMention: 0.001,
-		TriggerFrequencyDM:             0,
-		AgentUsername:                  "",
-		AgentUserID:                    "",
-		TriggerMode:                    TriggerModeChannelMention,
-	}
-	assert.Error(t, c.Validate())
-}
-
-func TestConfigValidate_MissingAgentWhenDMNeeded(t *testing.T) {
-	c := Config{
-		TriggerFrequencyChannelMention: 0,
-		TriggerFrequencyDM:             0.001,
-		AgentUsername:                  "",
-		AgentUserID:                    "",
-		TriggerMode:                    TriggerModeDM,
-	}
-	assert.Error(t, c.Validate())
-}
-
-func TestConfigValidate_ZeroFrequenciesSkipAgentRequirement(t *testing.T) {
-	c := Config{
-		TriggerFrequencyChannelMention: 0,
-		TriggerFrequencyDM:             0,
-		AgentUsername:                  "",
-		AgentUserID:                    "",
-		TriggerMode:                    TriggerModeBoth,
-	}
-	assert.NoError(t, c.Validate())
 }

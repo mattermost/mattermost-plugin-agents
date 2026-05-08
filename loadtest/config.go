@@ -16,7 +16,7 @@ const (
 	defaultConfigPath = "./config/mattermost-ai-loadtest.json"
 )
 
-// TriggerMode selects which simulative actions are logically enabled by configuration.
+// TriggerMode selects which simulated actions are logically enabled by configuration.
 // Action weights (TriggerFrequency*) are separate; zero frequency omits an action from Actions().
 type TriggerMode string
 
