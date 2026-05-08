@@ -589,7 +589,14 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				if strings.TrimSpace(post.Message) == "" && !hasToolCalls {
 					p.mmClient.LogError("LLM closed stream with no result")
 					T := i18n.LocalizerFunc(p.i18n, userLocale)
-					post.Message = T("agents.stream_to_post_llm_not_return", "Sorry! The LLM did not return a result.")
+					emptyText := T("agents.stream_to_post_llm_not_return", "Sorry! The LLM did not return a result.")
+					post.Message = emptyText
+					// Mirror the fallback text into the accumulator so the
+					// persisted turn carries it; otherwise the round renders
+					// empty after the post-end refetch.
+					if acc != nil {
+						acc.text.WriteString(emptyText)
+					}
 					p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 				}
 
@@ -608,14 +615,27 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				}
 
 				// Handle partial results
+				var separator string
 				if strings.TrimSpace(post.Message) == "" {
 					post.Message = ""
 				} else {
-					post.Message += "\n\n"
+					separator = "\n\n"
+					post.Message += separator
 				}
 				p.mmClient.LogError("Streaming result to post failed partway", "error", err)
 				T := i18n.LocalizerFunc(p.i18n, userLocale)
-				post.Message += T("agents.stream_to_post_access_llm_error", "Sorry! An error occurred while accessing the LLM. See server logs for details.")
+				errorText := T("agents.stream_to_post_access_llm_error", "Sorry! An error occurred while accessing the LLM. See server logs for details.")
+				post.Message += errorText
+				// Mirror the error text into the accumulator so finalize
+				// persists it as the turn's text — otherwise the round
+				// renders empty and the user only sees the (transient)
+				// post.Message until the post-end refetch wipes it.
+				if acc != nil {
+					if separator != "" {
+						acc.text.WriteString(separator)
+					}
+					acc.text.WriteString(errorText)
+				}
 
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Error recovering from streaming error", "error", err)

@@ -473,7 +473,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, int64(30), streamTurn.TokensOut)
 	})
 
-	t.Run("error persists partial content", func(t *testing.T) {
+	t.Run("error persists partial content followed by the error fallback", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 		client := &fakeStreamingClient{
 			channels: map[string]*model.Channel{
@@ -501,7 +501,11 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		blocks := parseContentBlocks(t, streamTurn.Content)
 		require.Len(t, blocks, 1)
 		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
-		require.Equal(t, "Partial text", blocks[0].Text)
+		// Partial text is preserved AND the error fallback is appended so
+		// the persisted turn carries the user-visible message — without
+		// this the round renders empty after the post-end refetch.
+		require.Contains(t, blocks[0].Text, "Partial text")
+		require.Contains(t, blocks[0].Text, "An error occurred")
 	})
 
 	t.Run("cancellation persists partial content", func(t *testing.T) {
@@ -891,11 +895,12 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, "https://example.com", parsedAnnotations[0].URL)
 	})
 
-	// Reproducer: a stream that produces no text/reasoning/tool_calls should
-	// finalize to "[]" so the webapp can safely iterate `turn.content`. The
-	// current implementation marshals a nil slice to "null" instead, which
-	// crashes the webapp with "turn.content is null".
-	t.Run("empty stream finalizes to empty array not null", func(t *testing.T) {
+	// Reproducer: a stream that produces no text/reasoning/tool_calls and
+	// no tool_use should finalize with the empty-result fallback text in
+	// the turn so the webapp's per-round renderer has something to show
+	// instead of an empty round, and the persisted content is always a
+	// JSON array (never null — webapp crashes on turn.content.filter).
+	t.Run("empty stream finalizes with the LLM-no-result fallback text", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 		client := &fakeStreamingClient{
 			channels: map[string]*model.Channel{
@@ -918,11 +923,12 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		defer ts.mu.Unlock()
 		streamTurn := findStreamTurn(ts.turns, postID)
 		require.NotNil(t, streamTurn)
-		// The persisted content must be a JSON array so the webapp can iterate it.
 		require.NotEqual(t, "null", string(streamTurn.Content),
-			"empty stream must not persist literal null; webapp crashes on turn.content.filter")
+			"persisted content must be a JSON array; webapp crashes on turn.content.filter")
 		blocks := parseContentBlocks(t, streamTurn.Content)
-		require.Empty(t, blocks)
+		require.Len(t, blocks, 1)
+		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
+		require.Contains(t, blocks[0].Text, "did not return a result")
 	})
 
 	// Reproducer: when the ToolRunner emits multiple rounds of tool calls on
