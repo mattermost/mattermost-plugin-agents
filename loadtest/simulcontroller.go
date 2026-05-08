@@ -34,11 +34,13 @@ func NewSimulController() *SimulController {
 }
 
 // PluginId returns the manifest ID expected by mattermost-load-test-ng.
+//
+//revive:disable-next-line:var-naming - PluginId matches the load-test-ng SimulController interface.
 func (c *SimulController) PluginId() string {
 	return PluginID
 }
 
-// MinServerVersion matches mattermost-load-test-ng's simulative controller gate (control.MinSupportedVersion).
+// MinServerVersion matches mattermost-load-test-ng's simulated controller gate (control.MinSupportedVersion).
 func (c *SimulController) MinServerVersion() semver.Version {
 	return semver.MustParse("7.8.0")
 }

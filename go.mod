@@ -237,3 +237,5 @@ require (
 
 // Pinned to mattermost/mattermost#35924 (agent permissions). Drop when a tagged server/public includes these symbols.
 replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.3.1-0.20260402155910-d9d71af83e3f
+
+replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.6

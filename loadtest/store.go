@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// PluginStore holds mutex-protected per-loadtest-user state for the simulative controller.
+// PluginStore holds mutex-protected per-loadtest-user state for the simulated controller.
 type PluginStore struct {
 	lock  sync.RWMutex
 	users map[string]UserState

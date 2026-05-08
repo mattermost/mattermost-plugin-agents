@@ -116,9 +116,9 @@ func resolveChannelForMention(st store.UserStore, state UserState) (model.Channe
 	}
 
 	if state.CurrentTeamID != "" {
-		ch, err := st.RandomChannel(state.CurrentTeamID, store.SelectMemberOf)
-		if err == nil && isEligibleMentionChannel(&ch) {
-			return ch, true, nil
+		teamChannel, randErr := st.RandomChannel(state.CurrentTeamID, store.SelectMemberOf)
+		if randErr == nil && isEligibleMentionChannel(&teamChannel) {
+			return teamChannel, true, nil
 		}
 	}
 

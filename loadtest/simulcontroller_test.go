@@ -28,68 +28,81 @@ func TestSimulController_PluginIdAndMinVersion(t *testing.T) {
 }
 
 func TestSimulController_Actions_TriggerModeAndFrequencies(t *testing.T) {
-	t.Run("both with distinct frequencies", func(t *testing.T) {
-		ctrl := &SimulController{
-			store: NewPluginStore(),
-			config: Config{
+	type expectedAction struct {
+		name      string
+		frequency float64
+	}
+
+	tests := []struct {
+		name string
+		cfg  Config
+		want []expectedAction
+	}{
+		{
+			name: "both with distinct frequencies",
+			cfg: Config{
 				TriggerFrequencyChannelMention: 0.001,
 				TriggerFrequencyDM:             0.01,
 				AgentUsername:                  "x",
 				TriggerMode:                    TriggerModeBoth,
 			},
-		}
-		acts := ctrl.Actions()
-		require.Len(t, acts, 2)
-		assert.Equal(t, "AskAgentChannelMention", acts[0].Name)
-		assert.Equal(t, 0.001, acts[0].Frequency)
-		assert.Equal(t, "AskAgentDM", acts[1].Name)
-		assert.Equal(t, 0.01, acts[1].Frequency)
-	})
-
-	t.Run("omit zero frequency", func(t *testing.T) {
-		ctrl := &SimulController{
-			store: NewPluginStore(),
-			config: Config{
+			want: []expectedAction{
+				{name: "AskAgentChannelMention", frequency: 0.001},
+				{name: "AskAgentDM", frequency: 0.01},
+			},
+		},
+		{
+			name: "omit zero frequency",
+			cfg: Config{
 				TriggerFrequencyChannelMention: 0.005,
 				TriggerFrequencyDM:             0,
 				AgentUsername:                  "x",
 				TriggerMode:                    TriggerModeBoth,
 			},
-		}
-		acts := ctrl.Actions()
-		require.Len(t, acts, 1)
-		assert.Equal(t, "AskAgentChannelMention", acts[0].Name)
-	})
-
-	t.Run("channel_mention only", func(t *testing.T) {
-		ctrl := &SimulController{
-			store: NewPluginStore(),
-			config: Config{
+			want: []expectedAction{
+				{name: "AskAgentChannelMention", frequency: 0.005},
+			},
+		},
+		{
+			name: "channel_mention only",
+			cfg: Config{
 				TriggerFrequencyChannelMention: 0.002,
 				TriggerFrequencyDM:             0.001,
 				AgentUsername:                  "x",
 				TriggerMode:                    TriggerModeChannelMention,
 			},
-		}
-		acts := ctrl.Actions()
-		require.Len(t, acts, 1)
-		assert.Equal(t, "AskAgentChannelMention", acts[0].Name)
-	})
-
-	t.Run("dm only", func(t *testing.T) {
-		ctrl := &SimulController{
-			store: NewPluginStore(),
-			config: Config{
+			want: []expectedAction{
+				{name: "AskAgentChannelMention", frequency: 0.002},
+			},
+		},
+		{
+			name: "dm only",
+			cfg: Config{
 				TriggerFrequencyChannelMention: 0.001,
 				TriggerFrequencyDM:             0.003,
 				AgentUsername:                  "x",
 				TriggerMode:                    TriggerModeDM,
 			},
-		}
-		acts := ctrl.Actions()
-		require.Len(t, acts, 1)
-		assert.Equal(t, "AskAgentDM", acts[0].Name)
-	})
+			want: []expectedAction{
+				{name: "AskAgentDM", frequency: 0.003},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := &SimulController{
+				store:  NewPluginStore(),
+				config: tt.cfg,
+			}
+			acts := ctrl.Actions()
+			require.Len(t, acts, len(tt.want))
+			for i, want := range tt.want {
+				assert.Equal(t, want.name, acts[i].Name)
+				assert.Equal(t, want.frequency, acts[i].Frequency)
+			}
+		})
+	}
 }
 
 func TestSimulController_Actions_ConfigErr(t *testing.T) {
@@ -346,13 +359,12 @@ func (s *simulTestUser) Store() store.UserStore {
 }
 
 func (s *simulTestUser) CreatePost(p *model.Post) (string, error) {
-	cp := *p
-	s.captured = &cp
+	s.captured = p
 	return "posted-id", nil
 }
 
-func (s *simulTestUser) CreateDirectChannel(otherUserId string) (string, error) {
-	s.dmPeer = otherUserId
+func (s *simulTestUser) CreateDirectChannel(otherUserID string) (string, error) {
+	s.dmPeer = otherUserID
 	if s.dmChannel == "" {
 		return "dm-fallback", nil
 	}
@@ -366,6 +378,7 @@ func (s *simulTestUser) GetUsersByUsernames(names []string) ([]string, error) {
 	return nil, errors.New("GetUsersByUsernames not stubbed")
 }
 
+//revive:disable-next-line:var-naming - GetUsersByIds matches the load-test-ng UserStore interface.
 func (s *simulTestUser) GetUsersByIds(ids []string, since int64) ([]string, error) {
 	if s.idsFn != nil {
 		return s.idsFn(ids, since)
