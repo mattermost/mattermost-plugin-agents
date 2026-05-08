@@ -79,9 +79,10 @@ function collectResponseTurns(
     return out;
 }
 
-// Results may land in any turn — most commonly the assistant turn that
-// requested them, but for the user-approval flow they land in a tool_result
-// turn AFTER the anchor. Indexing every turn keeps both shapes covered.
+// Tool results can land in different turns depending on how the tool was
+// resolved (auto-run vs. user-approved), and the post's anchor shifts on
+// continuation. Indexing every turn in the conversation pairs each
+// tool_use with its result by id regardless of where either lives.
 function buildToolResultMap(conversation: ConversationResponse): Map<string, ContentBlock> {
     const resultMap = new Map<string, ContentBlock>();
     for (const t of conversation.turns) {

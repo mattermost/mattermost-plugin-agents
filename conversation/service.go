@@ -228,12 +228,12 @@ func (s *Service) UpdateTurnPostID(id string, postID *string) error {
 	return s.store.UpdateTurnPostID(id, postID)
 }
 
-// DeleteResponseTurns removes the assistant and tool_result turns between
-// the originating user turn and the post anchor for the given post. The
-// anchor itself is preserved (regen updates it in place at finalize). Use
-// this on regeneration to scrub stale intermediate turns from a prior
-// generation so the regenerated response doesn't render with leftover
-// rounds attached.
+// DeleteResponseTurns removes every turn that belongs to a response — the
+// post anchor itself plus any assistant/tool_result turns between it and
+// the originating user turn. After this call the post has no DB state and
+// a regen can stream a fresh response identically to a first stream.
+// Callers must build any completion request BEFORE this runs, since
+// ExcludeAfterPostID walks back from the anchor that's about to disappear.
 func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
 	return s.store.DeleteResponseTurns(conversationID, postID)
 }

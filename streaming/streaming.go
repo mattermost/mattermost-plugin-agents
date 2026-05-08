@@ -97,11 +97,11 @@ type turnAccumulator struct {
 	postID         string
 	isDM           bool // true for DM channels; controls shared flag on tool_use blocks
 
-	// existingAnchorID is the prior assistant turn anchored to this post,
-	// looked up once at stream start. Empty if no prior anchor exists. How
-	// finalizeTurn uses it depends on isContinuation:
-	//   - regen / non-continuation: update in place (replace content).
-	//   - continuation: demote (clear PostID) and append a fresh anchor.
+	// existingAnchorID is the prior anchor turn for this post, looked up
+	// once at stream start. Only the continuation flow uses it (to demote
+	// the prior anchor at finalize). For first streams and regen it stays
+	// empty: regen relies on the caller scrubbing prior turns via
+	// DeleteResponseTurns before getting here.
 	existingAnchorID string
 	isContinuation   bool
 
@@ -480,11 +480,12 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	return redacted
 }
 
-// StreamToPost streams a fresh response onto a post. Use this for the first
-// stream after creating a placeholder, and for regeneration — both replace
-// any prior content. For the tool-approval resume flow that wants to
-// preserve the prior round and append the next one, call
-// StreamContinuationToPost instead.
+// StreamToPost streams a fresh response onto a post: the first stream after
+// creating a placeholder, or a regeneration. Either way finalize creates a
+// new anchor turn — for regen the caller is responsible for scrubbing the
+// prior anchor and intermediates first (DeleteResponseTurns). Use
+// StreamContinuationToPost for the tool-approval resume flow, which keeps
+// the prior round and appends the next one as a new anchor.
 func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string) {
 	p.streamToPostImpl(ctx, stream, post, userLocale, requesterUserID, false)
 }
@@ -673,21 +674,22 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					if acc != nil {
 						// ToolRunner emits two tool-call events per round: a
 						// "pending" event before execution (original statuses)
-						// and a "resolved" event after execution (Success or
-						// Error). On resolved, this round's text, reasoning
-						// and tool calls have already been persisted separately
-						// via WriteToolTurns, so we reset the placeholder
-						// accumulator and associated live-post state so only
-						// the final round's content lands on the response post.
-						// On the pending event we retain the tool calls so a
-						// rejected-approval turn still carries them.
+						// and a "resolved" event after execution (Success,
+						// Error, or AutoApproved). On resolved we discard the
+						// placeholder accumulator and live-post state so only
+						// the final round's content lands on the response
+						// post's anchor turn — toolrunner separately writes
+						// the just-resolved round to the conversation via the
+						// onToolTurns callback at end-of-stream. On pending
+						// we retain the tool calls so a rejected-approval
+						// turn still carries them.
 						//
 						// We do NOT broadcast a `next: ""` event here. The
 						// webapp uses the resolved tool_call event itself to
 						// snapshot the just-completed round's text/tools into
-						// its rounds list. Sending an empty `next` first
-						// would clear the text before the snapshot ran,
-						// dropping the round's preamble.
+						// its rounds list. An empty `next` first would clear
+						// the text before the snapshot ran and drop the
+						// round's preamble.
 						if isResolvedToolCallsEvent(toolCalls) {
 							acc.text.Reset()
 							acc.reasoning.Reset()

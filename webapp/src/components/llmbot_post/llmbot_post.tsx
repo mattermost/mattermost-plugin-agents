@@ -423,12 +423,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Approval stage applies only to the post anchor — the latest persisted
     // round. The live in-progress round and any locally-tracked completed
-    // rounds (liveRounds) don't have a server-confirmed approval state, so
-    // they always render as 'done' (no approve / share buttons). This also
-    // covers the brief gap between reasoning_summary_done and the next event,
-    // where `generating` is false but the stream is still active — without
-    // this guard, the cached anchorStage would leak into the live round and
-    // briefly flash the approval UI before auto-execution resolves.
+    // rounds (liveRounds) have no server-confirmed approval state, so they
+    // always render as 'done' (no approve / share buttons). Without this
+    // gate the cached anchorStage would leak into the live round and flash
+    // the approval UI before auto-execution resolves.
     const anchorStage: ToolApprovalStage = conversation ? deriveApprovalStageForPost(conversation, props.post.id) : 'done';
     const lastPersistedIdx = stablePersisted.length - 1;
     const lastRenderedIdx = renderedRounds.length - 1;
