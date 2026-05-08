@@ -352,8 +352,8 @@ func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bo
 	return cfg, ok
 }
 
-// syncPluginServersFromConfig merges persisted admin-owned fields onto live
-// plugin registrations. Callers must not hold pluginServersMu.
+// syncPluginServersFromConfig merges persisted admin-owned plugin-server fields
+// onto live plugin registrations. Callers must not hold pluginServersMu.
 func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
@@ -363,9 +363,9 @@ func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
 			continue
 		}
 		if existing, ok := m.pluginServers[persisted.PluginID]; ok {
-			// Merge admin fields onto the live entry; keep runtime identity.
+			// Merge admin-owned fields onto the live entry; keep runtime identity
+			// and the plugin-controlled external exposure flag.
 			existing.Enabled = persisted.Enabled
-			existing.ExposeExternal = persisted.ExposeExternal
 			existing.ToolConfigs = persisted.ToolConfigs
 			m.pluginServers[persisted.PluginID] = existing
 			continue

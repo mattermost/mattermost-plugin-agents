@@ -361,7 +361,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
     const isResultApprovalStage = approvalStage === 'result';
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
 
-    // Tool-call cards lack server context, so strip the mcphelper prefix
+    // Tool-call cards lack server context, so strip the pluginmcp prefix
     // heuristically before title-casing the display name.
     const displayName = stripWirePrefix(tool.name).
         replace(/_/g, ' ').

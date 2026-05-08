@@ -50,7 +50,7 @@ func mcpUnregisterRequest(t *testing.T, body any) *http.Request {
 	return httptest.NewRequest(http.MethodPost, "/bridge/v1/mcp/unregister", &buf)
 }
 
-// serveAndReturn drives the full API router so interPluginAuthorizationRequired runs.
+// serveAndReturn exercises the full router so auth middleware runs.
 func serveAndReturn(e *TestEnvironment, req *http.Request) *http.Response {
 	recorder := httptest.NewRecorder()
 	e.api.ServeHTTP(&plugin.Context{}, recorder, req)
@@ -112,14 +112,31 @@ func TestHandleMCPRegister(t *testing.T) {
 			},
 		},
 		{
-			name: "missing plugin_id in body",
+			name: "missing plugin_id in body uses trusted header",
 			body: mcp.PluginServerConfig{
 				Name: "Playbooks MCP", Path: "/mcp", Enabled: true,
 			},
 			header:     testCallerPluginID,
-			wantStatus: http.StatusBadRequest,
-			wantErrSub: "plugin_id is required",
-			assertMock: func(t *testing.T, m *mockMCPClientManager) { require.Empty(t, m.registerCalls) },
+			wantStatus: http.StatusOK,
+			assertMock: func(t *testing.T, m *mockMCPClientManager) {
+				require.Len(t, m.registerCalls, 1)
+				require.Equal(t, testCallerPluginID, m.registerCalls[0].PluginID)
+			},
+		},
+		{
+			name: "omitted enabled defaults to true on first registration",
+			body: map[string]any{
+				"name":            "Playbooks MCP",
+				"path":            "/mcp",
+				"expose_external": true,
+			},
+			header:     testCallerPluginID,
+			wantStatus: http.StatusOK,
+			assertMock: func(t *testing.T, m *mockMCPClientManager) {
+				require.Len(t, m.registerCalls, 1)
+				require.True(t, m.registerCalls[0].Enabled)
+				require.True(t, m.registerCalls[0].ExposeExternal)
+			},
 		},
 		{
 			name: "missing name in body",
@@ -152,13 +169,14 @@ func TestHandleMCPRegister(t *testing.T) {
 			assertMock: func(t *testing.T, m *mockMCPClientManager) { require.Empty(t, m.registerCalls) },
 		},
 		{
-			name:       "SECURITY: plugin_id mismatch — 403, no registry mutation",
+			name:       "body plugin_id mismatch ignored in favor of trusted header",
 			body:       mcp.PluginServerConfig{PluginID: testOtherPluginID, Name: "Fake", Path: "/mcp", Enabled: true},
 			header:     testEvilPluginID,
-			wantStatus: http.StatusForbidden,
-			wantErrSub: "plugin_id does not match",
+			wantStatus: http.StatusOK,
 			assertMock: func(t *testing.T, m *mockMCPClientManager) {
-				require.Empty(t, m.registerCalls, "RegisterPluginServer must not be called on identity mismatch")
+				require.Len(t, m.registerCalls, 1)
+				require.Equal(t, testEvilPluginID, m.registerCalls[0].PluginID)
+				require.Equal(t, "Fake", m.registerCalls[0].Name)
 			},
 		},
 		{
@@ -170,7 +188,7 @@ func TestHandleMCPRegister(t *testing.T) {
 			assertMock: func(t *testing.T, m *mockMCPClientManager) { require.Empty(t, m.registerCalls) },
 		},
 		{
-			name: "boolean zero values (Enabled=false, ExposeExternal=false) are accepted",
+			name: "explicit enabled=false still respected when sent",
 			body: mcp.PluginServerConfig{
 				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
 				Enabled: false, ExposeExternal: false,
@@ -215,7 +233,7 @@ func TestHandleMCPRegister(t *testing.T) {
 	}
 }
 
-func TestHandleMCPRegister_PluginIDMismatch_Returns403(t *testing.T) {
+func TestHandleMCPRegister_TrustedHeaderControlsIdentityLookups(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
@@ -225,21 +243,34 @@ func TestHandleMCPRegister_PluginIDMismatch_Returns403(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 
+	e.mcp.pluginServers = []mcp.PluginServerConfig{{
+		PluginID:       testEvilPluginID,
+		Name:           "Existing",
+		Path:           "/existing",
+		Enabled:        true,
+		ExposeExternal: false,
+		ToolConfigs: []mcp.ToolConfig{
+			{Name: "existing", Policy: "ask", Enabled: false},
+		},
+	}}
+
 	req := mcpRegisterRequest(t, mcp.PluginServerConfig{
 		PluginID: testOtherPluginID,
-		Name:     "Fake",
-		Path:     "/mcp",
-		Enabled:  true,
+		Name:     "Updated",
+		Path:     "/updated",
+		Enabled:  false,
 	})
 	req.Header.Set("Mattermost-Plugin-ID", testEvilPluginID)
 
 	resp := serveAndReturn(e, req)
-	require.Equal(t, http.StatusForbidden, resp.StatusCode)
-	require.Contains(t, readJSONError(t, resp), "plugin_id does not match")
-	require.Empty(t, e.mcp.registerCalls, "RegisterPluginServer must not be called on identity mismatch")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 1)
+	require.Equal(t, testEvilPluginID, e.mcp.registerCalls[0].PluginID)
+	require.True(t, e.mcp.registerCalls[0].Enabled, "existing settings must be loaded using the trusted header plugin ID")
+	require.Equal(t, []mcp.ToolConfig{{Name: "existing", Policy: "ask", Enabled: false}}, e.mcp.registerCalls[0].ToolConfigs)
 }
 
-func TestHandleMCPUnregister_PluginIDMismatch_Returns403(t *testing.T) {
+func TestHandleMCPUnregister_BodyPluginIDIgnored_UsesTrustedHeader(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
@@ -253,9 +284,8 @@ func TestHandleMCPUnregister_PluginIDMismatch_Returns403(t *testing.T) {
 	req.Header.Set("Mattermost-Plugin-ID", testEvilPluginID)
 
 	resp := serveAndReturn(e, req)
-	require.Equal(t, http.StatusForbidden, resp.StatusCode)
-	require.Contains(t, readJSONError(t, resp), "plugin_id does not match")
-	require.Empty(t, e.mcp.unregisterCalls, "UnregisterPluginServer must not be called on identity mismatch")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, []string{testEvilPluginID}, e.mcp.unregisterCalls)
 }
 
 func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
@@ -501,21 +531,21 @@ func TestHandleMCPUnregister(t *testing.T) {
 			assertMock: func(t *testing.T, m *mockMCPClientManager) { require.Empty(t, m.unregisterCalls) },
 		},
 		{
-			name:       "missing plugin_id in body — 400",
+			name:       "missing plugin_id in body uses trusted header",
 			body:       map[string]string{},
 			header:     testCallerPluginID,
-			wantStatus: http.StatusBadRequest,
-			wantErrSub: "plugin_id is required",
-			assertMock: func(t *testing.T, m *mockMCPClientManager) { require.Empty(t, m.unregisterCalls) },
+			wantStatus: http.StatusOK,
+			assertMock: func(t *testing.T, m *mockMCPClientManager) {
+				require.Equal(t, []string{testCallerPluginID}, m.unregisterCalls)
+			},
 		},
 		{
-			name:       "SECURITY: plugin_id mismatch — 403, no registry mutation",
+			name:       "body plugin_id mismatch ignored in favor of trusted header",
 			body:       map[string]string{"plugin_id": testOtherPluginID},
 			header:     testEvilPluginID,
-			wantStatus: http.StatusForbidden,
-			wantErrSub: "plugin_id does not match",
+			wantStatus: http.StatusOK,
 			assertMock: func(t *testing.T, m *mockMCPClientManager) {
-				require.Empty(t, m.unregisterCalls, "UnregisterPluginServer must not be called on identity mismatch")
+				require.Equal(t, []string{testEvilPluginID}, m.unregisterCalls)
 			},
 		},
 		{
@@ -558,7 +588,7 @@ func TestHandleMCPUnregister(t *testing.T) {
 	}
 }
 
-// Unregister always triggers rebuild so stale proxy tools are dropped, regardless of ExposeExternal.
+// Unregister always rebuilds so stale proxy tools are removed.
 func TestHandleMCPUnregister_TriggersRebuild(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -603,13 +633,12 @@ func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 	require.Len(t, e.mcp.registerCalls, 1, "registry mutation must still happen")
 }
 
-// Persisted system-console ExposeExternal=false must cap plugin-requested true
-// so admins keep a durable veto without uninstalling the plugin.
-func TestHandleMCPRegister_PersistedExposeExternal_CeilsPluginRequest(t *testing.T) {
+// Persisted state must not override the latest ExposeExternal payload.
+func TestHandleMCPRegister_PersistedExposeExternal_DoesNotOverridePluginRequest(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	t.Run("persisted false caps plugin true", func(t *testing.T) {
+	t.Run("persisted false does not cap plugin true", func(t *testing.T) {
 		e := SetupTestEnvironment(t)
 		defer e.Cleanup(t)
 
@@ -635,8 +664,8 @@ func TestHandleMCPRegister_PersistedExposeExternal_CeilsPluginRequest(t *testing
 		resp := serveAndReturn(e, req)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		require.Len(t, e.mcp.registerCalls, 1)
-		require.False(t, e.mcp.registerCalls[0].ExposeExternal,
-			"persisted expose_external=false must cap plugin-requested true")
+		require.True(t, e.mcp.registerCalls[0].ExposeExternal,
+			"plugin-requested expose_external=true must remain authoritative")
 	})
 
 	t.Run("persisted true preserves plugin true", func(t *testing.T) {
@@ -669,8 +698,7 @@ func TestHandleMCPRegister_PersistedExposeExternal_CeilsPluginRequest(t *testing
 	})
 }
 
-// Persisted admin fields must be recovered when the in-memory entry is wiped
-// (unregister) and the plugin re-registers with a zero-valued payload.
+// Persisted admin fields must survive unregister plus re-register.
 func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

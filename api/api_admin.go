@@ -225,9 +225,6 @@ type MCPServerInfo struct {
 	// ServerType is one of "embedded", "remote", or "plugin".
 	ServerType string `json:"serverType"`
 	Enabled    bool   `json:"enabled"`
-	// ExposeExternal mirrors the persisted server-level external aggregation
-	// flag for plugin rows; embedded/remote rows leave it unset.
-	ExposeExternal bool `json:"exposeExternal,omitempty"`
 	// ToolConfigs is populated for plugin rows only.
 	ToolConfigs []mcp.ToolConfig `json:"toolConfigs,omitempty"`
 }
@@ -312,14 +309,13 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	// can re-enable them.
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
 		serverInfo := MCPServerInfo{
-			Name:           cfg.Name,
-			URL:            fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
-			Tools:          []MCPToolInfo{},
-			Error:          nil,
-			ServerType:     "plugin",
-			Enabled:        cfg.Enabled,
-			ExposeExternal: cfg.ExposeExternal,
-			ToolConfigs:    cfg.ToolConfigs,
+			Name:        cfg.Name,
+			URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
+			Tools:       []MCPToolInfo{},
+			Error:       nil,
+			ServerType:  "plugin",
+			Enabled:     cfg.Enabled,
+			ToolConfigs: cfg.ToolConfigs,
 		}
 
 		if cfg.Enabled {
@@ -431,13 +427,12 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.
 // Pointer fields use partial-update semantics: nil means unchanged.
 type UpdatePluginServerRequest struct {
-	Enabled        *bool             `json:"enabled,omitempty"`
-	ExposeExternal *bool             `json:"expose_external,omitempty"`
-	ToolConfigs    *[]mcp.ToolConfig `json:"tool_configs,omitempty"`
+	Enabled     *bool             `json:"enabled,omitempty"`
+	ToolConfigs *[]mcp.ToolConfig `json:"tool_configs,omitempty"`
 }
 
-// handleUpdatePluginServer updates admin-owned fields (Enabled, ExposeExternal,
-// ToolConfigs) on a registered plugin MCP server; PluginID, Name, and Path
+// handleUpdatePluginServer updates admin-owned fields (Enabled, ToolConfigs) on
+// a registered plugin MCP server; PluginID, Name, Path, and ExposeExternal
 // remain owned by the source plugin. The full registry snapshot is captured
 // before configUpdater.Update to avoid re-entrant pluginServersMu locking.
 func (a *API) handleUpdatePluginServer(c *gin.Context) {
@@ -474,9 +469,6 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	updated := *found
 	if req.Enabled != nil {
 		updated.Enabled = *req.Enabled
-	}
-	if req.ExposeExternal != nil {
-		updated.ExposeExternal = *req.ExposeExternal
 	}
 	if req.ToolConfigs != nil {
 		updated.ToolConfigs = *req.ToolConfigs

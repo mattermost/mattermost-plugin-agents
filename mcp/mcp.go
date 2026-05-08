@@ -87,11 +87,7 @@ func DiscoverPluginServerTools(
 	}
 
 	// Transport chain: PluginHTTPRoundTripper (URL rewrite) -> headerTransport (UserID).
-	roundTripper := &PluginHTTPRoundTripper{
-		pluginID:  cfg.PluginID,
-		basePath:  cfg.Path,
-		pluginAPI: sourcePluginAPI,
-	}
+	roundTripper := NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI)
 	httpClient := &http.Client{
 		Transport: &headerTransport{
 			base:    roundTripper,

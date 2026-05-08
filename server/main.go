@@ -446,7 +446,7 @@ func (p *Plugin) OnActivate() error {
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations.
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
-		return lookupToolPolicy(p.configuration.MCP(), serverBaseURL, toolName)
+		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, toolName)
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)

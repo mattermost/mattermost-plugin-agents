@@ -12,16 +12,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 )
 
-// externalServerRebuilder lets bridge handlers refresh the external MCP
-// aggregate when plugin servers change.
+// externalServerRebuilder rebuilds the external MCP aggregate after plugin changes.
 type externalServerRebuilder interface {
 	RebuildExternalServer()
-}
-
-// unregisterRequest is intentionally narrower than mcp.PluginServerConfig:
-// only plugin_id is honored on unregister.
-type unregisterRequest struct {
-	PluginID string `json:"plugin_id"`
 }
 
 func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
@@ -37,22 +30,36 @@ func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
 	return nil
 }
 
-// handleMCPRegister handles POST /bridge/v1/mcp/register. The body PluginID
-// must match the authenticated Mattermost-Plugin-ID header.
+// handleMCPRegister handles POST /bridge/v1/mcp/register using the authenticated
+// Mattermost-Plugin-ID header.
 func (a *API) handleMCPRegister(c *gin.Context) {
-	var cfg mcp.PluginServerConfig
-	if err := c.BindJSON(&cfg); err != nil {
+	var req struct {
+		PluginID       string           `json:"plugin_id"`
+		Name           string           `json:"name"`
+		Path           string           `json:"path"`
+		Enabled        *bool            `json:"enabled"`
+		ExposeExternal bool             `json:"expose_external"`
+		ToolConfigs    []mcp.ToolConfig `json:"tool_configs,omitempty"`
+	}
+	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
 		return
 	}
 
-	if cfg.PluginID == "" {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "plugin_id is required",
-		})
-		return
+	trustedPluginID := c.GetHeader("Mattermost-Plugin-ID")
+	cfg := mcp.PluginServerConfig{
+		PluginID:       trustedPluginID,
+		Name:           req.Name,
+		Path:           req.Path,
+		ExposeExternal: req.ExposeExternal,
+		ToolConfigs:    req.ToolConfigs,
+	}
+	if req.Enabled != nil {
+		cfg.Enabled = *req.Enabled
+	} else {
+		cfg.Enabled = true
 	}
 	if cfg.Name == "" {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
@@ -66,10 +73,7 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		})
 		return
 	}
-	// Reject non-absolute paths at registration time. The PluginHTTP transport
-	// concatenates "/" + pluginID + cfg.Path, so a path like "mcp" would yield
-	// "/com.example.pluginmcp" instead of "/com.example.plugin/mcp" and break
-	// tool discovery. Surface misconfiguration to plugin authors immediately.
+	// PluginHTTP builds "/{pluginID}{path}", so the path must be absolute.
 	if cfg.Path[0] != '/' {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "path must be absolute (start with '/')",
@@ -77,32 +81,18 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		return
 	}
 
-	callerPluginID := c.GetHeader("Mattermost-Plugin-ID")
-	if cfg.PluginID != callerPluginID {
-		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
-			Error: "plugin_id does not match Mattermost-Plugin-ID header",
-		})
-		return
-	}
+	// Snapshot effective external exposure so we rebuild when it turns on or off.
+	prevEffectiveExternal := a.pluginServerExternallyExposed(trustedPluginID)
 
-	// External aggregate includes a plugin only when Enabled && ExposeExternal.
-	// Snapshot before merge so we rebuild when exposure transitions off as well as on.
-	prevEffectiveExternal := a.pluginServerExternallyExposed(cfg.PluginID)
-
-	// Preserve admin-managed Enabled and ToolConfigs across re-registration.
-	// ExposeExternal starts from the plugin payload; if this plugin already has a
-	// persisted system-console row, admin ExposeExternal is a ceiling (false in
-	// config blocks external exposure until an admin allows it again).
-	// Fall back to persisted config when in-memory was cleared (e.g. unregister).
-	if existing, found := a.mcpClientManager.GetPluginServer(cfg.PluginID); found {
+	// Preserve Enabled and ToolConfigs across re-registration, even after unregister.
+	// A first-time registration with no explicit enabled flag defaults to enabled.
+	persisted, hasPersisted := a.findPersistedPluginServer(trustedPluginID)
+	if existing, found := a.mcpClientManager.GetPluginServer(trustedPluginID); found {
 		cfg.Enabled = existing.Enabled
 		cfg.ToolConfigs = existing.ToolConfigs
-	} else if persisted, ok := a.findPersistedPluginServer(cfg.PluginID); ok {
+	} else if hasPersisted {
 		cfg.Enabled = persisted.Enabled
 		cfg.ToolConfigs = persisted.ToolConfigs
-	}
-	if persisted, ok := a.findPersistedPluginServer(cfg.PluginID); ok {
-		cfg.ExposeExternal = cfg.ExposeExternal && persisted.ExposeExternal
 	}
 	a.mcpClientManager.RegisterPluginServer(cfg)
 
@@ -116,9 +106,8 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// pluginServerExternallyExposed reports whether the plugin's tools are (or would be)
-// included on the external MCP server: Enabled && ExposeExternal, using in-memory
-// registration first, then persisted config.
+// pluginServerExternallyExposed reports whether the plugin should appear on the
+// external MCP server.
 func (a *API) pluginServerExternallyExposed(pluginID string) bool {
 	if existing, found := a.mcpClientManager.GetPluginServer(pluginID); found {
 		return existing.Enabled && existing.ExposeExternal
@@ -129,32 +118,18 @@ func (a *API) pluginServerExternallyExposed(pluginID string) bool {
 	return false
 }
 
-// handleMCPUnregister handles POST /bridge/v1/mcp/unregister. The body
-// PluginID must match the authenticated Mattermost-Plugin-ID header.
+// handleMCPUnregister handles POST /bridge/v1/mcp/unregister using the
+// authenticated Mattermost-Plugin-ID header.
 func (a *API) handleMCPUnregister(c *gin.Context) {
-	var req unregisterRequest
+	var req struct{}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
 		return
 	}
-	if req.PluginID == "" {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "plugin_id is required",
-		})
-		return
-	}
 
-	callerPluginID := c.GetHeader("Mattermost-Plugin-ID")
-	if req.PluginID != callerPluginID {
-		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
-			Error: "plugin_id does not match Mattermost-Plugin-ID header",
-		})
-		return
-	}
-
-	a.mcpClientManager.UnregisterPluginServer(req.PluginID)
+	a.mcpClientManager.UnregisterPluginServer(c.GetHeader("Mattermost-Plugin-ID"))
 
 	// Always rebuild on unregister so stale proxy tools disappear.
 	if rb := a.resolveExternalServerRebuilder(); rb != nil {

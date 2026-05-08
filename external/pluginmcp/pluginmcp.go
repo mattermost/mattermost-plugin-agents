@@ -1,10 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Package mcphelper helps Mattermost plugins expose MCP tools to the Agents
+// Package pluginmcp helps Mattermost plugins expose MCP tools to the Agents
 // plugin. It handles tool-name namespacing, inter-plugin request checks, and
 // async registration retries.
-package mcphelper
+package pluginmcp
 
 import (
 	"context"
@@ -15,9 +15,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// PluginMCPServer is the wire descriptor sent to the Agents plugin on
-// register. Version defaults to "0.0.1" when empty.
-type PluginMCPServer struct {
+const agentsPluginID = "mattermost-ai"
+
+// Config is the wire descriptor sent to the Agents plugin on register.
+// Version defaults to "0.0.1" when empty.
+type Config struct {
 	PluginID string `json:"plugin_id"`
 	Name     string `json:"name"`
 	Path     string `json:"path"`
@@ -27,7 +29,7 @@ type PluginMCPServer struct {
 	Version        string `json:"version,omitempty"`
 }
 
-// PluginAPI is the minimal Mattermost plugin API subset mcphelper needs.
+// PluginAPI is the minimal Mattermost plugin API subset pluginmcp needs.
 type PluginAPI interface {
 	PluginHTTP(*http.Request) *http.Response
 }
@@ -49,7 +51,7 @@ var defaultRetryPolicy = retryPolicy{
 // concurrent use after construction.
 type Server struct {
 	server    *mcp.Server
-	config    PluginMCPServer
+	config    Config
 	pluginAPI PluginAPI
 
 	// mu guards lazy init of handler against concurrent first requests.
@@ -70,7 +72,7 @@ type Server struct {
 
 // NewServer constructs a cross-plugin MCP server. The config must have
 // non-empty PluginID, Name, and Path.
-func NewServer(pluginAPI PluginAPI, config PluginMCPServer) *Server {
+func NewServer(pluginAPI PluginAPI, config Config) *Server {
 	regCtx, regCancel := context.WithCancel(context.Background())
 	version := config.Version
 	if version == "" {

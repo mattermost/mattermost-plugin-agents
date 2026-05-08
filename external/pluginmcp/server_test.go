@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package mcphelper
+package pluginmcp
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +30,7 @@ type echoOut struct {
 func newTestServerWithAuthInjection(t *testing.T, s *Server, extraHeaders http.Header) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Header.Set("Mattermost-Plugin-ID", bridgeclient.AiPluginID)
+		r.Header.Set("Mattermost-Plugin-ID", agentsPluginID)
 		for k, vs := range extraHeaders {
 			for _, v := range vs {
 				r.Header.Add(k, v)
@@ -45,7 +44,7 @@ func newTestServerWithAuthInjection(t *testing.T, s *Server, extraHeaders http.H
 
 func connectClient(ctx context.Context, t *testing.T, endpoint string) *mcp.ClientSession {
 	t.Helper()
-	client := mcp.NewClient(&mcp.Implementation{Name: "mcphelper-test-client", Version: "0.0.1"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "pluginmcp-test-client", Version: "0.0.1"}, nil)
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: endpoint}, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -66,7 +65,7 @@ func registerEchoTool(s *Server, toolName string) {
 func TestAddTool_PrependsNamespace(t *testing.T) {
 	ctx := context.Background()
 
-	s := NewServer(nil, PluginMCPServer{
+	s := NewServer(nil, Config{
 		PluginID: "com.example.demo",
 		Name:     "Demo",
 		Path:     "/mcp",
@@ -85,7 +84,7 @@ func TestAddTool_PrependsNamespace(t *testing.T) {
 func TestAddTool_NoDoublePrefix(t *testing.T) {
 	ctx := context.Background()
 
-	s := NewServer(nil, PluginMCPServer{
+	s := NewServer(nil, Config{
 		PluginID: "com.example.demo",
 		Name:     "Demo",
 		Path:     "/mcp",
@@ -108,7 +107,7 @@ func TestAddTool_SanitizesInvalidPluginID(t *testing.T) {
 	ctx := context.Background()
 
 	rawPluginID := "com mattermost/@evil"
-	s := NewServer(nil, PluginMCPServer{
+	s := NewServer(nil, Config{
 		PluginID: rawPluginID,
 		Name:     "Evil",
 		Path:     "/mcp",
@@ -130,7 +129,7 @@ func TestAddTool_SanitizesInvalidPluginID(t *testing.T) {
 func TestAddTool_NoDoublePrefix_Sanitized(t *testing.T) {
 	ctx := context.Background()
 
-	s := NewServer(nil, PluginMCPServer{
+	s := NewServer(nil, Config{
 		PluginID: "has space",
 		Name:     "Test",
 		Path:     "/mcp",
@@ -158,7 +157,7 @@ func TestAddTool_NoDoublePrefix_Sanitized(t *testing.T) {
 func TestAddTool_SchemaGenerated(t *testing.T) {
 	ctx := context.Background()
 
-	s := NewServer(nil, PluginMCPServer{
+	s := NewServer(nil, Config{
 		PluginID: "com.example.demo",
 		Name:     "Demo",
 		Path:     "/mcp",
@@ -185,7 +184,7 @@ func TestAddTool_SchemaGenerated(t *testing.T) {
 func TestNewServer_DefaultVersion(t *testing.T) {
 	ctx := context.Background()
 
-	s := NewServer(nil, PluginMCPServer{
+	s := NewServer(nil, Config{
 		PluginID: "x",
 		Name:     "X",
 		Path:     "/mcp",
@@ -202,7 +201,7 @@ func TestNewServer_DefaultVersion(t *testing.T) {
 func TestNewServer_ExplicitVersion(t *testing.T) {
 	ctx := context.Background()
 
-	s := NewServer(nil, PluginMCPServer{
+	s := NewServer(nil, Config{
 		PluginID: "x",
 		Name:     "X",
 		Path:     "/mcp",
@@ -218,7 +217,7 @@ func TestNewServer_ExplicitVersion(t *testing.T) {
 }
 
 func TestServeHTTP_MissingPluginIDHeader_403(t *testing.T) {
-	s := NewServer(nil, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(nil, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
@@ -230,7 +229,7 @@ func TestServeHTTP_MissingPluginIDHeader_403(t *testing.T) {
 }
 
 func TestServeHTTP_WrongPluginIDHeader_403(t *testing.T) {
-	s := NewServer(nil, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(nil, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
@@ -243,7 +242,7 @@ func TestServeHTTP_WrongPluginIDHeader_403(t *testing.T) {
 func TestServeHTTP_CorrectPluginID_Delegates(t *testing.T) {
 	ctx := context.Background()
 
-	s := NewServer(nil, PluginMCPServer{
+	s := NewServer(nil, Config{
 		PluginID: "com.example.demo",
 		Name:     "Demo",
 		Path:     "/mcp",
@@ -265,7 +264,7 @@ func TestServeHTTP_InjectsUserID(t *testing.T) {
 	var capturedUserID string
 	var mu sync.Mutex
 
-	s := NewServer(nil, PluginMCPServer{
+	s := NewServer(nil, Config{
 		PluginID: "com.example.demo",
 		Name:     "Demo",
 		Path:     "/mcp",
@@ -298,7 +297,7 @@ func TestServeHTTP_InjectsUserID(t *testing.T) {
 
 // TestServeHTTP_HandlerLazyInit exercises s.mu under -race.
 func TestServeHTTP_HandlerLazyInit(t *testing.T) {
-	s := NewServer(nil, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(nil, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	var wg sync.WaitGroup
 	const N = 10
@@ -308,7 +307,7 @@ func TestServeHTTP_HandlerLazyInit(t *testing.T) {
 			defer wg.Done()
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(""))
-			req.Header.Set("Mattermost-Plugin-ID", bridgeclient.AiPluginID)
+			req.Header.Set("Mattermost-Plugin-ID", agentsPluginID)
 			s.ServeHTTP(rec, req)
 		}()
 	}

@@ -19,26 +19,27 @@ import (
 // mmUserIDHeader propagates the calling Mattermost user ID through PluginHTTP.
 const mmUserIDHeader = "X-Mattermost-UserID"
 
-// proxyRoundTripper rewrites the outbound URL.Path to "/{pluginID}{basePath}"
-// and delegates to PluginHTTP.
-type proxyRoundTripper struct {
-	pluginID  string
-	basePath  string
-	pluginAPI mmapi.Client
+// boundedRoundTripper bounds how long Agents waits on PluginHTTP, but it cannot
+// cancel the underlying PluginHTTP execution once started.
+type boundedRoundTripper struct {
+	base http.RoundTripper
 }
 
-func (p *proxyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if p == nil || p.pluginAPI == nil {
-		return nil, fmt.Errorf("proxy round tripper not initialized")
+func (b *boundedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if b == nil || b.base == nil {
+		return nil, fmt.Errorf("bounded round tripper not initialized")
 	}
-	r := req.Clone(req.Context())
-	r.URL.Path = "/" + p.pluginID + p.basePath
 
-	respCh := make(chan *http.Response)
+	type roundTripResult struct {
+		resp *http.Response
+		err  error
+	}
+
+	respCh := make(chan roundTripResult, 1)
 	go func() {
-		resp := p.pluginAPI.PluginHTTP(r)
+		resp, err := b.base.RoundTrip(req)
 		select {
-		case respCh <- resp:
+		case respCh <- roundTripResult{resp: resp, err: err}:
 		case <-req.Context().Done():
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -47,11 +48,8 @@ func (p *proxyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	}()
 
 	select {
-	case resp := <-respCh:
-		if resp == nil {
-			return nil, fmt.Errorf("PluginHTTP returned nil response for plugin %s", p.pluginID)
-		}
-		return resp, nil
+	case result := <-respCh:
+		return result.resp, result.err
 	case <-req.Context().Done():
 		return nil, req.Context().Err()
 	}
@@ -71,9 +69,36 @@ func (h *headerInjector) RoundTrip(req *http.Request) (*http.Response, error) {
 	return h.base.RoundTrip(r)
 }
 
-// BuildProxyTools lists a source plugin's MCP tools and returns proxy tool
-// definitions and handlers for the Agents plugin's external MCP server. Names
-// and input schemas are pass-through.
+func newProxyHTTPClient(ctx context.Context, cfg mcppkg.PluginServerConfig, sourcePluginAPI mmapi.Client, callerUserID string) *http.Client {
+	transport := http.RoundTripper(&boundedRoundTripper{
+		base: mcppkg.NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI),
+	})
+	if callerUserID != "" {
+		transport = &headerInjector{
+			base:    transport,
+			headers: map[string]string{mmUserIDHeader: callerUserID},
+		}
+	}
+
+	client := &http.Client{Transport: transport}
+	if deadline, ok := ctx.Deadline(); ok {
+		client.Timeout = time.Until(deadline)
+	}
+	return client
+}
+
+func connectProxySession(ctx context.Context, cfg mcppkg.PluginServerConfig, sourcePluginAPI mmapi.Client, callerUserID string) (*gosdkmcp.ClientSession, error) {
+	client := gosdkmcp.NewClient(
+		&gosdkmcp.Implementation{Name: "mattermost-agents-plugin-aggregator", Version: "1.0"},
+		&gosdkmcp.ClientOptions{},
+	)
+	return client.Connect(ctx, &gosdkmcp.StreamableClientTransport{
+		Endpoint:   "http://plugin" + cfg.Path,
+		HTTPClient: newProxyHTTPClient(ctx, cfg, sourcePluginAPI, callerUserID),
+	}, nil)
+}
+
+// BuildProxyTools proxies a source plugin's MCP tools into the external server.
 func BuildProxyTools(
 	ctx context.Context,
 	cfg mcppkg.PluginServerConfig,
@@ -83,23 +108,7 @@ func BuildProxyTools(
 		return nil, nil, fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)
 	}
 
-	rt := &proxyRoundTripper{
-		pluginID:  cfg.PluginID,
-		basePath:  cfg.Path,
-		pluginAPI: sourcePluginAPI,
-	}
-	httpClient := &http.Client{Transport: rt}
-	if deadline, ok := ctx.Deadline(); ok {
-		httpClient.Timeout = time.Until(deadline)
-	}
-	listClient := gosdkmcp.NewClient(
-		&gosdkmcp.Implementation{Name: "mattermost-agents-plugin-aggregator", Version: "1.0"},
-		&gosdkmcp.ClientOptions{},
-	)
-	listSession, err := listClient.Connect(ctx, &gosdkmcp.StreamableClientTransport{
-		Endpoint:   "http://plugin" + cfg.Path,
-		HTTPClient: httpClient,
-	}, nil)
+	listSession, err := connectProxySession(ctx, cfg, sourcePluginAPI, "")
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)
 	}
@@ -120,7 +129,7 @@ func BuildProxyTools(
 		t := &gosdkmcp.Tool{
 			Name:        remote.Name,
 			Description: remote.Description,
-			InputSchema: remote.InputSchema, // JSON-marshalable `any`; pass-through is correct
+			InputSchema: remote.InputSchema,
 			Annotations: remote.Annotations,
 		}
 		tools = append(tools, t)
@@ -133,23 +142,7 @@ func BuildProxyTools(
 				return nil, fmt.Errorf("proxy tool %s: authenticated user ID not found in context", toolName)
 			}
 
-			perCallRT := &proxyRoundTripper{
-				pluginID:  pluginCfg.PluginID,
-				basePath:  pluginCfg.Path,
-				pluginAPI: sourcePluginAPI,
-			}
-			httpClient := &http.Client{Transport: &headerInjector{
-				base:    perCallRT,
-				headers: map[string]string{mmUserIDHeader: callerUserID},
-			}}
-			callClient := gosdkmcp.NewClient(
-				&gosdkmcp.Implementation{Name: "mattermost-agents-plugin-aggregator", Version: "1.0"},
-				&gosdkmcp.ClientOptions{},
-			)
-			session, err := callClient.Connect(hctx, &gosdkmcp.StreamableClientTransport{
-				Endpoint:   "http://plugin" + pluginCfg.Path,
-				HTTPClient: httpClient,
-			}, nil)
+			session, err := connectProxySession(hctx, pluginCfg, sourcePluginAPI, callerUserID)
 			if err != nil {
 				return nil, fmt.Errorf("proxy tool %s: connect failed: %w", toolName, err)
 			}

@@ -27,10 +27,6 @@ export type MCPServerConfig = {
     tool_configs?: MCPToolConfig[];
     clientID?: string;
     clientSecret?: string;
-
-    // Populated only for plugin rows resolved by mcp_tools_viewer; remote and
-    // embedded rows leave it undefined.
-    exposeExternal?: boolean;
 };
 
 export type MCPEmbeddedServerConfig = {

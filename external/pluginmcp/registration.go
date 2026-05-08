@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package mcphelper
+package pluginmcp
 
 import (
 	"bytes"
@@ -13,8 +13,6 @@ import (
 	"log"
 	"net/http"
 	"time"
-
-	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 )
 
 const (
@@ -46,11 +44,11 @@ func (s *Server) registerWithBackoff(ctx context.Context) {
 			return
 		}
 		if !retriable {
-			log.Printf("mcphelper: registration with Agents plugin failed permanently (plugin_id=%s): %v", s.config.PluginID, err)
+			log.Printf("pluginmcp: registration with Agents plugin failed permanently (plugin_id=%s): %v", s.config.PluginID, err)
 			return
 		}
 		if attempt == s.retry.maxAttempts {
-			log.Printf("mcphelper: registration with Agents plugin gave up after %d attempts (plugin_id=%s): %v", attempt, s.config.PluginID, err)
+			log.Printf("pluginmcp: registration with Agents plugin gave up after %d attempts (plugin_id=%s): %v", attempt, s.config.PluginID, err)
 			return
 		}
 		select {
@@ -73,13 +71,13 @@ func (s *Server) registerOnce(ctx context.Context) (bool, error) {
 
 func (s *Server) postRegistration(ctx context.Context, path string, body any) (bool, error) {
 	if s.pluginAPI == nil {
-		return false, errors.New("mcphelper: PluginAPI is required for registration")
+		return false, errors.New("pluginmcp: PluginAPI is required for registration")
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return false, fmt.Errorf("marshal payload: %w", err)
 	}
-	url := "/" + bridgeclient.AiPluginID + path
+	url := "/" + agentsPluginID + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return false, fmt.Errorf("build request: %w", err)
@@ -92,7 +90,7 @@ func (s *Server) postRegistration(ctx context.Context, path string, body any) (b
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
-			log.Printf("mcphelper: closing registration response body: %v", cerr)
+			log.Printf("pluginmcp: closing registration response body: %v", cerr)
 		}
 	}()
 

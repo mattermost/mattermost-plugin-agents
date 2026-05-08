@@ -8,7 +8,7 @@ import {
     stripWirePrefix,
 } from './tool_names';
 
-// Mirrors public/mcphelper/mcphelper_test.go's TestSanitizeForToolName; keep TS and Go cases in sync.
+// Mirrors external/pluginmcp/pluginmcp_test.go's TestSanitizeForToolName; keep TS and Go cases in sync.
 describe('sanitizeForToolName', () => {
     test.each([
         ['', ''],

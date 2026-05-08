@@ -218,9 +218,10 @@ func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
 	require.Empty(t, b.ToolConfigs)
 }
 
-// A config broadcast must merge admin-owned fields (Enabled, ExposeExternal,
+// A config broadcast must merge persisted admin-owned fields (Enabled,
 // ToolConfigs) onto in-memory entries while preserving runtime identity
-// fields (Name, Path) set by the source plugin.
+// fields and the plugin-controlled ExposeExternal flag set by the source
+// plugin.
 func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -257,7 +258,7 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	require.True(t, ok)
 
 	require.True(t, got.Enabled, "Enabled merged from config")
-	require.True(t, got.ExposeExternal, "ExposeExternal merged from config")
+	require.False(t, got.ExposeExternal, "ExposeExternal must remain plugin-controlled")
 	require.Len(t, got.ToolConfigs, 1, "ToolConfigs merged from config")
 	require.Equal(t, "echo", got.ToolConfigs[0].Name)
 	require.False(t, got.ToolConfigs[0].Enabled)

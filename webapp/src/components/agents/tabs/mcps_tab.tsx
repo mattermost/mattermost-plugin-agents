@@ -365,7 +365,7 @@ const McpsTab = (props: Props) => {
                                         </EmptyToolsNotice>
                                     )}
                                     {(() => {
-                                        // Strip the mcphelper "<pluginID>__" prefix for display
+                                        // Strip the pluginmcp "<pluginID>__" prefix for display
                                         // only; wire tool.name remains the enable/disable identity.
                                         const pluginID = pluginIDFromServerOrigin(server.serverOrigin);
                                         const toolsDisabled = autoEnableNewMCPTools || wildcardOn;

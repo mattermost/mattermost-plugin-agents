@@ -1,9 +1,9 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Helpers for displaying MCP tool names emitted by public/mcphelper.
+// Helpers for displaying MCP tool names emitted by external/pluginmcp.
 
-// Mirrors public/mcphelper/tools.go:sanitizeForToolName.
+// Mirrors external/pluginmcp/tools.go:sanitizeForToolName.
 export function sanitizeForToolName(pluginID: string): string {
     let out = '';
     for (const ch of pluginID) {

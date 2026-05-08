@@ -42,8 +42,7 @@ func (s *stubRegistry) set(servers []mcppkg.PluginServerConfig) {
 
 var _ PluginServerRegistry = (*stubRegistry)(nil)
 
-// stubPluginAPI satisfies mmapi.Client via the embedded interface; only
-// PluginHTTP is exercised by these tests.
+// stubPluginAPI only overrides PluginHTTP for these tests.
 type stubPluginAPI struct {
 	mmapi.Client
 	pluginHTTP func(req *http.Request) *http.Response
@@ -53,8 +52,7 @@ func (s *stubPluginAPI) PluginHTTP(req *http.Request) *http.Response {
 	return s.pluginHTTP(req)
 }
 
-// listToolNamesNoRequire lists the active server's tools through h.MCPHandler
-// without calling require, so it is safe to call from a goroutine.
+// listToolNamesNoRequire avoids require so it is safe from goroutines.
 func listToolNamesNoRequire(t *testing.T, h *PluginMCPHandlers) ([]string, error) {
 	t.Helper()
 	ts := httptest.NewServer(h.MCPHandler)
@@ -250,9 +248,7 @@ func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
 	require.True(t, sawAllowed, "tool with no policy entry must default-allow through (matches GetToolPolicy fallback)")
 }
 
-// TestNewPluginMCPHandlers_PolicyIsPerPluginServer verifies ToolConfigs are
-// scoped per-plugin: one plugin's deny does not affect another's same-named
-// tool.
+// ToolConfigs are scoped per plugin server.
 func TestNewPluginMCPHandlers_PolicyIsPerPluginServer(t *testing.T) {
 	targetA := newFakePluginMCPServer(t, 1, nil)
 	t.Cleanup(targetA.Close)
@@ -421,8 +417,7 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 	}
 }
 
-// TestNewPluginMCPHandlers_NilRegistryIsNoOp confirms a nil registry disables
-// aggregation while keeping native tools available.
+// A nil registry disables aggregation but keeps native tools available.
 func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
@@ -432,8 +427,7 @@ func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
 	_ = listToolNames(t, h)
 }
 
-// newPerPluginForwarder routes PluginHTTP by the leading /{pluginID} path
-// segment proxyRoundTripper writes on every outbound request.
+// newPerPluginForwarder routes PluginHTTP by the leading /{pluginID} path segment.
 func newPerPluginForwarder(t *testing.T, byPluginID map[string]*httptest.Server) *stubPluginAPI {
 	t.Helper()
 	return &stubPluginAPI{pluginHTTP: func(req *http.Request) *http.Response {

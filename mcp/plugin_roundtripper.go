@@ -10,19 +10,27 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 )
 
-// PluginHTTPRoundTripper routes requests from the Agents plugin to a source
-// plugin's MCP endpoint via PluginHTTP. Callers layer user headers above it.
+// PluginHTTPRoundTripper routes requests to a source plugin's MCP endpoint via
+// PluginHTTP. Callers layer user headers above it.
 type PluginHTTPRoundTripper struct {
 	pluginID string
 	basePath string
-	// pluginAPI is the agents-plugin mmapi.Client (sourcePluginAPI on
-	// ClientManager), NOT the source plugin's own API.
+	// pluginAPI is the Agents plugin's mmapi client used to reach the source plugin.
 	pluginAPI mmapi.Client
 }
 
-// RoundTrip rewrites req.URL.Path to "/{pluginID}{basePath}" — the path format
-// PluginHTTP uses to dispatch to a target plugin. The original req.URL.Path is
-// discarded; MCP Streamable HTTP uses a single endpoint (verified vs go-sdk v1.4.1).
+// NewPluginHTTPRoundTripper constructs a PluginHTTP-based transport for a
+// source plugin MCP endpoint.
+func NewPluginHTTPRoundTripper(pluginID, basePath string, pluginAPI mmapi.Client) *PluginHTTPRoundTripper {
+	return &PluginHTTPRoundTripper{
+		pluginID:  pluginID,
+		basePath:  basePath,
+		pluginAPI: pluginAPI,
+	}
+}
+
+// RoundTrip rewrites req.URL.Path to "/{pluginID}{basePath}", the path
+// PluginHTTP dispatches on.
 func (p *PluginHTTPRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if p == nil || p.pluginAPI == nil {
 		return nil, fmt.Errorf("plugin MCP round tripper not initialized")

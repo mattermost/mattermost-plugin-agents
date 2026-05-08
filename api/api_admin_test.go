@@ -292,23 +292,16 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 
 func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 	tests := []struct {
-		name                 string
-		pluginServers        []mcp.PluginServerConfig
-		discoverToolsResp    []mcp.ToolInfo
-		discoverToolsErr     error
-		expectServerType     string
-		expectEnabled        bool
-		expectToolCount      int
-		expectErrorNotNil    bool
-		expectProbeCalls     int
-		expectToolConfigs    []mcp.ToolConfig // nil => skip assertion
-		expectExposeExternal bool
-		// expectExposeFieldOmitted asserts the raw JSON for the plugin row
-		// does NOT include the "exposeExternal" key (because of omitempty
-		// when ExposeExternal is false). This guards against a regression
-		// where the field gets serialized as false and a webapp save reads
-		// false rather than the actually-persisted true.
-		expectExposeFieldOmitted bool
+		name              string
+		pluginServers     []mcp.PluginServerConfig
+		discoverToolsResp []mcp.ToolInfo
+		discoverToolsErr  error
+		expectServerType  string
+		expectEnabled     bool
+		expectToolCount   int
+		expectErrorNotNil bool
+		expectProbeCalls  int
+		expectToolConfigs []mcp.ToolConfig // nil => skip assertion
 	}{
 		{
 			name: "enabled plugin server returns tools",
@@ -322,11 +315,10 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				{Name: "echo", Description: "echoes input"},
 				{Name: "add", Description: "adds numbers"},
 			},
-			expectServerType:         "plugin",
-			expectEnabled:            true,
-			expectToolCount:          2,
-			expectProbeCalls:         1,
-			expectExposeFieldOmitted: true,
+			expectServerType: "plugin",
+			expectEnabled:    true,
+			expectToolCount:  2,
+			expectProbeCalls: 1,
 		},
 		{
 			name: "disabled plugin server renders row with no probe",
@@ -336,11 +328,10 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				Path:     "/mcp",
 				Enabled:  false,
 			}},
-			expectServerType:         "plugin",
-			expectEnabled:            false,
-			expectToolCount:          0,
-			expectProbeCalls:         0,
-			expectExposeFieldOmitted: true,
+			expectServerType: "plugin",
+			expectEnabled:    false,
+			expectToolCount:  0,
+			expectProbeCalls: 0,
 		},
 		{
 			name: "unreachable plugin populates Error",
@@ -350,12 +341,11 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				Path:     "/mcp",
 				Enabled:  true,
 			}},
-			discoverToolsErr:         errors.New("connection refused"),
-			expectServerType:         "plugin",
-			expectEnabled:            true,
-			expectErrorNotNil:        true,
-			expectProbeCalls:         1,
-			expectExposeFieldOmitted: true,
+			discoverToolsErr:  errors.New("connection refused"),
+			expectServerType:  "plugin",
+			expectEnabled:     true,
+			expectErrorNotNil: true,
+			expectProbeCalls:  1,
 		},
 		{
 			name: "enabled plugin server with per-tool policy surfaces ToolConfigs",
@@ -381,14 +371,9 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				{Name: "echo", Policy: "ask", Enabled: false},
 				{Name: "sum", Policy: "auto_run_in_dm", Enabled: true},
 			},
-			expectExposeFieldOmitted: true,
 		},
 		{
-			// Guards against the missing ExposeExternal field assignment in
-			// the plugin-row builder: if the handler drops the flag, the
-			// webapp reads false on next admin save and silently regresses
-			// the persisted value.
-			name: "ExposeExternal=true round-trips through JSON",
+			name: "ExposeExternal remains hidden even when true",
 			pluginServers: []mcp.PluginServerConfig{{
 				PluginID:       "com.mattermost.demo",
 				Name:           "Demo",
@@ -396,12 +381,11 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				Enabled:        true,
 				ExposeExternal: true,
 			}},
-			discoverToolsResp:    []mcp.ToolInfo{{Name: "echo", Description: "echoes input"}},
-			expectServerType:     "plugin",
-			expectEnabled:        true,
-			expectToolCount:      1,
-			expectProbeCalls:     1,
-			expectExposeExternal: true,
+			discoverToolsResp: []mcp.ToolInfo{{Name: "echo", Description: "echoes input"}},
+			expectServerType:  "plugin",
+			expectEnabled:     true,
+			expectToolCount:   1,
+			expectProbeCalls:  1,
 		},
 	}
 
@@ -445,8 +429,6 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			require.Equal(t, tt.expectServerType, pluginRow.ServerType)
 			require.Equal(t, tt.expectEnabled, pluginRow.Enabled)
 			require.Equal(t, tt.expectToolCount, len(pluginRow.Tools))
-			require.Equal(t, tt.expectExposeExternal, pluginRow.ExposeExternal,
-				"plugin row must surface persisted ExposeExternal verbatim")
 			if tt.expectErrorNotNil {
 				require.NotNil(t, pluginRow.Error)
 			} else {
@@ -457,9 +439,7 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				require.Equal(t, tt.expectToolConfigs, pluginRow.ToolConfigs, "plugin row must surface ToolConfigs verbatim")
 			}
 
-			// Verify omitempty behavior at the raw-JSON level: when
-			// ExposeExternal is false, the key must not appear in the
-			// plugin row payload.
+			// The admin tools response must never expose ExposeExternal on plugin rows.
 			var rawResp struct {
 				Servers []map[string]json.RawMessage `json:"servers"`
 			}
@@ -473,12 +453,7 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			}
 			require.NotNil(t, rawPluginRow, "expected raw plugin row in JSON")
 			_, hasField := rawPluginRow["exposeExternal"]
-			if tt.expectExposeFieldOmitted {
-				require.False(t, hasField, "exposeExternal must be omitted when false")
-			} else {
-				require.True(t, hasField, "exposeExternal must be present when true")
-				require.JSONEq(t, "true", string(rawPluginRow["exposeExternal"]))
-			}
+			require.False(t, hasField, "exposeExternal must be omitted from admin tools payloads")
 		})
 	}
 }
@@ -512,22 +487,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectRebuildCalls:  0,
 		},
 		{
-			name:     "expose_external toggle: false -> true triggers rebuild",
-			pluginID: "com.mattermost.demo",
-			preRegistered: []mcp.PluginServerConfig{{
-				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
-				Enabled: true, ExposeExternal: false,
-			}},
-			body:                `{"enabled": true, "expose_external": true}`,
-			hasAdminPerm:        true,
-			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
-			expectEnabledAfter:  true,
-			expectExposeAfter:   true,
-			expectRebuildCalls:  1,
-		},
-		{
-			name:     "expose_external omitted preserves existing value",
+			name:     "enabled update preserves existing ExposeExternal",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
@@ -542,8 +502,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectRebuildCalls:  1,
 		},
 		{
-			// Omitted field must not JSON-decode to false and clobber the admin-set true value.
-			name:     "enabled omitted preserves existing true value",
+			name:     "expose_external field is ignored",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
@@ -554,23 +513,8 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectStatus:        http.StatusOK,
 			expectRegisterCalls: 1,
 			expectEnabledAfter:  true,
-			expectExposeAfter:   true,
-			expectRebuildCalls:  1,
-		},
-		{
-			name:     "enabled omitted preserves existing false value",
-			pluginID: "com.mattermost.demo",
-			preRegistered: []mcp.PluginServerConfig{{
-				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
-				Enabled: false, ExposeExternal: false,
-			}},
-			body:                `{"expose_external": true}`,
-			hasAdminPerm:        true,
-			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
-			expectEnabledAfter:  false,
-			expectExposeAfter:   true,
-			expectRebuildCalls:  1,
+			expectExposeAfter:   false,
+			expectRebuildCalls:  0,
 		},
 		{
 			name:     "empty body preserves both fields",

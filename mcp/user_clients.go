@@ -306,11 +306,7 @@ func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServe
 		return nil
 	}
 
-	roundTripper := &PluginHTTPRoundTripper{
-		pluginID:  cfg.PluginID,
-		basePath:  cfg.Path,
-		pluginAPI: sourcePluginAPI,
-	}
+	roundTripper := NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI)
 	httpClient := &http.Client{
 		Transport: &headerTransport{
 			base:    roundTripper,

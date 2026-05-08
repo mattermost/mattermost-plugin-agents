@@ -1,12 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package mcphelper
+package pluginmcp
 
 import (
 	"net/http"
 
-	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -14,7 +13,7 @@ import (
 // the Agents plugin can call it; X-Mattermost-UserID is trusted only after
 // that check.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Mattermost-Plugin-ID") != bridgeclient.AiPluginID {
+	if r.Header.Get("Mattermost-Plugin-ID") != agentsPluginID {
 		http.Error(w, "forbidden: plugin-ID header missing or mismatched", http.StatusForbidden)
 		return
 	}

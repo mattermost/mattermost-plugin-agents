@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package mcphelper
+package pluginmcp
 
 import (
 	"bytes"
@@ -82,7 +82,7 @@ func fastRetry() retryPolicy {
 
 func TestRegisterOnce_URLAndPayload(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(200, "")}}
-	s := NewServer(api, PluginMCPServer{
+	s := NewServer(api, Config{
 		PluginID:       "com.example.demo",
 		Name:           "Demo",
 		Path:           "/mcp",
@@ -101,14 +101,14 @@ func TestRegisterOnce_URLAndPayload(t *testing.T) {
 	assert.Equal(t, "application/json", reqs[0].Header.Get("Content-Type"))
 
 	body, _ := io.ReadAll(reqs[0].Body)
-	var got PluginMCPServer
+	var got Config
 	require.NoError(t, json.Unmarshal(body, &got))
 	assert.Equal(t, s.config, got)
 }
 
 func TestRegisterOnce_PayloadIncludesExposeExternalFalse(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(200, "")}}
-	s := NewServer(api, PluginMCPServer{
+	s := NewServer(api, Config{
 		PluginID: "com.example.demo", Name: "Demo", Path: "/mcp",
 		ExposeExternal: false, Version: "0.5.0",
 	})
@@ -127,7 +127,7 @@ func TestRegisterOnce_PayloadIncludesExposeExternalFalse(t *testing.T) {
 
 func TestRegisterOnce_Retries5xx(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(500, "boom")}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
 	assert.True(t, retriable)
@@ -136,7 +136,7 @@ func TestRegisterOnce_Retries5xx(t *testing.T) {
 
 func TestRegisterOnce_Retries404(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(404, "not ready")}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
 	assert.True(t, retriable)
@@ -144,7 +144,7 @@ func TestRegisterOnce_Retries404(t *testing.T) {
 
 func TestRegisterOnce_Retries429(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(429, "slow down")}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
 	assert.True(t, retriable)
@@ -152,7 +152,7 @@ func TestRegisterOnce_Retries429(t *testing.T) {
 
 func TestRegisterOnce_GiveUpOn4xx(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(400, "bad")}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
 	assert.False(t, retriable)
@@ -160,17 +160,17 @@ func TestRegisterOnce_GiveUpOn4xx(t *testing.T) {
 
 func TestRegisterOnce_GiveUpOn403(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(403, "forbidden")}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
 	assert.False(t, retriable)
 }
 
-// TestRegisterOnce_NilResponse — PluginHTTP returns nil when the target
+// TestRegisterOnce_NilResponse: PluginHTTP returns nil when the target
 // plugin is not loaded; treated as retriable (it may load soon).
 func TestRegisterOnce_NilResponse(t *testing.T) {
 	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response { return nil }}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
 	assert.True(t, retriable)
@@ -183,12 +183,12 @@ func TestRegisterWithBackoff_Succeeds(t *testing.T) {
 		newJSONResponse(500, ""),
 		newJSONResponse(200, ""),
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	s.retry = fastRetry()
 
 	s.registerWithBackoff(context.Background())
 
-	assert.Len(t, api.requests(), 3, "expected 3 POST attempts (2 × 500 + 1 × 200)")
+	assert.Len(t, api.requests(), 3, "expected 3 POST attempts (2 x 500 + 1 x 200)")
 }
 
 func TestRegisterWithBackoff_GivesUpAfterMaxAttempts(t *testing.T) {
@@ -197,7 +197,7 @@ func TestRegisterWithBackoff_GivesUpAfterMaxAttempts(t *testing.T) {
 		newJSONResponse(500, ""),
 		newJSONResponse(500, ""),
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 3}
 
 	start := time.Now()
@@ -213,7 +213,7 @@ func TestRegisterWithBackoff_GivesUpOnPermanent4xx(t *testing.T) {
 		newJSONResponse(400, "bad"),
 		newJSONResponse(200, ""),
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	s.retry = fastRetry()
 
 	s.registerWithBackoff(context.Background())
@@ -225,7 +225,7 @@ func TestRegisterWithBackoff_CancelStops(t *testing.T) {
 	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response {
 		return newJSONResponse(500, "")
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	// Delay big enough to guarantee the time.After() select is reached.
 	s.retry = retryPolicy{baseDelay: 50 * time.Millisecond, maxDelay: 50 * time.Millisecond, maxAttempts: 15}
 
@@ -246,7 +246,7 @@ func TestRegisterWithBackoff_CancelStops(t *testing.T) {
 
 func TestRegister_IsAsync(t *testing.T) {
 	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response { return newJSONResponse(200, "") }}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 1}
 
 	start := time.Now()
@@ -267,7 +267,7 @@ func TestUnregister_Sync_CancelsRetries(t *testing.T) {
 		}
 		return newJSONResponse(500, "")
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	// Slow enough that the retry loop is mid-wait when Unregister fires.
 	s.retry = retryPolicy{baseDelay: 1 * time.Second, maxDelay: 1 * time.Second, maxAttempts: 15}
 
@@ -290,7 +290,7 @@ func TestUnregister_Sync_CancelsRetries(t *testing.T) {
 
 func TestUnregister_URLAndPayload(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(200, "")}}
-	s := NewServer(api, PluginMCPServer{
+	s := NewServer(api, Config{
 		PluginID: "com.example.demo",
 		Name:     "Demo",
 		Path:     "/mcp",
@@ -306,14 +306,14 @@ func TestUnregister_URLAndPayload(t *testing.T) {
 	assert.Equal(t, "application/json", reqs[0].Header.Get("Content-Type"))
 
 	body, _ := io.ReadAll(reqs[0].Body)
-	var got PluginMCPServer
+	var got Config
 	require.NoError(t, json.Unmarshal(body, &got))
 	assert.Equal(t, s.config, got)
 }
 
 func TestUnregister_PropagatesNon200(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(500, "boom")}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	err := s.Unregister()
 	require.Error(t, err)
@@ -322,18 +322,18 @@ func TestUnregister_PropagatesNon200(t *testing.T) {
 
 func TestUnregister_NilResponse(t *testing.T) {
 	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response { return nil }}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	err := s.Unregister()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "PluginHTTP returned nil response")
 }
 
-// TestPostRegistration_NilPluginAPI — NewServer accepts a nil PluginAPI, so
+// TestPostRegistration_NilPluginAPI: NewServer accepts a nil PluginAPI, so
 // postRegistration must return a normal error instead of panicking on the
 // pluginAPI.PluginHTTP dereference.
 func TestPostRegistration_NilPluginAPI(t *testing.T) {
-	s := NewServer(nil, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(nil, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
@@ -342,7 +342,7 @@ func TestPostRegistration_NilPluginAPI(t *testing.T) {
 }
 
 func TestUnregister_NilPluginAPI(t *testing.T) {
-	s := NewServer(nil, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(nil, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	err := s.Unregister()
 	require.Error(t, err)
@@ -368,7 +368,7 @@ func TestPostRegistration_SurfacesDrainError(t *testing.T) {
 	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response {
 		return errResponse(http.StatusOK, io.ErrUnexpectedEOF)
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
@@ -380,7 +380,7 @@ func TestPostRegistration_SurfacesReadErrorOnRetriable(t *testing.T) {
 	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response {
 		return errResponse(http.StatusInternalServerError, io.ErrUnexpectedEOF)
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
@@ -392,7 +392,7 @@ func TestPostRegistration_SurfacesReadErrorOnPermanent(t *testing.T) {
 	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response {
 		return errResponse(http.StatusBadRequest, io.ErrUnexpectedEOF)
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	retriable, err := s.registerOnce(context.Background())
 	require.Error(t, err)
@@ -420,7 +420,7 @@ func TestUnregister_BoundedTimeout(t *testing.T) {
 		<-req.Context().Done()
 		return nil
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	start := time.Now()
 	err := s.Unregister()
@@ -453,7 +453,7 @@ func TestUnregister_WaitsForInFlightRegister(t *testing.T) {
 		<-release
 		return newJSONResponse(200, "")
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 1}
 
 	require.NoError(t, s.Register())
@@ -511,7 +511,7 @@ func TestUnregister_BoundedWaitForInFlightRegister(t *testing.T) {
 		<-release
 		return newJSONResponse(200, "")
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 1}
 
 	require.NoError(t, s.Register())
@@ -566,7 +566,7 @@ func TestPostRegistration_BodyCloseErrorIsLoggedNotReturned(t *testing.T) {
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 		}
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	var buf bytes.Buffer
 	prevOut := log.Writer()
@@ -600,7 +600,7 @@ func TestUnregister_DeadlinePropagated(t *testing.T) {
 		deadline, gotDeadline = req.Context().Deadline()
 		return newJSONResponse(200, "")
 	}}
-	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	start := time.Now()
 	require.NoError(t, s.Unregister())

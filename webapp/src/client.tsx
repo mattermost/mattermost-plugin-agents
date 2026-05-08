@@ -549,7 +549,6 @@ export async function updatePluginServer(
     pluginID: string,
     update: {
         enabled?: boolean;
-        expose_external?: boolean;
         tool_configs?: MCPToolConfig[];
     },
 ) {
