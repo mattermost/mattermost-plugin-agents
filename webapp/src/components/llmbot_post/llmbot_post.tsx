@@ -347,10 +347,16 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const renderedRounds = useMemo(() => {
         if (regenerating) {
-            // The prior generation is being replaced; show only the live
-            // content as it streams in. persistedRounds still holds the
-            // pre-regen turn until the post-end refetch lands.
-            return currentRound ? [currentRound] : [];
+            // The prior generation is being replaced; suppress the cached
+            // persistedRounds (still holds the pre-regen turn until refetch)
+            // but keep liveRounds — those are this regen's completed rounds
+            // captured between resolved tool_call events. Without them the
+            // post would visually empty out between rounds.
+            const out: Round[] = [...liveRounds];
+            if (currentRound) {
+                out.push(currentRound);
+            }
+            return out;
         }
         const out: Round[] = [...stablePersisted, ...liveRounds];
         if (generating && currentRound) {

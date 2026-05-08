@@ -576,6 +576,137 @@ func TestUpdateTurnPostID(t *testing.T) {
 	}
 }
 
+// TestDeleteResponseTurns exercises the SQL DELETE that scrubs intermediate
+// turns of a prior generation when a post is regenerated. The anchor turn
+// stays (regen updates it in place); demoted assistants and tool_results
+// between the originating user turn and the anchor are removed.
+func TestDeleteResponseTurns(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store) (convID, postID string)
+		validate func(t *testing.T, s *Store, convID, postID string)
+	}{
+		{
+			name: "removes demoted assistant + tool_result between user turn and anchor",
+			setup: func(t *testing.T, s *Store) (string, string) {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				postID := "regen-post"
+				err = s.CreateTurn(makeTurn(conv.ID, 1, func(tu *Turn) {
+					tu.Role = "user"
+				}))
+				require.NoError(t, err)
+				demoted := makeTurn(conv.ID, 2, func(tu *Turn) {
+					tu.Role = "assistant"
+					tu.PostID = nil
+				})
+				err = s.CreateTurn(demoted)
+				require.NoError(t, err)
+				toolResult := makeTurn(conv.ID, 3, func(tu *Turn) {
+					tu.Role = "tool_result"
+				})
+				err = s.CreateTurn(toolResult)
+				require.NoError(t, err)
+				anchor := makeTurn(conv.ID, 4, func(tu *Turn) {
+					tu.Role = "assistant"
+					tu.PostID = stringPtr(postID)
+				})
+				err = s.CreateTurn(anchor)
+				require.NoError(t, err)
+
+				return conv.ID, postID
+			},
+			validate: func(t *testing.T, s *Store, convID, postID string) {
+				err := s.DeleteResponseTurns(convID, postID)
+				require.NoError(t, err)
+
+				turns, err := s.GetTurnsForConversation(convID)
+				require.NoError(t, err)
+				require.Len(t, turns, 2, "user turn + anchor remain; demoted + tool_result deleted")
+				assert.Equal(t, "user", turns[0].Role)
+				assert.Equal(t, "assistant", turns[1].Role)
+				require.NotNil(t, turns[1].PostID)
+				assert.Equal(t, postID, *turns[1].PostID)
+			},
+		},
+		{
+			name: "leaves earlier turns (before the prior user turn) untouched",
+			setup: func(t *testing.T, s *Store) (string, string) {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				postID := "second-post"
+				err = s.CreateTurn(makeTurn(conv.ID, 1, func(tu *Turn) { tu.Role = "user" }))
+				require.NoError(t, err)
+				err = s.CreateTurn(makeTurn(conv.ID, 2, func(tu *Turn) {
+					tu.Role = "assistant"
+					tu.PostID = stringPtr("first-post")
+				}))
+				require.NoError(t, err)
+				err = s.CreateTurn(makeTurn(conv.ID, 3, func(tu *Turn) { tu.Role = "user" }))
+				require.NoError(t, err)
+				err = s.CreateTurn(makeTurn(conv.ID, 4, func(tu *Turn) {
+					tu.Role = "assistant"
+					tu.PostID = nil
+				}))
+				require.NoError(t, err)
+				err = s.CreateTurn(makeTurn(conv.ID, 5, func(tu *Turn) {
+					tu.Role = "assistant"
+					tu.PostID = stringPtr(postID)
+				}))
+				require.NoError(t, err)
+				return conv.ID, postID
+			},
+			validate: func(t *testing.T, s *Store, convID, postID string) {
+				err := s.DeleteResponseTurns(convID, postID)
+				require.NoError(t, err)
+
+				turns, err := s.GetTurnsForConversation(convID)
+				require.NoError(t, err)
+				// First user, first anchor, second user, second anchor.
+				require.Len(t, turns, 4)
+				assert.Equal(t, 1, turns[0].Sequence)
+				assert.Equal(t, 2, turns[1].Sequence)
+				assert.Equal(t, 3, turns[2].Sequence)
+				assert.Equal(t, 5, turns[3].Sequence)
+			},
+		},
+		{
+			name: "no-op when the post has no anchor",
+			setup: func(t *testing.T, s *Store) (string, string) {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+				err = s.CreateTurn(makeTurn(conv.ID, 1, func(tu *Turn) { tu.Role = "user" }))
+				require.NoError(t, err)
+				return conv.ID, "no-such-post"
+			},
+			validate: func(t *testing.T, s *Store, convID, postID string) {
+				err := s.DeleteResponseTurns(convID, postID)
+				require.NoError(t, err)
+				turns, err := s.GetTurnsForConversation(convID)
+				require.NoError(t, err)
+				require.Len(t, turns, 1)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			convID, postID := tt.setup(t, s)
+			tt.validate(t, s, convID, postID)
+		})
+	}
+}
+
 func TestTurnCleanupWithConversation(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -179,6 +179,41 @@ func (s *fakeConvStore) UpdateTurnPostID(id string, postID *string) error {
 	return nil
 }
 
+func (s *fakeConvStore) DeleteResponseTurns(conversationID, postID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns := s.turns[conversationID]
+
+	anchorSeq := -1
+	for _, t := range turns {
+		if t.Role == "assistant" && t.PostID != nil && *t.PostID == postID {
+			anchorSeq = t.Sequence
+			break
+		}
+	}
+	if anchorSeq < 0 {
+		return nil
+	}
+	userSeq := 0
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == "user" && turns[i].Sequence < anchorSeq {
+			userSeq = turns[i].Sequence
+			break
+		}
+	}
+
+	keep := turns[:0]
+	for _, t := range turns {
+		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+			delete(s.allTurns, t.ID)
+			continue
+		}
+		keep = append(keep, t)
+	}
+	s.turns[conversationID] = keep
+	return nil
+}
+
 func (s *fakeConvStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

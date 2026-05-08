@@ -32,6 +32,7 @@ type Store interface {
 	UpdateTurnContent(id string, content json.RawMessage) error
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
 	UpdateTurnPostID(id string, postID *string) error
+	DeleteResponseTurns(conversationID, postID string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
 }
 
@@ -225,6 +226,16 @@ func (s *Service) GetTurnByPostID(postID string) (*store.Turn, error) {
 // turn for the same response post.
 func (s *Service) UpdateTurnPostID(id string, postID *string) error {
 	return s.store.UpdateTurnPostID(id, postID)
+}
+
+// DeleteResponseTurns removes the assistant and tool_result turns between
+// the originating user turn and the post anchor for the given post. The
+// anchor itself is preserved (regen updates it in place at finalize). Use
+// this on regeneration to scrub stale intermediate turns from a prior
+// generation so the regenerated response doesn't render with leftover
+// rounds attached.
+func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
+	return s.store.DeleteResponseTurns(conversationID, postID)
 }
 
 // UpdateConversationRootPostID sets the RootPostID on a conversation.

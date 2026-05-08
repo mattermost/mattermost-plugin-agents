@@ -250,6 +250,15 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("failed to get conversation for regen: %w", err)
 	}
 
+	// Scrub the prior generation's intermediate turns (auto-run rounds and
+	// any tool_result turns) before streaming. Without this, the webapp's
+	// per-round renderer would replay the prior tool calls alongside the
+	// regenerated response after the post-end refetch. The anchor turn
+	// stays — finalize updates it in place.
+	if delErr := c.convService.DeleteResponseTurns(conv.ID, post.Id); delErr != nil {
+		c.mmClient.LogError("Failed to scrub prior response turns on regen", "error", delErr.Error(), "post_id", post.Id, "conversation_id", conv.ID)
+	}
+
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
 	}

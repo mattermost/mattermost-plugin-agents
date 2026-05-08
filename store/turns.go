@@ -187,6 +187,36 @@ func (s *Store) UpdateTurnPostID(id string, postID *string) error {
 	return nil
 }
 
+// DeleteResponseTurns removes the assistant + tool_result turns that belong
+// to a response between the user turn that initiated it and the anchor turn
+// for the given post. The anchor itself stays — regen's stream updates it
+// in place. Used to scrub stale intermediate turns from a prior generation
+// so the regenerated response doesn't render alongside leftover content.
+func (s *Store) DeleteResponseTurns(conversationID, postID string) error {
+	const query = `
+DELETE FROM LLM_Turns
+WHERE ConversationID = $1
+  AND Sequence > COALESCE((
+    SELECT MAX(Sequence) FROM LLM_Turns
+    WHERE ConversationID = $1
+      AND Role = 'user'
+      AND Sequence < (
+        SELECT Sequence FROM LLM_Turns
+        WHERE ConversationID = $1 AND Role = 'assistant' AND PostID = $2
+        LIMIT 1
+      )
+  ), 0)
+  AND Sequence < (
+    SELECT Sequence FROM LLM_Turns
+    WHERE ConversationID = $1 AND Role = 'assistant' AND PostID = $2
+    LIMIT 1
+  )`
+	if _, err := s.db.Exec(query, conversationID, postID); err != nil {
+		return fmt.Errorf("failed to delete response turns: %w", err)
+	}
+	return nil
+}
+
 // UpdateTurnTokens updates the TokensIn and TokensOut fields on a turn.
 func (s *Store) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	query, args, err := s.builder.

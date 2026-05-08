@@ -131,6 +131,10 @@ func (s *fakeConversationStore) UpdateTurnPostID(id string, postID *string) erro
 	return errors.New("turn not found")
 }
 
+func (s *fakeConversationStore) DeleteResponseTurns(_ string, _ string) error {
+	return nil
+}
+
 func (s *fakeConversationStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
 	maxSeq := 0
 	for _, t := range s.turns {

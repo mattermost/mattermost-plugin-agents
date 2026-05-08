@@ -153,6 +153,10 @@ func (m *mockConvServiceStore) UpdateTurnPostID(_ string, _ *string) error {
 	return nil
 }
 
+func (m *mockConvServiceStore) DeleteResponseTurns(_ string, _ string) error {
+	return nil
+}
+
 func (m *mockConvServiceStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
 	return len(m.turns[conversationID]), nil
 }

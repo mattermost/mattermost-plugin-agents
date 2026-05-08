@@ -216,6 +216,10 @@ func (s *evalInMemoryStore) UpdateTurnPostID(id string, postID *string) error {
 	return nil
 }
 
+func (s *evalInMemoryStore) DeleteResponseTurns(_ string, _ string) error {
+	return nil
+}
+
 func (s *evalInMemoryStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
 	maxSeq := 0
 	for _, id := range s.turnsByConv[conversationID] {
