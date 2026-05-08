@@ -167,13 +167,14 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 
 // getClientForUser gets or creates an MCP client for a specific user
 func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) {
-	m.clientsMu.RLock()
+	m.clientsMu.Lock()
 	client, exists := m.clients[userID]
-	m.clientsMu.RUnlock()
 	if exists {
 		m.activity[userID] = time.Now()
+		m.clientsMu.Unlock()
 		return client, client.initialRemoteConnectErrors
 	}
+	m.clientsMu.Unlock()
 
 	return m.createAndStoreUserClient(userID)
 }

@@ -646,6 +646,46 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 	require.False(t, lastActivity.After(after))
 }
 
+func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {
+	before := time.Now()
+	userClients := &UserClients{clients: map[string]*Client{}}
+	manager := &ClientManager{
+		clients: map[string]*UserClients{
+			"user-1": userClients,
+		},
+		activity: map[string]time.Time{
+			"user-1": before.Add(-time.Minute),
+		},
+	}
+
+	const goroutines = 16
+	const iterations = 200
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range iterations {
+				got, errs := manager.getClientForUser("user-1")
+				if got != userClients || errs != nil {
+					t.Errorf("getClientForUser returned unexpected result: got=%p errs=%v", got, errs)
+					return
+				}
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	lastActivity, ok := manager.activity["user-1"]
+	require.True(t, ok)
+	require.False(t, lastActivity.Before(before))
+}
+
 func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 	testCases := []struct {
 		name                     string
