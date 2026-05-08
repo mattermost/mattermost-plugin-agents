@@ -64,6 +64,7 @@ type MCPClientManager interface {
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
+	RefreshToolsForUser(userID string) ([]llm.Tool, *mcp.Errors, error)
 	GetConfig() mcp.Config
 }
 
@@ -267,6 +268,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
+	router.POST("/mcp/tools/refresh", a.handleRefreshUserMCPTools)
 	router.GET("/mcp/oauth/:serverName/start", a.handleOAuthStart)
 	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
 	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)

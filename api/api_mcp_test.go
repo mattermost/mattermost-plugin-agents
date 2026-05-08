@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -93,6 +94,62 @@ func TestHandleGetUserMCPToolsIncludesZeroToolConfiguredServers(t *testing.T) {
 
 	require.False(t, response.Servers[0].NeedsOAuth)
 	require.False(t, response.Servers[1].NeedsOAuth)
+}
+
+func TestHandleRefreshUserMCPToolsUsesForcedRefresh(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := mcp.ServerConfig{
+		Name:    "With Tools",
+		Enabled: true,
+		BaseURL: "https://with-tools.example.com",
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+	mcpMock := &mockMCPClientManager{
+		tools: []llm.Tool{
+			{
+				Name:         "refreshed_tool",
+				Description:  "refreshed tool",
+				ServerOrigin: server.BaseURL,
+			},
+		},
+	}
+	e.api.mcpClientManager = mcpMock
+
+	response := refreshUserMCPToolsResponse(t, e.api, nil)
+
+	require.Equal(t, []string{testUserID}, mcpMock.refreshCalls)
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, server.Name, response.Servers[0].Name)
+	require.Len(t, response.Servers[0].Tools, 1)
+	require.Equal(t, "refreshed_tool", response.Servers[0].Tools[0].Name)
+}
+
+func TestHandleRefreshUserMCPToolsRejectsRequestBody(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mcpMock := &mockMCPClientManager{}
+	e.api.mcpClientManager = mcpMock
+
+	request := httptest.NewRequest(http.MethodPost, "/mcp/tools/refresh", strings.NewReader("{}"))
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+	require.Empty(t, mcpMock.refreshCalls)
 }
 
 func TestHandleGetUserMCPToolsStaticOAuthCredentialsNeedOAuthWhenUnauthenticated(t *testing.T) {
@@ -419,6 +476,22 @@ func getUserMCPToolsResponse(t *testing.T, api *API) UserMCPToolsResponse {
 	t.Helper()
 
 	request := httptest.NewRequest(http.MethodGet, "/mcp/tools", nil)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var response UserMCPToolsResponse
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
+	return response
+}
+
+func refreshUserMCPToolsResponse(t *testing.T, api *API, body io.Reader) UserMCPToolsResponse {
+	t.Helper()
+
+	request := httptest.NewRequest(http.MethodPost, "/mcp/tools/refresh", body)
 	request.Header.Add("Mattermost-User-Id", testUserID)
 
 	recorder := httptest.NewRecorder()

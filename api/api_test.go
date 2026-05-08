@@ -118,6 +118,8 @@ type mockMCPClientManager struct {
 	disconnectErr       error
 	disconnectCalls     []mcpDisconnectCall
 	oauthNeededCalls    []mcpDisconnectCall
+	refreshErr          error
+	refreshCalls        []string
 }
 
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
@@ -171,6 +173,11 @@ func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 
 func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
 	return m.tools, m.mcpErrors
+}
+
+func (m *mockMCPClientManager) RefreshToolsForUser(userID string) ([]llm.Tool, *mcp.Errors, error) {
+	m.refreshCalls = append(m.refreshCalls, userID)
+	return m.tools, m.mcpErrors, m.refreshErr
 }
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {

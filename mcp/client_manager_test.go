@@ -12,6 +12,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -130,6 +131,32 @@ func TestClientManagerInvalidateUserClients(t *testing.T) {
 			require.Equal(t, now.Add(time.Minute), manager.activity["user-2"])
 		})
 	}
+}
+
+func TestClientManagerInvalidateSharedToolsCacheForRefresh(t *testing.T) {
+	kvAPI := newMockKVService()
+	cache := NewToolsCache(kvAPI, &mockLogService{})
+	cachedTools := map[string]*gomcp.Tool{
+		"tool": {Name: "tool"},
+	}
+	require.NoError(t, cache.SetTools("shared-server", "shared-server", "https://shared.example.com", cachedTools, time.Now()))
+	require.NoError(t, cache.SetTools("oauth-server", "oauth-server", "https://oauth.example.com", cachedTools, time.Now()))
+
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{Name: "shared-server", BaseURL: "https://shared.example.com", Enabled: true},
+				{Name: "disabled-server", BaseURL: "https://disabled.example.com", Enabled: false},
+				{Name: "oauth-server", BaseURL: "https://oauth.example.com", Enabled: true, ClientID: "client-id"},
+			},
+		},
+		toolsCache: cache,
+	}
+
+	require.NoError(t, manager.invalidateSharedToolsCacheForRefresh())
+
+	require.Empty(t, cache.GetTools("shared-server"))
+	require.NotEmpty(t, cache.GetTools("oauth-server"))
 }
 
 func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) {

@@ -6,6 +6,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"sync"
@@ -189,6 +190,38 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	rawTools := userClient.GetTools()
 	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient)
 	return filtered, mcpErrors
+}
+
+// RefreshToolsForUser drops cached user clients and shared server tool lists before rediscovery.
+func (m *ClientManager) RefreshToolsForUser(userID string) ([]llm.Tool, *Errors, error) {
+	if userID == "" {
+		return nil, nil, errors.New("userID is required")
+	}
+
+	if err := m.invalidateSharedToolsCacheForRefresh(); err != nil {
+		return nil, nil, err
+	}
+
+	m.InvalidateUserClients(userID)
+	tools, mcpErrors := m.GetToolsForUser(userID)
+	return tools, mcpErrors, nil
+}
+
+func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
+	if m.toolsCache == nil {
+		return nil
+	}
+
+	var refreshErr error
+	for _, serverConfig := range m.config.Servers {
+		if !serverConfig.Enabled || serverConfig.BaseURL == "" || !shouldUseSharedToolsCache(serverConfig) {
+			continue
+		}
+		if err := m.toolsCache.InvalidateServer(serverConfig.Name); err != nil {
+			refreshErr = errors.Join(refreshErr, fmt.Errorf("failed to invalidate tools cache for server %s: %w", serverConfig.Name, err))
+		}
+	}
+	return refreshErr
 }
 
 // InvalidateUserClients closes and removes cached MCP clients for a user.
