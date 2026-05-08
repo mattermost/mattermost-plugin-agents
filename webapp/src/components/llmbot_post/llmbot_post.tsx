@@ -358,12 +358,19 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
             return out;
         }
+
+        // Always show currentRound when it has content. Don't gate on
+        // `generating`: reasoning_summary events flip generating=false while
+        // streaming reasoning chunks, so a `generating && currentRound`
+        // guard would hide the thinking block until text or tool calls
+        // arrive. After end+refetch, useLayoutEffect clears the live state
+        // so currentRound naturally falls back to null.
         const out: Round[] = [...stablePersisted, ...liveRounds];
-        if (generating && currentRound) {
+        if (currentRound) {
             out.push(currentRound);
         }
         return out;
-    }, [regenerating, stablePersisted, liveRounds, generating, currentRound]);
+    }, [regenerating, stablePersisted, liveRounds, currentRound]);
 
     const regnerate = () => {
         setMessage('');
