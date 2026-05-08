@@ -177,57 +177,81 @@ func TestSimulController_RunHook_LoginSwitchTypes(t *testing.T) {
 }
 
 func TestSimulController_HookLogin_BestEffort(t *testing.T) {
-	st := newMemStoreWithUser(t)
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) (*memstore.MemStore, *ltUserTest, *SimulController, func(t *testing.T, st *memstore.MemStore, u *ltUserTest, ctrl *SimulController))
+	}{
+		{
+			name: "config error skips resolution",
+			setup: func(t *testing.T) (*memstore.MemStore, *ltUserTest, *SimulController, func(t *testing.T, st *memstore.MemStore, u *ltUserTest, ctrl *SimulController)) {
+				t.Helper()
+				st := newMemStoreWithUser(t)
+				called := false
+				u := &ltUserTest{
+					simulTestUser: &simulTestUser{
+						st: st,
+						namesFn: func([]string) ([]string, error) {
+							called = true
+							return nil, errors.New("should not resolve")
+						},
+					},
+				}
+				ctrl := &SimulController{
+					store:     NewPluginStore(),
+					config:    Config{AgentUsername: "ai", TriggerMode: TriggerModeBoth},
+					configErr: errors.New("bad config"),
+				}
 
-	t.Run("config error skips resolution", func(t *testing.T) {
-		called := false
-		u := &ltUserTest{
-			simulTestUser: &simulTestUser{
-				st: st,
-				namesFn: func([]string) ([]string, error) {
-					called = true
-					return nil, errors.New("should not resolve")
-				},
+				return st, u, ctrl, func(t *testing.T, st *memstore.MemStore, _ *ltUserTest, ctrl *SimulController) {
+					t.Helper()
+					assert.False(t, called)
+					assert.Equal(t, UserState{}, ctrl.store.Get(st.Id()))
+				}
 			},
-		}
-		ctrl := &SimulController{
-			store:     NewPluginStore(),
-			config:    Config{AgentUsername: "ai", TriggerMode: TriggerModeBoth},
-			configErr: errors.New("bad config"),
-		}
+		},
+		{
+			name: "resolution errors are deferred to actions",
+			setup: func(t *testing.T) (*memstore.MemStore, *ltUserTest, *SimulController, func(t *testing.T, st *memstore.MemStore, u *ltUserTest, ctrl *SimulController)) {
+				t.Helper()
+				st := newMemStoreWithUser(t)
+				seedOpenChannel(t, st, "teamA", "town-square")
+				u := &ltUserTest{
+					simulTestUser: &simulTestUser{
+						st: st,
+						namesFn: func([]string) ([]string, error) {
+							return nil, errors.New("missing ai user")
+						},
+					},
+				}
+				ctrl := &SimulController{
+					store: NewPluginStore(),
+					config: Config{
+						AgentUsername:                  "ai",
+						TriggerMode:                    TriggerModeBoth,
+						TriggerFrequencyChannelMention: 0.001,
+						TriggerFrequencyDM:             0.001,
+						PromptProfile:                  "short",
+					},
+				}
 
-		require.NoError(t, ctrl.RunHook(plugins.HookLogin, u, nil))
-		assert.False(t, called)
-		assert.Equal(t, UserState{}, ctrl.store.Get(st.Id()))
-	})
-
-	t.Run("resolution errors are deferred to actions", func(t *testing.T) {
-		st := newMemStoreWithUser(t)
-		seedOpenChannel(t, st, "teamA", "town-square")
-		u := &ltUserTest{
-			simulTestUser: &simulTestUser{
-				st: st,
-				namesFn: func([]string) ([]string, error) {
-					return nil, errors.New("missing ai user")
-				},
+				return st, u, ctrl, func(t *testing.T, _ *memstore.MemStore, u *ltUserTest, ctrl *SimulController) {
+					t.Helper()
+					resp := ctrl.askAgentChannelMention(u)
+					require.Error(t, resp.Err)
+					assert.Contains(t, resp.Err.Error(), "missing ai user")
+				}
 			},
-		}
-		ctrl := &SimulController{
-			store: NewPluginStore(),
-			config: Config{
-				AgentUsername:                  "ai",
-				TriggerMode:                    TriggerModeBoth,
-				TriggerFrequencyChannelMention: 0.001,
-				TriggerFrequencyDM:             0.001,
-				PromptProfile:                  "short",
-			},
-		}
+		},
+	}
 
-		require.NoError(t, ctrl.RunHook(plugins.HookLogin, u, nil))
-		resp := ctrl.askAgentChannelMention(u)
-		require.Error(t, resp.Err)
-		assert.Contains(t, resp.Err.Error(), "missing ai user")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, u, ctrl, assertion := tt.setup(t)
+
+			require.NoError(t, ctrl.RunHook(plugins.HookLogin, u, nil))
+			assertion(t, st, u, ctrl)
+		})
+	}
 }
 
 func TestSimulController_ClearUserData(t *testing.T) {

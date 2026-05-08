@@ -23,34 +23,51 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "mixed", c.PromptProfile)
 }
 
-func TestReadConfig_JSONOverride(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "cfg.json")
-	err := os.WriteFile(p, []byte(`{
+func TestReadConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		contents  string
+		assertion func(t *testing.T, c Config, err error)
+	}{
+		{
+			name: "JSON override",
+			contents: `{
   "triggerFrequencyChannelMention": 0.01,
   "triggerFrequencyDM": 0.001,
   "agentUsername": "helper_bot",
   "triggerMode": "dm",
   "promptProfile": "short"
-}`), 0o600)
-	require.NoError(t, err)
+}`,
+			assertion: func(t *testing.T, c Config, err error) {
+				t.Helper()
+				require.NoError(t, err)
+				assert.Equal(t, 0.01, c.TriggerFrequencyChannelMention)
+				assert.Equal(t, 0.001, c.TriggerFrequencyDM)
+				assert.Equal(t, "helper_bot", c.AgentUsername)
+				assert.Equal(t, TriggerModeDM, c.TriggerMode)
+			},
+		},
+		{
+			name:     "unknown fields",
+			contents: `{"agentUsername":"x","extraField":true}`,
+			assertion: func(t *testing.T, _ Config, err error) {
+				t.Helper()
+				require.Error(t, err)
+			},
+		},
+	}
 
-	c, err := ReadConfig(p)
-	require.NoError(t, err)
-	assert.Equal(t, 0.01, c.TriggerFrequencyChannelMention)
-	assert.Equal(t, 0.001, c.TriggerFrequencyDM)
-	assert.Equal(t, "helper_bot", c.AgentUsername)
-	assert.Equal(t, TriggerModeDM, c.TriggerMode)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, "cfg.json")
+			err := os.WriteFile(p, []byte(tt.contents), 0o600)
+			require.NoError(t, err)
 
-func TestReadConfig_UnknownFields(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "cfg.json")
-	err := os.WriteFile(p, []byte(`{"agentUsername":"x","extraField":true}`), 0o600)
-	require.NoError(t, err)
-
-	_, err = ReadConfig(p)
-	require.Error(t, err)
+			c, err := ReadConfig(p)
+			tt.assertion(t, c, err)
+		})
+	}
 }
 
 func TestConfigValidate(t *testing.T) {
