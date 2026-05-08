@@ -900,6 +900,85 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 	assert.Equal(t, "user2", req.Posts[3].Message)
 }
 
+// Regression: regenerating a post whose response went through a
+// tool-approval continuation must drop the demoted prior anchor + its
+// tool_result turn along with the post anchor, otherwise the request ends
+// in assistant content (the continuation history) and bifrost-backed models
+// reject it as an unsupported assistant prefill.
+func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeavesUserTail(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "user1",
+		UserPostID:   stringPtr("user_post1"),
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	// Demoted prior anchor: this is the shape left behind by the
+	// streaming layer when a continuation stream finalizes — the original
+	// anchor turn loses its PostID but keeps its content + tool_use.
+	demotedContent, _ := json.Marshal([]ContentBlock{
+		{Type: BlockTypeText, Text: "Let me search."},
+		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Status: StatusSuccess, Shared: BoolPtr(true)},
+	})
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         nil,
+		Role:           "assistant",
+		Content:        demotedContent,
+		Sequence:       2,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	resultContent, _ := json.Marshal([]ContentBlock{
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "5 channels found", Shared: BoolPtr(true)},
+	})
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         nil,
+		Role:           "tool_result",
+		Content:        resultContent,
+		Sequence:       3,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	// New anchor — the post being regenerated.
+	anchorContent, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "Found 5 channels."}})
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         stringPtr("resp_post"),
+		Role:           "assistant",
+		Content:        anchorContent,
+		Sequence:       4,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{ExcludeAfterPostID: "resp_post"})
+	require.NoError(t, err)
+
+	require.NotEmpty(t, req.Posts)
+	last := req.Posts[len(req.Posts)-1]
+	require.Equal(t, llm.PostRoleUser, last.Role,
+		"regen request must end with the user turn that initiated the response — never with the continuation's assistant + tool_result tail")
+	require.Equal(t, "user1", last.Message)
+	require.Len(t, req.Posts, 2, "expected system + user1 only; demoted assistant + tool_result must be dropped")
+	require.Equal(t, llm.PostRoleSystem, req.Posts[0].Role)
+}
+
 func TestCreatePlaceholderAssistantTurn(t *testing.T) {
 	svc, s := setupTestService(t)
 

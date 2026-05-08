@@ -386,15 +386,31 @@ func (s *Service) BuildCompletionRequest(
 	redactUnshared := true
 	if len(opts) > 0 {
 		redactUnshared = !opts[0].AllowUnsharedToolContent
-		// If ExcludeAfterPostID is set, truncate the turn slice at (and including)
-		// the turn whose PostID matches, so that turn and all subsequent turns are dropped.
+		// ExcludeAfterPostID truncates the conversation back to right after
+		// the user turn that initiated the response for this post, so the
+		// LLM regenerates from the same starting point. Truncating only at
+		// the post's anchor would leave any continuation history (a demoted
+		// prior anchor plus its tool_result turns from a tool-approval
+		// resume) at the tail — that ends in assistant content, which
+		// bifrost-backed models reject as an unsupported prefill.
 		if opts[0].ExcludeAfterPostID != "" {
 			excludeID := opts[0].ExcludeAfterPostID
+			anchorIdx := -1
 			for i, turn := range turns {
-				if turn.PostID != nil && *turn.PostID == excludeID {
-					turns = turns[:i]
+				if turn.Role == "assistant" && turn.PostID != nil && *turn.PostID == excludeID {
+					anchorIdx = i
 					break
 				}
+			}
+			if anchorIdx >= 0 {
+				truncateAt := anchorIdx
+				for i := anchorIdx - 1; i >= 0; i-- {
+					if turns[i].Role == "user" {
+						truncateAt = i + 1
+						break
+					}
+				}
+				turns = turns[:truncateAt]
 			}
 		}
 	}

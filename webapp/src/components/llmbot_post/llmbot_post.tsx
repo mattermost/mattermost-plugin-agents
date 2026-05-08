@@ -121,6 +121,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // refetch becomes the trigger to clear local-state for completed rounds.
     const [pendingRefetch, setPendingRefetch] = useState(false);
 
+    // Set true while the user just clicked Regenerate. The persisted round
+    // from the prior generation must NOT render alongside the in-progress
+    // regenerated content — the user expects the post to be replaced, not
+    // appended. Cleared once the post-end refetch lands new content into
+    // persistedRounds.
+    const [regenerating, setRegenerating] = useState(false);
+
     // A single ref mirrors the in-progress round so the WebSocket handler
     // can snapshot it without rebuilding the listener on every keystroke.
     const liveRef = useRef({message, toolCalls, reasoningSummary, annotations});
@@ -172,6 +179,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setMessage((prev: string) => (prev === '' ? prev : ''));
         setReasoningSummary((prev: string) => (prev === '' ? prev : ''));
         setIsReasoningLoading(false);
+        setRegenerating(false);
         setPendingRefetch(false);
     }, [conversation, pendingRefetch]);
 
@@ -274,6 +282,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setPrecontent(false);
                 setStopped(false);
                 setIsReasoningLoading(false);
+                setRegenerating(false);
                 return;
             }
 
@@ -337,12 +346,18 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }, [message, toolCalls, reasoningSummary, annotations]);
 
     const renderedRounds = useMemo(() => {
+        if (regenerating) {
+            // The prior generation is being replaced; show only the live
+            // content as it streams in. persistedRounds still holds the
+            // pre-regen turn until the post-end refetch lands.
+            return currentRound ? [currentRound] : [];
+        }
         const out: Round[] = [...stablePersisted, ...liveRounds];
         if (generating && currentRound) {
             out.push(currentRound);
         }
         return out;
-    }, [stablePersisted, liveRounds, generating, currentRound]);
+    }, [regenerating, stablePersisted, liveRounds, generating, currentRound]);
 
     const regnerate = () => {
         setMessage('');
@@ -354,6 +369,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setAnnotations([]);
         setToolCalls([]);
         setLiveRounds([]);
+        setRegenerating(true);
         doRegenerate(props.post.id);
     };
 
