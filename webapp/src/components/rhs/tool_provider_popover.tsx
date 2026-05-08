@@ -147,7 +147,15 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                     aria-label={refreshLabel}
                     title={refreshLabel}
                     disabled={loading}
-                    onClick={() => fetchServers({showLoading: true, forceRefresh: true})}
+                    onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        fetchServers({showLoading: true, forceRefresh: true});
+                    }}
                 >
                     <RefreshIcon size={14}/>
                 </RefreshToolsButton>
