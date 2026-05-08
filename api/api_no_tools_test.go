@@ -67,6 +67,9 @@ func (s *noToolsStreamingService) StreamToNewDM(_ context.Context, botID string,
 func (s *noToolsStreamingService) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
 }
 
+func (s *noToolsStreamingService) StreamContinuationToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
+}
+
 func (s *noToolsStreamingService) StopStreaming(string) {}
 
 func (s *noToolsStreamingService) GetStreamingContext(ctx context.Context, _ string) (context.Context, error) {

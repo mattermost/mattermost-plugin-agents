@@ -53,6 +53,18 @@ type Service interface {
 	StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error
 	StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string) error
 	StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string)
+
+	// StreamContinuationToPost streams a follow-up round onto a post that
+	// already has an assistant turn (the tool-approval resume flow). At
+	// finalize, the prior anchor turn is demoted so the new turn becomes
+	// the post's anchor and the webapp's per-round renderer picks up both
+	// the prior and new content.
+	//
+	// Plain regeneration must NOT use this entry point — the regenerated
+	// answer is meant to replace the prior one, not be appended as a new
+	// round below it.
+	StreamContinuationToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string)
+
 	StopStreaming(postID string)
 	GetStreamingContext(inCtx context.Context, postID string) (context.Context, error)
 	FinishStreaming(postID string)
@@ -63,20 +75,22 @@ type postStreamContext struct {
 }
 
 // TurnStore is the subset of store operations needed by the streaming layer.
-// The streaming layer creates exactly one assistant turn per stream, at the
-// END of the stream, with the fully-accumulated content — that way the turn's
-// auto-assigned sequence lands after any tool-round turns that WriteToolTurns
-// persisted during the stream.
-//
-// GetTurnByPostID and UpdateTurnPostID support continuation streams: when an
-// agent turn that ended with pending tool calls is resumed (after the user
-// approves), the new round streams onto the SAME post. At finalize, the prior
-// anchor turn for that post is demoted (PostID cleared) so the webapp's
-// post→anchor lookup keeps finding exactly one match per post.
+// At finalize the streamer ends up in one of three states for the post's
+// assistant anchor turn:
+//   - first stream: no prior anchor → create one (CreateTurnAutoSequence).
+//   - regeneration: prior anchor → update its content/tokens in place
+//     (UpdateTurnContent, UpdateTurnTokens) so the post stays single-anchored
+//     and the regenerated response replaces the prior one.
+//   - continuation (tool-approval resume): prior anchor → demote
+//     (UpdateTurnPostID(nil)) and append a new anchor at the back of the
+//     conversation, so the webapp's per-round renderer sees the prior round
+//     followed by the new one.
 type TurnStore interface {
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnPostID(id string, postID *string) error
+	UpdateTurnContent(id string, content json.RawMessage) error
+	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
 }
 
 // turnAccumulator collects stream state. The turn is not written to the
@@ -86,11 +100,13 @@ type turnAccumulator struct {
 	postID         string
 	isDM           bool // true for DM channels; controls shared flag on tool_use blocks
 
-	// priorAnchorID is set when StreamToPost detected a continuation at start
-	// — the existing assistant turn anchored to this post. finalizeTurn uses
-	// it to demote that turn before creating the new anchor without an extra
-	// GetTurnByPostID round trip.
-	priorAnchorID string
+	// existingAnchorID is the prior assistant turn anchored to this post,
+	// looked up once at stream start. Empty if no prior anchor exists. How
+	// finalizeTurn uses it depends on isContinuation:
+	//   - regen / non-continuation: update in place (replace content).
+	//   - continuation: demote (clear PostID) and append a fresh anchor.
+	existingAnchorID string
+	isContinuation   bool
 
 	// Accumulated content
 	text          strings.Builder
@@ -338,29 +354,23 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 }
 
 // newTurnAccumulator constructs an in-memory accumulator for a streaming
-// assistant response. priorAnchorID is the existing assistant turn anchored
-// to this post (set on continuation streams), or "" for first-time streams.
-// Nothing is persisted until finalizeTurn runs.
-func newTurnAccumulator(conversationID, postID, priorAnchorID string, isDM bool) *turnAccumulator {
+// assistant response. existingAnchorID is the existing assistant turn
+// anchored to this post (or "" if none); isContinuation distinguishes the
+// tool-approval resume flow from a regeneration. Nothing is persisted
+// until finalizeTurn runs.
+func newTurnAccumulator(conversationID, postID, existingAnchorID string, isContinuation, isDM bool) *turnAccumulator {
 	return &turnAccumulator{
-		conversationID: conversationID,
-		postID:         postID,
-		priorAnchorID:  priorAnchorID,
-		isDM:           isDM,
+		conversationID:   conversationID,
+		postID:           postID,
+		existingAnchorID: existingAnchorID,
+		isContinuation:   isContinuation,
+		isDM:             isDM,
 	}
 }
 
-// finalizeTurn builds content blocks from accumulated state and persists them
-// as a single new assistant turn. Creating the turn at stream END rather than
-// start gives it the highest sequence in the conversation — ensuring the
-// final response sits after any tool-round turns WriteToolTurns persisted
-// during the stream.
-//
-// If a prior assistant turn is already anchored to this post (continuation
-// after user-approved tool calls), its PostID is cleared first so the new
-// turn becomes the canonical anchor. The prior turn keeps its content and
-// stays in sequence; the webapp's back-walk through non-anchor turns picks
-// it up alongside the newly-written tool_result rounds.
+// finalizeTurn dispatches the accumulated content to the right write path:
+// fresh create for first streams, demote-then-append for continuation
+// streams (tool-approval resume), and update-in-place for regeneration.
 func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 	blocks := acc.buildContentBlocks()
 
@@ -370,9 +380,26 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 		return
 	}
 
-	if acc.priorAnchorID != "" {
-		if demoteErr := p.turnStore.UpdateTurnPostID(acc.priorAnchorID, nil); demoteErr != nil {
-			p.mmClient.LogError("Failed to demote prior anchor turn", "error", demoteErr, "post_id", acc.postID, "turn_id", acc.priorAnchorID)
+	if acc.existingAnchorID != "" && !acc.isContinuation {
+		// Regeneration: replace the existing anchor's content. Sequence and
+		// PostID stay put so the webapp keeps finding the same single
+		// anchor with the regenerated response.
+		if updateErr := p.turnStore.UpdateTurnContent(acc.existingAnchorID, contentJSON); updateErr != nil {
+			p.mmClient.LogError("Failed to update regenerated turn content", "error", updateErr, "post_id", acc.postID, "turn_id", acc.existingAnchorID)
+		}
+		if tokenErr := p.turnStore.UpdateTurnTokens(acc.existingAnchorID, acc.tokensIn, acc.tokensOut); tokenErr != nil {
+			p.mmClient.LogError("Failed to update regenerated turn tokens", "error", tokenErr, "post_id", acc.postID, "turn_id", acc.existingAnchorID)
+		}
+		return
+	}
+
+	if acc.existingAnchorID != "" && acc.isContinuation {
+		// Continuation: demote the prior anchor so the new turn we're about
+		// to create becomes the post's canonical anchor. The demoted turn
+		// keeps its content and the webapp's back-walk picks it up as a
+		// prior round.
+		if demoteErr := p.turnStore.UpdateTurnPostID(acc.existingAnchorID, nil); demoteErr != nil {
+			p.mmClient.LogError("Failed to demote prior anchor turn", "error", demoteErr, "post_id", acc.postID, "turn_id", acc.existingAnchorID)
 		}
 	}
 
@@ -468,11 +495,22 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	return redacted
 }
 
-// StreamToPost streams the result of a TextStreamResult to a post.
-// it will internally handle logging needs and updating the post.
-// requesterUserID is the user who initiated the request; tool call details
-// are scoped to this user while other channel members see redacted metadata.
+// StreamToPost streams a fresh response onto a post. Use this for the first
+// stream after creating a placeholder, and for regeneration — both replace
+// any prior content. For the tool-approval resume flow that wants to
+// preserve the prior round and append the next one, call
+// StreamContinuationToPost instead.
 func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string) {
+	p.streamToPostImpl(ctx, stream, post, userLocale, requesterUserID, false)
+}
+
+// StreamContinuationToPost is the resume-after-tool-approval entry point.
+// See the Service interface for the full contract.
+func (p *MMPostStreamService) StreamContinuationToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string) {
+	p.streamToPostImpl(ctx, stream, post, userLocale, requesterUserID, true)
+}
+
+func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string, isContinuation bool) {
 	// Top-level posts are their own thread root, so falling back to post.Id
 	// keeps the attribute populated and makes "all spans for this thread"
 	// queries work uniformly for both replies and root posts.
@@ -491,20 +529,26 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 
 	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId}
 
-	// Continuation: a prior round on this same post already finalized an
-	// anchor turn (e.g., the user just approved pending tool calls). Send
-	// "continue" instead of "start" so the webapp keeps the resolved tool
-	// cards visible, and clear post.Message so the new round's text replaces
-	// the prior round's preamble rather than appending to it. The turn ID
-	// flows through to finalizeTurn so demote happens without a second
-	// GetTurnByPostID round trip.
+	// Look up any prior anchor turn for this post. Both code paths use the
+	// result, but for different ends:
+	//   - Continuation (StreamContinuationToPost): emit "continue" instead
+	//     of "start" so the webapp keeps resolved tool cards visible; clear
+	//     post.Message so the new round's text replaces the prior preamble;
+	//     pass the turn ID through so finalizeTurn can demote without a
+	//     second round trip.
+	//   - Regen (StreamToPost on a post that already has an anchor):
+	//     finalizeTurn updates that turn in place rather than creating a
+	//     second anchor for the same post. The control event stays "start"
+	//     because regen is a fresh response from the user's POV.
 	controlEvent := PostStreamingControlStart
-	priorAnchorID := ""
+	existingAnchorID := ""
 	if p.turnStore != nil {
 		if existing, lookupErr := p.turnStore.GetTurnByPostID(post.Id); lookupErr == nil && existing != nil && existing.Role == "assistant" {
-			controlEvent = PostStreamingControlContinue
-			priorAnchorID = existing.ID
-			post.Message = ""
+			existingAnchorID = existing.ID
+			if isContinuation {
+				controlEvent = PostStreamingControlContinue
+				post.Message = ""
+			}
 		}
 	}
 	p.sendPostStreamingControlEventWithBroadcast(post, controlEvent, broadcast)
@@ -520,7 +564,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 			if ch, chErr := p.mmClient.GetChannel(post.ChannelId); chErr == nil {
 				isDM = mmapi.IsDMWith(requesterUserID, ch)
 			}
-			acc = newTurnAccumulator(convID, post.Id, priorAnchorID, isDM)
+			acc = newTurnAccumulator(convID, post.Id, existingAnchorID, isContinuation, isDM)
 		}
 	}
 

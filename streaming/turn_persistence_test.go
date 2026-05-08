@@ -77,6 +77,31 @@ func (f *fakeTurnStore) UpdateTurnPostID(id string, postID *string) error {
 	return nil
 }
 
+func (f *fakeTurnStore) UpdateTurnContent(id string, content json.RawMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, t := range f.turns {
+		if t.ID == id {
+			t.Content = content
+			return nil
+		}
+	}
+	return nil
+}
+
+func (f *fakeTurnStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, t := range f.turns {
+		if t.ID == id {
+			t.TokensIn = tokensIn
+			t.TokensOut = tokensOut
+			return nil
+		}
+	}
+	return nil
+}
+
 // parseContentBlocks is a test helper that unmarshals content JSON into content blocks.
 func parseContentBlocks(t *testing.T, raw json.RawMessage) []conversation.ContentBlock {
 	t.Helper()
@@ -1045,7 +1070,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+		service.StreamContinuationToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -1186,7 +1211,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 				close(streamChannel)
 
-				service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+				service.StreamContinuationToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
 
 				var control string
 				for _, ev := range client.events {
@@ -1223,7 +1248,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+		service.StreamContinuationToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
 
 		var sawStart bool
 		for _, ev := range client.events {
@@ -1409,7 +1434,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+		service.StreamContinuationToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -1420,7 +1445,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		// existing turn precedes the create of the new one.
 		demoteIdx, createIdx := -1, -1
 		for i, op := range ts.ops {
-			if op == "update:prior" && demoteIdx == -1 {
+			if op == "demote:prior" && demoteIdx == -1 {
 				demoteIdx = i
 			}
 			if op == "create" && createIdx == -1 {
@@ -1430,6 +1455,79 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.NotEqual(t, -1, demoteIdx, "expected a demote (UpdateTurnPostID) on prior turn")
 		require.NotEqual(t, -1, createIdx, "expected a create (CreateTurnAutoSequence) of the new anchor")
 		require.Less(t, demoteIdx, createIdx, "demote of prior anchor must run BEFORE creating the new anchor")
+	})
+
+	// Regen on a post that already has an anchor turn must NOT take the
+	// continuation path: it must NOT demote the prior anchor (that would
+	// surface the prior response as a "round" in the rendered post) and it
+	// must NOT create a second anchor (two anchors per post breaks the
+	// webapp's anchor lookup). Instead, the prior turn is updated in place.
+	t.Run("regen via StreamToPost updates the existing anchor in place — no demote, no second anchor", func(t *testing.T) {
+		ts := &fakeOrderingTurnStore{
+			fakeTurnStore: fakeTurnStore{},
+		}
+
+		// Seed an existing anchor — analogous to the prior response being
+		// regenerated.
+		priorPostIDCopy := postID
+		priorContent, mErr := json.Marshal([]conversation.ContentBlock{
+			{Type: conversation.BlockTypeText, Text: "Old answer."},
+		})
+		require.NoError(t, mErr)
+		ts.turns = append(ts.turns, &store.Turn{
+			ID:             "prior",
+			ConversationID: conversationID,
+			PostID:         &priorPostIDCopy,
+			Role:           "assistant",
+			Sequence:       2,
+			Content:        priorContent,
+			TokensIn:       111,
+			TokensOut:      222,
+		})
+
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 3)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Regenerated answer."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeUsage, Value: llm.TokenUsage{InputTokens: 5, OutputTokens: 10}}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+
+		// Exactly one assistant turn for this post — the prior, updated.
+		var anchors []*store.Turn
+		for _, tr := range ts.turns {
+			if tr.PostID != nil && *tr.PostID == postID && tr.Role == "assistant" {
+				anchors = append(anchors, tr)
+			}
+		}
+		require.Len(t, anchors, 1, "regen must keep the post anchored to a single turn — no second anchor created")
+		require.Equal(t, "prior", anchors[0].ID, "the existing turn was kept; not replaced by a new ID")
+
+		blocks := parseContentBlocks(t, anchors[0].Content)
+		require.Len(t, blocks, 1)
+		require.Equal(t, "Regenerated answer.", blocks[0].Text, "regen overwrote the prior content")
+		require.Equal(t, int64(5), anchors[0].TokensIn, "regen overwrote token usage")
+		require.Equal(t, int64(10), anchors[0].TokensOut)
+
+		// No demote happened. The prior anchor's PostID was never cleared
+		// — that's the path that would resurface the prior response as a
+		// "round" alongside the new one.
+		require.NotContains(t, ts.ops, "demote:prior", "regen must not demote the prior anchor")
+		require.NotContains(t, ts.ops, "create", "regen must NOT create a second anchor for the same post")
 	})
 }
 
@@ -1453,6 +1551,16 @@ func (f *fakeOrderingTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
 
 func (f *fakeOrderingTurnStore) UpdateTurnPostID(id string, postID *string) error {
 	if err := f.fakeTurnStore.UpdateTurnPostID(id, postID); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.ops = append(f.ops, "demote:"+id)
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeOrderingTurnStore) UpdateTurnContent(id string, content json.RawMessage) error {
+	if err := f.fakeTurnStore.UpdateTurnContent(id, content); err != nil {
 		return err
 	}
 	f.mu.Lock()

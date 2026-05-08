@@ -482,13 +482,12 @@ func (c *Conversations) streamToolFollowUp(
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
 	}
 
-	// Stream onto the same post the user just approved. The streaming layer
-	// detects the existing anchor turn, sends a "continue" control event, and
-	// demotes the prior anchor at finalize so the new turn replaces it. The
-	// resolved tool cards stay visible because their tool_use blocks live on
-	// the demoted turn (now a non-anchor turn that the webapp picks up while
-	// walking back from the new anchor).
-	if err := c.streamResponseToExistingPost(ctx, runResult.Stream, post, user, channel); err != nil {
+	// Stream onto the same post the user just approved. The continuation
+	// path demotes the prior anchor at finalize so the new turn becomes the
+	// post's anchor while the resolved tool cards stay visible (they live
+	// on the demoted turn, which the webapp picks up while walking back
+	// from the new anchor).
+	if err := c.streamContinuationToExistingPost(ctx, runResult.Stream, post, user, channel); err != nil {
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}
 
