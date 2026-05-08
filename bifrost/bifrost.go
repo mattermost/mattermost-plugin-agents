@@ -1533,7 +1533,9 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Process stream
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
-	var currentFuncCallID string // tracks the active function call for argument deltas
+	// Route argument deltas by output_index so native server-tool deltas do not
+	// bleed into unrelated function-call arguments.
+	outputIndexToFuncCallID := make(map[int]string)
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -1670,9 +1672,8 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				blockStartPos = textLen
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
-				// Tool call arguments delta.
-				// Bifrost often does not populate resp.Item on delta events; the call ID
-				// may come from the preceding OutputItemAdded event (currentFuncCallID).
+				// Bifrost often omits resp.Item on deltas; fall back to the
+				// output_index map populated by OutputItemAdded.
 				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
 					tm := resp.Item.ResponsesToolMessage
 					callID := ""
@@ -1690,15 +1691,19 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 						}
 					}
-				} else if currentFuncCallID != "" && resp.Delta != nil {
-					if toolCallsBuffer[currentFuncCallID] == nil {
-						toolCallsBuffer[currentFuncCallID] = &responsesToolCallBuffer{id: currentFuncCallID}
+				} else if resp.OutputIndex != nil && resp.Delta != nil {
+					if callID, ok := outputIndexToFuncCallID[*resp.OutputIndex]; ok {
+						if toolCallsBuffer[callID] == nil {
+							toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
+						}
+						toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 					}
-					toolCallsBuffer[currentFuncCallID].arguments.WriteString(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
-				// New output item added - could be function call
+				// New output item added - register function calls so their
+				// argument deltas can be routed back to the right buffer by
+				// OutputIndex.
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
 						tm := resp.Item.ResponsesToolMessage
@@ -1707,7 +1712,9 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							callID = *tm.CallID
 						}
 						if callID != "" {
-							currentFuncCallID = callID
+							if resp.OutputIndex != nil {
+								outputIndexToFuncCallID[*resp.OutputIndex] = callID
+							}
 							if toolCallsBuffer[callID] == nil {
 								toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
 							}
