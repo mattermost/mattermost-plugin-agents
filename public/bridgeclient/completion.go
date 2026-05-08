@@ -228,7 +228,7 @@ func buildServiceCompletionURL(service string, isStreaming bool) (string, error)
 		return "", fmt.Errorf("service cannot be empty")
 	}
 
-	path := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(service))
+	path := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", AiPluginID, url.PathEscape(service))
 	if !isStreaming {
 		path = fmt.Sprintf("%s/nostream", path)
 	}
@@ -241,7 +241,7 @@ func buildAgentCompletionURL(agent string, isStreaming bool) (string, error) {
 		return "", fmt.Errorf("invalid agent ID: %w", err)
 	}
 
-	path := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
+	path := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", AiPluginID, agent)
 	if !isStreaming {
 		path = fmt.Sprintf("%s/nostream", path)
 	}

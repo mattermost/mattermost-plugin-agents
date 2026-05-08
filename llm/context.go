@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -47,6 +48,7 @@ type Context struct {
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]interface{}
+	RequestContext    context.Context
 }
 
 // ContextOption defines a function that configures a Context

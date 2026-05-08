@@ -366,6 +366,14 @@ func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter Too
 		span.SetStatus(otelcodes.Error, err.Error())
 		return "", err
 	}
+	if llmCtx != nil {
+		previousRequestContext := llmCtx.RequestContext
+		llmCtx.RequestContext = ctx
+		defer func() {
+			llmCtx.RequestContext = previousRequestContext
+		}()
+	}
+
 	result, err := tool.Resolver(llmCtx, argsGetter)
 	if err != nil {
 		span.RecordError(err)

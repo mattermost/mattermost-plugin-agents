@@ -97,8 +97,7 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 	}
 }
 
-// ProvideTools registers all available MCP tools with the server.
-func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
+func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	mcpTools := []MCPTool{}
 
 	// Add regular tools
@@ -119,7 +118,22 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 		mcpTools = append(mcpTools, p.getDevTeamTools()...)
 	}
 
+	return mcpTools
+}
+
+// ToolNames returns the names of the tools this provider will register.
+func (p *MattermostToolProvider) ToolNames() []string {
+	mcpTools := p.mcpTools()
+	names := make([]string, 0, len(mcpTools))
 	for _, mcpTool := range mcpTools {
+		names = append(names, mcpTool.Name)
+	}
+	return names
+}
+
+// ProvideTools registers all available MCP tools with the server.
+func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
+	for _, mcpTool := range p.mcpTools() {
 		p.registerDynamicTool(mcpServer, mcpTool)
 	}
 

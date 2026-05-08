@@ -63,7 +63,7 @@ func appendValidatedUserIDQuery(requestURL string, userID string) (string, error
 // GetAgents retrieves all available agents from the bridge API.
 // If userID is provided, only agents accessible to that user are returned.
 func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
-	requestURL := fmt.Sprintf("/%s/bridge/v1/agents", aiPluginID)
+	requestURL := fmt.Sprintf("/%s/bridge/v1/agents", AiPluginID)
 	updatedRequestURL, err := appendValidatedUserIDQuery(requestURL, userID)
 	if err != nil {
 		return nil, err
@@ -81,7 +81,7 @@ func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
 // GetServices retrieves all available services from the bridge API.
 // If userID is provided, only services accessible to that user (via their permitted bots) are returned.
 func (c *Client) GetServices(userID string) ([]BridgeServiceInfo, error) {
-	requestURL := fmt.Sprintf("/%s/bridge/v1/services", aiPluginID)
+	requestURL := fmt.Sprintf("/%s/bridge/v1/services", AiPluginID)
 	updatedRequestURL, err := appendValidatedUserIDQuery(requestURL, userID)
 	if err != nil {
 		return nil, err
@@ -103,7 +103,7 @@ func (c *Client) GetAgentTools(agent string, userID string) ([]BridgeToolInfo, e
 		return nil, fmt.Errorf("invalid agent ID: %w", err)
 	}
 
-	requestURL := fmt.Sprintf("/%s/bridge/v1/agents/%s/tools", aiPluginID, agent)
+	requestURL := fmt.Sprintf("/%s/bridge/v1/agents/%s/tools", AiPluginID, agent)
 	updatedRequestURL, err := appendValidatedUserIDQuery(requestURL, userID)
 	if err != nil {
 		return nil, err

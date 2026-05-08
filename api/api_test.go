@@ -54,6 +54,7 @@ type TestEnvironment struct {
 	client            *pluginapi.Client
 	conversationStore *mockConversationStore
 	agentStore        *mockAgentStore
+	mcp               *mockMCPClientManager
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -81,6 +82,10 @@ func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConf
 
 func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
+}
+
+func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
+	return false
 }
 
 type testLLMContextToolProvider struct {
@@ -115,13 +120,22 @@ type mockMCPClientManager struct {
 	embeddedServer      mcp.EmbeddedMCPServer
 	processOAuthSession *mcp.OAuthSession
 	processOAuthErr     error
-	disconnectErr       error
 	disconnectCalls     []mcpDisconnectCall
+	disconnectErr       error
 	oauthNeededCalls    []mcpDisconnectCall
 	refreshErr          error
 	refreshCalls        []string
 	getContexts         []context.Context
 	refreshContexts     []context.Context
+	ensureSessionErr    error
+
+	registerCalls   []mcp.PluginServerConfig
+	unregisterCalls []string
+	pluginServers   []mcp.PluginServerConfig
+
+	discoverPluginToolsResponse  []mcp.ToolInfo
+	discoverPluginToolsErr       error
+	discoverPluginToolsCallCount int
 }
 
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
@@ -166,6 +180,9 @@ func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
 }
 
 func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {
+	if m.ensureSessionErr != nil {
+		return "", m.ensureSessionErr
+	}
 	return "mock-session-id", nil
 }
 
@@ -186,6 +203,48 @@ func (m *mockMCPClientManager) RefreshToolsForUser(ctx context.Context, userID s
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
 	return m.config
+}
+
+func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) {
+	m.registerCalls = append(m.registerCalls, cfg)
+	// Mirror real ClientManager: same PluginID replaces existing entry.
+	for i, existing := range m.pluginServers {
+		if existing.PluginID == cfg.PluginID {
+			m.pluginServers[i] = cfg
+			return
+		}
+	}
+	m.pluginServers = append(m.pluginServers, cfg)
+}
+
+func (m *mockMCPClientManager) UnregisterPluginServer(pluginID string) {
+	m.unregisterCalls = append(m.unregisterCalls, pluginID)
+	for i, existing := range m.pluginServers {
+		if existing.PluginID == pluginID {
+			m.pluginServers = append(m.pluginServers[:i], m.pluginServers[i+1:]...)
+			return
+		}
+	}
+}
+
+func (m *mockMCPClientManager) ListPluginServers() []mcp.PluginServerConfig {
+	out := make([]mcp.PluginServerConfig, len(m.pluginServers))
+	copy(out, m.pluginServers)
+	return out
+}
+
+func (m *mockMCPClientManager) GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool) {
+	for _, existing := range m.pluginServers {
+		if existing.PluginID == pluginID {
+			return existing, true
+		}
+	}
+	return mcp.PluginServerConfig{}, false
+}
+
+func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
+	m.discoverPluginToolsCallCount++
+	return m.discoverPluginToolsResponse, m.discoverPluginToolsErr
 }
 
 type fakeMCPOAuthClusterNotifier struct {
@@ -476,12 +535,10 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	// Create test bots instance
 	testBots := createTestBots(mockAPI, client)
 
-	// Create minimal conversations service for testing
-	conversationsService := &conversations.Conversations{}
-
 	cfg := &testConfigImpl{}
 	mockConvStore := newMockConversationStore()
 	agentStore := newMockAgentStore()
+	mcpMgr := newTestMCPClientManager(t)
 
 	// Allow arbitrary log calls from subsystems used in tests (e.g. MCP discovery).
 	for i := 1; i <= 20; i++ {
@@ -499,6 +556,19 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
 
+	conversationsService := conversations.New(
+		llmPrompts,
+		nil,
+		nil,
+		contextBuilder,
+		testBots,
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+	)
+
 	api := New(
 		testBots,
 		conversationsService,
@@ -515,7 +585,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		nil,
-		&mockMCPClientManager{},
+		mcpMgr,
 		nil,
 		nil,
 		nil,
@@ -537,6 +607,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		client:            client,
 		conversationStore: mockConvStore,
 		agentStore:        agentStore,
+		mcp:               mcpMgr,
 	}
 }
 

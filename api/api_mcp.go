@@ -122,6 +122,30 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 		))
 	}
 
+	// Plugin rows use the same synthetic origin key as filterToolsByConfig.
+	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+		if !cfg.Enabled {
+			continue
+		}
+
+		origin := "plugin://" + cfg.PluginID
+		pluginConfig := &mcp.ServerConfig{
+			Name:        cfg.Name,
+			Enabled:     true,
+			BaseURL:     origin,
+			ToolConfigs: cfg.ToolConfigs,
+		}
+
+		servers = append(servers, buildUserMCPServerInfo(
+			a,
+			userID,
+			oauthManager,
+			pluginConfig,
+			toolsByOrigin[origin],
+			authErrorsByOrigin,
+		))
+	}
+
 	return UserMCPToolsResponse{Servers: servers}
 }
 

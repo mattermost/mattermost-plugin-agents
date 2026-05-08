@@ -22,7 +22,7 @@ export type UserMCPToolInfo = {
     name: string;
     description: string;
     enabled: boolean;
-    policy: string;
+    policy: MCPToolPolicy;
 };
 export type UserMCPServerInfo = {
     name: string;
@@ -35,6 +35,14 @@ export type UserMCPServerInfo = {
 };
 export type UserMCPToolsResponse = {
     servers: UserMCPServerInfo[];
+};
+
+// Mirrors components/system_console/mcp_servers.tsx MCPToolConfig; duplicated to
+// avoid client.tsx depending on UI components.
+type MCPToolConfig = {
+    name: string;
+    policy: MCPToolPolicy;
+    enabled: boolean;
 };
 
 export function setSiteURL(siteURL: string) {
@@ -541,6 +549,32 @@ export async function clearMCPToolsCache() {
     const url = `${baseRoute()}/admin/mcp/tools/cache/clear`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+// Omitted fields are preserved server-side; tool_configs: [] clears policy.
+export async function updatePluginServer(
+    pluginID: string,
+    update: {
+        enabled?: boolean;
+        tool_configs?: MCPToolConfig[];
+    },
+) {
+    const encoded = encodeURIComponent(pluginID);
+    const url = `${baseRoute()}/admin/mcp/plugin-servers/${encoded}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(update),
     }));
 
     if (response.ok) {

@@ -400,7 +400,7 @@ func (p *Plugin) OnActivate() error {
 		}
 		return mcp.ServerConfig{}, false
 	}
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient)
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient)
 	p.configuration.RegisterUpdateListener(func() {
 		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
 		if embeddedErr != nil {
@@ -450,23 +450,9 @@ func (p *Plugin) OnActivate() error {
 	// TODO: Refactor to avoid circular dependency
 	conversationsService.SetMeetingsService(meetingsService)
 
-	// Wire per-tool policy checker for auto-approval in streaming and conversations
+	// Wire per-tool policy checker for auto-approval in streaming and conversations.
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
-		mcpCfg := p.configuration.MCP()
-		if serverBaseURL == mcp.EmbeddedClientKey {
-			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
-			if len(toolConfigs) == 0 {
-				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
-			}
-			embeddedCfg := &mcp.ServerConfig{Enabled: true, ToolConfigs: toolConfigs}
-			return embeddedCfg.GetToolPolicy(toolName)
-		}
-		for i := range mcpCfg.Servers {
-			if mcpCfg.Servers[i].BaseURL == serverBaseURL {
-				return mcpCfg.Servers[i].GetToolPolicy(toolName)
-			}
-		}
-		return "ask", false
+		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, toolName)
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
@@ -476,7 +462,7 @@ func (p *Plugin) OnActivate() error {
 	// Create logger adapter to route MCP handler logs through plugin logging
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI)
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger)
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, mcpClientManager, mmClient)
 	if err != nil {
 		pluginAPI.Log.Error("Failed to create MCP handlers", "error", err)
 	} else {

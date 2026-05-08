@@ -3,6 +3,8 @@
 
 package mcp
 
+import "strings"
+
 // ToolPolicyChecker looks up the per-tool policy for a given MCP server/tool.
 type ToolPolicyChecker interface {
 	GetToolPolicy(serverBaseURL string, toolName string) (policy string, enabled bool)
@@ -14,4 +16,52 @@ type ToolPolicyFunc func(serverBaseURL string, toolName string) (string, bool)
 // GetToolPolicy implements ToolPolicyChecker.
 func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string) (string, bool) {
 	return f(serverBaseURL, toolName)
+}
+
+// LookupToolPolicy resolves a tool's policy for embedded, remote, and plugin
+// origins. Unknown or disabled origins never auto-execute.
+func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool) {
+	if serverBaseURL == EmbeddedClientKey {
+		toolConfigs := cfg.EmbeddedServer.ToolConfigs
+		if len(toolConfigs) == 0 {
+			toolConfigs = SeedVettedToolConfigs(EmbeddedClientKey)
+		}
+		embeddedCfg := &ServerConfig{
+			Name:        EmbeddedServerName,
+			Enabled:     true,
+			BaseURL:     EmbeddedClientKey,
+			ToolConfigs: toolConfigs,
+		}
+		return embeddedCfg.GetToolPolicy(toolName)
+	}
+
+	for i := range cfg.Servers {
+		if cfg.Servers[i].BaseURL == serverBaseURL {
+			return cfg.Servers[i].GetToolPolicy(toolName)
+		}
+	}
+
+	pluginID, isPluginOrigin := strings.CutPrefix(serverBaseURL, pluginServerOriginKey(""))
+	if !isPluginOrigin {
+		return ToolPolicyAsk, false
+	}
+
+	for i := range cfg.PluginServers {
+		ps := &cfg.PluginServers[i]
+		if ps.PluginID != pluginID {
+			continue
+		}
+		if !ps.Enabled {
+			return ToolPolicyAsk, false
+		}
+		synthetic := &ServerConfig{
+			Name:        ps.Name,
+			Enabled:     true,
+			BaseURL:     serverBaseURL,
+			ToolConfigs: ps.ToolConfigs,
+		}
+		return synthetic.GetToolPolicy(toolName)
+	}
+
+	return ToolPolicyAsk, false
 }

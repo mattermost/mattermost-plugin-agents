@@ -8,6 +8,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
 import {ToggleSwitch} from '../toggle_switch';
+import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
 
 import {MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import {MCPServerInfo} from './mcp_tools_viewer';
@@ -76,6 +77,11 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                     <ServerInfo>
                         <ServerName>{server.name}</ServerName>
                         <ServerMeta>
+                            {server.serverType === 'plugin' && (
+                                <PluginBadge>
+                                    <FormattedMessage defaultMessage='Plugin'/>
+                                </PluginBadge>
+                            )}
                             {server.error && (
                                 <ErrorIndicator>
                                     <ExclamationThickIcon size={16}/>
@@ -154,17 +160,24 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                         </EmptyTools>
                     )}
                     {!server.error && !server.needsOAuth && server.tools.length > 0 && (
-                        server.tools.map((tool) => (
-                            <MCPToolConfigRow
-                                key={tool.name}
-                                tool={tool}
-                                toolConfig={getToolConfig(tool.name)}
-                                onToolConfigChange={(updatedConfig) =>
-                                    handleToolConfigChange(tool.name, updatedConfig)
-                                }
-                                serverDisabled={!serverEnabled}
-                            />
-                        ))
+                        server.tools.map((tool) => {
+                            const isPlugin = server.serverType === 'plugin';
+                            const pluginID = isPlugin ? pluginIDFromServerOrigin(server.url) : '';
+                            const displayName = isPlugin ? stripPluginPrefix(tool.name, pluginID) : tool.name;
+
+                            return (
+                                <MCPToolConfigRow
+                                    key={tool.name}
+                                    tool={tool}
+                                    toolConfig={getToolConfig(tool.name)}
+                                    onToolConfigChange={(updatedConfig) =>
+                                        handleToolConfigChange(tool.name, updatedConfig)
+                                    }
+                                    serverDisabled={!serverEnabled}
+                                    displayName={displayName}
+                                />
+                            );
+                        })
                     )}
                 </ToolsContainer>
             )}
@@ -297,6 +310,18 @@ const OAuthIndicator = styled.div`
     font-size: 12px;
     font-weight: 600;
     color: var(--button-bg);
+`;
+
+const PluginBadge = styled.span`
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    margin-right: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--center-channel-bg);
+    background-color: rgba(var(--center-channel-color-rgb), 0.56);
+    border-radius: 10px;
 `;
 
 const ErrorMessage = styled.div`
