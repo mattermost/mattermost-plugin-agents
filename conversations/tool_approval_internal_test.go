@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,8 +113,92 @@ func TestFindPendingToolTurn_StaleClickErrorsAreTyped(t *testing.T) {
 		turnsWithResolved = append(turnsWithResolved, resolved)
 
 		_, _, err = findPendingToolTurn(turnsWithResolved, "post-resolved")
-		require.Error(t, err)
 		require.ErrorIs(t, err, ErrStaleToolClick,
 			"a second click on an already-resolved approval is a client-side staleness issue, not a server error")
+	})
+}
+
+// TestBuildToolResultBlocks pins the privacy/visibility contract for
+// tool_result block creation in HandleToolCall. The rejected-vs-channel
+// distinction is the half of MM-67597 that lives on the writer side: a
+// regression that drops the rejected `Shared: true` override would silently
+// re-introduce the bug because the directive rejection text would be
+// scrubbed by the unshared-redaction in the channel follow-up.
+func TestBuildToolResultBlocks(t *testing.T) {
+	const now = int64(1_700_000_000_000)
+
+	const (
+		acceptedID = "tu-accepted"
+		rejectedID = "tu-rejected"
+	)
+	statusByID := map[string]string{
+		acceptedID: conversation.StatusSuccess,
+		rejectedID: conversation.StatusRejected,
+	}
+	results := []toolrunner.ToolResult{
+		{ToolCallID: acceptedID, Name: "search", Result: "PUBLIC", IsError: false},
+		{ToolCallID: rejectedID, Name: "delete_channel", Result: conversation.RejectedToolCallMessage, IsError: true},
+	}
+
+	indexByID := func(blocks []conversation.ContentBlock) map[string]conversation.ContentBlock {
+		out := map[string]conversation.ContentBlock{}
+		for _, b := range blocks {
+			out[b.ToolUseID] = b
+		}
+		return out
+	}
+
+	t.Run("channel: accepted block stays undecided, rejected forces shared=true and decided", func(t *testing.T) {
+		blocks := buildToolResultBlocks(results, statusByID, false, now)
+		require.Len(t, blocks, 2)
+
+		idx := indexByID(blocks)
+
+		accepted := idx[acceptedID]
+		require.NotNil(t, accepted.Shared)
+		assert.False(t, *accepted.Shared,
+			"channel accepted result must stay shared=false until the user clicks Share")
+		assert.Equal(t, conversation.StatusSuccess, accepted.Status)
+		assert.Nil(t, accepted.DecidedAt,
+			"channel accepted result must stay undecided so the Share/Keep Private prompt renders")
+
+		rejected := idx[rejectedID]
+		require.NotNil(t, rejected.Shared)
+		assert.True(t, *rejected.Shared,
+			"rejected result must be shared=true so the server-authored "+
+				"RejectedToolCallMessage reaches the LLM through the unshared "+
+				"redaction layer (MM-67597)")
+		assert.Equal(t, conversation.StatusRejected, rejected.Status,
+			"rejected tool_result status must mirror the rejected tool_use, "+
+				"not the IsError-derived StatusError")
+		require.NotNil(t, rejected.DecidedAt)
+		assert.Equal(t, now, *rejected.DecidedAt,
+			"rejected results have no Share decision to make, so DecidedAt must be set at creation")
+		assert.Equal(t, conversation.RejectedToolCallMessage, rejected.Content,
+			"rejected result content must be the directive message so the "+
+				"LLM can ask the user for clarification instead of silently stalling")
+	})
+
+	t.Run("DM: every result is shared and decided", func(t *testing.T) {
+		blocks := buildToolResultBlocks(results, statusByID, true, now)
+		require.Len(t, blocks, 2)
+
+		for _, b := range blocks {
+			require.NotNil(t, b.Shared)
+			assert.True(t, *b.Shared, "DM results are auto-shared regardless of accept/reject")
+			require.NotNil(t, b.DecidedAt, "DM results have no Share/Keep Private prompt, so DecidedAt is set immediately")
+		}
+	})
+
+	t.Run("error result on accepted tool stays as StatusError, not StatusRejected", func(t *testing.T) {
+		errResults := []toolrunner.ToolResult{
+			{ToolCallID: acceptedID, Name: "search", Result: "boom", IsError: true},
+		}
+		blocks := buildToolResultBlocks(errResults, statusByID, false, now)
+		require.Len(t, blocks, 1)
+		assert.Equal(t, conversation.StatusError, blocks[0].Status,
+			"a tool_use that the user accepted but that failed at execution "+
+				"is StatusError, not StatusRejected — the rejected path is "+
+				"reserved for user-initiated rejection")
 	})
 }

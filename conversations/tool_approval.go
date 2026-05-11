@@ -177,49 +177,13 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return fmt.Errorf("failed to update turn with resolved statuses: %w", updateErr)
 	}
 
-	// Write tool results as a tool_result turn. DecidedAt is set when the
-	// result is terminal — no share/keep-private decision remains. That
-	// applies to every DM result (auto-shared) and every rejected tool
-	// (nothing was produced to share). Channel results from accepted tools
-	// stay undecided until the requester clicks Share or Keep Private.
-	shared := isDM
 	toolUseStatusByID := make(map[string]string, len(pendingBlocks))
 	for _, b := range pendingBlocks {
 		if b.Type == conversation.BlockTypeToolUse {
 			toolUseStatusByID[b.ID] = b.Status
 		}
 	}
-	now := model.GetMillis()
-	resultBlocks := make([]conversation.ContentBlock, 0, len(toolResults))
-	for _, tr := range toolResults {
-		status := conversation.StatusSuccess
-		if tr.IsError {
-			status = conversation.StatusError
-		}
-		// Rejected tool_results carry a server-authored directive
-		// message (not tool output), so propagate the rejected status
-		// onto the result block and mark it shared. The shared flag
-		// ensures the directive reaches the LLM in channel follow-ups
-		// instead of being replaced with the unshared-redaction
-		// placeholder, which would hide the rejection signal and let
-		// the model silently stall on the next step.
-		blockShared := shared
-		if toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
-			status = conversation.StatusRejected
-			blockShared = true
-		}
-		rb := conversation.ContentBlock{
-			Type:      conversation.BlockTypeToolResult,
-			ToolUseID: tr.ToolCallID,
-			Content:   tr.Result,
-			Status:    status,
-			Shared:    conversation.BoolPtr(blockShared),
-		}
-		if isDM || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
-			rb.DecidedAt = conversation.Int64Ptr(now)
-		}
-		resultBlocks = append(resultBlocks, rb)
-	}
+	resultBlocks := buildToolResultBlocks(toolResults, toolUseStatusByID, isDM, model.GetMillis())
 	resultContent, err := json.Marshal(resultBlocks)
 	if err != nil {
 		return fmt.Errorf("failed to marshal tool result blocks: %w", err)
@@ -504,6 +468,51 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	return nil
+}
+
+// buildToolResultBlocks converts ToolRunner results into tool_result content
+// blocks for persistence. The privacy/visibility invariants encoded here are:
+//
+//   - DM results are shared=true and DecidedAt at creation time (no share
+//     prompt, no follow-up decision needed).
+//   - Channel results from accepted tools are shared=false and DecidedAt is
+//     left nil so the requester is prompted with Share / Keep Private.
+//   - Rejected tool_results always get status=rejected, shared=true, and
+//     DecidedAt set. The block content is the server-authored
+//     RejectedToolCallMessage — not user data — and it must reach the LLM
+//     verbatim through the redaction layer so the model knows to ask for
+//     clarification instead of silently retrying or stalling (MM-67597).
+func buildToolResultBlocks(
+	toolResults []toolrunner.ToolResult,
+	toolUseStatusByID map[string]string,
+	isDM bool,
+	now int64,
+) []conversation.ContentBlock {
+	resultBlocks := make([]conversation.ContentBlock, 0, len(toolResults))
+	for _, tr := range toolResults {
+		status := conversation.StatusSuccess
+		if tr.IsError {
+			status = conversation.StatusError
+		}
+		blockShared := isDM
+		isRejected := toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected
+		if isRejected {
+			status = conversation.StatusRejected
+			blockShared = true
+		}
+		rb := conversation.ContentBlock{
+			Type:      conversation.BlockTypeToolResult,
+			ToolUseID: tr.ToolCallID,
+			Content:   tr.Result,
+			Status:    status,
+			Shared:    conversation.BoolPtr(blockShared),
+		}
+		if isDM || isRejected {
+			rb.DecidedAt = conversation.Int64Ptr(now)
+		}
+		resultBlocks = append(resultBlocks, rb)
+	}
+	return resultBlocks
 }
 
 // findPendingToolTurn returns the assistant turn linked to clickedPostID along

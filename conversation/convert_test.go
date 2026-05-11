@@ -250,6 +250,9 @@ func TestRejectedToolCallMessageIsDirective(t *testing.T) {
 		"rejection message must say the call was rejected")
 	assert.Contains(t, lower, "clarification",
 		"rejection message must direct the LLM to ask the user for clarification")
+	assert.NotRegexp(t, `^\[.*\]$`, RejectedToolCallMessage,
+		"rejection message must be a directive sentence, not a bare bracketed "+
+			"label that LLMs treat as inert metadata")
 }
 
 func TestPostToBlocks(t *testing.T) {
