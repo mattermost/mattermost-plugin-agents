@@ -42,10 +42,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
     const intl = useIntl();
     const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
     const [loading, setLoading] = useState(false);
-    const refreshLabel = intl.formatMessage({
-        id: 'ai.rhs.tools.refresh_tool_providers',
-        defaultMessage: 'Refresh tool providers',
-    });
+    const refreshLabel = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
 
     useEffect(() => {
         if (preloadedServers && preloadedServers.length > 0) {
