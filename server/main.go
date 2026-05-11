@@ -658,44 +658,66 @@ func (p *Plugin) ServeMetrics(c *plugin.Context, w http.ResponseWriter, r *http.
 	p.apiService.ServeMetrics(c, w, r)
 }
 
-// EmailNotificationWillBeSent blocks email notifications for bot replies in threads.
+// EmailNotificationWillBeSent blocks email notifications for AI bot posts that
+// were triggered by the user's own action (thread replies and DM responses).
 func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotification) (*model.EmailNotificationContent, string) {
-	if p.shouldBlockBotReplyNotification(emailNotification.SenderId, emailNotification.RootId) {
-		return nil, "notification blocked: bot reply in thread"
+	if p.shouldBlockAgentNotification(emailNotification.SenderId, emailNotification.RootId, "", emailNotification.IsDirectMessage) {
+		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return &emailNotification.EmailNotificationContent, ""
 }
 
-// NotificationWillBePushed blocks push notifications for bot replies in threads.
+// NotificationWillBePushed blocks push notifications for AI bot posts that were
+// triggered by the user's own action (thread replies and DM responses to RHS
+// actions such as "Summarize Thread"). See MM-66720.
 // IMPORTANT: This hook must execute quickly as it can become blocking and delay post creation.
 func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotification, userID string) (*model.PushNotification, string) {
 	if pushNotification.PostId == "" {
 		return pushNotification, ""
 	}
 
-	if p.shouldBlockBotReplyNotification(pushNotification.SenderId, pushNotification.RootId) {
-		return nil, "notification blocked: bot reply in thread"
+	isDM := pushNotification.ChannelType == model.ChannelTypeDirect
+	if p.shouldBlockAgentNotification(pushNotification.SenderId, pushNotification.RootId, pushNotification.PostType, isDM) {
+		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return pushNotification, ""
 }
 
-func (p *Plugin) shouldBlockBotReplyNotification(senderID, rootID string) bool {
-	// Only check threaded replies
-	if rootID == "" {
-		return false
-	}
-
-	// Check if bots service is initialized
+// shouldBlockAgentNotification reports whether a notification should be
+// suppressed because it originates from an AI agent post that is a response to
+// the receiving user's own action.
+//
+// Posts from configured AI agent bots are suppressed when any of the following holds:
+//   - The post is a threaded reply (rootID != ""). Agents only reply in threads
+//     in response to a user mention or DM.
+//   - The post is of type "custom_llmbot". This type is set exclusively on
+//     agent response posts produced by streaming flows (channel/thread summarize,
+//     AI conversation responses, etc.), including the root DM post created when
+//     a user triggers an RHS action like "Summarize Thread".
+//   - The post is delivered in a direct-message channel. Agents only post in a
+//     DM in response to the user they're DMing, so the notification is always
+//     redundant.
+func (p *Plugin) shouldBlockAgentNotification(senderID, rootID, postType string, isDM bool) bool {
 	if p.bots == nil {
 		return false
 	}
 
-	// Check if sender is a bot by looking up in the bots cache
 	bot := p.bots.GetBotByID(senderID)
 	if bot == nil {
 		return false
 	}
 
-	// Block all bot reply notifications in threads
-	return true
+	if rootID != "" {
+		return true
+	}
+
+	if postType == "custom_llmbot" {
+		return true
+	}
+
+	if isDM {
+		return true
+	}
+
+	return false
 }

@@ -349,8 +349,11 @@ export default class Plugin {
             return {args};
         }
 
-        // Block all threaded replies from our AI bots
-        if (post.root_id && post.type === 'custom_llmbot') {
+        // Block desktop notifications for AI agent response posts. The
+        // custom_llmbot post type is only used by agent responses, which are
+        // always triggered by the receiving user's own action (mention, DM,
+        // or an RHS action like "Summarize Thread"). See MM-66720.
+        if (post.type === 'custom_llmbot') {
             return {args: {...args, notify: false}};
         }
 
