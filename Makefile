@@ -370,16 +370,9 @@ dist: apply server webapp bundle
 .PHONY: dist-ci
 dist-ci: apply server-ci webapp bundle
 
-## Builds and installs the plugin to a server. Builds linux-amd64 only by
-## default (the platform of most Mattermost server deployments). Set
-## MAKE_ALL_PLATFORMS=1 to build all supported OS/arch combinations — needed
-## when deploying to a Mac- or Windows-native Mattermost.
+## Builds and installs the plugin to a server.
 .PHONY: deploy
-ifeq ($(MAKE_ALL_PLATFORMS),)
-deploy: dist-ci
-else
 deploy: dist
-endif
 	./build/bin/pluginctl deploy $(PLUGIN_ID) dist/$(BUNDLE_NAME)
 
 ## Builds the MCP server binary.
@@ -589,7 +582,7 @@ help:
 	@printf "  \033[36m%-22s\033[0m %s\n" "check-style-fix" "Lint and auto-fix what's fixable; re-extracts i18n strings"
 	@printf "  \033[36m%-22s\033[0m %s\n" "test" "Run all unit tests"
 	@printf "  \033[36m%-22s\033[0m %s\n" "e2e" "Run Playwright e2e suite (slow, defer to CI when possible)"
-	@printf "  \033[36m%-22s\033[0m %s\n" "deploy" "Build linux-amd64 and deploy to a running Mattermost"
+	@printf "  \033[36m%-22s\033[0m %s\n" "deploy" "Build and deploy to a running Mattermost"
 	@printf "\nAll documented targets:\n\n"
 	@awk '/^## / { sub(/^## /, "", $$0); if (doc == "") doc=$$0; next } \
 	      /^## *$$/ { next } \
