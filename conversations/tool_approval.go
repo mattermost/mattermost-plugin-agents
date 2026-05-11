@@ -162,7 +162,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
-				Result:     "Tool call rejected by user",
+				Result:     conversation.RejectedToolCallMessage,
 				IsError:    true,
 			})
 		}
@@ -196,12 +196,24 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		if tr.IsError {
 			status = conversation.StatusError
 		}
+		// Rejected tool_results carry a server-authored directive
+		// message (not tool output), so propagate the rejected status
+		// onto the result block and mark it shared. The shared flag
+		// ensures the directive reaches the LLM in channel follow-ups
+		// instead of being replaced with the unshared-redaction
+		// placeholder, which would hide the rejection signal and let
+		// the model silently stall on the next step.
+		blockShared := shared
+		if toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
+			status = conversation.StatusRejected
+			blockShared = true
+		}
 		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			Status:    status,
-			Shared:    conversation.BoolPtr(shared),
+			Shared:    conversation.BoolPtr(blockShared),
 		}
 		if isDM || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
 			rb.DecidedAt = conversation.Int64Ptr(now)

@@ -223,6 +223,35 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	})
 }
 
+// TestUnsharedToolResultRedactionIsDirective pins the contract that the
+// kept-private redaction text instructs the LLM to ask for clarification.
+// Regressing to a passive label like "[result not shared by user]" causes
+// multi-step workflows to silently stall after a Keep Private click — the
+// model sees no tool output and no instruction on how to proceed (MM-67597).
+func TestUnsharedToolResultRedactionIsDirective(t *testing.T) {
+	lower := strings.ToLower(UnsharedToolResultRedaction)
+	assert.Contains(t, lower, "private",
+		"redaction must mention that the result is being kept private")
+	assert.Contains(t, lower, "clarification",
+		"redaction must direct the LLM to ask the user for clarification, "+
+			"otherwise multi-step workflows stall after Keep Private")
+	assert.NotRegexp(t, `^\[.*\]$`, UnsharedToolResultRedaction,
+		"redaction must be a directive sentence, not a bare bracketed label "+
+			"that LLMs treat as inert metadata")
+}
+
+// TestRejectedToolCallMessageIsDirective mirrors the kept-private contract
+// for the rejected case. Per MM-67597 the bug report explicitly calls out
+// that both Keep Private and Reject must produce a directive prompt rather
+// than a terse error.
+func TestRejectedToolCallMessageIsDirective(t *testing.T) {
+	lower := strings.ToLower(RejectedToolCallMessage)
+	assert.Contains(t, lower, "rejected",
+		"rejection message must say the call was rejected")
+	assert.Contains(t, lower, "clarification",
+		"rejection message must direct the LLM to ask the user for clarification")
+}
+
 func TestPostToBlocks(t *testing.T) {
 	tests := []struct {
 		name     string

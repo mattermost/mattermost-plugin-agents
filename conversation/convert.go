@@ -16,8 +16,22 @@ const DefaultMaxFileSize = int64(5 * 1024 * 1024)
 
 // UnsharedToolResultRedaction replaces tool_result content the requester has
 // not shared, preserving the tool_use/tool_result pairing required by LLM
-// providers.
-const UnsharedToolResultRedaction = "[result not shared by user]"
+// providers. The wording is directive: the LLM that previously generated the
+// tool call is told the user opted to keep the result private and asked to
+// request clarification rather than silently retrying or stalling. Without
+// the directive, multi-step workflows stall after a Keep Private click
+// because the model cannot see the tool output and has no instruction on how
+// to proceed.
+const UnsharedToolResultRedaction = "The user opted to keep this tool call result private. " +
+	"You cannot see the tool output. Do not retry the tool call. Ask the user " +
+	"for clarification on how to proceed."
+
+// RejectedToolCallMessage is written into the tool_result content when the
+// user rejects a pending tool call. The wording mirrors
+// UnsharedToolResultRedaction and instructs the LLM to ask the user how to
+// proceed instead of silently retrying the same call.
+const RejectedToolCallMessage = "The user rejected this tool call. " +
+	"Do not retry the same tool call. Ask the user for clarification on how to proceed."
 
 // unsharedToolUseArgumentsRedaction replaces tool_use arguments the requester
 // has not shared. Empty JSON keeps the call well-formed for providers that

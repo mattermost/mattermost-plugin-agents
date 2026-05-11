@@ -746,6 +746,80 @@ func TestBuildCompletionRequest_RedactsUnsharedToolContentByDefault(t *testing.T
 		assert.Equal(t, "PUBLIC DATA", results["tc-shared"])
 		assert.Equal(t, "PRIVATE SECRET", results["tc-private"])
 	})
+
+	t.Run("kept-private tool result reaches LLM with directive wording", func(t *testing.T) {
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		require.NoError(t, err)
+		results := resultsByID(req)
+		assert.Contains(t, strings.ToLower(results["tc-private"]), "clarification",
+			"the LLM-facing redaction must instruct the model to ask for "+
+				"clarification, otherwise multi-step workflows stall after "+
+				"the user clicks Keep Private (MM-67597)")
+	})
+}
+
+// TestBuildCompletionRequest_RejectedToolResultReachesLLM pins the contract
+// that a tool_use the user rejected at the call stage flows to the LLM with
+// a directive rejection message instead of the unshared-redaction
+// placeholder. Without this, channel mentions whose only tool_use was
+// rejected would receive "[result not shared by user]" with no instruction
+// on how to proceed, mirroring the original Keep Private bug (MM-67597).
+func TestBuildCompletionRequest_RejectedToolResultReachesLLM(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "do something risky",
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	// Channel-style write: the assistant tool_use is shared=false, but the
+	// rejected tool_result must be shared=true with status=rejected so the
+	// directive message is preserved through the LLM-facing redaction.
+	assistantBlocks := []ContentBlock{
+		{Type: BlockTypeToolUse, ID: "tc-rejected", Name: "delete_channel", Input: json.RawMessage(`{}`), Status: StatusRejected, Shared: BoolPtr(false)},
+	}
+	assistantContent, err := json.Marshal(assistantBlocks)
+	require.NoError(t, err)
+	err = s.CreateTurn(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "assistant",
+		Content: assistantContent, Sequence: 2, CreatedAt: model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	resultBlocks := []ContentBlock{
+		{Type: BlockTypeToolResult, ToolUseID: "tc-rejected", Content: RejectedToolCallMessage, Status: StatusRejected, Shared: BoolPtr(true)},
+	}
+	resultContent, err := json.Marshal(resultBlocks)
+	require.NoError(t, err)
+	err = s.CreateTurn(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "tool_result",
+		Content: resultContent, Sequence: 3, CreatedAt: model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+	require.NoError(t, err)
+
+	var rejectedResult string
+	for _, p := range req.Posts {
+		for _, tc := range p.ToolUse {
+			if tc.ID == "tc-rejected" {
+				rejectedResult = tc.Result
+			}
+		}
+	}
+	assert.Equal(t, RejectedToolCallMessage, rejectedResult,
+		"server-authored rejection messages must reach the LLM verbatim "+
+			"(no unshared-redaction substitution); the LLM needs to see "+
+			"the rejection to ask for clarification")
 }
 
 // TestBuildChannelMentionRequest_RedactsUnsharedToolContentByDefault mirrors
