@@ -847,6 +847,97 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 	}
 }
 
+func TestAppendFirstWebSearchFallbackSource(t *testing.T) {
+	sourceTitle := "Example Source"
+	item := &schemas.ResponsesMessage{
+		Type: schemas.Ptr(schemas.ResponsesMessageTypeWebSearchCall),
+		ResponsesToolMessage: &schemas.ResponsesToolMessage{
+			Action: &schemas.ResponsesToolMessageActionStruct{
+				ResponsesWebSearchToolCallAction: &schemas.ResponsesWebSearchToolCallAction{
+					Sources: []schemas.ResponsesWebSearchToolCallActionSearchSource{
+						{Type: "url", URL: "https://example.com/one", Title: &sourceTitle},
+						{Type: "url", URL: "https://example.com/two"},
+					},
+				},
+			},
+		},
+	}
+
+	sources := appendFirstWebSearchFallbackSource(nil, item)
+	require.Len(t, sources, 1)
+	assert.Equal(t, webSearchFallbackSource{
+		URL:   "https://example.com/one",
+		Title: "Example Source",
+	}, sources[0])
+
+	sources = appendFirstWebSearchFallbackSource(sources, item)
+	require.Len(t, sources, 2)
+	assert.Equal(t, "https://example.com/two", sources[1].URL)
+}
+
+func TestBuildFallbackAnnotations(t *testing.T) {
+	annotations := buildFallbackAnnotations([]webSearchFallbackSource{
+		{URL: "https://example.com/one", Title: "One"},
+		{URL: "https://example.com/two", Title: "Two"},
+	}, 42)
+
+	require.Len(t, annotations, 2)
+	assert.Equal(t, llm.Annotation{
+		Type:       llm.AnnotationTypeURLCitation,
+		StartIndex: 42,
+		EndIndex:   42,
+		URL:        "https://example.com/one",
+		Title:      "One",
+		Index:      1,
+	}, annotations[0])
+	assert.Equal(t, llm.Annotation{
+		Type:       llm.AnnotationTypeURLCitation,
+		StartIndex: 42,
+		EndIndex:   42,
+		URL:        "https://example.com/two",
+		Title:      "Two",
+		Index:      2,
+	}, annotations[1])
+}
+
+func TestApplyPendingAnnotationPositions(t *testing.T) {
+	annotations := []llm.Annotation{
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 0, EndIndex: 0, URL: "https://example.com/one", Index: 1},
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 5, EndIndex: 10, URL: "https://example.com/two", Index: 2},
+	}
+
+	applyPendingAnnotationPositions(annotations, []pendingAnnotationPosition{
+		{index: 0, missingStart: true, missingEnd: true},
+		{index: 1, missingEnd: true},
+	}, 20, 42)
+
+	assert.Equal(t, 20, annotations[0].StartIndex)
+	assert.Equal(t, 42, annotations[0].EndIndex)
+	assert.Equal(t, 5, annotations[1].StartIndex)
+	assert.Equal(t, 42, annotations[1].EndIndex)
+}
+
+func TestPendingAnnotationPositionsWithoutContentIndex(t *testing.T) {
+	pending := map[int][]pendingAnnotationPosition{}
+	annotations := []llm.Annotation{
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 0, EndIndex: 0, URL: "https://example.com", Index: 1},
+	}
+
+	pending[missingContentIndex] = append(pending[missingContentIndex], pendingAnnotationPosition{
+		index:        0,
+		missingStart: true,
+		missingEnd:   true,
+	})
+	for contentIndex, positions := range pending {
+		applyPendingAnnotationPositions(annotations, positions, 0, 42)
+		delete(pending, contentIndex)
+	}
+
+	assert.Empty(t, pending)
+	assert.Equal(t, 0, annotations[0].StartIndex)
+	assert.Equal(t, 42, annotations[0].EndIndex)
+}
+
 type testStructuredOutput struct {
 	Name  string `json:"name"`
 	Score int    `json:"score"`

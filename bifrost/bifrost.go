@@ -32,6 +32,19 @@ const (
 	DefaultStreamingTimeout = 5 * time.Minute
 )
 
+type webSearchFallbackSource struct {
+	URL   string
+	Title string
+}
+
+type pendingAnnotationPosition struct {
+	index        int
+	missingStart bool
+	missingEnd   bool
+}
+
+const missingContentIndex = -1
+
 // LLM implements the llm.LanguageModel interface using the Bifrost gateway.
 type LLM struct {
 	client           *bifrostcore.Bifrost
@@ -1572,8 +1585,10 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 	// Annotation buffer and text position tracking
 	var annotations []llm.Annotation
-	var textLen int       // cumulative byte length of all streamed text
-	var blockStartPos int // byte position where current text block started
+	var fallbackSources []webSearchFallbackSource
+	pendingAnnotationPositions := make(map[int][]pendingAnnotationPosition)
+	var textLen int       // cumulative UTF-16 length of all streamed text
+	var blockStartPos int // UTF-16 position where current text block started
 
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
@@ -1644,7 +1659,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 						Type:  llm.EventTypeText,
 						Value: *resp.Delta,
 					}
-					textLen += len(*resp.Delta)
+					textLen += llm.UTF16CodeUnitCount(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
@@ -1675,8 +1690,10 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				if resp.Annotation != nil {
 					if ann := convertBifrostAnnotation(resp.Annotation, len(annotations)+1); ann != nil {
 						// Bifrost doesn't provide output-text positions during Anthropic streaming.
-						// Compute them from tracked block boundaries, matching the approach used by
-						// the old Anthropic SDK implementation (extractAnnotations).
+						// Attach those citations to the current text block and correct the end
+						// position when output_text.done arrives.
+						missingStart := resp.Annotation.StartIndex == nil
+						missingEnd := resp.Annotation.EndIndex == nil
 						if resp.Annotation.StartIndex == nil {
 							ann.StartIndex = blockStartPos
 						}
@@ -1684,6 +1701,20 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 							ann.EndIndex = textLen
 						}
 						annotations = append(annotations, *ann)
+						if missingStart || missingEnd {
+							contentIndex := missingContentIndex
+							if resp.ContentIndex != nil {
+								contentIndex = *resp.ContentIndex
+							}
+							pendingAnnotationPositions[contentIndex] = append(
+								pendingAnnotationPositions[contentIndex],
+								pendingAnnotationPosition{
+									index:        len(annotations) - 1,
+									missingStart: missingStart,
+									missingEnd:   missingEnd,
+								},
+							)
+						}
 					}
 				}
 
@@ -1694,6 +1725,15 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				// Text block complete - emit accumulated annotations and advance block position.
 				// Keep the annotation buffer so subsequent output_text_done events can include
 				// citations accumulated across the full response.
+				if resp.ContentIndex != nil {
+					applyPendingAnnotationPositions(
+						annotations,
+						pendingAnnotationPositions[*resp.ContentIndex],
+						blockStartPos,
+						textLen,
+					)
+					delete(pendingAnnotationPositions, *resp.ContentIndex)
+				}
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
@@ -1772,6 +1812,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemDone:
+				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
 				// Output item completed - finalize function call if any
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
@@ -1808,6 +1849,13 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				}
 
 				// Emit any accumulated annotations
+				for contentIndex, positions := range pendingAnnotationPositions {
+					applyPendingAnnotationPositions(annotations, positions, blockStartPos, textLen)
+					delete(pendingAnnotationPositions, contentIndex)
+				}
+				if len(annotations) == 0 && len(fallbackSources) > 0 {
+					annotations = buildFallbackAnnotations(fallbackSources, textLen)
+				}
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
@@ -1928,4 +1976,68 @@ func convertBifrostAnnotation(ann *schemas.ResponsesOutputMessageContentTextAnno
 	}
 
 	return result
+}
+
+func appendFirstWebSearchFallbackSource(sources []webSearchFallbackSource, item *schemas.ResponsesMessage) []webSearchFallbackSource {
+	if item == nil || item.Type == nil || *item.Type != schemas.ResponsesMessageTypeWebSearchCall {
+		return sources
+	}
+	if item.ResponsesToolMessage == nil ||
+		item.ResponsesToolMessage.Action == nil ||
+		item.ResponsesToolMessage.Action.ResponsesWebSearchToolCallAction == nil {
+		return sources
+	}
+
+	for _, source := range item.ResponsesToolMessage.Action.ResponsesWebSearchToolCallAction.Sources {
+		if source.URL == "" || hasFallbackSource(sources, source.URL) {
+			continue
+		}
+		title := ""
+		if source.Title != nil {
+			title = *source.Title
+		}
+		return append(sources, webSearchFallbackSource{
+			URL:   source.URL,
+			Title: title,
+		})
+	}
+	return sources
+}
+
+func hasFallbackSource(sources []webSearchFallbackSource, url string) bool {
+	for _, source := range sources {
+		if source.URL == url {
+			return true
+		}
+	}
+	return false
+}
+
+func buildFallbackAnnotations(sources []webSearchFallbackSource, endIndex int) []llm.Annotation {
+	annotations := make([]llm.Annotation, 0, len(sources))
+	for i, source := range sources {
+		annotations = append(annotations, llm.Annotation{
+			Type:       llm.AnnotationTypeURLCitation,
+			StartIndex: endIndex,
+			EndIndex:   endIndex,
+			URL:        source.URL,
+			Title:      source.Title,
+			Index:      i + 1,
+		})
+	}
+	return annotations
+}
+
+func applyPendingAnnotationPositions(annotations []llm.Annotation, positions []pendingAnnotationPosition, startIndex, endIndex int) {
+	for _, position := range positions {
+		if position.index < 0 || position.index >= len(annotations) {
+			continue
+		}
+		if position.missingStart {
+			annotations[position.index].StartIndex = startIndex
+		}
+		if position.missingEnd {
+			annotations[position.index].EndIndex = endIndex
+		}
+	}
 }
