@@ -1725,15 +1725,17 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				// Text block complete - emit accumulated annotations and advance block position.
 				// Keep the annotation buffer so subsequent output_text_done events can include
 				// citations accumulated across the full response.
+				contentIndex := missingContentIndex
 				if resp.ContentIndex != nil {
-					applyPendingAnnotationPositions(
-						annotations,
-						pendingAnnotationPositions[*resp.ContentIndex],
-						blockStartPos,
-						textLen,
-					)
-					delete(pendingAnnotationPositions, *resp.ContentIndex)
+					contentIndex = *resp.ContentIndex
 				}
+				flushPendingAnnotationPositions(
+					annotations,
+					pendingAnnotationPositions,
+					contentIndex,
+					blockStartPos,
+					textLen,
+				)
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
@@ -1982,13 +1984,11 @@ func appendFirstWebSearchFallbackSource(sources []webSearchFallbackSource, item 
 	if item == nil || item.Type == nil || *item.Type != schemas.ResponsesMessageTypeWebSearchCall {
 		return sources
 	}
-	if item.ResponsesToolMessage == nil ||
-		item.ResponsesToolMessage.Action == nil ||
-		item.ResponsesToolMessage.Action.ResponsesWebSearchToolCallAction == nil {
+	if item.Action == nil || item.Action.ResponsesWebSearchToolCallAction == nil {
 		return sources
 	}
 
-	for _, source := range item.ResponsesToolMessage.Action.ResponsesWebSearchToolCallAction.Sources {
+	for _, source := range item.Action.ResponsesWebSearchToolCallAction.Sources {
 		if source.URL == "" || hasFallbackSource(sources, source.URL) {
 			continue
 		}
@@ -1996,7 +1996,7 @@ func appendFirstWebSearchFallbackSource(sources []webSearchFallbackSource, item 
 		if source.Title != nil {
 			title = *source.Title
 		}
-		return append(sources, webSearchFallbackSource{
+		sources = append(sources, webSearchFallbackSource{
 			URL:   source.URL,
 			Title: title,
 		})
@@ -2040,4 +2040,13 @@ func applyPendingAnnotationPositions(annotations []llm.Annotation, positions []p
 			annotations[position.index].EndIndex = endIndex
 		}
 	}
+}
+
+func flushPendingAnnotationPositions(
+	annotations []llm.Annotation,
+	pending map[int][]pendingAnnotationPosition,
+	contentIndex, startIndex, endIndex int,
+) {
+	applyPendingAnnotationPositions(annotations, pending[contentIndex], startIndex, endIndex)
+	delete(pending, contentIndex)
 }

@@ -864,15 +864,28 @@ func TestAppendFirstWebSearchFallbackSource(t *testing.T) {
 	}
 
 	sources := appendFirstWebSearchFallbackSource(nil, item)
-	require.Len(t, sources, 1)
+	require.Len(t, sources, 2)
 	assert.Equal(t, webSearchFallbackSource{
 		URL:   "https://example.com/one",
 		Title: "Example Source",
 	}, sources[0])
+	assert.Equal(t, webSearchFallbackSource{
+		URL:   "https://example.com/two",
+		Title: "",
+	}, sources[1])
 
 	sources = appendFirstWebSearchFallbackSource(sources, item)
 	require.Len(t, sources, 2)
-	assert.Equal(t, "https://example.com/two", sources[1].URL)
+	assert.Equal(t, []webSearchFallbackSource{
+		{
+			URL:   "https://example.com/one",
+			Title: "Example Source",
+		},
+		{
+			URL:   "https://example.com/two",
+			Title: "",
+		},
+	}, sources)
 }
 
 func TestBuildFallbackAnnotations(t *testing.T) {
@@ -928,10 +941,7 @@ func TestPendingAnnotationPositionsWithoutContentIndex(t *testing.T) {
 		missingStart: true,
 		missingEnd:   true,
 	})
-	for contentIndex, positions := range pending {
-		applyPendingAnnotationPositions(annotations, positions, 0, 42)
-		delete(pending, contentIndex)
-	}
+	flushPendingAnnotationPositions(annotations, pending, missingContentIndex, 0, 42)
 
 	assert.Empty(t, pending)
 	assert.Equal(t, 0, annotations[0].StartIndex)
