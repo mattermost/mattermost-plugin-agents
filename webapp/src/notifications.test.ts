@@ -106,4 +106,41 @@ describe('shouldSuppressBotNotification', () => {
             }),
         ).toBe(false);
     });
+
+    it('treats from_bot as the string "true" only (Mattermost emits it as a string)', () => {
+        // The Mattermost server emits the `from_bot` prop as the literal string
+        // 'true'. Callers that ever pass a boolean would silently miss the
+        // suppression — this test pins the documented contract.
+        const post = {
+            user_id: 'some-bot',
+            root_id: 'parent-1',
+            props: {from_bot: true as unknown as string},
+        };
+
+        expect(
+            shouldSuppressBotNotification(post, {
+                now: fakeNow,
+                currentUserId: 'user-1',
+                parentPost: {user_id: 'user-1', create_at: fakeNow - 100},
+            }),
+        ).toBe(false);
+    });
+
+    it('does not suppress when currentUserId is unknown (login/logout race)', () => {
+        // When the webapp is between users (e.g. logout) the suppression check
+        // must still resolve to false rather than crash or match an empty
+        // string against a real user id.
+        const post = {
+            user_id: 'some-bot',
+            root_id: 'parent-1',
+            props: {from_bot: 'true'},
+        };
+
+        expect(
+            shouldSuppressBotNotification(post, {
+                now: fakeNow,
+                parentPost: {user_id: 'user-1', create_at: fakeNow - 100},
+            }),
+        ).toBe(false);
+    });
 });

@@ -33,28 +33,33 @@ func TestNotificationWillBePushed(t *testing.T) {
 		wantBlocked  bool
 	}{
 		{
-			name: "blocks AI agent threaded reply (existing behaviour)",
+			// Isolates the rootID branch: no DM, no custom_llmbot type.
+			name: "blocks AI agent threaded reply in a regular channel",
 			notification: &model.PushNotification{
-				PostId:   "post-1",
-				SenderId: botUserID,
-				RootId:   "parent-post-1",
-				PostType: "custom_llmbot",
+				PostId:      "post-1",
+				SenderId:    botUserID,
+				RootId:      "parent-post-1",
+				ChannelType: model.ChannelTypeOpen,
 			},
 			wantBlocked: true,
 		},
 		{
-			name: "blocks AI agent root DM post created by an RHS action (MM-66720)",
+			// Isolates the custom_llmbot branch: rootless root post in a regular
+			// channel (e.g. a streaming /summarize answer in a public channel).
+			name: "blocks AI agent custom_llmbot root post in a regular channel",
 			notification: &model.PushNotification{
 				PostId:      "post-2",
 				SenderId:    botUserID,
-				RootId:      "",
 				PostType:    "custom_llmbot",
-				ChannelType: model.ChannelTypeDirect,
+				ChannelType: model.ChannelTypeOpen,
 			},
 			wantBlocked: true,
 		},
 		{
-			name: "blocks AI agent post in a DM channel without custom_llmbot type",
+			// Isolates the DM branch and represents the MM-66720 scenario:
+			// "Summarize Thread" creates an agent root post in the bot DM with
+			// no rootID.
+			name: "blocks AI agent root post in a DM channel (MM-66720)",
 			notification: &model.PushNotification{
 				PostId:      "post-3",
 				SenderId:    botUserID,
@@ -73,11 +78,24 @@ func TestNotificationWillBePushed(t *testing.T) {
 			wantBlocked: false,
 		},
 		{
-			name: "does NOT block a non-bot user's post",
+			name: "does NOT block a non-bot user's post in a DM",
 			notification: &model.PushNotification{
 				PostId:      "post-5",
 				SenderId:    "regular-user",
 				ChannelType: model.ChannelTypeDirect,
+			},
+			wantBlocked: false,
+		},
+		{
+			// Defensive: a custom_llmbot-typed post from an unknown sender (e.g.
+			// after an agent is deleted) must not leak suppression onto an
+			// unrelated user's notifications.
+			name: "does NOT block a custom_llmbot post from an unknown sender",
+			notification: &model.PushNotification{
+				PostId:      "post-6",
+				SenderId:    "regular-user",
+				PostType:    "custom_llmbot",
+				ChannelType: model.ChannelTypeOpen,
 			},
 			wantBlocked: false,
 		},
@@ -174,5 +192,19 @@ func TestNotificationWillBePushed_BotsCacheUninitialized(t *testing.T) {
 
 	got, reason := p.NotificationWillBePushed(notification, "recipient-user")
 	require.Equal(t, notification, got, "must pass through when bots service is not initialized")
+	require.Empty(t, reason)
+}
+
+func TestEmailNotificationWillBeSent_BotsCacheUninitialized(t *testing.T) {
+	p := &Plugin{}
+	notification := &model.EmailNotification{
+		PostId:          "post-1",
+		SenderId:        botUserID,
+		IsDirectMessage: true,
+		RootId:          "parent-post-1",
+	}
+
+	got, reason := p.EmailNotificationWillBeSent(notification)
+	require.NotNil(t, got, "must pass through when bots service is not initialized")
 	require.Empty(t, reason)
 }
