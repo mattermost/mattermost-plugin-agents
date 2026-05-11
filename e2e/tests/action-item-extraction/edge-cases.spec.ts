@@ -32,7 +32,7 @@ data: [DONE]
 test.beforeAll(async () => {
     mattermost = await RunContainer();
     openAIMock = await RunOpenAIMocks(mattermost.network);
-});
+}, { timeout: 120000 });
 
 test.beforeEach(async () => {
     // Reset mocks before each test to prevent cross-contamination
@@ -40,8 +40,12 @@ test.beforeEach(async () => {
 });
 
 test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
+    if (openAIMock) {
+        await openAIMock.stop();
+    }
+    if (mattermost) {
+        await mattermost.stop();
+    }
 });
 
 async function setupTestPage(page) {
