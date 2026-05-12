@@ -201,6 +201,16 @@ func toolArgsToJSON(s string) json.RawMessage {
 	return json.RawMessage(s)
 }
 
+func readFileData(file llm.File) ([]byte, error) {
+	if len(file.Data) > 0 {
+		return file.Data, nil
+	}
+	if file.Reader == nil {
+		return nil, fmt.Errorf("file reader is nil")
+	}
+	return io.ReadAll(file.Reader)
+}
+
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
 	account := &providerAccount{
@@ -1054,7 +1064,7 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 			continue
 		}
 
-		data, err := io.ReadAll(file.Reader)
+		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, schemas.ChatContentBlock{
 				Type: schemas.ChatContentBlockTypeText,
@@ -1355,7 +1365,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 			continue
 		}
 
-		data, err := io.ReadAll(file.Reader)
+		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, schemas.ResponsesMessageContentBlock{
 				Type: schemas.ResponsesInputMessageContentBlockTypeText,

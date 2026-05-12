@@ -12,6 +12,7 @@ import (
 type File struct {
 	MimeType string
 	Size     int64
+	Data     []byte
 	Reader   io.Reader
 }
 

@@ -4,9 +4,11 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -59,11 +61,19 @@ func (a *API) convertBridgePostsToInternal(req bridgeclient.CompletionRequest) (
 				if err != nil {
 					return nil, fmt.Errorf("failed to get file for file ID %s: %w", fileID, err)
 				}
+				data, err := io.ReadAll(fileReader)
+				if closeErr := fileReader.Close(); closeErr != nil {
+					a.mmClient.LogError("failed to close bridge file reader", "error", closeErr)
+				}
+				if err != nil {
+					return nil, fmt.Errorf("failed to read file for file ID %s: %w", fileID, err)
+				}
 
 				files[j] = llm.File{
 					MimeType: fileInfo.MimeType,
 					Size:     fileInfo.Size,
-					Reader:   fileReader,
+					Data:     data,
+					Reader:   bytes.NewReader(data),
 				}
 			}
 		}

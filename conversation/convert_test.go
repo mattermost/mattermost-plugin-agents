@@ -498,6 +498,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		require.Len(t, post.Files, 1, "an image block with vision enabled must produce exactly one entry in Post.Files")
 		assert.Equal(t, "image/png", post.Files[0].MimeType)
 		assert.Equal(t, int64(1234), post.Files[0].Size)
+		assert.Equal(t, []byte("PNGDATA"), post.Files[0].Data)
 		require.NotNil(t, post.Files[0].Reader)
 
 		// Read the bytes back and pin them to what the mock returned.

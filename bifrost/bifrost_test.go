@@ -4,6 +4,7 @@
 package bifrost
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -186,6 +187,31 @@ func TestBuildChatReasoning(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
+	b := &LLM{}
+	imageData := []byte("PNGDATA")
+	post := llm.Post{
+		Role:    llm.PostRoleUser,
+		Message: "look at this",
+		Files: []llm.File{{
+			MimeType: "image/png",
+			Size:     int64(len(imageData)),
+			Data:     imageData,
+			Reader:   bytes.NewReader(imageData),
+		}},
+	}
+
+	first := b.createMultimodalContent(post)
+	second := b.createMultimodalContent(post)
+
+	require.Len(t, first, 2)
+	require.Len(t, second, 2)
+	require.NotNil(t, first[1].ImageURLStruct)
+	require.NotNil(t, second[1].ImageURLStruct)
+	assert.Equal(t, first[1].ImageURLStruct.URL, second[1].ImageURLStruct.URL)
+	assert.Contains(t, second[1].ImageURLStruct.URL, "UE5HREFUQQ==")
 }
 
 // TestConvertToBifrostRequestOpus47Reasoning verifies that when our
