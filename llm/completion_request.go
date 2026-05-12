@@ -16,6 +16,15 @@ type File struct {
 	Reader   io.Reader
 }
 
+func IsSupportedImageMimeType(mimeType string) bool {
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
 type PostRole int
 
 const (

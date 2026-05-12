@@ -1220,13 +1220,7 @@ func buildResponsesTextConfig(schema *jsonschema.Schema) (*schemas.ResponsesText
 
 // isValidImageType checks if the MIME type is supported.
 func isValidImageType(mimeType string) bool {
-	validTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
-	}
-	return validTypes[mimeType]
+	return llm.IsSupportedImageMimeType(mimeType)
 }
 
 // Ptr is a helper function to create a pointer to a value.

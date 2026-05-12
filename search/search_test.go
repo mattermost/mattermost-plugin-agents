@@ -677,6 +677,7 @@ func TestRunSearch(t *testing.T) {
 	t.Run("successful RunSearch returns post info", func(t *testing.T) {
 		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 		mockClient := mmapimocks.NewMockClient(t)
+		searchDone := make(chan struct{})
 
 		// First DM is for question post (synchronous)
 		mockClient.On("DM", "user1", "bot1", mock.Anything).
@@ -697,8 +698,13 @@ func TestRunSearch(t *testing.T) {
 		mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).
 			Return([]embeddings.SearchResult{}, nil).Maybe()
 
-		// If zero results, UpdatePost is called
-		mockClient.On("UpdatePost", mock.Anything).Return(nil).Maybe()
+		// If zero results, UpdatePost is called. Wait for it so the async
+		// search goroutine cannot leak into following tests.
+		mockClient.On("UpdatePost", mock.Anything).
+			Run(func(_ mock.Arguments) {
+				close(searchDone)
+			}).
+			Return(nil).Once()
 
 		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
 		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
@@ -708,6 +714,14 @@ func TestRunSearch(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "question_post_id", result["postid"])
 		require.Equal(t, "dm_channel_id", result["channelid"])
+		require.Eventually(t, func() bool {
+			select {
+			case <-searchDone:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, 5*time.Millisecond)
 	})
 }
 

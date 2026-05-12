@@ -106,6 +106,13 @@ func BlocksToPost(
 				mmClient.LogError("failed to get file info for image attachment", "error", err)
 				continue
 			}
+			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
+				post.Files = append(post.Files, llm.File{
+					MimeType: fileInfo.MimeType,
+					Size:     fileInfo.Size,
+				})
+				continue
+			}
 			reader, err := mmClient.GetFile(block.FileID)
 			if err != nil {
 				mmClient.LogError("failed to get file for image attachment", "error", err)

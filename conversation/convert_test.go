@@ -524,6 +524,28 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		assert.Empty(t, post.Files, "image block must be silently dropped when vision is disabled")
 	})
 
+	t.Run("unsupported image MIME is passed through without reading blob", func(t *testing.T) {
+		mmClient := mmapimocks.NewMockClient(t)
+		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
+			Id:       "img1",
+			Name:     "vector.svg",
+			MimeType: "image/svg+xml",
+			Size:     1234,
+		}, nil)
+
+		blocks := []ContentBlock{
+			{Type: BlockTypeImage, FileID: "img1", Filename: "vector.svg", MimeType: "image/svg+xml"},
+		}
+
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+
+		require.Len(t, post.Files, 1)
+		mmClient.AssertNotCalled(t, "GetFile", "img1")
+		assert.Equal(t, "image/svg+xml", post.Files[0].MimeType)
+		assert.Empty(t, post.Files[0].Data)
+		assert.Nil(t, post.Files[0].Reader)
+	})
+
 	t.Run("text/plain file block reads content via GetFile and appends Attached File Contents", func(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{

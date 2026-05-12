@@ -55,6 +55,13 @@ func (a *API) convertBridgePostsToInternal(req bridgeclient.CompletionRequest) (
 				if err != nil {
 					return nil, fmt.Errorf("failed to get file info for file ID %s: %w", fileID, err)
 				}
+				if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
+					files[j] = llm.File{
+						MimeType: fileInfo.MimeType,
+						Size:     fileInfo.Size,
+					}
+					continue
+				}
 
 				// Get file reader
 				fileReader, err := a.mmClient.GetFile(fileID)
