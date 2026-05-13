@@ -180,65 +180,81 @@ func TestConstructAppendedWellKnownURL(t *testing.T) {
 	}
 }
 
-// TestDiscoverAuthorizationServerMetadata_PathAppendedFallback verifies that
-// authorization-server metadata discovery falls back to the path-appended
-// well-known URL when the RFC 8414 location returns 404. Some MCP servers
-// (e.g. Rocketlane via Scalekit) only publish metadata at the path-appended
-// location.
-func TestDiscoverAuthorizationServerMetadata_PathAppendedFallback(t *testing.T) {
+// TestDiscoverAuthorizationServerMetadata_PathAppendedFallbackBehavior verifies
+// the 404 fallback path and the non-404 no-fallback path in one table-driven
+// suite, per the repository testing convention.
+func TestDiscoverAuthorizationServerMetadata_PathAppendedFallbackBehavior(t *testing.T) {
 	const resourcePath = "/resources/res_121247790507492638"
 
-	var serverURL string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/oauth-authorization-server" + resourcePath:
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte("404 page not found"))
-		case resourcePath + "/.well-known/oauth-authorization-server":
-			w.Header().Set("Content-Type", "application/json")
-			metadata := AuthorizationServerMetadata{
-				Issuer:                serverURL + resourcePath,
-				AuthorizationEndpoint: serverURL + "/authorize",
-				TokenEndpoint:         serverURL + "/token",
-				RegistrationEndpoint:  serverURL + "/register",
+	tests := []struct {
+		name            string
+		primaryStatus   int
+		wantErrContains string
+		wantAppendedHit bool
+	}{
+		{
+			name:            "404 falls back to path-appended metadata",
+			primaryStatus:   http.StatusNotFound,
+			wantAppendedHit: true,
+		},
+		{
+			name:            "500 does not fall back",
+			primaryStatus:   http.StatusInternalServerError,
+			wantErrContains: "HTTP 500",
+			wantAppendedHit: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				appendedHit bool
+				serverURL   string
+			)
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/.well-known/oauth-authorization-server" + resourcePath:
+					w.WriteHeader(tt.primaryStatus)
+					if tt.primaryStatus == http.StatusNotFound {
+						_, _ = w.Write([]byte("404 page not found"))
+					}
+				case resourcePath + "/.well-known/oauth-authorization-server":
+					appendedHit = true
+
+					if tt.primaryStatus != http.StatusNotFound {
+						w.WriteHeader(http.StatusOK)
+						return
+					}
+
+					w.Header().Set("Content-Type", "application/json")
+					metadata := AuthorizationServerMetadata{
+						Issuer:                serverURL + resourcePath,
+						AuthorizationEndpoint: serverURL + "/authorize",
+						TokenEndpoint:         serverURL + "/token",
+						RegistrationEndpoint:  serverURL + "/register",
+					}
+					_ = json.NewEncoder(w).Encode(metadata)
+				default:
+					t.Errorf("Unexpected request path: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			serverURL = server.URL
+
+			metadata, err := discoverAuthorizationServerMetadata(context.Background(), http.DefaultClient, server.URL+resourcePath)
+			if tt.wantErrContains != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, serverURL+"/authorize", metadata.AuthorizationEndpoint)
+				assert.Equal(t, serverURL+"/token", metadata.TokenEndpoint)
+				assert.Equal(t, serverURL+"/register", metadata.RegistrationEndpoint)
 			}
-			_ = json.NewEncoder(w).Encode(metadata)
-		default:
-			t.Errorf("Unexpected request path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-	serverURL = server.URL
 
-	metadata, err := discoverAuthorizationServerMetadata(context.Background(), http.DefaultClient, server.URL+resourcePath)
-	require.NoError(t, err)
-	assert.Equal(t, serverURL+"/authorize", metadata.AuthorizationEndpoint)
-	assert.Equal(t, serverURL+"/token", metadata.TokenEndpoint)
-	assert.Equal(t, serverURL+"/register", metadata.RegistrationEndpoint)
-}
-
-// TestDiscoverAuthorizationServerMetadata_NonNotFoundErrorDoesNotFallBack
-// verifies that we only attempt the path-appended fallback when the primary
-// URL returns 404. Other status codes (e.g. 500) indicate a real upstream
-// problem and the original error should be returned.
-func TestDiscoverAuthorizationServerMetadata_NonNotFoundErrorDoesNotFallBack(t *testing.T) {
-	const resourcePath = "/resources/res_121247790507492638"
-
-	var appendedHit bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/oauth-authorization-server" + resourcePath:
-			w.WriteHeader(http.StatusInternalServerError)
-		case resourcePath + "/.well-known/oauth-authorization-server":
-			appendedHit = true
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer server.Close()
-
-	_, err := discoverAuthorizationServerMetadata(context.Background(), http.DefaultClient, server.URL+resourcePath)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "HTTP 500")
-	assert.False(t, appendedHit, "fallback URL must not be tried for non-404 responses")
+			assert.Equal(t, tt.wantAppendedHit, appendedHit)
+		})
+	}
 }

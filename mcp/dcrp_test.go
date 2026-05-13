@@ -236,61 +236,79 @@ func TestGetRegistrationEndpoint_ServerURLWithPath(t *testing.T) {
 	assert.Equal(t, server.URL+"/register", endpoint)
 }
 
-// TestGetRegistrationEndpoint_PathAppendedFallback_NonNotFoundErrorDoesNotFallBack
-// verifies that we only attempt the path-appended fallback when the primary URL
-// returns 404. Other status codes (e.g. 500) indicate a real upstream problem
-// and the original error should be returned without spamming the server.
-func TestGetRegistrationEndpoint_PathAppendedFallback_NonNotFoundErrorDoesNotFallBack(t *testing.T) {
-	const resourcePath = "/resources/res_abc"
+// TestGetRegistrationEndpoint_PathAppendedFallbackBehavior verifies the 404
+// fallback path and the non-404 no-fallback path in one table-driven suite, per
+// the repository testing convention.
+func TestGetRegistrationEndpoint_PathAppendedFallbackBehavior(t *testing.T) {
+	tests := []struct {
+		name            string
+		resourcePath    string
+		primaryStatus   int
+		wantErrContains string
+		wantAppendedHit bool
+	}{
+		{
+			name:            "404 falls back to path-appended metadata",
+			resourcePath:    "/resources/res_121247790507492638",
+			primaryStatus:   http.StatusNotFound,
+			wantAppendedHit: true,
+		},
+		{
+			name:            "500 does not fall back",
+			resourcePath:    "/resources/res_abc",
+			primaryStatus:   http.StatusInternalServerError,
+			wantErrContains: "HTTP 500",
+			wantAppendedHit: false,
+		},
+	}
 
-	var appendedHit bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/oauth-authorization-server":
-			w.WriteHeader(http.StatusInternalServerError)
-		case resourcePath + "/.well-known/oauth-authorization-server":
-			appendedHit = true
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer server.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				appendedHit bool
+				serverURL   string
+			)
 
-	_, err := GetRegistrationEndpoint(context.Background(), http.DefaultClient, server.URL+resourcePath)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "HTTP 500")
-	assert.False(t, appendedHit, "fallback URL must not be tried for non-404 responses")
-}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/.well-known/oauth-authorization-server":
+					w.WriteHeader(tt.primaryStatus)
+					if tt.primaryStatus == http.StatusNotFound {
+						_, _ = w.Write([]byte("404 page not found"))
+					}
+				case tt.resourcePath + "/.well-known/oauth-authorization-server":
+					appendedHit = true
 
-// TestGetRegistrationEndpoint_PathAppendedFallback verifies that when an MCP
-// server (e.g. Rocketlane) publishes its OAuth authorization-server metadata
-// appended to the resource path rather than at the host root, discovery falls
-// back to the path-appended form after the host-root form returns 404.
-func TestGetRegistrationEndpoint_PathAppendedFallback(t *testing.T) {
-	const resourcePath = "/resources/res_121247790507492638"
+					if tt.primaryStatus != http.StatusNotFound {
+						w.WriteHeader(http.StatusOK)
+						return
+					}
 
-	var serverURL string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/oauth-authorization-server":
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte("404 page not found"))
-		case resourcePath + "/.well-known/oauth-authorization-server":
-			w.Header().Set("Content-Type", "application/json")
-			metadata := map[string]string{
-				"registration_endpoint": serverURL + "/register",
+					w.Header().Set("Content-Type", "application/json")
+					metadata := map[string]string{
+						"registration_endpoint": serverURL + "/register",
+					}
+					_ = json.NewEncoder(w).Encode(metadata)
+				default:
+					t.Errorf("Unexpected request path: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			serverURL = server.URL
+
+			endpoint, err := GetRegistrationEndpoint(context.Background(), http.DefaultClient, server.URL+tt.resourcePath)
+			if tt.wantErrContains != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, server.URL+"/register", endpoint)
 			}
-			_ = json.NewEncoder(w).Encode(metadata)
-		default:
-			t.Errorf("Unexpected request path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-	serverURL = server.URL
 
-	endpoint, err := GetRegistrationEndpoint(context.Background(), http.DefaultClient, server.URL+resourcePath)
-	require.NoError(t, err)
-	assert.Equal(t, server.URL+"/register", endpoint)
+			assert.Equal(t, tt.wantAppendedHit, appendedHit)
+		})
+	}
 }
 
 func TestDiscoverAndRegisterClient_Success(t *testing.T) {
