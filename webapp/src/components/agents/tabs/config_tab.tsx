@@ -399,10 +399,6 @@ const ConfigTab = (props: Props) => {
     );
 };
 
-// FieldError sits inside the two-column ItemList grid. Span the input column so the
-// error renders directly below the field it describes without consuming a single grid
-// cell — which previously bumped every subsequent label/input pair into the wrong
-// column (MM-68775).
 const FieldError = styled.div`
     grid-column: 2 / -1;
     color: var(--dnd-indicator, #D24B4E);
