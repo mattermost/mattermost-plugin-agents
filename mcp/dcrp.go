@@ -196,38 +196,68 @@ func DiscoverAndRegisterClient(ctx context.Context, httpClient *http.Client, ser
 	return response, nil
 }
 
-// GetRegistrationEndpoint discovers the registration endpoint from server metadata
+// GetRegistrationEndpoint discovers the registration endpoint from server metadata.
+//
+// Per the MCP spec the authorization base URL is derived by discarding the path
+// component, so discovery first tries the host-root well-known URL. Some MCP
+// servers (e.g. Rocketlane via Scalekit) only publish metadata at the
+// path-appended location, so on a 404 the discovery retries against the
+// original server URL with /.well-known/oauth-authorization-server appended.
 func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serverURL string) (string, error) {
-	// Strip path from server URL per MCP spec: the authorization base URL is derived
-	// by discarding the path component from the server URL.
 	parsedURL, err := url.Parse(serverURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse server URL %s: %w", serverURL, err)
 	}
 	baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 
-	// Construct the metadata URL according to RFC 8414 Section 3.1
-	metadataURL, err := constructWellKnownURL(baseURL, "oauth-authorization-server")
+	primaryURL, err := constructWellKnownURL(baseURL, "oauth-authorization-server")
 	if err != nil {
 		return "", fmt.Errorf("failed to construct metadata URL from server URL %s: %w", serverURL, err)
 	}
 
+	candidateURLs := []string{primaryURL}
+	if fallbackURL, fallbackErr := constructAppendedWellKnownURL(serverURL, "oauth-authorization-server"); fallbackErr == nil && fallbackURL != primaryURL {
+		candidateURLs = append(candidateURLs, fallbackURL)
+	}
+
+	var lastErr error
+	for _, metadataURL := range candidateURLs {
+		endpoint, status, fetchErr := fetchRegistrationEndpoint(ctx, httpClient, metadataURL)
+		if fetchErr == nil {
+			if endpoint == "" {
+				return "", fmt.Errorf("server %s does not support dynamic client registration (no registration_endpoint in metadata from %s)", serverURL, metadataURL)
+			}
+			return endpoint, nil
+		}
+		lastErr = fetchErr
+		if status != http.StatusNotFound {
+			return "", fetchErr
+		}
+	}
+
+	return "", lastErr
+}
+
+// fetchRegistrationEndpoint performs a single GET against metadataURL and extracts the
+// registration_endpoint field. It returns the HTTP status code so callers can distinguish
+// 404 (try a fallback URL) from other errors (give up).
+func fetchRegistrationEndpoint(ctx context.Context, httpClient *http.Client, metadataURL string) (string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", metadataURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create metadata request for %s: %w", metadataURL, err)
+		return "", 0, fmt.Errorf("failed to create metadata request for %s: %w", metadataURL, err)
 	}
 
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch server metadata from %s: %w", metadataURL, err)
+		return "", 0, fmt.Errorf("failed to fetch server metadata from %s: %w", metadataURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("server metadata request to %s failed with HTTP %d: %s", metadataURL, resp.StatusCode, string(body))
+		return "", resp.StatusCode, fmt.Errorf("server metadata request to %s failed with HTTP %d: %s", metadataURL, resp.StatusCode, string(body))
 	}
 
 	var metadata struct {
@@ -235,12 +265,8 @@ func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serve
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
-		return "", fmt.Errorf("failed to decode server metadata from %s: %w", metadataURL, err)
+		return "", resp.StatusCode, fmt.Errorf("failed to decode server metadata from %s: %w", metadataURL, err)
 	}
 
-	if metadata.RegistrationEndpoint == "" {
-		return "", fmt.Errorf("server %s does not support dynamic client registration (no registration_endpoint in metadata from %s)", serverURL, metadataURL)
-	}
-
-	return metadata.RegistrationEndpoint, nil
+	return metadata.RegistrationEndpoint, resp.StatusCode, nil
 }
