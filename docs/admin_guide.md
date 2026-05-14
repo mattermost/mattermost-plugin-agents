@@ -33,7 +33,7 @@ Install the plugin through the System Console by navigating to **System Console 
 
 Navigate to **System Console > Plugins > Agents** to configure plugin-wide settings such as AI services, the default bot, web search, embedding search, and MCP settings.
 
-Create and manage agents from the top-level **Agents** product page. You can also open it from **AI Actions > Manage agents**. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
+Create and manage agents from the top-level **Agents** product page. If an agent selector dropdown is available in the Agents experience, use its **Manage** link to open the same page. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
 
 ### Enable the plugin
 
@@ -102,7 +102,7 @@ See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html)
 
 ### Agent configuration
 
-Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry or from **AI Actions > Manage agents**. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
+Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry, or use the **Manage** link in an agent selector dropdown to navigate there. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
 
 If you can manage an agent, select its row in the Agents list to open the full-page configuration view directly. The overflow menu remains available for **Edit** and **Delete**. Use **Back to agents** to return to the list.
 
@@ -639,12 +639,25 @@ The built-in Mattermost MCP server provides the following native Mattermost tool
 - **read_channel**: Retrieve recent posts from a channel
 - **search_posts**: Search across Mattermost content with optional team/channel filters
 - **create_post**: Create new posts or replies in channels
+- **dm**: Send a direct message to a user
+- **group_message**: Send a message to a group conversation
 - **create_channel**: Create new public or private channels
 - **get_channel_info**: Retrieve channel details by ID or name
 - **get_team_info**: Retrieve team details by ID or name
 - **search_users**: Find users by username, email, or name
 - **get_channel_members**: List all members of a channel
+- **add_user_to_channel**: Add a user to a channel
+- **get_user_channels**: List the channels the current user is a member of
 - **get_team_members**: List all members of a team
+- **list_agents**: List the AI agents (bots) available to the current user, including each agent's ID, display name, and username
+
+When the Channel Automation plugin is installed, the MCP server also exposes the following tools. They proxy requests to that plugin; execution follows the same MCP tool policies as other tools and each user's Mattermost permissions.
+
+- **list_automations**: List channel automations, filter them by channel, or retrieve a specific automation by ID
+- **get_automation_instructions**: Retrieve the Channel Automation plugin's current automation authoring guidance
+- **create_automation**: Create a channel automation
+- **update_automation**: Update a channel automation
+- **delete_automation**: Delete a channel automation
 
 These are the native Mattermost tools included by the Agents plugin itself. Plugin-registered MCP tools are configured separately in the **Tools** tab and are not part of the built-in list above.
 

@@ -85,7 +85,7 @@ const RHSHeader = (props: Props) => {
                             testId='bot-selector-rhs'
                         >
                             <>
-                                {currentBotName}
+                                <SelectorDropdownName>{currentBotName}</SelectorDropdownName>
                                 <ChevronDownIcon/>
                             </>
                         </BotDropdown>
@@ -150,8 +150,7 @@ const SelectorDropdown = styled(DotMenuButton)<{isActive: boolean}>`
 	border-radius: 4px;
 	height: 20px;
 	width: auto;
-	max-width: 145px;
-	overflow: ellipsis;
+	max-width: 128px;
 
 	font-size: 11px;
 	font-weight: 600;
@@ -164,6 +163,17 @@ const SelectorDropdown = styled(DotMenuButton)<{isActive: boolean}>`
         color: ${(props) => (props.isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
         background-color: ${(props) => (props.isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.16)')};
     }
+
+    svg {
+        flex-shrink: 0;
+    }
+`;
+
+const SelectorDropdownName = styled.span`
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 `;
 
 export default React.memo(RHSHeader);
