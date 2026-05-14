@@ -52,7 +52,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 
 	contextHint := "Results show individual matching posts — to see the full conversation around a result, use read_channel with the channel_id."
 
-	mentionHint := "To find posts mentioning a specific person, query their username only (e.g. `guillermo.vaya`); at-mentions in posts use the username, never the display name. Do not combine username and display name (e.g. `guillermo.vaya Guillermo Vayá`) in a single query — that requires all of those tokens to co-occur and will miss most posts."
+	mentionHint := "To find posts mentioning a specific person, query their username only (e.g. `john.smith`); at-mentions in posts use the username, never the display name. Do not combine username and display name (e.g. `john.smith John Smith`) in a single query — that requires all of those tokens to co-occur and will miss most posts."
 
 	if semanticEnabled {
 		schema = llm.NewJSONSchemaFromStruct[CombinedSearchArgs]()
