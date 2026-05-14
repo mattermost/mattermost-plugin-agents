@@ -96,7 +96,7 @@ type StaticOAuthCredentials struct {
 
 // loadOrCreateClientCredentials gets existing client credentials or creates new ones using dynamic client registration.
 // If staticCreds is non-nil and has a ClientID, those credentials are used directly (skipping DCR).
-func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, serverURL string, staticCreds *StaticOAuthCredentials) (*ClientCredentials, error) {
+func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, serverURL string, staticCreds *StaticOAuthCredentials, registrationEndpoint string) (*ClientCredentials, error) {
 	if staticCreds != nil && staticCreds.ClientID != "" {
 		return &ClientCredentials{
 			ClientID:     staticCreds.ClientID,
@@ -115,8 +115,17 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 		return creds, nil
 	}
 
-	// Perform complete client registration flow
-	response, err := DiscoverAndRegisterClient(ctx, m.httpClient, serverURL, m.callbackURL, clientID, "")
+	var response *RegistrationResponse
+	if registrationEndpoint != "" {
+		request := DefaultRegistrationRequest(m.callbackURL, clientID)
+		response, err = RegisterClient(ctx, m.httpClient, registrationEndpoint, request, "")
+		if err != nil {
+			return nil, fmt.Errorf("failed to register OAuth client with server %s (registration endpoint: %s): %w", serverURL, registrationEndpoint, err)
+		}
+	} else {
+		// Perform complete client registration flow
+		response, err = DiscoverAndRegisterClient(ctx, m.httpClient, serverURL, m.callbackURL, clientID, "")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +158,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	authURL := baseURL + "/authorize" // Fallback
 	tokenURL := baseURL + "/token"    // Fallback
 	authServerURL := baseURL          // Fallback - per MCP spec, auth server is at base URL (path stripped)
+	registrationEndpoint := ""
 	var scopes []string
 
 	// Attempt discovery (best effort, fall back to hardcoded endpoints if it fails).
@@ -164,6 +174,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 				tokenURL = authMetadata.TokenEndpoint
 				// Per OAuth best practices, credentials are registered with the authorization server
 				authServerURL = authServerIssuer
+				registrationEndpoint = authMetadata.RegistrationEndpoint
 			}
 		}
 	} else {
@@ -174,6 +185,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 		if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, m.httpClient, baseURL); authErr == nil {
 			authURL = authMetadata.AuthorizationEndpoint
 			tokenURL = authMetadata.TokenEndpoint
+			registrationEndpoint = authMetadata.RegistrationEndpoint
 			// authServerURL already set to baseURL above
 		}
 	}
@@ -182,7 +194,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	// Per OAuth 2.0 best practices, client credentials are registered with and belong to
 	// the authorization server, not the protected resource.
 	// If static credentials are provided, they are used directly (skipping DCR).
-	clientCreds, err := m.loadOrCreateClientCredentials(ctx, authServerURL, staticCreds)
+	clientCreds, err := m.loadOrCreateClientCredentials(ctx, authServerURL, staticCreds, registrationEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client credentials: %w", err)
 	}

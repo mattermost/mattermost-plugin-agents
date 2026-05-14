@@ -67,6 +67,29 @@ func TestRegisterClient_Success(t *testing.T) {
 	assert.Equal(t, "Test Client", response.ClientName)
 }
 
+func TestRegisterClient_SuccessOK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		response := RegistrationResponse{
+			ClientID:     "client123",
+			ClientSecret: "secret456",
+		}
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	request := DefaultRegistrationRequest("https://example.com/callback", "Test Client")
+
+	response, err := RegisterClient(context.Background(), http.DefaultClient, server.URL, request, "")
+	require.NoError(t, err)
+	assert.Equal(t, "client123", response.ClientID)
+	assert.Equal(t, "secret456", response.ClientSecret)
+}
+
 func TestRegisterClient_WithInitialAccessToken(t *testing.T) {
 	// Create mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
