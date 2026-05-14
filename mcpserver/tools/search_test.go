@@ -54,6 +54,15 @@ func TestGetSearchTools_SchemaReflectsCapabilities(t *testing.T) {
 		},
 	}
 
+	// Guidance fragments that must appear in every search_posts description so the
+	// model does not combine username and display name into a single literal query
+	// (see MM-67962).
+	mentionGuidanceFragments := []string{
+		"username only",
+		"at-mentions in posts use the username",
+		"Do not combine username and display name",
+	}
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := &MattermostToolProvider{
@@ -76,6 +85,11 @@ func TestGetSearchTools_SchemaReflectsCapabilities(t *testing.T) {
 			// Verify description matches capability
 			assert.Contains(t, searchPostsTool.Description, tc.descriptionContains,
 				"description should indicate correct search type")
+
+			for _, fragment := range mentionGuidanceFragments {
+				assert.Contains(t, searchPostsTool.Description, fragment,
+					"description should include mention-search guidance: %q", fragment)
+			}
 
 			// Verify schema properties match capability
 			require.NotNil(t, searchPostsTool.Schema, "schema should not be nil")
