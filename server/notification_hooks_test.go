@@ -12,12 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// botUserID is the ID of an AI agent bot used by the tests below.
 const botUserID = "agent-bot-user-id"
 
-// pluginWithAgentBot returns a *Plugin whose bot cache contains a single AI
-// agent bot with UserId == botUserID, matching what the real plugin produces
-// for a configured agent.
 func pluginWithAgentBot() *Plugin {
 	mmBots := &bots.MMBots{}
 	mmBots.SetBotsForTesting([]*bots.Bot{
@@ -33,7 +29,6 @@ func TestNotificationWillBePushed(t *testing.T) {
 		wantBlocked  bool
 	}{
 		{
-			// Isolates the rootID branch: no DM, no custom_llmbot type.
 			name: "blocks AI agent threaded reply in a regular channel",
 			notification: &model.PushNotification{
 				PostId:      "post-1",
@@ -44,8 +39,6 @@ func TestNotificationWillBePushed(t *testing.T) {
 			wantBlocked: true,
 		},
 		{
-			// Isolates the custom_llmbot branch: rootless root post in a regular
-			// channel (e.g. a streaming /summarize answer in a public channel).
 			name: "blocks AI agent custom_llmbot root post in a regular channel",
 			notification: &model.PushNotification{
 				PostId:      "post-2",
@@ -56,9 +49,6 @@ func TestNotificationWillBePushed(t *testing.T) {
 			wantBlocked: true,
 		},
 		{
-			// Isolates the DM branch and represents the MM-66720 scenario:
-			// "Summarize Thread" creates an agent root post in the bot DM with
-			// no rootID.
 			name: "blocks AI agent root post in a DM channel (MM-66720)",
 			notification: &model.PushNotification{
 				PostId:      "post-3",
@@ -87,9 +77,6 @@ func TestNotificationWillBePushed(t *testing.T) {
 			wantBlocked: false,
 		},
 		{
-			// Defensive: a custom_llmbot-typed post from an unknown sender (e.g.
-			// after an agent is deleted) must not leak suppression onto an
-			// unrelated user's notifications.
 			name: "does NOT block a custom_llmbot post from an unknown sender",
 			notification: &model.PushNotification{
 				PostId:      "post-6",

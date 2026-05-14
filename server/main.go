@@ -658,8 +658,7 @@ func (p *Plugin) ServeMetrics(c *plugin.Context, w http.ResponseWriter, r *http.
 	p.apiService.ServeMetrics(c, w, r)
 }
 
-// EmailNotificationWillBeSent blocks email notifications for AI bot posts that
-// were triggered by the user's own action (thread replies and DM responses).
+// EmailNotificationWillBeSent blocks redundant AI agent email notifications.
 func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotification) (*model.EmailNotificationContent, string) {
 	if p.shouldBlockAgentNotification(emailNotification.SenderId, emailNotification.RootId, "", emailNotification.IsDirectMessage) {
 		return nil, "notification blocked: AI agent response to user-initiated action"
@@ -667,10 +666,7 @@ func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotif
 	return &emailNotification.EmailNotificationContent, ""
 }
 
-// NotificationWillBePushed blocks push notifications for AI bot posts that were
-// triggered by the user's own action (thread replies and DM responses to RHS
-// actions such as "Summarize Thread"). See MM-66720.
-// IMPORTANT: This hook must execute quickly as it can become blocking and delay post creation.
+// NotificationWillBePushed blocks redundant AI agent push notifications.
 func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotification, userID string) (*model.PushNotification, string) {
 	if pushNotification.PostId == "" {
 		return pushNotification, ""
@@ -683,20 +679,7 @@ func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotificati
 	return pushNotification, ""
 }
 
-// shouldBlockAgentNotification reports whether a notification should be
-// suppressed because it originates from an AI agent post that is a response to
-// the receiving user's own action.
-//
-// Posts from configured AI agent bots are suppressed when any of the following holds:
-//   - The post is a threaded reply (rootID != ""). Agents only reply in threads
-//     in response to a user mention or DM.
-//   - The post is of type "custom_llmbot". This type is set exclusively on
-//     agent response posts produced by streaming flows (channel/thread summarize,
-//     AI conversation responses, etc.), including the root DM post created when
-//     a user triggers an RHS action like "Summarize Thread".
-//   - The post is delivered in a direct-message channel. Agents only post in a
-//     DM in response to the user they're DMing, so the notification is always
-//     redundant.
+// shouldBlockAgentNotification reports whether an AI agent notification is redundant.
 func (p *Plugin) shouldBlockAgentNotification(senderID, rootID, postType string, isDM bool) bool {
 	if p.bots == nil {
 		return false

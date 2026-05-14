@@ -7,9 +7,6 @@ describe('shouldSuppressBotNotification', () => {
     const fakeNow = 10_000;
 
     it('suppresses any custom_llmbot post regardless of root_id (MM-66720)', () => {
-        // The "Summarize Thread" / "Summarize Channel" flow creates an agent
-        // response in the bot DM with no root_id. That used to slip through
-        // and produce a desktop notification.
         const rootlessAgentPost = {
             user_id: 'agent-bot',
             type: 'custom_llmbot',
@@ -108,9 +105,6 @@ describe('shouldSuppressBotNotification', () => {
     });
 
     it('treats from_bot as the string "true" only (Mattermost emits it as a string)', () => {
-        // The Mattermost server emits the `from_bot` prop as the literal string
-        // 'true'. Callers that ever pass a boolean would silently miss the
-        // suppression — this test pins the documented contract.
         const post = {
             user_id: 'some-bot',
             root_id: 'parent-1',
@@ -127,9 +121,6 @@ describe('shouldSuppressBotNotification', () => {
     });
 
     it('does not suppress when currentUserId is unknown (login/logout race)', () => {
-        // When the webapp is between users (e.g. logout) the suppression check
-        // must still resolve to false rather than crash or match an empty
-        // string against a real user id.
         const post = {
             user_id: 'some-bot',
             root_id: 'parent-1',
