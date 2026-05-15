@@ -928,8 +928,12 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				},
 			}
 
-			// Add reasoning details for thinking-enabled conversations
-			if post.Reasoning != "" {
+			// Add reasoning details for thinking-enabled conversations.
+			// Anthropic requires historical thinking blocks to include a valid
+			// provider-issued signature. If a previous stream failed before the
+			// signature arrived, we persist partial reasoning for display only; do
+			// not replay it to the provider as an unsigned thinking block.
+			if post.Reasoning != "" && post.ReasoningSignature != "" {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}

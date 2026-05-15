@@ -189,6 +189,36 @@ func TestBuildChatReasoning(t *testing.T) {
 	}
 }
 
+func TestConvertMessagesSkipsUnsignedReasoning(t *testing.T) {
+	b := &LLM{}
+
+	messages := b.convertMessages([]llm.Post{{
+		Role:               llm.PostRoleBot,
+		Message:            "partial response",
+		Reasoning:          "partial thinking captured before stream error",
+		ReasoningSignature: "",
+	}})
+
+	require.Len(t, messages, 1)
+	assert.Nil(t, messages[0].ChatAssistantMessage)
+}
+
+func TestConvertMessagesIncludesSignedReasoning(t *testing.T) {
+	b := &LLM{}
+
+	messages := b.convertMessages([]llm.Post{{
+		Role:               llm.PostRoleBot,
+		Message:            "response",
+		Reasoning:          "thinking",
+		ReasoningSignature: "sig123",
+	}})
+
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].ReasoningDetails, 1)
+	assert.Equal(t, "thinking", *messages[0].ReasoningDetails[0].Text)
+	assert.Equal(t, "sig123", *messages[0].ReasoningDetails[0].Signature)
+}
+
 func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
 	b := &LLM{}
 	imageData := []byte("PNGDATA")
