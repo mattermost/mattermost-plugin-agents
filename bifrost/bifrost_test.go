@@ -189,34 +189,54 @@ func TestBuildChatReasoning(t *testing.T) {
 	}
 }
 
-func TestConvertMessagesSkipsUnsignedReasoning(t *testing.T) {
-	b := &LLM{}
+func TestConvertMessagesReasoningDetails(t *testing.T) {
+	tests := []struct {
+		name              string
+		posts             []llm.Post
+		expectedLen       int
+		expectedReasoning string
+		expectedSignature string
+	}{
+		{
+			name: "skips unsigned reasoning",
+			posts: []llm.Post{{
+				Role:               llm.PostRoleBot,
+				Message:            "partial response",
+				Reasoning:          "partial thinking captured before stream error",
+				ReasoningSignature: "",
+			}},
+			expectedLen: 1,
+		},
+		{
+			name: "includes signed reasoning",
+			posts: []llm.Post{{
+				Role:               llm.PostRoleBot,
+				Message:            "response",
+				Reasoning:          "thinking",
+				ReasoningSignature: "sig123",
+			}},
+			expectedLen:       1,
+			expectedReasoning: "thinking",
+			expectedSignature: "sig123",
+		},
+	}
 
-	messages := b.convertMessages([]llm.Post{{
-		Role:               llm.PostRoleBot,
-		Message:            "partial response",
-		Reasoning:          "partial thinking captured before stream error",
-		ReasoningSignature: "",
-	}})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{}
 
-	require.Len(t, messages, 1)
-	assert.Nil(t, messages[0].ChatAssistantMessage)
-}
+			messages := b.convertMessages(tt.posts)
 
-func TestConvertMessagesIncludesSignedReasoning(t *testing.T) {
-	b := &LLM{}
-
-	messages := b.convertMessages([]llm.Post{{
-		Role:               llm.PostRoleBot,
-		Message:            "response",
-		Reasoning:          "thinking",
-		ReasoningSignature: "sig123",
-	}})
-
-	require.Len(t, messages, 1)
-	require.Len(t, messages[0].ReasoningDetails, 1)
-	assert.Equal(t, "thinking", *messages[0].ReasoningDetails[0].Text)
-	assert.Equal(t, "sig123", *messages[0].ReasoningDetails[0].Signature)
+			require.Len(t, messages, tt.expectedLen)
+			if tt.expectedReasoning == "" {
+				assert.Nil(t, messages[0].ChatAssistantMessage)
+				return
+			}
+			require.Len(t, messages[0].ReasoningDetails, 1)
+			assert.Equal(t, tt.expectedReasoning, *messages[0].ReasoningDetails[0].Text)
+			assert.Equal(t, tt.expectedSignature, *messages[0].ReasoningDetails[0].Signature)
+		})
+	}
 }
 
 func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
