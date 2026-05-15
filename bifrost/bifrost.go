@@ -932,8 +932,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 			// Anthropic requires historical thinking blocks to include a valid
 			// provider-issued signature. If a previous stream failed before the
 			// signature arrived, we persist partial reasoning for display only; do
-			// not replay it to the provider as an unsigned thinking block.
-			if post.Reasoning != "" && post.ReasoningSignature != "" {
+			// not replay it to Anthropic as an unsigned thinking block. Other
+			// providers may accept unsigned reasoning, so preserve it for them.
+			if post.Reasoning != "" && (b.provider != schemas.Anthropic || post.ReasoningSignature != "") {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}

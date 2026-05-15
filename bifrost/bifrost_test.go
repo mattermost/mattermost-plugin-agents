@@ -192,13 +192,15 @@ func TestBuildChatReasoning(t *testing.T) {
 func TestConvertMessagesReasoningDetails(t *testing.T) {
 	tests := []struct {
 		name              string
+		provider          schemas.ModelProvider
 		posts             []llm.Post
 		expectedLen       int
 		expectedReasoning string
 		expectedSignature string
 	}{
 		{
-			name: "skips unsigned reasoning",
+			name:     "skips unsigned reasoning for Anthropic",
+			provider: schemas.Anthropic,
 			posts: []llm.Post{{
 				Role:               llm.PostRoleBot,
 				Message:            "partial response",
@@ -208,7 +210,20 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 			expectedLen: 1,
 		},
 		{
-			name: "includes signed reasoning",
+			name:     "preserves unsigned reasoning for non-Anthropic",
+			provider: schemas.OpenAI,
+			posts: []llm.Post{{
+				Role:               llm.PostRoleBot,
+				Message:            "partial response",
+				Reasoning:          "partial thinking",
+				ReasoningSignature: "",
+			}},
+			expectedLen:       1,
+			expectedReasoning: "partial thinking",
+		},
+		{
+			name:     "includes signed reasoning",
+			provider: schemas.Anthropic,
 			posts: []llm.Post{{
 				Role:               llm.PostRoleBot,
 				Message:            "response",
@@ -223,7 +238,7 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{}
+			b := &LLM{provider: tt.provider}
 
 			messages := b.convertMessages(tt.posts)
 
