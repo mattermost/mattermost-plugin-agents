@@ -161,7 +161,8 @@ async function openCustomPromptsModal(page) {
     if (await aiButton.isVisible({ timeout: 3000 }).catch(() => false)) {
         await aiButton.click();
         await page.getByText('Custom prompts').click();
-        await page.getByText('Create a prompt').click();
+        await expect(page.getByText('Manage prompts')).toBeVisible({ timeout: 10000 });
+        await page.getByText(/Manage prompts|Create a prompt/).click();
     } else {
         // Fallback: dispatch Redux action directly (test environment)
         await page.evaluate(() => {
@@ -441,6 +442,7 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
 
         await aiButton.click();
         await page.getByText('Custom prompts').click();
+        await expect(page.getByText('Manage prompts')).toBeVisible({ timeout: 10000 });
 
         await expect(page.getByText('Formatting Bar Prompt')).toBeVisible({ timeout: 10000 });
         await page.getByText('Formatting Bar Prompt').click();
@@ -448,7 +450,7 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
         await expect(postTextbox).toHaveValue(/Inserted via formatting bar/, { timeout: 10000 });
     });
 
-    test('"Create a prompt" in the submenu opens the management modal', async ({ page }) => {
+    test('"Manage prompts" in the submenu opens the management modal', async ({ page }) => {
         await setupTestPage(page);
 
         const postTextbox = page.getByTestId('post_textbox');
@@ -462,7 +464,8 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
 
         await aiButton.click();
         await page.getByText('Custom prompts').click();
-        await page.getByText('Create a prompt').click();
+        await expect(page.getByText('Manage prompts')).toBeVisible({ timeout: 10000 });
+        await page.getByText(/Manage prompts|Create a prompt/).click();
 
         await expect(page.getByText('Custom Prompts')).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('All Prompts')).toBeVisible();
