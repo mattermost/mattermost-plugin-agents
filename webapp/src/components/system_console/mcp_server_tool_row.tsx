@@ -6,7 +6,7 @@ import styled from 'styled-components';
 import {ChevronDownIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {TertiaryButton} from '../assets/buttons';
+import {PrimaryButton} from '../assets/buttons';
 import {ToggleSwitch} from '../toggle_switch';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
 
@@ -369,15 +369,8 @@ const OAuthDescription = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
-const OAuthButton = styled(TertiaryButton)`
-    white-space: nowrap;
-    background-color: var(--button-bg);
-    color: var(--button-color);
-    border: 1px solid var(--button-bg);
-
-    &:hover {
-        background-color: rgba(var(--button-bg-rgb), 0.88);
-    }
+const OAuthButton = styled(PrimaryButton)`
+    flex-shrink: 0;
 `;
 
 const EmptyTools = styled.div`
