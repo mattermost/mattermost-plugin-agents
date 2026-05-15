@@ -532,4 +532,3 @@ func TestIsValidService(t *testing.T) {
 		})
 	}
 }
-

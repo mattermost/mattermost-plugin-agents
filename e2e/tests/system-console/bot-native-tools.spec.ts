@@ -311,9 +311,8 @@ test.describe.skip('Bot Native Tools', () => {
         }
 
         // 14. Find the True radio button for Use Responses API within the service card
-        // The radios in the service card are: Use Responses API (True/False)
-        // So the "Use Responses API - True" radio is the 1st radio (index 0)
-        const useResponsesAPITrue = serviceCard.getByRole('radio').nth(0);
+        const useResponsesAPISetting = serviceCard.locator('label').filter({hasText: 'Use Responses API'}).locator('xpath=following-sibling::div[1]');
+        const useResponsesAPITrue = useResponsesAPISetting.locator('input[type="radio"][value="true"]');
         await expect(useResponsesAPITrue).toBeVisible();
 
         // 15. Enable 'Use Responses API' by clicking the True radio button
