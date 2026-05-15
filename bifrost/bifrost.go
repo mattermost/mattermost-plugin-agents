@@ -54,7 +54,6 @@ type LLM struct {
 	inputTokenLimit  int
 	outputTokenLimit int
 	streamingTimeout time.Duration
-	sendUserID       bool
 
 	// Native tools and reasoning configuration
 	enabledNativeTools []string
@@ -86,7 +85,6 @@ type Config struct {
 	InputTokenLimit  int
 	OutputTokenLimit int
 	StreamingTimeout time.Duration
-	SendUserID       bool
 
 	// Native tools and reasoning configuration
 	EnabledNativeTools []string
@@ -263,7 +261,6 @@ func New(cfg Config) (*LLM, error) {
 		inputTokenLimit:    cfg.InputTokenLimit,
 		outputTokenLimit:   outputLimit,
 		streamingTimeout:   streamingTimeout,
-		sendUserID:         cfg.SendUserID,
 		enabledNativeTools: cfg.EnabledNativeTools,
 		reasoningEnabled:   cfg.ReasoningEnabled,
 		reasoningEffort:    cfg.ReasoningEffort,

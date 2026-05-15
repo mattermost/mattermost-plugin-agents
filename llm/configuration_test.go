@@ -4,11 +4,9 @@
 package llm
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestBotConfig_IsValid(t *testing.T) {
@@ -535,10 +533,3 @@ func TestIsValidService(t *testing.T) {
 	}
 }
 
-func TestServiceConfig_JSONUnmarshal_sendUserID(t *testing.T) {
-	const payload = `{"id":"s1","name":"x","type":"openai","sendUserID":true}`
-	var cfg ServiceConfig
-	err := json.Unmarshal([]byte(payload), &cfg)
-	require.NoError(t, err)
-	assert.True(t, cfg.SendUserID)
-}

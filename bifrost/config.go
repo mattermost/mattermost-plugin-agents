@@ -124,7 +124,6 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		InputTokenLimit:       serviceConfig.InputTokenLimit,
 		OutputTokenLimit:      serviceConfig.OutputTokenLimit,
 		StreamingTimeout:      streamingTimeout,
-		SendUserID:            serviceConfig.SendUserID,
 		UseResponsesAPI:       llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration

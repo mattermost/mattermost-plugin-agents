@@ -33,7 +33,6 @@ test.describe.serial('MCP Panel', () => {
                         defaultModel: 'gpt-4',
                         tokenLimit: 16384,
                         streamingTimeoutSeconds: 30,
-                        sendUserId: false,
                         outputTokenLimit: 4096,
                         useResponsesAPI: false,
                     },

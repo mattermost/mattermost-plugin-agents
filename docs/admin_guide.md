@@ -74,7 +74,6 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | **Input Token Limit** | Maximum tokens allowed in input |
 | **Output Token Limit** | Maximum tokens allowed in output |
 | **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
-| **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
 | **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) always uses the Responses API, so this control isn't shown for that service type. |
 
 #### Provider Specific Settings

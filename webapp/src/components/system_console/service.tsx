@@ -25,7 +25,6 @@ export type LLMService = {
     defaultModel: string
     tokenLimit: number
     streamingTimeoutSeconds: number
-    sendUserId: boolean
     outputTokenLimit: number
     useResponsesAPI: boolean
     region: string
@@ -279,14 +278,6 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                             value={props.service.orgId}
                             onChange={(e) => props.onChange({...props.service, orgId: e.target.value})}
                             helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale Account ID (x-selected-account-id header, required for ScaleGov)'}) : undefined} // eslint-disable-line no-undefined
-                        />
-                    )}
-                    {!isScale && (
-                        <BooleanItem
-                            label={intl.formatMessage({defaultMessage: 'Send User ID'})}
-                            value={props.service.sendUserId}
-                            onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
-                            helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
                         />
                     )}
                     {supportsResponsesAPIToggle && (
