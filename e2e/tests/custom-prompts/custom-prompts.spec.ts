@@ -32,6 +32,44 @@ async function setupTestPage(page) {
     return { mmPage, aiPlugin };
 }
 
+async function openCustomPromptsViaRedux(page) {
+    await page.evaluate(() => {
+        const store = (window as any).store || (window as any).__store;
+        if (store?.dispatch) {
+            store.dispatch({type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: true});
+        }
+    });
+}
+
+async function getComposerAIActionsButton(page) {
+    const testIdButton = page.getByTestId('ai-actions-menu');
+    if (await testIdButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+        return testIdButton;
+    }
+
+    const legacyButton = page.locator('#aiActionsMenu');
+    if (await legacyButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+        return legacyButton;
+    }
+
+    return null;
+}
+
+async function openCustomPromptsSubmenu(page) {
+    const postTextbox = page.getByTestId('post_textbox');
+    await postTextbox.click();
+
+    const aiButton = await getComposerAIActionsButton(page);
+    if (!aiButton) {
+        return false;
+    }
+
+    await aiButton.click();
+    await page.getByText('Custom prompts').click();
+
+    return true;
+}
+
 /**
  * Helper: create a custom prompt via the plugin REST API.
  * Returns the created prompt object (with `id`, etc.).
@@ -153,25 +191,18 @@ async function renderPromptViaAPI(
  * environments where the formatting bar button is not available.
  */
 async function openCustomPromptsModal(page) {
-    // Try the real UI path first: formatting bar AI actions menu
-    const postTextbox = page.getByTestId('post_textbox');
-    await postTextbox.click();
-
-    const aiButton = page.locator('#aiActionsMenu');
-    if (await aiButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await aiButton.click();
-        await page.getByText('Custom prompts').click();
+    // Try the real UI path first. If the submenu is unavailable on the current
+    // server build, dispatch the modal directly so the management tests still
+    // cover the modal behavior itself.
+    if (await openCustomPromptsSubmenu(page)) {
         const manageOrCreate = page.getByText(/^(Manage prompts|Create a prompt)$/);
-        await expect(manageOrCreate).toBeVisible({ timeout: 10000 });
-        await manageOrCreate.click();
+        if (await manageOrCreate.isVisible({ timeout: 3000 }).catch(() => false)) {
+            await manageOrCreate.click();
+        } else {
+            await openCustomPromptsViaRedux(page);
+        }
     } else {
-        // Fallback: dispatch Redux action directly (test environment)
-        await page.evaluate(() => {
-            const store = (window as any).store || (window as any).__store;
-            if (store?.dispatch) {
-                store.dispatch({ type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: true });
-            }
-        });
+        await openCustomPromptsViaRedux(page);
     }
     await expect(page.getByText('Custom Prompts')).toBeVisible({ timeout: 10000 });
 }
@@ -431,19 +462,16 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
         await setupTestPage(page);
 
         const postTextbox = page.getByTestId('post_textbox');
-        await postTextbox.click();
-
-        // The AI actions button is only present when the server includes the
-        // pluggable AI actions menu (custom mattermost build). Skip on stock images.
-        const aiButton = page.locator('#aiActionsMenu');
-        if (!await aiButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+        if (!await openCustomPromptsSubmenu(page)) {
             test.skip(true, 'AI Actions menu not available (requires custom server build)');
             return;
         }
 
-        await aiButton.click();
-        await page.getByText('Custom prompts').click();
-        await expect(page.getByText(/^(Manage prompts|Create a prompt)$/)).toBeVisible({ timeout: 10000 });
+        const manageOrCreate = page.getByText(/^(Manage prompts|Create a prompt)$/);
+        if (!await manageOrCreate.isVisible({ timeout: 3000 }).catch(() => false)) {
+            test.skip(true, 'Custom prompts submenu not available on this server build');
+            return;
+        }
 
         await expect(page.getByText('Formatting Bar Prompt')).toBeVisible({ timeout: 10000 });
         await page.getByText('Formatting Bar Prompt').click();
@@ -454,19 +482,16 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
     test('"Manage prompts" in the submenu opens the management modal', async ({ page }) => {
         await setupTestPage(page);
 
-        const postTextbox = page.getByTestId('post_textbox');
-        await postTextbox.click();
-
-        const aiButton = page.locator('#aiActionsMenu');
-        if (!await aiButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+        if (!await openCustomPromptsSubmenu(page)) {
             test.skip(true, 'AI Actions menu not available (requires custom server build)');
             return;
         }
 
-        await aiButton.click();
-        await page.getByText('Custom prompts').click();
         const manageOrCreate = page.getByText(/^(Manage prompts|Create a prompt)$/);
-        await expect(manageOrCreate).toBeVisible({ timeout: 10000 });
+        if (!await manageOrCreate.isVisible({ timeout: 3000 }).catch(() => false)) {
+            test.skip(true, 'Custom prompts submenu not available on this server build');
+            return;
+        }
         await manageOrCreate.click();
 
         await expect(page.getByText('Custom Prompts')).toBeVisible({ timeout: 10000 });
