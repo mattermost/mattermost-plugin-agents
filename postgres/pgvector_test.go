@@ -2298,6 +2298,87 @@ func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
 	}
 }
 
+// TestStoreConcurrentChunkConsistency verifies that concurrent Store calls
+// for the same post_id with differing chunk counts never leave a mixed state
+// (some chunks from one writer, some from another). The advisory-lock fix
+// serializes per-post writers so each Store atomically replaces the row set;
+// an ON CONFLICT-only implementation would fail this test, because writer A's
+// DELETE can run against a snapshot from before writer B commits, leaving B's
+// chunk_index values beyond A's chunk count behind as orphans next to A's
+// freshly inserted rows.
+func TestStoreConcurrentChunkConsistency(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	const postID = "consistency_post"
+	addTestPosts(t, db, []string{postID}, []int64{now})
+
+	ctx := context.Background()
+	const numGoroutines = 20
+	const numIterations = 10
+
+	for iter := 0; iter < numIterations; iter++ {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(numGoroutines)
+		for i := 0; i < numGoroutines; i++ {
+			go func(idx int) {
+				defer wg.Done()
+				<-start
+
+				// Each writer uses a unique tag and a distinct chunk count so
+				// different writers' row sets overlap unevenly. Tag is encoded
+				// in content so we can detect mixed-writer states.
+				tag := fmt.Sprintf("iter%d-writer%d", iter, idx)
+				chunkCount := idx + 1
+
+				docs := make([]embeddings.PostDocument, chunkCount)
+				vecs := make([][]float32, chunkCount)
+				for j := 0; j < chunkCount; j++ {
+					docs[j] = embeddings.PostDocument{
+						PostID:    postID,
+						CreateAt:  now,
+						TeamID:    "team1",
+						ChannelID: "channel1",
+						UserID:    "user1",
+						Content:   fmt.Sprintf("%s/chunk%d", tag, j),
+						ChunkInfo: chunking.ChunkInfo{
+							IsChunk:     true,
+							ChunkIndex:  j,
+							TotalChunks: chunkCount,
+						},
+					}
+					vecs[j] = []float32{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3}
+				}
+				_ = pgVector.Store(ctx, docs, vecs)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+
+		var contents []string
+		err := db.Select(&contents, "SELECT content FROM llm_posts_embeddings WHERE post_id = $1 ORDER BY chunk_index", postID)
+		require.NoError(t, err)
+		if len(contents) == 0 {
+			continue
+		}
+
+		// Every surviving row should belong to the same writer.
+		firstTag := strings.SplitN(contents[0], "/", 2)[0]
+		for _, c := range contents {
+			tag := strings.SplitN(c, "/", 2)[0]
+			if tag != firstTag {
+				t.Fatalf("iter %d: mixed-writer state observed: rows tagged with both %q and %q (rows=%v)",
+					iter, firstTag, tag, contents)
+			}
+		}
+	}
+}
+
 func TestDeleteOrphaned(t *testing.T) {
 	setupDeleteOrphanedTest := func(t *testing.T) (context.Context, *PGVector, *sqlx.DB) {
 		db := testDB(t)
