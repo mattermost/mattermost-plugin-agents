@@ -14,7 +14,6 @@ jest.mock('@/components/system_console/bot', () => ({
 }));
 
 // eslint-disable-next-line import/first
-import CustomPromptsDropdown from './custom_prompts_dropdown';
 // eslint-disable-next-line import/first
 import {LLMBot} from '@/bots';
 // eslint-disable-next-line import/first
@@ -30,6 +29,8 @@ import {
 import {getDefaultBotID, getSelectedBotId} from '@/selectors';
 // eslint-disable-next-line import/first
 import manifest from '@/manifest';
+
+import CustomPromptsDropdown from './custom_prompts_dropdown';
 
 const ChannelAccessLevelAll = 0;
 const UserAccessLevelAll = 0;
@@ -135,13 +136,13 @@ function createTestStore(initial: Partial<PluginSlice>) {
         [`plugins-${manifest.id}`]: pluginSlice,
     });
     const store = createStore(rootReducer, applyMiddleware(thunkMiddleware));
-    if (initial.bots !== undefined) {
+    if ('bots' in initial) {
         store.dispatch({type: BotsHandler, bots: initial.bots});
     }
-    if (initial.defaultBotID !== undefined) {
+    if ('defaultBotID' in initial) {
         store.dispatch({type: DefaultBotIDHandler, defaultBotID: initial.defaultBotID});
     }
-    if (initial.selectedBotId !== undefined) {
+    if ('selectedBotId' in initial) {
         store.dispatch({type: SelectedBotIdHandler, botId: initial.selectedBotId});
     }
     dispatches.length = 0;
