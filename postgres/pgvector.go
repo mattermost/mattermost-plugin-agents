@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 
 	sq "github.com/Masterminds/squirrel"
@@ -17,6 +17,33 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/pgvector/pgvector-go"
 )
+
+// lockPostIDs takes per-post xact advisory locks. postIDs must be sorted to
+// avoid deadlocks across batches with overlapping posts.
+func lockPostIDs(ctx context.Context, tx *sqlx.Tx, postIDs []string) error {
+	_, err := tx.ExecContext(ctx,
+		"SELECT pg_advisory_xact_lock(hashtext(p)) FROM unnest($1::text[]) AS t(p)",
+		pq.Array(postIDs),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to acquire per-post advisory lock: %w", err)
+	}
+	return nil
+}
+
+// uniqueSortedPostIDs returns the distinct post IDs in lexicographic order.
+func uniqueSortedPostIDs(docs []embeddings.PostDocument) []string {
+	seen := make(map[string]struct{}, len(docs))
+	for _, doc := range docs {
+		seen[doc.PostID] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
+}
 
 type PGVector struct {
 	db *sqlx.DB
@@ -75,7 +102,6 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 }
 
 func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, embeddings [][]float32) error {
-	// Validate input lengths match to prevent index out of bounds errors
 	if len(docs) != len(embeddings) {
 		return fmt.Errorf("mismatched input lengths: got %d documents but %d embeddings", len(docs), len(embeddings))
 	}
@@ -84,20 +110,7 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 		return nil
 	}
 
-	// Collect unique post IDs to clean up before insert
-	// This ensures that when a post is re-indexed with a different chunk count,
-	// old chunks are removed to prevent orphaned data.
-	postIDSet := make(map[string]struct{})
-	for _, doc := range docs {
-		postIDSet[doc.PostID] = struct{}{}
-	}
-	postIDs := make([]string, 0, len(postIDSet))
-	for id := range postIDSet {
-		postIDs = append(postIDs, id)
-	}
-	// Sorted lock acquisition order prevents deadlocks between batches with
-	// overlapping post sets.
-	sort.Strings(postIDs)
+	postIDs := uniqueSortedPostIDs(docs)
 
 	tx, err := pv.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -105,18 +118,13 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// Serialize concurrent writers for the same post. Without this, two
-	// transactions can each run DELETE-then-INSERT and either collide on the
-	// PK (23505) or, with the ON CONFLICT clause below, last-writer-wins
-	// stale data into the row. Lock is released at COMMIT/ROLLBACK.
-	if _, lockErr := tx.ExecContext(ctx,
-		"SELECT pg_advisory_xact_lock(hashtext(p)) FROM unnest($1::text[]) AS t(p) ORDER BY p",
-		pq.Array(postIDs),
-	); lockErr != nil {
-		return fmt.Errorf("failed to acquire per-post advisory lock: %w", lockErr)
+	if lockErr := lockPostIDs(ctx, tx, postIDs); lockErr != nil {
+		return lockErr
 	}
 
-	// Bulk delete existing entries for all posts being updated
+	// Drop any prior rows for these posts so chunk-count shrinks don't leave
+	// orphans. ON CONFLICT below is a safety net for callers that bypass the
+	// lock.
 	deleteQuery, deleteArgs, err := sq.
 		Delete("llm_posts_embeddings").
 		Where(sq.Eq{"post_id": postIDs}).
@@ -129,10 +137,6 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 		return fmt.Errorf("failed to delete existing chunks: %w", err)
 	}
 
-	// Insert new entries. ON CONFLICT acts as a safety net for any code path
-	// that ever bypasses the advisory lock above (and for the astronomically
-	// rare hashtext collision); under normal operation the DELETE makes the
-	// conflict path unreachable.
 	for i, doc := range docs {
 		id := doc.PostID
 		if doc.IsChunk {
@@ -343,19 +347,44 @@ func scanSearchResults(rows *sqlx.Rows, minScore float32) ([]embeddings.SearchRe
 }
 
 func (pv *PGVector) Delete(ctx context.Context, postIDs []string) error {
+	if len(postIDs) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(postIDs))
+	for _, id := range postIDs {
+		seen[id] = struct{}{}
+	}
+	sortedIDs := make([]string, 0, len(seen))
+	for id := range seen {
+		sortedIDs = append(sortedIDs, id)
+	}
+	slices.Sort(sortedIDs)
+
+	tx, err := pv.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Lock so an in-flight Store for the same post commits before we delete,
+	// preventing it from resurrecting rows for a now-deleted post.
+	if lockErr := lockPostIDs(ctx, tx, sortedIDs); lockErr != nil {
+		return lockErr
+	}
+
 	query, args, err := sq.
 		Delete("llm_posts_embeddings").
-		Where(sq.Eq{"post_id": postIDs}).
+		Where(sq.Eq{"post_id": sortedIDs}).
 		PlaceholderFormat(sq.Dollar).
 		ToSql()
 	if err != nil {
 		return fmt.Errorf("failed to create query: %w", err)
 	}
-	_, err = pv.db.ExecContext(ctx, query, args...)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("failed to delete vectors: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (pv *PGVector) Clear(ctx context.Context) error {
