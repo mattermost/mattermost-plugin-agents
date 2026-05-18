@@ -62,9 +62,16 @@ type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableChannelMentionToolCalling bool
 	mcpConfig                       mcp.Config
+	// defaultBotName, when set, overrides the default returned by
+	// GetDefaultBotName. When nil, GetDefaultBotName returns "ai" so existing
+	// tests keep their previous behavior.
+	defaultBotName *string
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
+	if tc.defaultBotName != nil {
+		return *tc.defaultBotName
+	}
 	return "ai"
 }
 

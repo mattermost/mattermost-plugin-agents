@@ -492,16 +492,26 @@ type AIBotsResponse struct {
 	Bots             []AIBotInfo `json:"bots"`
 	SearchEnabled    bool        `json:"searchEnabled"`
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	// DefaultBotID is the user ID of the system-wide default bot, or "" if
+	// no default is configured or the default is not available to this user.
+	// Clients should prefer this over assuming the first bot in the list is
+	// the default.
+	DefaultBotID string `json:"defaultBotID"`
 }
 
-// getAIBotsForUser returns all AI bots available to a user
-func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
+// getAIBotsForUser returns all AI bots available to a user along with the
+// user ID of the system-wide default bot (or "" when there is no available
+// default for this user).
+func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, string, error) {
 	allBots := a.bots.GetAllBots()
 
 	// Get the info from all the bots.
-	// Put the default bot first.
+	// Put the default bot first for backward compatibility with older clients
+	// that infer the default from list order. Newer clients should rely on
+	// the returned defaultBotID instead.
 	bots := make([]AIBotInfo, 0, len(allBots))
 	defaultBotName := a.config.GetDefaultBotName()
+	defaultBotID := ""
 	for _, bot := range allBots {
 		// Don't return bots the user is excluded from using.
 		if a.bots.CheckUsageRestrictionsForUser(bot, userID) != nil {
@@ -530,18 +540,19 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
 			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
 		})
-		if bot.GetMMBot().Username == defaultBotName {
+		if defaultBotName != "" && bot.GetMMBot().Username == defaultBotName {
+			defaultBotID = bot.GetMMBot().UserId
 			last := len(bots) - 1
 			bots[0], bots[last] = bots[last], bots[0]
 		}
 	}
 
-	return bots, nil
+	return bots, defaultBotID, nil
 }
 
 func (a *API) handleGetAIBots(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	bots, err := a.getAIBotsForUser(userID)
+	bots, defaultBotID, err := a.getAIBotsForUser(userID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -554,6 +565,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		Bots:             bots,
 		SearchEnabled:    searchEnabled,
 		AllowUnsafeLinks: a.config.AllowUnsafeLinks(),
+		DefaultBotID:     defaultBotID,
 	})
 }
 
