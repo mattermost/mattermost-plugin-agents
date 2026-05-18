@@ -912,6 +912,21 @@ func TestAppendFirstWebSearchFallbackSource(t *testing.T) {
 			Title: "",
 		},
 	}, sources)
+
+	sources = appendFirstWebSearchFallbackSource(sources, &schemas.ResponsesMessage{
+		Type: schemas.Ptr(schemas.ResponsesMessageTypeWebSearchCall),
+	})
+	require.Len(t, sources, 2)
+	assert.Equal(t, []webSearchFallbackSource{
+		{
+			URL:   "https://example.com/one",
+			Title: "Example Source",
+		},
+		{
+			URL:   "https://example.com/two",
+			Title: "",
+		},
+	}, sources)
 }
 
 func TestBuildFallbackAnnotations(t *testing.T) {
