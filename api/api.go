@@ -492,23 +492,16 @@ type AIBotsResponse struct {
 	Bots             []AIBotInfo `json:"bots"`
 	SearchEnabled    bool        `json:"searchEnabled"`
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
-	// DefaultBotID is the user ID of the system-wide default bot, or "" if
-	// no default is configured or the default is not available to this user.
-	// Clients should prefer this over assuming the first bot in the list is
-	// the default.
-	DefaultBotID string `json:"defaultBotID"`
+	DefaultBotID     string      `json:"defaultBotID"`
 }
 
 // getAIBotsForUser returns all AI bots available to a user along with the
-// user ID of the system-wide default bot (or "" when there is no available
-// default for this user).
+// user ID of the configured default bot (or "" when none is available).
 func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, string, error) {
 	allBots := a.bots.GetAllBots()
 
 	// Get the info from all the bots.
-	// Put the default bot first for backward compatibility with older clients
-	// that infer the default from list order. Newer clients should rely on
-	// the returned defaultBotID instead.
+	// Put the default bot first.
 	bots := make([]AIBotInfo, 0, len(allBots))
 	defaultBotName := a.config.GetDefaultBotName()
 	defaultBotID := ""

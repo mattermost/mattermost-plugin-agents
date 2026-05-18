@@ -30,7 +30,5 @@ export const getShowCustomPromptsModal = (state: AppState): boolean =>
 export const getSelectedBotId = (state: AppState): string | null =>
     state[`plugins-${manifest.id}`]?.selectedBotId ?? null;
 
-// getDefaultBotID returns the user ID of the system-wide default agent
-// configured by the admin (or "" when none is configured).
 export const getDefaultBotID = (state: AppState): string =>
     state[`plugins-${manifest.id}`]?.defaultBotID ?? '';

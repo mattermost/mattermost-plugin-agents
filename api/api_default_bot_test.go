@@ -19,16 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHandleGetAIBotsDefaultBotID verifies that /ai_bots returns:
-//   - The system-wide default bot's user ID as defaultBotID so clients can
-//     resolve the default explicitly without depending on list order.
-//   - The default bot first in the list for backward compatibility with
-//     older clients.
-//
-// This is the behavior MM-68856 fixed: previously clients had no explicit
-// signal and used "first agent in the list" as the default, which broke
-// when a per-user filter, a name mismatch, or any other reordering moved
-// a non-default bot to position 0.
+// TestHandleGetAIBotsDefaultBotID verifies that /ai_bots returns the
+// configured default bot's user ID as defaultBotID and places it first in
+// the list (for backward compatibility with clients that infer the default
+// from list order).
 func TestHandleGetAIBotsDefaultBotID(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -133,9 +127,6 @@ func TestHandleGetAIBotsDefaultBotID(t *testing.T) {
 			require.Equal(t, tt.expectedFirstBotID, response.Bots[0].ID,
 				"first bot in list should match expected ordering")
 
-			// When a default is returned, the list ordering must agree with
-			// it so older clients that infer the default from list order
-			// keep working.
 			if response.DefaultBotID != "" {
 				require.Equal(t, response.DefaultBotID, response.Bots[0].ID,
 					"defaultBotID must match Bots[0].ID for backward compatibility")

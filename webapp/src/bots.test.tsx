@@ -130,9 +130,6 @@ describe('useBotlist defaultBotID dispatch (MM-68856)', () => {
     });
 
     test('handles older servers that omit defaultBotID by defaulting to empty', async () => {
-        // Older versions of the server don't send defaultBotID; the hook
-        // must default it to '' so the selector keeps the empty-string
-        // contract instead of returning undefined.
         mockGetAIBots.mockResolvedValue({
             bots: [{id: 'aira-id', username: 'aira', displayName: 'Aira'}],
             searchEnabled: false,

@@ -100,10 +100,6 @@ const initialPluginSlice: PluginSlice = {
     showCustomPromptsModal: false,
 };
 
-// pluginSlice mirrors the production reducer shape for the keys this
-// component reads/writes via Redux. Keeping the same action types means the
-// real selector (`getDefaultBotID`) and the component's own dispatches go
-// through the real wiring rather than ad-hoc mocks.
 const pluginSlice: Reducer<PluginSlice> = (state = initialPluginSlice, action: any) => {
     switch (action.type) {
     case BotsHandler:
@@ -123,11 +119,8 @@ const pluginSlice: Reducer<PluginSlice> = (state = initialPluginSlice, action: a
     }
 };
 
-// Track which actions the component dispatches via a passthrough middleware
-// so tests can both observe dispatches AND let the real reducer apply them.
-// thunkMiddleware mirrors redux-thunk's behavior so the component's
-// `dispatch(fetchCustomPrompts() as any)` call (which returns a function)
-// resolves without exploding the store.
+// Passthrough middleware that captures dispatched actions and resolves the
+// thunk dispatched by fetchCustomPrompts so the real reducer runs.
 const dispatches: any[] = [];
 const thunkMiddleware = (api: any) => (next: any) => (action: any) => {
     if (typeof action === 'function') {
@@ -151,8 +144,6 @@ function createTestStore(initial: Partial<PluginSlice>) {
     if (initial.selectedBotId !== undefined) {
         store.dispatch({type: SelectedBotIdHandler, botId: initial.selectedBotId});
     }
-    // Drop the seeding dispatches so tests only inspect what the component
-    // produced.
     dispatches.length = 0;
     return store;
 }
@@ -185,9 +176,8 @@ describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
     const zorro = makeBot({id: 'zorro-id', username: 'zorro', displayName: 'Zorro'});
 
     test('pre-selects the system-wide default agent when one is configured', () => {
-        // The order intentionally puts a non-default bot first to exercise
-        // the bug: previously the dropdown showed bots[0] ("Aira") even when
-        // the admin had configured Matty as the system default.
+        // Non-default bot first in the list to exercise the regression
+        // (previously the dropdown always picked bots[0]).
         renderDropdown({
             bots: [aira, matty, zorro],
             defaultBotID: matty.id,
@@ -231,8 +221,6 @@ describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
             defaultBotID: matty.id,
         });
 
-        // The component should have dispatched SelectedBotIdHandler with the
-        // default bot, and the real reducer should have applied it.
         expect(dispatches).toContainEqual({
             type: SelectedBotIdHandler,
             botId: matty.id,
@@ -241,9 +229,6 @@ describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
     });
 
     test('getDefaultBotID selector reads the reducer state set by DefaultBotIDHandler', () => {
-        // Locks down the redux wiring: dispatching DefaultBotIDHandler must
-        // be reflected by getDefaultBotID. Guards against typos in either
-        // the reducer key or the selector.
         const {store} = renderDropdown({
             bots: [aira, matty],
             defaultBotID: matty.id,
