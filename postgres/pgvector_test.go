@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2232,6 +2234,68 @@ func TestConcurrentStoreOperations(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, count, "Should have exactly one document for the post after concurrent operations")
 	})
+}
+
+// TestStoreConcurrentNoDuplicateKey verifies that Store does not surface a
+// pq 23505 duplicate-key error when many writers race for the same post id.
+// The current DELETE-then-INSERT implementation under READ COMMITTED loses
+// this race; this test pins that behavior so the upcoming fix (advisory
+// lock + ON CONFLICT) can be verified.
+func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	addTestPosts(t, db, []string{"race_post"}, []int64{now})
+
+	ctx := context.Background()
+	const numGoroutines = 30
+	const numIterations = 10
+
+	var dupKeyCount, otherErrCount atomic.Int32
+	var sampleDupErr atomic.Value
+
+	for iter := 0; iter < numIterations; iter++ {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(numGoroutines)
+		for i := 0; i < numGoroutines; i++ {
+			go func(idx int) {
+				defer wg.Done()
+				<-start
+				docs := []embeddings.PostDocument{{
+					PostID:    "race_post",
+					CreateAt:  now,
+					TeamID:    "team1",
+					ChannelID: "channel1",
+					UserID:    "user1",
+					Content:   fmt.Sprintf("iter %d worker %d", iter, idx),
+				}}
+				vecs := [][]float32{{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3}}
+				if storeErr := pgVector.Store(ctx, docs, vecs); storeErr != nil {
+					if strings.Contains(storeErr.Error(), "duplicate key value") {
+						dupKeyCount.Add(1)
+						sampleDupErr.Store(storeErr.Error())
+					} else {
+						otherErrCount.Add(1)
+					}
+				}
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+	}
+
+	if other := otherErrCount.Load(); other != 0 {
+		t.Logf("non-duplicate-key errors observed: %d", other)
+	}
+	if got := dupKeyCount.Load(); got > 0 {
+		sample, _ := sampleDupErr.Load().(string)
+		t.Fatalf("Store returned duplicate key error under concurrent writes (%d occurrences); sample: %s", got, sample)
+	}
 }
 
 func TestDeleteOrphaned(t *testing.T) {

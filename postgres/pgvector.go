@@ -7,10 +7,12 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/pgvector/pgvector-go"
@@ -93,12 +95,26 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 	for id := range postIDSet {
 		postIDs = append(postIDs, id)
 	}
+	// Sorted lock acquisition order prevents deadlocks between batches with
+	// overlapping post sets.
+	sort.Strings(postIDs)
 
 	tx, err := pv.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	// Serialize concurrent writers for the same post. Without this, two
+	// transactions can each run DELETE-then-INSERT and either collide on the
+	// PK (23505) or, with the ON CONFLICT clause below, last-writer-wins
+	// stale data into the row. Lock is released at COMMIT/ROLLBACK.
+	if _, lockErr := tx.ExecContext(ctx,
+		"SELECT pg_advisory_xact_lock(hashtext(p)) FROM unnest($1::text[]) AS t(p) ORDER BY p",
+		pq.Array(postIDs),
+	); lockErr != nil {
+		return fmt.Errorf("failed to acquire per-post advisory lock: %w", lockErr)
+	}
 
 	// Bulk delete existing entries for all posts being updated
 	deleteQuery, deleteArgs, err := sq.
@@ -113,7 +129,10 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 		return fmt.Errorf("failed to delete existing chunks: %w", err)
 	}
 
-	// Insert new entries
+	// Insert new entries. ON CONFLICT acts as a safety net for any code path
+	// that ever bypasses the advisory lock above (and for the astronomically
+	// rare hashtext collision); under normal operation the DELETE makes the
+	// conflict path unreachable.
 	for i, doc := range docs {
 		id := doc.PostID
 		if doc.IsChunk {
@@ -127,7 +146,18 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 			VALUES (
 				:id, :post_id, :team_id, :channel_id, :user_id, :content, :embedding, :created_at,
 				:is_chunk, :chunk_index, :total_chunks
-			)`,
+			)
+			ON CONFLICT (id) DO UPDATE SET
+				post_id = EXCLUDED.post_id,
+				team_id = EXCLUDED.team_id,
+				channel_id = EXCLUDED.channel_id,
+				user_id = EXCLUDED.user_id,
+				content = EXCLUDED.content,
+				embedding = EXCLUDED.embedding,
+				created_at = EXCLUDED.created_at,
+				is_chunk = EXCLUDED.is_chunk,
+				chunk_index = EXCLUDED.chunk_index,
+				total_chunks = EXCLUDED.total_chunks`,
 			map[string]interface{}{
 				"id":           id,
 				"post_id":      doc.PostID,
