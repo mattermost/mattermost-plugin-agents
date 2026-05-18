@@ -3708,8 +3708,6 @@ func TestSaveJobStatusPreservesCancelRequested(t *testing.T) {
 		"saveJobStatus must propagate cancel_requested to the worker's local status so it observes the cancel on the next loop iteration")
 }
 
-// TestCatchUpPassSkipsAlreadyIndexedPosts verifies the catch-up SELECT
-// excludes posts already present in llm_posts_embeddings.
 func TestCatchUpPassSkipsAlreadyIndexedPosts(t *testing.T) {
 	type seedPost struct {
 		id      string
@@ -3722,7 +3720,7 @@ func TestCatchUpPassSkipsAlreadyIndexedPosts(t *testing.T) {
 		expectedStoredIDs []string
 	}{
 		{
-			// Interleaved timestamps so the cursor would advance through
+			// Interleaved timestamps so the keyset cursor would pass through
 			// both sets in a single page absent the NOT EXISTS filter.
 			name: "mixed indexed and unseen",
 			seed: []seedPost{
@@ -3783,8 +3781,8 @@ func TestCatchUpPassSkipsAlreadyIndexedPosts(t *testing.T) {
 					}).
 					Return(nil).Once()
 			}
-			// When expectedStoredIDs is empty, no Store expectation is set;
-			// a Store call would fail the test with "unexpected call".
+			// No Store expectation when expectedStoredIDs is empty — an
+			// unexpected Store call will then fail the test.
 
 			mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
 			mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()

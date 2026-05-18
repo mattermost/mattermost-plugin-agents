@@ -2237,10 +2237,8 @@ func TestConcurrentStoreOperations(t *testing.T) {
 	})
 }
 
-// TestStoreConcurrentNoDuplicateKey verifies that Store does not surface a
-// pq 23505 duplicate-key error when many writers race for the same post id.
-// Any non-duplicate error also fails the test: a regression that turned the
-// race into a deadlock or serialization failure must not be hidden.
+// Any non-duplicate error (e.g. a deadlock or serialization failure) also
+// fails the test so a regression can't hide behind a different error class.
 func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
 	db := testDB(t)
 	defer cleanupDB(t, db)
@@ -2303,14 +2301,11 @@ func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
 	}
 }
 
-// TestStoreConcurrentChunkConsistency verifies that concurrent Store calls
-// for the same post_id with differing chunk counts never leave a mixed state
-// (some chunks from one writer, some from another). The advisory-lock fix
-// serializes per-post writers so each Store atomically replaces the row set;
-// an ON CONFLICT-only implementation would fail this test, because writer A's
-// DELETE can run against a snapshot from before writer B commits, leaving B's
-// chunk_index values beyond A's chunk count behind as orphans next to A's
-// freshly inserted rows.
+// Concurrent Store calls for the same post_id with differing chunk counts
+// must never leave a mixed state (some chunks from one writer, some from
+// another). Without the advisory lock, writer A's DELETE can run against a
+// snapshot from before writer B commits, leaving B's chunk rows beyond A's
+// chunk count behind as orphans alongside A's freshly inserted rows.
 func TestStoreConcurrentChunkConsistency(t *testing.T) {
 	db := testDB(t)
 	defer cleanupDB(t, db)
@@ -2336,9 +2331,8 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 				defer wg.Done()
 				<-start
 
-				// Each writer uses a unique tag and a distinct chunk count so
-				// different writers' row sets overlap unevenly. Tag is encoded
-				// in content so we can detect mixed-writer states.
+				// Distinct chunk counts so writers' row sets overlap unevenly;
+				// tag encoded in content lets us detect mixed-writer states.
 				tag := fmt.Sprintf("iter%d-writer%d", iter, idx)
 				chunkCount := idx + 1
 
@@ -2375,9 +2369,9 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, contents, "iter %d: at least one writer should have committed rows", iter)
 
-		// Every surviving row should belong to the same writer, and the count
-		// should equal that writer's TotalChunks (idx+1) — the surviving Store
-		// must have replaced the row set atomically with its full chunk count.
+		// Every surviving row must belong to the same writer, and the count
+		// must equal that writer's TotalChunks — the winning Store must have
+		// replaced the row set atomically.
 		firstTag := strings.SplitN(contents[0], "/", 2)[0]
 		for _, c := range contents {
 			tag := strings.SplitN(c, "/", 2)[0]

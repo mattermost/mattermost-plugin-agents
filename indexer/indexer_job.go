@@ -489,8 +489,7 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	lastID := ""
 
 	for {
-		// Skip posts the live hook has already indexed, so catch-up
-		// doesn't redo their embeddings.
+		// Skip posts the live hook has already indexed so catch-up doesn't redo them.
 		query := `SELECT
 			Posts.Id as id,
 			Posts.Message as message,

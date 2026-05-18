@@ -18,8 +18,7 @@ import (
 	"github.com/pgvector/pgvector-go"
 )
 
-// lockPostIDs takes per-post xact advisory locks. postIDs must be sorted to
-// avoid deadlocks across batches with overlapping posts.
+// postIDs must be sorted to avoid deadlocks across batches with overlapping posts.
 func lockPostIDs(ctx context.Context, tx *sqlx.Tx, postIDs []string) error {
 	_, err := tx.ExecContext(ctx,
 		"SELECT pg_advisory_xact_lock(hashtext(p)) FROM unnest($1::text[]) AS t(p)",
@@ -31,7 +30,6 @@ func lockPostIDs(ctx context.Context, tx *sqlx.Tx, postIDs []string) error {
 	return nil
 }
 
-// uniqueSortedPostIDs returns the distinct post IDs in lexicographic order.
 func uniqueSortedPostIDs(docs []embeddings.PostDocument) []string {
 	seen := make(map[string]struct{}, len(docs))
 	for _, doc := range docs {
@@ -122,9 +120,7 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 		return lockErr
 	}
 
-	// Drop any prior rows for these posts so chunk-count shrinks don't leave
-	// orphans. ON CONFLICT DO NOTHING below preserves existing rows if any
-	// caller ever bypasses the advisory lock.
+	// Drop any prior rows for these posts so a shrinking chunk count doesn't leave orphans.
 	deleteQuery, deleteArgs, err := sq.
 		Delete("llm_posts_embeddings").
 		Where(sq.Eq{"post_id": postIDs}).

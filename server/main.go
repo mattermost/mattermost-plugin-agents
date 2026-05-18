@@ -596,10 +596,6 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 }
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
-	// IndexPost atomically replaces prior rows under pgvector.Store's
-	// per-post advisory lock, so no separate pre-delete is needed.
-	// Edits that make a post non-indexable leave stale chunks behind
-	// for the orphan sweep.
 	if p.indexerService != nil {
 		channel, err := p.API.GetChannel(newPost.ChannelId)
 		if err != nil {
