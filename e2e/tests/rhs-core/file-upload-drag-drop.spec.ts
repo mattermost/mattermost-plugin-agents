@@ -69,13 +69,8 @@ test.describe('Agents RHS drag-and-drop file upload', () => {
             'hello from the agents drag-and-drop test',
         );
 
-        // The AdvancedTextEditor inside the plugin RHS hosts the hidden file
-        // input we forward dropped files to. After a successful drop it should
-        // hold at least one file, which proves the editor's upload pipeline
-        // received the payload.
-        const inputHasFiles = await rhs.locator('input[type="file"]').first().evaluate(
-            (el: HTMLInputElement) => (el.files?.length ?? 0) > 0,
-        );
-        expect(inputHasFiles).toBe(true);
+        // Assert the user-visible attachment preview instead of the editor's
+        // hidden file input so the test tracks real RHS composer behavior.
+        await expect(rhs.locator('.file-preview__container')).toContainText('agents-dnd.txt');
     });
 });
