@@ -71,6 +71,8 @@ Pending tool calls remain pending. They do not auto-approve after a timeout, and
 
 A single Agent response can include multiple tool calls. If some of those calls are governed by an `auto_run` policy (§5) and others require approval, the auto-approved tools render with an **Auto-approved** badge and execute immediately, while the pending ones still show **Accept** / **Reject** buttons for the initiator. The badge applies per-tool, not per-response. (This is the behavior fixed in PR #645; earlier builds rendered the entire stream as either pending or approved.)
 
+When one of those tools triggers another model round, Mattermost keeps the conversation in the same bot post. Earlier tool cards remain visible, and the continued answer appears as the next round in that post instead of as a separate follow-up post.
+
 ## 5. Per-tool policy interaction
 
 Admins configure each tool with one of three policy values:
@@ -116,6 +118,8 @@ Multiplayer tool calling handles this with a two-step flow:
    - **Share** marks the tool result as visible to the channel. Other channel members see the arguments and the result, and the Agent's follow-up response incorporates the result openly.
    - **Keep Private** marks the result as private to the initiator. Other channel members do not see the arguments or the result, and the Agent's follow-up response is generated without leaking that content into the channel-visible reply.
 
+After the share decision is made, any follow-up answer still renders in the same bot post. Mattermost adds a new round to that post rather than posting a second bot message for the continuation.
+
 DMs auto-share by definition: there is no other human in the room, so there is no second step.
 
 A few important properties of the two-step flow:
@@ -148,6 +152,7 @@ The tool-call card is the single piece of UI that ties this whole model together
 - **"No parameters required" replaces empty-object rendering.** When a tool takes no arguments, the card shows the explicit string "No parameters required" rather than `{}` (PR #596 / commit `289dd21d`). This is a UI clarification only; it does not change auth or execution.
 - **The card is bound to the post and the conversation, not just the post.** PR #642 threaded the originating `postId` through the markdown renderer so the tool card always finds its conversation, including in edge cases like edited posts and rendered-image regressions.
 - **Mixed streams render correctly.** A response that contains both auto-approved tools and pending-approval tools renders each tool with its own state (PR #645). There is no longer a single "this whole response is approved" or "this whole response is pending" rendering bug.
+- **Continued tool flows stay on one post.** When approval or auto-run leads to another model round, Mattermost appends that round inside the existing bot post. The latest prose answer is therefore the last round in the post, while earlier rounds continue to show their own text and tool cards.
 - **Bulk controls.** When multiple tools are pending in the same response, the card may surface **Accept all** and **Reject all** controls in addition to per-tool buttons. Bulk controls obey the same initiator-only rule as the individual buttons.
 
 ## 9. Bot-triggered flows
