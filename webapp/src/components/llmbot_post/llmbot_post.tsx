@@ -31,11 +31,9 @@ import {extractPermalinkData} from './permalink_data';
 
 const SearchResultsPropKey = 'search_results';
 
-// Sentinel id for the in-progress streaming round. Distinguishes the live
-// round from persisted (turn-id keyed) rounds in `renderedRounds`.
+// Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
 
-// Types
 export interface PostUpdateWebsocketMessage {
     post_id: string
     next?: string
@@ -51,11 +49,8 @@ interface LLMBotPostProps {
     websocketUnregister?: (postID: string, listenerID: string) => void;
 }
 
-// Treat a tool_call event as the round-complete signal when every tool in
-// the batch has reached a terminal status. ToolRunner emits exactly one such
-// event per round after execution; the pending event preceding it carries
-// status=Pending instead and is treated as a live update on the current
-// round, not a round boundary.
+// ToolRunner emits one tool_call event per round with pending statuses, then one
+// with terminal statuses after execution. The terminal one is the round boundary.
 function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
     if (toolCalls.length === 0) {
         return false;
@@ -71,14 +66,11 @@ function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
 export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
 
-    // Conversation entity data
     const conversationId: string | undefined = props.post.props?.conversation_id;
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
-    // Derive requester check from conversation entity. Meeting summarization
-    // posts currently have no conversation entity; fall back to the legacy
-    // llm_requester_user_id prop for those. Remove the fallback once meeting
-    // flows produce conversation entities.
+    // Meeting summarization posts have no conversation entity yet; fall back to
+    // the legacy llm_requester_user_id prop.
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
     const requesterIsCurrentUser = Boolean(
@@ -108,28 +100,18 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [reasoningSummary, setReasoningSummary] = useState('');
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
-    // Per-round collapse toggle keyed by round id. Defaults to collapsed
-    // for any round not yet expanded.
     const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
 
-    // Rounds completed during the current streaming session, not yet
-    // reflected in `conversation.turns` (turns are written when the toolrunner
-    // terminates, which is end-of-stream — not between rounds).
+    // Rounds completed during this stream, before turns land via refetch.
     const [liveRounds, setLiveRounds] = useState<Round[]>([]);
 
-    // Set true when an `end` event invalidates the conversation; the next
-    // refetch becomes the trigger to clear local-state for completed rounds.
     const [pendingRefetch, setPendingRefetch] = useState(false);
 
-    // Set true while the user just clicked Regenerate. The persisted round
-    // from the prior generation must NOT render alongside the in-progress
-    // regenerated content — the user expects the post to be replaced, not
-    // appended. Cleared once the post-end refetch lands new content into
-    // persistedRounds.
+    // Suppresses persistedRounds while regenerating so the prior generation
+    // doesn't render alongside the new stream.
     const [regenerating, setRegenerating] = useState(false);
 
-    // A single ref mirrors the in-progress round so the WebSocket handler
-    // can snapshot it without rebuilding the listener on every keystroke.
+    // Lets the WebSocket handler snapshot the live round without re-subscribing.
     const liveRef = useRef({message, toolCalls, reasoningSummary, annotations});
     liveRef.current = {message, toolCalls, reasoningSummary, annotations};
 
@@ -140,9 +122,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         }
     }, [props.post.message]);
 
-    // Persisted rounds from turns. Empty for posts without a conversation
-    // entity (legacy meeting summary posts) — those render purely from local
-    // streaming state.
     const persistedRounds: Round[] = useMemo(() => {
         if (!conversation) {
             return [];
@@ -150,8 +129,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         return buildRoundsFromTurns(conversation, props.post.id);
     }, [conversation, props.post.id]);
 
-    // Cache the last-known persisted rounds across refetch invalidations so
-    // the UI doesn't briefly empty out while the refetch is in flight.
+    // Keep prior rounds visible during the refetch window after invalidate.
     const lastPersistedRef = useRef<Round[]>([]);
     useEffect(() => {
         if (conversation) {
@@ -160,19 +138,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }, [conversation, persistedRounds]);
     const stablePersisted = conversation ? persistedRounds : lastPersistedRef.current;
 
-    // After an `end` invalidates and the refetch completes, clear the
-    // local-state for completed rounds so we don't double-render them
-    // alongside the freshly-loaded persisted copies. useLayoutEffect runs
-    // synchronously after the render that sees the new conversation,
-    // before paint, so the user never sees a duplicated frame.
+    // Once the refetch lands, clear local state for completed rounds so we
+    // don't double-render. useLayoutEffect prevents a duplicated frame.
     useLayoutEffect(() => {
         if (!pendingRefetch || !conversation) {
             return;
         }
 
-        // Reset only what's actually populated. Each setX([]) call would
-        // otherwise allocate a fresh empty array, causing the parent to
-        // re-render even when the round had no content to clear.
         setLiveRounds((prev: Round[]) => (prev.length === 0 ? prev : []));
         setToolCalls((prev: ToolCall[]) => (prev.length === 0 ? prev : []));
         setAnnotations((prev: Annotation[]) => (prev.length === 0 ? prev : []));
@@ -193,18 +165,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         props.websocketRegister(props.post.id, listenerID, (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => {
             const data = msg.data;
 
-            // Ensure we're only processing events for this post
             if (data.post_id !== props.post.id) {
                 return;
             }
 
             if (data.control === 'reasoning_summary' && data.reasoning) {
-                // Keep generating=true: the model is still actively producing
-                // reasoning chunks. Flipping it to false here would hide
-                // currentRound (the `generating && currentRound` gate in
-                // renderedRounds) and the thinking block wouldn't appear
-                // until text or a tool call arrived. isReasoningLoading
-                // separately drives the reasoning spinner state.
+                // Don't clear generating: the `generating && currentRound`
+                // gate in renderedRounds would hide the thinking block.
                 setReasoningSummary(data.reasoning);
                 setIsReasoningLoading(true);
                 setPrecontent(false);
@@ -221,10 +188,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 try {
                     const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
                     if (isResolvedToolCallEvent(parsedToolCalls)) {
-                        // Round complete: snapshot the current in-progress
-                        // round (text/reasoning/annotations + the resolved
-                        // tools from this event) into liveRounds, then reset
-                        // for the next round to begin streaming below it.
+                        // Snapshot the round into liveRounds and reset for the next.
                         const live = liveRef.current;
                         setLiveRounds((prev) => [
                             ...prev,
@@ -242,7 +206,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                         setIsReasoningLoading(false);
                         setAnnotations([]);
                     } else {
-                        // Pending: replace the current round's tool calls.
                         setToolCalls(parsedToolCalls);
                     }
                     setPrecontent(false);
@@ -307,10 +270,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'continue') {
-                // Continuation stream after the user approved pending tool
-                // calls. The prior round's resolved tools come from the
-                // refetched persisted rounds, so reset all local state and
-                // let the next round stream into a clean slate.
+                // Tool-approval resume: prior round comes from refetched
+                // persistedRounds, so reset all local state.
                 setGenerating(true);
                 setPrecontent(true);
                 setStopped(false);
@@ -352,11 +313,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const renderedRounds = useMemo(() => {
         if (regenerating) {
-            // The prior generation is being replaced; suppress the cached
-            // persistedRounds (still holds the pre-regen turn until refetch)
-            // but keep liveRounds — those are this regen's completed rounds
-            // captured between resolved tool_call events. Without them the
-            // post would visually empty out between rounds.
+            // Suppress stablePersisted (still the pre-regen turn) but keep
+            // liveRounds so multi-round regens don't visually empty between rounds.
             const out: Round[] = [...liveRounds];
             if (currentRound) {
                 out.push(currentRound);
@@ -421,12 +379,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 
-    // Approval stage applies only to the post anchor — the latest persisted
-    // round. The live in-progress round and any locally-tracked completed
-    // rounds (liveRounds) have no server-confirmed approval state, so they
-    // always render as 'done' (no approve / share buttons). Without this
-    // gate the cached anchorStage would leak into the live round and flash
-    // the approval UI before auto-execution resolves.
+    // Only the post anchor (latest persisted round) gets a real approval stage;
+    // live/locally-tracked rounds always render as 'done'.
     const anchorStage: ToolApprovalStage = conversation ? deriveApprovalStageForPost(conversation, props.post.id) : 'done';
     const lastPersistedIdx = stablePersisted.length - 1;
     const lastRenderedIdx = renderedRounds.length - 1;
@@ -524,10 +478,6 @@ interface RoundViewProps {
     onToggleReasoning: (collapsed: boolean) => void;
 }
 
-// One round's worth of LLM output. The vertical order text → tools mirrors
-// what the LLM emits within a round (preamble first, then any tool_use it
-// chose to invoke), so the post reads as the natural back-and-forth of
-// reasoning and action.
 function RoundView(props: RoundViewProps) {
     const {round} = props;
     const showArguments = round.toolCalls.some((tc) => tc.arguments != null);
@@ -567,7 +517,6 @@ function RoundView(props: RoundViewProps) {
     );
 }
 
-// Styled components
 const PostBody = styled.div`
 `;
 

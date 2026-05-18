@@ -135,11 +135,8 @@ export class LLMBotPostHelper {
     }
 
     /**
-     * Get the post text content. Multi-round responses (auto-run tool rounds
-     * + a final answer) render one [data-testid="posttext"] per round in
-     * order. Returning .last() gives the final answer text — the round
-     * tests typically assert against. Tests needing a different round can
-     * use the underlying locator directly.
+     * Get the final answer's post text. Multi-round responses render one
+     * [data-testid="posttext"] per round; .last() returns the final round.
      * @param postId - Optional post ID to scope the search
      */
     getPostText(postId?: string): Locator {

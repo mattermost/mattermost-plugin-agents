@@ -214,26 +214,19 @@ func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
 	return s.store.CreateTurnAutoSequence(turn)
 }
 
-// GetTurnByPostID retrieves the assistant turn anchored to the given post,
-// or nil if none exists. Used by the streaming layer to detect a continuation
-// stream and demote the prior anchor before creating the new one.
+// GetTurnByPostID returns the assistant turn anchored to postID, or nil.
 func (s *Service) GetTurnByPostID(postID string) (*store.Turn, error) {
 	return s.store.GetTurnByPostID(postID)
 }
 
-// UpdateTurnPostID sets or clears the PostID on a turn. Streaming uses this to
-// demote a prior anchor turn (PostID = nil) when finalizing a continuation
-// turn for the same response post.
+// UpdateTurnPostID sets or clears the PostID on a turn.
 func (s *Service) UpdateTurnPostID(id string, postID *string) error {
 	return s.store.UpdateTurnPostID(id, postID)
 }
 
-// DeleteResponseTurns removes every turn that belongs to a response — the
-// post anchor itself plus any assistant/tool_result turns between it and
-// the originating user turn. After this call the post has no DB state and
-// a regen can stream a fresh response identically to a first stream.
-// Callers must build any completion request BEFORE this runs, since
-// ExcludeAfterPostID walks back from the anchor that's about to disappear.
+// DeleteResponseTurns removes the post's anchor and any assistant/tool_result
+// turns between it and the originating user turn. Callers must build any
+// completion request before calling this — ExcludeAfterPostID needs the anchor.
 func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
 	return s.store.DeleteResponseTurns(conversationID, postID)
 }
@@ -397,13 +390,9 @@ func (s *Service) BuildCompletionRequest(
 	redactUnshared := true
 	if len(opts) > 0 {
 		redactUnshared = !opts[0].AllowUnsharedToolContent
-		// ExcludeAfterPostID truncates the conversation back to right after
-		// the user turn that initiated the response for this post, so the
-		// LLM regenerates from the same starting point. Truncating only at
-		// the post's anchor would leave any continuation history (a demoted
-		// prior anchor plus its tool_result turns from a tool-approval
-		// resume) at the tail — that ends in assistant content, which
-		// bifrost-backed models reject as an unsupported prefill.
+		// Truncate back to right after the originating user turn. Stopping
+		// at the anchor alone would leave demoted continuation turns at the
+		// tail; bifrost rejects an assistant-ended request as prefill.
 		if opts[0].ExcludeAfterPostID != "" {
 			excludeID := opts[0].ExcludeAfterPostID
 			anchorIdx := -1

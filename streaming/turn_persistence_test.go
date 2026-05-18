@@ -19,9 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeTurnStore implements TurnStore and records every created turn.
-// Streaming creates its assistant turn at finalize; for continuation streams
-// it also looks up and demotes the prior anchor turn for the same post.
+// fakeTurnStore implements TurnStore and records every operation.
 type fakeTurnStore struct {
 	mu        sync.Mutex
 	turns     []*store.Turn
@@ -501,9 +499,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		blocks := parseContentBlocks(t, streamTurn.Content)
 		require.Len(t, blocks, 1)
 		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
-		// Partial text is preserved AND the error fallback is appended so
-		// the persisted turn carries the user-visible message — without
-		// this the round renders empty after the post-end refetch.
 		require.Contains(t, blocks[0].Text, "Partial text")
 		require.Contains(t, blocks[0].Text, "An error occurred")
 	})
@@ -895,11 +890,8 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, "https://example.com", parsedAnnotations[0].URL)
 	})
 
-	// Reproducer: a stream that produces no text/reasoning/tool_calls and
-	// no tool_use should finalize with the empty-result fallback text in
-	// the turn so the webapp's per-round renderer has something to show
-	// instead of an empty round, and the persisted content is always a
-	// JSON array (never null — webapp crashes on turn.content.filter).
+	// An empty stream must persist the no-result fallback (and the content
+	// must be a JSON array, not null — webapp crashes on .filter).
 	t.Run("empty stream finalizes with the LLM-no-result fallback text", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 		client := &fakeStreamingClient{
@@ -923,8 +915,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		defer ts.mu.Unlock()
 		streamTurn := findStreamTurn(ts.turns, postID)
 		require.NotNil(t, streamTurn)
-		require.NotEqual(t, "null", string(streamTurn.Content),
-			"persisted content must be a JSON array; webapp crashes on turn.content.filter")
+		require.NotEqual(t, "null", string(streamTurn.Content))
 		blocks := parseContentBlocks(t, streamTurn.Content)
 		require.Len(t, blocks, 1)
 		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
@@ -1010,16 +1001,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 			"final placeholder turn must contain only the final round's text")
 	})
 
-	// Continuation: when StreamToPost runs against a post that already has an
-	// assistant turn anchored to it (the user just approved tool calls and we
-	// re-stream onto the SAME post), the prior anchor must be demoted at
-	// finalize so the webapp's post→anchor lookup still resolves to exactly
-	// one match.
 	t.Run("continuation stream demotes the prior anchor and emits continue control", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 
-		// Seed a prior anchor turn — analogous to one written by the first
-		// stream's finalize when it ended on pending tool_use blocks.
 		priorPostIDCopy := postID
 		priorContent, mErr := json.Marshal([]conversation.ContentBlock{
 			{Type: conversation.BlockTypeText, Text: "Let me search for that."},
@@ -1056,7 +1040,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
 
-		// Prior anchor lost its post link.
 		var prior *store.Turn
 		for _, t := range ts.turns {
 			if t.ID == "prior-anchor" {
@@ -1065,9 +1048,8 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 			}
 		}
 		require.NotNil(t, prior)
-		require.Nil(t, prior.PostID, "prior anchor must be demoted on continuation")
+		require.Nil(t, prior.PostID)
 
-		// New anchor turn carries the post link and the new round's content.
 		require.Len(t, ts.turns, 2)
 		var newAnchor *store.Turn
 		for _, t := range ts.turns {
@@ -1084,7 +1066,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
 		require.Equal(t, "Found 5 channels.", blocks[0].Text)
 
-		// Continue control event was sent instead of start.
 		var sawContinue, sawStart bool
 		for _, ev := range client.events {
 			if ev.event != "postupdate" {
@@ -1099,13 +1080,11 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				}
 			}
 		}
-		require.True(t, sawContinue, "continuation must emit a continue control event")
-		require.False(t, sawStart, "continuation must not emit start (the webapp would clear tool cards)")
+		require.True(t, sawContinue)
+		require.False(t, sawStart)
 	})
 
-	// Continuation detection must only fire on a prior ASSISTANT turn for
-	// THIS post. Each of these table cases would silently regress the
-	// detection guard if the role/post-id checks were removed.
+	// Continuation must only fire on a prior assistant turn for THIS post.
 	t.Run("continuation detection guards", func(t *testing.T) {
 		userPostIDCopy := "user-post-id"
 		unrelatedPostIDCopy := "other-post-id"
@@ -1122,7 +1101,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				want: PostStreamingControlStart,
 			},
 			{
-				name: "user turn with the same post_id (must NOT trigger continue)",
+				name: "user turn with the same post_id",
 				seed: []*store.Turn{{
 					ID:             "u1",
 					ConversationID: conversationID,
@@ -1134,7 +1113,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				want: PostStreamingControlStart,
 			},
 			{
-				name: "assistant turn for an unrelated post (must NOT trigger continue)",
+				name: "assistant turn for an unrelated post",
 				seed: []*store.Turn{{
 					ID:             "a1",
 					ConversationID: conversationID,
@@ -1146,7 +1125,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				want: PostStreamingControlStart,
 			},
 			{
-				name: "user turn for a different post (must NOT trigger continue)",
+				name: "user turn for a different post",
 				seed: []*store.Turn{{
 					ID:             "u1",
 					ConversationID: conversationID,
@@ -1158,7 +1137,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				want: PostStreamingControlStart,
 			},
 			{
-				name: "assistant turn anchored to this post (the only case that triggers continue)",
+				name: "assistant turn anchored to this post",
 				seed: []*store.Turn{{
 					ID:             "a1",
 					ConversationID: conversationID,
@@ -1208,9 +1187,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		}
 	})
 
-	// A lookup error must not crash StreamToPost or hang the stream — it
-	// should fall through to a normal start. Without this guard, a transient
-	// DB blip would corrupt every concurrent stream on the node.
 	t.Run("lookup error falls through to start without crashing", func(t *testing.T) {
 		ts := &fakeTurnStore{lookupErr: fmt.Errorf("transient db error")}
 		client := &fakeStreamingClient{
@@ -1237,16 +1213,11 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				sawStart = true
 			}
 		}
-		require.True(t, sawStart, "a lookup error must not silence the start control event — the webapp depends on it")
+		require.True(t, sawStart)
 	})
 
-	// On resolved tool calls the WS event ordering must let the webapp
-	// snapshot the round's preamble text BEFORE seeing the resolved
-	// tool_call event. Concretely: between the round's text events and the
-	// resolved tool_call event, no event may clear the message (next: "").
-	// The webapp's live round snapshot reads messageRef.current at the
-	// moment the resolved event arrives — so anything that mutates that
-	// state in between would drop the round's preamble.
+	// The webapp snapshots the round's text when the resolved tool_call
+	// event arrives; no postupdate may broadcast next: "" before that.
 	t.Run("text events for a round are not erased before the resolved tool_call event", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 		client := &fakeStreamingClient{
@@ -1274,11 +1245,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
 
-		// Walk the broadcast events and find the resolved tool_call event.
-		// Verify (a) no `next: ""` is broadcast at any point in the stream,
-		// (b) the LAST `next` value before the resolved tool_call carries
-		// the round's preamble — proving the webapp's resolved-event
-		// snapshot would observe it.
 		resolvedIdx := -1
 		var lastNextBeforeResolved string
 		resolvedJSONNeedle := fmt.Sprintf(`"status":%d`, llm.ToolCallStatusAutoApproved)
@@ -1287,8 +1253,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				continue
 			}
 			if next, ok := ev.payload["next"].(string); ok {
-				require.NotEqual(t, "", next,
-					"no postupdate may carry next: \"\" — that erases the round's text before the webapp can snapshot it on the resolved tool_call event")
+				require.NotEqual(t, "", next)
 				if resolvedIdx == -1 {
 					lastNextBeforeResolved = next
 				}
@@ -1301,24 +1266,16 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				}
 			}
 		}
-		require.NotEqual(t, -1, resolvedIdx, "expected a resolved tool_call event in the broadcast stream")
-		require.Equal(t, "Let me search.", lastNextBeforeResolved,
-			"the round's preamble must still be the broadcast post message at the moment the resolved tool_call event arrives — otherwise the webapp's snapshot has no text to attribute to this round")
+		require.NotEqual(t, -1, resolvedIdx)
+		require.Equal(t, "Let me search.", lastNextBeforeResolved)
 	})
 
-	// Cross-post isolation: a finalize against post B must not touch post A's
-	// anchor turn even though they share a conversation. The demote logic
-	// keys on post.Id, but a subtle regression (e.g. demoting the first
-	// assistant turn rather than the matching one) would silently break
-	// multi-post threads where each post is the anchor of its own response.
 	t.Run("finalize on one post leaves other posts' anchors intact", func(t *testing.T) {
 		const postA = "post-a"
 		const postB = "post-b"
 
 		ts := &fakeTurnStore{}
 
-		// Seed post A with its own anchor turn — analogous to a prior
-		// response in the same conversation thread.
 		postACopy := postA
 		anchorAContent, mErr := json.Marshal([]conversation.ContentBlock{
 			{Type: conversation.BlockTypeText, Text: "Post A's response."},
@@ -1341,9 +1298,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		service := NewMMPostStreamService(client, i18n.Init())
 		service.SetTurnStore(ts)
 
-		// Stream a response to post B. The streaming layer's lookup keys on
-		// post.Id, so finalize must demote nothing for post B (no prior
-		// anchor exists for B) and leave post A's anchor untouched.
 		postBPost := &model.Post{Id: postB, ChannelId: channelID, UserId: botID}
 		postBPost.AddProp(ConversationIDProp, conversationID)
 
@@ -1356,9 +1310,8 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.turns, 2, "expected post A's anchor + post B's new anchor — nothing else demoted")
+		require.Len(t, ts.turns, 2)
 
-		// Post A's anchor must still carry its post link.
 		var aAfter, bAfter *store.Turn
 		for _, tr := range ts.turns {
 			if tr.ID == "anchor-a" {
@@ -1368,27 +1321,21 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 			bAfter = tr
 		}
 		require.NotNil(t, aAfter)
-		require.NotNil(t, aAfter.PostID, "post A's anchor must NOT be demoted by an unrelated post's finalize")
+		require.NotNil(t, aAfter.PostID)
 		require.Equal(t, postA, *aAfter.PostID)
 
 		require.NotNil(t, bAfter)
 		require.NotNil(t, bAfter.PostID)
-		require.Equal(t, postB, *bAfter.PostID, "post B's new anchor carries its own post link")
+		require.Equal(t, postB, *bAfter.PostID)
 	})
 
-	// Operation order: finalize must DEMOTE the prior anchor before creating
-	// the new one. If the order is wrong, two turns with the same post_id
-	// briefly exist; the webapp's findIndex(post_id == postId) lookup
-	// nondeterministically returns one of them, hiding either the new
-	// content or the resolved tool_use blocks. Catching this requires
-	// recording the call sequence into the store, not just the terminal
-	// state.
+	// Demote must precede create; otherwise two turns briefly share a post_id
+	// and the webapp's anchor lookup is nondeterministic.
 	t.Run("finalize demotes the prior anchor before creating the new one", func(t *testing.T) {
 		ts := &fakeOrderingTurnStore{
 			fakeTurnStore: fakeTurnStore{},
 		}
 
-		// Seed a prior anchor.
 		priorPostIDCopy := postID
 		ts.turns = append(ts.turns, &store.Turn{
 			ID:             "prior",
@@ -1420,10 +1367,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
 
-		// At minimum: lookup, then demote (UpdateTurnPostID on prior), then
-		// create (CreateTurnAutoSequence) — in that order. The lookup at
-		// stream START is acceptable; what matters is that demote of the
-		// existing turn precedes the create of the new one.
 		demoteIdx, createIdx := -1, -1
 		for i, op := range ts.ops {
 			if op == "demote:prior" && demoteIdx == -1 {
@@ -1433,17 +1376,13 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				createIdx = i
 			}
 		}
-		require.NotEqual(t, -1, demoteIdx, "expected a demote (UpdateTurnPostID) on prior turn")
-		require.NotEqual(t, -1, createIdx, "expected a create (CreateTurnAutoSequence) of the new anchor")
-		require.Less(t, demoteIdx, createIdx, "demote of prior anchor must run BEFORE creating the new anchor")
+		require.NotEqual(t, -1, demoteIdx)
+		require.NotEqual(t, -1, createIdx)
+		require.Less(t, demoteIdx, createIdx)
 	})
 
-	// After the regen-unification: regen first scrubs the prior anchor and
-	// intermediates via DeleteResponseTurns at the caller, then runs
-	// StreamToPost identically to a first stream. Verify finalize creates a
-	// fresh anchor and never demotes (demote is the continuation flow's job
-	// — taking it on plain regen would resurface the prior response as a
-	// rendered "round" alongside the new one).
+	// Regen scrubs prior turns at the caller, so StreamToPost must create
+	// a fresh anchor and not demote.
 	t.Run("regen via StreamToPost (with no prior anchor present) creates a fresh anchor and does not demote", func(t *testing.T) {
 		ts := &fakeOrderingTurnStore{
 			fakeTurnStore: fakeTurnStore{},
@@ -1471,30 +1410,27 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
 
-		// Exactly one assistant turn for this post — freshly created.
 		var anchors []*store.Turn
 		for _, tr := range ts.turns {
 			if tr.PostID != nil && *tr.PostID == postID && tr.Role == "assistant" {
 				anchors = append(anchors, tr)
 			}
 		}
-		require.Len(t, anchors, 1, "regen must produce exactly one anchor for the post")
+		require.Len(t, anchors, 1)
 		blocks := parseContentBlocks(t, anchors[0].Content)
 		require.Len(t, blocks, 1)
 		require.Equal(t, "Regenerated answer.", blocks[0].Text)
 		require.Equal(t, int64(5), anchors[0].TokensIn)
 		require.Equal(t, int64(10), anchors[0].TokensOut)
 
-		require.Contains(t, ts.ops, "create", "regen must create a fresh anchor")
+		require.Contains(t, ts.ops, "create")
 		for _, op := range ts.ops {
-			require.False(t, strings.HasPrefix(op, "demote:"), "regen via StreamToPost must not demote anything")
+			require.False(t, strings.HasPrefix(op, "demote:"))
 		}
 	})
 }
 
-// fakeOrderingTurnStore extends fakeTurnStore to record the sequence of
-// operations performed against it, so tests can assert on call ordering
-// (e.g. demote-before-create) rather than only terminal state.
+// fakeOrderingTurnStore records the sequence of operations for ordering asserts.
 type fakeOrderingTurnStore struct {
 	fakeTurnStore
 	ops []string

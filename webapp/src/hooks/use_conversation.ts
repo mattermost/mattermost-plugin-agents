@@ -43,13 +43,8 @@ function fetchConversation(id: string): Promise<ConversationResponse> {
         return existing;
     }
 
-    // Capture the promise reference so a later resolution can detect that
-    // invalidateConversation evicted us mid-flight and skip writing stale
-    // data into the cache. Without this, two close-together invalidations
-    // (e.g. 'continue' then 'end' on a tool-approval continuation stream)
-    // can race: the older fetch resolves AFTER the newer fetch has updated
-    // the cache, overwriting fresh data with the pre-finalize snapshot —
-    // leaving the post visually stuck on the prior round.
+    // Identity-check the inflight promise so a fetch evicted mid-flight by
+    // invalidateConversation can't overwrite the newer fetch's result.
     const settle = (data: ConversationResponse) => {
         if (inflightRequests.get(id) !== promise) {
             return data;

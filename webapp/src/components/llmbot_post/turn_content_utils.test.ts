@@ -579,10 +579,7 @@ describe('buildRoundsFromTurns', () => {
         expect(rounds[1].reasoning.summary).toBe('thinking about round 2');
     });
 
-    // User-approval flow: the assistant turn requesting tools is the post
-    // anchor; its tool_result turn is written AFTER approval, at a higher
-    // sequence number. The pairing must still find the result so the
-    // resolved tool card renders with content.
+    // User-approval flow: tool_result is written after the anchor turn.
     test('pairs tool_result that lives at a sequence GREATER than the anchor', () => {
         const userTurn = makeTurn({id: 'u1', role: 'user', sequence: 1, post_id: 'user_post', content: []});
         const anchor = makeTurn({
@@ -595,8 +592,6 @@ describe('buildRoundsFromTurns', () => {
             ],
         });
 
-        // tool_result lives at sequence 3 — AFTER the anchor. This is the
-        // shape produced by HandleToolCall in the user-approval flow.
         const lateResult = makeTurn({
             id: 'tr1',
             role: 'tool_result',
@@ -615,10 +610,6 @@ describe('buildRoundsFromTurns', () => {
         expect(rounds[0].toolCalls[0].result).toBe('late result');
     });
 
-    // A tool_use block that has no matching tool_result (e.g. user rejected
-    // mid-decision, or the tool errored before producing output) must
-    // surface as a card with `result === undefined` rather than silently
-    // dropping the tool call.
     test('renders a tool_use with no matching tool_result and undefined result', () => {
         const anchor = makeTurn({
             id: 'a1',
@@ -633,16 +624,11 @@ describe('buildRoundsFromTurns', () => {
         expect(rounds[0].toolCalls[0].result).toBeUndefined();
     });
 
-    // Continuation flow: the prior anchor turn is demoted (post_id cleared)
-    // when a follow-up stream finalizes. The demoted turn still carries the
-    // round's text and resolved tool_use blocks, and must be picked up by
-    // the back-walk so the per-round visual render reflects the full
-    // back-and-forth — not just the final round.
+    // Continuation: demoted prior anchor (post_id cleared) must still render
+    // as a prior round.
     test('includes a demoted prior anchor turn between the user turn and the new anchor', () => {
         const userTurn = makeTurn({id: 'u1', role: 'user', sequence: 1, post_id: 'user_post', content: []});
 
-        // Demoted prior anchor: post_id is now null, but its content
-        // (text + resolved tool_use) belongs to this response.
         const demoted = makeTurn({
             id: 'a_old',
             post_id: null,
@@ -679,10 +665,7 @@ describe('buildRoundsFromTurns', () => {
         expect(rounds[1].text).toBe('Found 5 channels.');
     });
 
-    // Cross-post isolation: a sibling post in the same conversation must
-    // not contribute its rounds to this post's view. With the demote logic
-    // clearing post_ids on prior rounds, the back-walk can't trust post_id
-    // alone — it has to stop at user turns and at OTHER post anchors.
+    // Sibling posts in the same conversation must not contribute rounds.
     test('does not include rounds belonging to a sibling post anchor', () => {
         const userA = makeTurn({id: 'uA', role: 'user', sequence: 1, post_id: 'user_a', content: []});
         const anchorA = makeTurn({

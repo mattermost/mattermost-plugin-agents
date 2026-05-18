@@ -451,12 +451,6 @@ func TestGetTurnByPostID(t *testing.T) {
 	}
 }
 
-// TestUpdateTurnPostID exercises the SQL UPDATE that demotes (or reassigns)
-// a turn's post anchor. The streaming layer relies on this to keep "exactly
-// one assistant turn anchored per post" — a typo'd column name or missing
-// WHERE clause would either silently fail or, worse, demote every turn in
-// the table. Mirrors the TestGetTurnByPostID pattern so the round trip
-// (write → read) is end-to-end.
 func TestUpdateTurnPostID(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -481,10 +475,9 @@ func TestUpdateTurnPostID(t *testing.T) {
 				err := s.UpdateTurnPostID(turnID, nil)
 				require.NoError(t, err)
 
-				// Lookup by the old post id no longer finds it.
 				gone, err := s.GetTurnByPostID("post-anchor")
 				require.NoError(t, err)
-				assert.Nil(t, gone, "demoted turn must not be findable via its old post id")
+				assert.Nil(t, gone)
 			},
 		},
 		{
@@ -506,12 +499,10 @@ func TestUpdateTurnPostID(t *testing.T) {
 				err := s.UpdateTurnPostID(turnID, &newPost)
 				require.NoError(t, err)
 
-				// Old anchor: gone.
 				oldHit, err := s.GetTurnByPostID("old-post")
 				require.NoError(t, err)
 				assert.Nil(t, oldHit)
 
-				// New anchor: present.
 				newHit, err := s.GetTurnByPostID("new-post")
 				require.NoError(t, err)
 				require.NotNil(t, newHit)
@@ -519,20 +510,18 @@ func TestUpdateTurnPostID(t *testing.T) {
 			},
 		},
 		{
-			name: "leaves OTHER rows untouched (WHERE clause is honored)",
+			name: "leaves other rows untouched",
 			setup: func(t *testing.T, s *Store) string {
 				conv := makeConversation()
 				err := s.CreateConversation(conv)
 				require.NoError(t, err)
 
-				// The turn we'll demote.
 				targetTurn := makeTurn(conv.ID, 1, func(tu *Turn) {
 					tu.PostID = stringPtr("target-post")
 				})
 				err = s.CreateTurn(targetTurn)
 				require.NoError(t, err)
 
-				// A sibling turn that must NOT be touched.
 				sibling := makeTurn(conv.ID, 2, func(tu *Turn) {
 					tu.PostID = stringPtr("sibling-post")
 				})
@@ -545,20 +534,19 @@ func TestUpdateTurnPostID(t *testing.T) {
 				err := s.UpdateTurnPostID(turnID, nil)
 				require.NoError(t, err)
 
-				// The sibling's post anchor is unaffected.
 				sibling, err := s.GetTurnByPostID("sibling-post")
 				require.NoError(t, err)
-				require.NotNil(t, sibling, "demoting one turn must not clear unrelated turns' PostIDs")
+				require.NotNil(t, sibling)
 			},
 		},
 		{
-			name: "returns nil error for non-existent ID (no row updated)",
+			name: "non-existent ID is a no-op",
 			setup: func(t *testing.T, s *Store) string {
 				return ""
 			},
 			validate: func(t *testing.T, s *Store, _ string) {
 				err := s.UpdateTurnPostID("does-not-exist", nil)
-				assert.NoError(t, err, "demoting a non-existent turn is a no-op, not an error")
+				assert.NoError(t, err)
 			},
 		},
 	}
@@ -576,11 +564,6 @@ func TestUpdateTurnPostID(t *testing.T) {
 	}
 }
 
-// TestDeleteResponseTurns exercises the SQL DELETE that scrubs every turn of
-// a prior generation when a post is regenerated — the anchor itself plus any
-// demoted assistants/tool_results between the originating user turn and the
-// anchor. After the delete the post has no DB state, so the next stream
-// creates fresh turns (no update-in-place special case).
 func TestDeleteResponseTurns(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -625,13 +608,12 @@ func TestDeleteResponseTurns(t *testing.T) {
 
 				turns, err := s.GetTurnsForConversation(convID)
 				require.NoError(t, err)
-				require.Len(t, turns, 1, "only the originating user turn remains; anchor + intermediates deleted")
+				require.Len(t, turns, 1)
 				assert.Equal(t, "user", turns[0].Role)
 
-				// The anchor is gone — looking it up by post id returns nothing.
 				gone, err := s.GetTurnByPostID(postID)
 				require.NoError(t, err)
-				assert.Nil(t, gone, "anchor must be deleted, not just demoted")
+				assert.Nil(t, gone)
 			},
 		},
 		{
@@ -669,8 +651,6 @@ func TestDeleteResponseTurns(t *testing.T) {
 
 				turns, err := s.GetTurnsForConversation(convID)
 				require.NoError(t, err)
-				// First user, first anchor, second user remain; the second
-				// anchor (post being regenerated) and its intermediates are gone.
 				require.Len(t, turns, 3)
 				assert.Equal(t, 1, turns[0].Sequence)
 				assert.Equal(t, 2, turns[1].Sequence)

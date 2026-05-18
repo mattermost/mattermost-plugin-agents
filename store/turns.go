@@ -166,11 +166,8 @@ RETURNING Sequence`
 	return fmt.Errorf("failed to create turn after %d retries: %w", maxAutoSequenceRetries, lastErr)
 }
 
-// UpdateTurnPostID sets the PostID column for a turn. Pass nil to clear the
-// anchor — used when finalizing a continuation stream so the new turn becomes
-// the canonical anchor and prior rounds for the same response post lose their
-// post link. The webapp's anchor lookup relies on at most one assistant turn
-// per post_id.
+// UpdateTurnPostID sets or clears the PostID column for a turn. The webapp's
+// anchor lookup expects at most one assistant turn per post_id.
 func (s *Store) UpdateTurnPostID(id string, postID *string) error {
 	query, args, err := s.builder.
 		Update("LLM_Turns").
@@ -187,12 +184,9 @@ func (s *Store) UpdateTurnPostID(id string, postID *string) error {
 	return nil
 }
 
-// DeleteResponseTurns removes every turn that belongs to a response — the
-// anchor itself and any assistant/tool_result turns between the user turn
-// that initiated it and that anchor. After this, the post has no DB state
-// and a regen can stream a fresh response identically to a first stream.
-// Callers must build any completion request BEFORE this runs, since the
-// anchor used to walk back from is gone afterwards.
+// DeleteResponseTurns removes the post's anchor turn and any assistant or
+// tool_result turns between it and the originating user turn. Callers must
+// build any completion request before calling this.
 func (s *Store) DeleteResponseTurns(conversationID, postID string) error {
 	const query = `
 DELETE FROM LLM_Turns

@@ -900,11 +900,9 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 	assert.Equal(t, "user2", req.Posts[3].Message)
 }
 
-// Regression: regenerating a post whose response went through a
-// tool-approval continuation must drop the demoted prior anchor + its
-// tool_result turn along with the post anchor, otherwise the request ends
-// in assistant content (the continuation history) and bifrost-backed models
-// reject it as an unsupported assistant prefill.
+// Regen of a post that went through a tool-approval continuation must drop
+// the demoted prior anchor and its tool_result, so the request ends on the
+// user turn (bifrost rejects an assistant-ended prefill).
 func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeavesUserTail(t *testing.T) {
 	svc, s := setupTestService(t)
 
@@ -919,9 +917,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 	require.NoError(t, err)
 	convID := result.ConversationID
 
-	// Demoted prior anchor: this is the shape left behind by the
-	// streaming layer when a continuation stream finalizes — the original
-	// anchor turn loses its PostID but keeps its content + tool_use.
+	// Demoted prior anchor (left behind by a continuation finalize).
 	demotedContent, _ := json.Marshal([]ContentBlock{
 		{Type: BlockTypeText, Text: "Let me search."},
 		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Status: StatusSuccess, Shared: BoolPtr(true)},
@@ -951,7 +947,6 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 	})
 	require.NoError(t, err)
 
-	// New anchor — the post being regenerated.
 	anchorContent, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "Found 5 channels."}})
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
@@ -972,10 +967,9 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 
 	require.NotEmpty(t, req.Posts)
 	last := req.Posts[len(req.Posts)-1]
-	require.Equal(t, llm.PostRoleUser, last.Role,
-		"regen request must end with the user turn that initiated the response — never with the continuation's assistant + tool_result tail")
+	require.Equal(t, llm.PostRoleUser, last.Role)
 	require.Equal(t, "user1", last.Message)
-	require.Len(t, req.Posts, 2, "expected system + user1 only; demoted assistant + tool_result must be dropped")
+	require.Len(t, req.Posts, 2)
 	require.Equal(t, llm.PostRoleSystem, req.Posts[0].Role)
 }
 

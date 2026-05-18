@@ -79,10 +79,8 @@ function collectResponseTurns(
     return out;
 }
 
-// Tool results can land in different turns depending on how the tool was
-// resolved (auto-run vs. user-approved), and the post's anchor shifts on
-// continuation. Indexing every turn in the conversation pairs each
-// tool_use with its result by id regardless of where either lives.
+// Index every tool_result block in the conversation by tool_use_id so a
+// tool_use can be paired regardless of which turn its result lives in.
 function buildToolResultMap(conversation: ConversationResponse): Map<string, ContentBlock> {
     const resultMap = new Map<string, ContentBlock>();
     for (const t of conversation.turns) {
@@ -231,15 +229,9 @@ export function hasAutoApprovedToolsForPost(
     );
 }
 
-/**
- * One round of the LLM's response — what was emitted between two tool
- * boundaries (or between the user turn and the first tool boundary). The
- * post is rendered as a vertical sequence of rounds so the user sees the
- * back-and-forth: text → tools → text → tools → final text.
- */
+// One assistant turn in a response. The post renders these as a vertical
+// sequence: text → tools → text → tools → final text.
 export interface Round {
-
-    /** Stable React key. */
     id: string;
     text: string;
     toolCalls: ToolCall[];
@@ -247,13 +239,6 @@ export interface Round {
     annotations: Annotation[];
 }
 
-/**
- * Build the per-round view from the persisted turns of a response. Each
- * assistant turn in the response is one round; tool_use blocks are paired
- * with their tool_result block by id (results may live in a tool_result turn
- * later in the sequence — for the user-approval flow, results are written
- * after the assistant turn that requested them).
- */
 export function buildRoundsFromTurns(
     conversation: ConversationResponse,
     postId: string,

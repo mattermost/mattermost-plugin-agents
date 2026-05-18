@@ -435,11 +435,8 @@ func (c *Conversations) streamResponseToExistingPost(ctx context.Context, stream
 	return nil
 }
 
-// streamContinuationToExistingPost streams a follow-up round onto a post that
-// already carries an assistant turn — used after the user approves pending
-// tool calls so the prior preamble + resolved tool cards stay visible while
-// the new round streams in below them. Regeneration must NOT use this entry
-// point; see streamingService.StreamContinuationToPost for the full contract.
+// streamContinuationToExistingPost streams a tool-approval follow-up.
+// See streamingService.StreamContinuationToPost.
 func (c *Conversations) streamContinuationToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel) error {
 	streamCtx, err := c.streamingService.GetStreamingContext(ctx, post.Id)
 	if err != nil {
