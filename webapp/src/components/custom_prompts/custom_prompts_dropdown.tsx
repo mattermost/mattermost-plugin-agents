@@ -8,7 +8,7 @@ import {useSelector, useDispatch} from 'react-redux';
 
 import {CogOutlineIcon} from '@mattermost/compass-icons/components';
 
-import {getCustomPrompts, getSelectedBotId} from '@/selectors';
+import {getCustomPrompts, getDefaultBotID, getSelectedBotId} from '@/selectors';
 import {fetchCustomPrompts, ShowCustomPromptsModalHandler, SelectedBotIdHandler} from '@/redux';
 import {renderCustomPrompt} from '@/client';
 import {CustomPrompt} from '@/types';
@@ -17,6 +17,20 @@ import manifest from '@/manifest';
 import {DropdownBotSelector} from '@/components/bot_selector';
 
 const EMPTY_BOTS: LLMBot[] = [];
+
+// resolveInitialBot returns the bot that should be pre-selected when the user
+// has not explicitly chosen one. We prefer the system-wide default agent
+// configured by the admin (defaultBotID) and only fall back to the first bot
+// in the list when no default is configured or it isn't available to the user.
+function resolveInitialBot(bots: LLMBot[], defaultBotID: string): LLMBot | null {
+    if (defaultBotID) {
+        const fromDefault = bots.find((b) => b.id === defaultBotID);
+        if (fromDefault) {
+            return fromDefault;
+        }
+    }
+    return bots[0] ?? null;
+}
 
 function dismissMenu() {
     document.getElementById('backdropForMenuComponent')?.click();
@@ -76,8 +90,15 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     );
 
     const selectedBotId = useSelector(getSelectedBotId);
+    const defaultBotID = useSelector(getDefaultBotID);
     const isBotDMChannel = bots.some((b: LLMBot) => b.dmChannelID === channelId);
-    const selectedBot = bots.find((b: LLMBot) => b.id === selectedBotId) ?? bots[0] ?? null;
+
+    // Prefer the user's explicit selection, then the system-wide default
+    // agent, and only fall back to the first bot in the list if neither
+    // resolves. This honors the admin's default bot configuration even when
+    // the server returns bots in an order that doesn't put the default first.
+    const userSelectedBot = selectedBotId ? bots.find((b: LLMBot) => b.id === selectedBotId) : null;
+    const selectedBot = userSelectedBot ?? resolveInitialBot(bots, defaultBotID);
 
     useEffect(() => {
         dispatch(fetchCustomPrompts() as any);
@@ -85,9 +106,12 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
 
     useEffect(() => {
         if (bots.length > 0 && !selectedBotId) {
-            dispatch({type: SelectedBotIdHandler, botId: bots[0].id});
+            const initial = resolveInitialBot(bots, defaultBotID);
+            if (initial) {
+                dispatch({type: SelectedBotIdHandler, botId: initial.id});
+            }
         }
-    }, [bots, selectedBotId, dispatch]);
+    }, [bots, selectedBotId, defaultBotID, dispatch]);
 
     const setSelectedBot = useCallback((bot: LLMBot) => {
         dispatch({type: SelectedBotIdHandler, botId: bot.id});

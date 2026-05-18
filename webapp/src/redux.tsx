@@ -13,6 +13,7 @@ type WebappStore = Store<GlobalState, UnknownAction>
 
 const CallsClickHandler = 'calls_post_button_clicked_handler';
 export const BotsHandler = manifest.id + '_bots';
+export const DefaultBotIDHandler = manifest.id + '_default_bot_id';
 export const CustomPromptsHandler = 'SET_CUSTOM_PROMPTS';
 export const PinnedPromptIdsHandler = 'SET_PINNED_PROMPT_IDS';
 export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
@@ -22,6 +23,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
     const reducer = combineReducers({
         callsPostButtonClickedTranscription,
         bots,
+        defaultBotID,
         botChannelId,
         selectedPostId,
         searchEnabled,
@@ -71,6 +73,15 @@ function bots(state = null, action: any) {
     switch (action.type) {
     case BotsHandler:
         return action.bots;
+    default:
+        return state;
+    }
+}
+
+function defaultBotID(state = '', action: any) {
+    switch (action.type) {
+    case DefaultBotIDHandler:
+        return action.defaultBotID ?? '';
     default:
         return state;
     }

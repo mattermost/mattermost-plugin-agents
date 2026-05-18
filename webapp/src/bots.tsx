@@ -10,7 +10,7 @@ import {GlobalState} from '@mattermost/types/store';
 import {getAIBots} from '@/client';
 
 import manifest from './manifest';
-import {BotsHandler} from './redux';
+import {BotsHandler, DefaultBotIDHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 import {EnabledTool} from './types/agents';
 
@@ -50,6 +50,11 @@ export const useBotlist = () => {
             dispatch({
                 type: BotsHandler,
                 bots: response.bots,
+            });
+
+            dispatch({
+                type: DefaultBotIDHandler,
+                defaultBotID: response.defaultBotID ?? '',
             });
 
             dispatch({
