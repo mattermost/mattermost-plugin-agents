@@ -347,44 +347,19 @@ func scanSearchResults(rows *sqlx.Rows, minScore float32) ([]embeddings.SearchRe
 }
 
 func (pv *PGVector) Delete(ctx context.Context, postIDs []string) error {
-	if len(postIDs) == 0 {
-		return nil
-	}
-
-	seen := make(map[string]struct{}, len(postIDs))
-	for _, id := range postIDs {
-		seen[id] = struct{}{}
-	}
-	sortedIDs := make([]string, 0, len(seen))
-	for id := range seen {
-		sortedIDs = append(sortedIDs, id)
-	}
-	slices.Sort(sortedIDs)
-
-	tx, err := pv.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	// Lock so an in-flight Store for the same post commits before we delete,
-	// preventing it from resurrecting rows for a now-deleted post.
-	if lockErr := lockPostIDs(ctx, tx, sortedIDs); lockErr != nil {
-		return lockErr
-	}
-
 	query, args, err := sq.
 		Delete("llm_posts_embeddings").
-		Where(sq.Eq{"post_id": sortedIDs}).
+		Where(sq.Eq{"post_id": postIDs}).
 		PlaceholderFormat(sq.Dollar).
 		ToSql()
 	if err != nil {
 		return fmt.Errorf("failed to create query: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+	_, err = pv.db.ExecContext(ctx, query, args...)
+	if err != nil {
 		return fmt.Errorf("failed to delete vectors: %w", err)
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (pv *PGVector) Clear(ctx context.Context) error {
