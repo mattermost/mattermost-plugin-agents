@@ -75,7 +75,9 @@ const RhsFileDropZone = ({children, className}: Props) => {
     useEffect(() => {
         const container = containerRef.current;
         if (!container) {
-            return undefined;
+            return () => {
+                // no listeners were attached
+            };
         }
 
         const handleDragEnter = (e: DragEvent) => {

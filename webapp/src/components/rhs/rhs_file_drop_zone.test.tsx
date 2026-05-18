@@ -36,38 +36,38 @@ class FakeFileList {
 }
 
 class FakeDataTransfer {
-    private _files: File[] = [];
-    private _types: string[] = [];
-    private _data: Record<string, string> = {};
+    private fileList: File[] = [];
+    private typeList: string[] = [];
+    private dataByType: Record<string, string> = {};
     dropEffect = 'none';
     effectAllowed = 'all';
 
     items = {
         add: (file: File) => {
-            this._files.push(file);
-            if (!this._types.includes('Files')) {
-                this._types.push('Files');
+            this.fileList.push(file);
+            if (!this.typeList.includes('Files')) {
+                this.typeList.push('Files');
             }
         },
     };
 
     get files() {
-        return new FakeFileList(this._files);
+        return new FakeFileList(this.fileList);
     }
 
     get types() {
-        return this._types;
+        return this.typeList;
     }
 
     setData(type: string, value: string) {
-        this._data[type] = value;
-        if (!this._types.includes(type)) {
-            this._types.push(type);
+        this.dataByType[type] = value;
+        if (!this.typeList.includes(type)) {
+            this.typeList.push(type);
         }
     }
 
     getData(type: string) {
-        return this._data[type] ?? '';
+        return this.dataByType[type] ?? '';
     }
 }
 
@@ -164,7 +164,12 @@ describe('RhsFileDropZone', () => {
     test('forwards dropped files to the nested file input and hides the overlay', () => {
         const onFiles = jest.fn();
         const onChange = jest.fn();
-        renderZone(<InstrumentedFileInput onFiles={onFiles} onChange={onChange}/>);
+        renderZone(
+            <InstrumentedFileInput
+                onFiles={onFiles}
+                onChange={onChange}
+            />,
+        );
         const zone = screen.getByTestId('rhs-file-drop-zone');
         const file = new File(['hello'], 'hello.txt', {type: 'text/plain'});
 
@@ -183,7 +188,12 @@ describe('RhsFileDropZone', () => {
     test('does nothing on drops without files', () => {
         const onFiles = jest.fn();
         const onChange = jest.fn();
-        renderZone(<InstrumentedFileInput onFiles={onFiles} onChange={onChange}/>);
+        renderZone(
+            <InstrumentedFileInput
+                onFiles={onFiles}
+                onChange={onChange}
+            />,
+        );
         const zone = screen.getByTestId('rhs-file-drop-zone');
 
         const textDrop = new DataTransfer();
@@ -285,7 +295,7 @@ describe('RhsFileDropZone', () => {
         // The dragCounter exists for this case: browsers fire dragenter/leave
         // per element entered, so a naive boolean toggle flickers the overlay
         // when the cursor moves across children.
-        renderZone(<div data-testid='inner'>inner</div>);
+        renderZone(<div data-testid='inner'>{'inner'}</div>);
         const zone = screen.getByTestId('rhs-file-drop-zone');
         const dt = makeFileTransfer([new File(['x'], 'a.txt')]);
 
