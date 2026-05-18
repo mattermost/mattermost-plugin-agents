@@ -5,6 +5,9 @@ import React, {useEffect} from 'react';
 import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
+// In jest, babel-plugin-formatjs doesn't auto-fill the message id, so
+// FormattedMessage throws without one. Substitute a literal renderer for the
+// overlay label so we exercise the real component without a build-time plugin.
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
     return {
@@ -199,6 +202,101 @@ describe('RhsFileDropZone', () => {
         expect(() => {
             fireEvent.drop(zone, {dataTransfer: makeFileTransfer([file])});
         }).not.toThrow();
+        expect(screen.getByTestId('rhs-file-drop-overlay').getAttribute('aria-hidden')).toBe('true');
+    });
+
+    test('forwards files when the editor file input is nested several levels deep', () => {
+        // AdvancedTextEditor wraps its <input type="file"> several layers deep;
+        // a shallow selector would silently regress and break the bug fix.
+        const onFiles = jest.fn();
+        renderZone(
+            <div>
+                <section>
+                    <div className='inner-wrapper'>
+                        <InstrumentedFileInput onFiles={onFiles}/>
+                    </div>
+                </section>
+            </div>,
+        );
+        const zone = screen.getByTestId('rhs-file-drop-zone');
+        const file = new File(['a'], 'deeply-nested.txt');
+
+        fireEvent.drop(zone, {dataTransfer: makeFileTransfer([file])});
+
+        expect(onFiles).toHaveBeenCalledTimes(1);
+        const forwarded = onFiles.mock.calls[0][0] as FileList;
+        expect(forwarded.item(0)?.name).toBe('deeply-nested.txt');
+    });
+
+    test('preserves order when multiple files are dropped at once', () => {
+        const onFiles = jest.fn();
+        renderZone(<InstrumentedFileInput onFiles={onFiles}/>);
+        const zone = screen.getByTestId('rhs-file-drop-zone');
+        const files = [
+            new File(['a'], 'a.txt'),
+            new File(['b'], 'b.png'),
+            new File(['c'], 'c.pdf'),
+        ];
+
+        fireEvent.drop(zone, {dataTransfer: makeFileTransfer(files)});
+
+        const forwarded = onFiles.mock.calls[0][0] as FileList;
+        expect(forwarded.length).toBe(3);
+        expect(forwarded.item(0)?.name).toBe('a.txt');
+        expect(forwarded.item(1)?.name).toBe('b.png');
+        expect(forwarded.item(2)?.name).toBe('c.pdf');
+    });
+
+    test('forwards to the first file input when multiple are present', () => {
+        const onFirst = jest.fn();
+        const onSecond = jest.fn();
+        renderZone(
+            <>
+                <InstrumentedFileInput onFiles={onFirst}/>
+                <InstrumentedFileInput onFiles={onSecond}/>
+            </>,
+        );
+        const zone = screen.getByTestId('rhs-file-drop-zone');
+        const file = new File(['a'], 'a.txt');
+
+        fireEvent.drop(zone, {dataTransfer: makeFileTransfer([file])});
+
+        expect(onFirst).toHaveBeenCalledTimes(1);
+        expect(onSecond).not.toHaveBeenCalled();
+    });
+
+    test('calls preventDefault on dragover so the browser does not navigate to the file', () => {
+        // Without preventDefault on dragover/drop, the browser opens dropped
+        // files in the tab — the user-visible failure mode is far worse than
+        // "drop is ignored".
+        renderZone();
+        const zone = screen.getByTestId('rhs-file-drop-zone');
+
+        const dt = makeFileTransfer([new File(['x'], 'a.txt')]);
+        const overReturn = fireEvent.dragOver(zone, {dataTransfer: dt});
+        const dropReturn = fireEvent.drop(zone, {dataTransfer: dt});
+
+        // fireEvent returns false when any handler called preventDefault.
+        expect(overReturn).toBe(false);
+        expect(dropReturn).toBe(false);
+    });
+
+    test('keeps the overlay visible until every nested dragleave unwinds', () => {
+        // The dragCounter exists for this case: browsers fire dragenter/leave
+        // per element entered, so a naive boolean toggle flickers the overlay
+        // when the cursor moves across children.
+        renderZone(<div data-testid='inner'>inner</div>);
+        const zone = screen.getByTestId('rhs-file-drop-zone');
+        const dt = makeFileTransfer([new File(['x'], 'a.txt')]);
+
+        fireEvent.dragEnter(zone, {dataTransfer: dt});
+        fireEvent.dragEnter(zone, {dataTransfer: dt}); // crossed into nested child
+        expect(screen.getByTestId('rhs-file-drop-overlay').getAttribute('aria-hidden')).toBe('false');
+
+        fireEvent.dragLeave(zone, {dataTransfer: dt}); // left nested child only
+        expect(screen.getByTestId('rhs-file-drop-overlay').getAttribute('aria-hidden')).toBe('false');
+
+        fireEvent.dragLeave(zone, {dataTransfer: dt}); // left outer zone
         expect(screen.getByTestId('rhs-file-drop-overlay').getAttribute('aria-hidden')).toBe('true');
     });
 });
