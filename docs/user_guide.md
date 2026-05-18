@@ -84,11 +84,15 @@ When Agents use external tools or integrations, Mattermost may prompt you to rev
 
 By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, each tool call may require approval before execution or run automatically. A single Agent response can include both auto-approved tools and tools still waiting for approval. In that case, the auto-approved badge applies only to the individual tool that ran automatically, while pending tools continue to show **Accept** and **Reject** options. Tool results are shown after execution, and if a result needs a visibility decision, you'll see **Share** and **Keep private** options.
 
+When a tool runs automatically or after you approve it, Mattermost continues the response in the same bot post instead of creating a separate follow-up post. That post can show multiple rounds of the response, so earlier tool cards and text stay visible while the newest answer appears in the last round.
+
 Only the person who started the conversation can approve or reject tool calls. In direct messages with an agent, approved tool results are shared automatically because only you can view that conversation.
 
 In channels, tool approval can be a two-step process. After you approve a tool call and it runs, Mattermost can prompt you again to decide whether the tool arguments and results should be shared with the channel or kept private. If you choose **Keep Private**, other channel members don't see that tool data, and the channel-visible follow-up response is generated without the private content.
 
 If a tool execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
+
+If you use **Regenerate** on a response that already includes tool rounds, Mattermost replaces the generated rounds in that same post and streams the replacement as a fresh answer instead of appending another follow-up round to the old result.
 
 On web and desktop, start a new chat in the Agents right-hand pane and open the **Tools** menu in the header. The menu lists configured tool providers. For MCP servers that use OAuth, you'll see **Connect** when you're not authenticated and **Disconnect** when an OAuth session applies. You can turn individual providers on or off from this menu, and your choices are saved as your personal preferences. Mattermost doesn't send OAuth connection prompts as ephemeral posts in the conversation; use the **Tools** menu to check connection state and complete **Connect** or **Disconnect** flows.
 
