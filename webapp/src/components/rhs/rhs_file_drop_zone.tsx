@@ -42,21 +42,8 @@ const OverlayMessage = styled.div`
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 `;
 
-const dataTransferHasFiles = (dataTransfer: DataTransfer | null): boolean => {
-    if (!dataTransfer) {
-        return false;
-    }
-    const types = dataTransfer.types;
-    if (!types) {
-        return false;
-    }
-    for (let i = 0; i < types.length; i++) {
-        if (types[i] === 'Files') {
-            return true;
-        }
-    }
-    return false;
-};
+const dataTransferHasFiles = (dataTransfer: DataTransfer | null): boolean =>
+    Boolean(dataTransfer?.types.includes('Files'));
 
 type Props = {
     children: React.ReactNode;
@@ -78,11 +65,8 @@ const RhsFileDropZone = ({children, className}: Props) => {
             return;
         }
         const dataTransfer = new DataTransfer();
-        for (let i = 0; i < files.length; i++) {
-            const file = files.item ? files.item(i) : files[i];
-            if (file) {
-                dataTransfer.items.add(file);
-            }
+        for (const file of Array.from(files)) {
+            dataTransfer.items.add(file);
         }
         fileInput.files = dataTransfer.files;
         fileInput.dispatchEvent(new Event('change', {bubbles: true}));
