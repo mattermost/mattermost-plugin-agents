@@ -3,7 +3,8 @@
 
 import React from 'react';
 import {render, screen} from '@testing-library/react';
-import {useSelector, useDispatch} from 'react-redux';
+import {Provider} from 'react-redux';
+import {applyMiddleware, combineReducers, createStore, Reducer} from 'redux';
 
 // Stub heavy modules pulled in transitively. `system_console/bot` imports
 // `avatar.tsx`, which imports a PNG asset that jest can't transform.
@@ -17,9 +18,16 @@ import CustomPromptsDropdown from './custom_prompts_dropdown';
 // eslint-disable-next-line import/first
 import {LLMBot} from '@/bots';
 // eslint-disable-next-line import/first
-import {getCustomPrompts, getDefaultBotID, getSelectedBotId} from '@/selectors';
+import {
+    BotsHandler,
+    CustomPromptsHandler,
+    DefaultBotIDHandler,
+    PinnedPromptIdsHandler,
+    SelectedBotIdHandler,
+    ShowCustomPromptsModalHandler,
+} from '@/redux';
 // eslint-disable-next-line import/first
-import {SelectedBotIdHandler} from '@/redux';
+import {getDefaultBotID, getSelectedBotId} from '@/selectors';
 // eslint-disable-next-line import/first
 import manifest from '@/manifest';
 
@@ -48,21 +56,13 @@ jest.mock('react-intl', () => ({
     useIntl: () => ({formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage}),
 }));
 
-jest.mock('react-redux', () => ({
-    useSelector: jest.fn(),
-    useDispatch: jest.fn(),
-}));
-
 jest.mock('@/client', () => ({
     renderCustomPrompt: jest.fn(),
     getProfilePictureUrl: () => 'http://localhost/picture.png',
-    getCustomPrompts: jest.fn(),
-    getCustomPromptPins: jest.fn(),
+    getCustomPrompts: jest.fn().mockResolvedValue([]),
+    getCustomPromptPins: jest.fn().mockResolvedValue([]),
+    fetchModels: jest.fn(),
 }));
-
-const mockUseSelector = useSelector as unknown as jest.Mock;
-const mockUseDispatch = useDispatch as unknown as jest.Mock;
-const mockDispatch = jest.fn();
 
 function makeBot(overrides: Partial<LLMBot>): LLMBot {
     return {
@@ -82,57 +82,101 @@ function makeBot(overrides: Partial<LLMBot>): LLMBot {
     };
 }
 
-interface TestState {
-    bots: LLMBot[];
+interface PluginSlice {
+    bots: LLMBot[] | null;
     defaultBotID: string;
     selectedBotId: string | null;
+    customPrompts: unknown[];
+    pinnedPromptIds: string[];
+    showCustomPromptsModal: boolean;
 }
 
-function selectFromState(state: TestState, selector: any): any {
-    const pluginState = {
-        customPrompts: [],
-        pinnedPromptIds: [],
-        showCustomPromptsModal: false,
-        bots: state.bots,
-        defaultBotID: state.defaultBotID,
-        selectedBotId: state.selectedBotId,
+const initialPluginSlice: PluginSlice = {
+    bots: null,
+    defaultBotID: '',
+    selectedBotId: null,
+    customPrompts: [],
+    pinnedPromptIds: [],
+    showCustomPromptsModal: false,
+};
+
+// pluginSlice mirrors the production reducer shape for the keys this
+// component reads/writes via Redux. Keeping the same action types means the
+// real selector (`getDefaultBotID`) and the component's own dispatches go
+// through the real wiring rather than ad-hoc mocks.
+const pluginSlice: Reducer<PluginSlice> = (state = initialPluginSlice, action: any) => {
+    switch (action.type) {
+    case BotsHandler:
+        return {...state, bots: action.bots};
+    case DefaultBotIDHandler:
+        return {...state, defaultBotID: action.defaultBotID ?? ''};
+    case SelectedBotIdHandler:
+        return {...state, selectedBotId: action.botId};
+    case CustomPromptsHandler:
+        return {...state, customPrompts: action.customPrompts};
+    case PinnedPromptIdsHandler:
+        return {...state, pinnedPromptIds: action.pinnedPromptIds};
+    case ShowCustomPromptsModalHandler:
+        return {...state, showCustomPromptsModal: action.show};
+    default:
+        return state;
+    }
+};
+
+// Track which actions the component dispatches via a passthrough middleware
+// so tests can both observe dispatches AND let the real reducer apply them.
+// thunkMiddleware mirrors redux-thunk's behavior so the component's
+// `dispatch(fetchCustomPrompts() as any)` call (which returns a function)
+// resolves without exploding the store.
+const dispatches: any[] = [];
+const thunkMiddleware = (api: any) => (next: any) => (action: any) => {
+    if (typeof action === 'function') {
+        return action(api.dispatch, api.getState);
+    }
+    dispatches.push(action);
+    return next(action);
+};
+
+function createTestStore(initial: Partial<PluginSlice>) {
+    const rootReducer = combineReducers({
+        [`plugins-${manifest.id}`]: pluginSlice,
+    });
+    const store = createStore(rootReducer, applyMiddleware(thunkMiddleware));
+    if (initial.bots !== undefined) {
+        store.dispatch({type: BotsHandler, bots: initial.bots});
+    }
+    if (initial.defaultBotID !== undefined) {
+        store.dispatch({type: DefaultBotIDHandler, defaultBotID: initial.defaultBotID});
+    }
+    if (initial.selectedBotId !== undefined) {
+        store.dispatch({type: SelectedBotIdHandler, botId: initial.selectedBotId});
+    }
+    // Drop the seeding dispatches so tests only inspect what the component
+    // produced.
+    dispatches.length = 0;
+    return store;
+}
+
+function renderDropdown(initial: Partial<PluginSlice>) {
+    const store = createTestStore(initial);
+    return {
+        store,
+        ...render(
+            <Provider store={store}>
+                <CustomPromptsDropdown
+                    draft={{}}
+                    getSelectedText={() => ({start: 0, end: 0})}
+                    updateText={jest.fn()}
+                    channelId='channel-1'
+                    isRHS={false}
+                />
+            </Provider>,
+        ),
     };
-
-    const fakeGlobal = {
-        [`plugins-${manifest.id}`]: pluginState,
-    } as any;
-
-    // Support the inline selector used inside the component for bots and
-    // the named selectors for everything else.
-    if (selector === getCustomPrompts) {
-        return [];
-    }
-    if (selector === getDefaultBotID) {
-        return state.defaultBotID;
-    }
-    if (selector === getSelectedBotId) {
-        return state.selectedBotId;
-    }
-    return selector(fakeGlobal);
-}
-
-function renderDropdown(state: TestState) {
-    mockUseSelector.mockImplementation((selector) => selectFromState(state, selector));
-    mockUseDispatch.mockReturnValue(mockDispatch);
-
-    return render(
-        <CustomPromptsDropdown
-            draft={{}}
-            getSelectedText={() => ({start: 0, end: 0})}
-            updateText={jest.fn()}
-            channelId='channel-1'
-            isRHS={false}
-        />,
-    );
 }
 
 beforeEach(() => {
-    jest.clearAllMocks();
+    dispatches.length = 0;
 });
 
 describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
@@ -147,7 +191,6 @@ describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
         renderDropdown({
             bots: [aira, matty, zorro],
             defaultBotID: matty.id,
-            selectedBotId: null,
         });
 
         expect(screen.getByTestId('active-bot').textContent).toBe('Matty');
@@ -157,7 +200,6 @@ describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
         renderDropdown({
             bots: [aira, matty, zorro],
             defaultBotID: '',
-            selectedBotId: null,
         });
 
         expect(screen.getByTestId('active-bot').textContent).toBe('Aira');
@@ -168,7 +210,6 @@ describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
         renderDropdown({
             bots: [aira, zorro],
             defaultBotID: 'missing-default-id',
-            selectedBotId: null,
         });
 
         expect(screen.getByTestId('active-bot').textContent).toBe('Aira');
@@ -184,16 +225,29 @@ describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
         expect(screen.getByTestId('active-bot').textContent).toBe('Zorro');
     });
 
-    test('dispatches the default bot id when no selection exists yet', () => {
-        renderDropdown({
+    test('dispatches the default bot id to the store when no selection exists yet', () => {
+        const {store} = renderDropdown({
             bots: [aira, matty, zorro],
             defaultBotID: matty.id,
-            selectedBotId: null,
         });
 
-        expect(mockDispatch).toHaveBeenCalledWith({
+        // The component should have dispatched SelectedBotIdHandler with the
+        // default bot, and the real reducer should have applied it.
+        expect(dispatches).toContainEqual({
             type: SelectedBotIdHandler,
             botId: matty.id,
         });
+        expect(getSelectedBotId(store.getState() as any)).toBe(matty.id);
+    });
+
+    test('getDefaultBotID selector reads the reducer state set by DefaultBotIDHandler', () => {
+        // Locks down the redux wiring: dispatching DefaultBotIDHandler must
+        // be reflected by getDefaultBotID. Guards against typos in either
+        // the reducer key or the selector.
+        const {store} = renderDropdown({
+            bots: [aira, matty],
+            defaultBotID: matty.id,
+        });
+        expect(getDefaultBotID(store.getState() as any)).toBe(matty.id);
     });
 });

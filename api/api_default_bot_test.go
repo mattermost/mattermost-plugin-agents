@@ -132,6 +132,14 @@ func TestHandleGetAIBotsDefaultBotID(t *testing.T) {
 				"defaultBotID should match the configured default's user ID")
 			require.Equal(t, tt.expectedFirstBotID, response.Bots[0].ID,
 				"first bot in list should match expected ordering")
+
+			// When a default is returned, the list ordering must agree with
+			// it so older clients that infer the default from list order
+			// keep working.
+			if response.DefaultBotID != "" {
+				require.Equal(t, response.DefaultBotID, response.Bots[0].ID,
+					"defaultBotID must match Bots[0].ID for backward compatibility")
+			}
 		})
 	}
 }

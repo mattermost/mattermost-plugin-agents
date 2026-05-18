@@ -1071,6 +1071,8 @@ func TestHandleGetAIBotsDefaultBotAfterFilteredBot(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, response.Bots, 1)
 	require.Equal(t, "ai", response.Bots[0].Username)
+	require.Equal(t, "defaultbotuserid1234567890", response.DefaultBotID,
+		"defaultBotID should be set even when a non-default bot was filtered out")
 }
 
 func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
