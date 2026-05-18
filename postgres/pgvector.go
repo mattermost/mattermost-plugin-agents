@@ -123,8 +123,8 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 	}
 
 	// Drop any prior rows for these posts so chunk-count shrinks don't leave
-	// orphans. ON CONFLICT below is a safety net for callers that bypass the
-	// lock.
+	// orphans. ON CONFLICT DO NOTHING below preserves existing rows if any
+	// caller ever bypasses the advisory lock.
 	deleteQuery, deleteArgs, err := sq.
 		Delete("llm_posts_embeddings").
 		Where(sq.Eq{"post_id": postIDs}).
@@ -151,17 +151,7 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 				:id, :post_id, :team_id, :channel_id, :user_id, :content, :embedding, :created_at,
 				:is_chunk, :chunk_index, :total_chunks
 			)
-			ON CONFLICT (id) DO UPDATE SET
-				post_id = EXCLUDED.post_id,
-				team_id = EXCLUDED.team_id,
-				channel_id = EXCLUDED.channel_id,
-				user_id = EXCLUDED.user_id,
-				content = EXCLUDED.content,
-				embedding = EXCLUDED.embedding,
-				created_at = EXCLUDED.created_at,
-				is_chunk = EXCLUDED.is_chunk,
-				chunk_index = EXCLUDED.chunk_index,
-				total_chunks = EXCLUDED.total_chunks`,
+			ON CONFLICT (id) DO NOTHING`,
 			map[string]interface{}{
 				"id":           id,
 				"post_id":      doc.PostID,

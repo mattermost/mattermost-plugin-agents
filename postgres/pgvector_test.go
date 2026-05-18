@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -15,7 +16,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -2238,9 +2239,8 @@ func TestConcurrentStoreOperations(t *testing.T) {
 
 // TestStoreConcurrentNoDuplicateKey verifies that Store does not surface a
 // pq 23505 duplicate-key error when many writers race for the same post id.
-// The current DELETE-then-INSERT implementation under READ COMMITTED loses
-// this race; this test pins that behavior so the upcoming fix (advisory
-// lock + ON CONFLICT) can be verified.
+// Any non-duplicate error also fails the test: a regression that turned the
+// race into a deadlock or serialization failure must not be hidden.
 func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
 	db := testDB(t)
 	defer cleanupDB(t, db)
@@ -2256,7 +2256,7 @@ func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
 	const numIterations = 10
 
 	var dupKeyCount, otherErrCount atomic.Int32
-	var sampleDupErr atomic.Value
+	var sampleDupErr, sampleOtherErr atomic.Value
 
 	for iter := 0; iter < numIterations; iter++ {
 		start := make(chan struct{})
@@ -2275,26 +2275,31 @@ func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
 					Content:   fmt.Sprintf("iter %d worker %d", iter, idx),
 				}}
 				vecs := [][]float32{{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3}}
-				if storeErr := pgVector.Store(ctx, docs, vecs); storeErr != nil {
-					if strings.Contains(storeErr.Error(), "duplicate key value") {
-						dupKeyCount.Add(1)
-						sampleDupErr.Store(storeErr.Error())
-					} else {
-						otherErrCount.Add(1)
-					}
+				storeErr := pgVector.Store(ctx, docs, vecs)
+				if storeErr == nil {
+					return
 				}
+				var pqErr *pq.Error
+				if errors.As(storeErr, &pqErr) && pqErr.Code == "23505" {
+					dupKeyCount.Add(1)
+					sampleDupErr.Store(storeErr.Error())
+					return
+				}
+				otherErrCount.Add(1)
+				sampleOtherErr.Store(storeErr.Error())
 			}(i)
 		}
 		close(start)
 		wg.Wait()
 	}
 
-	if other := otherErrCount.Load(); other != 0 {
-		t.Logf("non-duplicate-key errors observed: %d", other)
-	}
 	if got := dupKeyCount.Load(); got > 0 {
 		sample, _ := sampleDupErr.Load().(string)
 		t.Fatalf("Store returned duplicate key error under concurrent writes (%d occurrences); sample: %s", got, sample)
+	}
+	if got := otherErrCount.Load(); got > 0 {
+		sample, _ := sampleOtherErr.Load().(string)
+		t.Fatalf("Store returned non-duplicate-key error under concurrent writes (%d occurrences); sample: %s", got, sample)
 	}
 }
 
@@ -2323,6 +2328,7 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 
 	for iter := 0; iter < numIterations; iter++ {
 		start := make(chan struct{})
+		storeErrs := make([]error, numGoroutines)
 		var wg sync.WaitGroup
 		wg.Add(numGoroutines)
 		for i := 0; i < numGoroutines; i++ {
@@ -2354,28 +2360,39 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 					}
 					vecs[j] = []float32{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3}
 				}
-				_ = pgVector.Store(ctx, docs, vecs)
+				storeErrs[idx] = pgVector.Store(ctx, docs, vecs)
 			}(i)
 		}
 		close(start)
 		wg.Wait()
 
+		for i, err := range storeErrs {
+			require.NoErrorf(t, err, "iter %d: writer %d Store failed", iter, i)
+		}
+
 		var contents []string
 		err := db.Select(&contents, "SELECT content FROM llm_posts_embeddings WHERE post_id = $1 ORDER BY chunk_index", postID)
 		require.NoError(t, err)
-		if len(contents) == 0 {
-			continue
-		}
+		require.NotEmpty(t, contents, "iter %d: at least one writer should have committed rows", iter)
 
-		// Every surviving row should belong to the same writer.
+		// Every surviving row should belong to the same writer, and the count
+		// should equal that writer's TotalChunks (idx+1) — the surviving Store
+		// must have replaced the row set atomically with its full chunk count.
 		firstTag := strings.SplitN(contents[0], "/", 2)[0]
 		for _, c := range contents {
 			tag := strings.SplitN(c, "/", 2)[0]
 			if tag != firstTag {
-				t.Fatalf("iter %d: mixed-writer state observed: rows tagged with both %q and %q (rows=%v)",
+				t.Fatalf("iter %d: mixed-writer state: rows tagged with both %q and %q (rows=%v)",
 					iter, firstTag, tag, contents)
 			}
 		}
+
+		var winnerIdx int
+		_, err = fmt.Sscanf(firstTag, fmt.Sprintf("iter%d-writer%%d", iter), &winnerIdx)
+		require.NoErrorf(t, err, "iter %d: could not parse winning writer index from tag %q", iter, firstTag)
+		require.Equalf(t, winnerIdx+1, len(contents),
+			"iter %d: winner is writer%d (TotalChunks=%d) but found %d rows: %v",
+			iter, winnerIdx, winnerIdx+1, len(contents), contents)
 	}
 }
 
