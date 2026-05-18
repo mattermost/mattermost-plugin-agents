@@ -2379,6 +2379,69 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 	}
 }
 
+// TestDeleteWaitsForInFlightStore verifies that Delete blocks while a Store
+// for the same post is mid-transaction, preventing the Store from
+// resurrecting rows after the Delete commits. The test holds an open
+// transaction that has taken the per-post advisory lock (simulating Store
+// after BEGIN, before COMMIT) and asserts that pv.Delete cannot proceed
+// until that transaction commits its INSERT.
+func TestDeleteWaitsForInFlightStore(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	const postID = "resurrect_post"
+	addTestPosts(t, db, []string{postID}, []int64{now})
+
+	ctx := context.Background()
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback() //nolint:errcheck
+
+	_, err = tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", postID)
+	require.NoError(t, err)
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- pgVector.Delete(ctx, []string{postID})
+	}()
+
+	// Give Delete time to begin and block on the advisory lock.
+	time.Sleep(100 * time.Millisecond)
+
+	select {
+	case dErr := <-deleteDone:
+		t.Fatalf("Delete returned before in-flight Store committed (err=%v): Delete-side advisory lock is missing", dErr)
+	default:
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO llm_posts_embeddings (
+			id, post_id, team_id, channel_id, user_id, content, embedding, created_at,
+			is_chunk, chunk_index, total_chunks
+		) VALUES (
+			$1, $1, 'team1', 'channel1', 'user1', 'in-flight row', '[0.1, 0.2, 0.3]', $2,
+			false, NULL, NULL
+		)`, postID, now)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	select {
+	case dErr := <-deleteDone:
+		require.NoError(t, dErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Delete did not unblock after in-flight Store committed")
+	}
+
+	var count int
+	require.NoError(t, db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = $1", postID))
+	require.Equal(t, 0, count, "Delete should have removed the row that committed while Delete was waiting on the lock")
+}
+
 func TestDeleteOrphaned(t *testing.T) {
 	setupDeleteOrphanedTest := func(t *testing.T) (context.Context, *PGVector, *sqlx.DB) {
 		db := testDB(t)
