@@ -4,7 +4,7 @@
 import React from 'react';
 import {render, screen} from '@testing-library/react';
 import {Provider} from 'react-redux';
-import {applyMiddleware, combineReducers, createStore, Reducer} from 'redux';
+import {applyMiddleware, combineReducers, createStore, Middleware, Reducer, Store, UnknownAction} from 'redux';
 
 // Stub heavy modules pulled in transitively. `system_console/bot` imports
 // `avatar.tsx`, which imports a PNG asset that jest can't transform.
@@ -101,20 +101,69 @@ const initialPluginSlice: PluginSlice = {
     showCustomPromptsModal: false,
 };
 
-const pluginSlice: Reducer<PluginSlice> = (state = initialPluginSlice, action: any) => {
+const pluginKey = `plugins-${manifest.id}` as const;
+
+type RootState = Record<typeof pluginKey, PluginSlice>;
+type SelectorState = Parameters<typeof getSelectedBotId>[0];
+type TestStore = Store<RootState, UnknownAction>;
+type TestThunk = (dispatch: TestStore['dispatch'], getState: TestStore['getState']) => unknown;
+
+type BotsAction = UnknownAction & {
+    type: typeof BotsHandler;
+    bots: PluginSlice['bots'];
+};
+
+type DefaultBotIDAction = UnknownAction & {
+    type: typeof DefaultBotIDHandler;
+    defaultBotID?: string;
+};
+
+type SelectedBotIDAction = UnknownAction & {
+    type: typeof SelectedBotIdHandler;
+    botId: string | null;
+};
+
+type CustomPromptsAction = UnknownAction & {
+    type: typeof CustomPromptsHandler;
+    customPrompts: PluginSlice['customPrompts'];
+};
+
+type PinnedPromptIdsAction = UnknownAction & {
+    type: typeof PinnedPromptIdsHandler;
+    pinnedPromptIds: string[];
+};
+
+type ShowCustomPromptsModalAction = UnknownAction & {
+    type: typeof ShowCustomPromptsModalHandler;
+    show: boolean;
+};
+
+function isThunkAction(action: unknown): action is TestThunk {
+    return typeof action === 'function';
+}
+
+function isUnknownAction(action: unknown): action is UnknownAction {
+    return typeof action === 'object' && action !== null && 'type' in action;
+}
+
+function toSelectorState(store: TestStore): SelectorState {
+    return store.getState() as unknown as SelectorState;
+}
+
+const pluginSlice: Reducer<PluginSlice, UnknownAction> = (state = initialPluginSlice, action) => {
     switch (action.type) {
     case BotsHandler:
-        return {...state, bots: action.bots};
+        return {...state, bots: (action as BotsAction).bots};
     case DefaultBotIDHandler:
-        return {...state, defaultBotID: action.defaultBotID ?? ''};
+        return {...state, defaultBotID: (action as DefaultBotIDAction).defaultBotID ?? ''};
     case SelectedBotIdHandler:
-        return {...state, selectedBotId: action.botId};
+        return {...state, selectedBotId: (action as SelectedBotIDAction).botId};
     case CustomPromptsHandler:
-        return {...state, customPrompts: action.customPrompts};
+        return {...state, customPrompts: (action as CustomPromptsAction).customPrompts};
     case PinnedPromptIdsHandler:
-        return {...state, pinnedPromptIds: action.pinnedPromptIds};
+        return {...state, pinnedPromptIds: (action as PinnedPromptIdsAction).pinnedPromptIds};
     case ShowCustomPromptsModalHandler:
-        return {...state, showCustomPromptsModal: action.show};
+        return {...state, showCustomPromptsModal: (action as ShowCustomPromptsModalAction).show};
     default:
         return state;
     }
@@ -122,20 +171,22 @@ const pluginSlice: Reducer<PluginSlice> = (state = initialPluginSlice, action: a
 
 // Passthrough middleware that captures dispatched actions and resolves the
 // thunk dispatched by fetchCustomPrompts so the real reducer runs.
-const dispatches: any[] = [];
-const thunkMiddleware = (api: any) => (next: any) => (action: any) => {
-    if (typeof action === 'function') {
-        return action(api.dispatch, api.getState);
+const dispatches: UnknownAction[] = [];
+const thunkMiddleware: Middleware<unknown, RootState> = ({dispatch, getState}) => (next) => (action) => {
+    if (isThunkAction(action)) {
+        return action(dispatch, getState);
     }
-    dispatches.push(action);
+    if (isUnknownAction(action)) {
+        dispatches.push(action);
+    }
     return next(action);
 };
 
-function createTestStore(initial: Partial<PluginSlice>) {
+function createTestStore(initial: Partial<PluginSlice>): TestStore {
     const rootReducer = combineReducers({
-        [`plugins-${manifest.id}`]: pluginSlice,
+        [pluginKey]: pluginSlice,
     });
-    const store = createStore(rootReducer, applyMiddleware(thunkMiddleware));
+    const store = createStore(rootReducer, applyMiddleware(thunkMiddleware)) as TestStore;
     if ('bots' in initial) {
         store.dispatch({type: BotsHandler, bots: initial.bots});
     }
@@ -226,7 +277,7 @@ describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
             type: SelectedBotIdHandler,
             botId: matty.id,
         });
-        expect(getSelectedBotId(store.getState() as any)).toBe(matty.id);
+        expect(getSelectedBotId(toSelectorState(store))).toBe(matty.id);
     });
 
     test('getDefaultBotID selector reads the reducer state set by DefaultBotIDHandler', () => {
@@ -234,6 +285,6 @@ describe('CustomPromptsDropdown bot selection (MM-68856)', () => {
             bots: [aira, matty],
             defaultBotID: matty.id,
         });
-        expect(getDefaultBotID(store.getState() as any)).toBe(matty.id);
+        expect(getDefaultBotID(toSelectorState(store))).toBe(matty.id);
     });
 });
