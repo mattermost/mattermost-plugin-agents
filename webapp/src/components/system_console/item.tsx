@@ -106,8 +106,11 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
                 textarea.style.left = '-9999px';
                 document.body.appendChild(textarea);
                 textarea.select();
-                document.execCommand('copy');
+                const didCopy = document.execCommand('copy');
                 document.body.removeChild(textarea);
+                if (!didCopy) {
+                    throw new Error('Failed to copy to clipboard');
+                }
             }
             setCopied(true);
             if (copyResetTimer.current) {
@@ -131,6 +134,7 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
                         type='text'
                         value={props.value}
                         readOnly={true}
+                        aria-label={props.label}
                         onFocus={(e) => e.currentTarget.select()}
                     />
                     <CopyButton

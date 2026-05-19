@@ -357,7 +357,8 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const configuredSiteURL = useSelector<GlobalState, string | undefined>(
         (state) => state.entities.general.config.SiteURL,
     );
-    const siteURL = (configuredSiteURL && configuredSiteURL.length > 0) ? configuredSiteURL.replace(/\/+$/, '') : window.location.origin;
+    const normalizedConfiguredSiteURL = configuredSiteURL?.trim();
+    const siteURL = normalizedConfiguredSiteURL ? normalizedConfiguredSiteURL.replace(/\/+$/, '') : window.location.origin;
     const oauthCallbackURL = `${siteURL}/plugins/${manifest.id}/oauth/callback`;
 
     // Tool-affecting config fingerprint (must be declared before prefetch effect)

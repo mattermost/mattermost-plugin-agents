@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 import {CopyableTextItem} from './item';
 
@@ -37,6 +37,10 @@ describe('CopyableTextItem', () => {
             value: {writeText: writeTextMock},
             configurable: true,
         });
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
     });
 
     it('renders the label, value, and help text', () => {
@@ -88,31 +92,74 @@ describe('CopyableTextItem', () => {
     });
 
     it('reverts the button label back to "Copy to clipboard" after the confirmation timeout', async () => {
+        jest.useFakeTimers();
         renderItem('https://example.com/plugins/mattermost-ai/oauth/callback');
 
-        fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
-
-        await waitFor(() => {
-            expect(screen.getByRole('button', {name: /^copied$/i})).toBeTruthy();
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
         });
 
-        await waitFor(() => {
-            expect(screen.getByRole('button', {name: /copy to clipboard/i})).toBeTruthy();
-        }, {timeout: 4000});
+        expect(screen.getByRole('button', {name: /^copied$/i})).toBeTruthy();
+
+        act(() => {
+            jest.advanceTimersByTime(2000);
+        });
+
+        expect(screen.getByRole('button', {name: /copy to clipboard/i})).toBeTruthy();
     });
 
     it('falls back to document.execCommand when navigator.clipboard is unavailable', async () => {
-        delete (navigator as unknown as {clipboard?: unknown}).clipboard;
+        const originalClipboard = navigator.clipboard;
+        const originalExecCommand = document.execCommand;
         const execCommand = jest.fn().mockReturnValue(true);
-        document.execCommand = execCommand;
 
-        renderItem('https://example.com/plugins/mattermost-ai/oauth/callback');
+        try {
+            delete (navigator as unknown as {clipboard?: unknown}).clipboard;
+            document.execCommand = execCommand;
 
-        fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
+            renderItem('https://example.com/plugins/mattermost-ai/oauth/callback');
 
-        await waitFor(() => {
+            fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
+
+            await waitFor(() => {
+                expect(execCommand).toHaveBeenCalledWith('copy');
+            });
+        } finally {
+            document.execCommand = originalExecCommand;
+            Object.defineProperty(navigator, 'clipboard', {
+                value: originalClipboard,
+                configurable: true,
+            });
+        }
+    });
+
+    it('does not show success when document.execCommand fails', async () => {
+        const originalClipboard = navigator.clipboard;
+        const originalExecCommand = document.execCommand;
+        const execCommand = jest.fn().mockReturnValue(false);
+        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        try {
+            delete (navigator as unknown as {clipboard?: unknown}).clipboard;
+            document.execCommand = execCommand;
+
+            renderItem('https://example.com/plugins/mattermost-ai/oauth/callback');
+
+            await act(async () => {
+                fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
+            });
+
             expect(execCommand).toHaveBeenCalledWith('copy');
-        });
+            expect(screen.getByRole('button', {name: /copy to clipboard/i})).toBeTruthy();
+            expect(screen.queryByRole('button', {name: /^copied$/i})).toBeNull();
+        } finally {
+            document.execCommand = originalExecCommand;
+            Object.defineProperty(navigator, 'clipboard', {
+                value: originalClipboard,
+                configurable: true,
+            });
+            consoleErrorSpy.mockRestore();
+        }
     });
 
     it('does not call onChange when the user types into the field (read-only)', () => {

@@ -9,9 +9,6 @@ import {SystemConsoleHelper} from 'helpers/system-console';
 import {OpenAIMockContainer, RunOpenAIMocks} from 'helpers/openai-mock';
 import RunSystemConsoleContainer, {adminUsername, adminPassword} from 'helpers/system-console-container';
 
-let mattermost: MattermostContainer | undefined;
-let openAIMock: OpenAIMockContainer | undefined;
-
 async function setupMattermost(): Promise<MattermostContainer> {
     return RunSystemConsoleContainer({
         mcp: {
@@ -51,6 +48,8 @@ async function setupMattermost(): Promise<MattermostContainer> {
 test.describe.serial('MCP Panel', () => {
     test('should keep Connection Idle Timeout empty when cleared', async ({page}) => {
         test.setTimeout(60000);
+        let mattermost: MattermostContainer | undefined;
+        let openAIMock: OpenAIMockContainer | undefined;
 
         try {
             mattermost = await setupMattermost();
@@ -90,6 +89,8 @@ test.describe.serial('MCP Panel', () => {
 
     test('should display the MCP OAuth callback URL with a copy button', async ({page, context}) => {
         test.setTimeout(60000);
+        let mattermost: MattermostContainer | undefined;
+        let openAIMock: OpenAIMockContainer | undefined;
 
         try {
             mattermost = await setupMattermost();
@@ -102,13 +103,14 @@ test.describe.serial('MCP Panel', () => {
             await systemConsole.navigateToPluginConfig(mattermost.url());
 
             const callbackField = page.getByLabel(/MCP OAuth Callback URL/i);
+            const callbackRow = callbackField.locator('xpath=..');
             await callbackField.scrollIntoViewIfNeeded();
 
             // The URL must be the SiteURL the server reports plus the plugin OAuth callback path.
             await expect(callbackField).toHaveValue(/\/plugins\/mattermost-ai\/oauth\/callback$/);
             await expect(callbackField).toHaveAttribute('readonly');
 
-            const copyButton = page.getByRole('button', {name: /copy to clipboard/i}).first();
+            const copyButton = callbackRow.getByRole('button', {name: /copy to clipboard/i});
             await expect(copyButton).toBeVisible();
 
             // Grant clipboard permissions so navigator.clipboard.writeText succeeds.
@@ -118,7 +120,7 @@ test.describe.serial('MCP Panel', () => {
             await copyButton.click();
 
             // Button label flips to the confirmation state.
-            await expect(page.getByRole('button', {name: /^copied$/i}).first()).toBeVisible();
+            await expect(callbackRow.getByRole('button', {name: /^copied$/i})).toBeVisible();
 
             const clipboardValue = await page.evaluate(() => navigator.clipboard.readText());
             expect(clipboardValue).toBe(expectedValue);
