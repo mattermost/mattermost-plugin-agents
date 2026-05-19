@@ -578,12 +578,12 @@ func (s *OpenAI) handleStreamEnd(ctx context.Context, stream *ssestream.Stream[o
 		if ctxErr := context.Cause(ctx); ctxErr != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: ctxErr,
+				Value: llm.SanitizeProviderError(ctxErr, s.config.APIKey),
 			}
 		} else {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: err,
+				Value: llm.SanitizeProviderError(err, s.config.APIKey),
 			}
 		}
 	}
@@ -913,7 +913,7 @@ func (s *OpenAI) handleResponseError(event responses.ResponseStreamEventUnion, o
 	}
 	output <- llm.TextStreamEvent{
 		Type:  llm.EventTypeError,
-		Value: errors.New(errorMsg),
+		Value: llm.SanitizeProviderError(errors.New(errorMsg), s.config.APIKey),
 	}
 }
 
@@ -936,12 +936,12 @@ func (s *OpenAI) handleResponsesStreamEnd(ctx context.Context, stream *ssestream
 		if ctxErr := context.Cause(ctx); ctxErr != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: ctxErr,
+				Value: llm.SanitizeProviderError(ctxErr, s.config.APIKey),
 			}
 		} else {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: err,
+				Value: llm.SanitizeProviderError(err, s.config.APIKey),
 			}
 		}
 	}
@@ -1211,7 +1211,7 @@ func (s *OpenAI) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 
 	resp, err := s.client.Audio.Transcriptions.New(context.Background(), params)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create whisper transcription: %w", err)
+		return nil, fmt.Errorf("unable to create whisper transcription: %w", llm.SanitizeProviderError(err, s.config.APIKey))
 	}
 
 	// The response for VTT format is the Text field
@@ -1233,7 +1233,7 @@ func (s *OpenAI) GenerateImage(prompt string) (image.Image, error) {
 
 	resp, err := s.client.Images.Generate(context.Background(), params)
 	if err != nil {
-		return nil, err
+		return nil, llm.SanitizeProviderError(err, s.config.APIKey)
 	}
 
 	if len(resp.Data) == 0 {
@@ -1309,7 +1309,7 @@ func (s *OpenAI) CreateEmbedding(ctx context.Context, text string) ([]float32, e
 
 	resp, err := s.client.Embeddings.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create embedding: %w", err)
+		return nil, fmt.Errorf("failed to create embedding: %w", llm.SanitizeProviderError(err, s.config.APIKey))
 	}
 
 	if len(resp.Data) == 0 {
@@ -1340,7 +1340,7 @@ func (s *OpenAI) BatchCreateEmbeddings(ctx context.Context, texts []string) ([][
 
 	resp, err := s.client.Embeddings.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create embeddings batch: %w", err)
+		return nil, fmt.Errorf("failed to create embeddings batch: %w", llm.SanitizeProviderError(err, s.config.APIKey))
 	}
 
 	// Validate response count matches input count
@@ -1415,7 +1415,7 @@ func FetchModels(apiKey string, apiURL string, orgID string, httpClient *http.Cl
 
 	// Check if there was an error during iteration
 	if err := autoPager.Err(); err != nil {
-		return nil, err
+		return nil, llm.SanitizeProviderError(err, apiKey)
 	}
 
 	return models, nil

@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,10 +19,17 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/responses"
 	"github.com/openai/openai-go/v2/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestPostsToChatCompletionMessages(t *testing.T) {
 	tests := []struct {
@@ -1193,6 +1202,128 @@ func TestReasoningEffortConfiguration(t *testing.T) {
 			// When reasoning is enabled, verify the effort is set correctly
 			assert.Equal(t, tt.expectedEffort, result.Reasoning.Effort, "Reasoning effort should match expected value")
 			assert.Equal(t, shared.ReasoningSummaryAuto, result.Reasoning.Summary, "Reasoning summary should be set to auto")
+		})
+	}
+}
+
+func TestHandleResponseErrorSanitizesMessage(t *testing.T) {
+	oai := OpenAI{
+		config: Config{
+			APIKey: "this-is-my-disclosed-api-key",
+		},
+	}
+	output := make(chan llm.TextStreamEvent, 1)
+
+	oai.handleResponseError(responses.ResponseStreamEventUnion{
+		Type:    "error",
+		Message: `Incorrect API key provided: this-is-my-disclosed-api-key. You can find your API key at https://platform.openai.com/account/api-keys.`,
+	}, output)
+
+	event := <-output
+	require.Equal(t, llm.EventTypeError, event.Type)
+
+	err, ok := event.Value.(error)
+	require.True(t, ok)
+	assert.Contains(t, err.Error(), "Incorrect API key provided.")
+	assert.NotContains(t, err.Error(), "this-is-my-disclosed-api-key")
+}
+
+func TestFetchModelsSanitizesProviderErrors(t *testing.T) {
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, http.MethodGet, req.Method)
+
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body:    io.NopCloser(strings.NewReader(`{"error":{"message":"Incorrect API key provided: this-is-****************-key. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","code":"invalid_api_key"}}`)),
+				Request: req,
+			}, nil
+		}),
+	}
+
+	models, err := FetchModels("this-is-my-disclosed-api-key", "https://example.invalid", "", httpClient)
+
+	require.Nil(t, models)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Incorrect API key provided. You can find your API key")
+	assert.NotContains(t, err.Error(), "this-is-****************-key")
+}
+
+func TestNonStreamingHelpersSanitizeProviderErrors(t *testing.T) {
+	const apiKey = "this-is-my-disclosed-api-key"
+	const maskedKey = "this-is-****************-key"
+
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body:    io.NopCloser(strings.NewReader(`{"error":{"message":"Incorrect API key provided: ` + maskedKey + `. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","code":"invalid_api_key"}}`)),
+				Request: req,
+			}, nil
+		}),
+	}
+
+	newOpenAI := func() *OpenAI {
+		return NewCompatible(Config{
+			APIKey:         apiKey,
+			APIURL:         "https://example.invalid",
+			EmbeddingModel: "text-embedding-3-small",
+		}, httpClient)
+	}
+
+	tests := []struct {
+		name string
+		call func(t *testing.T, oai *OpenAI) error
+	}{
+		{
+			name: "transcribe",
+			call: func(t *testing.T, oai *OpenAI) error {
+				t.Helper()
+				_, err := oai.Transcribe(strings.NewReader("fake audio"))
+				return err
+			},
+		},
+		{
+			name: "generate image",
+			call: func(t *testing.T, oai *OpenAI) error {
+				t.Helper()
+				var zeroImage image.Image
+				zeroImage, err := oai.GenerateImage("draw a cat")
+				assert.Nil(t, zeroImage)
+				return err
+			},
+		},
+		{
+			name: "create embedding",
+			call: func(t *testing.T, oai *OpenAI) error {
+				t.Helper()
+				_, err := oai.CreateEmbedding(context.Background(), "hello")
+				return err
+			},
+		},
+		{
+			name: "batch create embeddings",
+			call: func(t *testing.T, oai *OpenAI) error {
+				t.Helper()
+				_, err := oai.BatchCreateEmbeddings(context.Background(), []string{"hello", "world"})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(t, newOpenAI())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "Incorrect API key provided. You can find your API key")
+			assert.NotContains(t, err.Error(), apiKey)
+			assert.NotContains(t, err.Error(), maskedKey)
 		})
 	}
 }
