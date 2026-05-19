@@ -5,12 +5,17 @@ import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 import styled from 'styled-components';
 
+import fileOverlayImage from '../../images/file_overlay.svg';
+
 // Mirrors the upstream Mattermost RHS drag-drop behavior. The plugin embeds
 // AdvancedTextEditor outside the standard RHS chrome (no `.post-right__container`
 // / `.row.main` wrapper), so the editor's internal FileUpload component cannot
 // attach its drag listeners. We attach our own and forward dropped files to the
 // AdvancedTextEditor's hidden file input, which then runs the normal upload +
 // draft-update pipeline.
+//
+// Overlay visuals match `webapp/channels/src/components/file_upload_overlay/`
+// in mattermost-server (`.file-overlay.right-file-overlay`).
 const Wrapper = styled.div`
     position: relative;
     display: flex;
@@ -21,25 +26,44 @@ const Wrapper = styled.div`
 
 const Overlay = styled.div<{$visible: boolean}>`
     position: absolute;
-    inset: 0;
-    z-index: 1000;
-    display: ${({$visible}) => ($visible ? 'flex' : 'none')};
+    z-index: 13;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: ${({$visible}) => ($visible ? 'block' : 'none')};
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 600;
+    pointer-events: none;
+    text-align: center;
+`;
+
+const OverlayIndent = styled.div`
+    position: relative;
+    display: flex;
+    height: 100%;
     align-items: center;
     justify-content: center;
-    background: rgba(var(--button-bg-rgb), 0.12);
-    border: 2px dashed rgba(var(--button-bg-rgb), 0.6);
-    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.75);
+`;
+
+const OverlayCircle = styled.div`
+    display: flex;
+    width: 300px;
+    height: 300px;
+    max-height: 100%;
+    flex-direction: column;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
     pointer-events: none;
 `;
 
-const OverlayMessage = styled.div`
-    background: rgb(var(--center-channel-bg-rgb));
-    color: rgb(var(--center-channel-color));
-    border-radius: 4px;
-    padding: 12px 20px;
-    font-size: 14px;
-    font-weight: 600;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+const OverlayFilesImage = styled.img`
+    display: block;
+    width: 150px;
 `;
 
 const dataTransferHasFiles = (dataTransfer: DataTransfer | null): boolean =>
@@ -151,9 +175,16 @@ const RhsFileDropZone = ({children, className}: Props) => {
                 data-testid='rhs-file-drop-overlay'
                 aria-hidden={!isDragging}
             >
-                <OverlayMessage>
-                    <FormattedMessage defaultMessage='Drop a file to attach it'/>
-                </OverlayMessage>
+                <OverlayIndent>
+                    <OverlayCircle>
+                        <OverlayFilesImage
+                            src={fileOverlayImage}
+                            alt=''
+                            loading='lazy'
+                        />
+                        <FormattedMessage defaultMessage='Drop a file to upload it.'/>
+                    </OverlayCircle>
+                </OverlayIndent>
             </Overlay>
         </Wrapper>
     );
