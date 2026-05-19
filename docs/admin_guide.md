@@ -562,7 +562,7 @@ Some MCP servers require OAuth per Mattermost user. For those servers, the plugi
 
 **Mobile and other clients:** MCP OAuth is not initiated from the mobile app or other clients that do not use the Agents webapp. Users need Mattermost web or desktop to connect OAuth-backed MCP servers.
 
-**Custom MCP OAuth setups:** If the OAuth start URL includes a `resource_metadata` query parameter, it is accepted only when its origin matches the origin of the configured MCP server **Server URL**. This prevents cross-origin metadata injection during discovery.
+**Custom MCP OAuth setups:** If the OAuth start URL includes a `resource_metadata` query parameter, it is accepted only when its origin matches the origin of the configured MCP server **Server URL**. This prevents cross-origin metadata injection during discovery. For dynamic client registration, the plugin uses the `registration_endpoint` advertised by the authorization-server metadata discovered for the configured MCP server. This improves compatibility with providers that use path-scoped authorization issuer URLs. Registration also succeeds when the provider returns a successful 2xx response, including `200 OK`, with a valid registration payload.
 
 ### Atlassian MCP server authorization
 
