@@ -1990,11 +1990,11 @@ func appendFirstWebSearchFallbackSource(sources []webSearchFallbackSource, item 
 	if item == nil || item.Type == nil || *item.Type != schemas.ResponsesMessageTypeWebSearchCall {
 		return sources
 	}
-	if item.Action == nil || item.Action.ResponsesWebSearchToolCallAction == nil {
+	if item.ResponsesToolMessage == nil || item.ResponsesToolMessage.Action == nil || item.ResponsesToolMessage.Action.ResponsesWebSearchToolCallAction == nil {
 		return sources
 	}
 
-	for _, source := range item.Action.ResponsesWebSearchToolCallAction.Sources {
+	for _, source := range item.ResponsesToolMessage.Action.ResponsesWebSearchToolCallAction.Sources {
 		if source.URL == "" || hasFallbackSource(sources, source.URL) {
 			continue
 		}

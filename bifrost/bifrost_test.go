@@ -979,6 +979,15 @@ func TestAppendFirstWebSearchFallbackSource(t *testing.T) {
 	}, sources)
 }
 
+func TestAppendFirstWebSearchFallbackSourceIgnoresNilToolMessage(t *testing.T) {
+	item := &schemas.ResponsesMessage{
+		Type: schemas.Ptr(schemas.ResponsesMessageTypeWebSearchCall),
+	}
+
+	sources := appendFirstWebSearchFallbackSource(nil, item)
+	assert.Nil(t, sources)
+}
+
 func TestBuildFallbackAnnotations(t *testing.T) {
 	annotations := buildFallbackAnnotations([]webSearchFallbackSource{
 		{URL: "https://example.com/one", Title: "One"},
