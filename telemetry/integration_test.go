@@ -119,7 +119,9 @@ func (f *fakeLLM) CountTokens(text string) int { return len(text) / 4 }
 func (f *fakeLLM) InputTokenLimit() int        { return 100000 }
 
 // fakeLLMError simulates an LLM that produces an error span.
-type fakeLLMError struct{}
+type fakeLLMError struct {
+	wg sync.WaitGroup
+}
 
 func (f *fakeLLMError) ChatCompletion(ctx context.Context, request llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	_, span := telemetry.Tracer().Start(ctx, "llm chat completion",
@@ -127,7 +129,9 @@ func (f *fakeLLMError) ChatCompletion(ctx context.Context, request llm.Completio
 	)
 
 	stream := make(chan llm.TextStreamEvent)
+	f.wg.Add(1)
 	go func() {
+		defer f.wg.Done()
 		defer close(stream)
 		defer span.End()
 
@@ -218,6 +222,7 @@ func TestLLMChatCompletionErrorSpan(t *testing.T) {
 
 	// Drain the stream (should contain the error event)
 	_, _ = result.ReadAll()
+	model.wg.Wait()
 
 	spans := exporter.GetSpans()
 	if len(spans) != 1 {

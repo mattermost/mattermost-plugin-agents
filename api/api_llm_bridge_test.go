@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -65,6 +66,33 @@ func (m *mockEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, 
 }
 
 // Full-stack integration tests using bridge client → real API → fake LLM
+
+func TestConvertBridgePostsToInternalUnsupportedImageDoesNotReadFile(t *testing.T) {
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("GetFileInfo", "svg1").Return(&model.FileInfo{
+		Id:       "svg1",
+		Name:     "vector.svg",
+		MimeType: "image/svg+xml",
+		Size:     1234,
+	}, nil)
+
+	api := &API{mmClient: mmClient}
+	posts, err := api.convertBridgePostsToInternal(bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{{
+			Role:    "user",
+			Message: "see attached",
+			FileIDs: []string{"svg1"},
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, posts, 1)
+	require.Len(t, posts[0].Files, 1)
+	mmClient.AssertNotCalled(t, "GetFile", "svg1")
+	require.Equal(t, "image/svg+xml", posts[0].Files[0].MimeType)
+	require.Empty(t, posts[0].Files[0].Data)
+	require.Nil(t, posts[0].Files[0].Reader)
+}
 
 func TestBridgeClientAgentCompletion(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)

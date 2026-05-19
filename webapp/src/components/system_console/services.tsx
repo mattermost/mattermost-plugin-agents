@@ -22,7 +22,6 @@ const defaultNewService: LLMService = {
     defaultModel: '',
     tokenLimit: 0,
     streamingTimeoutSeconds: 0,
-    sendUserId: false,
     outputTokenLimit: 0,
     useResponsesAPI: true,
     region: '',

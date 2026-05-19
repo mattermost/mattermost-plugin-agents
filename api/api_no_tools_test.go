@@ -67,6 +67,9 @@ func (s *noToolsStreamingService) StreamToNewDM(_ context.Context, botID string,
 func (s *noToolsStreamingService) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
 }
 
+func (s *noToolsStreamingService) StreamContinuationToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
+}
+
 func (s *noToolsStreamingService) StopStreaming(string) {}
 
 func (s *noToolsStreamingService) GetStreamingContext(ctx context.Context, _ string) (context.Context, error) {
@@ -139,6 +142,18 @@ func (m *mockConvServiceStore) UpdateTurnContent(id string, content json.RawMess
 }
 
 func (m *mockConvServiceStore) UpdateTurnTokens(_ string, _, _ int64) error {
+	return nil
+}
+
+func (m *mockConvServiceStore) GetTurnByPostID(_ string) (*store.Turn, error) {
+	return nil, nil
+}
+
+func (m *mockConvServiceStore) UpdateTurnPostID(_ string, _ *string) error {
+	return nil
+}
+
+func (m *mockConvServiceStore) DeleteResponseTurns(_ string, _ string) error {
 	return nil
 }
 

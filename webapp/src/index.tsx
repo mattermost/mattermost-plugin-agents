@@ -39,6 +39,7 @@ import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_co
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
+import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
@@ -129,8 +130,6 @@ const ChannelHeaderIcon = () => {
 export default class Plugin {
     postEventListener: PostEventListener = new PostEventListener();
     private store: WebappStore | null = null;
-    private static readonly BOT_REPLY_DEBOUNCE_TIMEOUT_MS = 1000;
-
     // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
     public async initialize(registry: any, store: WebappStore) {
         setupRedux(registry, store);
@@ -345,38 +344,13 @@ export default class Plugin {
         teamId: string,
         args: any,
     ): Promise<{args?: any; error?: string}> {
-        if (!post || !post.user_id) {
-            return {args};
-        }
+        const state = this.store?.getState();
+        const parentPost = post?.root_id ? state?.entities.posts.posts[post.root_id] : null;
+        const currentUserId = state?.entities.users.currentUserId;
 
-        // Block all threaded replies from our AI bots
-        if (post.root_id && post.type === 'custom_llmbot') {
+        if (shouldSuppressBotNotification(post, {currentUserId, parentPost, now: Date.now()})) {
             return {args: {...args, notify: false}};
         }
-
-        // Only handle threaded posts from bots
-        if (!post.root_id || post.props?.from_bot !== 'true') {
-            return {args};
-        }
-
-        if (!this.store) {
-            return {args};
-        }
-
-        const state = this.store.getState();
-        const parentPost = state.entities.posts.posts[post.root_id];
-        if (!parentPost) {
-            return {args};
-        }
-
-        // Block notifications created within DEBOUNCE_TIMEOUT of parent
-        const now = Date.now();
-        const timeSinceParentPost = now - parentPost.create_at;
-        const currentUserId = state.entities.users.currentUserId;
-        if (parentPost.user_id === currentUserId && timeSinceParentPost < Plugin.BOT_REPLY_DEBOUNCE_TIMEOUT_MS) {
-            return {args: {...args, notify: false}};
-        }
-
         return {args};
     }
 }

@@ -32,6 +32,19 @@ const (
 	DefaultStreamingTimeout = 5 * time.Minute
 )
 
+type webSearchFallbackSource struct {
+	URL   string
+	Title string
+}
+
+type pendingAnnotationPosition struct {
+	index        int
+	missingStart bool
+	missingEnd   bool
+}
+
+const missingContentIndex = -1
+
 // LLM implements the llm.LanguageModel interface using the Bifrost gateway.
 type LLM struct {
 	client           *bifrostcore.Bifrost
@@ -41,7 +54,6 @@ type LLM struct {
 	inputTokenLimit  int
 	outputTokenLimit int
 	streamingTimeout time.Duration
-	sendUserID       bool
 
 	// Native tools and reasoning configuration
 	enabledNativeTools []string
@@ -73,7 +85,6 @@ type Config struct {
 	InputTokenLimit  int
 	OutputTokenLimit int
 	StreamingTimeout time.Duration
-	SendUserID       bool
 
 	// Native tools and reasoning configuration
 	EnabledNativeTools []string
@@ -201,6 +212,16 @@ func toolArgsToJSON(s string) json.RawMessage {
 	return json.RawMessage(s)
 }
 
+func readFileData(file llm.File) ([]byte, error) {
+	if len(file.Data) > 0 {
+		return file.Data, nil
+	}
+	if file.Reader == nil {
+		return nil, fmt.Errorf("file reader is nil")
+	}
+	return io.ReadAll(file.Reader)
+}
+
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
 	account := &providerAccount{
@@ -240,7 +261,6 @@ func New(cfg Config) (*LLM, error) {
 		inputTokenLimit:    cfg.InputTokenLimit,
 		outputTokenLimit:   outputLimit,
 		streamingTimeout:   streamingTimeout,
-		sendUserID:         cfg.SendUserID,
 		enabledNativeTools: cfg.EnabledNativeTools,
 		reasoningEnabled:   cfg.ReasoningEnabled,
 		reasoningEffort:    cfg.ReasoningEffort,
@@ -905,8 +925,13 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				},
 			}
 
-			// Add reasoning details for thinking-enabled conversations
-			if post.Reasoning != "" {
+			// Add reasoning details for thinking-enabled conversations.
+			// Anthropic requires historical thinking blocks to include a valid
+			// provider-issued signature. If a previous stream failed before the
+			// signature arrived, we persist partial reasoning for display only; do
+			// not replay it to Anthropic as an unsigned thinking block. Other
+			// providers may accept unsigned reasoning, so preserve it for them.
+			if post.Reasoning != "" && (b.provider != schemas.Anthropic || post.ReasoningSignature != "") {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}
@@ -1054,7 +1079,7 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 			continue
 		}
 
-		data, err := io.ReadAll(file.Reader)
+		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, schemas.ChatContentBlock{
 				Type: schemas.ChatContentBlockTypeText,
@@ -1210,13 +1235,7 @@ func buildResponsesTextConfig(schema *jsonschema.Schema) (*schemas.ResponsesText
 
 // isValidImageType checks if the MIME type is supported.
 func isValidImageType(mimeType string) bool {
-	validTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
-	}
-	return validTypes[mimeType]
+	return llm.IsSupportedImageMimeType(mimeType)
 }
 
 // Ptr is a helper function to create a pointer to a value.
@@ -1355,7 +1374,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 			continue
 		}
 
-		data, err := io.ReadAll(file.Reader)
+		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, schemas.ResponsesMessageContentBlock{
 				Type: schemas.ResponsesInputMessageContentBlockTypeText,
@@ -1572,8 +1591,10 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 	// Annotation buffer and text position tracking
 	var annotations []llm.Annotation
-	var textLen int       // cumulative byte length of all streamed text
-	var blockStartPos int // byte position where current text block started
+	var fallbackSources []webSearchFallbackSource
+	pendingAnnotationPositions := make(map[int][]pendingAnnotationPosition)
+	var textLen int       // cumulative UTF-16 length of all streamed text
+	var blockStartPos int // UTF-16 position where current text block started
 
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
@@ -1644,7 +1665,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 						Type:  llm.EventTypeText,
 						Value: *resp.Delta,
 					}
-					textLen += len(*resp.Delta)
+					textLen += llm.UTF16CodeUnitCount(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
@@ -1675,8 +1696,10 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				if resp.Annotation != nil {
 					if ann := convertBifrostAnnotation(resp.Annotation, len(annotations)+1); ann != nil {
 						// Bifrost doesn't provide output-text positions during Anthropic streaming.
-						// Compute them from tracked block boundaries, matching the approach used by
-						// the old Anthropic SDK implementation (extractAnnotations).
+						// Attach those citations to the current text block and correct the end
+						// position when output_text.done arrives.
+						missingStart := resp.Annotation.StartIndex == nil
+						missingEnd := resp.Annotation.EndIndex == nil
 						if resp.Annotation.StartIndex == nil {
 							ann.StartIndex = blockStartPos
 						}
@@ -1684,6 +1707,20 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 							ann.EndIndex = textLen
 						}
 						annotations = append(annotations, *ann)
+						if missingStart || missingEnd {
+							contentIndex := missingContentIndex
+							if resp.ContentIndex != nil {
+								contentIndex = *resp.ContentIndex
+							}
+							pendingAnnotationPositions[contentIndex] = append(
+								pendingAnnotationPositions[contentIndex],
+								pendingAnnotationPosition{
+									index:        len(annotations) - 1,
+									missingStart: missingStart,
+									missingEnd:   missingEnd,
+								},
+							)
+						}
 					}
 				}
 
@@ -1694,6 +1731,17 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				// Text block complete - emit accumulated annotations and advance block position.
 				// Keep the annotation buffer so subsequent output_text_done events can include
 				// citations accumulated across the full response.
+				contentIndex := missingContentIndex
+				if resp.ContentIndex != nil {
+					contentIndex = *resp.ContentIndex
+				}
+				flushPendingAnnotationPositions(
+					annotations,
+					pendingAnnotationPositions,
+					contentIndex,
+					blockStartPos,
+					textLen,
+				)
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
@@ -1772,6 +1820,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemDone:
+				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
 				// Output item completed - finalize function call if any
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
@@ -1808,6 +1857,13 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				}
 
 				// Emit any accumulated annotations
+				for contentIndex, positions := range pendingAnnotationPositions {
+					applyPendingAnnotationPositions(annotations, positions, blockStartPos, textLen)
+					delete(pendingAnnotationPositions, contentIndex)
+				}
+				if len(annotations) == 0 && len(fallbackSources) > 0 {
+					annotations = buildFallbackAnnotations(fallbackSources, textLen)
+				}
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
@@ -1928,4 +1984,75 @@ func convertBifrostAnnotation(ann *schemas.ResponsesOutputMessageContentTextAnno
 	}
 
 	return result
+}
+
+func appendFirstWebSearchFallbackSource(sources []webSearchFallbackSource, item *schemas.ResponsesMessage) []webSearchFallbackSource {
+	if item == nil || item.Type == nil || *item.Type != schemas.ResponsesMessageTypeWebSearchCall {
+		return sources
+	}
+	if item.Action == nil || item.Action.ResponsesWebSearchToolCallAction == nil {
+		return sources
+	}
+
+	for _, source := range item.Action.ResponsesWebSearchToolCallAction.Sources {
+		if source.URL == "" || hasFallbackSource(sources, source.URL) {
+			continue
+		}
+		title := ""
+		if source.Title != nil {
+			title = *source.Title
+		}
+		sources = append(sources, webSearchFallbackSource{
+			URL:   source.URL,
+			Title: title,
+		})
+	}
+	return sources
+}
+
+func hasFallbackSource(sources []webSearchFallbackSource, url string) bool {
+	for _, source := range sources {
+		if source.URL == url {
+			return true
+		}
+	}
+	return false
+}
+
+func buildFallbackAnnotations(sources []webSearchFallbackSource, endIndex int) []llm.Annotation {
+	annotations := make([]llm.Annotation, 0, len(sources))
+	for i, source := range sources {
+		annotations = append(annotations, llm.Annotation{
+			Type:       llm.AnnotationTypeURLCitation,
+			StartIndex: endIndex,
+			EndIndex:   endIndex,
+			URL:        source.URL,
+			Title:      source.Title,
+			Index:      i + 1,
+		})
+	}
+	return annotations
+}
+
+func applyPendingAnnotationPositions(annotations []llm.Annotation, positions []pendingAnnotationPosition, startIndex, endIndex int) {
+	for _, position := range positions {
+		if position.index < 0 || position.index >= len(annotations) {
+			continue
+		}
+		if position.missingStart {
+			annotations[position.index].StartIndex = startIndex
+		}
+		if position.missingEnd {
+			annotations[position.index].EndIndex = endIndex
+		}
+	}
+}
+
+func flushPendingAnnotationPositions(
+	annotations []llm.Annotation,
+	pending map[int][]pendingAnnotationPosition,
+	contentIndex, startIndex, endIndex int,
+) {
+	applyPendingAnnotationPositions(annotations, pending[contentIndex], startIndex, endIndex)
+	delete(pending, contentIndex)
 }

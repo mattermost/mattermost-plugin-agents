@@ -199,6 +199,27 @@ func (s *evalInMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int6
 	return nil
 }
 
+func (s *evalInMemoryStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	for _, t := range s.turns {
+		if t.PostID != nil && *t.PostID == postID {
+			c := t.Turn
+			return &c, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *evalInMemoryStore) UpdateTurnPostID(id string, postID *string) error {
+	if t, ok := s.turns[id]; ok {
+		t.PostID = postID
+	}
+	return nil
+}
+
+func (s *evalInMemoryStore) DeleteResponseTurns(_ string, _ string) error {
+	return nil
+}
+
 func (s *evalInMemoryStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
 	maxSeq := 0
 	for _, id := range s.turnsByConv[conversationID] {

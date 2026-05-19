@@ -482,12 +482,9 @@ func (c *Conversations) streamToolFollowUp(
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
 	}
 
-	responsePost := &model.Post{
-		ChannelId: channel.Id,
-		RootId:    responseRootIDFromPost(post),
-	}
-	responsePost.AddProp(streaming.ConversationIDProp, conv.ID)
-	if err := c.streamingService.StreamToNewPost(ctx, bot.GetMMBot().UserId, user.Id, runResult.Stream, responsePost, post.Id); err != nil {
+	// Stream onto the same post; finalize demotes the prior anchor so
+	// resolved tool cards remain visible alongside the new round.
+	if err := c.streamContinuationToExistingPost(ctx, runResult.Stream, post, user, channel); err != nil {
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}
 
@@ -520,14 +517,6 @@ func findPendingToolTurn(turns []store.Turn, clickedPostID string) (*store.Turn,
 	}
 
 	return nil, nil, fmt.Errorf("no pending tool calls found for clicked post: %w", ErrStaleToolClick)
-}
-
-// responseRootIDFromPost returns the root ID for responding in a thread.
-func responseRootIDFromPost(post *model.Post) string {
-	if post.RootId != "" {
-		return post.RootId
-	}
-	return post.Id
 }
 
 // rehydrateRunTrace stamps ctx with the user-turn ID that initiated the run

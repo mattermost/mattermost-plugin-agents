@@ -149,6 +149,71 @@ func (s *fakeConvStore) UpdateTurnContent(id string, content json.RawMessage) er
 	return nil
 }
 
+func (s *fakeConvStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.allTurns {
+		if t.PostID != nil && *t.PostID == postID {
+			c := *t
+			return &c, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *fakeConvStore) UpdateTurnPostID(id string, postID *string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.allTurns[id]
+	if !ok {
+		return fmt.Errorf("turn %s not found", id)
+	}
+	t.PostID = postID
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id {
+				s.turns[convID][i].PostID = postID
+			}
+		}
+	}
+	return nil
+}
+
+func (s *fakeConvStore) DeleteResponseTurns(conversationID, postID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns := s.turns[conversationID]
+
+	anchorSeq := -1
+	for _, t := range turns {
+		if t.Role == "assistant" && t.PostID != nil && *t.PostID == postID {
+			anchorSeq = t.Sequence
+			break
+		}
+	}
+	if anchorSeq < 0 {
+		return nil
+	}
+	userSeq := 0
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == "user" && turns[i].Sequence < anchorSeq {
+			userSeq = turns[i].Sequence
+			break
+		}
+	}
+
+	keep := turns[:0]
+	for _, t := range turns {
+		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+			delete(s.allTurns, t.ID)
+			continue
+		}
+		keep = append(keep, t)
+	}
+	s.turns[conversationID] = keep
+	return nil
+}
+
 func (s *fakeConvStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

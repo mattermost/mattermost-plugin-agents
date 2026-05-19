@@ -75,6 +75,7 @@ const groups = {
         'tests/system-console/debug-panel.spec.ts',
         'tests/system-console/functions-panel.spec.ts',
         'tests/rhs-core/basic.spec.ts',
+        'tests/rhs-core/file-upload-drag-drop.spec.ts',
         'tests/system-console/mcp-panel.spec.ts',
         'tests/system-console/service-management-ui.spec.ts',
         'tests/rhs-core/direct-channel-creation.spec.ts',

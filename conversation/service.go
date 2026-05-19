@@ -28,8 +28,11 @@ type Store interface {
 	CreateTurn(turn *store.Turn) error
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
+	UpdateTurnPostID(id string, postID *string) error
+	DeleteResponseTurns(conversationID, postID string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
 }
 
@@ -211,6 +214,23 @@ func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
 	return s.store.CreateTurnAutoSequence(turn)
 }
 
+// GetTurnByPostID returns the assistant turn anchored to postID, or nil.
+func (s *Service) GetTurnByPostID(postID string) (*store.Turn, error) {
+	return s.store.GetTurnByPostID(postID)
+}
+
+// UpdateTurnPostID sets or clears the PostID on a turn.
+func (s *Service) UpdateTurnPostID(id string, postID *string) error {
+	return s.store.UpdateTurnPostID(id, postID)
+}
+
+// DeleteResponseTurns removes the post's anchor and any assistant/tool_result
+// turns between it and the originating user turn. Callers must build any
+// completion request before calling this — ExcludeAfterPostID needs the anchor.
+func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
+	return s.store.DeleteResponseTurns(conversationID, postID)
+}
+
 // UpdateConversationRootPostID sets the RootPostID on a conversation.
 // Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -370,15 +390,27 @@ func (s *Service) BuildCompletionRequest(
 	redactUnshared := true
 	if len(opts) > 0 {
 		redactUnshared = !opts[0].AllowUnsharedToolContent
-		// If ExcludeAfterPostID is set, truncate the turn slice at (and including)
-		// the turn whose PostID matches, so that turn and all subsequent turns are dropped.
+		// Truncate back to right after the originating user turn. Stopping
+		// at the anchor alone would leave demoted continuation turns at the
+		// tail; bifrost rejects an assistant-ended request as prefill.
 		if opts[0].ExcludeAfterPostID != "" {
 			excludeID := opts[0].ExcludeAfterPostID
+			anchorIdx := -1
 			for i, turn := range turns {
-				if turn.PostID != nil && *turn.PostID == excludeID {
-					turns = turns[:i]
+				if turn.Role == "assistant" && turn.PostID != nil && *turn.PostID == excludeID {
+					anchorIdx = i
 					break
 				}
+			}
+			if anchorIdx >= 0 {
+				truncateAt := anchorIdx
+				for i := anchorIdx - 1; i >= 0; i-- {
+					if turns[i].Role == "user" {
+						truncateAt = i + 1
+						break
+					}
+				}
+				turns = turns[:truncateAt]
 			}
 		}
 	}

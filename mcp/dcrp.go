@@ -126,8 +126,8 @@ func RegisterClient(ctx context.Context, httpClient *http.Client, registrationEn
 		return nil, fmt.Errorf("failed to read response body from %s: %w", registrationEndpoint, err)
 	}
 
-	// Check for success status (RFC 7591 requires 201 Created)
-	if resp.StatusCode == http.StatusCreated {
+	// Some authorization servers return 200 OK with a valid registration response.
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		var registrationResp RegistrationResponse
 		if err := json.Unmarshal(responseBody, &registrationResp); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal registration response: %w", err)

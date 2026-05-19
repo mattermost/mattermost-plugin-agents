@@ -108,7 +108,6 @@ const ConfigTab = (props: Props) => {
             defaultModel: selectedService.defaultModel,
             tokenLimit: 0,
             streamingTimeoutSeconds: 0,
-            sendUserId: false,
             outputTokenLimit: selectedService.outputTokenLimit || 4096,
             useResponsesAPI: selectedService.type === 'openai' ? true : selectedService.useResponsesAPI,
             region: '',
@@ -400,6 +399,7 @@ const ConfigTab = (props: Props) => {
 };
 
 const FieldError = styled.div`
+    grid-column: 2 / -1;
     color: var(--dnd-indicator, #D24B4E);
     font-size: 12px;
     margin-top: -8px;

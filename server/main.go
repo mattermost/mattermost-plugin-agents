@@ -658,44 +658,49 @@ func (p *Plugin) ServeMetrics(c *plugin.Context, w http.ResponseWriter, r *http.
 	p.apiService.ServeMetrics(c, w, r)
 }
 
-// EmailNotificationWillBeSent blocks email notifications for bot replies in threads.
+// EmailNotificationWillBeSent blocks redundant AI agent email notifications.
 func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotification) (*model.EmailNotificationContent, string) {
-	if p.shouldBlockBotReplyNotification(emailNotification.SenderId, emailNotification.RootId) {
-		return nil, "notification blocked: bot reply in thread"
+	if p.shouldBlockAgentNotification(emailNotification.SenderId, emailNotification.RootId, "", emailNotification.IsDirectMessage) {
+		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return &emailNotification.EmailNotificationContent, ""
 }
 
-// NotificationWillBePushed blocks push notifications for bot replies in threads.
-// IMPORTANT: This hook must execute quickly as it can become blocking and delay post creation.
+// NotificationWillBePushed blocks redundant AI agent push notifications.
 func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotification, userID string) (*model.PushNotification, string) {
 	if pushNotification.PostId == "" {
 		return pushNotification, ""
 	}
 
-	if p.shouldBlockBotReplyNotification(pushNotification.SenderId, pushNotification.RootId) {
-		return nil, "notification blocked: bot reply in thread"
+	isDM := pushNotification.ChannelType == model.ChannelTypeDirect
+	if p.shouldBlockAgentNotification(pushNotification.SenderId, pushNotification.RootId, pushNotification.PostType, isDM) {
+		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return pushNotification, ""
 }
 
-func (p *Plugin) shouldBlockBotReplyNotification(senderID, rootID string) bool {
-	// Only check threaded replies
-	if rootID == "" {
-		return false
-	}
-
-	// Check if bots service is initialized
+// shouldBlockAgentNotification reports whether an AI agent notification is redundant.
+func (p *Plugin) shouldBlockAgentNotification(senderID, rootID, postType string, isDM bool) bool {
 	if p.bots == nil {
 		return false
 	}
 
-	// Check if sender is a bot by looking up in the bots cache
 	bot := p.bots.GetBotByID(senderID)
 	if bot == nil {
 		return false
 	}
 
-	// Block all bot reply notifications in threads
-	return true
+	if rootID != "" {
+		return true
+	}
+
+	if postType == "custom_llmbot" {
+		return true
+	}
+
+	if isDM {
+		return true
+	}
+
+	return false
 }

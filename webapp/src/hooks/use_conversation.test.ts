@@ -268,6 +268,42 @@ describe('useConversation', () => {
         });
         expect(result.current.error).toBeNull();
     });
+
+    // Two close-together invalidates can race; stale fetch must not clobber.
+    test('a stale fetch resolving after a newer fetch must not overwrite cache', async () => {
+        const stale = makeConversation({title: 'stale'});
+        const fresh = makeConversation({title: 'fresh'});
+
+        let resolveStale: (data: ConversationResponse) => void;
+        let resolveFresh: (data: ConversationResponse) => void;
+        getConversation.
+            mockReturnValueOnce(new Promise<ConversationResponse>((r) => {
+                resolveStale = r;
+            })).
+            mockReturnValueOnce(new Promise<ConversationResponse>((r) => {
+                resolveFresh = r;
+            }));
+
+        const {result} = renderHook(() => useConversation('conv_123'));
+        expect(result.current.loading).toBe(true);
+
+        act(() => {
+            invalidateConversation('conv_123');
+        });
+
+        await act(async () => {
+            resolveFresh!(fresh);
+        });
+        await waitFor(() => {
+            expect(result.current.conversation).toEqual(fresh);
+        });
+
+        await act(async () => {
+            resolveStale!(stale);
+        });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(result.current.conversation).toEqual(fresh);
+    });
 });
 
 describe('useTurnForPost', () => {
