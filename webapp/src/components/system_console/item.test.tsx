@@ -32,7 +32,7 @@ describe('CopyableTextItem', () => {
 
     beforeEach(() => {
         writeTextMock.mockReset();
-        writeTextMock.mockResolvedValue(undefined);
+        writeTextMock.mockImplementation(() => Promise.resolve());
         Object.defineProperty(navigator, 'clipboard', {
             value: {writeText: writeTextMock},
             configurable: true,
@@ -102,10 +102,7 @@ describe('CopyableTextItem', () => {
     });
 
     it('falls back to document.execCommand when navigator.clipboard is unavailable', async () => {
-        Object.defineProperty(navigator, 'clipboard', {
-            value: undefined,
-            configurable: true,
-        });
+        delete (navigator as unknown as {clipboard?: unknown}).clipboard;
         const execCommand = jest.fn().mockReturnValue(true);
         document.execCommand = execCommand;
 

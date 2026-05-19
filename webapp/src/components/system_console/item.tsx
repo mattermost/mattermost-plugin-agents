@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import styled, {createGlobalStyle} from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import CreatableSelect from 'react-select/creatable';
@@ -83,9 +83,9 @@ export type CopyableTextItemProps = {
 export const CopyableTextItem = (props: CopyableTextItemProps) => {
     const intl = useIntl();
     const [copied, setCopied] = useState(false);
-    const copyResetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    React.useEffect(() => {
+    useEffect(() => {
         return () => {
             if (copyResetTimer.current) {
                 clearTimeout(copyResetTimer.current);
@@ -120,9 +120,7 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
         }
     };
 
-    const copyLabel = copied ?
-        intl.formatMessage({defaultMessage: 'Copied'}) :
-        intl.formatMessage({defaultMessage: 'Copy to clipboard'});
+    const copyLabel = copied ? intl.formatMessage({defaultMessage: 'Copied'}) : intl.formatMessage({defaultMessage: 'Copy to clipboard'});
 
     return (
         <>
