@@ -150,8 +150,10 @@ export class AIPlugin {
   }
 
   async clickChatHistoryItem(index: number = 0) {
-    const threadItems = this.threadsListContainer.locator('div');
-    await threadItems.nth(index).click();
+    const threadItem = this.threadsListContainer.locator(':scope > *').nth(index);
+    await expect(threadItem).toBeVisible({timeout: 15000});
+    await threadItem.click();
+    await expect(this.page.getByTestId('rhs-thread-viewer')).toBeVisible({timeout: 15000});
   }
 
   async clickNewMessagesButton() {

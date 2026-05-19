@@ -168,18 +168,21 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.expectReasoningVisible(true);
             await llmBotHelper.expectReasoningExpanded(false);
 
+            const postTextBefore = llmBotHelper.getPostText();
+            const contentBefore = (await postTextBefore.textContent())?.trim() ?? '';
+            expect(contentBefore).toBeTruthy();
+            const contentSnippet = contentBefore.slice(0, Math.min(contentBefore.length, 80));
+
             await llmBotHelper.clickReasoningToggle();
             await llmBotHelper.expectReasoningExpanded(true);
 
             await page.reload();
             await aiPlugin.openRHS();
-            await page.waitForTimeout(2000);
 
             // After refresh, RHS shows fresh conversation - must navigate to chat history
             await aiPlugin.openChatHistory();
-            await page.waitForTimeout(1000);
             await aiPlugin.clickChatHistoryItem(0); // Select most recent conversation
-            await page.waitForTimeout(2000);
+            await expect(llmBotHelper.getPostText()).toContainText(contentSnippet, {timeout: 15000});
 
             // Verify reasoning persists in loaded conversation
             await llmBotHelper.expectReasoningVisible(true);
