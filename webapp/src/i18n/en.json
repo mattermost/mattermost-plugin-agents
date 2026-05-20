@@ -329,6 +329,7 @@
   "gMuXrprN": "Every MCP tool is enabled for this agent. Disable \"Automatically enable all MCP tools\" above to pick specific tools.",
   "gUnydF38": "Connect this server to see and pick individual tools, or toggle it on to give the agent access to every tool the server exposes once a user connects.",
   "gY19rcnT": "Find open questions",
+  "gpCJg6mz": "Drop a file to upload it.",
   "h+txJLQu": "Open prompt {name}",
   "h/3/GO4g": "Refresh Tools",
   "howFpzJ3": "Unpin prompt",

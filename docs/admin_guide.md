@@ -500,9 +500,9 @@ Integrations are available in direct messages by default. If you enable the expe
 
 ## Model Context Protocol (MCP) Integration
 
-The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools and optional remote servers.
+The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools, plugin-registered MCP servers from compatible Mattermost plugins, and optional remote servers.
 
-The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers, connection timeout, and per-tool enabled state and approval policies from the MCP UI in the System Console. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
+The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers and connection timeout from the MCP UI in the System Console. The **Tools** tab also shows plugin-registered MCP servers, where admins can enable or disable each plugin server and set per-tool enabled state and approval policies. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
 
 ### Configuration
 
@@ -513,7 +513,7 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
    - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
    - Remote MCP servers, including URL, custom headers, OAuth client settings, and per-server enablement.
 
-3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy.
+3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Plugin-registered MCP servers appear as separate plugin rows in this tab.
 4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
 
 The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
@@ -531,6 +531,18 @@ You can't disable MCP entirely from the System Console. To limit access, disable
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
 
 3. Select **Save** to add the server.
+
+### Plugin-registered MCP servers
+
+Compatible Mattermost plugins can register MCP servers with Agents. In the **Tools** tab, each registered plugin server appears as its own plugin row, where admins can enable or disable the entire plugin server and configure per-tool approval policies. Plugin tool names are shown in a friendlier form instead of the raw wire-format names.
+
+These admin-owned settings persist across plugin re-registration and restart.
+
+The source plugin controls the plugin server's name, path, and whether it is eligible for external exposure. Admins do not configure the external exposure flag in the Agents UI.
+
+When a plugin server is enabled and the source plugin marks it for external exposure, its enabled tools can be added to the external Mattermost MCP HTTP endpoint. Per-tool admin policy applies to those tools there as well.
+
+Proxied tool calls to plugin-registered MCP servers carry the authenticated Mattermost user context through to the source plugin, so user-scoped permissions still apply.
 
 ### Configure OAuth-backed servers for agents
 
@@ -594,7 +606,7 @@ For more information, see [Atlassian's documentation on MCP server settings](htt
 
 ## Mattermost MCP Server
 
-The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This is a standardized protocol that allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically.
+The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This is a standardized protocol that allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically. The built-in Mattermost tools are always available to Agents through the embedded server, and the optional HTTP endpoint for external clients can also aggregate eligible tools from compatible plugin-registered MCP servers.
 
 **Standalone MCP server (separate process / stdio):** Running the standalone `mattermost-mcp-server` binary outside the Mattermost server is for **development and local use only** and is **not** intended for production. Production deployments should rely on the embedded Mattermost MCP server and the supported configuration in this plugin (System Console, HTTP endpoint for external clients, and agent MCP settings below).
 
@@ -620,7 +632,7 @@ With the Mattermost MCP Server, you can:
 
 ### Available Tools
 
-The MCP server provides the following tools to AI agents and external clients:
+The built-in Mattermost MCP server provides the following native Mattermost tools:
 
 - **read_post**: Read a specific post and its thread
 - **read_channel**: Retrieve recent posts from a channel
@@ -646,19 +658,27 @@ When the Channel Automation plugin is installed, the MCP server also exposes the
 - **update_automation**: Update a channel automation
 - **delete_automation**: Delete a channel automation
 
+These are the native Mattermost tools included by the Agents plugin itself. Plugin-registered MCP tools are configured separately in the **Tools** tab and are not part of the built-in list above.
+
 ### Deployment
 
 #### For AI Agents
 
 The embedded Mattermost MCP server is available automatically to configured AI agents. No System Console switch is required to enable embedded MCP for in-product agents.
 
-Use **System Console > Plugins > Agents > Model Context Protocol (MCP)** to configure remote MCP servers, the idle timeout, the optional HTTP endpoint for external clients, and per-tool enablement and approval policies. Then use each agent's **MCPs** tab on the **Agents** page to either automatically enable all MCP tools or restrict that agent to specific tools.
+Use **System Console > Plugins > Agents > Model Context Protocol (MCP)** to configure remote MCP servers, review plugin-registered MCP servers, set the idle timeout, control the optional HTTP endpoint for external clients, and manage per-tool enablement and approval policies. Then use each agent's **MCPs** tab on the **Agents** page to either automatically enable all MCP tools or restrict that agent to specific tools.
 
 Configured agents can use these tools subject to their own MCP settings, admin tool policies, user permissions, and any required approval flow.
 
 #### For External Clients
 
 You can enable external MCP clients, such as Claude web, Claude Code, or other MCP-compatible applications, to interact with your Mattermost instance. This HTTP server is separate from the always-on embedded MCP server used by Mattermost Agents.
+
+When enabled, the external HTTP endpoint exposes the built-in Mattermost MCP tools. It can also aggregate enabled tools from plugin-registered MCP servers when the source plugin marks that server for external exposure and the plugin server is enabled in Agents.
+
+Per-tool admin policy applies to aggregated plugin tools. Proxied plugin tool calls carry the authenticated Mattermost user context through to the source plugin, so the source plugin can continue to enforce user-scoped permissions.
+
+If an exposed plugin tool name conflicts with a built-in Mattermost tool or with another exposed plugin tool, the conflicting plugin tool is skipped from the external endpoint. These conflicts are logged.
 
 **Requirements:**
 - Mattermost Server v11.2 or later

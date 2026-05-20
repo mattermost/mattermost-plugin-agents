@@ -3707,3 +3707,102 @@ func TestSaveJobStatusPreservesCancelRequested(t *testing.T) {
 	assert.Equal(t, JobStatusCancelRequested, worker.Status,
 		"saveJobStatus must propagate cancel_requested to the worker's local status so it observes the cancel on the next loop iteration")
 }
+
+func TestCatchUpPassSkipsAlreadyIndexedPosts(t *testing.T) {
+	type seedPost struct {
+		id      string
+		offset  int64
+		indexed bool
+	}
+	cases := []struct {
+		name              string
+		seed              []seedPost
+		expectedStoredIDs []string
+	}{
+		{
+			// Interleaved timestamps so the keyset cursor would pass through
+			// both sets in a single page absent the NOT EXISTS filter.
+			name: "mixed indexed and unseen",
+			seed: []seedPost{
+				{"indexed-1", 100, true},
+				{"unseen-1", 200, false},
+				{"indexed-2", 300, true},
+				{"unseen-2", 400, false},
+			},
+			expectedStoredIDs: []string{"unseen-1", "unseen-2"},
+		},
+		{
+			name: "all posts already indexed",
+			seed: []seedPost{
+				{"already-1", 100, true},
+				{"already-2", 200, true},
+				{"already-3", 300, true},
+				{"already-4", 400, true},
+			},
+			expectedStoredIDs: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testDB(t)
+			defer cleanupDB(t, db)
+
+			mockClient := mocks.NewMockClient(t)
+			mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+			mockBots := &bots.MMBots{}
+
+			_, err := db.Exec("INSERT INTO Channels (Id, Type, Name, TeamId) VALUES ('channel1', 'O', 'town-square', 'team1')")
+			require.NoError(t, err)
+
+			cutoffTime := model.GetMillis() - 5000
+
+			for _, p := range tc.seed {
+				_, err = db.Exec(
+					"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'channel1', 'user1')",
+					p.id, cutoffTime+p.offset, "content for "+p.id)
+				require.NoError(t, err)
+				if p.indexed {
+					_, err = db.Exec(
+						"INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $1, $2, '[0.1, 0.2, 0.3]')",
+						p.id, "live-hook content for "+p.id)
+					require.NoError(t, err)
+				}
+			}
+
+			var storedPostIDs []string
+			if len(tc.expectedStoredIDs) > 0 {
+				mockSearch.On("Store", mock.Anything, mock.Anything).
+					Run(func(args mock.Arguments) {
+						docs := args.Get(1).([]embeddings.PostDocument)
+						for _, doc := range docs {
+							storedPostIDs = append(storedPostIDs, doc.PostID)
+						}
+					}).
+					Return(nil).Once()
+			}
+			// No Store expectation when expectedStoredIDs is empty — an
+			// unexpected Store call will then fail the test.
+
+			mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+			mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+			mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+			mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+			mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+			mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+			indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+
+			jobStatus := &JobStatus{
+				Status:    JobStatusRunning,
+				StartedAt: time.Now(),
+				CutoffAt:  cutoffTime,
+			}
+
+			count, _, err := indexer.runCatchUpPass(context.Background(), jobStatus, mockSearch)
+			require.NoError(t, err)
+			assert.Equal(t, int64(len(tc.expectedStoredIDs)), count)
+			assert.ElementsMatch(t, tc.expectedStoredIDs, storedPostIDs)
+		})
+	}
+}
