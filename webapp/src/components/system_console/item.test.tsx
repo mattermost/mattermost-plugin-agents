@@ -137,7 +137,7 @@ describe('CopyableTextItem', () => {
         const originalClipboard = navigator.clipboard;
         const originalExecCommand = document.execCommand;
         const execCommand = jest.fn().mockReturnValue(false);
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(jest.fn());
 
         try {
             delete (navigator as unknown as {clipboard?: unknown}).clipboard;
