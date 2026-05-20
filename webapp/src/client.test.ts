@@ -194,4 +194,25 @@ describe('reindexClientError', () => {
 
         expect('job_status' in err).toBe(false);
     });
+
+    // Regression: JSON.parse can return any valid JSON value, including
+    // primitives. An earlier draft used `'job_status' in parsed`, which throws
+    // TypeError when parsed is null/number/string.
+    test.each([
+        ['null', 'null'],
+        ['a JSON number', '42'],
+        ['a JSON string', '"oops"'],
+        ['a JSON boolean', 'true'],
+        ['a JSON array', '[1,2,3]'],
+    ])('does not throw when the body is %s', async (_label, body) => {
+        const resp = makeResponse(500, 'Internal Server Error', body);
+        const err = await reindexClientError(resp, '/admin/reindex') as Error & {
+            status_code: number;
+            job_status?: unknown;
+        };
+
+        expect(err.status_code).toBe(500);
+        expect(err.message).toBe('500 Internal Server Error');
+        expect('job_status' in err).toBe(false);
+    });
 });

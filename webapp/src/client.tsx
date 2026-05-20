@@ -431,16 +431,23 @@ export function getPost(postId: string) {
 // Exported for tests; production callers use it indirectly via the wrappers
 // below.
 export async function reindexClientError(response: Response, url: string) {
-    let parsed: {error?: string; job_status?: unknown} = {};
+    // JSON.parse can return any valid JSON value, including primitives like
+    // null, numbers, or strings. We only treat object payloads as a structured
+    // error envelope; primitives fall through to the HTTP-status fallback.
+    let parsedRaw: unknown = null;
     try {
         const text = await response.text();
         if (text) {
-            parsed = JSON.parse(text);
+            parsedRaw = JSON.parse(text);
         }
     } catch {
-        // Body wasn't JSON; keep parsed empty.
+        // Body wasn't JSON; keep parsedRaw null.
     }
-    const message = parsed.error || `${response.status} ${response.statusText}`.trim();
+    const isObject = parsedRaw !== null && typeof parsedRaw === 'object';
+    const parsed: {error?: unknown; job_status?: unknown} = isObject ? parsedRaw as {error?: unknown; job_status?: unknown} : {};
+
+    const serverError = typeof parsed.error === 'string' ? parsed.error : '';
+    const message = serverError || `${response.status} ${response.statusText}`.trim();
     const err = new ClientError(Client4.url, {
         message,
         status_code: response.status,
