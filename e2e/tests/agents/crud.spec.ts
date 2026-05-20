@@ -156,6 +156,35 @@ test.describe('Agent CRUD', () => {
         await expect(agentPage.getAgentRowByName('Delete Me')).not.toBeVisible({ timeout: 10000 });
     });
 
+    test('should surface actionable server error when custom instructions exceed limit', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+
+        // 16384 is llm.MaxCustomInstructionsRunes; one extra char trips Validate().
+        const oversizedInstructions = 'a'.repeat(16385);
+
+        await agentPage.fillConfigTab({
+            displayName: 'Oversized Prompt Agent',
+            username: 'oversizedpromptagent',
+            serviceLabel: 'Mock Service',
+            instructions: oversizedInstructions,
+        });
+
+        await agentPage.getModalSaveButton().click();
+
+        // The fix surfaces the server-provided message verbatim. The generic
+        // "Please try again." hint was misleading because retrying never helps.
+        await expect(page.getByText(/customInstructions exceeds maximum length/i)).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText('Failed to save agent. Please try again.')).not.toBeVisible();
+    });
+
     test('should reject duplicate username with error', async ({ page }) => {
         test.setTimeout(60000);
         const mmPage = new MattermostPage(page);
