@@ -53,9 +53,14 @@ function agentRoute(agentId: string): string {
 // (oversized prompt, taken username, etc.) instead of a generic retry hint.
 async function readAgentErrorMessage(response: Response): Promise<string> {
     try {
-        const data = await response.json();
-        if (data && typeof data.error === 'string') {
-            return data.error;
+        const data: unknown = await response.json();
+        if (
+            data !== null &&
+            typeof data === 'object' &&
+            'error' in data &&
+            typeof (data as {error?: unknown}).error === 'string'
+        ) {
+            return (data as {error: string}).error;
         }
     } catch {
         // Body was empty or not JSON — fall through to empty string so the

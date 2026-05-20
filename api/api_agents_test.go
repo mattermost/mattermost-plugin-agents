@@ -6,6 +6,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -47,10 +48,14 @@ func setupAgentTestEnvironment(t *testing.T) *TestEnvironment {
 
 // mockConfigStore is a minimal ConfigStore for agent tests.
 type mockConfigStore struct {
-	cfg *config.Config
+	cfg    *config.Config
+	getErr error
 }
 
 func (m *mockConfigStore) GetConfig() (*config.Config, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
 	return m.cfg, nil
 }
 
@@ -1025,6 +1030,19 @@ func TestAgentSaveErrorsAreActionable(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			errorContains:  "username cannot be changed",
+		},
+		{
+			name: "create sanitizes internal server error responses",
+			setup: func(_ *testing.T, e *TestEnvironment) (string, string, any) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+				e.api.configStore = &mockConfigStore{getErr: errors.New("database connection secret-detail")}
+				return http.MethodPost, "/agents", createAgentBody(nil)
+			},
+			expectedStatus: http.StatusInternalServerError,
+			errorContains:  "internal server error",
 		},
 		{
 			name: "update returns reason when caller cannot manage agent",

@@ -46,7 +46,11 @@ type agentErrorResponse struct {
 // gin context so ginlogger captures it server-side.
 func abortAgentRequest(c *gin.Context, status int, err error) {
 	_ = c.Error(err)
-	c.AbortWithStatusJSON(status, agentErrorResponse{Error: err.Error()})
+	publicMsg := err.Error()
+	if status >= http.StatusInternalServerError {
+		publicMsg = "internal server error"
+	}
+	c.AbortWithStatusJSON(status, agentErrorResponse{Error: publicMsg})
 }
 
 // CreateAgentRequest is the JSON body for POST /agents. Field values are stored as given (no server-side fill-in).
