@@ -123,7 +123,9 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
         }
     };
 
-    const copyLabel = copied ? intl.formatMessage({defaultMessage: 'Copied'}) : intl.formatMessage({defaultMessage: 'Copy to clipboard'});
+    const copyLabel = copied ?
+        intl.formatMessage({id: 'p556q3uv', defaultMessage: 'Copied'}) :
+        intl.formatMessage({id: 'aCdAsIsV', defaultMessage: 'Copy to clipboard'});
 
     return (
         <>
