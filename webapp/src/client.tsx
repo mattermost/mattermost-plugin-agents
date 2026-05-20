@@ -424,27 +424,20 @@ export function getPost(postId: string) {
     return Client4.getPost(postId);
 }
 
-// reindexClientError parses the JSON error body the reindex admin endpoints
-// emit (`{"error": "...", "job_status": {...}}`) so the UI can surface the
-// server's specific reason instead of a single generic "Failed to start
-// reindexing" message. Non-JSON bodies fall back to the HTTP status text.
-// Exported for tests; production callers use it indirectly via the wrappers
-// below.
+// Parses `{error, job_status}` error bodies from the reindex admin endpoints.
+// JSON.parse can return primitives, so only object payloads are treated as a
+// structured envelope; everything else falls back to the HTTP status text.
 export async function reindexClientError(response: Response, url: string) {
-    // JSON.parse can return any valid JSON value, including primitives like
-    // null, numbers, or strings. We only treat object payloads as a structured
-    // error envelope; primitives fall through to the HTTP-status fallback.
-    let parsedRaw: unknown = null;
+    let parsed: {error?: unknown; job_status?: unknown} = {};
     try {
         const text = await response.text();
-        if (text) {
-            parsedRaw = JSON.parse(text);
+        const value = text ? JSON.parse(text) : null;
+        if (value !== null && typeof value === 'object') {
+            parsed = value;
         }
     } catch {
-        // Body wasn't JSON; keep parsedRaw null.
+        // Body wasn't JSON.
     }
-    const isObject = parsedRaw !== null && typeof parsedRaw === 'object';
-    const parsed: {error?: unknown; job_status?: unknown} = isObject ? parsedRaw as {error?: unknown; job_status?: unknown} : {};
 
     const serverError = typeof parsed.error === 'string' ? parsed.error : '';
     const message = serverError || `${response.status} ${response.statusText}`.trim();

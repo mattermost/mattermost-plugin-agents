@@ -413,9 +413,7 @@ func (a *API) ginlogger(c *gin.Context) {
 func (a *API) MattermostAuthorizationRequired(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	if userID == "" {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"error": "not signed in; reload the page and sign in again",
-		})
+		c.AbortWithStatus(http.StatusUnauthorized)
 		return
 	}
 }

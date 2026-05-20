@@ -8,11 +8,10 @@ import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkInde
 
 import {JobStatusType, StatusMessageType, HealthCheckResultType} from './types';
 
-// extractStatusCode pulls the numeric HTTP status off a thrown ClientError-like
-// object. Returns -1 for native fetch failures (which have no status_code), so
-// callers can branch on the value without juggling undefined. Exported for
-// tests.
+// Sentinel for native fetch failures, which carry no HTTP status. Using -1
+// instead of undefined lets callers branch on a single value.
 export const NO_STATUS = -1;
+
 export const extractStatusCode = (err: unknown): number => {
     if (err && typeof err === 'object' && 'status_code' in err) {
         const code = (err as {status_code?: unknown}).status_code;
@@ -33,11 +32,7 @@ export const extractServerMessage = (err: unknown): string => {
     return '';
 };
 
-// formatReindexError maps a thrown ClientError-like value into a single
-// admin-actionable sentence. We special-case the status codes the admin can
-// act on (auth, conflict, search not configured) and fall through to the
-// server's own `error` field for everything else. Network failures (no
-// status_code) get a connectivity hint. Exported for tests.
+// Maps a thrown ClientError-like value to a single admin-actionable sentence.
 export const formatReindexError = (err: unknown, intl: IntlShape, actionLabel: string): string => {
     const status = extractStatusCode(err);
     const serverMsg = extractServerMessage(err);
@@ -173,9 +168,7 @@ export const useJobStatus = () => {
                 ),
             });
 
-            // On a 409 the server already has an active job; refresh the
-            // status so the admin sees the running job and its progress
-            // instead of just the error.
+            // 409 means a job is already running; surface its progress.
             if (extractStatusCode(error) === 409) {
                 fetchJobStatus();
             }
