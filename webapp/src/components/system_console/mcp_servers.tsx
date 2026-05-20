@@ -13,9 +13,10 @@ import {getMCPTools, getVettedToolSeed} from '../../client';
 
 import manifest from '@/manifest';
 
+import {CopyableTextItem} from './copyable_text_item';
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
-import {BooleanItem, CopyableTextItem, ItemList, TextItem} from './item';
+import {BooleanItem, ItemList, TextItem} from './item';
 
 export type MCPToolConfig = {
     name: string;

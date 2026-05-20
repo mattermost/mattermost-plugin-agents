@@ -4,7 +4,7 @@
 import React from 'react';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
-import {CopyableTextItem} from './item';
+import {CopyableTextItem} from './copyable_text_item';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -108,40 +108,11 @@ describe('CopyableTextItem', () => {
         expect(screen.getByRole('button', {name: /copy to clipboard/i})).toBeTruthy();
     });
 
-    it('falls back to document.execCommand when navigator.clipboard is unavailable', async () => {
+    it('does not show success when the Clipboard API is unavailable', async () => {
         const originalClipboard = navigator.clipboard;
-        const originalExecCommand = document.execCommand;
-        const execCommand = jest.fn().mockReturnValue(true);
 
         try {
             delete (navigator as unknown as {clipboard?: unknown}).clipboard;
-            document.execCommand = execCommand;
-
-            renderItem('https://example.com/plugins/mattermost-ai/oauth/callback');
-
-            fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
-
-            await waitFor(() => {
-                expect(execCommand).toHaveBeenCalledWith('copy');
-            });
-        } finally {
-            document.execCommand = originalExecCommand;
-            Object.defineProperty(navigator, 'clipboard', {
-                value: originalClipboard,
-                configurable: true,
-            });
-        }
-    });
-
-    it('does not show success when document.execCommand fails', async () => {
-        const originalClipboard = navigator.clipboard;
-        const originalExecCommand = document.execCommand;
-        const execCommand = jest.fn().mockReturnValue(false);
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(jest.fn());
-
-        try {
-            delete (navigator as unknown as {clipboard?: unknown}).clipboard;
-            document.execCommand = execCommand;
 
             renderItem('https://example.com/plugins/mattermost-ai/oauth/callback');
 
@@ -149,15 +120,32 @@ describe('CopyableTextItem', () => {
                 fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
             });
 
-            expect(execCommand).toHaveBeenCalledWith('copy');
             expect(screen.getByRole('button', {name: /copy to clipboard/i})).toBeTruthy();
             expect(screen.queryByRole('button', {name: /^copied$/i})).toBeNull();
         } finally {
-            document.execCommand = originalExecCommand;
             Object.defineProperty(navigator, 'clipboard', {
                 value: originalClipboard,
                 configurable: true,
             });
+        }
+    });
+
+    it('does not show success when navigator.clipboard.writeText fails', async () => {
+        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(jest.fn());
+        writeTextMock.mockRejectedValue(new Error('denied'));
+
+        try {
+            renderItem('https://example.com/plugins/mattermost-ai/oauth/callback');
+
+            await act(async () => {
+                fireEvent.click(screen.getByRole('button', {name: /copy to clipboard/i}));
+            });
+
+            expect(writeTextMock).toHaveBeenCalledWith('https://example.com/plugins/mattermost-ai/oauth/callback');
+            expect(screen.getByRole('button', {name: /copy to clipboard/i})).toBeTruthy();
+            expect(screen.queryByRole('button', {name: /^copied$/i})).toBeNull();
+            expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to copy to clipboard:', expect.any(Error));
+        } finally {
             consoleErrorSpy.mockRestore();
         }
     });
