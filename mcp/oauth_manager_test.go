@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
@@ -483,15 +484,18 @@ func TestProcessCallback_InvalidSession(t *testing.T) {
 	state := "test-state"
 	code := "auth-code"
 
-	// Mock session not found - KVGet should return an error
-	appErr := model.NewAppError("test", "not_found", nil, "session not found", 404)
-	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Return(appErr)
+	// Missing session must surface as an error rather than nil-panic on
+	// session.State below. Asserting ErrorIs against the sentinel pins
+	// that the wrap chain survives ProcessCallback's fmt.Errorf and is
+	// not hostage to the user-facing wording.
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Return(mmapi.ErrKVNotFound)
 
 	ctx := context.Background()
 	session, err := manager.ProcessCallback(ctx, userID, state, code)
 
 	require.Error(t, err)
 	require.Nil(t, session)
+	require.ErrorIs(t, err, mmapi.ErrKVNotFound)
 	require.Contains(t, err.Error(), "invalid or expired session")
 }
 

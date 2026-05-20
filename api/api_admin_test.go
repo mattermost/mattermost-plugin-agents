@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/metrics"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -58,16 +59,27 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestS
 
 func TestHandleGetJobStatusIncludesStale(t *testing.T) {
 	tests := []struct {
-		name           string
-		indexerNil     bool
-		jobStatus      *indexer.JobStatus
-		expectedStatus int
-		expectedStale  bool
+		name              string
+		indexerNil        bool
+		jobStatus         *indexer.JobStatus
+		expectedStatus    int
+		expectedStale     bool
+		expectedBodyField string // optional: when set, asserts JSON contains {"status": <field>}
 	}{
 		{
-			name:           "returns 404 when indexer is nil",
-			indexerNil:     true,
-			expectedStatus: http.StatusNotFound,
+			name:              "returns 404 when indexer is nil",
+			indexerNil:        true,
+			expectedStatus:    http.StatusNotFound,
+			expectedBodyField: "no_job",
+		},
+		{
+			// Fresh install: missing KV key must surface as 404 with
+			// {"status":"no_job"} (the contract use_job_status.tsx relies on).
+			name:              "returns 404 with no_job when no job has ever run",
+			indexerNil:        false,
+			jobStatus:         nil,
+			expectedStatus:    http.StatusNotFound,
+			expectedBodyField: "no_job",
 		},
 		{
 			name:       "running job with recent heartbeat is not stale",
@@ -120,6 +132,12 @@ func TestHandleGetJobStatusIncludesStale(t *testing.T) {
 				err := json.NewDecoder(resp.Body).Decode(&response)
 				require.NoError(t, err)
 				require.Equal(t, tt.expectedStale, response.IsStale)
+			}
+			if tt.expectedBodyField != "" {
+				var body map[string]string
+				err := json.NewDecoder(resp.Body).Decode(&body)
+				require.NoError(t, err)
+				require.Equal(t, tt.expectedBodyField, body["status"])
 			}
 		})
 	}
@@ -250,13 +268,6 @@ func TestHandleFetchModelsVertexAndGeminiValidation(t *testing.T) {
 	}
 }
 
-// notFoundError simulates the "not found" error that the indexer checks for
-type notFoundError struct{}
-
-func (e notFoundError) Error() string {
-	return "not found"
-}
-
 // mockIndexerService holds the mock configuration for creating test indexers
 type mockIndexerService struct {
 	jobStatus *indexer.JobStatus
@@ -269,13 +280,10 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 	mockMutexAPI := &plugintest.API{}
 	mockClient := mocks.NewMockClient(t)
 
-	// Setup mock for GetJobStatus - always handle the ReindexJobKey
 	if mockService.jobStatus == nil {
-		// No job exists - return "not found" error
 		mockClient.On("KVGet", indexer.ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Return(notFoundError{}).Maybe()
+			Return(mmapi.ErrKVNotFound).Maybe()
 	} else {
-		// Job exists - populate the status
 		mockClient.On("KVGet", indexer.ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(1).(*indexer.JobStatus)
