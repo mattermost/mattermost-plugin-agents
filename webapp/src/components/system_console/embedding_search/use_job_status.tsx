@@ -2,11 +2,70 @@
 // See LICENSE.txt for license information.
 
 import {useState, useEffect, useCallback} from 'react';
-import {useIntl} from 'react-intl';
+import {IntlShape, useIntl} from 'react-intl';
 
 import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth} from '../../../client';
 
 import {JobStatusType, StatusMessageType, HealthCheckResultType} from './types';
+
+// extractStatusCode pulls the numeric HTTP status off a thrown ClientError-like
+// object. Returns -1 for native fetch failures (which have no status_code), so
+// callers can branch on the value without juggling undefined.
+const NO_STATUS = -1;
+const extractStatusCode = (err: unknown): number => {
+    if (err && typeof err === 'object' && 'status_code' in err) {
+        const code = (err as {status_code?: unknown}).status_code;
+        if (typeof code === 'number') {
+            return code;
+        }
+    }
+    return NO_STATUS;
+};
+
+const extractServerMessage = (err: unknown): string => {
+    if (err && typeof err === 'object' && 'message' in err) {
+        const msg = (err as {message?: unknown}).message;
+        if (typeof msg === 'string') {
+            return msg;
+        }
+    }
+    return '';
+};
+
+// formatReindexError maps a thrown ClientError-like value into a single
+// admin-actionable sentence. We special-case the status codes the admin can
+// act on (auth, conflict, search not configured) and fall through to the
+// server's own `error` field for everything else. Network failures (no
+// status_code) get a connectivity hint.
+const formatReindexError = (err: unknown, intl: IntlShape, actionLabel: string): string => {
+    const status = extractStatusCode(err);
+    const serverMsg = extractServerMessage(err);
+
+    switch (status) {
+    case 401:
+        return intl.formatMessage({defaultMessage: 'Your session has expired. Reload the page and sign in again.'});
+    case 403:
+        return intl.formatMessage({defaultMessage: 'System administrator privileges are required to reindex.'});
+    case 409:
+        return serverMsg || intl.formatMessage({defaultMessage: 'A reindex job is already running. Wait for it to finish, or cancel it before starting a new one.'});
+    case NO_STATUS:
+        return intl.formatMessage(
+            {defaultMessage: '{action} could not reach the server. Check your connection and try again.'},
+            {action: actionLabel},
+        );
+    default:
+        if (serverMsg) {
+            return intl.formatMessage(
+                {defaultMessage: '{action} failed: {error}'},
+                {action: actionLabel, error: serverMsg},
+            );
+        }
+        return intl.formatMessage(
+            {defaultMessage: '{action} failed. Check the server logs and try again.'},
+            {action: actionLabel},
+        );
+    }
+};
 
 export const useJobStatus = () => {
     const intl = useIntl();
@@ -48,10 +107,14 @@ export const useJobStatus = () => {
             }
         } catch (error) {
             // 404 is expected when no job has run yet, don't show an error
-            if (error && typeof error === 'object' && 'status_code' in error && error.status_code !== 404) {
+            if (extractStatusCode(error) !== 404) {
                 setStatusMessage({
                     success: false,
-                    message: intl.formatMessage({defaultMessage: 'Failed to get reindexing status.'}),
+                    message: formatReindexError(
+                        error,
+                        intl,
+                        intl.formatMessage({defaultMessage: 'Fetching reindex status'}),
+                    ),
                 });
             }
             setPolling(false);
@@ -102,8 +165,19 @@ export const useJobStatus = () => {
         } catch (error) {
             setStatusMessage({
                 success: false,
-                message: intl.formatMessage({defaultMessage: 'Failed to start reindexing. Please try again.'}),
+                message: formatReindexError(
+                    error,
+                    intl,
+                    intl.formatMessage({defaultMessage: 'Reindexing'}),
+                ),
             });
+
+            // On a 409 the server already has an active job; refresh the
+            // status so the admin sees the running job and its progress
+            // instead of just the error.
+            if (extractStatusCode(error) === 409) {
+                fetchJobStatus();
+            }
         }
     };
 
@@ -121,8 +195,15 @@ export const useJobStatus = () => {
         } catch (error) {
             setStatusMessage({
                 success: false,
-                message: intl.formatMessage({defaultMessage: 'Failed to resume reindexing. Please try again.'}),
+                message: formatReindexError(
+                    error,
+                    intl,
+                    intl.formatMessage({defaultMessage: 'Resuming reindexing'}),
+                ),
             });
+            if (extractStatusCode(error) === 409) {
+                fetchJobStatus();
+            }
         }
     };
 
@@ -141,7 +222,11 @@ export const useJobStatus = () => {
         } catch (error) {
             setStatusMessage({
                 success: false,
-                message: intl.formatMessage({defaultMessage: 'Failed to cancel reindexing job.'}),
+                message: formatReindexError(
+                    error,
+                    intl,
+                    intl.formatMessage({defaultMessage: 'Canceling reindexing'}),
+                ),
             });
         }
     };
@@ -156,8 +241,15 @@ export const useJobStatus = () => {
         } catch (error) {
             setStatusMessage({
                 success: false,
-                message: intl.formatMessage({defaultMessage: 'Failed to start catch-up indexing. Make sure a full reindex has been completed first.'}),
+                message: formatReindexError(
+                    error,
+                    intl,
+                    intl.formatMessage({defaultMessage: 'Catch-up indexing'}),
+                ),
             });
+            if (extractStatusCode(error) === 409) {
+                fetchJobStatus();
+            }
         }
     };
 
@@ -184,7 +276,11 @@ export const useJobStatus = () => {
         } catch (error) {
             setStatusMessage({
                 success: false,
-                message: intl.formatMessage({defaultMessage: 'Failed to check index health.'}),
+                message: formatReindexError(
+                    error,
+                    intl,
+                    intl.formatMessage({defaultMessage: 'Index health check'}),
+                ),
             });
         } finally {
             setHealthCheckLoading(false);

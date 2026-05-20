@@ -16,6 +16,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	embeddingmocks "github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
@@ -121,6 +123,160 @@ func TestHandleGetJobStatusIncludesStale(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, tt.expectedStale, response.IsStale)
 			}
+		})
+	}
+}
+
+// TestHandleReindexPostsErrorResponses covers the contract relied on by the
+// admin UI: every error path returns a JSON body with an `error` field so the
+// frontend can show a specific message instead of a generic
+// "Failed to start reindexing. Please try again." The 409 conflict path also
+// returns the existing `job_status` so the UI can refresh state.
+func TestHandleReindexPostsErrorResponses(t *testing.T) {
+	tests := []struct {
+		name               string
+		indexerNil         bool
+		hasSearch          bool
+		existingJobStatus  *indexer.JobStatus
+		body               string
+		expectedStatus     int
+		expectedErrorMatch string
+		expectJobStatus    bool
+	}{
+		{
+			name:               "no indexer service returns JSON error",
+			indexerNil:         true,
+			body:               `{"clearIndex":true}`,
+			expectedStatus:     http.StatusBadRequest,
+			expectedErrorMatch: "search functionality is not configured",
+		},
+		{
+			name:               "malformed body returns JSON error",
+			body:               `{"clearIndex": "not-a-bool"`,
+			expectedStatus:     http.StatusBadRequest,
+			expectedErrorMatch: "invalid request body",
+		},
+		{
+			name:               "indexer with no search returns JSON error",
+			hasSearch:          false,
+			body:               `{"clearIndex":true}`,
+			expectedStatus:     http.StatusBadRequest,
+			expectedErrorMatch: "embedding search is not initialized",
+		},
+		{
+			name:      "running job returns 409 with job_status in body",
+			hasSearch: true,
+			existingJobStatus: &indexer.JobStatus{
+				JobID:         "existing-job-id",
+				Status:        indexer.JobStatusRunning,
+				StartedAt:     time.Now(),
+				LastUpdatedAt: time.Now(),
+				ProcessedRows: 42,
+			},
+			body:               `{"clearIndex":true}`,
+			expectedStatus:     http.StatusConflict,
+			expectedErrorMatch: "already running",
+			expectJobStatus:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			defer mockAPI.AssertExpectations(t)
+
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+			mockAPI.On("LogError", mock.Anything).Return().Maybe()
+			// handleReindexPosts logs the existing job state on a 409; cover
+			// every variadic arg count it might emit.
+			mockAPI.On("LogWarn", anyArgs(11)...).Return().Maybe()
+
+			if !tt.indexerNil {
+				api.indexerService = createMockIndexer(t, &mockIndexerService{
+					jobStatus: tt.existingJobStatus,
+					hasSearch: tt.hasSearch,
+				})
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/reindex", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			resp := recorder.Result()
+			require.Equal(t, tt.expectedStatus, resp.StatusCode)
+
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+			errVal, ok := body["error"].(string)
+			require.True(t, ok, "response body must include a string `error` field")
+			require.Contains(t, errVal, tt.expectedErrorMatch)
+
+			if tt.expectJobStatus {
+				_, hasJobStatus := body["job_status"]
+				require.True(t, hasJobStatus, "409 response must include `job_status` so the UI can refresh state")
+			}
+		})
+	}
+}
+
+// TestHandleReindexPostsAuthErrors verifies that the auth middlewares emit a
+// JSON body the admin UI can render, instead of an opaque status code. This is
+// the silent path the original bug report hit: a 401/403 with no logs and no
+// usable response body in the UI.
+func TestHandleReindexPostsAuthErrors(t *testing.T) {
+	tests := []struct {
+		name           string
+		userHeader     string
+		isAdmin        bool
+		expectedStatus int
+		expectedErrSub string
+	}{
+		{
+			name:           "missing user header returns JSON 401",
+			userHeader:     "",
+			expectedStatus: http.StatusUnauthorized,
+			expectedErrSub: "not signed in",
+		},
+		{
+			name:           "non-admin user returns JSON 403",
+			userHeader:     "regular-user",
+			isAdmin:        false,
+			expectedStatus: http.StatusForbidden,
+			expectedErrSub: "system administrator",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			defer mockAPI.AssertExpectations(t)
+
+			if tt.userHeader != "" {
+				mockAPI.On("HasPermissionTo", tt.userHeader, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
+			}
+			mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/reindex", strings.NewReader(`{"clearIndex":true}`))
+			req.Header.Set("Content-Type", "application/json")
+			if tt.userHeader != "" {
+				req.Header.Set("Mattermost-User-Id", tt.userHeader)
+			}
+
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			resp := recorder.Result()
+			require.Equal(t, tt.expectedStatus, resp.StatusCode)
+
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+			errVal, ok := body["error"].(string)
+			require.True(t, ok, "response body must include a string `error` field")
+			require.Contains(t, errVal, tt.expectedErrSub)
 		})
 	}
 }
@@ -257,9 +413,26 @@ func (e notFoundError) Error() string {
 	return "not found"
 }
 
+// anyArgs returns n mock.Anything matchers so a variadic call's spread
+// arguments can be matched without spelling each one out. plugintest.API
+// spreads variadic LogWarn/LogError args into separate Called positions,
+// so a fixed "any, any" expectation panics when the caller passes more.
+func anyArgs(n int) []interface{} {
+	args := make([]interface{}, n)
+	for i := range args {
+		args[i] = mock.Anything
+	}
+	return args
+}
+
 // mockIndexerService holds the mock configuration for creating test indexers
 type mockIndexerService struct {
 	jobStatus *indexer.JobStatus
+	// hasSearch wires a non-nil EmbeddingSearch into the indexer so the
+	// "search functionality is not configured" short-circuit in
+	// StartReindexJob is bypassed and the handler can reach KV-driven
+	// branches like 409 conflict.
+	hasSearch bool
 }
 
 // createMockIndexer creates a real indexer.Indexer with mocked dependencies
@@ -287,7 +460,13 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
-	return indexer.New(nil, nil, mockClient, nil, nil, mockMutexAPI)
+	var getSearch func() embeddings.EmbeddingSearch
+	if mockService.hasSearch {
+		mockSearch := embeddingmocks.NewMockEmbeddingSearch(t)
+		getSearch = func() embeddings.EmbeddingSearch { return mockSearch }
+	}
+
+	return indexer.New(getSearch, nil, mockClient, nil, nil, mockMutexAPI)
 }
 
 func TestHandleGetMCPTools_PluginServer(t *testing.T) {

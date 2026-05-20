@@ -424,6 +424,32 @@ export function getPost(postId: string) {
     return Client4.getPost(postId);
 }
 
+// reindexClientError parses the JSON error body the reindex admin endpoints
+// emit (`{"error": "...", "job_status": {...}}`) so the UI can surface the
+// server's specific reason instead of a single generic "Failed to start
+// reindexing" message. Non-JSON bodies fall back to the HTTP status text.
+async function reindexClientError(response: Response, url: string) {
+    let parsed: {error?: string; job_status?: unknown} = {};
+    try {
+        const text = await response.text();
+        if (text) {
+            parsed = JSON.parse(text);
+        }
+    } catch {
+        // Body wasn't JSON; keep parsed empty.
+    }
+    const message = parsed.error || `${response.status} ${response.statusText}`.trim();
+    const err = new ClientError(Client4.url, {
+        message,
+        status_code: response.status,
+        url,
+    }) as ClientError & {job_status?: unknown};
+    if ('job_status' in parsed) {
+        err.job_status = parsed.job_status;
+    }
+    return err;
+}
+
 export async function doReindexPosts(clearIndex = true) {
     const url = `${baseRoute()}/admin/reindex`;
     const response = await fetch(url, Client4.getOptions({
@@ -435,11 +461,7 @@ export async function doReindexPosts(clearIndex = true) {
         return response.json();
     }
 
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
+    throw await reindexClientError(response, url);
 }
 
 export async function getReindexStatus() {
@@ -452,11 +474,7 @@ export async function getReindexStatus() {
         return response.json();
     }
 
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
+    throw await reindexClientError(response, url);
 }
 
 export async function cancelReindex() {
@@ -469,11 +487,7 @@ export async function cancelReindex() {
         return response.json();
     }
 
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
+    throw await reindexClientError(response, url);
 }
 
 export async function catchUpIndex() {
@@ -486,11 +500,7 @@ export async function catchUpIndex() {
         return response.json();
     }
 
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
+    throw await reindexClientError(response, url);
 }
 
 export async function checkIndexHealth() {
@@ -503,11 +513,7 @@ export async function checkIndexHealth() {
         return response.json();
     }
 
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
+    throw await reindexClientError(response, url);
 }
 
 export async function getMCPTools() {

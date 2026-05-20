@@ -22,10 +22,19 @@ type ReindexRequest struct {
 	ClearIndex *bool `json:"clearIndex"`
 }
 
+// respondError writes a JSON error body so the admin UI can display the
+// specific reason, and routes the underlying error through gin's error
+// chain so ginlogger emits a Log.Error line for the server audit trail.
+// Use for 4xx and 5xx paths where both a UI message and a log are wanted.
+func (a *API) respondError(c *gin.Context, code int, err error) {
+	_ = c.Error(err)
+	c.AbortWithStatusJSON(code, gin.H{"error": err.Error()})
+}
+
 // handleReindexPosts starts a background job to reindex all posts
 func (a *API) handleReindexPosts(c *gin.Context) {
 	if a.indexerService == nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
+		a.respondError(c, http.StatusBadRequest, errors.New("search functionality is not configured; enable embedding search in System Console before reindexing"))
 		return
 	}
 
@@ -33,7 +42,7 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 	var req ReindexRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		if !errors.Is(err, io.EOF) {
-			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+			a.respondError(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 			return
 		}
 		req.ClearIndex = nil
@@ -49,10 +58,26 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 	if err != nil {
 		switch err.Error() {
 		case "job already running":
-			c.JSON(http.StatusConflict, jobStatus)
+			// 409 is an expected client-side conflict, not a server error,
+			// but we still log a warning so admins debugging "Failed to
+			// start reindexing" in the UI can correlate it with a log entry.
+			a.pluginAPI.Log.Warn("Reindex start rejected: a reindex job is already running",
+				"existing_job_id", jobStatus.JobID,
+				"existing_status", jobStatus.Status,
+				"started_at", jobStatus.StartedAt,
+				"processed_rows", jobStatus.ProcessedRows,
+				"node_id", jobStatus.NodeID,
+			)
+			c.AbortWithStatusJSON(http.StatusConflict, gin.H{
+				"error":      "A reindex job is already running. Wait for it to finish, or cancel it before starting a new one.",
+				"job_status": jobStatus,
+			})
+			return
+		case "search functionality is not configured":
+			a.respondError(c, http.StatusBadRequest, errors.New("embedding search is not initialized; verify the provider configuration and that no model-compatibility check has disabled search"))
 			return
 		default:
-			c.AbortWithError(http.StatusInternalServerError, err)
+			a.respondError(c, http.StatusInternalServerError, fmt.Errorf("failed to start reindex job: %w", err))
 			return
 		}
 	}
@@ -77,7 +102,7 @@ func (a *API) handleGetJobStatus(c *gin.Context) {
 			})
 			return
 		}
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get job status: %w", err))
+		a.respondError(c, http.StatusInternalServerError, fmt.Errorf("failed to get job status: %w", err))
 		return
 	}
 
@@ -87,13 +112,14 @@ func (a *API) handleGetJobStatus(c *gin.Context) {
 // handleCancelJob cancels a running reindex job
 func (a *API) handleCancelJob(c *gin.Context) {
 	if err := a.enforceEmptyBody(c); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err)
+		a.respondError(c, http.StatusBadRequest, err)
 		return
 	}
 
 	if a.indexerService == nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "no_job",
+			"error":  "search functionality is not configured; nothing to cancel",
 		})
 		return
 	}
@@ -104,15 +130,17 @@ func (a *API) handleCancelJob(c *gin.Context) {
 		case "not found":
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "no_job",
+				"error":  "no reindex job has been recorded yet",
 			})
 			return
 		case "not running":
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "not_running",
+				"error":  "no reindex job is currently running; nothing to cancel",
 			})
 			return
 		default:
-			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get job status: %w", err))
+			a.respondError(c, http.StatusInternalServerError, fmt.Errorf("failed to cancel reindex job: %w", err))
 			return
 		}
 	}
@@ -123,12 +151,12 @@ func (a *API) handleCancelJob(c *gin.Context) {
 // handleCatchUpIndex starts a catch-up indexing job
 func (a *API) handleCatchUpIndex(c *gin.Context) {
 	if err := a.enforceEmptyBody(c); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err)
+		a.respondError(c, http.StatusBadRequest, err)
 		return
 	}
 
 	if a.indexerService == nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
+		a.respondError(c, http.StatusBadRequest, errors.New("search functionality is not configured; enable embedding search in System Console before running catch-up"))
 		return
 	}
 
@@ -136,13 +164,26 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 	if err != nil {
 		switch err.Error() {
 		case "job already running":
-			c.JSON(http.StatusConflict, jobStatus)
+			a.pluginAPI.Log.Warn("Catch-up start rejected: a reindex job is already running",
+				"existing_job_id", jobStatus.JobID,
+				"existing_status", jobStatus.Status,
+				"started_at", jobStatus.StartedAt,
+				"processed_rows", jobStatus.ProcessedRows,
+				"node_id", jobStatus.NodeID,
+			)
+			c.AbortWithStatusJSON(http.StatusConflict, gin.H{
+				"error":      "A reindex or catch-up job is already running. Wait for it to finish, or cancel it before starting another one.",
+				"job_status": jobStatus,
+			})
 			return
 		case "no previous index found, run a full reindex first":
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			a.respondError(c, http.StatusBadRequest, errors.New("no previous index found; run a full reindex first before using catch-up"))
+			return
+		case "search functionality is not configured":
+			a.respondError(c, http.StatusBadRequest, errors.New("embedding search is not initialized; verify the provider configuration and that no model-compatibility check has disabled search"))
 			return
 		default:
-			c.AbortWithError(http.StatusInternalServerError, err)
+			a.respondError(c, http.StatusInternalServerError, fmt.Errorf("failed to start catch-up job: %w", err))
 			return
 		}
 	}
@@ -164,7 +205,7 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 			c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
 			return
 		}
-		c.AbortWithError(http.StatusInternalServerError, err)
+		a.respondError(c, http.StatusInternalServerError, fmt.Errorf("failed to check index health: %w", err))
 		return
 	}
 
@@ -201,7 +242,7 @@ func (a *API) mattermostAdminAuthorizationRequired(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
 	if !a.pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem) {
-		c.AbortWithError(http.StatusForbidden, errors.New("must be a system admin"))
+		a.respondError(c, http.StatusForbidden, errors.New("system administrator privileges are required"))
 		return
 	}
 }
