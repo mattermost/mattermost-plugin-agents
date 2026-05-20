@@ -332,7 +332,10 @@ Post indexing occurs automatically during initial setup and when changing embedd
    
    - Monitor indexing progress during initial setup.
    - Trigger reindexing when changing embedding providers.
+   - Trigger **Reindex from scratch** if edited posts that are no longer eligible for indexing still appear in semantic search results.
    - Check indexing status.
+
+Edited posts that remain eligible for indexing are updated automatically in the embeddings index. If an edit makes a post no longer eligible for indexing, existing embeddings can remain until you run **Reindex from scratch**. During reindexing, the catch-up pass skips posts that already have embeddings.
 
 ### OpenTelemetry tracing
 
