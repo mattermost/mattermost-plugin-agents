@@ -6,7 +6,7 @@ import type {OptsSignalExt} from '@mattermost/types/client4';
 
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
-import {normalizeConversationResponse, searchAllChannels} from './client';
+import {normalizeConversationResponse, reindexClientError, searchAllChannels} from './client';
 
 type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
 
@@ -22,7 +22,18 @@ jest.mock('@mattermost/client', () => {
         Client4: class Client4 {
             searchAllChannels = mockSearchAllChannels;
         },
-        ClientError: class extends Error {},
+
+        // Mirror the real ClientError shape so reindexClientError's status_code
+        // and message propagate the way the UI handlers expect.
+        ClientError: class extends Error {
+            url: string;
+            status_code: number;
+            constructor(baseUrl: string, opts: {message: string; status_code: number; url: string}) {
+                super(opts.message);
+                this.url = opts.url;
+                this.status_code = opts.status_code;
+            }
+        },
         mockSearchAllChannels,
     };
 });
@@ -120,5 +131,67 @@ describe('searchAllChannels', () => {
             include_deleted: false,
             deleted: false,
         });
+    });
+});
+
+// Helper for building Response objects without depending on jsdom's whatwg-fetch.
+function makeResponse(status: number, statusText: string, body: string): Response {
+    return {
+        status,
+        statusText,
+        ok: status >= 200 && status < 300,
+        text: () => Promise.resolve(body),
+    } as Response;
+}
+
+describe('reindexClientError', () => {
+    test('uses the server `error` field as the ClientError message', async () => {
+        const resp = makeResponse(400, 'Bad Request', JSON.stringify({error: 'embedding search is not initialized'}));
+        const err = await reindexClientError(resp, '/admin/reindex');
+
+        expect(err).toBeInstanceOf(Error);
+        expect(err.message).toBe('embedding search is not initialized');
+        expect(err.status_code).toBe(400);
+        expect(err.url).toBe('/admin/reindex');
+    });
+
+    test('attaches job_status when the 409 response includes one', async () => {
+        const jobStatus = {job_id: 'abc', status: 'running', processed_rows: 17};
+        const resp = makeResponse(
+            409,
+            'Conflict',
+            JSON.stringify({error: 'A reindex job is already running.', job_status: jobStatus}),
+        );
+        const err = await reindexClientError(resp, '/admin/reindex') as Error & {
+            status_code: number;
+            job_status?: unknown;
+        };
+
+        expect(err.status_code).toBe(409);
+        expect(err.message).toBe('A reindex job is already running.');
+        expect(err.job_status).toEqual(jobStatus);
+    });
+
+    test('falls back to the HTTP status text when the body is not JSON', async () => {
+        const resp = makeResponse(502, 'Bad Gateway', '<html>upstream error</html>');
+        const err = await reindexClientError(resp, '/admin/reindex');
+
+        expect(err.message).toBe('502 Bad Gateway');
+        expect(err.status_code).toBe(502);
+    });
+
+    test('falls back to the HTTP status text when the body is empty', async () => {
+        const resp = makeResponse(401, 'Unauthorized', '');
+        const err = await reindexClientError(resp, '/admin/reindex');
+
+        expect(err.message).toBe('401 Unauthorized');
+        expect(err.status_code).toBe(401);
+    });
+
+    test('does not attach job_status when the response omits it', async () => {
+        const resp = makeResponse(500, 'Internal Server Error', JSON.stringify({error: 'boom'}));
+        const err = await reindexClientError(resp, '/admin/reindex') as Error & {job_status?: unknown};
+
+        expect('job_status' in err).toBe(false);
     });
 });

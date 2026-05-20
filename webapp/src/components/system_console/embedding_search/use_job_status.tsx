@@ -10,9 +10,10 @@ import {JobStatusType, StatusMessageType, HealthCheckResultType} from './types';
 
 // extractStatusCode pulls the numeric HTTP status off a thrown ClientError-like
 // object. Returns -1 for native fetch failures (which have no status_code), so
-// callers can branch on the value without juggling undefined.
-const NO_STATUS = -1;
-const extractStatusCode = (err: unknown): number => {
+// callers can branch on the value without juggling undefined. Exported for
+// tests.
+export const NO_STATUS = -1;
+export const extractStatusCode = (err: unknown): number => {
     if (err && typeof err === 'object' && 'status_code' in err) {
         const code = (err as {status_code?: unknown}).status_code;
         if (typeof code === 'number') {
@@ -22,7 +23,7 @@ const extractStatusCode = (err: unknown): number => {
     return NO_STATUS;
 };
 
-const extractServerMessage = (err: unknown): string => {
+export const extractServerMessage = (err: unknown): string => {
     if (err && typeof err === 'object' && 'message' in err) {
         const msg = (err as {message?: unknown}).message;
         if (typeof msg === 'string') {
@@ -36,8 +37,8 @@ const extractServerMessage = (err: unknown): string => {
 // admin-actionable sentence. We special-case the status codes the admin can
 // act on (auth, conflict, search not configured) and fall through to the
 // server's own `error` field for everything else. Network failures (no
-// status_code) get a connectivity hint.
-const formatReindexError = (err: unknown, intl: IntlShape, actionLabel: string): string => {
+// status_code) get a connectivity hint. Exported for tests.
+export const formatReindexError = (err: unknown, intl: IntlShape, actionLabel: string): string => {
     const status = extractStatusCode(err);
     const serverMsg = extractServerMessage(err);
 

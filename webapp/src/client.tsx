@@ -428,7 +428,9 @@ export function getPost(postId: string) {
 // emit (`{"error": "...", "job_status": {...}}`) so the UI can surface the
 // server's specific reason instead of a single generic "Failed to start
 // reindexing" message. Non-JSON bodies fall back to the HTTP status text.
-async function reindexClientError(response: Response, url: string) {
+// Exported for tests; production callers use it indirectly via the wrappers
+// below.
+export async function reindexClientError(response: Response, url: string) {
     let parsed: {error?: string; job_status?: unknown} = {};
     try {
         const text = await response.text();
