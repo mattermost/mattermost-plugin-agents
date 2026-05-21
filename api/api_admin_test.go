@@ -143,6 +143,35 @@ func TestHandleGetJobStatusIncludesStale(t *testing.T) {
 	}
 }
 
+// Fresh install: clicking Cancel when no job has ever run must surface as
+// 404 {"status":"no_job"}, not a 500. Pre-fix, the wrapper masked the
+// missing key as a present-but-zero JobStatus and CancelJob returned
+// "not running" — which the handler matched. The wrapper fix promotes the
+// missing key to ErrKVNotFound, so the handler must branch on
+// IsKVNotFound or fall through to a 500.
+func TestHandleCancelJob_FreshInstallReturns404NoJob(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+	api.indexerService = createMockIndexer(t, &mockIndexerService{jobStatus: nil})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/reindex/cancel", nil)
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Equal(t, "no_job", body["status"])
+}
+
 func TestHandleIndexHealthCheck(t *testing.T) {
 	tests := []struct {
 		name                 string
