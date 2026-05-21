@@ -113,9 +113,9 @@ func (c *Conversations) findPreviousThreadPost(post *model.Post) (*model.Post, e
 		}
 
 		candidateIndex, candidateOK := orderIndex[candidate.Id]
-		currentIndex, currentOK := orderIndex[current.Id]
-		if candidateOK && currentOK && candidateIndex != currentIndex {
-			return candidateIndex > currentIndex
+		currentPostIndex, currentOK := orderIndex[current.Id]
+		if candidateOK && currentOK && candidateIndex != currentPostIndex {
+			return candidateIndex > currentPostIndex
 		}
 
 		return candidate.Id > current.Id
