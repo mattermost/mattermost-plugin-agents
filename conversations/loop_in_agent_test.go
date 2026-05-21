@@ -4,6 +4,7 @@
 package conversations_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -126,7 +127,7 @@ func TestHandleLoopInAgentValidation(t *testing.T) {
 				require.NotNil(t, bot)
 			}
 
-			err := fix.conv.HandleLoopInAgent(tc.userID, bot, tc.post, tc.channel)
+			err := fix.conv.HandleLoopInAgent(context.Background(), tc.userID, bot, tc.post, tc.channel)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, tc.wantErr), "got %v want %v", err, tc.wantErr)
 		})

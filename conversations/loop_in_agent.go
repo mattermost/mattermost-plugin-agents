@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,7 +24,7 @@ var (
 
 // HandleLoopInAgent processes the user's thread reply through the conversation
 // flow when they click "loop in" on the agent mention reminder.
-func (c *Conversations) HandleLoopInAgent(userID string, bot *bots.Bot, post *model.Post, channel *model.Channel) error {
+func (c *Conversations) HandleLoopInAgent(ctx context.Context, userID string, bot *bots.Bot, post *model.Post, channel *model.Channel) error {
 	if post.UserId != userID {
 		return ErrLoopInNotPostOwner
 	}
@@ -66,5 +67,5 @@ func (c *Conversations) HandleLoopInAgent(userID string, bot *bots.Bot, post *mo
 		loopInPost.Message += " " + message
 	}
 
-	return c.handleMentions(bot, loopInPost, postingUser, channel)
+	return c.handleMentions(ctx, bot, loopInPost, postingUser, channel)
 }

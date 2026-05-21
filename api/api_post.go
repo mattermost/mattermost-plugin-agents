@@ -444,7 +444,7 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleLoopInAgent(userID, bot, post, channel); err != nil {
+	if err := a.conversationsService.HandleLoopInAgent(telemetry.DetachContext(c.Request.Context()), userID, bot, post, channel); err != nil {
 		c.AbortWithError(loopInAgentHTTPStatus(err), err)
 		return
 	}
