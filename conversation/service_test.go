@@ -900,6 +900,79 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 	assert.Equal(t, "user2", req.Posts[3].Message)
 }
 
+// Regen of a post that went through a tool-approval continuation must drop
+// the demoted prior anchor and its tool_result, so the request ends on the
+// user turn (bifrost rejects an assistant-ended prefill).
+func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeavesUserTail(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "user1",
+		UserPostID:   stringPtr("user_post1"),
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	// Demoted prior anchor (left behind by a continuation finalize).
+	demotedContent, _ := json.Marshal([]ContentBlock{
+		{Type: BlockTypeText, Text: "Let me search."},
+		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Status: StatusSuccess, Shared: BoolPtr(true)},
+	})
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         nil,
+		Role:           "assistant",
+		Content:        demotedContent,
+		Sequence:       2,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	resultContent, _ := json.Marshal([]ContentBlock{
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "5 channels found", Shared: BoolPtr(true)},
+	})
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         nil,
+		Role:           "tool_result",
+		Content:        resultContent,
+		Sequence:       3,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	anchorContent, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "Found 5 channels."}})
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         stringPtr("resp_post"),
+		Role:           "assistant",
+		Content:        anchorContent,
+		Sequence:       4,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{ExcludeAfterPostID: "resp_post"})
+	require.NoError(t, err)
+
+	require.NotEmpty(t, req.Posts)
+	last := req.Posts[len(req.Posts)-1]
+	require.Equal(t, llm.PostRoleUser, last.Role)
+	require.Equal(t, "user1", last.Message)
+	require.Len(t, req.Posts, 2)
+	require.Equal(t, llm.PostRoleSystem, req.Posts[0].Role)
+}
+
 func TestCreatePlaceholderAssistantTurn(t *testing.T) {
 	svc, s := setupTestService(t)
 

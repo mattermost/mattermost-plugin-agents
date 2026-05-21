@@ -431,6 +431,42 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 	c.Render(http.StatusOK, render.JSON{Data: result})
 }
 
+// handleLoopInAgent runs the target reply through the channel mention path
+// without persisting a synthetic @mention post.
+func (a *API) handleLoopInAgent(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
+
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleLoopInAgent(telemetry.DetachContext(c.Request.Context()), userID, bot, post, channel); err != nil {
+		c.AbortWithError(loopInAgentHTTPStatus(err), err)
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func loopInAgentHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrLoopInNotPostOwner),
+		errors.Is(err, conversations.ErrLoopInWrongAgent):
+		return http.StatusForbidden
+	case errors.Is(err, conversations.ErrLoopInNotThreadReply),
+		errors.Is(err, conversations.ErrLoopInUnsupportedChannel),
+		errors.Is(err, conversations.ErrLoopInAlreadyMentioned),
+		errors.Is(err, conversations.ErrLoopInNoAgentContext):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // makeAnalysisPost creates a post for thread analysis results
 func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, conversationID string) *model.Post {
 	post := &model.Post{}

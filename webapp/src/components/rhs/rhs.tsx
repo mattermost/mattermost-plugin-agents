@@ -20,6 +20,7 @@ import type {UserMCPServerInfo} from './tool_provider_popover';
 import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
 import RHSNewTab from './rhs_new_tab';
+import RhsFileDropZone from './rhs_file_drop_zone';
 
 const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
     height: 100%;
@@ -113,10 +114,12 @@ export default function RHS() {
     }
 
     let content = null;
+    let wrapInDropZone = false;
     if (selectedPostId) {
         if (currentTab !== 'thread') {
             setCurrentTab('thread');
         }
+        wrapInDropZone = true;
         content = (
             <ThreadViewer
                 data-testid='rhs-thread-viewer'
@@ -151,6 +154,7 @@ export default function RHS() {
             content = null;
         }
     } else if (currentTab === 'new') {
+        wrapInDropZone = true;
         content = (
             <RHSNewTab
                 data-testid='rhs-new-tab'
@@ -175,7 +179,9 @@ export default function RHS() {
                 onDisabledServersChange={setDisabledServers}
                 preloadedServers={preloadedServers}
             />
-            {content}
+            {wrapInDropZone ? (
+                <RhsFileDropZone>{content}</RhsFileDropZone>
+            ) : content}
         </RhsContainer>
     );
 }

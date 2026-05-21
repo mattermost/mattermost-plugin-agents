@@ -335,6 +335,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/tool_call", a.handleToolCall)
 	postRouter.POST("/tool_result", a.handleToolResult)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
+	postRouter.POST("/loop_in_agent", a.handleLoopInAgent)
 
 	channelRouter := botRequiredRouter.Group("/channel/:channelid")
 	channelRouter.Use(a.channelAuthorizationRequired)

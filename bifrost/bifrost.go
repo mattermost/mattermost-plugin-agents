@@ -54,7 +54,6 @@ type LLM struct {
 	inputTokenLimit  int
 	outputTokenLimit int
 	streamingTimeout time.Duration
-	sendUserID       bool
 
 	// Native tools and reasoning configuration
 	enabledNativeTools []string
@@ -86,7 +85,6 @@ type Config struct {
 	InputTokenLimit  int
 	OutputTokenLimit int
 	StreamingTimeout time.Duration
-	SendUserID       bool
 
 	// Native tools and reasoning configuration
 	EnabledNativeTools []string
@@ -263,7 +261,6 @@ func New(cfg Config) (*LLM, error) {
 		inputTokenLimit:    cfg.InputTokenLimit,
 		outputTokenLimit:   outputLimit,
 		streamingTimeout:   streamingTimeout,
-		sendUserID:         cfg.SendUserID,
 		enabledNativeTools: cfg.EnabledNativeTools,
 		reasoningEnabled:   cfg.ReasoningEnabled,
 		reasoningEffort:    cfg.ReasoningEffort,
@@ -928,8 +925,13 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				},
 			}
 
-			// Add reasoning details for thinking-enabled conversations
-			if post.Reasoning != "" {
+			// Add reasoning details for thinking-enabled conversations.
+			// Anthropic requires historical thinking blocks to include a valid
+			// provider-issued signature. If a previous stream failed before the
+			// signature arrived, we persist partial reasoning for display only; do
+			// not replay it to Anthropic as an unsigned thinking block. Other
+			// providers may accept unsigned reasoning, so preserve it for them.
+			if post.Reasoning != "" && (b.provider != schemas.Anthropic || post.ReasoningSignature != "") {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}

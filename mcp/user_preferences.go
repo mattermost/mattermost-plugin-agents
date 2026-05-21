@@ -38,6 +38,9 @@ func userPreferencesKVKey(userID string) string {
 func LoadUserPreferences(pluginAPI mmapi.Client, userID string) (*UserToolProviderPreferences, error) {
 	var prefs UserToolProviderPreferences
 	if err := pluginAPI.KVGet(userPreferencesKVKey(userID), &prefs); err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return &UserToolProviderPreferences{DisabledServers: []string{}}, nil
+		}
 		return nil, fmt.Errorf("failed to load user preferences: %w", err)
 	}
 	if prefs.DisabledServers == nil {

@@ -26,7 +26,6 @@ export interface LLMService {
     defaultModel: string;
     tokenLimit: number;
     streamingTimeoutSeconds: number;
-    sendUserId: boolean;
     outputTokenLimit: number;
     useResponsesAPI: boolean;
 }
@@ -191,7 +190,6 @@ export function createAnthropicService(overrides: ServiceConfigOverrides = {}): 
         tokenLimit: 16384,
         outputTokenLimit: 16384,
         streamingTimeoutSeconds: 0,
-        sendUserId: false,
         useResponsesAPI: false,
         ...overrides,
     };
@@ -217,7 +215,6 @@ export function createOpenAIService(overrides: ServiceConfigOverrides = {}): LLM
         tokenLimit: 16384,
         outputTokenLimit: 16384,
         streamingTimeoutSeconds: 500,
-        sendUserId: false,
         useResponsesAPI: true,
         ...overrides,
     };

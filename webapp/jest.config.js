@@ -9,6 +9,7 @@ module.exports = {
     moduleNameMapper: {
         '^@/(.*)$': '<rootDir>/src/$1',
         '^src/(.*)$': '<rootDir>/src/$1',
+        '\\.svg$': '<rootDir>/tests/svg_mock.js',
     },
     setupFilesAfterEnv: ['<rootDir>/tests/setup.tsx'],
 };

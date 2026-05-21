@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
@@ -149,7 +150,7 @@ func TestLoadOrCreateClientCredentials_ExistingCredentials(t *testing.T) {
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil)
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -168,7 +169,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentials(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds)
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -187,7 +188,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentialsSkipKVStore(t *testing.T
 	}
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds)
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -213,7 +214,7 @@ func TestLoadOrCreateClientCredentials_NilStaticCredsFallsBackToKVStore(t *testi
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil)
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -239,7 +240,7 @@ func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *tes
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, &StaticOAuthCredentials{})
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, &StaticOAuthCredentials{}, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -285,6 +286,60 @@ func TestCreateOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 	require.Equal(t, "https://auth.example.com/authorize", config.Endpoint.AuthURL)
 	require.Equal(t, "https://auth.example.com/token", config.Endpoint.TokenURL)
 	require.Equal(t, "test-client", config.ClientID)
+}
+
+func TestCreateOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
+	var serverURL string
+	registrationCalled := false
+	hostMetadataCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource/mcp":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProtectedResourceMetadata{
+				Resource:             serverURL + "/mcp",
+				AuthorizationServers: []string{serverURL + "/resources/res_123"},
+			})
+		case "/.well-known/oauth-authorization-server/resources/res_123":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthorizationServerMetadata{
+				Issuer:                serverURL,
+				AuthorizationEndpoint: serverURL + "/authorize",
+				TokenEndpoint:         serverURL + "/token",
+				RegistrationEndpoint:  serverURL + "/resources/res_123/register",
+			})
+		case "/resources/res_123/register":
+			registrationCalled = true
+			require.Equal(t, http.MethodPost, r.Method)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(RegistrationResponse{
+				ClientID:     "registered-client",
+				ClientSecret: "registered-secret",
+			})
+		case "/.well-known/oauth-authorization-server":
+			hostMetadataCalled = true
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
+	mockClient.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
+	mockClient.On("LogDebug", mock.Anything, mock.Anything).Return().Once()
+
+	config, err := manager.createOAuthConfig(context.Background(), serverURL+"/mcp", serverURL+"/.well-known/oauth-protected-resource/mcp", nil)
+
+	require.NoError(t, err)
+	require.True(t, registrationCalled)
+	require.False(t, hostMetadataCalled)
+	require.Equal(t, "registered-client", config.ClientID)
+	require.Equal(t, serverURL+"/authorize", config.Endpoint.AuthURL)
+	require.Equal(t, serverURL+"/token", config.Endpoint.TokenURL)
 }
 
 func TestStaticCredsHelpers(t *testing.T) {
@@ -429,15 +484,18 @@ func TestProcessCallback_InvalidSession(t *testing.T) {
 	state := "test-state"
 	code := "auth-code"
 
-	// Mock session not found - KVGet should return an error
-	appErr := model.NewAppError("test", "not_found", nil, "session not found", 404)
-	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Return(appErr)
+	// Missing session must surface as an error rather than nil-panic on
+	// session.State below. Asserting ErrorIs against the sentinel pins
+	// that the wrap chain survives ProcessCallback's fmt.Errorf and is
+	// not hostage to the user-facing wording.
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Return(mmapi.ErrKVNotFound)
 
 	ctx := context.Background()
 	session, err := manager.ProcessCallback(ctx, userID, state, code)
 
 	require.Error(t, err)
 	require.Nil(t, session)
+	require.ErrorIs(t, err, mmapi.ErrKVNotFound)
 	require.Contains(t, err.Error(), "invalid or expired session")
 }
 

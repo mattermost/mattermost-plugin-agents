@@ -41,7 +41,6 @@ The OpenAI Compatible option allows integration with any OpenAI-compatible LLM p
 | **API Key** | No | API key if your service requires authentication |
 | **Default Model** | Yes | The model to use by default |
 | **Organization ID** | No | Organization ID if your service supports it |
-| **Send User ID** | No | Whether to send user IDs to the service |
 | **Use Responses API** | No | Defaults to enabled. Uses the OpenAI Responses API when supported. Turn off for legacy Chat Completions compatibility with endpoints that do not implement the Responses API. |
 
 ### Special Considerations
@@ -63,7 +62,6 @@ Direct **OpenAI** services always use the OpenAI **Responses** API. There is no 
 | **API Key** | Yes | Your OpenAI API key |
 | **Organization ID** | No | Your OpenAI organization ID |
 | **Default Model** | Yes | The model to use by default (see [OpenAI's model documentation](https://platform.openai.com/docs/models)) |
-| **Send User ID** | No | Whether to send user IDs to OpenAI |
 
 ## Anthropic (Claude)
 
@@ -171,7 +169,6 @@ For more details about integrating with Microsoft Azure's OpenAI services, see t
 | **API Key** | Yes | Your Azure OpenAI API key |
 | **API URL** | Yes | Your Azure OpenAI endpoint |
 | **Default Model** | Yes | The model to use by default (see [Azure OpenAI's model documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models)) |
-| **Send User ID** | No | Whether to send user IDs to Azure OpenAI |
 | **Use Responses API** | No | Defaults to enabled. Uses the OpenAI Responses API when your Azure deployment supports it. Turn off for legacy Chat Completions compatibility if your endpoint or deployment does not support the Responses API. |
 
 ## Google Gemini
@@ -205,7 +202,7 @@ Google Gemini uses the Generative Language API (AI Studio), which authenticates 
 | **Input Token Limit** | No | Optional override for the maximum input context size, in tokens. Leave blank to use the model's default. |
 | **Output Token Limit** | No | Optional override for the maximum output (`max_tokens`) the plugin will request. |
 
-> The **Send User ID** and **Use Responses API** toggles are not exposed for the **Google Gemini** service type. Bifrost automatically switches to the Responses API path when you enable a native Google tool or when an agent or feature requires native web search; in all other cases the Chat path is used.
+> The **Use Responses API** toggle is not exposed for the **Google Gemini** service type. Bifrost automatically switches to the Responses API path when you enable a native Google tool or when an agent or feature requires native web search; in all other cases the Chat path is used.
 
 ### Reasoning (thinking) and model-version mapping
 
@@ -306,7 +303,7 @@ To create a service-account key for the JSON path:
 | **Input Token Limit** | No | Optional override for the maximum input context size, in tokens. |
 | **Output Token Limit** | No | Optional override for the maximum output (`max_tokens`) the plugin will request. |
 
-> The **API Key**, **Send User ID**, and **Use Responses API** toggles do not apply to the **Google Vertex AI** service type. The Responses API path is auto-enabled when a native Google tool is in use; otherwise the Chat path is used.
+> The **API Key** and **Use Responses API** toggles do not apply to the **Google Vertex AI** service type. The Responses API path is auto-enabled when a native Google tool is in use; otherwise the Chat path is used.
 
 ### Reasoning (thinking) and model-version mapping
 

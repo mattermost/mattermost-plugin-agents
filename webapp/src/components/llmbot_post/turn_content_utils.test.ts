@@ -12,6 +12,7 @@ import {
     extractAnnotationsFromTurn,
     deriveApprovalStageForPost,
     hasAutoApprovedToolsForPost,
+    buildRoundsFromTurns,
 } from './turn_content_utils';
 
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
@@ -486,5 +487,207 @@ describe('hasAutoApprovedToolsForPost', () => {
         });
         const conv = makeConversation([anchor]);
         expect(hasAutoApprovedToolsForPost(conv, 'post_missing')).toBe(false);
+    });
+});
+
+describe('buildRoundsFromTurns', () => {
+    test('returns one round per assistant turn in the response, preserving sequence', () => {
+        const userTurn = makeTurn({id: 'u1', role: 'user', sequence: 1, post_id: 'user_post', content: []});
+        const round1 = makeTurn({
+            id: 'r1',
+            post_id: null,
+            sequence: 2,
+            content: [
+                {type: 'text', text: 'Let me search.'},
+                {type: 'tool_use', id: 'tc_1', name: 'search', status: 'auto_approved'},
+            ],
+        });
+        const toolResult1 = makeTurn({
+            id: 'tr1',
+            role: 'tool_result',
+            post_id: null,
+            sequence: 3,
+            content: [{type: 'tool_result', tool_use_id: 'tc_1', content: 'channel data'}],
+        });
+        const round2 = makeTurn({
+            id: 'r2',
+            post_id: 'post_1',
+            sequence: 4,
+            content: [{type: 'text', text: 'Found 5 channels.'}],
+        });
+        const conv = makeConversation([userTurn, round1, toolResult1, round2]);
+
+        const rounds = buildRoundsFromTurns(conv, 'post_1');
+        expect(rounds).toHaveLength(2);
+        expect(rounds[0].id).toBe('r1');
+        expect(rounds[0].text).toBe('Let me search.');
+        expect(rounds[0].toolCalls).toHaveLength(1);
+        expect(rounds[0].toolCalls[0].id).toBe('tc_1');
+        expect(rounds[0].toolCalls[0].result).toBe('channel data');
+        expect(rounds[0].toolCalls[0].status).toBe(ToolCallStatus.AutoApproved);
+        expect(rounds[1].id).toBe('r2');
+        expect(rounds[1].text).toBe('Found 5 channels.');
+        expect(rounds[1].toolCalls).toHaveLength(0);
+    });
+
+    test('omits tool_result turns from the round list — they pair to tool_use blocks by id', () => {
+        const round1 = makeTurn({
+            id: 'r1',
+            post_id: 'post_1',
+            sequence: 1,
+            content: [{type: 'tool_use', id: 'tc_x', name: 'lookup', status: 'success'}],
+        });
+        const result = makeTurn({
+            id: 'tr1',
+            role: 'tool_result',
+            post_id: null,
+            sequence: 2,
+            content: [{type: 'tool_result', tool_use_id: 'tc_x', content: 'ok'}],
+        });
+        const rounds = buildRoundsFromTurns(makeConversation([round1, result]), 'post_1');
+        expect(rounds).toHaveLength(1);
+        expect(rounds[0].toolCalls[0].result).toBe('ok');
+    });
+
+    test('returns empty when the post has no anchor turn', () => {
+        const turn = makeTurn({post_id: 'post_other', content: []});
+        const rounds = buildRoundsFromTurns(makeConversation([turn]), 'post_missing');
+        expect(rounds).toEqual([]);
+    });
+
+    test('extracts reasoning per round, not aggregated across the response', () => {
+        const round1 = makeTurn({
+            id: 'r1',
+            post_id: null,
+            sequence: 1,
+            content: [
+                {type: 'thinking', text: 'thinking about round 1'},
+                {type: 'text', text: 'preamble'},
+            ],
+        });
+        const round2 = makeTurn({
+            id: 'r2',
+            post_id: 'post_1',
+            sequence: 2,
+            content: [
+                {type: 'thinking', text: 'thinking about round 2'},
+                {type: 'text', text: 'final answer'},
+            ],
+        });
+        const rounds = buildRoundsFromTurns(makeConversation([round1, round2]), 'post_1');
+        expect(rounds[0].reasoning.summary).toBe('thinking about round 1');
+        expect(rounds[1].reasoning.summary).toBe('thinking about round 2');
+    });
+
+    // User-approval flow: tool_result is written after the anchor turn.
+    test('pairs tool_result that lives at a sequence GREATER than the anchor', () => {
+        const userTurn = makeTurn({id: 'u1', role: 'user', sequence: 1, post_id: 'user_post', content: []});
+        const anchor = makeTurn({
+            id: 'a1',
+            post_id: 'post_1',
+            sequence: 2,
+            content: [
+                {type: 'text', text: 'I need to call this.'},
+                {type: 'tool_use', id: 'tc_after', name: 'lookup', status: 'success'},
+            ],
+        });
+
+        const lateResult = makeTurn({
+            id: 'tr1',
+            role: 'tool_result',
+            post_id: null,
+            sequence: 3,
+            content: [{type: 'tool_result', tool_use_id: 'tc_after', content: 'late result'}],
+        });
+
+        const rounds = buildRoundsFromTurns(
+            makeConversation([userTurn, anchor, lateResult]),
+            'post_1',
+        );
+        expect(rounds).toHaveLength(1);
+        expect(rounds[0].toolCalls).toHaveLength(1);
+        expect(rounds[0].toolCalls[0].id).toBe('tc_after');
+        expect(rounds[0].toolCalls[0].result).toBe('late result');
+    });
+
+    test('renders a tool_use with no matching tool_result and undefined result', () => {
+        const anchor = makeTurn({
+            id: 'a1',
+            post_id: 'post_1',
+            sequence: 1,
+            content: [{type: 'tool_use', id: 'tc_lonely', name: 'search', status: 'pending'}],
+        });
+        const rounds = buildRoundsFromTurns(makeConversation([anchor]), 'post_1');
+        expect(rounds).toHaveLength(1);
+        expect(rounds[0].toolCalls).toHaveLength(1);
+        expect(rounds[0].toolCalls[0].id).toBe('tc_lonely');
+        expect(rounds[0].toolCalls[0].result).toBeUndefined();
+    });
+
+    // Continuation: demoted prior anchor (post_id cleared) must still render
+    // as a prior round.
+    test('includes a demoted prior anchor turn between the user turn and the new anchor', () => {
+        const userTurn = makeTurn({id: 'u1', role: 'user', sequence: 1, post_id: 'user_post', content: []});
+
+        const demoted = makeTurn({
+            id: 'a_old',
+            post_id: null,
+            sequence: 2,
+            content: [
+                {type: 'text', text: 'Let me look that up.'},
+                {type: 'tool_use', id: 'tc1', name: 'search', status: 'success'},
+            ],
+        });
+        const result = makeTurn({
+            id: 'tr1',
+            role: 'tool_result',
+            post_id: null,
+            sequence: 3,
+            content: [{type: 'tool_result', tool_use_id: 'tc1', content: 'channel data'}],
+        });
+        const newAnchor = makeTurn({
+            id: 'a_new',
+            post_id: 'post_1',
+            sequence: 4,
+            content: [{type: 'text', text: 'Found 5 channels.'}],
+        });
+
+        const rounds = buildRoundsFromTurns(
+            makeConversation([userTurn, demoted, result, newAnchor]),
+            'post_1',
+        );
+        expect(rounds).toHaveLength(2);
+        expect(rounds[0].id).toBe('a_old');
+        expect(rounds[0].text).toBe('Let me look that up.');
+        expect(rounds[0].toolCalls).toHaveLength(1);
+        expect(rounds[0].toolCalls[0].result).toBe('channel data');
+        expect(rounds[1].id).toBe('a_new');
+        expect(rounds[1].text).toBe('Found 5 channels.');
+    });
+
+    // Sibling posts in the same conversation must not contribute rounds.
+    test('does not include rounds belonging to a sibling post anchor', () => {
+        const userA = makeTurn({id: 'uA', role: 'user', sequence: 1, post_id: 'user_a', content: []});
+        const anchorA = makeTurn({
+            id: 'aA',
+            post_id: 'post_a',
+            sequence: 2,
+            content: [{type: 'text', text: 'Response A.'}],
+        });
+        const userB = makeTurn({id: 'uB', role: 'user', sequence: 3, post_id: 'user_b', content: []});
+        const anchorB = makeTurn({
+            id: 'aB',
+            post_id: 'post_b',
+            sequence: 4,
+            content: [{type: 'text', text: 'Response B.'}],
+        });
+
+        const conv = makeConversation([userA, anchorA, userB, anchorB]);
+        const roundsA = buildRoundsFromTurns(conv, 'post_a');
+        const roundsB = buildRoundsFromTurns(conv, 'post_b');
+        expect(roundsA).toHaveLength(1);
+        expect(roundsA[0].text).toBe('Response A.');
+        expect(roundsB).toHaveLength(1);
+        expect(roundsB[0].text).toBe('Response B.');
     });
 });

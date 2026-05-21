@@ -189,6 +189,71 @@ func TestBuildChatReasoning(t *testing.T) {
 	}
 }
 
+func TestConvertMessagesReasoningDetails(t *testing.T) {
+	tests := []struct {
+		name              string
+		provider          schemas.ModelProvider
+		posts             []llm.Post
+		expectedLen       int
+		expectedReasoning string
+		expectedSignature string
+	}{
+		{
+			name:     "skips unsigned reasoning for Anthropic",
+			provider: schemas.Anthropic,
+			posts: []llm.Post{{
+				Role:               llm.PostRoleBot,
+				Message:            "partial response",
+				Reasoning:          "partial thinking captured before stream error",
+				ReasoningSignature: "",
+			}},
+			expectedLen: 1,
+		},
+		{
+			name:     "preserves unsigned reasoning for non-Anthropic",
+			provider: schemas.OpenAI,
+			posts: []llm.Post{{
+				Role:               llm.PostRoleBot,
+				Message:            "partial response",
+				Reasoning:          "partial thinking",
+				ReasoningSignature: "",
+			}},
+			expectedLen:       1,
+			expectedReasoning: "partial thinking",
+		},
+		{
+			name:     "includes signed reasoning",
+			provider: schemas.Anthropic,
+			posts: []llm.Post{{
+				Role:               llm.PostRoleBot,
+				Message:            "response",
+				Reasoning:          "thinking",
+				ReasoningSignature: "sig123",
+			}},
+			expectedLen:       1,
+			expectedReasoning: "thinking",
+			expectedSignature: "sig123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: tt.provider}
+
+			messages := b.convertMessages(tt.posts)
+
+			require.Len(t, messages, tt.expectedLen)
+			if tt.expectedReasoning == "" {
+				assert.Nil(t, messages[0].ChatAssistantMessage)
+				return
+			}
+			require.Len(t, messages[0].ReasoningDetails, 1)
+			assert.Equal(t, tt.expectedReasoning, *messages[0].ReasoningDetails[0].Text)
+			assert.Equal(t, tt.expectedSignature, *messages[0].ReasoningDetails[0].Signature)
+		})
+	}
+}
+
 func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
 	b := &LLM{}
 	imageData := []byte("PNGDATA")

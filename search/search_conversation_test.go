@@ -111,6 +111,30 @@ func (s *fakeConversationStore) UpdateTurnTokens(id string, tokensIn, tokensOut 
 	return errors.New("turn not found")
 }
 
+func (s *fakeConversationStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	for _, t := range s.turns {
+		if t.PostID != nil && *t.PostID == postID {
+			c := *t
+			return &c, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *fakeConversationStore) UpdateTurnPostID(id string, postID *string) error {
+	for _, t := range s.turns {
+		if t.ID == id {
+			t.PostID = postID
+			return nil
+		}
+	}
+	return errors.New("turn not found")
+}
+
+func (s *fakeConversationStore) DeleteResponseTurns(_ string, _ string) error {
+	return nil
+}
+
 func (s *fakeConversationStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
 	maxSeq := 0
 	for _, t := range s.turns {

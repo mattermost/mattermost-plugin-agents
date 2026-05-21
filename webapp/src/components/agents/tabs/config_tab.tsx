@@ -108,7 +108,6 @@ const ConfigTab = (props: Props) => {
             defaultModel: selectedService.defaultModel,
             tokenLimit: 0,
             streamingTimeoutSeconds: 0,
-            sendUserId: false,
             outputTokenLimit: selectedService.outputTokenLimit || 4096,
             useResponsesAPI: selectedService.type === 'openai' ? true : selectedService.useResponsesAPI,
             region: '',

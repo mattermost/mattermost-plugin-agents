@@ -113,6 +113,66 @@ func (s *inMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) e
 	return nil
 }
 
+func (s *inMemoryStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	for _, t := range s.turns {
+		if t.PostID != nil && *t.PostID == postID {
+			c := *t
+			return &c, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *inMemoryStore) UpdateTurnPostID(id string, postID *string) error {
+	turn, ok := s.turns[id]
+	if !ok {
+		return fmt.Errorf("turn not found")
+	}
+	turn.PostID = postID
+	return nil
+}
+
+func (s *inMemoryStore) DeleteResponseTurns(conversationID, postID string) error {
+	anchorSeq := -1
+	for _, id := range s.turnsByConv[conversationID] {
+		t, ok := s.turns[id]
+		if !ok {
+			continue
+		}
+		if t.Role == "assistant" && t.PostID != nil && *t.PostID == postID {
+			anchorSeq = t.Sequence
+			break
+		}
+	}
+	if anchorSeq < 0 {
+		return nil
+	}
+	userSeq := 0
+	for _, id := range s.turnsByConv[conversationID] {
+		t, ok := s.turns[id]
+		if !ok {
+			continue
+		}
+		if t.Role == "user" && t.Sequence < anchorSeq && t.Sequence > userSeq {
+			userSeq = t.Sequence
+		}
+	}
+	keep := s.turnsByConv[conversationID][:0]
+	for _, id := range s.turnsByConv[conversationID] {
+		t, ok := s.turns[id]
+		if !ok {
+			continue
+		}
+		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+			delete(s.turns, id)
+			continue
+		}
+		keep = append(keep, id)
+	}
+	s.turnsByConv[conversationID] = keep
+	return nil
+}
+
 func (s *inMemoryStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
 	maxSeq := 0
 	for _, id := range s.turnsByConv[conversationID] {

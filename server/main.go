@@ -596,19 +596,11 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 }
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
-	// Handle indexing of updated posts
 	if p.indexerService != nil {
-		// Delete the old post from index
-		if err := p.indexerService.DeletePost(context.Background(), oldPost.Id); err != nil {
-			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
-		}
-
-		// Get channel to retrieve team ID
 		channel, err := p.API.GetChannel(newPost.ChannelId)
 		if err != nil {
 			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
 		} else {
-			// Index the updated post
 			if err := p.indexerService.IndexPost(context.Background(), newPost, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index updated post in vector database", "error", err)
 			}
@@ -658,44 +650,49 @@ func (p *Plugin) ServeMetrics(c *plugin.Context, w http.ResponseWriter, r *http.
 	p.apiService.ServeMetrics(c, w, r)
 }
 
-// EmailNotificationWillBeSent blocks email notifications for bot replies in threads.
+// EmailNotificationWillBeSent blocks redundant AI agent email notifications.
 func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotification) (*model.EmailNotificationContent, string) {
-	if p.shouldBlockBotReplyNotification(emailNotification.SenderId, emailNotification.RootId) {
-		return nil, "notification blocked: bot reply in thread"
+	if p.shouldBlockAgentNotification(emailNotification.SenderId, emailNotification.RootId, "", emailNotification.IsDirectMessage) {
+		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return &emailNotification.EmailNotificationContent, ""
 }
 
-// NotificationWillBePushed blocks push notifications for bot replies in threads.
-// IMPORTANT: This hook must execute quickly as it can become blocking and delay post creation.
+// NotificationWillBePushed blocks redundant AI agent push notifications.
 func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotification, userID string) (*model.PushNotification, string) {
 	if pushNotification.PostId == "" {
 		return pushNotification, ""
 	}
 
-	if p.shouldBlockBotReplyNotification(pushNotification.SenderId, pushNotification.RootId) {
-		return nil, "notification blocked: bot reply in thread"
+	isDM := pushNotification.ChannelType == model.ChannelTypeDirect
+	if p.shouldBlockAgentNotification(pushNotification.SenderId, pushNotification.RootId, pushNotification.PostType, isDM) {
+		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return pushNotification, ""
 }
 
-func (p *Plugin) shouldBlockBotReplyNotification(senderID, rootID string) bool {
-	// Only check threaded replies
-	if rootID == "" {
-		return false
-	}
-
-	// Check if bots service is initialized
+// shouldBlockAgentNotification reports whether an AI agent notification is redundant.
+func (p *Plugin) shouldBlockAgentNotification(senderID, rootID, postType string, isDM bool) bool {
 	if p.bots == nil {
 		return false
 	}
 
-	// Check if sender is a bot by looking up in the bots cache
 	bot := p.bots.GetBotByID(senderID)
 	if bot == nil {
 		return false
 	}
 
-	// Block all bot reply notifications in threads
-	return true
+	if rootID != "" {
+		return true
+	}
+
+	if postType == "custom_llmbot" {
+		return true
+	}
+
+	if isDM {
+		return true
+	}
+
+	return false
 }
