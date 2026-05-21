@@ -4,6 +4,7 @@
 package conversation
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"strings"
@@ -105,15 +106,31 @@ func BlocksToPost(
 				mmClient.LogError("failed to get file info for image attachment", "error", err)
 				continue
 			}
+			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
+				post.Files = append(post.Files, llm.File{
+					MimeType: fileInfo.MimeType,
+					Size:     fileInfo.Size,
+				})
+				continue
+			}
 			reader, err := mmClient.GetFile(block.FileID)
 			if err != nil {
 				mmClient.LogError("failed to get file for image attachment", "error", err)
 				continue
 			}
+			data, err := io.ReadAll(reader)
+			if closeErr := reader.Close(); closeErr != nil {
+				mmClient.LogError("failed to close image attachment reader", "error", closeErr)
+			}
+			if err != nil {
+				mmClient.LogError("failed to read image attachment", "error", err)
+				continue
+			}
 			post.Files = append(post.Files, llm.File{
 				MimeType: fileInfo.MimeType,
 				Size:     fileInfo.Size,
-				Reader:   reader,
+				Data:     data,
+				Reader:   bytes.NewReader(data),
 			})
 
 		case BlockTypeFile:

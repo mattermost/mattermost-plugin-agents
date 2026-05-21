@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ToolInfo represents a tool's metadata for discovery purposes
@@ -89,27 +91,28 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 	return mcpErrors
 }
 
-// ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided
+// ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
+// If a connection already exists, it is reused.
 func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
 	if !embeddedConfig.Enabled || embeddedClient == nil {
 		return nil
 	}
 
-	// Check if we already have an embedded server connection
 	if _, exists := c.clients[EmbeddedClientKey]; exists {
-		return nil // Already connected
+		return nil
 	}
 
-	// Connect if session ID is provided
-	if sessionID != "" {
-		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := c.connectToEmbeddedServerWithClient(ctxWithTimeout, c.userID, sessionID, embeddedClient); err != nil {
-			c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
-			return fmt.Errorf("failed to connect to embedded server: %w", err)
-		}
-		c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
+	if sessionID == "" {
+		return nil
 	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.connectToEmbeddedServerWithClient(ctxWithTimeout, c.userID, sessionID, embeddedClient); err != nil {
+		c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
+		return fmt.Errorf("failed to connect to embedded server: %w", err)
+	}
+	c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
 
 	return nil
 }
@@ -185,19 +188,35 @@ func (c *UserClients) GetTools() []llm.Tool {
 	return tools
 }
 
-// prepareToolCallMetadata prepares metadata to be sent with MCP tool calls
-// This is where we inject context-specific information that tools need but shouldn't be in arguments
-func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Context) map[string]any {
-	// Only add metadata if we have a valid context
+// prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.
+// Per-call metadata is sourced from the tool itself (set at scope-time via
+// llm.Tool.WithCallMetadata) so callers can plumb runtime info — like before-hook
+// keys — without leaking it into the LLM-visible schema or onto llm.Context.
+// bot_user_id is sourced from llm.Context because it is identity, not per-call config.
+func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, llmContext *llm.Context) map[string]any {
 	if llmContext == nil {
 		return nil
 	}
 
-	var metadata map[string]any
+	// Only inject metadata for the embedded server.
+	if client.config.Name != EmbeddedClientKey {
+		return nil
+	}
 
-	// For embedded server, inject Bot UserID for AI-generated content tracking
-	if client.config.Name == EmbeddedClientKey && llmContext.BotUserID != "" {
-		metadata = make(map[string]any)
+	var metadata map[string]any
+	if llmContext.Tools != nil {
+		if tool := llmContext.Tools.GetTool(toolName); tool != nil && len(tool.CallMetadata) > 0 {
+			metadata = make(map[string]any, len(tool.CallMetadata)+1)
+			for k, v := range tool.CallMetadata {
+				metadata[k] = v
+			}
+		}
+	}
+
+	if llmContext.BotUserID != "" {
+		if metadata == nil {
+			metadata = make(map[string]any, 1)
+		}
 		metadata["bot_user_id"] = llmContext.BotUserID
 	}
 
@@ -255,8 +274,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
 		}
 
-		// Prepare metadata for the tool call
-		metadata := c.prepareToolCallMetadata(client, llmContext)
+		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
 
 		result, err := client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
 		if err != nil {
@@ -267,4 +285,84 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 		c.clearOAuthNeededForServer(client)
 		return result, nil
 	}
+}
+
+// pluginServerOriginKey returns the synthetic origin string for plugin-server
+// tools. Must match the key used by filterToolsByConfig.
+func pluginServerOriginKey(pluginID string) string {
+	return "plugin://" + pluginID
+}
+
+// ConnectToPluginServer establishes a cached MCP session with a source plugin
+// over PluginHTTP, injecting X-Mattermost-UserID. Plugin servers use
+// inter-plugin auth, not user OAuth.
+func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) error {
+	if sourcePluginAPI == nil {
+		return fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)
+	}
+
+	originKey := pluginServerOriginKey(cfg.PluginID)
+	if _, exists := c.clients[originKey]; exists {
+		return nil
+	}
+
+	roundTripper := NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI)
+	httpClient := &http.Client{
+		Transport: &headerTransport{
+			base:    roundTripper,
+			headers: map[string]string{MMUserIDHeader: c.userID},
+		},
+	}
+
+	// Endpoint URL is a placeholder — PluginHTTPRoundTripper rewrites
+	// req.URL.Path on each round trip. go-sdk requires a parseable URL.
+	mcpClient := gosdkmcp.NewClient(
+		&gosdkmcp.Implementation{
+			Name:    "mattermost-agents-plugin-bridge",
+			Version: "1.0",
+		},
+		&gosdkmcp.ClientOptions{},
+	)
+	session, err := mcpClient.Connect(ctx, &gosdkmcp.StreamableClientTransport{
+		Endpoint:   "http://plugin" + cfg.Path,
+		HTTPClient: httpClient,
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)
+	}
+
+	initResult, err := session.ListTools(ctx, &gosdkmcp.ListToolsParams{})
+	if err != nil {
+		_ = session.Close()
+		return fmt.Errorf("failed to list tools on plugin MCP server %s: %w", cfg.PluginID, err)
+	}
+	if len(initResult.Tools) == 0 {
+		_ = session.Close()
+		return fmt.Errorf("no tools found on plugin MCP server %s for user %s", cfg.PluginID, c.userID)
+	}
+
+	// Synthetic ServerConfig: BaseURL == originKey ties the client into
+	// filterToolsByConfig via llm.Tool.ServerOrigin in GetTools.
+	pluginCfg := ServerConfig{
+		Name:    cfg.Name,
+		Enabled: true,
+		BaseURL: originKey,
+	}
+
+	client := &Client{
+		session:    session,
+		config:     pluginCfg,
+		tools:      make(map[string]*gosdkmcp.Tool, len(initResult.Tools)),
+		userID:     c.userID,
+		log:        c.log,
+		httpClient: httpClient,
+		// oauthManager/embeddedClient stay nil; reconnect reuses httpClient.
+	}
+	for _, tool := range initResult.Tools {
+		client.tools[tool.Name] = tool
+	}
+
+	c.clients[originKey] = client
+	c.log.Debug("Connected to plugin MCP server", "userID", c.userID, "pluginID", cfg.PluginID, "toolCount", len(client.tools))
+	return nil
 }

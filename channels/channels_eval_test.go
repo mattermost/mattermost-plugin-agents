@@ -5,6 +5,7 @@ package channels_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"path/filepath"
@@ -87,7 +88,7 @@ func TestChannelSummarization(t *testing.T) {
 			if threadData.RequestingUser() != nil {
 				userID = threadData.RequestingUser().Id
 			}
-			result, err := channelService.Interval(ctx, threadData.Channel.Id, userID, "eval-bot", fixedStart, 0, prompts.PromptSummarizeChannelRangeSystem)
+			result, err := channelService.Interval(context.Background(), ctx, threadData.Channel.Id, userID, "eval-bot", fixedStart, 0, prompts.PromptSummarizeChannelRangeSystem)
 			require.NoError(t, err, "Failed to summarize channel")
 			require.NotNil(t, result, "Expected a non-nil result")
 			textStream := result.Stream
@@ -195,6 +196,27 @@ func (s *evalInMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int6
 		t.TokensIn = tokensIn
 		t.TokensOut = tokensOut
 	}
+	return nil
+}
+
+func (s *evalInMemoryStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	for _, t := range s.turns {
+		if t.PostID != nil && *t.PostID == postID {
+			c := t.Turn
+			return &c, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *evalInMemoryStore) UpdateTurnPostID(id string, postID *string) error {
+	if t, ok := s.turns[id]; ok {
+		t.PostID = postID
+	}
+	return nil
+}
+
+func (s *evalInMemoryStore) DeleteResponseTurns(_ string, _ string) error {
 	return nil
 }
 

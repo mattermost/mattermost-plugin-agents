@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/config"
@@ -63,6 +65,13 @@ type MCPClientManager interface {
 	EnsureMCPSessionID(userID string) (string, error)
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
 	GetConfig() mcp.Config
+
+	RegisterPluginServer(cfg mcp.PluginServerConfig)
+	UnregisterPluginServer(pluginID string)
+	ListPluginServers() []mcp.PluginServerConfig
+	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
+
+	DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
 }
 
 // ConfigStore provides read/write access to the plugin configuration in the database.
@@ -131,6 +140,7 @@ type API struct {
 	i18nBundle            *i18n.Bundle
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
+	beforeHookStore       *mcp.BeforeHookStore
 	llmUpstreamHTTPClient *http.Client
 	configStore           ConfigStore
 	agentStore            AgentStore
@@ -142,6 +152,15 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+
+	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
+	// is the only supported entry point for tests.
+	externalRebuilderForTest externalServerRebuilder
+}
+
+// SetExternalRebuilderForTest installs a test-only externalServerRebuilder.
+func (a *API) SetExternalRebuilderForTest(rb externalServerRebuilder) {
+	a.externalRebuilderForTest = rb
 }
 
 // New creates a new API instance
@@ -193,6 +212,7 @@ func New(
 		i18nBundle:            i18nBundle,
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
+		beforeHookStore:       mcp.NewBeforeHookStore(&pluginAPI.KV),
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
 		configStore:           configStore,
 		agentStore:            agentStore,
@@ -214,6 +234,7 @@ func (a *API) SetConversationService(svc *conversation.Service) {
 // ServeHTTP handles HTTP requests to the plugin
 func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	router := gin.Default()
+	router.Use(otelgin.Middleware("mattermost-ai-agents"))
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
 
@@ -222,15 +243,19 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	llmBridgeRoute.Use(a.interPluginAuthorizationRequired)
 
 	// Discovery endpoints
-	llmBridgeRoute.GET("/agents", a.handleGetAgents)
-	llmBridgeRoute.GET("/services", a.handleGetServices)
+	llmBridgeRoute.GET("/agents", a.validateUserIDQuery, a.handleGetAgents)
+	llmBridgeRoute.GET("/agents/:agent/tools", a.validateAgentParam, a.validateUserIDQuery, a.handleGetAgentTools)
+	llmBridgeRoute.GET("/services", a.validateUserIDQuery, a.handleGetServices)
 
 	// Completion endpoints
 	completionRoute := llmBridgeRoute.Group("/completion")
-	completionRoute.POST("/agent/:agent", a.handleAgentCompletionStreaming)
-	completionRoute.POST("/agent/:agent/nostream", a.handleAgentCompletionNoStream)
+	completionRoute.POST("/agent/:agent", a.validateAgentParam, a.handleAgentCompletionStreaming)
+	completionRoute.POST("/agent/:agent/nostream", a.validateAgentParam, a.handleAgentCompletionNoStream)
 	completionRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
 	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
+
+	llmBridgeRoute.POST("/mcp/register", a.handleMCPRegister)
+	llmBridgeRoute.POST("/mcp/unregister", a.handleMCPUnregister)
 
 	// MCP server endpoints - grouped under /mcp-server/
 	if a.mcpHandlers != nil && a.config.MCP().EnablePluginServer {
@@ -327,6 +352,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
+	adminRouter.PUT("/mcp/plugin-servers/:pluginID", a.handleUpdatePluginServer)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)

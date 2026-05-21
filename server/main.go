@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -55,6 +57,10 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
+	telemetryShutdown    telemetry.ShutdownFunc
+	telemetryMu          sync.Mutex
+	telemetryMode        telemetry.OutputMode
+	telemetryEndpoint    string
 	store                *store.Store
 	configMigrated       bool
 }
@@ -394,7 +400,7 @@ func (p *Plugin) OnActivate() error {
 		}
 		return mcp.ServerConfig{}, false
 	}
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient)
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient)
 	p.configuration.RegisterUpdateListener(func() {
 		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
 		if embeddedErr != nil {
@@ -444,23 +450,9 @@ func (p *Plugin) OnActivate() error {
 	// TODO: Refactor to avoid circular dependency
 	conversationsService.SetMeetingsService(meetingsService)
 
-	// Wire per-tool policy checker for auto-approval in streaming and conversations
+	// Wire per-tool policy checker for auto-approval in streaming and conversations.
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
-		mcpCfg := p.configuration.MCP()
-		if serverBaseURL == mcp.EmbeddedClientKey {
-			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
-			if len(toolConfigs) == 0 {
-				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
-			}
-			embeddedCfg := &mcp.ServerConfig{Enabled: true, ToolConfigs: toolConfigs}
-			return embeddedCfg.GetToolPolicy(toolName)
-		}
-		for i := range mcpCfg.Servers {
-			if mcpCfg.Servers[i].BaseURL == serverBaseURL {
-				return mcpCfg.Servers[i].GetToolPolicy(toolName)
-			}
-		}
-		return "ask", false
+		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, toolName)
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
@@ -470,7 +462,7 @@ func (p *Plugin) OnActivate() error {
 	// Create logger adapter to route MCP handler logs through plugin logging
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI)
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger)
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, mcpClientManager, mmClient)
 	if err != nil {
 		pluginAPI.Log.Error("Failed to create MCP handlers", "error", err)
 	} else {
@@ -512,6 +504,11 @@ func (p *Plugin) OnActivate() error {
 
 	apiService.SetConversationService(convService)
 
+	// Apply OpenTelemetry config now and re-apply on every config change so
+	// admins don't need to restart the plugin to switch modes.
+	p.applyTelemetryConfig()
+	p.configuration.RegisterUpdateListener(p.applyTelemetryConfig)
+
 	// Keep only what we need
 	p.apiService = apiService
 	p.bots = bots
@@ -523,10 +520,62 @@ func (p *Plugin) OnActivate() error {
 }
 
 func (p *Plugin) OnDeactivate() error {
+	// Flush pending telemetry spans
+	p.telemetryMu.Lock()
+	if p.telemetryShutdown != nil {
+		if err := p.telemetryShutdown(context.Background()); err != nil {
+			p.pluginAPI.Log.Error("Failed to shutdown OpenTelemetry", "error", err)
+		}
+		p.telemetryShutdown = nil
+	}
+	p.telemetryMu.Unlock()
+
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
 
 	return nil
+}
+
+// applyTelemetryConfig (re)initializes the global OpenTelemetry TracerProvider
+// from the current plugin configuration. It is safe to call repeatedly: when
+// the mode and endpoint match what's already running, it is a no-op. When the
+// settings change it shuts the previous provider down and installs a new one.
+func (p *Plugin) applyTelemetryConfig() {
+	cfg := p.configuration.Config()
+	mode := telemetry.OutputMode(cfg.TelemetryOutput)
+	if mode == "" {
+		mode = telemetry.OutputModeOff
+	}
+	endpoint := cfg.OpenTelemetryEndpoint
+
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+
+	if mode == p.telemetryMode && endpoint == p.telemetryEndpoint {
+		return
+	}
+
+	if p.telemetryShutdown != nil {
+		if err := p.telemetryShutdown(context.Background()); err != nil {
+			p.pluginAPI.Log.Error("Failed to shutdown previous OpenTelemetry provider", "error", err)
+		}
+		p.telemetryShutdown = nil
+	}
+
+	shutdown, err := telemetry.Init(context.Background(), "mattermost-ai-agents", manifest.Version, mode, endpoint, &p.pluginAPI.Log)
+	if err != nil {
+		p.pluginAPI.Log.Error("Failed to initialize OpenTelemetry", "error", err, "mode", string(mode))
+		// Leave previous mode tracked so the next change still triggers a re-init.
+		return
+	}
+	p.telemetryShutdown = shutdown
+	p.telemetryMode = mode
+	p.telemetryEndpoint = endpoint
+	if mode == telemetry.OutputModeOff {
+		p.pluginAPI.Log.Info("OpenTelemetry tracing disabled")
+	} else {
+		p.pluginAPI.Log.Info("OpenTelemetry tracing initialized", "mode", string(mode))
+	}
 }
 
 func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
@@ -547,19 +596,11 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 }
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
-	// Handle indexing of updated posts
 	if p.indexerService != nil {
-		// Delete the old post from index
-		if err := p.indexerService.DeletePost(context.Background(), oldPost.Id); err != nil {
-			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
-		}
-
-		// Get channel to retrieve team ID
 		channel, err := p.API.GetChannel(newPost.ChannelId)
 		if err != nil {
 			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
 		} else {
-			// Index the updated post
 			if err := p.indexerService.IndexPost(context.Background(), newPost, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index updated post in vector database", "error", err)
 			}
@@ -609,44 +650,49 @@ func (p *Plugin) ServeMetrics(c *plugin.Context, w http.ResponseWriter, r *http.
 	p.apiService.ServeMetrics(c, w, r)
 }
 
-// EmailNotificationWillBeSent blocks email notifications for bot replies in threads.
+// EmailNotificationWillBeSent blocks redundant AI agent email notifications.
 func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotification) (*model.EmailNotificationContent, string) {
-	if p.shouldBlockBotReplyNotification(emailNotification.SenderId, emailNotification.RootId) {
-		return nil, "notification blocked: bot reply in thread"
+	if p.shouldBlockAgentNotification(emailNotification.SenderId, emailNotification.RootId, "", emailNotification.IsDirectMessage) {
+		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return &emailNotification.EmailNotificationContent, ""
 }
 
-// NotificationWillBePushed blocks push notifications for bot replies in threads.
-// IMPORTANT: This hook must execute quickly as it can become blocking and delay post creation.
+// NotificationWillBePushed blocks redundant AI agent push notifications.
 func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotification, userID string) (*model.PushNotification, string) {
 	if pushNotification.PostId == "" {
 		return pushNotification, ""
 	}
 
-	if p.shouldBlockBotReplyNotification(pushNotification.SenderId, pushNotification.RootId) {
-		return nil, "notification blocked: bot reply in thread"
+	isDM := pushNotification.ChannelType == model.ChannelTypeDirect
+	if p.shouldBlockAgentNotification(pushNotification.SenderId, pushNotification.RootId, pushNotification.PostType, isDM) {
+		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return pushNotification, ""
 }
 
-func (p *Plugin) shouldBlockBotReplyNotification(senderID, rootID string) bool {
-	// Only check threaded replies
-	if rootID == "" {
-		return false
-	}
-
-	// Check if bots service is initialized
+// shouldBlockAgentNotification reports whether an AI agent notification is redundant.
+func (p *Plugin) shouldBlockAgentNotification(senderID, rootID, postType string, isDM bool) bool {
 	if p.bots == nil {
 		return false
 	}
 
-	// Check if sender is a bot by looking up in the bots cache
 	bot := p.bots.GetBotByID(senderID)
 	if bot == nil {
 		return false
 	}
 
-	// Block all bot reply notifications in threads
-	return true
+	if rootID != "" {
+		return true
+	}
+
+	if postType == "custom_llmbot" {
+		return true
+	}
+
+	if isDM {
+		return true
+	}
+
+	return false
 }

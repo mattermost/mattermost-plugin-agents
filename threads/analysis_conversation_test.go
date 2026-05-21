@@ -183,8 +183,8 @@ func TestAnalyzeCreatesConversation(t *testing.T) {
 
 			// Capture the completion request to verify tools are disabled
 			var capturedConfig llm.LanguageModelConfig
-			mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything).
-				Run(func(req llm.CompletionRequest, opts ...llm.LanguageModelOption) {
+			mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything, mock.Anything).
+				Run(func(_ context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) {
 					for _, opt := range opts {
 						opt(&capturedConfig)
 					}
@@ -195,7 +195,7 @@ func TestAnalyzeCreatesConversation(t *testing.T) {
 			ctx.RequestingUser = &model.User{Id: userID, Username: "requester", Locale: "en"}
 
 			svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
-			result, err := svc.Analyze("post123", ctx, tc.promptName, botID, userID)
+			result, err := svc.Analyze(context.Background(), "post123", ctx, tc.promptName, botID, userID)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.NotEmpty(t, result.ConversationID)
@@ -246,7 +246,7 @@ func TestAnalyzeThreadDataError(t *testing.T) {
 	ctx.RequestingUser = &model.User{Id: userID, Username: "requester", Locale: "en"}
 
 	svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
-	result, err := svc.Analyze("badpost", ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
+	result, err := svc.Analyze(context.Background(), "badpost", ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "thread")
 	assert.Nil(t, result)
@@ -267,7 +267,7 @@ func TestAnalyzeLLMError(t *testing.T) {
 	mockClient := setupMockThread(t, "post456", []*model.Post{threadPost}, threadUsers)
 	mockLLM := mocks.NewMockLanguageModel(t)
 
-	mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything).
+	mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, errors.New("llm unavailable"))
 
 	botID := model.NewId()
@@ -276,7 +276,7 @@ func TestAnalyzeLLMError(t *testing.T) {
 	ctx.RequestingUser = &model.User{Id: userID, Username: "requester", Locale: "en"}
 
 	svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
-	result, err := svc.Analyze("post456", ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
+	result, err := svc.Analyze(context.Background(), "post456", ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "llm unavailable")
 	assert.Nil(t, result)
@@ -302,7 +302,7 @@ func TestFollowUpContinuesConversation(t *testing.T) {
 	mockClient := setupMockThread(t, "post789", []*model.Post{threadPost}, threadUsers)
 	mockLLM := mocks.NewMockLanguageModel(t)
 
-	mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything).
+	mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything, mock.Anything).
 		Return(llm.NewStreamFromString("Here is the summary."), nil).Once()
 
 	botID := model.NewId()
@@ -313,7 +313,7 @@ func TestFollowUpContinuesConversation(t *testing.T) {
 	svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
 
 	// Step 1: Initial analysis
-	result, err := svc.Analyze("post789", ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
+	result, err := svc.Analyze(context.Background(), "post789", ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
 	require.NoError(t, err)
 	conversationID := result.ConversationID
 
@@ -413,8 +413,8 @@ func TestAnalyzeOperationSubType(t *testing.T) {
 			mockLLM := mocks.NewMockLanguageModel(t)
 
 			var capturedRequest llm.CompletionRequest
-			mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything).
-				Run(func(req llm.CompletionRequest, opts ...llm.LanguageModelOption) {
+			mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything, mock.Anything).
+				Run(func(_ context.Context, req llm.CompletionRequest, opts ...llm.LanguageModelOption) {
 					capturedRequest = req
 				}).
 				Return(&llm.TextStreamResult{}, nil)
@@ -423,7 +423,7 @@ func TestAnalyzeOperationSubType(t *testing.T) {
 			ctx.RequestingUser = &model.User{Id: model.NewId(), Username: "requester", Locale: "en"}
 
 			svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
-			_, err := svc.Analyze("postSub", ctx, tc.promptName, model.NewId(), model.NewId())
+			_, err := svc.Analyze(context.Background(), "postSub", ctx, tc.promptName, model.NewId(), model.NewId())
 			require.NoError(t, err)
 
 			assert.Equal(t, tc.expectedOperationSubType, capturedRequest.OperationSubType)

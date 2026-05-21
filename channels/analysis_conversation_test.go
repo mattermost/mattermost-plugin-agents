@@ -4,6 +4,7 @@
 package channels
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -112,6 +113,66 @@ func (s *inMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) e
 	return nil
 }
 
+func (s *inMemoryStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	for _, t := range s.turns {
+		if t.PostID != nil && *t.PostID == postID {
+			c := *t
+			return &c, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *inMemoryStore) UpdateTurnPostID(id string, postID *string) error {
+	turn, ok := s.turns[id]
+	if !ok {
+		return fmt.Errorf("turn not found")
+	}
+	turn.PostID = postID
+	return nil
+}
+
+func (s *inMemoryStore) DeleteResponseTurns(conversationID, postID string) error {
+	anchorSeq := -1
+	for _, id := range s.turnsByConv[conversationID] {
+		t, ok := s.turns[id]
+		if !ok {
+			continue
+		}
+		if t.Role == "assistant" && t.PostID != nil && *t.PostID == postID {
+			anchorSeq = t.Sequence
+			break
+		}
+	}
+	if anchorSeq < 0 {
+		return nil
+	}
+	userSeq := 0
+	for _, id := range s.turnsByConv[conversationID] {
+		t, ok := s.turns[id]
+		if !ok {
+			continue
+		}
+		if t.Role == "user" && t.Sequence < anchorSeq && t.Sequence > userSeq {
+			userSeq = t.Sequence
+		}
+	}
+	keep := s.turnsByConv[conversationID][:0]
+	for _, id := range s.turnsByConv[conversationID] {
+		t, ok := s.turns[id]
+		if !ok {
+			continue
+		}
+		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+			delete(s.turns, id)
+			continue
+		}
+		keep = append(keep, id)
+	}
+	s.turnsByConv[conversationID] = keep
+	return nil
+}
+
 func (s *inMemoryStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
 	maxSeq := 0
 	for _, id := range s.turnsByConv[conversationID] {
@@ -142,7 +203,7 @@ type fakeLLM struct {
 	callIdx int
 }
 
-func (f *fakeLLM) ChatCompletion(_ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (f *fakeLLM) ChatCompletion(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	if f.callIdx >= len(f.calls) {
 		return nil, fmt.Errorf("unexpected call #%d to ChatCompletion", f.callIdx)
 	}
@@ -156,7 +217,7 @@ func (f *fakeLLM) ChatCompletion(_ llm.CompletionRequest, _ ...llm.LanguageModel
 	return &llm.TextStreamResult{Stream: ch}, nil
 }
 
-func (f *fakeLLM) ChatCompletionNoStream(_ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
+func (f *fakeLLM) ChatCompletionNoStream(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
 	return "", fmt.Errorf("not implemented")
 }
 
@@ -229,7 +290,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{
 					makeTool("read_channel", "channel posts here"),
 					makeTool("get_channel_info", "channel info here"),
@@ -241,7 +302,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "user1", "bot1", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(context.Background(), ctx, "user1", "bot1", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 				require.NotNil(t, result)
 				assert.NotEmpty(t, result.ConversationID)
@@ -314,6 +375,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				// Call IntervalWithRequest directly to avoid needing real
 				// post-fetching infrastructure.
 				result, err := ch.IntervalWithRequest(
+					context.Background(),
 					ctx,
 					"user2",
 					"bot2",
@@ -358,7 +420,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{
 					makeTool("read_channel", "posts data"),
 					makeTool("get_channel_info", "info data"),
@@ -370,7 +432,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "user3", "bot3", "test system prompt", "test user prompt", "deep_analysis")
+				result, err := ch.AnalyzeChannelWithRequest(context.Background(), ctx, "user3", "bot3", "test system prompt", "test user prompt", "deep_analysis")
 				require.NoError(t, err)
 
 				text, err := result.Stream.ReadAll()
@@ -404,7 +466,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{
 					makeToolWithError("read_channel", "connection refused"),
 					makeTool("get_channel_info", "info"),
@@ -416,7 +478,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "user4", "bot4", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(context.Background(), ctx, "user4", "bot4", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 
 				text, err := result.Stream.ReadAll()
@@ -449,7 +511,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{
 					makeTool("read_channel", "posts"),
 					makeTool("get_channel_info", "info"),
@@ -461,7 +523,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "user5", "bot5", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(context.Background(), ctx, "user5", "bot5", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 
 				text, err := result.Stream.ReadAll()
@@ -500,7 +562,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{makeTool("read_channel", "data")})
 
 				ctx := llm.NewContext()
@@ -509,7 +571,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "user6", "bot6", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(context.Background(), ctx, "user6", "bot6", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 				_, err = result.Stream.ReadAll()
 				require.NoError(t, err)
@@ -536,7 +598,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{makeTool("read_channel", "data")})
 
 				ctx := llm.NewContext()
@@ -545,7 +607,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "user7", "bot7", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(context.Background(), ctx, "user7", "bot7", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 				_, err = result.Stream.ReadAll()
 				require.NoError(t, err)
@@ -599,7 +661,7 @@ func TestAnalysisResultConversationID(t *testing.T) {
 		},
 	}
 
-	tools := llm.NewToolStore(nil, false)
+	tools := llm.NewToolStore()
 	tools.AddTools([]llm.Tool{
 		makeTool("read_channel", "posts"),
 		makeTool("get_channel_info", "info"),
@@ -611,7 +673,7 @@ func TestAnalysisResultConversationID(t *testing.T) {
 	ctx.Tools = tools
 
 	ch := New(fakeLM, nil, nil, nil, convSvc)
-	result, err := ch.AnalyzeChannelWithRequest(ctx, "user8", "bot8", "test system prompt", "test user prompt", "summary")
+	result, err := ch.AnalyzeChannelWithRequest(context.Background(), ctx, "user8", "bot8", "test system prompt", "test user prompt", "summary")
 	require.NoError(t, err)
 	_, _ = result.Stream.ReadAll()
 
@@ -638,7 +700,7 @@ func TestIntervalWithRequestConversationID(t *testing.T) {
 
 	ch := New(fakeLM, nil, nil, nil, convSvc)
 	result, err := ch.IntervalWithRequest(
-		ctx, "user9", "bot9",
+		context.Background(), ctx, "user9", "bot9",
 		"sys prompt", "user prompt", "preset",
 	)
 	require.NoError(t, err)

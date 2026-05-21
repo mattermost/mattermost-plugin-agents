@@ -166,6 +166,52 @@ RETURNING Sequence`
 	return fmt.Errorf("failed to create turn after %d retries: %w", maxAutoSequenceRetries, lastErr)
 }
 
+// UpdateTurnPostID sets or clears the PostID column for a turn. The webapp's
+// anchor lookup expects at most one assistant turn per post_id.
+func (s *Store) UpdateTurnPostID(id string, postID *string) error {
+	query, args, err := s.builder.
+		Update("LLM_Turns").
+		Set("PostID", postID).
+		Where(sq.Eq{"ID": id}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build update turn post id query: %w", err)
+	}
+	_, err = s.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update turn post id: %w", err)
+	}
+	return nil
+}
+
+// DeleteResponseTurns removes the post's anchor turn and any assistant or
+// tool_result turns between it and the originating user turn. Callers must
+// build any completion request before calling this.
+func (s *Store) DeleteResponseTurns(conversationID, postID string) error {
+	const query = `
+DELETE FROM LLM_Turns
+WHERE ConversationID = $1
+  AND Sequence > COALESCE((
+    SELECT MAX(Sequence) FROM LLM_Turns
+    WHERE ConversationID = $1
+      AND Role = 'user'
+      AND Sequence < (
+        SELECT Sequence FROM LLM_Turns
+        WHERE ConversationID = $1 AND Role = 'assistant' AND PostID = $2
+        LIMIT 1
+      )
+  ), 0)
+  AND Sequence <= (
+    SELECT Sequence FROM LLM_Turns
+    WHERE ConversationID = $1 AND Role = 'assistant' AND PostID = $2
+    LIMIT 1
+  )`
+	if _, err := s.db.Exec(query, conversationID, postID); err != nil {
+		return fmt.Errorf("failed to delete response turns: %w", err)
+	}
+	return nil
+}
+
 // UpdateTurnTokens updates the TokensIn and TokensOut fields on a turn.
 func (s *Store) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	query, args, err := s.builder.

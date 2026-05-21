@@ -12,10 +12,11 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
-var ErrOAuthNotConfigured = errors.New("oauth is not configured for this plugin")
+var ErrOAuthNotConfigured = errors.New("oauth not configured")
 
 // ClientManager manages MCP clients for multiple users
 type ClientManager struct {
@@ -32,17 +33,26 @@ type ClientManager struct {
 	httpClient     *http.Client
 	embeddedClient *EmbeddedServerClient // Helper for embedded server (nil if disabled)
 	toolsCache     *ToolsCache
+
+	// pluginServersMu must not be held across PluginHTTP round trips.
+	pluginServersMu sync.RWMutex
+	pluginServers   map[string]PluginServerConfig // keyed by PluginID
+	// sourcePluginAPI is the agents-plugin mmapi.Client; used by
+	// PluginHTTPRoundTripper to dispatch to source plugins.
+	sourcePluginAPI mmapi.Client
 }
 
-// NewClientManager creates a new MCP client manager
-// embeddedServer can be nil if embedded server is not available
-func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client) *ClientManager {
+// NewClientManager creates a new MCP client manager. embeddedServer may be nil.
+// sourcePluginAPI routes PluginHTTP to source plugins; may be nil.
+func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client, sourcePluginAPI mmapi.Client) *ClientManager {
 	manager := &ClientManager{
-		log:          log,
-		pluginAPI:    pluginAPI,
-		oauthManager: oauthManager,
-		httpClient:   httpClient,
-		toolsCache:   NewToolsCache(&pluginAPI.KV, &log),
+		log:             log,
+		pluginAPI:       pluginAPI,
+		oauthManager:    oauthManager,
+		httpClient:      httpClient,
+		toolsCache:      NewToolsCache(&pluginAPI.KV, &log),
+		pluginServers:   make(map[string]PluginServerConfig),
+		sourcePluginAPI: sourcePluginAPI,
 	}
 	manager.ReInit(config, embeddedServer)
 	return manager
@@ -54,11 +64,12 @@ func (m *ClientManager) EnsureMCPSessionID(userID string) (string, error) {
 	return m.ensureEmbeddedSessionID(userID)
 }
 
-// cleanupInactiveClients periodically checks for and closes inactive client connections
-func (m *ClientManager) cleanupInactiveClients() {
+// cleanupInactiveClients closes idle clients. closeChan/ticker are captured at
+// launch to avoid racing with Close()/ReInit() reassigning the m.* fields.
+func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker *time.Ticker) {
 	for {
 		select {
-		case <-m.cleanupTicker.C:
+		case <-ticker.C:
 			m.clientsMu.Lock()
 			now := time.Now()
 			for userID, client := range m.clients {
@@ -66,12 +77,11 @@ func (m *ClientManager) cleanupInactiveClients() {
 					m.log.Debug("Closing inactive MCP client", "userID", userID)
 					client.Close()
 					delete(m.clients, userID)
-					delete(m.activity, userID)
 				}
 			}
 			m.clientsMu.Unlock()
-		case <-m.closeChan:
-			m.cleanupTicker.Stop()
+		case <-closeChan:
+			ticker.Stop()
 			return
 		}
 	}
@@ -98,9 +108,11 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 	m.closeChan = make(chan struct{})
 	m.activity = make(map[string]time.Time)
 
-	// Start cleanup ticker to remove inactive clients
 	m.cleanupTicker = time.NewTicker(5 * time.Minute)
-	go m.cleanupInactiveClients()
+	go m.cleanupInactiveClients(m.closeChan, m.cleanupTicker)
+
+	// Must happen after m.config = config so the persisted view drives the merge.
+	m.syncPluginServersFromConfig(config)
 }
 
 // Close closes the client manager and all managed clients
@@ -125,7 +137,6 @@ func (m *ClientManager) Close() {
 
 	// Clear the clients map
 	m.clients = make(map[string]*UserClients)
-	m.activity = make(map[string]time.Time)
 }
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager
@@ -168,13 +179,13 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 	return m.createAndStoreUserClient(userID)
 }
 
-// GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided
+// GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
 func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
 	userClient, mcpErrors := m.getClientForUser(userID)
 
-	// Connect to embedded server using a dedicated per-user session (stored/created in KV)
-	if m.embeddedClient != nil {
+	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
+	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
 		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
@@ -185,10 +196,37 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 		}
 	}
 
-	// Return admin-filtered tools from all connected servers (remote + embedded if connected)
+	// Snapshot under RLock, then release before PluginHTTP work.
+	pluginSnap := m.snapshotEnabledPluginServers()
+	for _, cfg := range pluginSnap {
+		if connectErr := userClient.ConnectToPluginServer(context.TODO(), cfg, m.sourcePluginAPI); connectErr != nil {
+			m.log.Error("Failed to connect to plugin MCP server", "userID", userID, "pluginID", cfg.PluginID, "error", connectErr)
+			if mcpErrors == nil {
+				mcpErrors = &Errors{}
+			}
+			mcpErrors.Errors = append(mcpErrors.Errors, connectErr)
+			// Surface plugin connect failures on subsequent cached lookups.
+			userClient.initialRemoteConnectErrors = mcpErrors
+		}
+	}
+
 	rawTools := userClient.GetTools()
-	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient)
+	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
 	return filtered, mcpErrors
+}
+
+// snapshotEnabledPluginServers returns a copy of enabled plugin configs so
+// callers can iterate (and do HTTP work) without holding pluginServersMu.
+func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
+	m.pluginServersMu.RLock()
+	defer m.pluginServersMu.RUnlock()
+	out := make([]PluginServerConfig, 0, len(m.pluginServers))
+	for _, cfg := range m.pluginServers {
+		if cfg.Enabled {
+			out = append(out, cfg)
+		}
+	}
+	return out
 }
 
 // InvalidateUserClients closes and removes cached MCP clients for a user.
@@ -283,17 +321,72 @@ func (m *ClientManager) GetConfig() Config {
 	return m.config
 }
 
-// filterToolsByConfig filters raw discovered tools against the admin-configured
-// tool policies. Only tools that have a matching ServerConfig entry with a
-// ToolConfigs entry where enabled=true are returned. The result is ordered by
-// configured server order, then alphabetically by tool name within each server.
-//
-// For the embedded server, if no explicit ToolConfigs are present, the vetted
-// tool seed is used as the effective config.
-func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *EmbeddedServerClient) []llm.Tool {
-	// Build a lookup: ServerOrigin (BaseURL) -> *ServerConfig
-	serverByOrigin := make(map[string]*ServerConfig, len(cfg.Servers))
-	serverOrder := make([]string, 0, len(cfg.Servers)+1)
+// RegisterPluginServer stores or overwrites a plugin-server registration.
+// Callers must ensure cfg.PluginID is non-empty.
+func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
+	m.pluginServersMu.Lock()
+	defer m.pluginServersMu.Unlock()
+	m.pluginServers[cfg.PluginID] = cfg
+}
+
+func (m *ClientManager) UnregisterPluginServer(pluginID string) {
+	m.pluginServersMu.Lock()
+	defer m.pluginServersMu.Unlock()
+	delete(m.pluginServers, pluginID)
+}
+
+func (m *ClientManager) ListPluginServers() []PluginServerConfig {
+	m.pluginServersMu.RLock()
+	defer m.pluginServersMu.RUnlock()
+	out := make([]PluginServerConfig, 0, len(m.pluginServers))
+	for _, cfg := range m.pluginServers {
+		out = append(out, cfg)
+	}
+	return out
+}
+
+// GetPluginServer returns a value-copy of the stored config for pluginID.
+func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bool) {
+	m.pluginServersMu.RLock()
+	defer m.pluginServersMu.RUnlock()
+	cfg, ok := m.pluginServers[pluginID]
+	return cfg, ok
+}
+
+// syncPluginServersFromConfig merges persisted admin-owned plugin-server fields
+// onto live plugin registrations. Callers must not hold pluginServersMu.
+func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
+	m.pluginServersMu.Lock()
+	defer m.pluginServersMu.Unlock()
+
+	for _, persisted := range cfg.PluginServers {
+		if persisted.PluginID == "" {
+			continue
+		}
+		if existing, ok := m.pluginServers[persisted.PluginID]; ok {
+			// Merge admin-owned fields onto the live entry; keep runtime identity
+			// and the plugin-controlled external exposure flag.
+			existing.Enabled = persisted.Enabled
+			existing.ToolConfigs = persisted.ToolConfigs
+			m.pluginServers[persisted.PluginID] = existing
+			continue
+		}
+		m.pluginServers[persisted.PluginID] = persisted
+	}
+}
+
+func (m *ClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg PluginServerConfig) ([]ToolInfo, error) {
+	return DiscoverPluginServerTools(ctx, userID, cfg, m.sourcePluginAPI, m.log)
+}
+
+// filterToolsByConfig filters raw discovered tools against admin-configured
+// policies. Result is ordered by configured server order, then by tool name.
+// The embedded server falls back to the vetted seed when ToolConfigs is empty.
+// Plugin-registered servers flow through via synthetic ServerConfig entries
+// keyed by "plugin://<pluginID>".
+func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *EmbeddedServerClient, pluginServers []PluginServerConfig) []llm.Tool {
+	serverByOrigin := make(map[string]*ServerConfig, len(cfg.Servers)+len(pluginServers)+1)
+	serverOrder := make([]string, 0, len(cfg.Servers)+len(pluginServers)+1)
 
 	for i := range cfg.Servers {
 		s := &cfg.Servers[i]
@@ -304,14 +397,13 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		serverOrder = append(serverOrder, s.BaseURL)
 	}
 
-	// Handle embedded server
 	if embeddedClient != nil {
 		embeddedCfg := &ServerConfig{
 			Name:    EmbeddedServerName,
 			Enabled: true,
 			BaseURL: EmbeddedClientKey,
 		}
-		// Use persisted tool configs if present, otherwise fall back to vetted seed
+		// Persisted tool configs override the vetted seed.
 		if len(cfg.EmbeddedServer.ToolConfigs) > 0 {
 			embeddedCfg.ToolConfigs = cfg.EmbeddedServer.ToolConfigs
 		} else {
@@ -321,7 +413,20 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		serverOrder = append(serverOrder, EmbeddedClientKey)
 	}
 
-	// Group raw tools by ServerOrigin
+	for _, ps := range pluginServers {
+		if !ps.Enabled {
+			continue
+		}
+		origin := "plugin://" + ps.PluginID
+		serverByOrigin[origin] = &ServerConfig{
+			Name:        ps.Name,
+			Enabled:     true,
+			BaseURL:     origin,
+			ToolConfigs: ps.ToolConfigs,
+		}
+		serverOrder = append(serverOrder, origin)
+	}
+
 	toolsByOrigin := make(map[string][]llm.Tool, len(rawTools))
 	for _, t := range rawTools {
 		toolsByOrigin[t.ServerOrigin] = append(toolsByOrigin[t.ServerOrigin], t)
@@ -339,7 +444,6 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 			continue
 		}
 
-		// Filter: only tools with enabled config entries
 		var filtered []llm.Tool
 		for _, t := range tools {
 			_, enabled := sc.GetToolPolicy(t.Name)
@@ -348,7 +452,7 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 			}
 		}
 
-		// Sort by tool name for deterministic output
+		// Sort for deterministic output.
 		sort.Slice(filtered, func(i, j int) bool {
 			return filtered[i].Name < filtered[j].Name
 		})

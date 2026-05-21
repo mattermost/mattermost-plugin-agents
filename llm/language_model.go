@@ -21,12 +21,14 @@
 package llm
 
 import (
+	"context"
+
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
 type LanguageModel interface {
-	ChatCompletion(conversation CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error)
-	ChatCompletionNoStream(conversation CompletionRequest, opts ...LanguageModelOption) (string, error)
+	ChatCompletion(ctx context.Context, conversation CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error)
+	ChatCompletionNoStream(ctx context.Context, conversation CompletionRequest, opts ...LanguageModelOption) (string, error)
 
 	CountTokens(text string) int
 	InputTokenLimit() int

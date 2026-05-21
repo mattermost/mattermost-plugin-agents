@@ -4,7 +4,6 @@
 package api
 
 import (
-	stdcontext "context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/react"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/threads"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -82,7 +82,7 @@ func (a *API) handleReact(c *gin.Context) {
 	emojiName, err := react.New(
 		bot.LLM(),
 		a.prompts,
-	).Resolve(post.Message, context)
+	).Resolve(c.Request.Context(), post.Message, context)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -154,13 +154,13 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	switch data.AnalysisType {
 	case "summarize_thread":
 		title = TitleThreadSummary
-		analyzeResult, err = analyzer.Summarize(post.Id, llmContext, botUserID, userID)
+		analyzeResult, err = analyzer.Summarize(c.Request.Context(), post.Id, llmContext, botUserID, userID)
 	case "action_items":
 		title = TitleFindActionItems
-		analyzeResult, err = analyzer.FindActionItems(post.Id, llmContext, botUserID, userID)
+		analyzeResult, err = analyzer.FindActionItems(c.Request.Context(), post.Id, llmContext, botUserID, userID)
 	case "open_questions":
 		title = TitleFindOpenQuestions
-		analyzeResult, err = analyzer.FindOpenQuestions(post.Id, llmContext, botUserID, userID)
+		analyzeResult, err = analyzer.FindOpenQuestions(c.Request.Context(), post.Id, llmContext, botUserID, userID)
 	}
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze thread: %w", err))
@@ -169,7 +169,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 
 	// Create analysis post with conversation ID
 	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, analyzeResult.ConversationID)
-	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
+	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -277,7 +277,7 @@ func (a *API) handleRegenerate(c *gin.Context) {
 		return
 	}
 
-	err := a.conversationsService.HandleRegenerate(userID, post, channel)
+	err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
 		return
@@ -316,7 +316,7 @@ func (a *API) handleToolCall(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs); err != nil {
+	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
 		return
 	}
@@ -370,7 +370,7 @@ func (a *API) handleToolResult(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleToolResult(userID, post, channel, data.AcceptedToolIDs); err != nil {
+	if err := a.conversationsService.HandleToolResult(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
 		return
 	}

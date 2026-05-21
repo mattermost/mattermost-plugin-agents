@@ -68,7 +68,6 @@ test.describe.serial('Initial State and Navigation', () => {
                 tokenLimit: 8000,
                 outputTokenLimit: 4000,
                 streamingTimeoutSeconds: 0,
-                sendUserId: false,
                 useResponsesAPI: false,
             }],
             bots: [],
@@ -115,7 +114,6 @@ test.describe.serial('Initial State and Navigation', () => {
                 tokenLimit: 8000,
                 outputTokenLimit: 4000,
                 streamingTimeoutSeconds: 0,
-                sendUserId: false,
                 useResponsesAPI: false,
             }],
             bots: [{

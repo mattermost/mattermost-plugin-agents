@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -25,18 +26,53 @@ type FakeLLM struct {
 	// TokenLimit to return from InputTokenLimit
 	TokenLimit int
 
+	// LastConversation holds the last completion request for assertions.
+	LastConversation llm.CompletionRequest
+	// LastConfig holds the resolved config from the last call's options.
+	LastConfig llm.LanguageModelConfig
+
+	// StreamEventSequence, when non-empty, supplies a different set of stream
+	// events for each successive call. The first call returns the first group,
+	// the second call returns the second group, and so on. Once exhausted, the
+	// last group is reused for any further calls. Useful for testing tool
+	// runners that re-invoke the LLM after executing tool calls.
+	StreamEventSequence [][]llm.TextStreamEvent
+
+	// AllRequests records every CompletionRequest received by either
+	// ChatCompletion or ChatCompletionNoStream, in order. Tests can inspect
+	// this to assert on multi-call behavior such as tool-runner round trips.
+	AllRequests []llm.CompletionRequest
+
 	mu          sync.RWMutex
 	lastRequest llm.CompletionRequest
+	callCount   int
 }
 
 // ChatCompletion implements streaming completion
-func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (f *FakeLLM) ChatCompletion(_ context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	var cfg llm.LanguageModelConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	f.mu.Lock()
 	f.lastRequest = conversation
+	f.LastConversation = conversation
+	f.LastConfig = cfg
+	f.AllRequests = append(f.AllRequests, conversation)
+	callIdx := f.callCount
+	f.callCount++
 	f.mu.Unlock()
 
 	if f.Error != nil {
 		return nil, f.Error
+	}
+
+	var sequencedEvents []llm.TextStreamEvent
+	if len(f.StreamEventSequence) > 0 {
+		if callIdx >= len(f.StreamEventSequence) {
+			callIdx = len(f.StreamEventSequence) - 1
+		}
+		sequencedEvents = f.StreamEventSequence[callIdx]
 	}
 
 	stream := make(chan llm.TextStreamEvent)
@@ -44,12 +80,16 @@ func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm
 	go func() {
 		defer close(stream)
 
-		if len(f.StreamEvents) > 0 {
-			// Send configured events
+		switch {
+		case len(sequencedEvents) > 0:
+			for _, event := range sequencedEvents {
+				stream <- event
+			}
+		case len(f.StreamEvents) > 0:
 			for _, event := range f.StreamEvents {
 				stream <- event
 			}
-		} else {
+		default:
 			// Default behavior: send response as single text event followed by end
 			if f.Response != "" {
 				stream <- llm.TextStreamEvent{
@@ -70,9 +110,17 @@ func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm
 }
 
 // ChatCompletionNoStream implements non-streaming completion
-func (f *FakeLLM) ChatCompletionNoStream(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (f *FakeLLM) ChatCompletionNoStream(_ context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	var cfg llm.LanguageModelConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	f.mu.Lock()
 	f.lastRequest = conversation
+	f.LastConversation = conversation
+	f.LastConfig = cfg
+	f.AllRequests = append(f.AllRequests, conversation)
+	f.callCount++
 	f.mu.Unlock()
 
 	if f.Error != nil {

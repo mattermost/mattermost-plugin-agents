@@ -35,7 +35,7 @@ export const DropdownBotSelector = (props: DropdownBotSelectorProps) => {
                     <FormattedMessage defaultMessage='Generate With:'/>
                 </SelectMessage>
                 <BotPill>
-                    {props.activeBot?.displayName}
+                    <BotPillName>{props.activeBot?.displayName}</BotPillName>
                     <ChevronDownIcon/>
                 </BotPill>
             </>
@@ -47,6 +47,18 @@ const BotPill = styled(GrayPill)`
 	font-size: 12px;
 	padding: 2px 6px;
 	gap: 0;
+	max-width: 128px;
+
+	svg {
+		flex-shrink: 0;
+	}
+`;
+
+const BotPillName = styled.span`
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
 `;
 
 export const BotSelectorContainer = styled.div`

@@ -70,6 +70,8 @@ response, err := client.AgentCompletion("bot-user-id", request)
 response, err := client.ServiceCompletion("openai", request)
 ```
 
+`allowed_tools` is supported only on agent endpoints. Service endpoints reject it.
+
 ### Streaming
 
 ```go
@@ -106,6 +108,28 @@ request := bridgeclient.CompletionRequest{
     },
 }
 ```
+
+### Agent tool allowlist
+
+Use tool names exactly as returned by `GetAgentTools` (each entry in `allowed_tools` is a string tool name).
+
+```go
+request := bridgeclient.CompletionRequest{
+    Posts: []bridgeclient.Post{
+        {Role: "user", Message: "Use the eligible MCP tool"},
+    },
+    AllowedTools: []string{"eligible_tool_name"},
+    UserID:       userID, // Required when using AllowedTools
+}
+
+response, err := client.AgentCompletion("bot-user-id", request)
+```
+
+When `AllowedTools` is provided:
+- only tools in the list may run
+- tool execution is auto-run (no approval flow)
+- tools must come from enabled MCP servers or embedded MCP servers (built-in agent tools are not exposed for bridge allowlists)
+- empty lists and blank tool names are rejected by the bridge API
 
 ## Permission Checking
 
@@ -191,6 +215,32 @@ for _, service := range services {
         service.Name, service.ID, service.Type)
 }
 ```
+
+### Get Eligible Tools for an Agent
+
+```go
+// Get bridge-eligible tools for an agent
+tools, err := client.GetAgentTools("bot-user-id", "")
+if err != nil {
+    return err
+}
+
+for _, tool := range tools {
+    fmt.Printf("Tool: %s - %s\n", tool.Name, tool.Description)
+}
+```
+
+This endpoint returns only tools that are currently eligible for `AllowedTools`.
+Eligible tools come from enabled MCP servers and embedded MCP servers.
+If no eligible tools are available, this returns an empty list.
+
+You can optionally pass `userID` to apply user-level permission filtering:
+
+```go
+tools, err := client.GetAgentTools("bot-user-id", userID)
+```
+
+If `userID` does not have access to the agent, the request fails with a permission error.
 
 ### Discovery with User Permissions
 

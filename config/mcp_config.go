@@ -40,6 +40,7 @@ type MCPConfig struct {
 	Enabled            bool                    `json:"enabled"`
 	EnablePluginServer bool                    `json:"enablePluginServer"`
 	Servers            []MCPServerConfig       `json:"servers"`
+	PluginServers      []PluginServerConfig    `json:"plugin_servers,omitempty"`
 	EmbeddedServer     MCPEmbeddedServerConfig `json:"embeddedServer"`
 	IdleTimeoutMinutes int                     `json:"idleTimeoutMinutes"`
 }
@@ -97,4 +98,14 @@ func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
 func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	policy, enabled := s.GetToolPolicy(toolName)
 	return IsToolPolicyAutoRunInDM(policy) && enabled
+}
+
+// PluginServerConfig describes an MCP server registered by another plugin.
+type PluginServerConfig struct {
+	PluginID       string          `json:"plugin_id"`
+	Name           string          `json:"name"`
+	Path           string          `json:"path"`
+	Enabled        bool            `json:"enabled"`
+	ExposeExternal bool            `json:"expose_external"`
+	ToolConfigs    []MCPToolConfig `json:"tool_configs,omitempty"`
 }

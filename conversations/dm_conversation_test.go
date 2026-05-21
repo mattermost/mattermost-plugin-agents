@@ -4,6 +4,7 @@
 package conversations_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -148,6 +149,71 @@ func (s *fakeConvStore) UpdateTurnContent(id string, content json.RawMessage) er
 	return nil
 }
 
+func (s *fakeConvStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.allTurns {
+		if t.PostID != nil && *t.PostID == postID {
+			c := *t
+			return &c, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *fakeConvStore) UpdateTurnPostID(id string, postID *string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.allTurns[id]
+	if !ok {
+		return fmt.Errorf("turn %s not found", id)
+	}
+	t.PostID = postID
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id {
+				s.turns[convID][i].PostID = postID
+			}
+		}
+	}
+	return nil
+}
+
+func (s *fakeConvStore) DeleteResponseTurns(conversationID, postID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns := s.turns[conversationID]
+
+	anchorSeq := -1
+	for _, t := range turns {
+		if t.Role == "assistant" && t.PostID != nil && *t.PostID == postID {
+			anchorSeq = t.Sequence
+			break
+		}
+	}
+	if anchorSeq < 0 {
+		return nil
+	}
+	userSeq := 0
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == "user" && turns[i].Sequence < anchorSeq {
+			userSeq = turns[i].Sequence
+			break
+		}
+	}
+
+	keep := turns[:0]
+	for _, t := range turns {
+		if t.Sequence > userSeq && t.Sequence < anchorSeq {
+			delete(s.allTurns, t.ID)
+			continue
+		}
+		keep = append(keep, t)
+	}
+	s.turns[conversationID] = keep
+	return nil
+}
+
 func (s *fakeConvStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -216,7 +282,7 @@ func newDMTestLLM(responses ...*llm.TextStreamResult) *dmTestLLM {
 	return &dmTestLLM{responses: responses}
 }
 
-func (f *dmTestLLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (f *dmTestLLM) ChatCompletion(_ context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, request)
@@ -228,7 +294,7 @@ func (f *dmTestLLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.La
 	return resp, nil
 }
 
-func (f *dmTestLLM) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (f *dmTestLLM) ChatCompletionNoStream(_ context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
 	return "Test Title", nil
 }
 
@@ -420,6 +486,7 @@ func TestDMNewConversation_CreatesConversationAndTurns(t *testing.T) {
 	require.True(t, convResult.IsNew)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil, // llmContext
@@ -480,6 +547,7 @@ func TestDMContinueConversation_ReadsTurnsNotPosts(t *testing.T) {
 	require.NotNil(t, convResult)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,
@@ -528,7 +596,7 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 
 	env.policyChecker.setAutoRun("https://mcp.example.com", "get_weather")
 
-	toolStore := llm.NewToolStore(nil, false)
+	toolStore := llm.NewToolStore()
 	toolStore.AddTools([]llm.Tool{
 		{
 			Name:         "get_weather",
@@ -560,6 +628,7 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 	require.NotEmpty(t, convResult.ConversationID)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		llmCtx,
@@ -636,6 +705,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 	require.NotNil(t, convResult)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,
@@ -817,7 +887,7 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 
 	env.policyChecker.setAutoRun("https://example.com", "tool_a")
 
-	toolStore := llm.NewToolStore(nil, false)
+	toolStore := llm.NewToolStore()
 	toolStore.AddTools([]llm.Tool{
 		{
 			Name:         "tool_a",
@@ -846,6 +916,7 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 	require.NoError(t, err)
 
 	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		&llm.Context{Tools: toolStore},
@@ -911,6 +982,7 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 	assert.Equal(t, createResult.ConversationID, convResult.ConversationID)
 
 	_, err = env.conversations.ProcessDMRequest(
+		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,

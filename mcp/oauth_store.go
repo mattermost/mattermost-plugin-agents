@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"golang.org/x/oauth2"
 )
 
@@ -50,6 +51,9 @@ func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error)
 	var oauth2Token oauth2.Token
 	err := m.pluginAPI.KVGet(tokenKey, &oauth2Token)
 	if err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to retrieve token from KV store: %w", err)
 	}
 
@@ -84,6 +88,9 @@ func (m *OAuthManager) LoadAuthNeededState(userID, serverID string) (*OAuthNeede
 	var state OAuthNeededState
 	err := m.pluginAPI.KVGet(authNeededKey, &state)
 	if err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to retrieve OAuth-needed state from KV store: %w", err)
 	}
 
@@ -155,6 +162,9 @@ func (m *OAuthManager) loadClientCredentials(serverURL string) (*ClientCredentia
 	var creds ClientCredentials
 	err := m.pluginAPI.KVGet(credKey, &creds)
 	if err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to retrieve client credentials from KV store: %w", err)
 	}
 
@@ -197,6 +207,8 @@ type OAuthSession struct {
 	CreatedAt         time.Time `json:"createdAt"`
 }
 
+// Unlike the other loaders, a missing key surfaces as an error here:
+// ProcessCallback nil-derefs the returned session unguarded.
 func (m *OAuthManager) loadSession(userID, state string) (*OAuthSession, error) {
 	sessionKey := buildSessionKey(userID, state)
 

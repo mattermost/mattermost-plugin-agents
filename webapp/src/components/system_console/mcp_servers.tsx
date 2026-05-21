@@ -5,10 +5,15 @@ import React, {useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
+import {useSelector} from 'react-redux';
+import {GlobalState} from '@mattermost/types/store';
 
 import {TertiaryButton} from '../assets/buttons';
 import {getMCPTools, getVettedToolSeed} from '../../client';
 
+import manifest from '@/manifest';
+
+import {CopyableTextItem} from './copyable_text_item';
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
 import {BooleanItem, ItemList, TextItem} from './item';
@@ -350,6 +355,13 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
 
+    const configuredSiteURL = useSelector<GlobalState, string | undefined>(
+        (state) => state.entities.general.config.SiteURL,
+    );
+    const normalizedConfiguredSiteURL = configuredSiteURL?.trim();
+    const siteURL = normalizedConfiguredSiteURL ? normalizedConfiguredSiteURL.replace(/\/+$/, '') : window.location.origin;
+    const oauthCallbackURL = `${siteURL}/plugins/${manifest.id}/oauth/callback`;
+
     // Tool-affecting config fingerprint (must be declared before prefetch effect)
     const configFingerprint = JSON.stringify({
         servers: normalizedServers.map((s) => ({
@@ -534,6 +546,11 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                     });
                                 }}
                                 helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times. Default: 30 minutes'})}
+                            />
+                            <CopyableTextItem
+                                label={intl.formatMessage({defaultMessage: 'MCP OAuth Callback URL'})}
+                                value={oauthCallbackURL}
+                                helptext={intl.formatMessage({defaultMessage: 'Register this redirect URI in the remote MCP server\u2019s OAuth application so authorization callbacks return to this Mattermost instance.'})}
                             />
                         </ItemList>
                         <ServersList>

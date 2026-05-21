@@ -552,7 +552,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
     });
 
-    test('approval continuation creates a second post that does not duplicate the first post tools or show the empty-result fallback', async ({ page }) => {
+    test('approval continuation streams into the same post and does not show the empty-result fallback', async ({ page }) => {
         test.setTimeout(120000);
 
         const townSquareChannelID = await getTownSquareChannelID();
@@ -634,14 +634,12 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(acceptButton).toBeVisible({timeout: 30000});
         await acceptButton.click();
 
-        const postB = botPosts.nth(1);
-        await expect(postB.getByText(continuationMarker)).toBeVisible({timeout: 30000});
-
-        // Each post scopes its tool cards to its own response — the aggregation
-        // must stop at the previous anchor so the continuation does not render
-        // the predecessor's tool_use blocks (and vice versa).
+        // Continuation now streams into the SAME post as the tool round.
+        // Both the original tool card and the follow-up text are visible in
+        // postA; no second bot post is created.
+        await expect(postA.getByText(continuationMarker)).toBeVisible({timeout: 30000});
         await expect(postA.getByText('Get Channel Info', {exact: true})).toBeVisible();
-        await expect(postB.getByText('Get Channel Info', {exact: true})).not.toBeVisible();
+        await expect(botPosts).toHaveCount(1);
     });
 
     test('channel auto_run requires Accept (DM-only policy), while auto_run_everywhere skips approval entirely', async ({ page }) => {

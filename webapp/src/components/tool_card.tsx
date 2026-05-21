@@ -13,6 +13,7 @@ import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
+import {stripWirePrefix} from '@/utils/tool_names';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
@@ -360,9 +361,9 @@ const ToolCard: React.FC<ToolCardProps> = ({
     const isResultApprovalStage = approvalStage === 'result';
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
 
-    // Convert underscores to spaces and capitalize first letter of each word
-    // (e.g., "create_post" -> "Create Post")
-    const displayName = tool.name.
+    // Tool-call cards lack server context, so strip the pluginmcp prefix
+    // heuristically before title-casing the display name.
+    const displayName = stripWirePrefix(tool.name).
         replace(/_/g, ' ').
         split(' ').
         map((word) => word.charAt(0).toUpperCase() + word.slice(1)).

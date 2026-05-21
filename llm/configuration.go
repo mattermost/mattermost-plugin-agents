@@ -37,9 +37,8 @@ type ServiceConfig struct {
 	VertexAuthCredentials string `json:"vertexAuthCredentials"`
 
 	// Renaming the JSON field to inputTokenLimit would require a migration, leaving as is for now.
-	InputTokenLimit         int  `json:"tokenLimit"`
-	StreamingTimeoutSeconds int  `json:"streamingTimeoutSeconds"`
-	SendUserID              bool `json:"sendUserID"`
+	InputTokenLimit         int `json:"tokenLimit"`
+	StreamingTimeoutSeconds int `json:"streamingTimeoutSeconds"`
 
 	// Otherwise known as maxTokens
 	OutputTokenLimit int `json:"outputTokenLimit"`

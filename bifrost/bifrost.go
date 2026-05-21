@@ -20,14 +20,30 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 )
 
 const (
 	DefaultMaxTokens        = 8192
+	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
 )
+
+type webSearchFallbackSource struct {
+	URL   string
+	Title string
+}
+
+type pendingAnnotationPosition struct {
+	index        int
+	missingStart bool
+	missingEnd   bool
+}
+
+const missingContentIndex = -1
 
 // LLM implements the llm.LanguageModel interface using the Bifrost gateway.
 type LLM struct {
@@ -38,7 +54,6 @@ type LLM struct {
 	inputTokenLimit  int
 	outputTokenLimit int
 	streamingTimeout time.Duration
-	sendUserID       bool
 
 	// Native tools and reasoning configuration
 	enabledNativeTools []string
@@ -70,7 +85,6 @@ type Config struct {
 	InputTokenLimit  int
 	OutputTokenLimit int
 	StreamingTimeout time.Duration
-	SendUserID       bool
 
 	// Native tools and reasoning configuration
 	EnabledNativeTools []string
@@ -198,6 +212,16 @@ func toolArgsToJSON(s string) json.RawMessage {
 	return json.RawMessage(s)
 }
 
+func readFileData(file llm.File) ([]byte, error) {
+	if len(file.Data) > 0 {
+		return file.Data, nil
+	}
+	if file.Reader == nil {
+		return nil, fmt.Errorf("file reader is nil")
+	}
+	return io.ReadAll(file.Reader)
+}
+
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
 	account := &providerAccount{
@@ -237,7 +261,6 @@ func New(cfg Config) (*LLM, error) {
 		inputTokenLimit:    cfg.InputTokenLimit,
 		outputTokenLimit:   outputLimit,
 		streamingTimeout:   streamingTimeout,
-		sendUserID:         cfg.SendUserID,
 		enabledNativeTools: cfg.EnabledNativeTools,
 		reasoningEnabled:   cfg.ReasoningEnabled,
 		reasoningEffort:    cfg.ReasoningEffort,
@@ -475,16 +498,22 @@ func toFloat64(value interface{}) (float64, bool) {
 }
 
 // ChatCompletion performs a streaming chat completion request.
-func (b *LLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (b *LLM) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	cfg := b.createConfig(opts)
+
+	ctx, span := telemetry.Tracer().Start(ctx, "llm chat completion",
+		telemetry.WithLLMAttributes(string(b.provider), cfg.Model, request.Operation, true),
+	)
+
 	eventStream := make(chan llm.TextStreamEvent)
 
 	go func() {
 		defer close(eventStream)
+		defer span.End()
 		if b.shouldUseResponsesAPI(cfg) {
-			b.streamResponses(request, cfg, eventStream)
+			b.streamResponses(ctx, request, cfg, eventStream)
 		} else {
-			b.streamChat(request, cfg, eventStream)
+			b.streamChat(ctx, request, cfg, eventStream)
 		}
 	}()
 
@@ -492,8 +521,8 @@ func (b *LLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.Language
 }
 
 // ChatCompletionNoStream performs a non-streaming chat completion request.
-func (b *LLM) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
-	result, err := b.ChatCompletion(request, opts...)
+func (b *LLM) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	result, err := b.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return "", err
 	}
@@ -526,8 +555,9 @@ func (b *LLM) InputTokenLimit() int {
 }
 
 // streamChat handles the streaming chat completion.
-func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), b.streamingTimeout*10)
+func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	span := telemetry.SpanFromContext(ctx)
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost request
@@ -536,9 +566,12 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
+			Value: err,
 		}
 		return
 	}
@@ -588,9 +621,12 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 		}
 
 		if chunk.BifrostError != nil {
+			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
+				Value: err,
 			}
 			return
 		}
@@ -707,6 +743,10 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 					OutputTokens: int64(resp.Usage.CompletionTokens),
 				}
 				if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+					span.SetAttributes(
+						telemetry.LLMInputTokens.Int64(usage.InputTokens),
+						telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
+					)
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeUsage,
 						Value: usage,
@@ -885,8 +925,13 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				},
 			}
 
-			// Add reasoning details for thinking-enabled conversations
-			if post.Reasoning != "" {
+			// Add reasoning details for thinking-enabled conversations.
+			// Anthropic requires historical thinking blocks to include a valid
+			// provider-issued signature. If a previous stream failed before the
+			// signature arrived, we persist partial reasoning for display only; do
+			// not replay it to Anthropic as an unsigned thinking block. Other
+			// providers may accept unsigned reasoning, so preserve it for them.
+			if post.Reasoning != "" && (b.provider != schemas.Anthropic || post.ReasoningSignature != "") {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}
@@ -1034,7 +1079,7 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 			continue
 		}
 
-		data, err := io.ReadAll(file.Reader)
+		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, schemas.ChatContentBlock{
 				Type: schemas.ChatContentBlockTypeText,
@@ -1190,13 +1235,7 @@ func buildResponsesTextConfig(schema *jsonschema.Schema) (*schemas.ResponsesText
 
 // isValidImageType checks if the MIME type is supported.
 func isValidImageType(mimeType string) bool {
-	validTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
-	}
-	return validTypes[mimeType]
+	return llm.IsSupportedImageMimeType(mimeType)
 }
 
 // Ptr is a helper function to create a pointer to a value.
@@ -1335,7 +1374,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 			continue
 		}
 
-		data, err := io.ReadAll(file.Reader)
+		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, schemas.ResponsesMessageContentBlock{
 				Type: schemas.ResponsesInputMessageContentBlockTypeText,
@@ -1506,8 +1545,9 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 }
 
 // streamResponses handles the streaming Responses API completion.
-func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), b.streamingTimeout*10)
+func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	span := telemetry.SpanFromContext(ctx)
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost Responses API request
@@ -1523,9 +1563,12 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
+			Value: err,
 		}
 		return
 	}
@@ -1533,7 +1576,13 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Process stream
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
-	var currentFuncCallID string // tracks the active function call for argument deltas
+	// outputIndexToFuncCallID maps a Responses-API output_index to the function
+	// call_id that we accepted via OutputItemAdded for that index. Argument
+	// deltas are routed through this map so deltas from non-function output
+	// items (e.g. Anthropic native server tools like code_execution that
+	// bifrost does not surface as OutputItemAdded events) do not bleed into
+	// an unrelated function call's argument buffer.
+	outputIndexToFuncCallID := make(map[int]string)
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -1542,8 +1591,10 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 
 	// Annotation buffer and text position tracking
 	var annotations []llm.Annotation
-	var textLen int       // cumulative byte length of all streamed text
-	var blockStartPos int // byte position where current text block started
+	var fallbackSources []webSearchFallbackSource
+	pendingAnnotationPositions := make(map[int][]pendingAnnotationPosition)
+	var textLen int       // cumulative UTF-16 length of all streamed text
+	var blockStartPos int // UTF-16 position where current text block started
 
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
@@ -1581,9 +1632,12 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 		}
 
 		if chunk.BifrostError != nil {
+			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
+				Value: err,
 			}
 			return
 		}
@@ -1611,7 +1665,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						Type:  llm.EventTypeText,
 						Value: *resp.Delta,
 					}
-					textLen += len(*resp.Delta)
+					textLen += llm.UTF16CodeUnitCount(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
@@ -1642,8 +1696,10 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				if resp.Annotation != nil {
 					if ann := convertBifrostAnnotation(resp.Annotation, len(annotations)+1); ann != nil {
 						// Bifrost doesn't provide output-text positions during Anthropic streaming.
-						// Compute them from tracked block boundaries, matching the approach used by
-						// the old Anthropic SDK implementation (extractAnnotations).
+						// Attach those citations to the current text block and correct the end
+						// position when output_text.done arrives.
+						missingStart := resp.Annotation.StartIndex == nil
+						missingEnd := resp.Annotation.EndIndex == nil
 						if resp.Annotation.StartIndex == nil {
 							ann.StartIndex = blockStartPos
 						}
@@ -1651,6 +1707,20 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							ann.EndIndex = textLen
 						}
 						annotations = append(annotations, *ann)
+						if missingStart || missingEnd {
+							contentIndex := missingContentIndex
+							if resp.ContentIndex != nil {
+								contentIndex = *resp.ContentIndex
+							}
+							pendingAnnotationPositions[contentIndex] = append(
+								pendingAnnotationPositions[contentIndex],
+								pendingAnnotationPosition{
+									index:        len(annotations) - 1,
+									missingStart: missingStart,
+									missingEnd:   missingEnd,
+								},
+							)
+						}
 					}
 				}
 
@@ -1661,6 +1731,17 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				// Text block complete - emit accumulated annotations and advance block position.
 				// Keep the annotation buffer so subsequent output_text_done events can include
 				// citations accumulated across the full response.
+				contentIndex := missingContentIndex
+				if resp.ContentIndex != nil {
+					contentIndex = *resp.ContentIndex
+				}
+				flushPendingAnnotationPositions(
+					annotations,
+					pendingAnnotationPositions,
+					contentIndex,
+					blockStartPos,
+					textLen,
+				)
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
@@ -1670,9 +1751,20 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				blockStartPos = textLen
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
-				// Tool call arguments delta.
-				// Bifrost often does not populate resp.Item on delta events; the call ID
-				// may come from the preceding OutputItemAdded event (currentFuncCallID).
+				// Tool call arguments delta. Bifrost does not always populate
+				// resp.Item on delta events, so the call_id is recovered via
+				// the OutputIndex map populated by the preceding
+				// OutputItemAdded event.
+				//
+				// Routing strictly by OutputIndex matters because providers
+				// like Anthropic emit native server-tool blocks (e.g.
+				// code_execution) for which Bifrost does not surface an
+				// OutputItemAdded of type FunctionCall, but it still emits
+				// FunctionCallArgumentsDelta events for them. Without this
+				// guard, those orphan deltas were appended to whatever
+				// function call most recently started, producing concatenated
+				// JSON like `{"team_id":"…"}{"code":"…"}` that later failed
+				// to marshal as a tool_use.input json.RawMessage.
 				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
 					tm := resp.Item.ResponsesToolMessage
 					callID := ""
@@ -1690,15 +1782,19 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 						}
 					}
-				} else if currentFuncCallID != "" && resp.Delta != nil {
-					if toolCallsBuffer[currentFuncCallID] == nil {
-						toolCallsBuffer[currentFuncCallID] = &responsesToolCallBuffer{id: currentFuncCallID}
+				} else if resp.OutputIndex != nil && resp.Delta != nil {
+					if callID, ok := outputIndexToFuncCallID[*resp.OutputIndex]; ok {
+						if toolCallsBuffer[callID] == nil {
+							toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
+						}
+						toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 					}
-					toolCallsBuffer[currentFuncCallID].arguments.WriteString(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
-				// New output item added - could be function call
+				// New output item added - register function calls so their
+				// argument deltas can be routed back to the right buffer by
+				// OutputIndex.
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
 						tm := resp.Item.ResponsesToolMessage
@@ -1707,7 +1803,9 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							callID = *tm.CallID
 						}
 						if callID != "" {
-							currentFuncCallID = callID
+							if resp.OutputIndex != nil {
+								outputIndexToFuncCallID[*resp.OutputIndex] = callID
+							}
 							if toolCallsBuffer[callID] == nil {
 								toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
 							}
@@ -1722,6 +1820,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemDone:
+				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
 				// Output item completed - finalize function call if any
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
@@ -1758,6 +1857,13 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				}
 
 				// Emit any accumulated annotations
+				for contentIndex, positions := range pendingAnnotationPositions {
+					applyPendingAnnotationPositions(annotations, positions, blockStartPos, textLen)
+					delete(pendingAnnotationPositions, contentIndex)
+				}
+				if len(annotations) == 0 && len(fallbackSources) > 0 {
+					annotations = buildFallbackAnnotations(fallbackSources, textLen)
+				}
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
@@ -1798,6 +1904,10 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						OutputTokens: int64(resp.Response.Usage.OutputTokens),
 					}
 					if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+						span.SetAttributes(
+							telemetry.LLMInputTokens.Int64(usage.InputTokens),
+							telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
+						)
 						output <- llm.TextStreamEvent{
 							Type:  llm.EventTypeUsage,
 							Value: usage,
@@ -1874,4 +1984,75 @@ func convertBifrostAnnotation(ann *schemas.ResponsesOutputMessageContentTextAnno
 	}
 
 	return result
+}
+
+func appendFirstWebSearchFallbackSource(sources []webSearchFallbackSource, item *schemas.ResponsesMessage) []webSearchFallbackSource {
+	if item == nil || item.Type == nil || *item.Type != schemas.ResponsesMessageTypeWebSearchCall {
+		return sources
+	}
+	if item.Action == nil || item.Action.ResponsesWebSearchToolCallAction == nil {
+		return sources
+	}
+
+	for _, source := range item.Action.ResponsesWebSearchToolCallAction.Sources {
+		if source.URL == "" || hasFallbackSource(sources, source.URL) {
+			continue
+		}
+		title := ""
+		if source.Title != nil {
+			title = *source.Title
+		}
+		sources = append(sources, webSearchFallbackSource{
+			URL:   source.URL,
+			Title: title,
+		})
+	}
+	return sources
+}
+
+func hasFallbackSource(sources []webSearchFallbackSource, url string) bool {
+	for _, source := range sources {
+		if source.URL == url {
+			return true
+		}
+	}
+	return false
+}
+
+func buildFallbackAnnotations(sources []webSearchFallbackSource, endIndex int) []llm.Annotation {
+	annotations := make([]llm.Annotation, 0, len(sources))
+	for i, source := range sources {
+		annotations = append(annotations, llm.Annotation{
+			Type:       llm.AnnotationTypeURLCitation,
+			StartIndex: endIndex,
+			EndIndex:   endIndex,
+			URL:        source.URL,
+			Title:      source.Title,
+			Index:      i + 1,
+		})
+	}
+	return annotations
+}
+
+func applyPendingAnnotationPositions(annotations []llm.Annotation, positions []pendingAnnotationPosition, startIndex, endIndex int) {
+	for _, position := range positions {
+		if position.index < 0 || position.index >= len(annotations) {
+			continue
+		}
+		if position.missingStart {
+			annotations[position.index].StartIndex = startIndex
+		}
+		if position.missingEnd {
+			annotations[position.index].EndIndex = endIndex
+		}
+	}
+}
+
+func flushPendingAnnotationPositions(
+	annotations []llm.Annotation,
+	pending map[int][]pendingAnnotationPosition,
+	contentIndex, startIndex, endIndex int,
+) {
+	applyPendingAnnotationPositions(annotations, pending[contentIndex], startIndex, endIndex)
+	delete(pending, contentIndex)
 }

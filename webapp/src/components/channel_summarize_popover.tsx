@@ -154,6 +154,18 @@ const BotPill = styled(GrayPill)`
     gap: 0;
     color: var(--center-channel-color);
     font-weight: 600;
+    max-width: 128px;
+
+    svg {
+        flex-shrink: 0;
+    }
+`;
+
+const BotPillName = styled.span`
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 `;
 
 interface Props {
@@ -291,7 +303,7 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
                                 <FormattedMessage defaultMessage='GENERATE WITH:'/>
                             </SelectMessage>
                             <BotPill>
-                                {activeBot?.displayName}
+                                <BotPillName>{activeBot?.displayName}</BotPillName>
                                 <ChevronDownIcon size={12}/>
                             </BotPill>
                         </>

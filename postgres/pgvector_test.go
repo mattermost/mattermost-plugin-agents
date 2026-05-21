@@ -5,41 +5,88 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/mattermost/mattermost-plugin-agents/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/testcontainers/testcontainers-go"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-// These tests require PostgreSQL with pgvector extension installed.
-// Tests will fail if the database connection fails or if pgvector is not available.
+// rootDSN points to a Postgres instance with the pgvector extension available.
+// By default, TestMain starts a pgvector/pgvector container and writes the
+// connection string here. Set PGVECTOR_TEST_DSN to point at an existing
+// pgvector-enabled Postgres instead — useful for fast local iteration.
+var rootDSN string
 
-// testDB creates a test database and returns a connection to it.
-// This function will automatically create a temporary database for testing.
-// If PG_ROOT_DSN environment variable is set, it will be used as the root connection.
-// Default: "postgres://root:mostest@localhost:5432/postgres?sslmode=disable"
-var rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
+func TestMain(m *testing.M) {
+	if dsn := os.Getenv("PGVECTOR_TEST_DSN"); dsn != "" {
+		if !strings.Contains(dsn, "://") {
+			fmt.Println("PGVECTOR_TEST_DSN must be a URL-style DSN (e.g. postgres://user:pass@host:5432/db?sslmode=disable).")
+			fmt.Println("libpq key=value DSNs are not supported by this test harness.")
+			os.Exit(1)
+		}
+		rootDSN = dsn
+		os.Exit(m.Run())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	container, err := tcpostgres.Run(ctx,
+		"pgvector/pgvector:pg17",
+		tcpostgres.WithDatabase("postgres"),
+		tcpostgres.WithUsername("mmuser"),
+		tcpostgres.WithPassword("mostest"),
+		tcpostgres.BasicWaitStrategies(),
+	)
+	cancel()
+	if err != nil {
+		fmt.Printf("Failed to start pgvector container: %v\n", err)
+		os.Exit(1)
+	}
+
+	rootDSN, err = container.ConnectionString(context.Background(), "sslmode=disable")
+	if err != nil {
+		_ = testcontainers.TerminateContainer(container)
+		fmt.Printf("Failed to get container connection string: %v\n", err)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+
+	if err := testcontainers.TerminateContainer(container); err != nil {
+		fmt.Printf("Failed to terminate pgvector container: %v\n", err)
+	}
+
+	os.Exit(code)
+}
+
+// dsnForDatabase rewrites rootDSN to point at a different database name.
+func dsnForDatabase(dbName string) (string, error) {
+	u, err := url.Parse(rootDSN)
+	if err != nil {
+		return "", fmt.Errorf("parse rootDSN: %w", err)
+	}
+	u.Path = "/" + dbName
+	return u.String(), nil
+}
 
 func testDB(t *testing.T) *sqlx.DB {
 	rootDB, err := sqlx.Connect("postgres", rootDSN)
-	require.NoError(t, err, "Failed to connect to PostgreSQL. Is PostgreSQL running?")
+	require.NoError(t, err, "Failed to connect to test Postgres")
 	defer rootDB.Close()
-
-	// Check if pgvector extension is available
-	var hasVector bool
-	err = rootDB.Get(&hasVector, "SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'vector')")
-	require.NoError(t, err, "Failed to check for vector extension")
-	if !hasVector {
-		t.Skip("pgvector extension not available in PostgreSQL. Skipping pgvector-dependent tests.")
-	}
 
 	// Create a unique database name with a timestamp
 	dbName := fmt.Sprintf("pgvector_test_%d", model.GetMillis())
@@ -50,7 +97,8 @@ func testDB(t *testing.T) *sqlx.DB {
 	t.Logf("Created test database: %s", dbName)
 
 	// Connect to the new database
-	testDSN := fmt.Sprintf("postgres://mmuser:mostest@localhost:5432/%s?sslmode=disable", dbName)
+	testDSN, err := dsnForDatabase(dbName)
+	require.NoError(t, err, "Failed to compute test database DSN")
 	db, err := sqlx.Connect("postgres", testDSN)
 	if err != nil {
 		// Try to clean up the database even if connection fails
@@ -2187,6 +2235,159 @@ func TestConcurrentStoreOperations(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, count, "Should have exactly one document for the post after concurrent operations")
 	})
+}
+
+// Any non-duplicate error (e.g. a deadlock or serialization failure) also
+// fails the test so a regression can't hide behind a different error class.
+func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	addTestPosts(t, db, []string{"race_post"}, []int64{now})
+
+	ctx := context.Background()
+	const numGoroutines = 30
+	const numIterations = 10
+
+	var dupKeyCount, otherErrCount atomic.Int32
+	var sampleDupErr, sampleOtherErr atomic.Value
+
+	for iter := 0; iter < numIterations; iter++ {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(numGoroutines)
+		for i := 0; i < numGoroutines; i++ {
+			go func(idx int) {
+				defer wg.Done()
+				<-start
+				docs := []embeddings.PostDocument{{
+					PostID:    "race_post",
+					CreateAt:  now,
+					TeamID:    "team1",
+					ChannelID: "channel1",
+					UserID:    "user1",
+					Content:   fmt.Sprintf("iter %d worker %d", iter, idx),
+				}}
+				vecs := [][]float32{{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3}}
+				storeErr := pgVector.Store(ctx, docs, vecs)
+				if storeErr == nil {
+					return
+				}
+				var pqErr *pq.Error
+				if errors.As(storeErr, &pqErr) && pqErr.Code == "23505" {
+					dupKeyCount.Add(1)
+					sampleDupErr.Store(storeErr.Error())
+					return
+				}
+				otherErrCount.Add(1)
+				sampleOtherErr.Store(storeErr.Error())
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+	}
+
+	if got := dupKeyCount.Load(); got > 0 {
+		sample, _ := sampleDupErr.Load().(string)
+		t.Fatalf("Store returned duplicate key error under concurrent writes (%d occurrences); sample: %s", got, sample)
+	}
+	if got := otherErrCount.Load(); got > 0 {
+		sample, _ := sampleOtherErr.Load().(string)
+		t.Fatalf("Store returned non-duplicate-key error under concurrent writes (%d occurrences); sample: %s", got, sample)
+	}
+}
+
+// Concurrent Store calls for the same post_id with differing chunk counts
+// must never leave a mixed state (some chunks from one writer, some from
+// another). Without the advisory lock, writer A's DELETE can run against a
+// snapshot from before writer B commits, leaving B's chunk rows beyond A's
+// chunk count behind as orphans alongside A's freshly inserted rows.
+func TestStoreConcurrentChunkConsistency(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	const postID = "consistency_post"
+	addTestPosts(t, db, []string{postID}, []int64{now})
+
+	ctx := context.Background()
+	const numGoroutines = 20
+	const numIterations = 10
+
+	for iter := 0; iter < numIterations; iter++ {
+		start := make(chan struct{})
+		storeErrs := make([]error, numGoroutines)
+		var wg sync.WaitGroup
+		wg.Add(numGoroutines)
+		for i := 0; i < numGoroutines; i++ {
+			go func(idx int) {
+				defer wg.Done()
+				<-start
+
+				// Distinct chunk counts so writers' row sets overlap unevenly;
+				// tag encoded in content lets us detect mixed-writer states.
+				tag := fmt.Sprintf("iter%d-writer%d", iter, idx)
+				chunkCount := idx + 1
+
+				docs := make([]embeddings.PostDocument, chunkCount)
+				vecs := make([][]float32, chunkCount)
+				for j := 0; j < chunkCount; j++ {
+					docs[j] = embeddings.PostDocument{
+						PostID:    postID,
+						CreateAt:  now,
+						TeamID:    "team1",
+						ChannelID: "channel1",
+						UserID:    "user1",
+						Content:   fmt.Sprintf("%s/chunk%d", tag, j),
+						ChunkInfo: chunking.ChunkInfo{
+							IsChunk:     true,
+							ChunkIndex:  j,
+							TotalChunks: chunkCount,
+						},
+					}
+					vecs[j] = []float32{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3}
+				}
+				storeErrs[idx] = pgVector.Store(ctx, docs, vecs)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+
+		for i, err := range storeErrs {
+			require.NoErrorf(t, err, "iter %d: writer %d Store failed", iter, i)
+		}
+
+		var contents []string
+		err := db.Select(&contents, "SELECT content FROM llm_posts_embeddings WHERE post_id = $1 ORDER BY chunk_index", postID)
+		require.NoError(t, err)
+		require.NotEmpty(t, contents, "iter %d: at least one writer should have committed rows", iter)
+
+		// Every surviving row must belong to the same writer, and the count
+		// must equal that writer's TotalChunks — the winning Store must have
+		// replaced the row set atomically.
+		firstTag := strings.SplitN(contents[0], "/", 2)[0]
+		for _, c := range contents {
+			tag := strings.SplitN(c, "/", 2)[0]
+			if tag != firstTag {
+				t.Fatalf("iter %d: mixed-writer state: rows tagged with both %q and %q (rows=%v)",
+					iter, firstTag, tag, contents)
+			}
+		}
+
+		var winnerIdx int
+		_, err = fmt.Sscanf(firstTag, fmt.Sprintf("iter%d-writer%%d", iter), &winnerIdx)
+		require.NoErrorf(t, err, "iter %d: could not parse winning writer index from tag %q", iter, firstTag)
+		require.Equalf(t, winnerIdx+1, len(contents),
+			"iter %d: winner is writer%d (TotalChunks=%d) but found %d rows: %v",
+			iter, winnerIdx, winnerIdx+1, len(contents), contents)
+	}
 }
 
 func TestDeleteOrphaned(t *testing.T) {
