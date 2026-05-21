@@ -753,6 +753,23 @@ func TestBridgeClientServiceCompletionStream(t *testing.T) {
 			expectError: true,
 			errorMsg:    "allowed_tools is only supported for agent completion endpoints",
 		},
+		{
+			name:    "use agent system prompt not supported on service stream endpoint",
+			service: "openai-service",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+				UseAgentSystemPrompt: true,
+			},
+			serviceConfig: llm.ServiceConfig{
+				ID:   "openai-service",
+				Name: "OpenAI",
+			},
+			fakeLLM:     NewFakeLLM("test"),
+			expectError: true,
+			errorMsg:    "use_agent_system_prompt is only supported for agent completion endpoints",
+		},
 	}
 
 	for _, tc := range tests {
