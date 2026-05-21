@@ -229,7 +229,7 @@ export async function doLoopInAgent(postid: string, botUsername: string) {
     }));
 
     if (response.ok) {
-        return response.json();
+        return;
     }
 
     throw new ClientError(Client4.url, {

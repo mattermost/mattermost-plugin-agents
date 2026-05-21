@@ -42,30 +42,28 @@ interface Props {
     };
 }
 
+type LoopInStatus = 'idle' | 'pending' | 'done' | 'error';
+
 export const AgentMentionReminderPost = ({post}: Props) => {
     const botUsername = post.props?.bot_username ?? '';
     const botDisplayName = post.props?.bot_display_name?.trim() || botUsername;
     const targetPostId = post.props?.target_post_id ?? post.id;
 
-    const [pending, setPending] = useState(false);
-    const [done, setDone] = useState(false);
-    const [error, setError] = useState(false);
+    const [status, setStatus] = useState<LoopInStatus>('idle');
+    const pending = status === 'pending';
 
     const onClick = async (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
-        if (pending || done || !botUsername || !targetPostId) {
+        if (pending || status === 'done' || !botUsername || !targetPostId) {
             return;
         }
-        setPending(true);
-        setError(false);
+        setStatus('pending');
         try {
             await doLoopInAgent(targetPostId, botUsername);
-            setDone(true);
+            setStatus('done');
         } catch (err) {
             console.error('Failed to loop in agent:', err); // eslint-disable-line no-console
-            setError(true);
-        } finally {
-            setPending(false);
+            setStatus('error');
         }
     };
 
@@ -75,8 +73,16 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         );
     }
 
-    if (done) {
-        return null;
+    if (status === 'done') {
+        return (
+            <Hint>
+                <FormattedMessage
+                    id='agents.agent_mention_reminder_done'
+                    defaultMessage='Looped in @{botDisplayName}.'
+                    values={{botDisplayName}}
+                />
+            </Hint>
+        );
     }
 
     return (
@@ -98,7 +104,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
                     ),
                 }}
             />
-            {error && (
+            {status === 'error' && (
                 <ErrorMessage>
                     <FormattedMessage
                         id='agents.agent_mention_reminder_error'

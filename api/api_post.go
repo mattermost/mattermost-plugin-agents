@@ -431,14 +431,12 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 	c.Render(http.StatusOK, render.JSON{Data: result})
 }
 
-// handleLoopInAgent creates a new user-authored post in the thread containing
-// only an @mention of the resolved bot. This backs the "click here to loop in"
-// affordance in the ephemeral agent mention reminder rendered by the webapp.
-// The new post triggers the existing MessageHasBeenPosted/handleMentions flow
-// so the agent responds naturally.
+// handleLoopInAgent runs the target reply through the channel mention path
+// without persisting a synthetic @mention post.
 func (a *API) handleLoopInAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	if err := a.enforceEmptyBody(c); err != nil {
@@ -446,36 +444,27 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 		return
 	}
 
-	mmBot := bot.GetMMBot()
-	if mmBot == nil || mmBot.Username == "" {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("bot has no resolved username"))
+	if err := a.conversationsService.HandleLoopInAgent(userID, bot, post, channel); err != nil {
+		c.AbortWithError(loopInAgentHTTPStatus(err), err)
 		return
 	}
 
-	rootID := post.RootId
-	if rootID == "" {
-		rootID = post.Id
-	}
+	c.Status(http.StatusOK)
+}
 
-	newPost := &model.Post{
-		UserId:    userID,
-		ChannelId: post.ChannelId,
-		RootId:    rootID,
-		Message:   "@" + mmBot.Username,
+func loopInAgentHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrLoopInNotPostOwner),
+		errors.Is(err, conversations.ErrLoopInWrongAgent):
+		return http.StatusForbidden
+	case errors.Is(err, conversations.ErrLoopInNotThreadReply),
+		errors.Is(err, conversations.ErrLoopInUnsupportedChannel),
+		errors.Is(err, conversations.ErrLoopInAlreadyMentioned),
+		errors.Is(err, conversations.ErrLoopInNoAgentContext):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
 	}
-	// The plugin's own MessageHasBeenPosted hook normally ignores posts
-	// originating from plugins (they get a from_plugin prop on creation).
-	// Opt back in with ActivateAIProp so the mention flow runs for this post
-	// and the agent responds to the user's @mention.
-	newPost.AddProp(conversations.ActivateAIProp, "true")
-	if err := a.pluginAPI.Post.CreatePost(newPost); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to create loop-in post: %w", err))
-		return
-	}
-
-	c.JSON(http.StatusOK, map[string]string{
-		"post_id": newPost.Id,
-	})
 }
 
 // makeAnalysisPost creates a post for thread analysis results

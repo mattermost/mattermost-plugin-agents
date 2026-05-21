@@ -91,12 +91,9 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 	c.mmClient.SendEphemeralPost(post.UserId, ephemeral)
 }
 
-// findPreviousThreadPost returns the post immediately preceding `post` in the
-// server-provided thread order when available. If the current post is not
-// present in the ordered thread list, it falls back to choosing the latest post
-// at or before the current post's CreateAt.
+// findPreviousThreadPost uses thread order to break same-timestamp ties.
 func (c *Conversations) findPreviousThreadPost(post *model.Post) (*model.Post, error) {
-	thread, err := c.mmClient.GetPostThread(post.Id)
+	thread, err := c.mmClient.GetPostThread(post.RootId)
 	if err != nil {
 		return nil, err
 	}
@@ -104,37 +101,47 @@ func (c *Conversations) findPreviousThreadPost(post *model.Post) (*model.Post, e
 		return nil, nil
 	}
 
+	orderIndex := make(map[string]int, len(thread.Order))
 	for i, id := range thread.Order {
-		if id != post.Id {
-			continue
+		orderIndex[id] = i
+	}
+	currentIndex, currentInOrder := orderIndex[post.Id]
+
+	isLater := func(candidate, current *model.Post) bool {
+		if candidate.CreateAt != current.CreateAt {
+			return candidate.CreateAt > current.CreateAt
 		}
-		for j := i - 1; j >= 0; j-- {
-			prevID := thread.Order[j]
-			if prev := thread.Posts[prevID]; prev != nil {
-				return prev, nil
-			}
+
+		candidateIndex, candidateOK := orderIndex[candidate.Id]
+		currentIndex, currentOK := orderIndex[current.Id]
+		if candidateOK && currentOK && candidateIndex != currentIndex {
+			return candidateIndex > currentIndex
 		}
-		return nil, nil
+
+		return candidate.Id > current.Id
 	}
 
 	var prev *model.Post
-	for _, p := range thread.Posts {
-		if p == nil || p.Id == post.Id {
+	for id, candidate := range thread.Posts {
+		if candidate == nil || id == post.Id {
 			continue
 		}
-		if p.CreateAt > post.CreateAt {
+		if candidate.CreateAt > post.CreateAt {
 			continue
 		}
-		if p.CreateAt == post.CreateAt && p.Id >= post.Id {
+		if candidate.CreateAt == post.CreateAt && currentInOrder {
+			candidateIndex, ok := orderIndex[id]
+			if !ok || candidateIndex >= currentIndex {
+				continue
+			}
+		}
+		if candidate.CreateAt == post.CreateAt && !currentInOrder && candidate.Id >= post.Id {
 			continue
 		}
-		if prev == nil {
-			prev = p
-			continue
-		}
-		if p.CreateAt > prev.CreateAt || (p.CreateAt == prev.CreateAt && p.Id > prev.Id) {
-			prev = p
+		if prev == nil || isLater(candidate, prev) {
+			prev = candidate
 		}
 	}
+
 	return prev, nil
 }

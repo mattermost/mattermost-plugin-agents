@@ -66,17 +66,6 @@ func isBotActivateAI(post *model.Post, postingUser *model.User) bool {
 	return post.GetProp(FromBotProp) != nil
 }
 
-// isHumanActivateAI is true when a human-authored post opts in with activate_ai.
-// This covers synthetic user mentions created on a user's behalf (for example,
-// the "loop in agent" action), which should keep the same tool-calling behavior
-// as a normal manual @mention even if the server marks the post as from_plugin.
-func isHumanActivateAI(post *model.Post, postingUser *model.User) bool {
-	return post != nil &&
-		post.GetProp(ActivateAIProp) != nil &&
-		postingUser != nil &&
-		!postingUser.IsBot
-}
-
 // computeAllowToolsInChannel returns whether tools should be allowed for a channel mention,
 // given the config flag and whether the invoker is automated. Bot activate_ai requires a
 // tool policy checker: without it, strict filtering and MCP auto-approval are no-ops and tools
@@ -87,9 +76,6 @@ func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUse
 	}
 	if isBotActivateAI(post, postingUser) {
 		return hasToolPolicyChecker
-	}
-	if isHumanActivateAI(post, postingUser) {
-		return true
 	}
 	return !isAutomatedInvoker(post, postingUser)
 }
