@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -163,6 +164,61 @@ func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRe
 	return context, nil
 }
 
+func (a *API) bridgeChannelForContext(channelID string) *model.Channel {
+	if channelID == "" {
+		return nil
+	}
+	if a.pluginAPI == nil {
+		return &model.Channel{Id: channelID}
+	}
+	channel, err := a.pluginAPI.Channel.Get(channelID)
+	if err != nil {
+		a.pluginAPI.Log.Warn("failed to get channel for bridge context; using channel ID only", "channel_id", channelID, "error", err)
+		return &model.Channel{Id: channelID}
+	}
+	return channel
+}
+
+func (a *API) buildAgentBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool) *llm.Context {
+	var requestingUser *model.User
+	if req.UserID != "" {
+		requestingUser = &model.User{Id: req.UserID}
+	}
+	channel := a.bridgeChannelForContext(req.ChannelID)
+
+	if a.contextBuilder != nil {
+		opts := []llm.ContextOption{
+			a.contextBuilder.WithLLMContextServerInfo(),
+			a.contextBuilder.WithLLMContextRequestingUser(requestingUser),
+			a.contextBuilder.WithLLMContextBot(bot),
+		}
+		if includeTools {
+			opts = append(opts, a.contextBuilder.WithLLMContextTools(bot))
+		}
+		context := llm.NewContext(opts...)
+		context.Channel = channel
+		if channel != nil && channel.TeamId != "" && channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
+			context.Team = &model.Team{Id: channel.TeamId}
+		}
+		return context
+	}
+
+	context := llm.NewContext()
+	if bot != nil {
+		var botUserID string
+		if mmBot := bot.GetMMBot(); mmBot != nil {
+			botUserID = mmBot.UserId
+		}
+		context.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+	}
+	context.RequestingUser = requestingUser
+	context.Channel = channel
+	if channel != nil && channel.TeamId != "" && channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
+		context.Team = &model.Team{Id: channel.TeamId}
+	}
+	return context
+}
+
 func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
@@ -170,8 +226,23 @@ func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclien
 	}
 
 	bridgeContext := llm.NewContext()
-	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
-	if includeTools && a.contextBuilder != nil {
+	if req.UserID != "" {
+		bridgeContext.RequestingUser = &model.User{Id: req.UserID}
+	}
+	if req.UseAgentSystemPrompt {
+		if a.prompts == nil {
+			return llm.CompletionRequest{}, errors.New("prompts are not configured")
+		}
+		bridgeContext = a.buildAgentBridgeContext(bot, req, includeTools)
+		systemPrompt, fmtErr := a.prompts.Format(prompts.PromptDirectMessageQuestionSystem, bridgeContext)
+		if fmtErr != nil {
+			return llm.CompletionRequest{}, fmt.Errorf("failed to format agent system prompt: %w", fmtErr)
+		}
+		posts = append([]llm.Post{{
+			Role:    llm.PostRoleSystem,
+			Message: systemPrompt,
+		}}, posts...)
+	} else if includeTools && a.contextBuilder != nil {
 		a.contextBuilder.WithLLMContextTools(bot)(bridgeContext)
 	}
 
@@ -854,6 +925,12 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 		})
 		return
 	}
+	if req.UseAgentSystemPrompt {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "use_agent_system_prompt is only supported for agent completion endpoints",
+		})
+		return
+	}
 
 	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
@@ -930,6 +1007,12 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	if req.AllowedTools != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "allowed_tools is only supported for agent completion endpoints",
+		})
+		return
+	}
+	if req.UseAgentSystemPrompt {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "use_agent_system_prompt is only supported for agent completion endpoints",
 		})
 		return
 	}

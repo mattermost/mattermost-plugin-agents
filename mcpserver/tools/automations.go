@@ -110,12 +110,13 @@ type SendMessageActionConfig struct {
 
 // AIPromptActionConfig holds config for the ai_prompt action type.
 type AIPromptActionConfig struct {
-	SystemPrompt string                `json:"system_prompt,omitempty"`
-	Prompt       string                `json:"prompt"`
-	ProviderType string                `json:"provider_type"`
-	ProviderID   string                `json:"provider_id"`
-	AllowedTools []string              `json:"allowed_tools,omitempty"`
-	Guardrails   *AutomationGuardrails `json:"guardrails,omitempty"`
+	SystemPrompt         string                `json:"system_prompt,omitempty"`
+	UseAgentSystemPrompt bool                  `json:"use_agent_system_prompt,omitempty"`
+	Prompt               string                `json:"prompt"`
+	ProviderType         string                `json:"provider_type"`
+	ProviderID           string                `json:"provider_id"`
+	AllowedTools         []string              `json:"allowed_tools,omitempty"`
+	Guardrails           *AutomationGuardrails `json:"guardrails,omitempty"`
 	// RequestAs selects which user the AI completion request is attributed to.
 	// Allowed values: "" or "triggerer" (default — the user who triggered the
 	// automation, falling back to the flow creator when the trigger has no

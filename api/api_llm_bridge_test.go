@@ -243,6 +243,76 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 	}
 }
 
+func TestBridgeClientAgentCompletionUseAgentSystemPrompt(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name                    string
+		useAgentSystemPrompt    bool
+		expectAgentSystemPrompt bool
+	}{
+		{
+			name:                    "prepends configured agent system prompt",
+			useAgentSystemPrompt:    true,
+			expectAgentSystemPrompt: true,
+		},
+		{
+			name:                    "omitted flag leaves posts unchanged",
+			useAgentSystemPrompt:    false,
+			expectAgentSystemPrompt: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			botConfig := llm.BotConfig{
+				Name:               "testbot",
+				DisplayName:        "Test Bot",
+				UserAccessLevel:    llm.UserAccessLevelAll,
+				CustomInstructions: "Always prefix summaries with AGENT-PROMPT:",
+			}
+			e.setupTestBot(botConfig)
+
+			fakeLLM := NewFakeLLM("ok")
+			for _, bot := range e.bots.GetAllBots() {
+				if bot.GetConfig().Name == "testbot" {
+					bot.SetLLMForTest(fakeLLM)
+				}
+			}
+
+			client := e.CreateBridgeClient()
+			result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "system", Message: "automation system prompt"},
+					{Role: "user", Message: "summarize this"},
+				},
+				UseAgentSystemPrompt: tc.useAgentSystemPrompt,
+			})
+			require.NoError(t, err)
+			require.Equal(t, "ok", result)
+
+			request := fakeLLM.LastRequest()
+			if tc.expectAgentSystemPrompt {
+				require.Len(t, request.Posts, 3)
+				require.Equal(t, llm.PostRoleSystem, request.Posts[0].Role)
+				require.Contains(t, request.Posts[0].Message, "You are called Test Bot")
+				require.Contains(t, request.Posts[0].Message, "Always prefix summaries with AGENT-PROMPT:")
+				require.Equal(t, "automation system prompt", request.Posts[1].Message)
+				require.Equal(t, "summarize this", request.Posts[2].Message)
+				return
+			}
+
+			require.Len(t, request.Posts, 2)
+			require.Equal(t, "automation system prompt", request.Posts[0].Message)
+			require.Equal(t, "summarize this", request.Posts[1].Message)
+		})
+	}
+}
+
 func TestBridgeClientContextEnrichment(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -544,6 +614,20 @@ func TestBridgeClientServiceCompletion(t *testing.T) {
 			fakeLLM:       NewFakeLLM("test"),
 			expectError:   true,
 			errorMsg:      "no bot found for service",
+		},
+		{
+			name:    "use agent system prompt rejected",
+			service: "test-service-id",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+				UseAgentSystemPrompt: true,
+			},
+			serviceConfig: llm.ServiceConfig{ID: "test-service-id", Name: "Test Service"},
+			fakeLLM:       NewFakeLLM("test"),
+			expectError:   true,
+			errorMsg:      "use_agent_system_prompt is only supported for agent completion endpoints",
 		},
 	}
 
