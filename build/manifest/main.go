@@ -85,7 +85,11 @@ func main() {
 		}
 
 	case "dist":
-		if err := distManifest(manifest); err != nil {
+		outDir := "dist"
+		if len(os.Args) > 2 {
+			outDir = os.Args[2]
+		}
+		if err := distManifest(manifest, outDir); err != nil {
 			panic("failed to write manifest to dist directory: " + err.Error())
 		}
 
@@ -205,13 +209,13 @@ func applyManifest(manifest *model.Manifest) error {
 }
 
 // distManifest writes the manifest file to the dist directory
-func distManifest(manifest *model.Manifest) error {
+func distManifest(manifest *model.Manifest, outDir string) error {
 	manifestBytes, err := json.MarshalIndent(manifest, "", "    ")
 	if err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(fmt.Sprintf("dist/%s/plugin.json", manifest.Id), manifestBytes, 0600); err != nil {
+	if err := os.WriteFile(fmt.Sprintf("%s/%s/plugin.json", outDir, manifest.Id), manifestBytes, 0600); err != nil {
 		return errors.Wrap(err, "failed to write plugin.json")
 	}
 
