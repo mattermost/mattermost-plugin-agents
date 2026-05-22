@@ -870,6 +870,10 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+		if cfg.ToolsDisabled {
+			none := string(schemas.ChatToolChoiceTypeNone)
+			params.ToolChoice = &schemas.ChatToolChoice{ChatToolChoiceStr: &none}
+		}
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildChatReasoning(cfg)
@@ -1102,9 +1106,32 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 	return parts
 }
 
+// hasToolUseHistory reports whether any post in the conversation carries
+// tool_use blocks. When true, providers like Anthropic require the tools
+// array to remain present even if the caller wants to forbid further tool
+// calls; we keep the definitions and rely on tool_choice="none" to enforce
+// the forbiddance.
+func hasToolUseHistory(posts []llm.Post) bool {
+	for _, post := range posts {
+		if len(post.ToolUse) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // convertTools converts llm.Tool to Bifrost ChatTool format.
 func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ChatTool {
-	if cfg.ToolsDisabled || request.Context == nil || request.Context.Tools == nil {
+	if request.Context == nil || request.Context.Tools == nil {
+		return nil
+	}
+	// ToolsDisabled normally means "send no tools". But when the conversation
+	// history contains tool_use blocks (typically the tools-disabled synthesis
+	// the toolrunner forces after hitting the iteration cap or after repeated
+	// tool failures), providers require the tools array to stay defined to
+	// validate the request. In that case we keep the tools and rely on
+	// tool_choice="none" (set by the caller) to forbid further tool calls.
+	if cfg.ToolsDisabled && !hasToolUseHistory(request.Posts) {
 		return nil
 	}
 
@@ -1427,8 +1454,12 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 		})
 	}
 
-	// Add custom function tools if available
-	if !cfg.ToolsDisabled && request.Context != nil && request.Context.Tools != nil {
+	// Add custom function tools. Normally skipped when ToolsDisabled, but if
+	// the conversation history contains tool_use blocks we must keep them in
+	// the request and forbid further calls via tool_choice="none" (set by the
+	// caller). See hasToolUseHistory.
+	keepFunctionTools := !cfg.ToolsDisabled || hasToolUseHistory(request.Posts)
+	if keepFunctionTools && request.Context != nil && request.Context.Tools != nil {
 		tools := request.Context.Tools.GetTools()
 		for _, tool := range tools {
 			var params *schemas.ToolFunctionParameters
@@ -1528,6 +1559,10 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+		if cfg.ToolsDisabled {
+			none := string(schemas.ResponsesToolChoiceTypeNone)
+			params.ToolChoice = &schemas.ResponsesToolChoice{ResponsesToolChoiceStr: &none}
+		}
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildResponsesReasoning(cfg)
