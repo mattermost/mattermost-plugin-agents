@@ -279,32 +279,22 @@ func (r *ToolRunner) runLoop(
 			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())
 		}
-	}
 
-	// Exhausted MaxToolRounds: tools ran on the last iteration but the model
-	// never produced its synthesis text. Make one tools-disabled call so the
-	// caller still gets a final answer instead of just the intermediate
-	// "Let me search..." preambles from each round.
-	request.Posts = llm.EnsureToolIterationLimitSystemMessage(request.Posts)
-	currentOpts = append(currentOpts, llm.WithToolsDisabled())
-
-	finalStream, err := r.llm.ChatCompletion(ctx, request, currentOpts...)
-	if err != nil {
-		r.deliverToolTurns(result, onToolTurns)
-		output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("final synthesis llm completion failed: %w", err),
+		// If the next iteration is the last one, force it to be a tools-disabled
+		// synthesis so the caller always receives a final answer instead of an
+		// abrupt end after the cap is hit. Mirrors the trailing-failures pattern
+		// above.
+		if round == MaxToolRounds-2 {
+			request.Posts = llm.EnsureToolIterationLimitSystemMessage(request.Posts)
+			currentOpts = append(currentOpts, llm.WithToolsDisabled())
 		}
-		return
 	}
 
-	for event := range finalStream.Stream {
-		if event.Type == llm.EventTypeEnd {
-			continue
-		}
-		output <- event
-	}
-
+	// Unreachable in practice: the round == MaxToolRounds-2 branch above forces
+	// the final iteration to be tools-disabled, so the LLM cannot emit more
+	// tool calls and the "no tool calls" early-return inside the loop fires.
+	// Kept as a defensive End so a misbehaving provider still terminates the
+	// stream cleanly instead of hanging.
 	r.deliverToolTurns(result, onToolTurns)
 	output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 }

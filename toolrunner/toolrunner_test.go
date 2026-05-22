@@ -480,10 +480,11 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 }
 
 func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
-	// LLM returns tool calls for MaxToolRounds rounds, then the runner forces
-	// one final tools-disabled synthesis call that returns text only.
-	responses := make([]testResponse, MaxToolRounds+1)
-	for i := 0; i < MaxToolRounds; i++ {
+	// LLM returns tool calls for MaxToolRounds-1 rounds. The runner forces the
+	// final (MaxToolRounds-th) round to be a tools-disabled synthesis that
+	// returns text only.
+	responses := make([]testResponse, MaxToolRounds)
+	for i := 0; i < MaxToolRounds-1; i++ {
 		responses[i] = testResponse{
 			events: []llm.TextStreamEvent{
 				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
@@ -493,7 +494,7 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 			},
 		}
 	}
-	responses[MaxToolRounds] = testResponse{
+	responses[MaxToolRounds-1] = testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeText, Value: "synthesized answer"},
 			{Type: llm.EventTypeEnd},
@@ -516,17 +517,17 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 	assert.NoError(t, readErr)
 	assert.Equal(t, "synthesized answer", text)
 
-	// MaxToolRounds tool turns plus one extra synthesis call.
-	assert.Len(t, result.ToolTurns, MaxToolRounds)
-	assert.Equal(t, MaxToolRounds+1, inner.callCount)
+	// Tools ran on MaxToolRounds-1 rounds; the last round was the synthesis.
+	assert.Len(t, result.ToolTurns, MaxToolRounds-1)
+	assert.Equal(t, MaxToolRounds, inner.callCount)
 }
 
 func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.T) {
 	// Same shape as MaxRoundsExhausted, but capture opts on every call and
-	// verify the final synthesis call has tools disabled and carries the
-	// iteration-limit system message.
-	responses := make([]testResponse, MaxToolRounds+1)
-	for i := 0; i < MaxToolRounds; i++ {
+	// verify the final round is the synthesis call: tools disabled and the
+	// iteration-limit system message present in the request.
+	responses := make([]testResponse, MaxToolRounds)
+	for i := 0; i < MaxToolRounds-1; i++ {
 		responses[i] = testResponse{
 			events: []llm.TextStreamEvent{
 				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
@@ -536,7 +537,7 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 			},
 		}
 	}
-	responses[MaxToolRounds] = testResponse{
+	responses[MaxToolRounds-1] = testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeText, Value: "wrapping up"},
 			{Type: llm.EventTypeEnd},
@@ -560,10 +561,10 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 	require.NoError(t, err)
 	_, _ = result.Stream.ReadAll()
 
-	require.Len(t, capturedOpts, MaxToolRounds+1)
+	require.Len(t, capturedOpts, MaxToolRounds)
 
 	// Earlier calls must not have tools disabled.
-	for round := 0; round < MaxToolRounds; round++ {
+	for round := 0; round < MaxToolRounds-1; round++ {
 		var cfg llm.LanguageModelConfig
 		for _, opt := range capturedOpts[round] {
 			opt(&cfg)
@@ -573,14 +574,14 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 
 	// The final synthesis call must have tools disabled.
 	var finalCfg llm.LanguageModelConfig
-	for _, opt := range capturedOpts[MaxToolRounds] {
+	for _, opt := range capturedOpts[MaxToolRounds-1] {
 		opt(&finalCfg)
 	}
 	assert.True(t, finalCfg.ToolsDisabled, "final synthesis call must disable tools")
 
 	// The final request's posts must contain the iteration-limit system message.
-	require.Len(t, inner.inner.capturedRequests, MaxToolRounds+1)
-	finalReq := inner.inner.capturedRequests[MaxToolRounds]
+	require.Len(t, inner.inner.capturedRequests, MaxToolRounds)
+	finalReq := inner.inner.capturedRequests[MaxToolRounds-1]
 	var foundSystemMessage bool
 	for _, post := range finalReq.Posts {
 		if post.Role == llm.PostRoleSystem && strings.Contains(post.Message, llm.ToolIterationLimitSystemMessage) {
