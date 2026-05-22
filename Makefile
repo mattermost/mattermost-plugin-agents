@@ -33,11 +33,6 @@ HAS_PUBLIC :=
 $(info Note: public/ directory contains Go modules, not HTTP assets - skipping bundle)
 
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
-
-# Output dir + source dir for the server binaries. Defaults match the
-# non-FIPS layout; bundle-fips (in build/fips.mk) overrides both to share
-# this target instead of duplicating its LICENSE/NOTICE/assets/webapp/tar
-# logic.
 BUNDLE_DIR ?= dist
 SERVER_DIST_SRC ?= server/dist
 
@@ -46,8 +41,7 @@ ifneq ($(wildcard build/custom.mk),)
 	include build/custom.mk
 endif
 
-# Include FIPS makefile, if present. Its presence is also the marker the
-# delivery-platform release pipeline uses to detect FIPS opt-in.
+# Presence of build/fips.mk is the per-plugin FIPS opt-in marker.
 ifneq ($(wildcard build/fips.mk),)
 	include build/fips.mk
 endif
