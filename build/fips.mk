@@ -10,13 +10,23 @@ FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.26.3-dev@sha256:48ab99fede7f
 BUNDLE_NAME_FIPS ?= $(PLUGIN_ID)-$(PLUGIN_VERSION)-fips.tar.gz
 FIPS_BIN := server/dist-fips/plugin-linux-amd64-fips
 
+# The FIPS build deliberately does NOT inherit GO_BUILD_LDFLAGS, because the
+# plugin's default release LDFLAGS is `-ldflags="-s -w"` (strip symbol +
+# DWARF tables). With `-s` the binary has no symbol section, and the
+# canonical `go tool nm | grep …OpenSSL_version` check in verify-fips
+# returns zero symbols and fails. `mattermost/server`'s LDFLAGS doesn't
+# include `-s -w` (it only injects build-info -X values), which is why the
+# same nm check works there. Unstripped FIPS binaries are larger but
+# verifiable; that's the right tradeoff for a compliance gate.
+FIPS_GO_BUILD_LDFLAGS ?=
+
 # Builds the server binary inside the FIPS Go toolchain image. The
 # GO_BUILD_* values are Make-side-interpolated into a single-quoted inner
-# shell script so the FIPS binary is built with the same -ldflags,
-# -gcflags, etc. as the non-FIPS one. Env-var passing (`-e VAR=...`) is
-# unsafe here because GO_BUILD_LDFLAGS / GO_BUILD_GCFLAGS contain embedded
-# double quotes (e.g. `-ldflags="-s -w"`) that don't survive a second pass
-# of shell word splitting inside the container.
+# shell script so the FIPS binary is built with the same -gcflags etc. as
+# the non-FIPS one (LDFLAGS excepted — see above). Env-var passing
+# (`-e VAR=...`) is unsafe because GO_BUILD_GCFLAGS can contain embedded
+# double quotes (e.g. `-gcflags "all=-N -l"`) that don't survive a second
+# pass of shell word splitting inside the container.
 .PHONY: server-fips
 server-fips: generate
 	mkdir -p server/dist-fips
@@ -27,7 +37,7 @@ server-fips: generate
 	  $(FIPS_IMAGE) \
 	  /bin/sh -c 'CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
 	    go build -trimpath -buildvcs=false \
-	    $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(GO_BUILD_LDFLAGS) \
+	    $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(FIPS_GO_BUILD_LDFLAGS) \
 	    -tags requirefips \
 	    -o dist-fips/plugin-linux-amd64-fips'
 
@@ -48,12 +58,15 @@ verify-fips:
 # between FIPS and non-FIPS bundling are the server-binary source dir, the
 # output dir, and the tarball filename — all three parameterized on `bundle`
 # itself via BUNDLE_DIR / BUNDLE_NAME / SERVER_DIST_SRC.
+#
+# Depends on verify-fips so a direct `make bundle-fips` invocation can't
+# package a binary that hasn't passed the FIPS marker checks. Make
+# deduplicates phony targets within a single invocation, so dist-fips /
+# dist-all still run verify-fips exactly once.
 .PHONY: bundle-fips
-bundle-fips:
+bundle-fips: verify-fips
 	rm -rf server/dist-fips-staged
 	mkdir -p server/dist-fips-staged
-	@test -f $(FIPS_BIN) \
-	  || (echo "bundle-fips: $(FIPS_BIN) missing — did server-fips run?" && exit 1)
 	cp $(FIPS_BIN) server/dist-fips-staged/plugin-linux-amd64
 	$(MAKE) bundle BUNDLE_DIR=dist-fips BUNDLE_NAME=$(BUNDLE_NAME_FIPS) SERVER_DIST_SRC=server/dist-fips-staged
 
