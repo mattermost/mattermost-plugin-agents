@@ -3,6 +3,8 @@
 
 package llm
 
+import "strings"
+
 const MaxConsecutiveToolCallFailures = 3
 
 const ToolRetryLimitSystemMessage = "The last 3 tool attempts failed. Do not call any more tools. Explain the latest error to the user and ask for guidance or missing information."
@@ -48,7 +50,7 @@ func ensureSystemMessage(posts []Post, message string) []Post {
 		if posts[i].Role != PostRoleSystem {
 			continue
 		}
-		if posts[i].Message == message {
+		if strings.Contains(posts[i].Message, message) {
 			return posts
 		}
 

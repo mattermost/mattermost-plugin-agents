@@ -111,6 +111,17 @@ func TestEnsureToolRetryLimitSystemMessage(t *testing.T) {
 				{Role: PostRoleUser, Message: "hello"},
 			},
 		},
+		{
+			name: "returns posts unchanged when retry message is embedded in system prompt",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: "base prompt\n\n" + ToolRetryLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			expected: []Post{
+				{Role: PostRoleSystem, Message: "base prompt\n\n" + ToolRetryLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -164,6 +175,17 @@ func TestEnsureToolIterationLimitSystemMessage(t *testing.T) {
 			},
 			expected: []Post{
 				{Role: PostRoleSystem, Message: ToolIterationLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+		},
+		{
+			name: "returns posts unchanged when iteration message is embedded in system prompt",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: "base prompt\n\n" + ToolIterationLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			expected: []Post{
+				{Role: PostRoleSystem, Message: "base prompt\n\n" + ToolIterationLimitSystemMessage},
 				{Role: PostRoleUser, Message: "hello"},
 			},
 		},
