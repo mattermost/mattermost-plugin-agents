@@ -34,9 +34,22 @@ $(info Note: public/ directory contains Go modules, not HTTP assets - skipping b
 
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
 
+# Output dir + source dir for the server binaries. Defaults match the
+# non-FIPS layout; bundle-fips (in build/fips.mk) overrides both to share
+# this target instead of duplicating its LICENSE/NOTICE/assets/webapp/tar
+# logic.
+BUNDLE_DIR ?= dist
+SERVER_DIST_SRC ?= server/dist
+
 # Include custom makefile, if present
 ifneq ($(wildcard build/custom.mk),)
 	include build/custom.mk
+endif
+
+# Include FIPS makefile, if present. Its presence is also the marker the
+# delivery-platform release pipeline uses to detect FIPS opt-in.
+ifneq ($(wildcard build/fips.mk),)
+	include build/fips.mk
 endif
 
 ifneq ($(MM_DEBUG),)
@@ -319,36 +332,36 @@ endif
 ## Generates a tar bundle of the plugin for install.
 .PHONY: bundle
 bundle:
-	rm -rf dist/
-	mkdir -p dist/$(PLUGIN_ID)
-	./build/bin/manifest dist
+	rm -rf $(BUNDLE_DIR)/
+	mkdir -p $(BUNDLE_DIR)/$(PLUGIN_ID)
+	./build/bin/manifest dist $(BUNDLE_DIR)
 ifneq ($(wildcard LICENSE.txt),)
-	cp -r LICENSE.txt dist/$(PLUGIN_ID)/
+	cp -r LICENSE.txt $(BUNDLE_DIR)/$(PLUGIN_ID)/
 endif
 ifneq ($(wildcard NOTICE.txt),)
-	cp -r NOTICE.txt dist/$(PLUGIN_ID)/
+	cp -r NOTICE.txt $(BUNDLE_DIR)/$(PLUGIN_ID)/
 endif
 ifneq ($(wildcard $(ASSETS_DIR)/.),)
-	cp -r $(ASSETS_DIR) dist/$(PLUGIN_ID)/
+	cp -r $(ASSETS_DIR) $(BUNDLE_DIR)/$(PLUGIN_ID)/
 endif
 ifneq ($(HAS_PUBLIC),)
-	cp -r public dist/$(PLUGIN_ID)/
+	cp -r public $(BUNDLE_DIR)/$(PLUGIN_ID)/
 endif
 ifneq ($(HAS_SERVER),)
-	mkdir -p dist/$(PLUGIN_ID)/server
-	cp -r server/dist dist/$(PLUGIN_ID)/server/
+	mkdir -p $(BUNDLE_DIR)/$(PLUGIN_ID)/server/dist
+	cp -r $(SERVER_DIST_SRC)/. $(BUNDLE_DIR)/$(PLUGIN_ID)/server/dist/
 endif
 ifneq ($(HAS_WEBAPP),)
-	mkdir -p dist/$(PLUGIN_ID)/webapp
-	cp -r webapp/dist dist/$(PLUGIN_ID)/webapp/
+	mkdir -p $(BUNDLE_DIR)/$(PLUGIN_ID)/webapp
+	cp -r webapp/dist $(BUNDLE_DIR)/$(PLUGIN_ID)/webapp/
 endif
 ifeq ($(shell uname),Darwin)
-	cd dist && tar --disable-copyfile -cvzf $(BUNDLE_NAME) $(PLUGIN_ID)
+	cd $(BUNDLE_DIR) && tar --disable-copyfile -cvzf $(BUNDLE_NAME) $(PLUGIN_ID)
 else
-	cd dist && tar -cvzf $(BUNDLE_NAME) $(PLUGIN_ID)
+	cd $(BUNDLE_DIR) && tar -cvzf $(BUNDLE_NAME) $(PLUGIN_ID)
 endif
 
-	@echo plugin built at: dist/$(BUNDLE_NAME)
+	@echo plugin built at: $(BUNDLE_DIR)/$(BUNDLE_NAME)
 
 ## Builds the server for Linux amd64 only (CI optimized).
 .PHONY: server-ci
@@ -551,9 +564,12 @@ mock:
 .PHONY: clean
 clean:
 	rm -fr dist/
+	rm -fr dist-fips/
 ifneq ($(HAS_SERVER),)
 	rm -fr server/coverage.txt
 	rm -fr server/dist
+	rm -fr server/dist-fips
+	rm -fr server/dist-fips-staged
 endif
 ifneq ($(HAS_WEBAPP),)
 	rm -fr webapp/junit.xml
