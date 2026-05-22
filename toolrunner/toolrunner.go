@@ -283,20 +283,13 @@ func (r *ToolRunner) runLoop(
 		// If the next iteration is the last one, force it to be a tools-disabled
 		// synthesis so the caller always receives a final answer instead of an
 		// abrupt end after the cap is hit. Mirrors the trailing-failures pattern
-		// above.
+		// above: the final iteration's no-tool-calls early-return then streams
+		// the synthesis text and emits End.
 		if round == MaxToolRounds-2 {
 			request.Posts = llm.EnsureToolIterationLimitSystemMessage(request.Posts)
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())
 		}
 	}
-
-	// Unreachable in practice: the round == MaxToolRounds-2 branch above forces
-	// the final iteration to be tools-disabled, so the LLM cannot emit more
-	// tool calls and the "no tool calls" early-return inside the loop fires.
-	// Kept as a defensive End so a misbehaving provider still terminates the
-	// stream cleanly instead of hanging.
-	r.deliverToolTurns(result, onToolTurns)
-	output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 }
 
 // deliverToolTurns calls the onToolTurns callback if there are accumulated turns.
