@@ -281,7 +281,30 @@ func (r *ToolRunner) runLoop(
 		}
 	}
 
-	// Exhausted MaxToolRounds.
+	// Exhausted MaxToolRounds: tools ran on the last iteration but the model
+	// never produced its synthesis text. Make one tools-disabled call so the
+	// caller still gets a final answer instead of just the intermediate
+	// "Let me search..." preambles from each round.
+	request.Posts = llm.EnsureToolIterationLimitSystemMessage(request.Posts)
+	currentOpts = append(currentOpts, llm.WithToolsDisabled())
+
+	finalStream, err := r.llm.ChatCompletion(ctx, request, currentOpts...)
+	if err != nil {
+		r.deliverToolTurns(result, onToolTurns)
+		output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeError,
+			Value: fmt.Errorf("final synthesis llm completion failed: %w", err),
+		}
+		return
+	}
+
+	for event := range finalStream.Stream {
+		if event.Type == llm.EventTypeEnd {
+			continue
+		}
+		output <- event
+	}
+
 	r.deliverToolTurns(result, onToolTurns)
 	output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 }

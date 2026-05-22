@@ -123,3 +123,59 @@ func TestEnsureToolRetryLimitSystemMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestEnsureToolIterationLimitSystemMessage(t *testing.T) {
+	tests := []struct {
+		name        string
+		posts       []Post
+		expected    []Post
+		assertInput func(*testing.T, []Post)
+	}{
+		{
+			name: "prepends a system post when none exists",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			expected: []Post{
+				{Role: PostRoleSystem, Message: ToolIterationLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+		},
+		{
+			name: "appends message to existing system prompt",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: "base prompt"},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			expected: []Post{
+				{Role: PostRoleSystem, Message: "base prompt\n\n" + ToolIterationLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			assertInput: func(t *testing.T, posts []Post) {
+				t.Helper()
+				assert.Equal(t, "base prompt", posts[0].Message)
+			},
+		},
+		{
+			name: "returns posts unchanged when iteration message already exists",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: ToolIterationLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			expected: []Post{
+				{Role: PostRoleSystem, Message: ToolIterationLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := EnsureToolIterationLimitSystemMessage(tt.posts)
+			assert.Equal(t, tt.expected, result)
+			if tt.assertInput != nil {
+				tt.assertInput(t, tt.posts)
+			}
+		})
+	}
+}

@@ -7,6 +7,8 @@ const MaxConsecutiveToolCallFailures = 3
 
 const ToolRetryLimitSystemMessage = "The last 3 tool attempts failed. Do not call any more tools. Explain the latest error to the user and ask for guidance or missing information."
 
+const ToolIterationLimitSystemMessage = "The maximum number of tool-use iterations has been reached. Do not call any more tools. Provide a final answer based on the information gathered so far."
+
 // CountTrailingFailedToolCalls counts consecutive trailing tool executions that
 // failed. A successful tool execution resets the streak. Posts without executed
 // tool results stop the scan because they represent a new agent turn.
@@ -31,26 +33,37 @@ func CountTrailingFailedToolCalls(posts []Post) int {
 }
 
 func EnsureToolRetryLimitSystemMessage(posts []Post) []Post {
+	return ensureSystemMessage(posts, ToolRetryLimitSystemMessage)
+}
+
+func EnsureToolIterationLimitSystemMessage(posts []Post) []Post {
+	return ensureSystemMessage(posts, ToolIterationLimitSystemMessage)
+}
+
+// ensureSystemMessage appends message to the first existing system post, or
+// prepends a new system post if none exists. If the message is already present
+// on a system post, posts is returned unchanged.
+func ensureSystemMessage(posts []Post, message string) []Post {
 	for i := range posts {
 		if posts[i].Role != PostRoleSystem {
 			continue
 		}
-		if posts[i].Message == ToolRetryLimitSystemMessage {
+		if posts[i].Message == message {
 			return posts
 		}
 
 		postsCopy := append([]Post(nil), posts...)
 		if postsCopy[i].Message == "" {
-			postsCopy[i].Message = ToolRetryLimitSystemMessage
+			postsCopy[i].Message = message
 		} else {
-			postsCopy[i].Message += "\n\n" + ToolRetryLimitSystemMessage
+			postsCopy[i].Message += "\n\n" + message
 		}
 		return postsCopy
 	}
 
 	return append([]Post{{
 		Role:    PostRoleSystem,
-		Message: ToolRetryLimitSystemMessage,
+		Message: message,
 	}}, posts...)
 }
 

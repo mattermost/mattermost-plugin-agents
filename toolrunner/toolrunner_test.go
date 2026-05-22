@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -479,9 +480,10 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 }
 
 func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
-	// LLM always returns tool calls, never text-only.
+	// LLM returns tool calls for MaxToolRounds rounds, then the runner forces
+	// one final tools-disabled synthesis call that returns text only.
 	responses := make([]testResponse, MaxToolRounds+1)
-	for i := range responses {
+	for i := 0; i < MaxToolRounds; i++ {
 		responses[i] = testResponse{
 			events: []llm.TextStreamEvent{
 				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
@@ -490,6 +492,12 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 				{Type: llm.EventTypeEnd},
 			},
 		}
+	}
+	responses[MaxToolRounds] = testResponse{
+		events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeText, Value: "synthesized answer"},
+			{Type: llm.EventTypeEnd},
+		},
 	}
 
 	inner := &testLLM{responses: responses}
@@ -503,14 +511,84 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 
-	// Should have exactly MaxToolRounds tool turns.
 	// (read stream first to ensure goroutine completes)
-	_, readErr := result.Stream.ReadAll()
+	text, readErr := result.Stream.ReadAll()
 	assert.NoError(t, readErr)
-	assert.Len(t, result.ToolTurns, MaxToolRounds)
+	assert.Equal(t, "synthesized answer", text)
 
-	// LLM called MaxToolRounds times (not MaxToolRounds+1).
-	assert.Equal(t, MaxToolRounds, inner.callCount)
+	// MaxToolRounds tool turns plus one extra synthesis call.
+	assert.Len(t, result.ToolTurns, MaxToolRounds)
+	assert.Equal(t, MaxToolRounds+1, inner.callCount)
+}
+
+func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.T) {
+	// Same shape as MaxRoundsExhausted, but capture opts on every call and
+	// verify the final synthesis call has tools disabled and carries the
+	// iteration-limit system message.
+	responses := make([]testResponse, MaxToolRounds+1)
+	for i := 0; i < MaxToolRounds; i++ {
+		responses[i] = testResponse{
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			},
+		}
+	}
+	responses[MaxToolRounds] = testResponse{
+		events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeText, Value: "wrapping up"},
+			{Type: llm.EventTypeEnd},
+		},
+	}
+
+	var capturedOpts [][]llm.LanguageModelOption
+	inner := &optCapturingLLM{
+		inner:        &testLLM{responses: responses},
+		capturedOpts: &capturedOpts,
+	}
+
+	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+	_, _ = result.Stream.ReadAll()
+
+	require.Len(t, capturedOpts, MaxToolRounds+1)
+
+	// Earlier calls must not have tools disabled.
+	for round := 0; round < MaxToolRounds; round++ {
+		var cfg llm.LanguageModelConfig
+		for _, opt := range capturedOpts[round] {
+			opt(&cfg)
+		}
+		assert.Falsef(t, cfg.ToolsDisabled, "round %d should not have tools disabled", round)
+	}
+
+	// The final synthesis call must have tools disabled.
+	var finalCfg llm.LanguageModelConfig
+	for _, opt := range capturedOpts[MaxToolRounds] {
+		opt(&finalCfg)
+	}
+	assert.True(t, finalCfg.ToolsDisabled, "final synthesis call must disable tools")
+
+	// The final request's posts must contain the iteration-limit system message.
+	require.Len(t, inner.inner.capturedRequests, MaxToolRounds+1)
+	finalReq := inner.inner.capturedRequests[MaxToolRounds]
+	var foundSystemMessage bool
+	for _, post := range finalReq.Posts {
+		if post.Role == llm.PostRoleSystem && strings.Contains(post.Message, llm.ToolIterationLimitSystemMessage) {
+			foundSystemMessage = true
+			break
+		}
+	}
+	assert.True(t, foundSystemMessage, "final request must include the iteration-limit system message")
 }
 
 func TestToolRunner_ReasoningPreservedInToolTurn(t *testing.T) {
