@@ -1,7 +1,7 @@
 // spec: tests/multiplayer-tool-calling/multiplayer-tool-calling.plan.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import fs from 'fs';
 import MattermostContainer from 'helpers/mmcontainer';
 import { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
@@ -239,6 +239,38 @@ async function clickAllButtonsInThread(page: Page, buttonName: string): Promise<
         clicked++;
         await page.waitForTimeout(500);
     }
+}
+
+async function getVisibleToolDecisionCard(page: Page, toolName: string, buttonName: string): Promise<Locator | null> {
+    const cards = page.locator('#rhsContainer').getByTestId(`tool-call-card-${toolName}`);
+    const cardCount = await cards.count().catch(() => 0);
+
+    for (let i = cardCount - 1; i >= 0; i--) {
+        const card = cards.nth(i);
+        const isVisible = await card.isVisible().catch(() => false);
+        if (!isVisible) {
+            continue;
+        }
+
+        const button = card.getByRole('button', { name: buttonName, exact: true });
+        const hasVisibleDecision = await button.isVisible().catch(() => false);
+        if (hasVisibleDecision) {
+            return card;
+        }
+    }
+
+    return null;
+}
+
+async function clickToolDecisionButton(page: Page, toolName: string, buttonName: string): Promise<boolean> {
+    const card = await getVisibleToolDecisionCard(page, toolName, buttonName);
+    if (!card) {
+        return false;
+    }
+
+    await card.getByRole('button', { name: buttonName, exact: true }).click();
+    await page.waitForTimeout(500);
+    return true;
 }
 
 /**
@@ -540,21 +572,15 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
                     rounds++;
 
-                    // Peek: does the thread contain text suggesting this is a create_post result?
-                    // If we see "Successfully created post" or similar, this is the final round.
-                    const resultText = rhs.getByText(/created post|post.*created|Successfully/i);
-                    const isCreatePostResult = await resultText.first().isVisible().catch(() => false);
-
-                    if (isCreatePostResult) {
-                        // This is the create_post result — Keep Private
-                        await clickAllButtonsInThread(invokerPage, 'Keep private');
+                    const keptCreatePostPrivate = await clickToolDecisionButton(invokerPage, 'create_post', 'Keep private');
+                    if (keptCreatePostPrivate) {
                         await invokerPage.waitForTimeout(2000);
                         break;
-                    } else {
-                        // Intermediate round (e.g. get_channel_info) — Share so LLM can continue
-                        await clickAllButtonsInThread(invokerPage, 'Share');
-                        await invokerPage.waitForTimeout(2000);
                     }
+
+                    // Intermediate round (e.g. get_channel_info) — Share so LLM can continue
+                    await clickAllButtonsInThread(invokerPage, 'Share');
+                    await invokerPage.waitForTimeout(2000);
                 }
                 expect(rounds).toBeGreaterThanOrEqual(1);
 

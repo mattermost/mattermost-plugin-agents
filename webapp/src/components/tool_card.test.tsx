@@ -78,6 +78,12 @@ beforeEach(() => {
 });
 
 describe('ToolCard argument rendering', () => {
+    test('exposes a stable test id for the stripped tool name', () => {
+        renderComponent(makeTool({name: 'mattermost-ai__create_post'}));
+
+        expect(screen.getByTestId('tool-call-card-create_post')).not.toBeNull();
+    });
+
     test('shows the no-parameters message for explicit empty object arguments', () => {
         renderComponent(makeTool({arguments: {}}));
 

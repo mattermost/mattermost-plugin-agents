@@ -363,7 +363,8 @@ const ToolCard: React.FC<ToolCardProps> = ({
 
     // Tool-call cards lack server context, so strip the pluginmcp prefix
     // heuristically before title-casing the display name.
-    const displayName = stripWirePrefix(tool.name).
+    const strippedToolName = stripWirePrefix(tool.name);
+    const displayName = strippedToolName.
         replace(/_/g, ' ').
         split(' ').
         map((word) => word.charAt(0).toUpperCase() + word.slice(1)).
@@ -538,7 +539,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
     }, [showResults, tool.result, formatText, markdownOptions, messageHtmlToComponent, messageHtmlToComponentOptions]);
 
     return (
-        <ToolCallCard>
+        <ToolCallCard data-testid={`tool-call-card-${strippedToolName}`}>
             <ToolCallHeader
                 $canExpand={canExpand}
                 onClick={canExpand ? onToggleCollapse : undefined} // eslint-disable-line no-undefined
