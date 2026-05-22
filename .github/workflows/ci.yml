@@ -501,10 +501,7 @@ jobs:
         with:
           golangci-lint-version: "v1.54.2"
       - uses: mattermost/actions/plugin-ci/build@main
-      # Temporarily a local composite. Switch to
-      # `mattermost/actions/plugin-ci/build-fips@<sha>` once that PR
-      # (mattermost/actions#57) merges, and delete `.github/actions/build-fips/`.
-      - uses: ./.github/actions/build-fips
+      - uses: mattermost/actions/plugin-ci/build-fips@c7a06bc642f72fc227deb2cae3af03cff72c0f0d
         with:
           chainguard-identity: ${{ secrets.CHAINGUARD_IDENTITY }}
       - name: build/upload-all
