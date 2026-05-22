@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"go.opentelemetry.io/otel/trace"
@@ -24,11 +26,27 @@ const MaxToolRounds = 10
 // approved ones, appends results back to the request, and calls again.
 type ToolRunner struct {
 	llm llm.LanguageModel
+	log *pluginapi.LogService
 }
 
 // New creates a ToolRunner bound to the given language model.
 func New(lm llm.LanguageModel) *ToolRunner {
 	return &ToolRunner{llm: lm}
+}
+
+// WithLogger attaches a logger for diagnostic debug output. Optional;
+// callers that don't provide one simply get no debug logs.
+func (r *ToolRunner) WithLogger(log *pluginapi.LogService) *ToolRunner {
+	r.log = log
+	return r
+}
+
+// debug emits a Debug-level log entry when a logger is configured. Safe to
+// call when r.log is nil.
+func (r *ToolRunner) debug(msg string, kvs ...any) {
+	if r.log != nil {
+		r.log.Debug(msg, kvs...)
+	}
 }
 
 // ToolRunResult is the return value of Run(). It contains the final
@@ -113,10 +131,17 @@ func (r *ToolRunner) Run(
 ) (*ToolRunResult, error) {
 	currentOpts := append([]llm.LanguageModelOption(nil), opts...)
 
+	r.debug("toolrunner: starting run",
+		"max_tool_rounds", MaxToolRounds,
+		"posts", len(request.Posts),
+		"has_tools", request.Context != nil && request.Context.Tools != nil,
+	)
+
 	// Make the first LLM call synchronously so initialization errors
 	// (auth failures, rate limits, etc.) are returned directly.
 	firstStream, err := r.llm.ChatCompletion(ctx, request, currentOpts...)
 	if err != nil {
+		r.debug("toolrunner: initial chat completion failed", "error", err.Error())
 		return nil, fmt.Errorf("llm completion failed: %w", err)
 	}
 
@@ -149,11 +174,14 @@ func (r *ToolRunner) runLoop(
 	stream := firstStream
 
 	for round := 0; round < MaxToolRounds; round++ {
+		r.debug("toolrunner: round start", "round", round, "posts", len(request.Posts))
+
 		// For round > 0, make a new LLM call.
 		if round > 0 {
 			var err error
 			stream, err = r.llm.ChatCompletion(ctx, request, currentOpts...)
 			if err != nil {
+				r.debug("toolrunner: chat completion failed mid-loop", "round", round, "error", err.Error())
 				r.deliverToolTurns(result, onToolTurns)
 				output <- llm.TextStreamEvent{
 					Type:  llm.EventTypeError,
@@ -210,13 +238,32 @@ func (r *ToolRunner) runLoop(
 			}
 		}
 
+		r.debug("toolrunner: round consumed",
+			"round", round,
+			"text_len", text.Len(),
+			"reasoning_len", reasoning.Len(),
+			"tool_call_count", len(toolCalls),
+			"input_tokens", usage.InputTokens,
+			"output_tokens", usage.OutputTokens,
+			"stream_error", streamErr != nil,
+		)
+
 		if streamErr != nil {
+			r.debug("toolrunner: stream error mid-round, terminating", "round", round, "error", streamErr.Error())
 			r.deliverToolTurns(result, onToolTurns)
 			return
 		}
 
 		// No tool calls = final response.
 		if len(toolCalls) == 0 {
+			// text_len == 0 here strongly suggests the LLM emitted an empty
+			// response (no synthesis), which the caller sees as an abrupt end.
+			r.debug("toolrunner: no tool calls, treating as final response",
+				"round", round,
+				"text_len", text.Len(),
+				"tool_turns_so_far", len(result.ToolTurns),
+				"empty_response", text.Len() == 0 && len(result.ToolTurns) > 0,
+			)
 			r.deliverToolTurns(result, onToolTurns)
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 			return
@@ -233,6 +280,7 @@ func (r *ToolRunner) runLoop(
 
 		// If NOT all approved, return with unresolved tool calls.
 		if !allApproved {
+			r.debug("toolrunner: tool calls not all approved, returning unresolved", "round", round, "tool_call_count", len(toolCalls))
 			r.deliverToolTurns(result, onToolTurns)
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
@@ -275,7 +323,11 @@ func (r *ToolRunner) runLoop(
 		})
 
 		// Check for consecutive tool call failures and disable tools if needed.
-		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
+		if trailingFailures := llm.CountTrailingFailedToolCalls(request.Posts); trailingFailures >= llm.MaxConsecutiveToolCallFailures {
+			r.debug("toolrunner: disabling tools due to consecutive failures",
+				"round", round,
+				"trailing_failures", trailingFailures,
+			)
 			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())
 		}
@@ -286,6 +338,10 @@ func (r *ToolRunner) runLoop(
 		// above: the final iteration's no-tool-calls early-return then streams
 		// the synthesis text and emits End.
 		if round == MaxToolRounds-2 {
+			r.debug("toolrunner: forcing tools-disabled synthesis for final iteration (cap reached)",
+				"round", round,
+				"next_round", round+1,
+			)
 			request.Posts = llm.EnsureToolIterationLimitSystemMessage(request.Posts)
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())
 		}
@@ -327,6 +383,13 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 		} else {
 			resolveErr = fmt.Errorf("no tool store available")
 		}
+
+		r.debug("toolrunner: tool executed",
+			"name", tc.Name,
+			"id", tc.ID,
+			"is_error", resolveErr != nil,
+			"result_len", len(result),
+		)
 
 		if resolveErr != nil {
 			toolResults[i] = ToolResult{
