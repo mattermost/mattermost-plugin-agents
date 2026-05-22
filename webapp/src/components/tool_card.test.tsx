@@ -13,6 +13,10 @@ jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
 }));
 
+jest.mock('@/manifest', () => ({
+    id: 'mattermost-ai',
+}), {virtual: true});
+
 jest.mock('react-bootstrap', () => ({
     OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
     Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
