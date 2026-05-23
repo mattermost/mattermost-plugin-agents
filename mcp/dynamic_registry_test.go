@@ -182,6 +182,20 @@ func TestToolRegistryNilReceiverSafe(t *testing.T) {
 	require.Nil(t, registry.ClosestMatches("jira", 10))
 }
 
+func TestToolRegistryZeroValueSafe(t *testing.T) {
+	registry := &ToolRegistry{}
+
+	require.Equal(t, 0, registry.Len())
+	require.Nil(t, registry.List())
+
+	entry, ok := registry.Lookup("jira__search")
+	require.False(t, ok)
+	require.Empty(t, entry)
+
+	require.Nil(t, registry.Search("jira", 10))
+	require.Nil(t, registry.ClosestMatches("jira", 10))
+}
+
 func TestToolRegistrySkipsEmptyNamesAndSearchesEmptyDescriptionsByName(t *testing.T) {
 	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("", "No runtime name", "https://jira.example.com"),
