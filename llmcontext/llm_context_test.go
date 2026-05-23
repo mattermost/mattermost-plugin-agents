@@ -5,15 +5,19 @@ package llmcontext
 
 import (
 	stdcontext "context"
+	"encoding/json"
+	"sort"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	storepkg "github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,6 +25,14 @@ type emptyToolProvider struct{}
 
 func (p *emptyToolProvider) GetTools(*bots.Bot) []llm.Tool {
 	return nil
+}
+
+type staticToolProvider struct {
+	tools []llm.Tool
+}
+
+func (p *staticToolProvider) GetTools(*bots.Bot) []llm.Tool {
+	return p.tools
 }
 
 type countingMCPToolProvider struct {
@@ -39,18 +51,93 @@ func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string) ([
 }
 
 type staticMCPToolProvider struct {
-	tools  []llm.Tool
-	errors *mcp.Errors
+	tools     []llm.Tool
+	errors    *mcp.Errors
+	overrides map[string]mcp.ToolRetrievalOverride
 }
 
 func (p *staticMCPToolProvider) GetToolsForUser(stdcontext.Context, string) ([]llm.Tool, *mcp.Errors) {
 	return p.tools, p.errors
 }
 
+func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride {
+	return p.overrides
+}
+
+type fakeLoadedMCPToolStore struct {
+	rows      []storepkg.LoadedMCPTool
+	upserts   []storepkg.LoadedMCPTool
+	deletes   []string
+	listCalls int
+	listErr   error
+}
+
+type contextTelemetryEvent struct {
+	botName string
+	event   string
+	result  string
+}
+
+type fakeMCPDynamicTelemetry struct {
+	events []contextTelemetryEvent
+}
+
+func (t *fakeMCPDynamicTelemetry) ObserveMCPDynamicToolEvent(botName, event, result string) {
+	t.events = append(t.events, contextTelemetryEvent{botName: botName, event: event, result: result})
+}
+
+func (s *fakeLoadedMCPToolStore) UpsertLoadedMCPTool(tool storepkg.LoadedMCPTool) error {
+	s.upserts = append(s.upserts, tool)
+	return nil
+}
+
+func (s *fakeLoadedMCPToolStore) ListLoadedMCPTools(conversationID, botID, userID string) ([]storepkg.LoadedMCPTool, error) {
+	s.listCalls++
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+
+	var result []storepkg.LoadedMCPTool
+	for _, row := range s.rows {
+		if row.ConversationID == conversationID && row.BotID == botID && row.UserID == userID {
+			result = append(result, row)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ToolName < result[j].ToolName
+	})
+	return result, nil
+}
+
+func (s *fakeLoadedMCPToolStore) DeleteLoadedMCPTool(conversationID, botID, userID, toolName string) error {
+	s.deletes = append(s.deletes, conversationID+"\x00"+botID+"\x00"+userID+"\x00"+toolName)
+	return nil
+}
+
+func (s *fakeLoadedMCPToolStore) DeleteLoadedMCPToolsByNames(conversationID, botID, userID string, toolNames []string) error {
+	for _, toolName := range toolNames {
+		s.deletes = append(s.deletes, conversationID+"\x00"+botID+"\x00"+userID+"\x00"+toolName)
+	}
+	return nil
+}
+
+func loadedMCPToolRow(toolName string) storepkg.LoadedMCPTool {
+	return storepkg.LoadedMCPTool{
+		ConversationID: "conv-id",
+		BotID:          "bot-id",
+		UserID:         "user-id",
+		ToolName:       toolName,
+	}
+}
+
 type contextTestConfigProvider struct{}
 
 func (p *contextTestConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
+}
+
+func (p *contextTestConfigProvider) GetEnableLLMTrace() bool {
+	return false
 }
 
 func newTestBot() *bots.Bot {
@@ -66,6 +153,117 @@ func newTestBotWithConfig(cfg llm.BotConfig) *bots.Bot {
 	)
 }
 
+func newTestBuilder(t *testing.T, toolProvider ToolProvider, mcpProvider MCPToolProvider) *Builder {
+	t.Helper()
+
+	mockAPI := &plugintest.API{}
+	siteName := "Mattermost"
+	siteURL := "https://example.com"
+	mockAPI.On("GetConfig").Return(&model.Config{
+		TeamSettings:    model.TeamSettings{SiteName: &siteName},
+		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+	}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
+	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
+	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
+
+	return NewLLMContextBuilder(
+		pluginapi.NewClient(mockAPI, nil),
+		toolProvider,
+		mcpProvider,
+		&contextTestConfigProvider{},
+	)
+}
+
+func testUser() *model.User {
+	return &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
+}
+
+func testChannel() *model.Channel {
+	return &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
+}
+
+func testBuiltinTool(name string) llm.Tool {
+	return llm.Tool{
+		Name:        name,
+		Description: name + " built-in",
+		Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+			return "builtin:" + name, nil
+		},
+	}
+}
+
+func testMCPTool(name, origin, description string) llm.Tool {
+	return llm.Tool{
+		Name:         name,
+		Description:  description,
+		ServerOrigin: origin,
+		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+			return "mcp:" + name, nil
+		},
+	}
+}
+
+func toolNames(store *llm.ToolStore) []string {
+	if store == nil {
+		return nil
+	}
+
+	tools := store.GetTools()
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+func mustTool(t *testing.T, store *llm.ToolStore, name string) *llm.Tool {
+	t.Helper()
+
+	require.NotNil(t, store)
+	tool := store.GetTool(name)
+	require.NotNil(t, tool, "tool %q should be visible", name)
+	return tool
+}
+
+func contextToolArgs(raw string) llm.ToolArgumentGetter {
+	return func(args any) error {
+		return json.Unmarshal([]byte(raw), args)
+	}
+}
+
+func searchToolNames(t *testing.T, store *llm.ToolStore, query string) []string {
+	t.Helper()
+
+	result := searchTools(t, store, query)
+	names := make([]string, 0, len(result.Tools))
+	for _, item := range result.Tools {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
+func searchTools(t *testing.T, store *llm.ToolStore, query string) mcp.SearchToolsResult {
+	t.Helper()
+
+	searchTool := mustTool(t, store, mcp.SearchToolsName)
+	resultJSON, err := searchTool.Resolver(&llm.Context{Tools: store}, contextToolArgs(`{"query":"`+query+`"}`))
+	require.NoError(t, err)
+
+	var result mcp.SearchToolsResult
+	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
+	return result
+}
+
+func buildToolsContext(builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
+	allOpts := append([]llm.ContextOption{}, opts...)
+	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(context.Background(), bot))
+	return builder.BuildLLMContextUserRequest(bot, testUser(), testChannel(), allOpts...)
+}
+
 func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	siteName := "Mattermost"
@@ -75,6 +273,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &countingMCPToolProvider{}
@@ -103,6 +302,7 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &countingMCPToolProvider{}
@@ -131,6 +331,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &staticMCPToolProvider{
@@ -311,6 +512,11 @@ func TestWithLLMContextRequestingUser_NilUser(t *testing.T) {
 func TestNormalizeMCPServerOrigin(t *testing.T) {
 	assert.Equal(t, "https://example.com", normalizeMCPServerOrigin("https://example.com/"))
 	assert.Equal(t, "https://example.com", normalizeMCPServerOrigin("  https://example.com/  "))
+}
+
+func TestNormalizeMCPServerOrigins(t *testing.T) {
+	assert.Equal(t, []string{"https://example.com", "https://other.example.com"},
+		normalizeMCPServerOrigins([]string{" https://example.com/ ", "", "https://example.com", "https://other.example.com///"}))
 }
 
 func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {

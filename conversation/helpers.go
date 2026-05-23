@@ -103,13 +103,16 @@ func toolUseBlocks(
 
 	for _, tc := range toolCalls {
 		blocks = append(blocks, ContentBlock{
-			Type:         BlockTypeToolUse,
-			ID:           tc.ID,
-			Name:         tc.Name,
-			ServerOrigin: tc.ServerOrigin,
-			Input:        tc.Arguments,
-			Status:       StatusToString(tc.Status),
-			Shared:       BoolPtr(shared),
+			Type:            BlockTypeToolUse,
+			ID:              tc.ID,
+			Name:            tc.Name,
+			ServerOrigin:    tc.ServerOrigin,
+			Input:           tc.Arguments,
+			InputSchema:     marshalToolSchema(tc.Schema),
+			MCPBareName:     tc.MCPBareName,
+			ToolDescription: tc.Description,
+			Status:          StatusToString(tc.Status),
+			Shared:          BoolPtr(shared),
 		})
 	}
 
