@@ -28,6 +28,7 @@ const VETTED_READ_TOOLS = [
     'search_users',
     'get_user_channels',
 ];
+const VETTED_READ_RUNTIME_TOOLS = VETTED_READ_TOOLS.map((name) => `mattermost__${name}`);
 
 test.describe('Vetted Server Seed', () => {
     test.beforeAll(async () => {
@@ -85,16 +86,15 @@ test.describe('Vetted Server Seed', () => {
         expect(toolsResponse.servers).toBeDefined();
         expect(toolsResponse.servers.length).toBeGreaterThan(0);
 
-        // Find the embedded server (identified by having Mattermost tools)
-        const embeddedServer = toolsResponse.servers.find((s: any) =>
-            s.tools?.some((t: any) => VETTED_READ_TOOLS.includes(t.name)),
+        const embeddedServer = toolsResponse.servers.find(
+            (s: any) => s.serverOrigin === 'embedded://mattermost',
         );
 
         // If embedded server tools are in the response, verify they are present
         if (embeddedServer) {
             const toolNames = embeddedServer.tools.map((t: any) => t.name);
             // At least some vetted tools should be present
-            const foundVettedTools = VETTED_READ_TOOLS.filter((name) =>
+            const foundVettedTools = VETTED_READ_RUNTIME_TOOLS.filter((name) =>
                 toolNames.includes(name),
             );
             expect(foundVettedTools.length).toBeGreaterThan(0);
