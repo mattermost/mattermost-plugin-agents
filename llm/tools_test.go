@@ -212,6 +212,46 @@ func TestResolveToolUnknownLogsArgumentGetterError(t *testing.T) {
 	assert.Equal(t, "failed to get tool args: bad arguments", logFields(log.infos[0])["args"])
 }
 
+func TestResolveToolUsesUniqueBareMCPToolName(t *testing.T) {
+	store := NewToolStore(nil, false)
+	store.AddTools([]Tool{{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://mcp.atlassian.com",
+		Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+			return "issue result", nil
+		},
+	}})
+
+	result, err := store.ResolveTool(context.Background(), "get_issue", rawArgsGetter(`{}`), &Context{})
+
+	require.NoError(t, err)
+	assert.Equal(t, "issue result", result)
+}
+
+func TestResolveToolBareMCPToolNameAmbiguous(t *testing.T) {
+	store := NewToolStore(nil, false)
+	store.AddTools([]Tool{
+		{
+			Name:         "jira__search",
+			ServerOrigin: "https://mcp.atlassian.com",
+			Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+				return "jira", nil
+			},
+		},
+		{
+			Name:         "github__search",
+			ServerOrigin: "https://api.githubcopilot.com",
+			Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+				return "github", nil
+			},
+		},
+	})
+
+	_, err := store.ResolveTool(context.Background(), "search", rawArgsGetter(`{}`), &Context{})
+
+	require.EqualError(t, err, "unknown tool search")
+}
+
 func TestGetToolKnownAndUnknown(t *testing.T) {
 	store := NewToolStore(nil, false)
 	store.AddTools([]Tool{{
@@ -223,6 +263,19 @@ func TestGetToolKnownAndUnknown(t *testing.T) {
 
 	require.NotNil(t, store.GetTool("known"))
 	assert.Nil(t, store.GetTool("ghost"))
+}
+
+func TestGetToolUsesUniqueBareMCPToolName(t *testing.T) {
+	store := NewToolStore(nil, false)
+	store.AddTools([]Tool{{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://mcp.atlassian.com",
+	}})
+
+	tool := store.GetTool("get_issue")
+
+	require.NotNil(t, tool)
+	assert.Equal(t, "jira__get_issue", tool.Name)
 }
 
 func TestToolCall_SanitizeArguments(t *testing.T) {
@@ -295,6 +348,23 @@ func TestGetServerOrigin(t *testing.T) {
 				{Name: "known_tool", ServerOrigin: "https://example.com"},
 			},
 			lookupName:  "unknown_tool",
+			expectedURL: "",
+		},
+		{
+			name: "unique bare MCP tool name returns server origin",
+			tools: []Tool{
+				{Name: "jira__get_issue", ServerOrigin: "https://mcp.atlassian.com/v2"},
+			},
+			lookupName:  "get_issue",
+			expectedURL: "https://mcp.atlassian.com/v2",
+		},
+		{
+			name: "ambiguous bare MCP tool name returns empty",
+			tools: []Tool{
+				{Name: "jira__search", ServerOrigin: "https://mcp.atlassian.com/v2"},
+				{Name: "github__search", ServerOrigin: "https://api.githubcopilot.com"},
+			},
+			lookupName:  "search",
 			expectedURL: "",
 		},
 		{
@@ -807,6 +877,10 @@ func TestToolStoreUnloadedMCPTools(t *testing.T) {
 
 	assert.True(t, store.IsUnloadedMCPTool("jira__get_issue"))
 	info, ok := store.GetUnloadedMCPToolInfo("jira__get_issue")
+	require.True(t, ok)
+	assert.Equal(t, ToolInfo{Name: "jira__get_issue", Description: "Get a Jira issue"}, info)
+	assert.True(t, store.IsUnloadedMCPTool("get_issue"))
+	info, ok = store.GetUnloadedMCPToolInfo("get_issue")
 	require.True(t, ok)
 	assert.Equal(t, ToolInfo{Name: "jira__get_issue", Description: "Get a Jira issue"}, info)
 

@@ -382,13 +382,39 @@ func (s *ToolStore) AddTools(tools []Tool) {
 	}
 }
 
+func (s *ToolStore) lookupTool(name string) (Tool, bool) {
+	if s == nil || name == "" {
+		return Tool{}, false
+	}
+	if tool, ok := s.tools[name]; ok {
+		return tool, true
+	}
+	if !IsBareMCPToolName(name) {
+		return Tool{}, false
+	}
+
+	var matched Tool
+	found := false
+	for toolName, tool := range s.tools {
+		if tool.ServerOrigin == "" || BareMCPToolName(toolName) != name {
+			continue
+		}
+		if found {
+			return Tool{}, false
+		}
+		matched = tool
+		found = true
+	}
+	return matched, found
+}
+
 func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
 	_, span := telemetry.Tracer().Start(ctx, "resolve tool",
 		trace.WithAttributes(telemetry.ToolName.String(name)),
 	)
 	defer span.End()
 
-	tool, ok := s.tools[name]
+	tool, ok := s.lookupTool(name)
 	if !ok {
 		s.LogUnknownToolWarning(name, argsGetter)
 		s.TraceUnknown(name, argsGetter)
@@ -416,10 +442,7 @@ func (s *ToolStore) GetTools() []Tool {
 
 // GetTool returns a pointer to a tool by name, or nil if not found
 func (s *ToolStore) GetTool(name string) *Tool {
-	if s == nil {
-		return nil
-	}
-	if tool, ok := s.tools[name]; ok {
+	if tool, ok := s.lookupTool(name); ok {
 		return &tool
 	}
 	return nil
@@ -453,7 +476,7 @@ func (s *ToolStore) IsUnloadedMCPTool(name string) bool {
 	if s == nil || s.GetTool(name) != nil {
 		return false
 	}
-	_, ok := s.unloadedMCPTools[name]
+	_, ok := s.lookupUnloadedMCPTool(name)
 	return ok
 }
 
@@ -461,14 +484,40 @@ func (s *ToolStore) GetUnloadedMCPToolInfo(name string) (ToolInfo, bool) {
 	if s == nil || s.GetTool(name) != nil {
 		return ToolInfo{}, false
 	}
+	return s.lookupUnloadedMCPTool(name)
+}
+
+func (s *ToolStore) lookupUnloadedMCPTool(name string) (ToolInfo, bool) {
 	info, ok := s.unloadedMCPTools[name]
-	return info, ok
+	if ok {
+		return info, true
+	}
+	if !IsBareMCPToolName(name) {
+		return ToolInfo{}, false
+	}
+
+	var matched ToolInfo
+	found := false
+	for toolName, info := range s.unloadedMCPTools {
+		if BareMCPToolName(toolName) != name {
+			continue
+		}
+		if found {
+			return ToolInfo{}, false
+		}
+		matched = info
+		found = true
+	}
+	if !found {
+		return ToolInfo{}, false
+	}
+	return matched, true
 }
 
 // GetServerOrigin returns the ServerOrigin for a tool by name.
 // Returns empty string if the tool is not found or has no server origin (built-in tools).
 func (s *ToolStore) GetServerOrigin(toolName string) string {
-	if tool, ok := s.tools[toolName]; ok {
+	if tool, ok := s.lookupTool(toolName); ok {
 		return tool.ServerOrigin
 	}
 	return ""
