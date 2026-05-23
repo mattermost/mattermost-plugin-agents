@@ -37,6 +37,7 @@ type Config struct {
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
 	TelemetryOutput                 string                           `json:"telemetryOutput"`
 	OpenTelemetryEndpoint           string                           `json:"openTelemetryEndpoint"`
+	EnableLLMTrace                  bool                             `json:"enableLLMTrace"`
 }
 
 type WebSearchConfig struct {
@@ -196,6 +197,14 @@ func (c *Container) GetServiceByID(id string) (llm.ServiceConfig, bool) {
 		return llm.ServiceConfig{}, false
 	}
 	return cfg.GetServiceByID(id)
+}
+
+func (c *Container) GetEnableLLMTrace() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return false
+	}
+	return cfg.EnableLLMTrace
 }
 
 // Updates the current configuration

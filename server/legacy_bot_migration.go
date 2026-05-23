@@ -106,6 +106,7 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		// MCP tool. Preserve that by auto-enabling new MCP tools for migrated agents.
 		ua.AutoEnableNewMCPTools = true
 		ua.EnabledMCPTools = nil
+		ua.MCPDynamicToolLoading = bc.MCPDynamicToolLoading
 
 		if createErr := st.CreateAgent(&ua); createErr != nil {
 			return false, fmt.Errorf("failed to create user agent for legacy bot %q: %w", bc.Name, createErr)
