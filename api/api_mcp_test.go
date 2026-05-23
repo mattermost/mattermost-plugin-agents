@@ -95,119 +95,106 @@ func TestHandleGetUserMCPToolsIncludesZeroToolConfiguredServers(t *testing.T) {
 	require.False(t, response.Servers[1].NeedsOAuth)
 }
 
-func TestHandleGetUserMCPToolsReturnsBareNamesForNamespacedRuntimeTools(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := mcp.ServerConfig{
-		Name:    "Jira",
-		Enabled: true,
-		BaseURL: "https://mcp.atlassian.com",
-		ToolConfigs: []mcp.ToolConfig{
-			{Name: "get_issue", Policy: mcp.ToolPolicyAutoRunEverywhere, Enabled: false},
-		},
-	}
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{server},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		tools: []llm.Tool{
-			{
+func TestHandleGetUserMCPToolsDynamicToolVariants(t *testing.T) {
+	tests := []struct {
+		name                string
+		server              mcp.ServerConfig
+		tool                llm.Tool
+		expectedName        string
+		expectedEnabled     bool
+		expectedPolicy      string
+		expectedDescription string
+	}{
+		{
+			name: "returns bare names for namespaced runtime tools",
+			server: mcp.ServerConfig{
+				Name:    "Jira",
+				Enabled: true,
+				BaseURL: "https://mcp.atlassian.com",
+				ToolConfigs: []mcp.ToolConfig{
+					{Name: "get_issue", Policy: mcp.ToolPolicyAutoRunEverywhere, Enabled: false},
+				},
+			},
+			tool: llm.Tool{
 				Name:         "jira__get_issue",
 				Description:  "Get issue",
-				ServerOrigin: server.BaseURL,
+				ServerOrigin: "https://mcp.atlassian.com",
 			},
+			expectedName:    "get_issue",
+			expectedEnabled: false,
+			expectedPolicy:  mcp.ToolPolicyAutoRunEverywhere,
 		},
-	}
-
-	response := getUserMCPToolsResponse(t, e.api)
-
-	require.Len(t, response.Servers, 1)
-	require.Len(t, response.Servers[0].Tools, 1)
-	require.Equal(t, "get_issue", response.Servers[0].Tools[0].Name)
-	require.False(t, response.Servers[0].Tools[0].Enabled)
-	require.Equal(t, mcp.ToolPolicyAutoRunEverywhere, response.Servers[0].Tools[0].Policy)
-}
-
-func TestHandleGetUserMCPToolsBareAllowlistUICompatibility(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := mcp.ServerConfig{
-		Name:    "GitHub",
-		Enabled: true,
-		BaseURL: "https://api.githubcopilot.com",
-	}
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{server},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		tools: []llm.Tool{
-			{
+		{
+			name: "bare allowlist UI compatibility",
+			server: mcp.ServerConfig{
+				Name:    "GitHub",
+				Enabled: true,
+				BaseURL: "https://api.githubcopilot.com",
+			},
+			tool: llm.Tool{
 				Name:         "github__search",
 				Description:  "Search",
-				ServerOrigin: server.BaseURL,
+				ServerOrigin: "https://api.githubcopilot.com",
 			},
+			expectedName:    "search",
+			expectedEnabled: true,
+			expectedPolicy:  mcp.ToolPolicyAsk,
 		},
-	}
-
-	response := getUserMCPToolsResponse(t, e.api)
-
-	require.Len(t, response.Servers, 1)
-	require.Len(t, response.Servers[0].Tools, 1)
-	require.Equal(t, "search", response.Servers[0].Tools[0].Name)
-	require.True(t, response.Servers[0].Tools[0].Enabled)
-	require.Equal(t, mcp.ToolPolicyAsk, response.Servers[0].Tools[0].Policy)
-}
-
-func TestHandleGetUserMCPToolsReturnsUpstreamDescriptionNotOverride(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := mcp.ServerConfig{
-		Name:    "Jira",
-		Enabled: true,
-		BaseURL: "https://jira.example.com",
-		ToolConfigs: []mcp.ToolConfig{
-			{
-				Name:                         "get_issue",
-				Policy:                       mcp.ToolPolicyAsk,
-				Enabled:                      true,
-				RetrievalDescriptionOverride: "Admin-only retrieval tuning text",
+		{
+			name: "returns upstream description not override",
+			server: mcp.ServerConfig{
+				Name:    "Jira",
+				Enabled: true,
+				BaseURL: "https://jira.example.com",
+				ToolConfigs: []mcp.ToolConfig{
+					{
+						Name:                         "get_issue",
+						Policy:                       mcp.ToolPolicyAsk,
+						Enabled:                      true,
+						RetrievalDescriptionOverride: "Admin-only retrieval tuning text",
+					},
+				},
 			},
-		},
-	}
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{server},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		tools: []llm.Tool{
-			{
+			tool: llm.Tool{
 				Name:         "jira__get_issue",
 				Description:  "Upstream MCP description",
-				ServerOrigin: server.BaseURL,
+				ServerOrigin: "https://jira.example.com",
 			},
+			expectedName:        "get_issue",
+			expectedEnabled:     true,
+			expectedPolicy:      mcp.ToolPolicyAsk,
+			expectedDescription: "Upstream MCP description",
 		},
 	}
 
-	response := getUserMCPToolsResponse(t, e.api)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.ReleaseMode)
+			gin.DefaultWriter = io.Discard
 
-	require.Len(t, response.Servers, 1)
-	require.Len(t, response.Servers[0].Tools, 1)
-	require.Equal(t, "get_issue", response.Servers[0].Tools[0].Name)
-	require.Equal(t, "Upstream MCP description", response.Servers[0].Tools[0].Description)
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.config.mcpConfig = mcp.Config{
+				Enabled: true,
+				Servers: []mcp.ServerConfig{tt.server},
+			}
+			e.api.mcpClientManager = &mockMCPClientManager{
+				tools: []llm.Tool{tt.tool},
+			}
+
+			response := getUserMCPToolsResponse(t, e.api)
+
+			require.Len(t, response.Servers, 1)
+			require.Len(t, response.Servers[0].Tools, 1)
+			require.Equal(t, tt.expectedName, response.Servers[0].Tools[0].Name)
+			require.Equal(t, tt.expectedEnabled, response.Servers[0].Tools[0].Enabled)
+			require.Equal(t, tt.expectedPolicy, response.Servers[0].Tools[0].Policy)
+			if tt.expectedDescription != "" {
+				require.Equal(t, tt.expectedDescription, response.Servers[0].Tools[0].Description)
+			}
+		})
+	}
 }
 
 func TestHandleGetUserMCPToolsStaticOAuthCredentialsNeedOAuthWhenUnauthenticated(t *testing.T) {

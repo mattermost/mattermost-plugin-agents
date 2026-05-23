@@ -182,73 +182,92 @@ func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiAndVertexOn
 	assert.NotContains(t, openAIOutput, "When asked about capabilities or tool access, agent may mention the tools listed above.")
 }
 
-func TestStandardPersonalityIncludesDynamicToolWorkflowWhenEnabled(t *testing.T) {
-	output := renderStandardPersonalityWithoutLocale(t, &llm.Context{
-		Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
-		ServerName:  "server",
-		BotName:     "agent",
-		BotUsername: "agent",
-		BotModel:    "model-x",
-		Tools:       dynamicMetaToolStore(),
-		ToolRuntime: llm.ToolRuntimeContext{MCPDynamicToolLoading: true},
-	})
+func TestStandardPersonalityDynamicToolWorkflow(t *testing.T) {
+	dynamicWorkflowText := []string{
+		"You have access to a large set of MCP tools through two meta-tools.",
+		"You MUST load a tool",
+		"CRITICAL: For side-effecting external actions",
+	}
+	tests := []struct {
+		name        string
+		context     *llm.Context
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "includes workflow when enabled",
+			context: &llm.Context{
+				Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:  "server",
+				BotName:     "agent",
+				BotUsername: "agent",
+				BotModel:    "model-x",
+				Tools:       dynamicMetaToolStore(),
+				ToolRuntime: llm.ToolRuntimeContext{MCPDynamicToolLoading: true},
+			},
+			contains: append(dynamicWorkflowText, "ask one focused clarification question"),
+			notContains: []string{
+				"pick a reasonable default",
+			},
+		},
+		{
+			name: "includes workflow with disabled tools info",
+			context: &llm.Context{
+				Time:              "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:        "server",
+				BotName:           "agent",
+				BotUsername:       "agent",
+				BotModel:          "model-x",
+				Tools:             dynamicMetaToolStore(),
+				DisabledToolsInfo: []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}},
+				ToolRuntime:       llm.ToolRuntimeContext{MCPDynamicToolLoading: true},
+			},
+			contains: append(dynamicWorkflowText,
+				"ask one focused clarification question",
+				"IMPORTANT: You have capabilities that can only be used in a Direct Message (DM) or via the Agents tab",
+			),
+			notContains: []string{
+				"pick a reasonable default",
+			},
+		},
+		{
+			name: "omits workflow when flag off",
+			context: &llm.Context{
+				Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:  "server",
+				BotName:     "agent",
+				BotUsername: "agent",
+				BotModel:    "model-x",
+				Tools:       dynamicMetaToolStore(),
+			},
+			notContains: dynamicWorkflowText,
+		},
+		{
+			name: "omits workflow without meta tools",
+			context: &llm.Context{
+				Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:  "server",
+				BotName:     "agent",
+				BotUsername: "agent",
+				BotModel:    "model-x",
+				Tools:       llm.NewNoTools(),
+				ToolRuntime: llm.ToolRuntimeContext{MCPDynamicToolLoading: true},
+			},
+			notContains: dynamicWorkflowText,
+		},
+	}
 
-	assert.Contains(t, output, "You have access to a large set of MCP tools through two meta-tools.")
-	assert.Contains(t, output, "You MUST load a tool")
-	assert.Contains(t, output, "CRITICAL: For side-effecting external actions")
-	assert.Contains(t, output, "ask one focused clarification question")
-	assert.NotContains(t, output, "pick a reasonable default")
-}
-
-func TestStandardPersonalityIncludesDynamicToolWorkflowWithDisabledToolsInfo(t *testing.T) {
-	output := renderStandardPersonalityWithoutLocale(t, &llm.Context{
-		Time:              "Fri, 20 Feb 2026 18:00:00 UTC",
-		ServerName:        "server",
-		BotName:           "agent",
-		BotUsername:       "agent",
-		BotModel:          "model-x",
-		Tools:             dynamicMetaToolStore(),
-		DisabledToolsInfo: []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}},
-		ToolRuntime:       llm.ToolRuntimeContext{MCPDynamicToolLoading: true},
-	})
-
-	assert.Contains(t, output, "You have access to a large set of MCP tools through two meta-tools.")
-	assert.Contains(t, output, "You MUST load a tool")
-	assert.Contains(t, output, "CRITICAL: For side-effecting external actions")
-	assert.Contains(t, output, "ask one focused clarification question")
-	assert.NotContains(t, output, "pick a reasonable default")
-	assert.Contains(t, output, "IMPORTANT: You have capabilities that can only be used in a Direct Message (DM) or via the Agents tab")
-}
-
-func TestStandardPersonalityOmitsDynamicToolWorkflowWhenFlagOff(t *testing.T) {
-	output := renderStandardPersonalityWithoutLocale(t, &llm.Context{
-		Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
-		ServerName:  "server",
-		BotName:     "agent",
-		BotUsername: "agent",
-		BotModel:    "model-x",
-		Tools:       dynamicMetaToolStore(),
-	})
-
-	assert.NotContains(t, output, "You have access to a large set of MCP tools through two meta-tools.")
-	assert.NotContains(t, output, "You MUST load a tool")
-	assert.NotContains(t, output, "CRITICAL: For side-effecting external actions")
-}
-
-func TestStandardPersonalityOmitsDynamicToolWorkflowWithoutMetaTools(t *testing.T) {
-	output := renderStandardPersonalityWithoutLocale(t, &llm.Context{
-		Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
-		ServerName:  "server",
-		BotName:     "agent",
-		BotUsername: "agent",
-		BotModel:    "model-x",
-		Tools:       llm.NewNoTools(),
-		ToolRuntime: llm.ToolRuntimeContext{MCPDynamicToolLoading: true},
-	})
-
-	assert.NotContains(t, output, "You have access to a large set of MCP tools through two meta-tools.")
-	assert.NotContains(t, output, "You MUST load a tool")
-	assert.NotContains(t, output, "CRITICAL: For side-effecting external actions")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := renderStandardPersonalityWithoutLocale(t, tt.context)
+			for _, expected := range tt.contains {
+				assert.Contains(t, output, expected)
+			}
+			for _, unexpected := range tt.notContains {
+				assert.NotContains(t, output, unexpected)
+			}
+		})
+	}
 }
 
 func renderStandardPersonalityWithoutLocale(t *testing.T, context *llm.Context) string {

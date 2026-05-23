@@ -362,120 +362,112 @@ func TestBotChannelAutoEverywhereFilterDenormalizesNamespacedTool(t *testing.T) 
 	require.Equal(t, "jira__safe_tool", tools[0].Name)
 }
 
-func TestChannelFollowUpStrictRegistryGetPostFailureFailsClosed(t *testing.T) {
-	origin := "https://mcp.atlassian.com"
-	config := &channelFollowUpTestConfig{enableChannelMentionToolCalling: true}
-	builder := newChannelFollowUpTestBuilder(t, []llm.Tool{
-		channelFollowUpTestMCPTool("jira__safe_tool", origin, "auto-everywhere safe channel follow-up capability"),
-		channelFollowUpTestMCPTool("jira__ask_tool", origin, "approval-only channel follow-up capability"),
-	}, config)
-	mmClient := mocks.NewMockClient(t)
-	mmClient.On("GetPost", "root-id").Return((*model.Post)(nil), errors.New("missing root post")).Once()
-	c := &Conversations{
-		mmClient:       mmClient,
-		contextBuilder: builder,
-		configProvider: config,
-		toolPolicyChecker: mapPolicyChecker{
-			origin: {
-				"safe_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
-				"ask_tool":  {policy: mcp.ToolPolicyAsk, enabled: true},
-			},
+func TestChannelFollowUpStrictRegistry(t *testing.T) {
+	const origin = "https://mcp.atlassian.com"
+
+	channelPolicyChecker := mapPolicyChecker{
+		origin: {
+			"safe_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+			"ask_tool":  {policy: mcp.ToolPolicyAsk, enabled: true},
 		},
 	}
-	rootID := "root-id"
-
-	opts, filtered := c.channelFollowUpMCPToolFilterContextOptions(false, &store.Conversation{RootPostID: &rootID})
-	require.True(t, filtered)
-
-	llmContext := buildChannelFollowUpStrictContext(t, builder, opts)
-	require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "safe"), "jira__safe_tool")
-	require.NotContains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
-}
-
-func TestChannelFollowUpStrictRegistryGetUserFailureFailsClosed(t *testing.T) {
-	origin := "https://mcp.atlassian.com"
-	config := &channelFollowUpTestConfig{enableChannelMentionToolCalling: true}
-	builder := newChannelFollowUpTestBuilder(t, []llm.Tool{
-		channelFollowUpTestMCPTool("jira__safe_tool", origin, "auto-everywhere safe channel follow-up capability"),
-		channelFollowUpTestMCPTool("jira__ask_tool", origin, "approval-only channel follow-up capability"),
-	}, config)
-	mmClient := mocks.NewMockClient(t)
-	mmClient.On("GetPost", "root-id").Return(&model.Post{UserId: "root-user"}, nil).Once()
-	mmClient.On("GetUser", "root-user").Return((*model.User)(nil), errors.New("missing root user")).Once()
-	c := &Conversations{
-		mmClient:       mmClient,
-		contextBuilder: builder,
-		configProvider: config,
-		toolPolicyChecker: mapPolicyChecker{
-			origin: {
-				"safe_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
-				"ask_tool":  {policy: mcp.ToolPolicyAsk, enabled: true},
+	tests := []struct {
+		name              string
+		isDM              bool
+		toolPolicyChecker mapPolicyChecker
+		setupMMClient     func(t *testing.T) *mocks.MockClient
+		expectedFiltered  bool
+		expectedOptsEmpty bool
+		expectSafeTool    bool
+		expectAskTool     bool
+	}{
+		{
+			name:              "get post failure fails closed",
+			toolPolicyChecker: channelPolicyChecker,
+			setupMMClient: func(t *testing.T) *mocks.MockClient {
+				mmClient := mocks.NewMockClient(t)
+				mmClient.On("GetPost", "root-id").Return((*model.Post)(nil), errors.New("missing root post")).Once()
+				return mmClient
 			},
+			expectedFiltered: true,
+			expectSafeTool:   true,
+			expectAskTool:    false,
+		},
+		{
+			name:              "get user failure fails closed",
+			toolPolicyChecker: channelPolicyChecker,
+			setupMMClient: func(t *testing.T) *mocks.MockClient {
+				mmClient := mocks.NewMockClient(t)
+				mmClient.On("GetPost", "root-id").Return(&model.Post{UserId: "root-user"}, nil).Once()
+				mmClient.On("GetUser", "root-user").Return((*model.User)(nil), errors.New("missing root user")).Once()
+				return mmClient
+			},
+			expectedFiltered: true,
+			expectSafeTool:   true,
+			expectAskTool:    false,
+		},
+		{
+			name:              "DM does not apply channel filter",
+			isDM:              true,
+			toolPolicyChecker: mapPolicyChecker{},
+			expectedFiltered:  false,
+			expectedOptsEmpty: true,
+			expectSafeTool:    true,
+			expectAskTool:     true,
+		},
+		{
+			name:              "confirmed ActivateAI filters auto everywhere",
+			toolPolicyChecker: channelPolicyChecker,
+			setupMMClient: func(t *testing.T) *mocks.MockClient {
+				rootPost := &model.Post{UserId: "bot-user"}
+				rootPost.AddProp(ActivateAIProp, true)
+				mmClient := mocks.NewMockClient(t)
+				mmClient.On("GetPost", "root-id").Return(rootPost, nil).Once()
+				mmClient.On("GetUser", "bot-user").Return(&model.User{Id: "bot-user", IsBot: true}, nil).Once()
+				return mmClient
+			},
+			expectedFiltered: true,
+			expectSafeTool:   true,
+			expectAskTool:    false,
 		},
 	}
-	rootID := "root-id"
 
-	opts, filtered := c.channelFollowUpMCPToolFilterContextOptions(false, &store.Conversation{RootPostID: &rootID})
-	require.True(t, filtered)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &channelFollowUpTestConfig{enableChannelMentionToolCalling: true}
+			builder := newChannelFollowUpTestBuilder(t, []llm.Tool{
+				channelFollowUpTestMCPTool("jira__safe_tool", origin, "auto-everywhere safe channel follow-up capability"),
+				channelFollowUpTestMCPTool("jira__ask_tool", origin, "approval-only channel follow-up capability"),
+			}, config)
+			c := &Conversations{
+				contextBuilder:    builder,
+				configProvider:    config,
+				toolPolicyChecker: tt.toolPolicyChecker,
+			}
+			if tt.setupMMClient != nil {
+				c.mmClient = tt.setupMMClient(t)
+			}
+			rootID := "root-id"
 
-	llmContext := buildChannelFollowUpStrictContext(t, builder, opts)
-	require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "safe"), "jira__safe_tool")
-	require.NotContains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
-}
+			opts, filtered := c.channelFollowUpMCPToolFilterContextOptions(tt.isDM, &store.Conversation{RootPostID: &rootID})
+			require.Equal(t, tt.expectedFiltered, filtered)
+			if tt.expectedOptsEmpty {
+				require.Empty(t, opts)
+			}
 
-func TestChannelFollowUpStrictRegistryDMDoesNotApplyChannelFilter(t *testing.T) {
-	origin := "https://mcp.atlassian.com"
-	config := &channelFollowUpTestConfig{enableChannelMentionToolCalling: true}
-	builder := newChannelFollowUpTestBuilder(t, []llm.Tool{
-		channelFollowUpTestMCPTool("jira__safe_tool", origin, "auto-everywhere safe channel follow-up capability"),
-		channelFollowUpTestMCPTool("jira__ask_tool", origin, "approval-only channel follow-up capability"),
-	}, config)
-	c := &Conversations{
-		contextBuilder:    builder,
-		configProvider:    config,
-		toolPolicyChecker: mapPolicyChecker{},
+			llmContext := buildChannelFollowUpStrictContext(t, builder, opts)
+			if tt.expectSafeTool {
+				require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "safe"), "jira__safe_tool")
+			} else {
+				require.NotContains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "safe"), "jira__safe_tool")
+			}
+			if tt.expectAskTool {
+				require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
+			} else {
+				require.NotContains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
+			}
+		})
 	}
-	rootID := "root-id"
-
-	opts, filtered := c.channelFollowUpMCPToolFilterContextOptions(true, &store.Conversation{RootPostID: &rootID})
-	require.False(t, filtered)
-	require.Empty(t, opts)
-
-	llmContext := buildChannelFollowUpStrictContext(t, builder, opts)
-	require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
-}
-
-func TestChannelFollowUpStrictRegistryConfirmedActivateAIFiltersAutoEverywhere(t *testing.T) {
-	origin := "https://mcp.atlassian.com"
-	config := &channelFollowUpTestConfig{enableChannelMentionToolCalling: true}
-	builder := newChannelFollowUpTestBuilder(t, []llm.Tool{
-		channelFollowUpTestMCPTool("jira__safe_tool", origin, "auto-everywhere safe channel follow-up capability"),
-		channelFollowUpTestMCPTool("jira__ask_tool", origin, "approval-only channel follow-up capability"),
-	}, config)
-	rootPost := &model.Post{UserId: "bot-user"}
-	rootPost.AddProp(ActivateAIProp, true)
-	mmClient := mocks.NewMockClient(t)
-	mmClient.On("GetPost", "root-id").Return(rootPost, nil).Once()
-	mmClient.On("GetUser", "bot-user").Return(&model.User{Id: "bot-user", IsBot: true}, nil).Once()
-	c := &Conversations{
-		mmClient:       mmClient,
-		contextBuilder: builder,
-		configProvider: config,
-		toolPolicyChecker: mapPolicyChecker{
-			origin: {
-				"safe_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
-				"ask_tool":  {policy: mcp.ToolPolicyAsk, enabled: true},
-			},
-		},
-	}
-	rootID := "root-id"
-
-	opts, filtered := c.channelFollowUpMCPToolFilterContextOptions(false, &store.Conversation{RootPostID: &rootID})
-	require.True(t, filtered)
-
-	llmContext := buildChannelFollowUpStrictContext(t, builder, opts)
-	require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "safe"), "jira__safe_tool")
-	require.NotContains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
 }
 
 func TestUserMCPPreferenceContextOptionsNormalizesDisabledServersBeforeBuild(t *testing.T) {
