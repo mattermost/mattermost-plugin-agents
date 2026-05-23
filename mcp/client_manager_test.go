@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -607,6 +608,143 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 	}
 }
 
+func TestClientManagerGetToolRetrievalOverridesRemote(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find Jira issues by key"},
+						{Name: "create_issue", Policy: ToolPolicyAsk, Enabled: true},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
+			Summary: "Find Jira issues by key",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesEmbedded(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			EmbeddedServer: EmbeddedServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find Mattermost people"},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey(EmbeddedClientKey, "search_users"): {
+			Summary: "Find Mattermost people",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesPlugin(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			PluginServers: []PluginServerConfig{
+				{
+					PluginID: "com.example.mcp",
+					Enabled:  true,
+					ToolConfigs: []ToolConfig{
+						{Name: "lookup", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find plugin records"},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey("plugin://com.example.mcp", "lookup"): {
+			Summary: "Find plugin records",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesTrimsAndSkipsEmpty(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", RetrievalDescriptionOverride: "  Find Jira issues  "},
+						{Name: "create_issue", RetrievalDescriptionOverride: "   "},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
+			Summary: "Find Jira issues",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesLastDuplicateWins(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", RetrievalDescriptionOverride: "old summary"},
+						{Name: "get_issue", RetrievalDescriptionOverride: "new summary"},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, "new summary", overrides[ToolRetrievalOverrideKey("https://jira.example.com", "get_issue")].Summary)
+}
+
+func TestClientManagerGetToolRetrievalOverridesDisabledServer(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: false,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", RetrievalDescriptionOverride: "Find Jira issues"},
+					},
+				},
+			},
+		},
+	}
+
+	require.Empty(t, manager.GetToolRetrievalOverrides())
+}
+
 func TestClientManagerInvalidateUserClients(t *testing.T) {
 	now := time.Now()
 	testCases := []struct {
@@ -675,7 +813,7 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 	}
 
 	before := time.Now()
-	userClients, mcpErrors := manager.createAndStoreUserClient("user-1")
+	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), "user-1")
 	after := time.Now()
 
 	require.NotNil(t, userClients)
@@ -711,7 +849,7 @@ func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for range iterations {
-				got, errs := manager.getClientForUser("user-1")
+				got, errs := manager.getClientForUser(context.Background(), "user-1")
 				if got != userClients || errs != nil {
 					t.Errorf("getClientForUser returned unexpected result: got=%p errs=%v", got, errs)
 					return

@@ -138,6 +138,7 @@ func (m *mockLogService) Debug(msg string, keyValuePairs ...interface{}) {}
 func (m *mockLogService) Info(msg string, keyValuePairs ...interface{})  {}
 func (m *mockLogService) Warn(msg string, keyValuePairs ...interface{})  {}
 func (m *mockLogService) Error(msg string, keyValuePairs ...interface{}) {}
+func (m *mockLogService) Flush() error                                   { return nil }
 
 func createTestTools() map[string]*mcp.Tool {
 	return map[string]*mcp.Tool{
@@ -242,6 +243,15 @@ func TestInvalidateServer(t *testing.T) {
 	key := cache.buildCacheKey(serverID)
 	err = kvAPI.Get(key, &storedCache)
 	require.Error(t, err)
+}
+
+func TestInvalidateServerMissingKeyIsNoop(t *testing.T) {
+	kvAPI := newMockKVService()
+	log := &mockLogService{}
+	cache := NewToolsCache(kvAPI, log)
+
+	require.NoError(t, cache.InvalidateServer("missing_server"))
+	require.Nil(t, cache.GetTools("missing_server"))
 }
 
 func TestBuildCacheKey(t *testing.T) {

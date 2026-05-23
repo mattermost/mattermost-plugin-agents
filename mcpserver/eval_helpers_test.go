@@ -568,7 +568,7 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requesting
 		allToolNames[i] = tool.Name
 	}
 
-	toolStore := llm.NewToolStore()
+	toolStore := llm.NewToolStore(nil, false)
 	toolStore.AddTools(mcpTools)
 
 	llmContext := llm.NewContext()

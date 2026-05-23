@@ -258,7 +258,7 @@ func TestToolResolveSpan(t *testing.T) {
 	exporter, cleanup := setupTestTracing(t)
 	defer cleanup()
 
-	store := llm.NewToolStore()
+	store := llm.NewToolStore(nil, false)
 	store.AddTools([]llm.Tool{
 		{
 			Name:        "test_tool",
@@ -297,7 +297,7 @@ func TestToolResolveUnknownSpan(t *testing.T) {
 	exporter, cleanup := setupTestTracing(t)
 	defer cleanup()
 
-	store := llm.NewToolStore()
+	store := llm.NewToolStore(nil, false)
 
 	_, err := store.ResolveTool(context.Background(), "nonexistent", func(args any) error {
 		return nil
@@ -386,7 +386,7 @@ func TestFullRequestTrace(t *testing.T) {
 	llmSpan.End()
 
 	// Tool resolution
-	store := llm.NewToolStore()
+	store := llm.NewToolStore(nil, false)
 	store.AddTools([]llm.Tool{
 		{
 			Name: "web_search",

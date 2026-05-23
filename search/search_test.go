@@ -688,15 +688,14 @@ func TestRunSearch(t *testing.T) {
 			}).
 			Return(nil).Once()
 
-		// Second DM is for response post (async in goroutine) - use Maybe since test may finish before goroutine
-		mockClient.On("DM", "bot1", "user1", mock.Anything).Return(nil).Maybe()
+		// Second DM is for response post (async in goroutine).
+		mockClient.On("DM", "bot1", "user1", mock.Anything).Return(nil).Once()
 
-		// The goroutine may call LogError if the search fails - use Maybe to handle both cases
-		mockClient.On("LogError", mock.Anything, mock.Anything).Maybe()
-
-		// The goroutine may call Search - set up to return empty results to avoid further processing
+		// Return empty results to exercise the async UpdatePost path, then wait
+		// for that update so this test does not leak background work into later
+		// tracing assertions.
 		mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).
-			Return([]embeddings.SearchResult{}, nil).Maybe()
+			Return([]embeddings.SearchResult{}, nil).Once()
 
 		// If zero results, UpdatePost is called. Wait for it so the async
 		// search goroutine cannot leak into following tests.
