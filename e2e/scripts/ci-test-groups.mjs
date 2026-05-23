@@ -85,7 +85,7 @@ const groups = {
         'tests/channel-summarization/basic-summarization.spec.ts',
         'tests/seed.spec.ts',
         'tests/tool-config/mock-api/tool-call-policies.spec.ts',
-        'tests/tool-config/mock-api/dynamic-mcp-approval.spec.ts',
+        'tests/tool-config/mock-api/dynamic_mcp_approval.spec.ts',
     ],
     'llmbot-real-citations': [
         'tests/llmbot-post-component/citations-annotations.spec.ts',

@@ -40,11 +40,12 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
 
     const handleRetrievalDescriptionOverrideChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const value = e.target.value;
+        const trimmedValue = value.trim();
         const nextToolConfig = {...toolConfig};
-        if (value.trim() === '') {
+        if (trimmedValue === '') {
             delete nextToolConfig.retrieval_description_override;
         } else {
-            nextToolConfig.retrieval_description_override = value;
+            nextToolConfig.retrieval_description_override = trimmedValue;
         }
         onToolConfigChange(nextToolConfig);
     };
@@ -222,8 +223,9 @@ const ExpandChevron = styled.button`
     border: none;
     background: transparent;
 
-    &:focus {
-        outline: none;
+    &:focus-visible {
+        outline: 2px solid var(--button-bg);
+        outline-offset: 2px;
     }
 `;
 

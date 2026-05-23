@@ -49,7 +49,7 @@ export type UserAgent = {
     enabledNativeTools: string[] | null;
     enabledMCPTools: EnabledTool[] | null;
     autoEnableNewMCPTools: boolean;
-    mcpDynamicToolLoading: boolean;
+    mcpDynamicToolLoading?: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
