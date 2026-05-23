@@ -271,6 +271,23 @@ func TestPostToBlocksPreservesToolSchemaMetadata(t *testing.T) {
 	assert.JSONEq(t, `{"type":"object","properties":{"key":{"type":"string"}}}`, string(blocks[0].InputSchema))
 }
 
+func TestPostToBlocksOmitsRawNullToolSchema(t *testing.T) {
+	post := llm.Post{
+		Role: llm.PostRoleBot,
+		ToolUse: []llm.ToolCall{{
+			ID:        "tc1",
+			Name:      "jira__get_issue",
+			Arguments: json.RawMessage(`{"key":"MM-1"}`),
+			Schema:    json.RawMessage(` null `),
+		}},
+	}
+
+	blocks := PostToBlocks(post, false)
+
+	require.Len(t, blocks, 1)
+	assert.Nil(t, blocks[0].InputSchema)
+}
+
 func TestBlocksToPostPreservesToolSchemaMetadata(t *testing.T) {
 	blocks := []ContentBlock{{
 		Type:            BlockTypeToolUse,
