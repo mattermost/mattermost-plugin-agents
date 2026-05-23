@@ -150,6 +150,10 @@ func (r *ToolRegistry) rebuildIndex() {
 }
 
 func (r *ToolRegistry) searchWithIndex(query string, limit int) []ToolSearchResult {
+	if r == nil || r.bm25 == nil {
+		return nil
+	}
+
 	bm25Results := r.bm25.Search(query, limit)
 	if len(bm25Results) == 0 {
 		return nil
