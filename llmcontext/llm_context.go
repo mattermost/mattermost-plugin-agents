@@ -407,9 +407,10 @@ func (b *Builder) preloadMCPTools(store *llm.ToolStore, available []llm.Tool, sp
 	}
 
 	for _, spec := range specs {
+		specOrigin := normalizeMCPServerOrigin(spec.ServerOrigin)
 		var matches []llm.Tool
 		for _, tool := range available {
-			if spec.ServerOrigin != tool.ServerOrigin {
+			if specOrigin != normalizeMCPServerOrigin(tool.ServerOrigin) {
 				continue
 			}
 			if llm.MCPToolNameMatches(tool.Name, spec.ToolName) {
@@ -642,21 +643,34 @@ func retainOnlyAllowedMCPTools(tools []llm.Tool, allowlist []llm.EnabledMCPTool)
 	allowed := make(map[string]bool, len(allowlist))
 	wildcardOrigins := make(map[string]bool, len(allowlist))
 	for _, t := range allowlist {
+		origin := normalizeMCPServerOrigin(t.ServerOrigin)
 		if t.ToolName == llm.MCPServerToolWildcard {
-			wildcardOrigins[t.ServerOrigin] = true
+			wildcardOrigins[origin] = true
 			continue
 		}
-		allowed[t.ServerOrigin+"\x00"+t.ToolName] = true
+		allowed[origin+"\x00"+t.ToolName] = true
 	}
 	if len(wildcardOrigins) > 0 {
 		for _, tool := range tools {
-			if wildcardOrigins[tool.ServerOrigin] {
-				allowed[tool.ServerOrigin+"\x00"+tool.Name] = true
+			origin := normalizeMCPServerOrigin(tool.ServerOrigin)
+			if wildcardOrigins[origin] {
+				allowed[origin+"\x00"+tool.Name] = true
 			}
 		}
 	}
 
-	return llm.FilterMCPToolsByAllowlist(tools, allowed)
+	filtered := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if tool.ServerOrigin == "" {
+			filtered = append(filtered, tool)
+			continue
+		}
+		origin := normalizeMCPServerOrigin(tool.ServerOrigin)
+		if allowed[origin+"\x00"+tool.Name] || allowed[origin+"\x00"+llm.BareMCPToolName(tool.Name)] {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
 }
 
 // WithLLMContextTools adds tools to the LLM context the requester can access.

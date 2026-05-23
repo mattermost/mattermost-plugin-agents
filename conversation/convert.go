@@ -280,10 +280,11 @@ func marshalToolSchema(schema any) json.RawMessage {
 		return nil
 	}
 	if raw, ok := schema.(json.RawMessage); ok {
-		if len(raw) == 0 {
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 			return nil
 		}
-		return append(json.RawMessage(nil), raw...)
+		return append(json.RawMessage(nil), trimmed...)
 	}
 	data, err := json.Marshal(schema)
 	if err != nil || len(data) == 0 || string(data) == "null" {

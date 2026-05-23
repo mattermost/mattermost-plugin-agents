@@ -99,6 +99,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// Build LLM context with tools for execution.
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
+		c.contextBuilder.WithLLMContextConversationID(convID),
 	}
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
 
@@ -423,6 +424,7 @@ func (c *Conversations) streamToolFollowUp(
 
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
+		c.contextBuilder.WithLLMContextConversationID(conv.ID),
 	}
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
 

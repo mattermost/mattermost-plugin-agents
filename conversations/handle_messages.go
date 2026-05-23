@@ -230,6 +230,10 @@ func (c *Conversations) handleMentionViaConversation(
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
 	}
+	c.contextBuilder.AttachConversationID(llmContext, bot, convResult.Conversation.ID)
+	if channelToolsAutoRunEverywhereOnly {
+		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+	}
 
 	// Anchor this run's trace to the user turn ID so cross-node resumes can
 	// reproduce the same TraceID. Link to the previous user turn so Tempo
@@ -356,11 +360,13 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
 	}
 
+	var disabledMCPServerOrigins []string
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
 		if err != nil {
 			c.mmClient.LogWarn("Failed to load user tool preferences", "error", err.Error(), "userID", postingUser.Id)
 		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
+			disabledMCPServerOrigins = prefs.DisabledServers
 			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
 		}
 	}
@@ -374,6 +380,10 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	convResult, err := c.CreateOrGetDMConversation(bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
+	}
+	c.contextBuilder.AttachConversationID(llmContext, bot, convResult.ConversationID)
+	if len(disabledMCPServerOrigins) > 0 && llmContext.Tools != nil {
+		llmContext.Tools.RemoveToolsByServerOrigin(disabledMCPServerOrigins)
 	}
 
 	// Anchor this run's trace to the user turn ID. Link to the previous user

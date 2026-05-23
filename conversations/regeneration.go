@@ -252,6 +252,7 @@ func (c *Conversations) regenerateViaConversation(
 
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
+		c.contextBuilder.WithLLMContextConversationID(conv.ID),
 	}
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
 
