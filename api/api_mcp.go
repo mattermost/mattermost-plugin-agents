@@ -140,8 +140,9 @@ func buildUserMCPServerInfo(
 	toolInfos := make([]UserMCPToolInfo, 0, len(originTools))
 	for _, t := range originTools {
 		policy, enabled := serverConfig.GetToolPolicy(mcp.ToolPolicyLookupName(serverConfig, t.Name))
+		bareName := llm.BareMCPToolName(t.Name)
 		toolInfos = append(toolInfos, UserMCPToolInfo{
-			Name:        t.Name,
+			Name:        bareName,
 			Description: t.Description,
 			Enabled:     enabled,
 			Policy:      policy,

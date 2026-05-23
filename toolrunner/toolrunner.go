@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner/limits"
 	"go.opentelemetry.io/otel/trace"
@@ -247,6 +248,24 @@ func (r *ToolRunner) runLoop(
 			return
 		}
 
+		store := toolStoreFromRequest(request)
+		if containsUnavailableTools(toolCalls, store) {
+			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+
+			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
+			resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
+
+			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
+
+			if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
+				request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
+				currentOpts = append(currentOpts, llm.WithToolsDisabled())
+			}
+			continue
+		}
+
+		toolCalls = enrichToolCallsForApproval(toolCalls, store)
+
 		// Check shouldExecute for ALL tool calls.
 		allApproved := true
 		for _, tc := range toolCalls {
@@ -269,35 +288,12 @@ func (r *ToolRunner) runLoop(
 
 		// Execute each tool call.
 		toolResults := r.executeTools(ctx, toolCalls, request)
+		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
-		// Build resolved tool calls with post-execution status
-		// (AutoApproved / Error). These flow into the ToolTurn so downstream
-		// persistence (WriteToolTurns → toolUseBlocks) can read the resolved
-		// status directly from tc.Status instead of inferring it from the
-		// fact that only the auto-execute path calls this function.
-		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-
-		// Build the ToolTurn for this round.
-		turn := ToolTurn{
-			AssistantMessage:   text.String(),
-			AssistantToolCalls: resolvedToolCalls,
-			AssistantReasoning: reasoningData,
-			ToolResults:        toolResults,
-			TokensIn:           usage.InputTokens,
-			TokensOut:          usage.OutputTokens,
-		}
-		result.ToolTurns = append(result.ToolTurns, turn)
+		resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
-
-		request.Posts = append(request.Posts, llm.Post{
-			Role:               llm.PostRoleBot,
-			Message:            text.String(),
-			ToolUse:            resolvedToolCalls,
-			Reasoning:          reasoningData.Text,
-			ReasoningSignature: reasoningData.Signature,
-		})
 
 		// Check for consecutive tool call failures and disable tools if needed.
 		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
@@ -328,7 +324,14 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 	for i, tc := range toolCalls {
 		var result string
 		var resolveErr error
-		if request.Context != nil && request.Context.Tools != nil {
+		switch {
+		case request.Context == nil || request.Context.Tools == nil:
+			resolveErr = fmt.Errorf("no tool store available")
+		case request.Context.Tools.IsUnloadedMCPTool(tc.Name):
+			resolveErr = fmt.Errorf("%s", mcp.UnloadedMCPToolUserHint(tc.Name))
+		case request.Context.Tools.GetTool(tc.Name) == nil:
+			resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
+		default:
 			toolCtx, span := telemetry.Tracer().Start(ctx, "resolve tool",
 				trace.WithAttributes(
 					telemetry.ToolName.String(tc.Name),
@@ -347,8 +350,6 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 				span.SetAttributes(telemetry.ToolStatus.String("success"))
 			}
 			span.End()
-		} else {
-			resolveErr = fmt.Errorf("no tool store available")
 		}
 
 		if resolveErr != nil {
@@ -370,6 +371,158 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 	return toolResults
 }
 
+func toolStoreFromRequest(request llm.CompletionRequest) *llm.ToolStore {
+	if request.Context == nil {
+		return nil
+	}
+	return request.Context.Tools
+}
+
+func unavailableToolNames(toolCalls []llm.ToolCall, store *llm.ToolStore) []string {
+	unavailable := make([]string, 0)
+	for _, tc := range toolCalls {
+		if store == nil || store.GetTool(tc.Name) == nil {
+			unavailable = append(unavailable, tc.Name)
+		}
+	}
+	return unavailable
+}
+
+func containsUnavailableTools(toolCalls []llm.ToolCall, store *llm.ToolStore) bool {
+	for _, tc := range toolCalls {
+		if store == nil || store.GetTool(tc.Name) == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore, llmContext *llm.Context) []ToolResult {
+	unavailableNames := unavailableToolNames(toolCalls, store)
+	unavailableSet := make(map[string]struct{}, len(unavailableNames))
+	for _, name := range unavailableNames {
+		unavailableSet[name] = struct{}{}
+	}
+
+	toolResults := make([]ToolResult, len(toolCalls))
+	for i, tc := range toolCalls {
+		if _, ok := unavailableSet[tc.Name]; ok {
+			if store != nil && store.IsUnloadedMCPTool(tc.Name) {
+				llmContext.ObserveMCPDynamicToolEvent("unloaded_tool_error", "error")
+				toolResults[i] = ToolResult{
+					ToolCallID: tc.ID,
+					Name:       tc.Name,
+					Result:     mcp.UnloadedMCPToolUserHint(tc.Name),
+					IsError:    true,
+				}
+				continue
+			}
+
+			if store != nil {
+				store.LogUnknownToolWarning(tc.Name, func(args any) error {
+					return json.Unmarshal(tc.Arguments, args)
+				})
+			}
+			toolResults[i] = ToolResult{
+				ToolCallID: tc.ID,
+				Name:       tc.Name,
+				Result:     "unknown tool " + tc.Name,
+				IsError:    true,
+			}
+			continue
+		}
+
+		toolResults[i] = ToolResult{
+			ToolCallID: tc.ID,
+			Name:       tc.Name,
+			Result:     llm.BatchSkippedToolResult(tc.Name, unavailableNames),
+			IsError:    true,
+		}
+	}
+	return toolResults
+}
+
+func recordMCPDynamicSearchLoadCallSuccess(llmContext *llm.Context, toolCalls []llm.ToolCall, toolResults []ToolResult) {
+	if llmContext == nil {
+		return
+	}
+	for i, toolResult := range toolResults {
+		if i >= len(toolCalls) || toolResult.IsError {
+			continue
+		}
+		toolName := toolCalls[i].Name
+		if mcp.IsMCPMetaTool(toolName) {
+			continue
+		}
+		if llmContext.ShouldRecordMCPDynamicSearchLoadCallSuccess(toolName) {
+			llmContext.ObserveMCPDynamicToolEvent("search_load_call_success", "success")
+		}
+	}
+}
+
+func enrichToolCallsForApproval(toolCalls []llm.ToolCall, store *llm.ToolStore) []llm.ToolCall {
+	enriched := make([]llm.ToolCall, len(toolCalls))
+	copy(enriched, toolCalls)
+	if store == nil {
+		return enriched
+	}
+
+	for i := range enriched {
+		tool := store.GetTool(enriched[i].Name)
+		if tool == nil {
+			continue
+		}
+		if enriched[i].Description == "" {
+			enriched[i].Description = tool.Description
+		}
+		if enriched[i].ServerOrigin == "" {
+			enriched[i].ServerOrigin = tool.ServerOrigin
+		}
+		enriched[i].Schema = tool.Schema
+		if enriched[i].ServerOrigin != "" {
+			enriched[i].MCPBareName = llm.BareMCPToolName(enriched[i].Name)
+		}
+	}
+	return enriched
+}
+
+func appendToolTurnAndPost(
+	result *ToolRunResult,
+	request *llm.CompletionRequest,
+	text string,
+	reasoningData llm.ReasoningData,
+	toolCalls []llm.ToolCall,
+	toolResults []ToolResult,
+	usage llm.TokenUsage,
+) []llm.ToolCall {
+	// Build resolved tool calls with post-execution status
+	// (AutoApproved / Error). These flow into the ToolTurn so downstream
+	// persistence (WriteToolTurns → toolUseBlocks) can read the resolved
+	// status directly from tc.Status instead of inferring it from the
+	// fact that only the auto-execute path calls this function.
+	resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
+
+	turn := ToolTurn{
+		AssistantMessage:   text,
+		AssistantToolCalls: resolvedToolCalls,
+		AssistantReasoning: reasoningData,
+		ToolResults:        toolResults,
+		TokensIn:           usage.InputTokens,
+		TokensOut:          usage.OutputTokens,
+	}
+	result.ToolTurns = append(result.ToolTurns, turn)
+
+	request.Posts = append(request.Posts, llm.Post{
+		Role:               llm.PostRoleBot,
+		Message:            text,
+		ToolUse:            resolvedToolCalls,
+		Reasoning:          reasoningData.Text,
+		ReasoningSignature: reasoningData.Signature,
+	})
+
+	return resolvedToolCalls
+}
+
 // buildResolvedToolCalls creates resolved ToolCall entries from executed results.
 func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) []llm.ToolCall {
 	resolved := make([]llm.ToolCall, len(toolCalls))
@@ -377,8 +530,11 @@ func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) 
 		resolved[i] = llm.ToolCall{
 			ID:           tc.ID,
 			Name:         tc.Name,
+			Description:  tc.Description,
 			Arguments:    tc.Arguments,
+			Schema:       tc.Schema,
 			ServerOrigin: tc.ServerOrigin,
+			MCPBareName:  tc.MCPBareName,
 		}
 		if toolResults[i].IsError {
 			resolved[i].Status = llm.ToolCallStatusError

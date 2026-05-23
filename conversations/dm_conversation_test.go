@@ -599,7 +599,7 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 
 	env.policyChecker.setAutoRun("https://mcp.example.com", "get_weather")
 
-	toolStore := llm.NewToolStore()
+	toolStore := llm.NewToolStore(nil, false)
 	toolStore.AddTools([]llm.Tool{
 		{
 			Name:         "get_weather",
@@ -689,6 +689,18 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 
 	// No auto-run policy -> manual approval required
 	// (default policy is "ask")
+	toolStore := llm.NewToolStore(nil, false)
+	toolStore.AddTools([]llm.Tool{
+		{
+			Name:         "run_dangerous",
+			Description:  "Runs a dangerous command",
+			ServerOrigin: "https://mcp.example.com",
+			Resolver: func(ctx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				return "should not execute", nil
+			},
+		},
+	})
+	llmCtx := &llm.Context{Tools: toolStore}
 
 	post := &model.Post{
 		Id:        "post1",
@@ -702,7 +714,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 		env.user,
 		env.channel,
 		post,
-		nil,
+		llmCtx,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, convResult)
@@ -711,7 +723,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 		context.Background(),
 		convResult.ConversationID,
 		env.fakeLLM,
-		nil,
+		llmCtx,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -732,6 +744,88 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 		assert.NotEqual(t, "tool_result", turn.Role,
 			"no tool_result turns should exist when tools weren't executed")
 	}
+}
+
+func TestDMUnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
+	toolCall := llm.ToolCall{
+		ID:           "tc_unknown",
+		Name:         "ghost_tool",
+		Arguments:    json.RawMessage(`{"query":"hello"}`),
+		ServerOrigin: "https://mcp.example.com",
+	}
+
+	env := setupDMTestEnv(t,
+		dmMakeToolCallStream([]llm.ToolCall{toolCall}),
+		dmMakeTextStream("I cannot use that tool"),
+	)
+
+	llmCtx := &llm.Context{Tools: llm.NewNoTools()}
+	post := &model.Post{
+		Id:        "post1",
+		UserId:    env.userID,
+		ChannelId: env.channelID,
+		Message:   "Use a ghost tool",
+	}
+
+	convResult, err := env.conversations.CreateOrGetDMConversation(
+		env.botID,
+		env.user,
+		env.channel,
+		post,
+		llmCtx,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, convResult)
+
+	streamResult, err := env.conversations.ProcessDMRequest(
+		context.Background(),
+		convResult.ConversationID,
+		env.fakeLLM,
+		llmCtx,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, streamResult)
+
+	text, readErr := streamResult.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Equal(t, "I cannot use that tool", text)
+
+	turns := env.convStore.turnsFor(convResult.ConversationID)
+	var foundErrorToolUse bool
+	var foundErrorToolResult bool
+	for _, turn := range turns {
+		var blocks []conversation.ContentBlock
+		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
+			continue
+		}
+		for _, b := range blocks {
+			switch b.Type {
+			case conversation.BlockTypeToolUse:
+				if b.Name == "ghost_tool" {
+					assert.Equal(t, conversation.StatusError, b.Status)
+					foundErrorToolUse = true
+				}
+			case conversation.BlockTypeToolResult:
+				if b.ToolUseID == "tc_unknown" {
+					assert.Equal(t, conversation.StatusError, b.Status)
+					assert.Contains(t, b.Content, "unknown tool ghost_tool")
+					foundErrorToolResult = true
+				}
+			}
+		}
+	}
+	assert.True(t, foundErrorToolUse, "unknown tool_use should be persisted as an error, not pending approval")
+	assert.True(t, foundErrorToolResult, "unknown tool should have an error tool_result")
+
+	env.fakeLLM.mu.Lock()
+	require.Len(t, env.fakeLLM.requests, 2)
+	secondReq := env.fakeLLM.requests[1]
+	env.fakeLLM.mu.Unlock()
+	require.NotEmpty(t, secondReq.Posts)
+	botPost := secondReq.Posts[len(secondReq.Posts)-1]
+	require.Len(t, botPost.ToolUse, 1)
+	assert.Equal(t, llm.ToolCallStatusError, botPost.ToolUse[0].Status)
+	assert.Equal(t, "unknown tool ghost_tool", botPost.ToolUse[0].Result)
 }
 
 // --- Test: conversation ID returned for setting on response post ----------
@@ -890,7 +984,7 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 
 	env.policyChecker.setAutoRun("https://example.com", "tool_a")
 
-	toolStore := llm.NewToolStore()
+	toolStore := llm.NewToolStore(nil, false)
 	toolStore.AddTools([]llm.Tool{
 		{
 			Name:         "tool_a",

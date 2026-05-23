@@ -56,6 +56,10 @@ func (m *mockConfigProvider) GetServiceByID(id string) (llm.ServiceConfig, bool)
 	return llm.ServiceConfig{}, false
 }
 
+func (m *mockConfigProvider) GetEnableLLMTrace() bool {
+	return false
+}
+
 func TestConversationMentionHandling(t *testing.T) {
 	// Define the evaluation rubrics for each conversation
 	evalConfigs := []struct {

@@ -494,6 +494,15 @@ func turnsToLLMPosts(
 			i++
 		}
 		post := BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize)
+		if turn.Role == "assistant" {
+			// Anthropic signed thinking must be replayed byte-for-byte. Our stored
+			// content blocks intentionally normalize assistant output (merge text
+			// blocks, pair tool_use/result turns, redact private content), so the
+			// persisted thinking block is not safe to send back as provider history.
+			// Keep reasoning for UI/persistence, but omit it from rebuilt requests.
+			post.Reasoning = ""
+			post.ReasoningSignature = ""
+		}
 		posts = append(posts, post)
 	}
 	return posts, nil

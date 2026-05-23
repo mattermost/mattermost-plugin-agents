@@ -60,6 +60,27 @@ func TestToolUseBlocksStatuses(t *testing.T) {
 	}
 }
 
+func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
+	blocks := toolUseBlocks("", llm.ReasoningData{}, []llm.ToolCall{{
+		ID:           "tc1",
+		Name:         "jira__get_issue",
+		Description:  "Get a Jira issue",
+		ServerOrigin: "https://jira.example.com",
+		Arguments:    json.RawMessage(`{"key":"MM-1"}`),
+		Schema:       json.RawMessage(`{"type":"object"}`),
+		MCPBareName:  "get_issue",
+		Status:       llm.ToolCallStatusPending,
+	}}, false)
+
+	require.Len(t, blocks, 1)
+	assert.Equal(t, BlockTypeToolUse, blocks[0].Type)
+	assert.Equal(t, "jira__get_issue", blocks[0].Name)
+	assert.Equal(t, "https://jira.example.com", blocks[0].ServerOrigin)
+	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
+	assert.Equal(t, "Get a Jira issue", blocks[0].ToolDescription)
+	assert.JSONEq(t, `{"type":"object"}`, string(blocks[0].InputSchema))
+}
+
 func TestUnmarshalBlocks(t *testing.T) {
 	tests := []struct {
 		name           string

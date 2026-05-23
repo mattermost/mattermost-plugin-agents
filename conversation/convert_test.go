@@ -180,7 +180,17 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	blocks := []ContentBlock{
 		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{"q":"public"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
 		{Type: BlockTypeToolResult, ToolUseID: "t-shared", Content: "PUBLIC", Status: StatusSuccess, Shared: BoolPtr(true)},
-		{Type: BlockTypeToolUse, ID: "t-private", Name: "read_dm", Input: json.RawMessage(`{"channel":"secret-dm"}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+		{
+			Type:            BlockTypeToolUse,
+			ID:              "t-private",
+			Name:            "read_dm",
+			Input:           json.RawMessage(`{"channel":"secret-dm"}`),
+			InputSchema:     json.RawMessage(`{"type":"object"}`),
+			MCPBareName:     "read_dm",
+			ToolDescription: "Read a DM",
+			Status:          StatusSuccess,
+			Shared:          BoolPtr(false),
+		},
 		{Type: BlockTypeToolResult, ToolUseID: "t-private", Content: "SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
 		{Type: BlockTypeToolUse, ID: "t-nilshared", Name: "foo", Input: json.RawMessage(`{"token":"xyz"}`), Status: StatusSuccess},
 		{Type: BlockTypeToolResult, ToolUseID: "t-nilshared", Content: "ALSO SECRET", Status: StatusSuccess},
@@ -221,7 +231,72 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 		assert.JSONEq(t, `{"q":"public"}`, args["t-shared"])
 		assert.JSONEq(t, `{}`, args["t-private"])
 		assert.JSONEq(t, `{}`, args["t-nilshared"])
+		for _, tc := range got.ToolUse {
+			if tc.ID == "t-private" {
+				assert.Nil(t, tc.Schema)
+				assert.Empty(t, tc.MCPBareName)
+				assert.Empty(t, tc.Description)
+			}
+		}
 	})
+}
+
+func TestPostToBlocksPreservesToolSchemaMetadata(t *testing.T) {
+	post := llm.Post{
+		Role: llm.PostRoleBot,
+		ToolUse: []llm.ToolCall{{
+			ID:           "tc1",
+			Name:         "jira__get_issue",
+			Description:  "Get a Jira issue",
+			ServerOrigin: "https://jira.example.com",
+			Arguments:    json.RawMessage(`{"key":"MM-1"}`),
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"key": map[string]any{"type": "string"},
+				},
+			},
+			MCPBareName: "get_issue",
+			Status:      llm.ToolCallStatusPending,
+		}},
+	}
+
+	blocks := PostToBlocks(post, false)
+
+	require.Len(t, blocks, 1)
+	assert.Equal(t, BlockTypeToolUse, blocks[0].Type)
+	assert.Equal(t, "jira__get_issue", blocks[0].Name)
+	assert.Equal(t, "https://jira.example.com", blocks[0].ServerOrigin)
+	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
+	assert.Equal(t, "Get a Jira issue", blocks[0].ToolDescription)
+	assert.JSONEq(t, `{"type":"object","properties":{"key":{"type":"string"}}}`, string(blocks[0].InputSchema))
+}
+
+func TestBlocksToPostPreservesToolSchemaMetadata(t *testing.T) {
+	blocks := []ContentBlock{{
+		Type:            BlockTypeToolUse,
+		ID:              "tc1",
+		Name:            "jira__get_issue",
+		ServerOrigin:    "https://jira.example.com",
+		Input:           json.RawMessage(`{"key":"MM-1"}`),
+		InputSchema:     json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`),
+		MCPBareName:     "get_issue",
+		ToolDescription: "Get a Jira issue",
+		Status:          StatusPending,
+		Shared:          BoolPtr(true),
+	}}
+
+	post := BlocksToPost(blocks, "assistant", false, nil, false, 0)
+
+	require.Len(t, post.ToolUse, 1)
+	toolCall := post.ToolUse[0]
+	assert.Equal(t, "tc1", toolCall.ID)
+	assert.Equal(t, "jira__get_issue", toolCall.Name)
+	assert.Equal(t, "https://jira.example.com", toolCall.ServerOrigin)
+	assert.Equal(t, "get_issue", toolCall.MCPBareName)
+	assert.Equal(t, "Get a Jira issue", toolCall.Description)
+	require.IsType(t, json.RawMessage{}, toolCall.Schema)
+	assert.JSONEq(t, `{"type":"object","properties":{"key":{"type":"string"}}}`, string(toolCall.Schema.(json.RawMessage)))
 }
 
 func TestPostToBlocks(t *testing.T) {
