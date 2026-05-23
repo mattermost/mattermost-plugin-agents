@@ -233,6 +233,9 @@ func (c *Conversations) ProcessDMRequest(
 // reveal unshared tool output without an explicit Share from the requester.
 func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) func(llm.ToolCall) bool {
 	return func(tc llm.ToolCall) bool {
+		if isMCPMetaToolCall(tc, llmCtx) {
+			return true
+		}
 		if c.toolPolicyChecker == nil {
 			return false
 		}
@@ -258,8 +261,13 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 	if c.toolPolicyChecker == nil {
 		return false
 	}
+	sawTool := false
 	for _, turn := range turns {
 		for _, tc := range turn.AssistantToolCalls {
+			sawTool = true
+			if isMCPMetaToolCall(tc, llmCtx) {
+				continue
+			}
 			origin := tc.ServerOrigin
 			if origin == "" && llmCtx.Tools != nil {
 				origin = llmCtx.Tools.GetServerOrigin(tc.Name)
@@ -270,5 +278,15 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 			}
 		}
 	}
-	return len(turns) > 0
+	return sawTool
+}
+
+func isMCPMetaToolCall(tc llm.ToolCall, llmCtx *llm.Context) bool {
+	if !mcp.IsMCPMetaTool(tc.Name) || tc.ServerOrigin != "" {
+		return false
+	}
+	if llmCtx == nil || llmCtx.Tools == nil {
+		return true
+	}
+	return llmCtx.Tools.GetServerOrigin(tc.Name) == ""
 }

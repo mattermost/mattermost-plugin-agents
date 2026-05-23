@@ -67,6 +67,7 @@ export async function RunToolConfigContainerWithPolicies(): Promise<MattermostCo
                 serviceID: 'mock-service',
                 customInstructions: '',
                 disableTools: false,
+                mcpDynamicToolLoading: false,
                 enabledNativeTools: [],
             },
         ],

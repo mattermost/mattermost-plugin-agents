@@ -67,6 +67,21 @@ func TestShouldAutoExecuteTool_NilChecker(t *testing.T) {
 	}
 }
 
+func TestShouldAutoExecuteTool_MetaToolsAutoExecute(t *testing.T) {
+	c := &Conversations{toolPolicyChecker: nil}
+	store := llm.NewToolStore()
+	store.AddTools(mcp.NewMetaTools(nil))
+	llmCtx := &llm.Context{Tools: store}
+
+	for _, isDM := range []bool{true, false} {
+		got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: mcp.LoadToolName})
+		assert.True(t, got, "isDM=%v", isDM)
+	}
+
+	got := c.shouldAutoExecuteTool(llmCtx, true)(llm.ToolCall{Name: mcp.LoadToolName, ServerOrigin: "https://mcp.example.com/mcp"})
+	assert.False(t, got)
+}
+
 func TestShouldAutoExecuteTool_NamespacedToolUsesBarePolicy(t *testing.T) {
 	const origin = "https://mcp.example.com/mcp"
 
@@ -125,6 +140,28 @@ func TestAllToolsAutoRunEverywhere_NamespacedToolUsesBarePolicy(t *testing.T) {
 	turns := []toolrunner.ToolTurn{{
 		AssistantToolCalls: []llm.ToolCall{{Name: "example__example_tool", ServerOrigin: origin}},
 	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+}
+
+func TestAllToolsAutoRunEverywhere_AllowsMetaTools(t *testing.T) {
+	const origin = "https://mcp.example.com/mcp"
+
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				"example_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+			},
+		},
+	}
+	store := llm.NewToolStore()
+	store.AddTools(mcp.NewMetaTools(nil))
+	llmCtx := &llm.Context{Tools: store}
+
+	turns := []toolrunner.ToolTurn{
+		{AssistantToolCalls: []llm.ToolCall{{Name: mcp.SearchToolsName}}},
+		{AssistantToolCalls: []llm.ToolCall{{Name: "example_tool", ServerOrigin: origin}}},
+	}
 
 	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
 }
