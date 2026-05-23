@@ -235,8 +235,10 @@ type ToolCall struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Arguments   json.RawMessage `json:"arguments"`
+	Schema      any             `json:"schema,omitempty"`
 	Result      string          `json:"result"`
 	Status      ToolCallStatus  `json:"status"`
+	MCPBareName string          `json:"mcp_bare_name,omitempty"`
 
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in tools. Used for auto-approval decisions.
@@ -318,8 +320,19 @@ type ToolAuthError struct {
 }
 
 type ToolStore struct {
-	tools      map[string]Tool
-	authErrors []ToolAuthError
+	tools            map[string]Tool
+	unloadedMCPTools map[string]ToolInfo
+	log              TraceLog
+	doTrace          bool
+	authErrors       []ToolAuthError
+}
+
+type TraceLog interface {
+	Info(message string, keyValuePairs ...any)
+}
+
+type warnTraceLog interface {
+	Warn(message string, keyValuePairs ...any)
 }
 
 // NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using generics
@@ -336,13 +349,26 @@ func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
 func NewNoTools() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
+		log:        nil,
+		doTrace:    false,
 		authErrors: []ToolAuthError{},
 	}
 }
 
-func NewToolStore() *ToolStore {
+func NewToolStore(options ...any) *ToolStore {
+	var log TraceLog
+	var doTrace bool
+	if len(options) > 0 {
+		log, _ = options[0].(TraceLog)
+	}
+	if len(options) > 1 {
+		doTrace, _ = options[1].(bool)
+	}
+
 	return &ToolStore{
 		tools:      make(map[string]Tool),
+		log:        log,
+		doTrace:    doTrace,
 		authErrors: []ToolAuthError{},
 	}
 }
@@ -350,6 +376,9 @@ func NewToolStore() *ToolStore {
 func (s *ToolStore) AddTools(tools []Tool) {
 	for _, tool := range tools {
 		s.tools[tool.Name] = tool
+		if s.unloadedMCPTools != nil {
+			delete(s.unloadedMCPTools, tool.Name)
+		}
 	}
 }
 
@@ -361,12 +390,15 @@ func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter Too
 
 	tool, ok := s.tools[name]
 	if !ok {
+		s.LogUnknownToolWarning(name, argsGetter)
+		s.TraceUnknown(name, argsGetter)
 		err := errors.New("unknown tool " + name)
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
 		return "", err
 	}
 	result, err := tool.Resolver(llmCtx, argsGetter)
+	s.TraceResolved(name, argsGetter, result, err)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
@@ -384,10 +416,53 @@ func (s *ToolStore) GetTools() []Tool {
 
 // GetTool returns a pointer to a tool by name, or nil if not found
 func (s *ToolStore) GetTool(name string) *Tool {
+	if s == nil {
+		return nil
+	}
 	if tool, ok := s.tools[name]; ok {
 		return &tool
 	}
 	return nil
+}
+
+func (s *ToolStore) SetUnloadedMCPTools(tools []Tool) {
+	if s == nil {
+		return
+	}
+	if len(tools) == 0 {
+		s.unloadedMCPTools = nil
+		return
+	}
+
+	s.unloadedMCPTools = make(map[string]ToolInfo, len(tools))
+	for _, tool := range tools {
+		if tool.Name == "" || s.GetTool(tool.Name) != nil {
+			continue
+		}
+		s.unloadedMCPTools[tool.Name] = ToolInfo{
+			Name:        tool.Name,
+			Description: tool.Description,
+		}
+	}
+	if len(s.unloadedMCPTools) == 0 {
+		s.unloadedMCPTools = nil
+	}
+}
+
+func (s *ToolStore) IsUnloadedMCPTool(name string) bool {
+	if s == nil || s.GetTool(name) != nil {
+		return false
+	}
+	_, ok := s.unloadedMCPTools[name]
+	return ok
+}
+
+func (s *ToolStore) GetUnloadedMCPToolInfo(name string) (ToolInfo, bool) {
+	if s == nil || s.GetTool(name) != nil {
+		return ToolInfo{}, false
+	}
+	info, ok := s.unloadedMCPTools[name]
+	return info, ok
 }
 
 // GetServerOrigin returns the ServerOrigin for a tool by name.
@@ -414,16 +489,25 @@ func (s *ToolStore) KeepToolsIf(keep func(Tool) bool) {
 // RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches
 // any of the provided origins. This is used for user-disabled provider
 // filtering in Copilot DM contexts.
+func normalizeToolServerOrigin(origin string) string {
+	return strings.TrimRight(strings.TrimSpace(origin), "/")
+}
+
 func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 	if s == nil || len(disabledOrigins) == 0 {
 		return
 	}
+
 	disabledSet := make(map[string]bool, len(disabledOrigins))
 	for _, origin := range disabledOrigins {
+		origin = normalizeToolServerOrigin(origin)
+		if origin == "" {
+			continue
+		}
 		disabledSet[origin] = true
 	}
 	for name, tool := range s.tools {
-		if disabledSet[tool.ServerOrigin] {
+		if disabledSet[normalizeToolServerOrigin(tool.ServerOrigin)] {
 			delete(s.tools, name)
 		}
 	}
@@ -431,6 +515,72 @@ func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 
 // MCPServerToolWildcard in EnabledMCPTool.ToolName means every tool from that ServerOrigin is allowed.
 const MCPServerToolWildcard = "*"
+
+const MCPToolNameSeparator = "__"
+
+func NamespaceMCPToolName(serverSlug, bareToolName string) string {
+	if serverSlug == "" || bareToolName == "" {
+		return bareToolName
+	}
+	return serverSlug + MCPToolNameSeparator + bareToolName
+}
+
+func BareMCPToolName(toolName string) string {
+	_, bareName, ok := strings.Cut(toolName, MCPToolNameSeparator)
+	if !ok {
+		return toolName
+	}
+	return bareName
+}
+
+// IsBareMCPToolName reports whether name is non-empty and has no MCP server
+// namespace prefix (e.g. "get_issue" rather than "jira__get_issue").
+func IsBareMCPToolName(name string) bool {
+	return name != "" && BareMCPToolName(name) == name
+}
+
+func MCPToolNameMatches(runtimeName, configuredName string) bool {
+	return runtimeName == configuredName || BareMCPToolName(runtimeName) == configuredName
+}
+
+// mcpToolAllowed reports whether a tool passes the allowlist filter. Built-in
+// tools (empty ServerOrigin) always pass. MCP tools pass when the allowlist
+// map contains the key for either the namespaced runtime name or the bare
+// name (see BareMCPToolName). Allowlist keys use the format
+// "serverOrigin\x00toolName".
+func mcpToolAllowed(tool Tool, allowlist map[string]bool) bool {
+	if tool.ServerOrigin == "" {
+		return true
+	}
+	if allowlist[tool.ServerOrigin+"\x00"+tool.Name] {
+		return true
+	}
+	return allowlist[tool.ServerOrigin+"\x00"+BareMCPToolName(tool.Name)]
+}
+
+// FilterMCPToolsByAllowlist returns a new slice containing every built-in tool
+// (empty ServerOrigin) plus every MCP tool whose (ServerOrigin, Name) pair is
+// present in the allowlist map. Allowlist keys use the format
+// "serverOrigin\x00toolName"; both the namespaced runtime name and the bare
+// name (see BareMCPToolName) are checked, so persisted allowlists with legacy
+// bare names continue to match.
+//
+// An empty or nil allowlist drops every MCP tool while still keeping built-in
+// tools. The input slice is never mutated. This helper does not interpret
+// MCPServerToolWildcard entries; callers that need wildcard semantics should
+// pre-expand wildcards into the allowlist map before calling.
+func FilterMCPToolsByAllowlist(tools []Tool, allowlist map[string]bool) []Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	filtered := make([]Tool, 0, len(tools))
+	for _, tool := range tools {
+		if mcpToolAllowed(tool, allowlist) {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
 
 // RetainOnlyMCPTools filters the tool store to only retain MCP tools whose
 // (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
@@ -456,17 +606,13 @@ func (s *ToolStore) RetainOnlyMCPTools(allowlist []EnabledMCPTool) {
 	}
 
 	for name, tool := range s.tools {
-		// Never filter built-in tools (empty ServerOrigin)
-		if tool.ServerOrigin == "" {
+		if mcpToolAllowed(tool, allowed) {
 			continue
 		}
 		if wildcardOrigins[tool.ServerOrigin] {
 			continue
 		}
-		// Remove MCP tools not in the allowlist
-		if !allowed[tool.ServerOrigin+"\x00"+tool.Name] {
-			delete(s.tools, name)
-		}
+		delete(s.tools, name)
 	}
 }
 
@@ -486,6 +632,45 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 		})
 	}
 	return result
+}
+
+func (s *ToolStore) TraceUnknown(name string, argsGetter ToolArgumentGetter) {
+	if s.log != nil && s.doTrace {
+		s.log.Info("unknown tool called", "name", name, "args", toolArgsForLog(argsGetter))
+	}
+}
+
+func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, result string, err error) {
+	if s.log != nil && s.doTrace {
+		s.log.Info("tool resolved", "name", name, "args", toolArgsForLog(argsGetter), "result", result, "error", err)
+	}
+}
+
+// maxToolArgsLogBytes caps the size of the JSON arg snippet we emit to logs.
+// Tool calls (especially failures) can carry large payloads; truncating keeps
+// log output bounded without losing the diagnostic head of the args.
+const maxToolArgsLogBytes = 512
+
+func (s *ToolStore) LogUnknownToolWarning(name string, argsGetter ToolArgumentGetter) {
+	if s == nil || s.log == nil {
+		return
+	}
+	warnLog, ok := s.log.(warnTraceLog)
+	if !ok {
+		return
+	}
+	warnLog.Warn("unknown tool called", "name", name, "args", toolArgsForLog(argsGetter), "available_tool_count", len(s.tools))
+}
+
+func toolArgsForLog(argsGetter ToolArgumentGetter) string {
+	var raw json.RawMessage
+	if err := argsGetter(&raw); err != nil {
+		return fmt.Sprintf("failed to get tool args: %v", err)
+	}
+	if len(raw) > maxToolArgsLogBytes {
+		return string(raw[:maxToolArgsLogBytes]) + "...(truncated)"
+	}
+	return string(raw)
 }
 
 // AddAuthError adds an authentication error to the tool store
