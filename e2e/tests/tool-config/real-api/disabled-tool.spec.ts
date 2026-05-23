@@ -38,7 +38,6 @@ const VETTED_EMBEDDED_TOOLS = [
 ];
 
 const TARGET_TOOL_NAME = 'read_post';
-const TARGET_RUNTIME_TOOL_NAME = `mattermost__${TARGET_TOOL_NAME}`;
 const TARGET_TOOL_LABEL = 'Read Post';
 const SEEDED_POST_MESSAGE =
     'Disabled tool e2e seed message: cobalt narwhal orchard 4821.';
@@ -108,8 +107,8 @@ for (const provider of providers) {
             expect(embeddedServer).toBeDefined();
 
             const names = embeddedServer.tools.map((t: any) => t.name);
-            expect(names).not.toContain(TARGET_RUNTIME_TOOL_NAME);
-            expect(names).toContain('mattermost__get_channel_info');
+            expect(names).not.toContain(TARGET_TOOL_NAME);
+            expect(names).toContain('get_channel_info');
 
             await mmPage.login(mattermost.url(), 'regularuser', 'regularuser');
             await aiPlugin.openRHS();
