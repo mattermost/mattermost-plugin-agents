@@ -211,6 +211,15 @@ type loadedStateStore struct {
 }
 
 func (s *loadedStateStore) UpsertLoadedMCPTool(tool store.LoadedMCPTool) error {
+	for i, row := range s.rows {
+		if row.ConversationID == tool.ConversationID &&
+			row.BotID == tool.BotID &&
+			row.UserID == tool.UserID &&
+			row.ToolName == tool.ToolName {
+			s.rows[i] = tool
+			return nil
+		}
+	}
 	s.rows = append(s.rows, tool)
 	return nil
 }

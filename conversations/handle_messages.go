@@ -449,6 +449,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
 	c.contextBuilder.AttachConversationID(llmContext, bot, convResult.ConversationID)
+	removePreFilteredMCPServersFromVisibleStore(llmContext)
 
 	// Anchor this run's trace to the user turn ID. Link to the previous user
 	// turn (if any) so consecutive DMs are navigable in Tempo.
