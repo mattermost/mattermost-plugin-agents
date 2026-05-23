@@ -89,11 +89,11 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	opts := []llm.ContextOption{
-		a.contextBuilder.WithLLMContextDefaultTools(c.Request.Context(), toolBot),
 		a.contextBuilder.WithLLMContextPreloadedMCPTools([]llm.EnabledMCPTool{
 			{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
 			{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "get_channel_info"},
 		}),
+		a.contextBuilder.WithLLMContextDefaultTools(c.Request.Context(), toolBot),
 	}
 
 	// If the channel is a DM/GM and we have a team ID from the client, use it for context
