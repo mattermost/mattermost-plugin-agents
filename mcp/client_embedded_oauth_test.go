@@ -30,6 +30,19 @@ func TestEmbeddedCreateClientDiscoversPaginatedTools(t *testing.T) {
 	}
 }
 
+func TestEmbeddedCreateClientRequiresPluginAPIForSessionValidation(t *testing.T) {
+	server := newTestMCPServer(0, "tool_1")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	embeddedClient := NewEmbeddedServerClient(&fakeEmbeddedMCPServer{ctx: ctx, server: server}, newTestLogService(), nil)
+
+	client, err := embeddedClient.CreateClient(context.Background(), "user-id", "session-id")
+
+	require.Nil(t, client)
+	require.EqualError(t, err, "plugin API is required when sessionID is provided")
+}
+
 func TestEmbeddedToolListChangedInvalidatesCacheAndClientTools(t *testing.T) {
 	server := newTestMCPServer(2, "tool_1", "tool_2", "tool_3")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -77,7 +90,7 @@ func TestEmbeddedToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T
 	}
 	t.Cleanup(func() { cleanupTestClientManager(manager) })
 
-	tools, mcpErrors := manager.GetToolsForUser("user-id")
+	tools, mcpErrors := manager.GetToolsForUser(context.Background(), "user-id")
 	require.Nil(t, mcpErrors)
 	requireToolNames(t, tools, "mattermost__tool_1", "mattermost__tool_2")
 
@@ -94,7 +107,7 @@ func TestEmbeddedToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T
 		return client != nil && len(client.Tools()) == 0
 	}, 5*time.Second, 10*time.Millisecond)
 
-	tools, mcpErrors = manager.GetToolsForUser("user-id")
+	tools, mcpErrors = manager.GetToolsForUser(context.Background(), "user-id")
 	require.Nil(t, mcpErrors)
 	requireToolNames(t, tools, "mattermost__new_tool", "mattermost__tool_1", "mattermost__tool_2")
 	require.Len(t, cache.GetTools(EmbeddedClientKey), 3)

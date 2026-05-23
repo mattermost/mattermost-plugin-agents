@@ -502,7 +502,7 @@ func TestRemoteToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T) 
 	var tools []llm.Tool
 	var mcpErrors *Errors
 	require.Eventually(t, func() bool {
-		tools, mcpErrors = manager.GetToolsForUser("user-id")
+		tools, mcpErrors = manager.GetToolsForUser(context.Background(), "user-id")
 		if mcpErrors != nil || len(cache.GetTools("paged")) != 2 {
 			return false
 		}
@@ -529,7 +529,7 @@ func TestRemoteToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T) 
 		return client != nil && len(client.Tools()) == 0 && cache.GetTools("paged") == nil
 	}, 5*time.Second, 10*time.Millisecond)
 
-	tools, mcpErrors = manager.GetToolsForUser("user-id")
+	tools, mcpErrors = manager.GetToolsForUser(context.Background(), "user-id")
 	require.Nil(t, mcpErrors)
 	requireToolNames(t, tools, "paged__new_tool", "paged__tool_1", "paged__tool_2")
 	require.Len(t, cache.GetTools("paged"), 3)

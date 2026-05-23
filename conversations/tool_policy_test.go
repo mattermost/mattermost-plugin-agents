@@ -67,6 +67,23 @@ func TestShouldAutoExecuteTool_NilChecker(t *testing.T) {
 	}
 }
 
+func TestShouldAutoExecuteTool_NamespacedToolUsesBarePolicy(t *testing.T) {
+	const origin = "https://mcp.example.com/mcp"
+
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				"example_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+			},
+		},
+	}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+
+	got := c.shouldAutoExecuteTool(llmCtx, false)(llm.ToolCall{Name: "example__example_tool", ServerOrigin: origin})
+
+	assert.True(t, got)
+}
+
 // TestAllToolsAutoRunEverywhere_RespectsEnabledFlag pins the result-sharing
 // contract: a disabled tool must never drive results to shared=true, even if
 // its policy is auto_run_everywhere. The enabled flag is authoritative —
@@ -91,4 +108,23 @@ func TestAllToolsAutoRunEverywhere_RespectsEnabledFlag(t *testing.T) {
 
 	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx),
 		"a disabled tool must not auto-share results even when the policy is auto_run_everywhere")
+}
+
+func TestAllToolsAutoRunEverywhere_NamespacedToolUsesBarePolicy(t *testing.T) {
+	const origin = "https://mcp.example.com/mcp"
+
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				"example_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+			},
+		},
+	}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: "example__example_tool", ServerOrigin: origin}},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
 }

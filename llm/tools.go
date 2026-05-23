@@ -663,6 +663,9 @@ func (s *ToolStore) LogUnknownToolWarning(name string, argsGetter ToolArgumentGe
 }
 
 func toolArgsForLog(argsGetter ToolArgumentGetter) string {
+	if argsGetter == nil {
+		return "{}"
+	}
 	var raw json.RawMessage
 	if err := argsGetter(&raw); err != nil {
 		return fmt.Sprintf("failed to get tool args: %v", err)

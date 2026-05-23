@@ -185,11 +185,10 @@ func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*U
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
-func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
-	ctx := context.Background()
-
+func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
-	userClient, _ := m.getClientForUser(ctx, userID)
+	userClient, initialErrors := m.getClientForUser(ctx, userID)
+	mcpErrors := cloneMCPErrors(initialErrors)
 
 	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
 	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
@@ -208,13 +207,34 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	for _, cfg := range pluginSnap {
 		if connectErr := userClient.ConnectToPluginServer(ctx, cfg, m.sourcePluginAPI); connectErr != nil {
 			m.log.Error("Failed to connect to plugin MCP server", "userID", userID, "pluginID", cfg.PluginID, "error", connectErr)
-			userClient.appendInitialRemoteConnectError(connectErr)
+			mcpErrors = appendMCPError(mcpErrors, connectErr)
 		}
 	}
 
 	rawTools := userClient.GetTools(ctx)
 	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
-	return filtered, userClient.InitialRemoteConnectErrors()
+	return filtered, mcpErrors
+}
+
+func cloneMCPErrors(src *Errors) *Errors {
+	if src == nil || (len(src.ToolAuthErrors) == 0 && len(src.Errors) == 0) {
+		return nil
+	}
+	return &Errors{
+		ToolAuthErrors: append([]llm.ToolAuthError(nil), src.ToolAuthErrors...),
+		Errors:         append([]error(nil), src.Errors...),
+	}
+}
+
+func appendMCPError(mcpErrors *Errors, err error) *Errors {
+	if err == nil {
+		return mcpErrors
+	}
+	if mcpErrors == nil {
+		mcpErrors = &Errors{}
+	}
+	mcpErrors.Errors = append(mcpErrors.Errors, err)
+	return mcpErrors
 }
 
 func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOverride {
@@ -503,7 +523,7 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 
 		var filtered []llm.Tool
 		for _, t := range tools {
-			_, enabled := sc.GetToolPolicy(llm.BareMCPToolName(t.Name))
+			_, enabled := sc.GetToolPolicy(ToolPolicyLookupName(sc, t.Name))
 			if enabled {
 				filtered = append(filtered, t)
 			}

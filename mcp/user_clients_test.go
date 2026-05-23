@@ -112,7 +112,7 @@ func TestUserClientsGetToolsResolverUsesBareToolName(t *testing.T) {
 	tools := userClients.GetTools(context.Background())
 	requireToolNames(t, tools, "jira__search")
 
-	result, err := tools[0].Resolver(&llm.Context{}, func(args any) error {
+	result, err := tools[0].Resolver(&llm.Context{RequestContext: context.Background()}, func(args any) error {
 		*(args.(*map[string]any)) = map[string]any{}
 		return nil
 	})
@@ -293,6 +293,35 @@ func TestUserClientsGetToolsResolverUsesRequestContext(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestUserClientsGetToolsResolverRequiresRequestContext(t *testing.T) {
+	server := newTestMCPServer(0, "search")
+	session := connectInMemoryTestSession(t, server)
+	userClients := &UserClients{
+		userID: "user-id",
+		clients: map[string]*Client{
+			"jira": {
+				session: session,
+				config:  ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+				tools: map[string]*gomcp.Tool{
+					"search": {
+						Name:        "search",
+						Description: "Search Jira",
+					},
+				},
+			},
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+	require.Len(t, tools, 1)
+
+	_, err := tools[0].Resolver(&llm.Context{}, func(args any) error {
+		*(args.(*map[string]any)) = map[string]any{}
+		return nil
+	})
+	require.EqualError(t, err, "missing request context for MCP tool call")
 }
 
 func TestPrepareToolCallMetadata_EmbeddedMergesCallMetadataAndBotUserID(t *testing.T) {

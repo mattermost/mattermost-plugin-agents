@@ -161,6 +161,9 @@ func listAllTools(ctx context.Context, session *mcp.ClientSession) (map[string]*
 func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, sessionID string) (*Client, error) {
 	// Validate session exists before creating transport (unless empty for tool discovery)
 	if sessionID != "" {
+		if c.pluginAPI == nil {
+			return nil, fmt.Errorf("plugin API is required when sessionID is provided")
+		}
 		mmSession, err := c.pluginAPI.Session.Get(sessionID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get session: %w", err)
