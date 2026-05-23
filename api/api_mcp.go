@@ -45,7 +45,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 
 	mcpCfg := a.config.MCP()
 
-	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(userID)
+	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(c.Request.Context(), userID)
 
 	// Group tools by ServerOrigin
 	toolsByOrigin := make(map[string][]llm.Tool, len(tools))
@@ -139,7 +139,7 @@ func buildUserMCPServerInfo(
 ) UserMCPServerInfo {
 	toolInfos := make([]UserMCPToolInfo, 0, len(originTools))
 	for _, t := range originTools {
-		policy, enabled := serverConfig.GetToolPolicy(t.Name)
+		policy, enabled := serverConfig.GetToolPolicy(mcp.ToolPolicyLookupName(serverConfig, t.Name))
 		toolInfos = append(toolInfos, UserMCPToolInfo{
 			Name:        t.Name,
 			Description: t.Description,

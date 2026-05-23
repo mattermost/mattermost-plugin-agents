@@ -136,6 +136,26 @@ func TestLookupToolPolicy(t *testing.T) {
 		require.True(t, enabled)
 	})
 
+	t.Run("remote namespaced tool matches bare configured policy", func(t *testing.T) {
+		cfg := Config{
+			Servers: []ServerConfig{{
+				Name:    "Remote",
+				Enabled: true,
+				BaseURL: remoteURL,
+				ToolConfigs: []ToolConfig{{
+					Name:    remoteToolName,
+					Policy:  ToolPolicyAutoRunEverywhere,
+					Enabled: true,
+				}},
+			}},
+		}
+
+		policy, enabled := LookupToolPolicy(cfg, remoteURL, "remote__"+remoteToolName)
+
+		require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
+		require.True(t, enabled)
+	})
+
 	t.Run("embedded server with empty tool configs falls back to vetted seed", func(t *testing.T) {
 		cfg := Config{
 			EmbeddedServer: EmbeddedServerConfig{

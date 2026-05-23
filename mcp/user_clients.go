@@ -193,18 +193,6 @@ func (c *UserClients) setInitialRemoteConnectErrors(mcpErrors *Errors) {
 	c.initialRemoteConnectErrors = mcpErrors
 }
 
-func (c *UserClients) appendInitialRemoteConnectError(err error) {
-	if err == nil {
-		return
-	}
-	c.clientsMu.Lock()
-	defer c.clientsMu.Unlock()
-	if c.initialRemoteConnectErrors == nil {
-		c.initialRemoteConnectErrors = &Errors{}
-	}
-	c.initialRemoteConnectErrors.Errors = append(c.initialRemoteConnectErrors.Errors, err)
-}
-
 // Close closes all server connections for a user client
 func (c *UserClients) Close() {
 	c.clientsMu.Lock()
@@ -368,10 +356,10 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 
 		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
 
-		callCtx := context.Background()
-		if llmContext != nil && llmContext.RequestContext != nil {
-			callCtx = llmContext.RequestContext
+		if llmContext == nil || llmContext.RequestContext == nil {
+			return "", errors.New("missing request context for MCP tool call")
 		}
+		callCtx := llmContext.RequestContext
 
 		result, err := client.CallToolWithMetadata(callCtx, toolName, args, metadata)
 		if err != nil {

@@ -374,7 +374,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	}
 	m.RegisterPluginServer(cfg)
 
-	tools, mcpErrors := m.GetToolsForUser("alice")
+	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
 	require.Nil(t, mcpErrors, "no errors expected on happy path")
 	require.Len(t, tools, 2, "expected 2 tools from plugin server")
 	for _, tool := range tools {
@@ -404,7 +404,7 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	}
 	m.RegisterPluginServer(cfg)
 
-	tools, mcpErrors := m.GetToolsForUser("alice")
+	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
 	require.Nil(t, mcpErrors, "no errors expected when plugin is simply disabled")
 	require.Empty(t, tools, "disabled plugin must contribute zero tools")
 
@@ -454,7 +454,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 				Enabled:  true,
 			})
 
-			tools, mcpErrors := m.GetToolsForUser("alice")
+			tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
 			require.NotNil(t, mcpErrors, "plugin connection failure must be surfaced")
 			require.NotEmpty(t, mcpErrors.Errors, "plugin connection failure must populate generic MCP errors")
 			require.Empty(t, mcpErrors.ToolAuthErrors, "plugin HTTP failures should not be treated as OAuth errors")
@@ -464,6 +464,48 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 			require.Empty(t, tools, "failed plugin server must not contribute tools")
 		})
 	}
+}
+
+func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *testing.T) {
+	target := newFakePluginMCPServer(t, 1)
+	t.Cleanup(target.Close)
+
+	var calls atomic.Int32
+	mockAPI := &fakePluginHTTPClient{
+		pluginHTTP: func(req *http.Request) *http.Response {
+			if calls.Add(1) == 1 {
+				rec := httptest.NewRecorder()
+				rec.WriteHeader(http.StatusInternalServerError)
+				return rec.Result()
+			}
+
+			rec := httptest.NewRecorder()
+			target.Config.Handler.ServeHTTP(rec, req)
+			return rec.Result()
+		},
+	}
+
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	t.Cleanup(m.Close)
+	m.RegisterPluginServer(PluginServerConfig{
+		PluginID: "com.example.mcp",
+		Name:     "Example",
+		Path:     "/mcp",
+		Enabled:  true,
+	})
+
+	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
+	require.Empty(t, tools)
+	require.NotNil(t, mcpErrors)
+	require.NotEmpty(t, mcpErrors.Errors)
+
+	tools, mcpErrors = m.GetToolsForUser(context.Background(), "alice")
+	require.Nil(t, mcpErrors, "successful plugin reconnect must not return the prior transient error")
+	require.Len(t, tools, 1)
 }
 
 func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
@@ -498,7 +540,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.a", Name: "A", Path: "/mcp", Enabled: true})
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.b", Name: "B", Path: "/mcp", Enabled: true})
 
-	tools, mcpErrors := m.GetToolsForUser("alice")
+	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
 	require.Nil(t, mcpErrors)
 	require.Len(t, tools, 3, "expected 2 tools from A + 1 tool from B")
 

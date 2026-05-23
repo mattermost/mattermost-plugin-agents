@@ -110,6 +110,10 @@ func TestSanitizeNonPrintableChars(t *testing.T) {
 	}
 }
 
+func TestToolArgsForLogNilGetter(t *testing.T) {
+	assert.Equal(t, "{}", toolArgsForLog(nil))
+}
+
 type logEntry struct {
 	message string
 	fields  []any

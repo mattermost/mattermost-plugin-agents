@@ -4,6 +4,7 @@
 package llmcontext
 
 import (
+	stdcontext "context"
 	"slices"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ type ToolProvider interface {
 
 // MCPToolProvider provides MCP tools for a user
 type MCPToolProvider interface {
-	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
+	GetToolsForUser(ctx stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors)
 }
 
 // ConfigProvider provides configuration access
@@ -197,8 +198,13 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	// so that GetToolsInfo() can inform the LLM about their availability.
 	// Actual execution is controlled via WithToolsDisabled() based on channel type.
 	if b.mcpToolProvider != nil {
+		if c.RequestContext == nil {
+			b.pluginAPI.Log.Error("Cannot add MCP tools to context: RequestContext is nil", "userID", userID)
+			return store
+		}
+
 		// Get tools from all connected servers
-		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID)
+		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(c.RequestContext, userID)
 
 		// Add tools from successfully connected servers even if some had errors
 		// These will be disabled in non-DM channels via WithToolsDisabled()
@@ -247,6 +253,14 @@ func (b *Builder) WithLLMContextTools(bot *bots.Bot) llm.ContextOption {
 // WithLLMContextDefaultTools adds default tools to the LLM context for the requesting user
 func (b *Builder) WithLLMContextDefaultTools(bot *bots.Bot) llm.ContextOption {
 	return b.WithLLMContextTools(bot)
+}
+
+// WithLLMContextRequestContext threads request-scoped cancellation/deadlines into
+// MCP discovery and tool execution.
+func (b *Builder) WithLLMContextRequestContext(ctx stdcontext.Context) llm.ContextOption {
+	return func(c *llm.Context) {
+		c.RequestContext = ctx
+	}
 }
 
 // WithLLMContextNoTools explicitly disables tools for this context session only,

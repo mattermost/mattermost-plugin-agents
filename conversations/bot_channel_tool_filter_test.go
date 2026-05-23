@@ -23,6 +23,9 @@ func (m mapPolicyChecker) GetToolPolicy(serverOrigin, toolName string) (string, 
 	}
 	cfg, ok := byServer[toolName]
 	if !ok {
+		cfg, ok = byServer[llm.BareMCPToolName(toolName)]
+	}
+	if !ok {
 		return mcp.ToolPolicyAsk, true
 	}
 	return cfg.policy, cfg.enabled
@@ -56,6 +59,30 @@ func TestApplyBotChannelAutoEverywhereToolFilter(t *testing.T) {
 	require.Len(t, tools, 1)
 	require.Equal(t, "everywhere_tool", tools[0].Name)
 	require.Len(t, llmContext.DisabledToolsInfo, 3)
+}
+
+func TestApplyBotChannelAutoEverywhereToolFilter_NamespacedToolUsesBarePolicy(t *testing.T) {
+	origin := "https://mcp.example.com/mcp"
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				"everywhere_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+			},
+		},
+	}
+
+	llmContext := &llm.Context{
+		Tools: llm.NewToolStore(),
+	}
+	llmContext.Tools.AddTools([]llm.Tool{
+		{Name: "server__everywhere_tool", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+	})
+
+	c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+
+	tools := llmContext.Tools.GetTools()
+	require.Len(t, tools, 1)
+	require.Equal(t, "server__everywhere_tool", tools[0].Name)
 }
 
 func TestApplyToolAvailabilityBeforeBotChannelFilterPreservesDisabledToolsInfo(t *testing.T) {

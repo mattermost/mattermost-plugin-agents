@@ -87,6 +87,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	opts := []llm.ContextOption{
+		a.contextBuilder.WithLLMContextRequestContext(c.Request.Context()),
 		a.contextBuilder.WithLLMContextDefaultTools(bot),
 	}
 
