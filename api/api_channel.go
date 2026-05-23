@@ -59,6 +59,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
+	toolBot := channelAnalysisToolBot(bot)
 
 	var data struct {
 		AnalysisType string `json:"analysis_type" binding:"required"`
@@ -88,7 +89,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 
 	opts := []llm.ContextOption{
 		a.contextBuilder.WithLLMContextRequestContext(c.Request.Context()),
-		a.contextBuilder.WithLLMContextDefaultTools(bot),
+		a.contextBuilder.WithLLMContextDefaultTools(toolBot),
 	}
 
 	// If the channel is a DM/GM and we have a team ID from the client, use it for context
@@ -121,16 +122,12 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 
 	// Check if read_channel tool is available
 	availableTools := llmContext.Tools.GetTools()
-	hasReadChannel := false
 	var toolNames []string
 	for _, tool := range availableTools {
 		toolNames = append(toolNames, tool.Name)
-		if tool.Name == "read_channel" {
-			hasReadChannel = true
-		}
 	}
 
-	if !hasReadChannel {
+	if llmContext.Tools.GetTool("read_channel") == nil {
 		a.pluginAPI.Log.Error("Channel analysis failed: read_channel tool not available",
 			"userID", userID,
 			"channelID", channel.Id,
@@ -177,6 +174,19 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		"postid":    analysisPost.Id,
 		"channelid": analysisPost.ChannelId,
 	})
+}
+
+func channelAnalysisToolBot(bot *bots.Bot) *bots.Bot {
+	cfg := bot.GetConfig()
+	if cfg.AutoEnableNewMCPTools {
+		return bot
+	}
+
+	// Channel analysis immediately scopes the catalog to bound read-only tools,
+	// so load the MCP catalog even when the agent uses a narrower allowlist.
+	cfg.AutoEnableNewMCPTools = true
+	cfg.EnabledMCPTools = nil
+	return bots.NewBot(cfg, bot.GetService(), bot.GetMMBot(), bot.LLM())
 }
 
 func (a *API) handleInterval(c *gin.Context) {
