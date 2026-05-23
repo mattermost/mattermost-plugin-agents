@@ -403,7 +403,8 @@ func TestClientManager_GetToolsForUser_NilContext(t *testing.T) {
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
-	tools, mcpErrors := m.GetToolsForUser(nil, "alice")
+	var ctx context.Context
+	tools, mcpErrors := m.GetToolsForUser(ctx, "alice")
 
 	require.Empty(t, tools)
 	require.NotNil(t, mcpErrors)
