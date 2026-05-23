@@ -373,8 +373,8 @@ export async function createPost(post: any) {
     return created;
 }
 
-export async function updateRead(userId: string, teamId: string, selectedPostId: string, timestamp: number) {
-    Client4.updateThreadReadForUser(userId, teamId, selectedPostId, timestamp);
+export function updateRead(userId: string, teamId: string, selectedPostId: string, timestamp: number) {
+    return Client4.updateThreadReadForUser(userId, teamId, selectedPostId, timestamp);
 }
 
 export function getProfilePictureUrl(userId: string, lastIconUpdate: number) {
