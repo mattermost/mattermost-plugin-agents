@@ -18,7 +18,6 @@ let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 const READ_POST_TOOL_NAME = 'read_post';
-const READ_POST_RUNTIME_TOOL_NAME = 'mattermost__read_post';
 
 test.describe('Per-Tool Enable/Disable', () => {
     test.beforeAll(async () => {
@@ -94,7 +93,7 @@ test.describe('Per-Tool Enable/Disable', () => {
         // Verify tools are returned
         expect(toolsBefore.servers).toBeDefined();
         const serverBefore = toolsBefore.servers?.find((s: any) =>
-            s.tools?.some((t: any) => t.name === READ_POST_RUNTIME_TOOL_NAME),
+            s.tools?.some((t: any) => t.name === READ_POST_TOOL_NAME),
         );
         expect(serverBefore).toBeDefined();
 
@@ -110,7 +109,7 @@ test.describe('Per-Tool Enable/Disable', () => {
         // Verify the API no longer returns read_post
         const toolsAfter = await apiHelper.getUserMCPTools(token);
         const serverAfter = toolsAfter.servers?.find((s: any) =>
-            s.tools?.some((t: any) => t.name === READ_POST_RUNTIME_TOOL_NAME),
+            s.tools?.some((t: any) => t.name === READ_POST_TOOL_NAME),
         );
         expect(serverAfter).toBeUndefined();
 
