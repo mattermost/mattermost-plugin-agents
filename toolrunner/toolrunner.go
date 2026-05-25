@@ -26,7 +26,7 @@ const MaxToolRounds = 10
 // (e.g., the model returned only a tool_use block despite tool_choice="none").
 // Without this fallback, the caller would receive only the intermediate
 // per-round "Let me search..." preambles with no closing answer.
-const ToolIterationLimitFallbackMessage = "I reached the maximum number of tool-use iterations without producing a final answer. The information gathered so far is above. Please ask a more focused question or break the task into smaller steps."
+const ToolIterationLimitFallbackMessage = "I reached the maximum number of tool-use iterations but was unable to produce a substantive answer. Please try a more focused question or break the task into smaller steps."
 
 // ToolRunner manages the call-execute-recall loop for LLM tool use.
 // It calls the LLM, checks for tool calls in the stream, executes
