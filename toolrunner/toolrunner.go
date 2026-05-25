@@ -31,6 +31,16 @@ func New(lm llm.LanguageModel) *ToolRunner {
 	return &ToolRunner{llm: lm}
 }
 
+// finalAssistantText returns the assistant text for a text-only exit. When the
+// forced synthesis round emitted tool calls that were dropped, any preamble
+// text from that round is discarded.
+func finalAssistantText(text string, synthesisForced bool, droppedToolCalls int) string {
+	if synthesisForced && droppedToolCalls > 0 {
+		return ""
+	}
+	return text
+}
+
 // ToolRunResult is the return value of Run(). It contains the final
 // stream (no more tool calls) and all intermediate tool rounds.
 type ToolRunResult struct {
@@ -49,6 +59,13 @@ type ToolRunResult struct {
 	// goroutine. It is safe to read after the Stream has been fully
 	// consumed (channel happens-before guarantees this).
 	ToolTurns []ToolTurn
+
+	// FinalText is the assistant text from the round where the loop exited
+	// because the model returned no tool calls. Empty when the run ended with
+	// unresolved tool calls, a stream error, or a failed forced synthesis
+	// (preamble only, tool calls dropped). Safe to read after the Stream has
+	// been fully consumed.
+	FinalText string
 }
 
 // ToolTurn represents one round of tool execution. Each round
@@ -226,12 +243,15 @@ func (r *ToolRunner) runLoop(
 		// still emit tool_use blocks despite tool_choice="none" when the
 		// conversation history is heavily tool-focused). Drop them so we fall
 		// into the "no tool calls = final response" branch below.
+		droppedToolCalls := 0
 		if synthesisForced && len(toolCalls) > 0 {
+			droppedToolCalls = len(toolCalls)
 			toolCalls = nil
 		}
 
 		// No tool calls = final response.
 		if len(toolCalls) == 0 {
+			result.FinalText = finalAssistantText(text.String(), synthesisForced, droppedToolCalls)
 			r.deliverToolTurns(result, onToolTurns)
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 			return
@@ -301,7 +321,7 @@ func (r *ToolRunner) runLoop(
 		// above: the final iteration's no-tool-calls early-return then streams
 		// the synthesis text and emits End.
 		if round == MaxToolRounds-2 {
-			request.Posts = llm.EnsureToolIterationLimitSystemMessage(request.Posts)
+			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())
 			synthesisForced = true
 		}

@@ -9,7 +9,7 @@ const MaxConsecutiveToolCallFailures = 3
 
 const ToolRetryLimitSystemMessage = "The last 3 tool attempts failed. Do not call any more tools. Explain the latest error to the user and ask for guidance or missing information."
 
-const ToolIterationLimitSystemMessage = "You have used all available tool calls. Respond with a text answer now — do not emit any more tool calls. Use the information already returned by your previous tool calls to answer the user's question. If your searches returned no useful results, explicitly say so and describe what you searched for so the user understands what was attempted. You must produce a non-empty written response."
+const ToolIterationLimitUserMessage = "You have used all available tool calls. Do not call any more tools. Answer the user's question using the results from your previous tool calls. If those results did not provide enough information, say so and summarize what you tried."
 
 // CountTrailingFailedToolCalls counts consecutive trailing tool executions that
 // failed. A successful tool execution resets the streak. Posts without executed
@@ -38,8 +38,18 @@ func EnsureToolRetryLimitSystemMessage(posts []Post) []Post {
 	return ensureSystemMessage(posts, ToolRetryLimitSystemMessage)
 }
 
-func EnsureToolIterationLimitSystemMessage(posts []Post) []Post {
-	return ensureSystemMessage(posts, ToolIterationLimitSystemMessage)
+func EnsureToolIterationLimitUserMessage(posts []Post) []Post {
+	for _, post := range posts {
+		if post.Role == PostRoleUser && strings.Contains(post.Message, ToolIterationLimitUserMessage) {
+			return posts
+		}
+	}
+
+	postsCopy := append([]Post(nil), posts...)
+	return append(postsCopy, Post{
+		Role:    PostRoleUser,
+		Message: ToolIterationLimitUserMessage,
+	})
 }
 
 // ensureSystemMessage appends message to the first existing system post, or

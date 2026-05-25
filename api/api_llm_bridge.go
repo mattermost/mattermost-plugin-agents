@@ -505,6 +505,22 @@ func (a *API) checkBridgePermissions(userID, channelID string, bot *bots.Bot) er
 	return a.bots.CheckUsageRestrictions(userID, bot, channel)
 }
 
+func drainToolRunnerStream(stream *llm.TextStreamResult) error {
+	for event := range stream.Stream {
+		if event.Type != llm.EventTypeError {
+			continue
+		}
+		if e, ok := event.Value.(error); ok {
+			return e
+		}
+		if s, ok := event.Value.(string); ok {
+			return errors.New(s)
+		}
+		return errors.New("tool runner stream failed")
+	}
+	return nil
+}
+
 // streamLLMResponse handles streaming LLM responses as Server-Sent Events.
 // When shouldExecute is non-nil, the stream is wrapped in a toolrunner so
 // allowlisted tool calls are auto-executed and their results fed back to the
@@ -586,23 +602,7 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 		return
 	}
 
-	var text strings.Builder
-	var streamErr error
-	for event := range runResult.Stream.Stream {
-		switch event.Type {
-		case llm.EventTypeText:
-			if t, ok := event.Value.(string); ok {
-				text.WriteString(t)
-			}
-		case llm.EventTypeError:
-			if e, ok := event.Value.(error); ok {
-				streamErr = e
-			} else if s, ok := event.Value.(string); ok {
-				streamErr = errors.New(s)
-			}
-		}
-	}
-	if streamErr != nil {
+	if streamErr := drainToolRunnerStream(runResult.Stream); streamErr != nil {
 		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("failed to complete LLM request: %v", streamErr),
 		})
@@ -610,7 +610,7 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 	}
 
 	c.JSON(http.StatusOK, bridgeclient.CompletionResponse{
-		Completion: text.String(),
+		Completion: runResult.FinalText,
 	})
 }
 
