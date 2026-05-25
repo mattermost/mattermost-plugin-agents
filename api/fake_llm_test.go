@@ -129,13 +129,14 @@ func (f *FakeLLM) ChatCompletionNoStream(_ context.Context, conversation llm.Com
 	return f.Response, nil
 }
 
-// CountTokens implements token counting (returns configured value or basic estimate)
-func (f *FakeLLM) CountTokens(text string) int {
+// CountTokens implements the LanguageModel real-count contract. The fake does
+// not call out to a provider, so it returns ErrUnsupportedTokenCount; callers
+// that need an estimate use llm.EstimateTokens.
+func (f *FakeLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
 	if f.TokenCount > 0 {
-		return f.TokenCount
+		return f.TokenCount, nil
 	}
-	// Simple estimate: ~4 characters per token
-	return len(text) / 4
+	return 0, llm.ErrUnsupportedTokenCount
 }
 
 // InputTokenLimit implements token limit getter

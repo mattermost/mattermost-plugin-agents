@@ -28,8 +28,8 @@ func (f *benchFakeLLM) ChatCompletionNoStream(ctx context.Context, _ CompletionR
 	return result.ReadAll()
 }
 
-func (f *benchFakeLLM) CountTokens(_ string) int {
-	return 0
+func (f *benchFakeLLM) CountTokens(_ context.Context, _ CompletionRequest, _ ...LanguageModelOption) (int, error) {
+	return 0, ErrUnsupportedTokenCount
 }
 
 func (f *benchFakeLLM) InputTokenLimit() int {

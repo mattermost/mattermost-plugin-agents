@@ -283,7 +283,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 
 func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error) {
 	llmFormattedTranscription := transcription.FormatForLLM()
-	tokens := bot.LLM().CountTokens(llmFormattedTranscription)
+	tokens := llm.EstimateTokens(llmFormattedTranscription)
 	tokenLimitWithMargin := int(float64(bot.LLM().InputTokenLimit())*0.75) - ContextTokenMargin
 	if tokenLimitWithMargin < 0 {
 		tokenLimitWithMargin = ContextTokenMargin / 2
@@ -325,7 +325,7 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 
 		llmFormattedTranscription = strings.Join(summarizedChunks, "\n\n")
 		isChunked = true
-		s.pluginAPI.Log.Debug("Completed chunk summarization", "chunks", len(summarizedChunks), "tokens", bot.LLM().CountTokens(llmFormattedTranscription))
+		s.pluginAPI.Log.Debug("Completed chunk summarization", "chunks", len(summarizedChunks), "tokens", llm.EstimateTokens(llmFormattedTranscription))
 	}
 
 	context.Parameters = map[string]any{"IsChunked": fmt.Sprintf("%t", isChunked)}

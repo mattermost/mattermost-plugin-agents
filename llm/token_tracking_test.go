@@ -31,9 +31,9 @@ func (m *MockLanguageModel) ChatCompletionNoStream(ctx context.Context, request 
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockLanguageModel) CountTokens(text string) int {
-	args := m.Called(text)
-	return args.Int(0)
+func (m *MockLanguageModel) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	args := m.Called(ctx, request, opts)
+	return args.Int(0), args.Error(1)
 }
 
 func (m *MockLanguageModel) InputTokenLimit() int {
@@ -44,13 +44,6 @@ func (m *MockLanguageModel) InputTokenLimit() int {
 func (m *MockLanguageModel) OutputTokenLimit() int {
 	args := m.Called()
 	return args.Int(0)
-}
-
-// CountRequestTokens lets MockLanguageModel satisfy the optional llm.TokenCounter
-// interface used by TruncationWrapper's safety check.
-func (m *MockLanguageModel) CountRequestTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
-	args := m.Called(ctx, request, opts)
-	return args.Int(0), args.Error(1)
 }
 
 type observedTokenUsage struct {
@@ -504,9 +497,11 @@ func TestTokenTrackingWrapper_DelegatedMethods(t *testing.T) {
 	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-llm", sinks, nil)
 
 	t.Run("CountTokens delegates to wrapped model", func(t *testing.T) {
-		mockLLM.On("CountTokens", "test text").Return(42)
+		req := CompletionRequest{Posts: []Post{{Role: PostRoleUser, Message: "test text"}}}
+		mockLLM.On("CountTokens", mock.Anything, req, mock.Anything).Return(42, nil)
 
-		result := wrapper.CountTokens("test text")
+		result, err := wrapper.CountTokens(context.Background(), req)
+		require.NoError(t, err)
 		assert.Equal(t, 42, result)
 
 		mockLLM.AssertExpectations(t)

@@ -5,6 +5,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"math"
 )
 
@@ -38,43 +39,39 @@ func (w *TruncationWrapper) ChatCompletionNoStream(ctx context.Context, request 
 	return w.wrapped.ChatCompletionNoStream(ctx, request, opts...)
 }
 
-// maybeTruncate applies the heuristic truncation and, when supported and the
-// heuristic estimate is near the budget, asks the provider for an exact count
-// to verify. If the provider count exceeds the raw input limit, the oldest
-// post is dropped and the provider is asked once more (bounded retry).
+// maybeTruncate applies the heuristic truncation and, when the wrapped model
+// can give us an exact count and our estimate is near the budget, asks the
+// provider to verify. If the provider count exceeds the raw input limit, the
+// oldest post is dropped and the provider is asked once more (bounded retry).
 func (w *TruncationWrapper) maybeTruncate(ctx context.Context, request *CompletionRequest, opts []LanguageModelOption) {
 	limit := w.wrapped.InputTokenLimit()
 	if limit <= 0 {
 		return
 	}
 	budget := int(math.Max(math.Floor(float64(limit-FunctionsTokenBudget)*TokenLimitBufferSize), MinTokens))
-	request.Truncate(budget, w.wrapped.CountTokens)
+	request.Truncate(budget, EstimateTokens)
 
-	counter, ok := w.wrapped.(TokenCounter)
-	if !ok {
-		return
-	}
 	heuristicEstimate := 0
 	for _, post := range request.Posts {
-		heuristicEstimate += w.wrapped.CountTokens(post.Message)
+		heuristicEstimate += EstimateTokens(post.Message)
 	}
 	if heuristicEstimate < int(SafetyCheckThreshold*float64(budget)) {
 		return
 	}
 
-	count, err := counter.CountRequestTokens(ctx, *request, opts...)
-	if err != nil || count <= limit {
+	count, err := w.wrapped.CountTokens(ctx, *request, opts...)
+	if errors.Is(err, ErrUnsupportedTokenCount) || err != nil || count <= limit {
 		return
 	}
 	if len(request.Posts) <= 1 {
 		return
 	}
 	request.Posts = request.Posts[1:] // drop oldest
-	_, _ = counter.CountRequestTokens(ctx, *request, opts...)
+	_, _ = w.wrapped.CountTokens(ctx, *request, opts...)
 }
 
-func (w *TruncationWrapper) CountTokens(text string) int {
-	return w.wrapped.CountTokens(text)
+func (w *TruncationWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	return w.wrapped.CountTokens(ctx, request, opts...)
 }
 
 func (w *TruncationWrapper) InputTokenLimit() int {

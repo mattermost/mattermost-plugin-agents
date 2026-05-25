@@ -531,14 +531,6 @@ func (b *LLM) ChatCompletionNoStream(ctx context.Context, request llm.Completion
 	return result.ReadAll()
 }
 
-// CountTokens estimates the token count for the given text.
-func (b *LLM) CountTokens(text string) int {
-	// Approximation based on character and word counts
-	charCount := float64(len(text)) / 4.0
-	wordCount := float64(len(strings.Fields(text))) / 0.75
-	return int((charCount + wordCount) / 2.0)
-}
-
 // InputTokenLimit returns the configured maximum number of input tokens.
 // Zero means "no client-side truncation" — the provider's own limit applies.
 func (b *LLM) InputTokenLimit() int {
@@ -621,11 +613,25 @@ func convertResponsesUsage(u *schemas.ResponsesResponseUsage) llm.TokenUsage {
 	return usage
 }
 
-// CountRequestTokens asks the provider for an exact input-token count for the
-// given request. Supported on Anthropic, OpenAI, Bedrock and Vertex; other
-// providers return an UnsupportedOperationError that the caller should treat as
-// "no exact count available" and fall back to a heuristic.
-func (b *LLM) CountRequestTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
+// providersSupportingCountTokens lists the Bifrost providers that implement a
+// real CountTokensRequest endpoint. Everything else returns ErrUnsupportedTokenCount
+// without making a network call.
+var providersSupportingCountTokens = map[schemas.ModelProvider]struct{}{
+	schemas.OpenAI:    {},
+	schemas.Anthropic: {},
+	schemas.Bedrock:   {},
+	schemas.Vertex:    {},
+}
+
+// CountTokens asks the provider for an exact input-token count for the given
+// request. Returns llm.ErrUnsupportedTokenCount for providers Bifrost cannot
+// count against (Azure, Gemini direct, Cohere, Mistral, OpenRouter, …);
+// callers should fall back to llm.EstimateTokens for an approximation.
+func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
+	if _, ok := providersSupportingCountTokens[b.provider]; !ok {
+		return 0, llm.ErrUnsupportedTokenCount
+	}
+
 	cfg := b.createConfig(opts)
 	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
 	if err != nil {

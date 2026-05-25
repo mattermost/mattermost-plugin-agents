@@ -30,7 +30,12 @@ type LanguageModel interface {
 	ChatCompletion(ctx context.Context, conversation CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error)
 	ChatCompletionNoStream(ctx context.Context, conversation CompletionRequest, opts ...LanguageModelOption) (string, error)
 
-	CountTokens(text string) int
+	// CountTokens returns the exact input-token count the provider would
+	// charge for this request. Implementations that cannot reach a provider
+	// counting endpoint return ErrUnsupportedTokenCount; callers should fall
+	// back to llm.EstimateTokens for cheap, synchronous approximations.
+	CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error)
+
 	InputTokenLimit() int
 	OutputTokenLimit() int
 }
@@ -83,13 +88,3 @@ func WithReasoningDisabled() LanguageModelOption {
 }
 
 type LanguageModelWrapper func(LanguageModel) LanguageModel
-
-// TokenCounter is an optional interface implemented by LanguageModels that
-// support exact provider-side input token counting (Anthropic, OpenAI, Bedrock,
-// Vertex via Bifrost). Wrappers can type-assert and use it as a safety check
-// when the heuristic count is near the model's limit. Returns an error when
-// the underlying provider does not support count-tokens — callers should treat
-// that as "no exact count available" and continue with the heuristic.
-type TokenCounter interface {
-	CountRequestTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error)
-}

@@ -328,8 +328,8 @@ func (w *TokenUsageLoggingWrapper) shouldTrackTokenUsage() bool {
 }
 
 // CountTokens delegates to the wrapped model
-func (w *TokenUsageLoggingWrapper) CountTokens(text string) int {
-	return w.wrapped.CountTokens(text)
+func (w *TokenUsageLoggingWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	return w.wrapped.CountTokens(ctx, request, opts...)
 }
 
 // InputTokenLimit delegates to the wrapped model

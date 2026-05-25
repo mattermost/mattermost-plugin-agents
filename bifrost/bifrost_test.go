@@ -1377,7 +1377,7 @@ func TestConvertChatUsage(t *testing.T) {
 	assert.InDelta(t, 0.0123, got.Cost, 1e-9)
 }
 
-func TestCountRequestTokens(t *testing.T) {
+func TestCountTokens(t *testing.T) {
 	var backendHit atomic.Bool
 	var receivedPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1398,7 +1398,7 @@ func TestCountRequestTokens(t *testing.T) {
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
 
-	count, err := llmClient.CountRequestTokens(context.Background(), llm.CompletionRequest{
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
 		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
 	})
 	require.NoError(t, err)
