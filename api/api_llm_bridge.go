@@ -506,19 +506,25 @@ func (a *API) checkBridgePermissions(userID, channelID string, bot *bots.Bot) er
 }
 
 func drainToolRunnerStream(stream *llm.TextStreamResult) error {
+	var firstErr error
 	for event := range stream.Stream {
 		if event.Type != llm.EventTypeError {
 			continue
 		}
+		if firstErr != nil {
+			continue
+		}
 		if e, ok := event.Value.(error); ok {
-			return e
+			firstErr = e
+			continue
 		}
 		if s, ok := event.Value.(string); ok {
-			return errors.New(s)
+			firstErr = errors.New(s)
+			continue
 		}
-		return errors.New("tool runner stream failed")
+		firstErr = errors.New("tool runner stream failed")
 	}
-	return nil
+	return firstErr
 }
 
 // streamLLMResponse handles streaming LLM responses as Server-Sent Events.

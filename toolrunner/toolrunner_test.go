@@ -713,15 +713,46 @@ func TestToolRunner_FinalText_DropsFailedSynthesisPreamble(t *testing.T) {
 }
 
 func TestFinalAssistantText(t *testing.T) {
-	t.Run("returns text for normal final response", func(t *testing.T) {
-		assert.Equal(t, "answer", finalAssistantText("answer", false, 0))
-	})
-	t.Run("discards preamble when synthesis tool calls were dropped", func(t *testing.T) {
-		assert.Empty(t, finalAssistantText("Let me search.", true, 1))
-	})
-	t.Run("keeps text when synthesis succeeded without dropped calls", func(t *testing.T) {
-		assert.Equal(t, "summary", finalAssistantText("summary", true, 0))
-	})
+	tests := []struct {
+		name            string
+		text            string
+		synthesisCalled bool
+		droppedCalls    int
+		want            string
+	}{
+		{
+			name:            "returns text for normal final response",
+			text:            "answer",
+			synthesisCalled: false,
+			droppedCalls:    0,
+			want:            "answer",
+		},
+		{
+			name:            "discards preamble when synthesis tool calls were dropped",
+			text:            "Let me search.",
+			synthesisCalled: true,
+			droppedCalls:    1,
+			want:            "",
+		},
+		{
+			name:            "keeps text when synthesis succeeded without dropped calls",
+			text:            "summary",
+			synthesisCalled: true,
+			droppedCalls:    0,
+			want:            "summary",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := finalAssistantText(tc.text, tc.synthesisCalled, tc.droppedCalls)
+			if tc.want == "" {
+				assert.Empty(t, got)
+				return
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestToolRunner_ReasoningPreservedInToolTurn(t *testing.T) {
