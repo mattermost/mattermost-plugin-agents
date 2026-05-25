@@ -592,12 +592,11 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 	assert.True(t, foundSystemMessage, "final request must include the iteration-limit system message")
 }
 
-// TestToolRunner_MaxRoundsExhausted_ProviderIgnoresToolsDisabled covers the
-// defense-in-depth case where the model returns tool calls during the forced
-// synthesis round (e.g. tool_choice="none" not honored). The runner must drop
-// the tool calls and emit the fallback message so the caller receives a
-// non-empty final response.
-func TestToolRunner_MaxRoundsExhausted_ProviderIgnoresToolsDisabled(t *testing.T) {
+// TestToolRunner_MaxRoundsExhausted_ProviderEmitsToolCallDuringSynthesis covers the
+// case where the model returns tool calls during the forced synthesis round
+// (e.g. tool_choice="none" not honored). The runner must drop the tool calls
+// without executing them and emit End with no synthetic fallback text.
+func TestToolRunner_MaxRoundsExhausted_ProviderEmitsToolCallDuringSynthesis(t *testing.T) {
 	responses := make([]testResponse, MaxToolRounds)
 	for i := 0; i < MaxToolRounds-1; i++ {
 		responses[i] = testResponse{
@@ -633,9 +632,7 @@ func TestToolRunner_MaxRoundsExhausted_ProviderIgnoresToolsDisabled(t *testing.T
 
 	text, readErr := result.Stream.ReadAll()
 	require.NoError(t, readErr)
-	assert.Contains(t, text, fmt.Sprintf("loop_tool×%d", MaxToolRounds-1),
-		"fallback text must include per-tool call counts so the caller has context")
-	assert.Contains(t, text, "more focused question", "fallback text must include the recovery guidance")
+	assert.Empty(t, text, "no synthetic fallback when synthesis round emits only tool calls")
 
 	// MaxToolRounds-1 tool turns; the final round's tool call was ignored.
 	assert.Len(t, result.ToolTurns, MaxToolRounds-1)

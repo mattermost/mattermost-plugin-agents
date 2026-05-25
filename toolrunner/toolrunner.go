@@ -151,8 +151,7 @@ func (r *ToolRunner) runLoop(
 	// synthesisForced tracks whether the iteration-cap branch has fired and
 	// added WithToolsDisabled to currentOpts. Once set, the runner refuses to
 	// execute any further tool calls (defense-in-depth: the LLM/provider may
-	// still emit tool_use blocks despite tool_choice="none"), and falls back
-	// to a synthetic message if the model produced no text either.
+	// still emit tool_use blocks despite tool_choice="none").
 	var synthesisForced bool
 
 	for round := 0; round < MaxToolRounds; round++ {
@@ -234,15 +233,6 @@ func (r *ToolRunner) runLoop(
 		// No tool calls = final response.
 		if len(toolCalls) == 0 {
 			r.deliverToolTurns(result, onToolTurns)
-			// If we forced a synthesis but the model produced nothing usable,
-			// emit a fallback string so the caller still gets a final message
-			// instead of just the intermediate "Let me search..." preambles.
-			if synthesisForced && text.Len() == 0 {
-				output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeText,
-					Value: iterationLimitFallback(result.ToolTurns),
-				}
-			}
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 			return
 		}
@@ -323,46 +313,6 @@ func (r *ToolRunner) deliverToolTurns(result *ToolRunResult, onToolTurns func([]
 	if onToolTurns != nil && len(result.ToolTurns) > 0 {
 		onToolTurns(result.ToolTurns)
 	}
-}
-
-// iterationLimitFallback returns a message used when the iteration cap is hit
-// and the forced tools-disabled synthesis produced no text. It includes a
-// per-tool call summary so the caller has at least some signal about what was
-// attempted instead of just a canned apology.
-func iterationLimitFallback(turns []ToolTurn) string {
-	if len(turns) == 0 {
-		return "I reached the maximum number of tool-use iterations but could not produce a final answer. Please try a more focused question."
-	}
-
-	counts := make(map[string]int, 4)
-	order := make([]string, 0, 4)
-	errors := 0
-	totalCalls := 0
-	for _, turn := range turns {
-		for _, result := range turn.ToolResults {
-			totalCalls++
-			if result.IsError {
-				errors++
-			}
-			if _, seen := counts[result.Name]; !seen {
-				order = append(order, result.Name)
-			}
-			counts[result.Name]++
-		}
-	}
-
-	parts := make([]string, 0, len(order))
-	for _, name := range order {
-		parts = append(parts, fmt.Sprintf("%s×%d", name, counts[name]))
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "I made %d tool calls (%s)", totalCalls, strings.Join(parts, ", "))
-	if errors > 0 {
-		fmt.Fprintf(&b, ", %d of which returned errors", errors)
-	}
-	b.WriteString(", but was unable to produce a substantive answer based on what was returned. Please try a more focused question or break the task into smaller steps.")
-	return b.String()
 }
 
 // executeTools runs each tool call and returns results.
