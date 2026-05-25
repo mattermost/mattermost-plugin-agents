@@ -318,10 +318,8 @@ func (t *otelTracer) Stop() {
 	t.mu.Unlock()
 }
 
-// setUsageAttributes copies token-count detail from a Bifrost usage payload onto
-// the active span. Cached / reasoning / cost attributes are only set when the
-// provider reported a non-zero value, to keep span attribute noise low for
-// providers that don't expose them.
+// setUsageAttributes only emits cached / reasoning / cost attributes when the
+// value is non-zero so spans from providers that don't expose them stay clean.
 func setUsageAttributes(span trace.Span, usage *bschemas.BifrostLLMUsage) {
 	attrs := []attribute.KeyValue{
 		telemetry.LLMInputTokens.Int64(int64(usage.PromptTokens)),

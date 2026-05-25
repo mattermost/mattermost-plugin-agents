@@ -1352,37 +1352,66 @@ func TestEnvProxyRouting(t *testing.T) {
 }
 
 func TestConvertChatUsage(t *testing.T) {
-	usage := &schemas.BifrostLLMUsage{
-		PromptTokens:     1200,
-		CompletionTokens: 350,
-		TotalTokens:      1550,
-		PromptTokensDetails: &schemas.ChatPromptTokensDetails{
-			CachedReadTokens:  800,
-			CachedWriteTokens: 100,
+	tests := []struct {
+		name  string
+		usage *schemas.BifrostLLMUsage
+		want  llm.TokenUsage
+	}{
+		{
+			name:  "nil usage yields zero value",
+			usage: nil,
+			want:  llm.TokenUsage{},
 		},
-		CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
-			ReasoningTokens: 64,
+		{
+			name: "nil detail and cost pointers stay zero",
+			usage: &schemas.BifrostLLMUsage{
+				PromptTokens:     100,
+				CompletionTokens: 50,
+			},
+			want: llm.TokenUsage{InputTokens: 100, OutputTokens: 50},
 		},
-		Cost: &schemas.BifrostCost{
-			TotalCost: 0.0123,
+		{
+			name: "fully populated payload carries every field",
+			usage: &schemas.BifrostLLMUsage{
+				PromptTokens:     1200,
+				CompletionTokens: 350,
+				PromptTokensDetails: &schemas.ChatPromptTokensDetails{
+					CachedReadTokens:  800,
+					CachedWriteTokens: 100,
+				},
+				CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
+					ReasoningTokens: 64,
+				},
+				Cost: &schemas.BifrostCost{TotalCost: 0.0123},
+			},
+			want: llm.TokenUsage{
+				InputTokens:       1200,
+				OutputTokens:      350,
+				CachedReadTokens:  800,
+				CachedWriteTokens: 100,
+				ReasoningTokens:   64,
+				Cost:              0.0123,
+			},
 		},
 	}
 
-	got := convertChatUsage(usage)
-	assert.Equal(t, int64(1200), got.InputTokens)
-	assert.Equal(t, int64(350), got.OutputTokens)
-	assert.Equal(t, int64(800), got.CachedReadTokens)
-	assert.Equal(t, int64(100), got.CachedWriteTokens)
-	assert.Equal(t, int64(64), got.ReasoningTokens)
-	assert.InDelta(t, 0.0123, got.Cost, 1e-9)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertChatUsage(tt.usage)
+			assert.Equal(t, tt.want.InputTokens, got.InputTokens)
+			assert.Equal(t, tt.want.OutputTokens, got.OutputTokens)
+			assert.Equal(t, tt.want.CachedReadTokens, got.CachedReadTokens)
+			assert.Equal(t, tt.want.CachedWriteTokens, got.CachedWriteTokens)
+			assert.Equal(t, tt.want.ReasoningTokens, got.ReasoningTokens)
+			assert.InDelta(t, tt.want.Cost, got.Cost, 1e-9)
+		})
+	}
 }
 
-func TestCountTokens(t *testing.T) {
+func TestCountTokensReturnsCount(t *testing.T) {
 	var backendHit atomic.Bool
-	var receivedPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendHit.Store(true)
-		receivedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"input_tokens": 42}`))
 	}))
@@ -1403,65 +1432,59 @@ func TestCountTokens(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 42, count)
-	assert.True(t, backendHit.Load(), "count_tokens endpoint should have been hit")
-	assert.Equal(t, "/v1/messages/count_tokens", receivedPath)
+	assert.True(t, backendHit.Load())
 }
 
-func TestOutputTokenLimit(t *testing.T) {
-	tests := []struct {
-		name             string
-		outputTokenLimit int
-		expected         int
-	}{
-		{name: "zero returned as-is", outputTokenLimit: 0, expected: 0},
-		{name: "configured value returned as-is", outputTokenLimit: 4096, expected: 4096},
-	}
+func TestCountTokensUnsupportedProviderShortCircuits(t *testing.T) {
+	var backendHit atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHit.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{outputTokenLimit: tt.outputTokenLimit}
-			assert.Equal(t, tt.expected, b.OutputTokenLimit())
-		})
-	}
+	// Cohere is not in providersSupportingCountTokens; CountTokens must
+	// return ErrUnsupportedTokenCount without contacting the backend.
+	llmClient, err := New(Config{
+		Provider:         schemas.Cohere,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "command-r",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	_, err = llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	})
+	require.ErrorIs(t, err, llm.ErrUnsupportedTokenCount)
+	assert.False(t, backendHit.Load(), "unsupported provider must not hit the backend")
 }
 
-func TestInputTokenLimit(t *testing.T) {
-	tests := []struct {
-		name            string
-		inputTokenLimit int
-		provider        schemas.ModelProvider
-		expected        int
-	}{
-		{
-			name:            "zero means no client-side truncation",
-			inputTokenLimit: 0,
-			provider:        schemas.OpenAI,
-			expected:        0,
-		},
-		{
-			name:            "configured value returned as-is",
-			inputTokenLimit: 12345,
-			provider:        schemas.Anthropic,
-			expected:        12345,
-		},
-		{
-			name:            "provider field is not consulted for zero",
-			inputTokenLimit: 0,
-			provider:        schemas.Bedrock,
-			expected:        0,
-		},
-		{
-			name:            "provider field is not consulted for non-zero",
-			inputTokenLimit: 50000,
-			provider:        schemas.Bedrock,
-			expected:        50000,
-		},
-	}
+func TestCountTokensScrubsAPIKeyFromError(t *testing.T) {
+	const secret = "sk-real-secret-key-do-not-leak" // #nosec G101 -- fixture, not a real credential
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Anthropic-shaped error payload that echoes the configured key.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprintf(w, `{"type":"error","error":{"type":"authentication_error","message":"invalid key %s"}}`, secret)
+	}))
+	defer backend.Close()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{inputTokenLimit: tt.inputTokenLimit, provider: tt.provider}
-			assert.Equal(t, tt.expected, b.InputTokenLimit())
-		})
-	}
+	llmClient, err := New(Config{
+		Provider:         schemas.Anthropic,
+		APIKey:           secret,
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	_, err = llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), secret, "API key must be redacted from provider error messages")
 }

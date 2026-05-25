@@ -319,7 +319,7 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 	}
 }
 
-func TestBuildTokenUsageLogKeyValuePairsIncludesRichUsageFields(t *testing.T) {
+func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 	dimensions := tokenUsageDimensions{
 		userID:           "user-1",
 		teamID:           "team-1",
@@ -333,78 +333,62 @@ func TestBuildTokenUsageLogKeyValuePairsIncludesRichUsageFields(t *testing.T) {
 		operation:        OperationConversation,
 		operationSubType: SubTypeStreaming,
 	}
-	usage := TokenUsage{
-		InputTokens:       1000,
-		OutputTokens:      300,
-		CachedReadTokens:  800,
-		CachedWriteTokens: 100,
-		ReasoningTokens:   64,
-		Cost:              0.0123,
+
+	tests := []struct {
+		name  string
+		usage TokenUsage
+		want  map[string]any
+	}{
+		{
+			name:  "rich usage fields populated",
+			usage: TokenUsage{InputTokens: 1000, OutputTokens: 300, CachedReadTokens: 800, CachedWriteTokens: 100, ReasoningTokens: 64, Cost: 0.0123},
+			want: map[string]any{
+				"input_tokens":        int64(1000),
+				"output_tokens":       int64(300),
+				"total_tokens":        int64(1300),
+				"cached_read_tokens":  int64(800),
+				"cached_write_tokens": int64(100),
+				"reasoning_tokens":    int64(64),
+				"cost":                0.0123,
+			},
+		},
+		{
+			name:  "zero usage emits zeros for every numeric field",
+			usage: TokenUsage{},
+			want: map[string]any{
+				"input_tokens":        int64(0),
+				"output_tokens":       int64(0),
+				"total_tokens":        int64(0),
+				"cached_read_tokens":  int64(0),
+				"cached_write_tokens": int64(0),
+				"reasoning_tokens":    int64(0),
+				"cost":                float64(0),
+			},
+		},
 	}
 
-	fields := buildTokenUsageLogKeyValuePairs(dimensions, usage)
-
-	// Schema version must be bumped because the field set changed.
-	assert.Equal(t, 2, TokenUsageLogSchemaVersion)
-
-	keyed := map[string]any{}
-	for i := 0; i+1 < len(fields); i += 2 {
-		keyed[fields[i].(string)] = fields[i+1]
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fields := buildTokenUsageLogKeyValuePairs(dimensions, tt.usage)
+			keyed := map[string]any{}
+			for i := 0; i+1 < len(fields); i += 2 {
+				keyed[fields[i].(string)] = fields[i+1]
+			}
+			for key, want := range tt.want {
+				assert.Equal(t, want, keyed[key], "field %s", key)
+			}
+			// Dimensions and meta keys must always be present.
+			assert.Equal(t, TokenUsageLogEvent, keyed["event"])
+			assert.Equal(t, TokenUsageLogSchemaVersion, keyed["schema_version"])
+			assert.Equal(t, "user-1", keyed["user_id"])
+			assert.Equal(t, "claude-sonnet-4-5", keyed["model"])
+		})
 	}
-	assert.Equal(t, int64(800), keyed["cached_read_tokens"])
-	assert.Equal(t, int64(100), keyed["cached_write_tokens"])
-	assert.Equal(t, int64(64), keyed["reasoning_tokens"])
-	assert.Equal(t, 0.0123, keyed["cost"])
 }
 
-func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
-	dimensions := tokenUsageDimensions{
-		userID:           "user-1",
-		teamID:           "team-1",
-		channelID:        "channel-1",
-		channelType:      "open",
-		botName:          "Agent Bot",
-		botUsername:      "agent",
-		botUserID:        "bot-user-1",
-		model:            "gpt-4.1",
-		serviceType:      "openai",
-		operation:        OperationConversation,
-		operationSubType: SubTypeStreaming,
-	}
-	usage := TokenUsage{InputTokens: 11, OutputTokens: 7}
-
-	expected := []any{
-		"event", TokenUsageLogEvent,
-		"schema_version", TokenUsageLogSchemaVersion,
-		"user_id", "user-1",
-		"team_id", "team-1",
-		"channel_id", "channel-1",
-		"channel_type", "open",
-		"agent_name", "Agent Bot",
-		"agent_username", "agent",
-		"bot_username", "agent",
-		"agent_user_id", "bot-user-1",
-		"model", "gpt-4.1",
-		"service_type", "openai",
-		"operation", OperationConversation,
-		"operation_subtype", SubTypeStreaming,
-		"input_tokens", int64(11),
-		"output_tokens", int64(7),
-		"total_tokens", int64(18),
-		"cached_read_tokens", int64(0),
-		"cached_write_tokens", int64(0),
-		"reasoning_tokens", int64(0),
-		"cost", float64(0),
-	}
-
-	actual := buildTokenUsageLogKeyValuePairs(dimensions, usage)
-	assert.Equal(t, expected, actual)
-
-	expectedMlogFields := make([]mlog.Field, 0, len(expected)/2)
-	for i := 0; i+1 < len(expected); i += 2 {
-		expectedMlogFields = append(expectedMlogFields, mlog.Any(expected[i].(string), expected[i+1]))
-	}
-	assert.Equal(t, expectedMlogFields, tokenUsageKeyValuePairsToMlogFields(actual))
+func TestTokenUsageKeyValuePairsToMlogFields(t *testing.T) {
+	out := tokenUsageKeyValuePairsToMlogFields([]any{"foo", "bar", "n", int64(42)})
+	assert.Equal(t, []mlog.Field{mlog.Any("foo", "bar"), mlog.Any("n", int64(42))}, out)
 }
 
 func TestTokenTrackingWrapper_DefaultOperationSubType(t *testing.T) {

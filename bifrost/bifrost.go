@@ -32,9 +32,8 @@ const (
 	DefaultMaxTokens        = 8192
 	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
-	// CountTokensTimeout caps the synchronous preflight count-tokens call so a
-	// wedged provider cannot block request handling before the main completion
-	// even starts. The endpoint is meant to be fast (typically <500ms).
+	// CountTokensTimeout caps the count-tokens preflight so a wedged provider
+	// can't block the request handler.
 	CountTokensTimeout = 30 * time.Second
 )
 
@@ -278,9 +277,8 @@ func (b *LLM) Shutdown() {
 }
 
 // GetDefaultConfig returns the default language model configuration.
-// When OutputTokenLimit is unset (0), MaxGeneratedTokens substitutes
-// DefaultMaxTokens so providers that require a value (e.g. Anthropic) still
-// receive one.
+// MaxGeneratedTokens substitutes DefaultMaxTokens when unset because some
+// providers (Anthropic) require it.
 func (b *LLM) GetDefaultConfig() llm.LanguageModelConfig {
 	maxGenerated := b.outputTokenLimit
 	if maxGenerated == 0 {
@@ -549,10 +547,8 @@ func (b *LLM) OutputTokenLimit() int {
 	return b.outputTokenLimit
 }
 
-// setTokenUsageSpanAttributes mirrors setUsageAttributes (which operates on a
-// raw Bifrost usage payload) but consumes our already-converted TokenUsage so
-// the streaming handlers in this file can record the same per-request span
-// detail.
+// setTokenUsageSpanAttributes is the converted-TokenUsage counterpart of
+// setUsageAttributes in tracer.go.
 func setTokenUsageSpanAttributes(span trace.Span, usage llm.TokenUsage) {
 	attrs := []attribute.KeyValue{
 		telemetry.LLMInputTokens.Int64(usage.InputTokens),
@@ -573,9 +569,6 @@ func setTokenUsageSpanAttributes(span trace.Span, usage llm.TokenUsage) {
 	span.SetAttributes(attrs...)
 }
 
-// convertChatUsage maps Bifrost's chat-completions usage payload onto our
-// internal TokenUsage shape, including cached / reasoning / cost detail when
-// the provider supplied it.
 func convertChatUsage(u *schemas.BifrostLLMUsage) llm.TokenUsage {
 	if u == nil {
 		return llm.TokenUsage{}
@@ -597,7 +590,6 @@ func convertChatUsage(u *schemas.BifrostLLMUsage) llm.TokenUsage {
 	return usage
 }
 
-// convertResponsesUsage mirrors convertChatUsage for the Responses API payload.
 func convertResponsesUsage(u *schemas.ResponsesResponseUsage) llm.TokenUsage {
 	if u == nil {
 		return llm.TokenUsage{}
@@ -619,9 +611,6 @@ func convertResponsesUsage(u *schemas.ResponsesResponseUsage) llm.TokenUsage {
 	return usage
 }
 
-// providersSupportingCountTokens lists the Bifrost providers that implement a
-// real CountTokensRequest endpoint. Everything else returns ErrUnsupportedTokenCount
-// without making a network call.
 var providersSupportingCountTokens = map[schemas.ModelProvider]struct{}{
 	schemas.OpenAI:    {},
 	schemas.Anthropic: {},
@@ -629,10 +618,8 @@ var providersSupportingCountTokens = map[schemas.ModelProvider]struct{}{
 	schemas.Vertex:    {},
 }
 
-// CountTokens asks the provider for an exact input-token count for the given
-// request. Returns llm.ErrUnsupportedTokenCount for providers Bifrost cannot
-// count against (Azure, Gemini direct, Cohere, Mistral, OpenRouter, …);
-// callers should fall back to llm.EstimateTokens for an approximation.
+// CountTokens returns llm.ErrUnsupportedTokenCount when the provider lacks a
+// count-tokens endpoint, signaling callers to fall back to llm.EstimateTokens.
 func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
 	if _, ok := providersSupportingCountTokens[b.provider]; !ok {
 		return 0, llm.ErrUnsupportedTokenCount

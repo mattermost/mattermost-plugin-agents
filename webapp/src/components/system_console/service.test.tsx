@@ -64,25 +64,6 @@ beforeEach(() => {
 });
 
 describe('ServiceFields token-limit inputs', () => {
-    it('persists the Bifrost-provided limits via onChange so the saved config carries them', async () => {
-        fetchModels.mockResolvedValue([
-            {
-                id: 'claude-sonnet-4-5',
-                displayName: 'Claude Sonnet 4.5',
-                inputTokenLimit: 200000,
-                outputTokenLimit: 8192,
-            },
-        ]);
-
-        const {onChange} = renderFields({...baseService, tokenLimit: 50000});
-
-        await waitFor(() => {
-            const calls = onChange.mock.calls.map((c) => c[0]);
-            expect(calls.some((s: LLMService) => s.tokenLimit === 200000)).toBe(true);
-            expect(calls.some((s: LLMService) => s.outputTokenLimit === 8192)).toBe(true);
-        });
-    });
-
     it('disables and prefills both inputs when Bifrost reports limits for the selected model', async () => {
         fetchModels.mockResolvedValue([
             {

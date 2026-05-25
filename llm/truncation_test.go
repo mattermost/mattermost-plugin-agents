@@ -56,14 +56,6 @@ func TestTruncationWrapper(t *testing.T) {
 			expectedPostCount:  1,
 		},
 		{
-			name:               "skips truncation when limit is zero (NoStream)",
-			posts:              []Post{{Role: PostRoleUser, Message: longMessage}},
-			inputTokenLimit:    0,
-			countTokensReturns: nil,
-			expectedPostCount:  1,
-			useNoStream:        true,
-		},
-		{
 			name:               "skips safety check when heuristic is far from budget",
 			posts:              []Post{{Role: PostRoleUser, Message: "hi"}},
 			inputTokenLimit:    1000,
@@ -81,7 +73,7 @@ func TestTruncationWrapper(t *testing.T) {
 			expectedPostCount:  2,
 		},
 		{
-			name: "drops oldest when provider count exceeds limit and retries once",
+			name: "drops oldest when provider count exceeds limit and retries once (NoStream)",
 			posts: []Post{
 				{Role: PostRoleUser, Message: "older-" + nearBudget},
 				{Role: PostRoleUser, Message: "newer-" + nearBudget},
@@ -90,6 +82,7 @@ func TestTruncationWrapper(t *testing.T) {
 			countTokensReturns: []countResult{{count: 1100}, {count: 800}},
 			expectedPostCount:  1,
 			expectedFirstPost:  &Post{Role: PostRoleUser, Message: "newer-" + nearBudget},
+			useNoStream:        true,
 		},
 		{
 			name: "preserves system prompt on overflow drop",

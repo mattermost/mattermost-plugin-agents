@@ -27,9 +27,8 @@ const (
 	EventTypeUsage
 )
 
-// TokenUsage represents token usage statistics for an LLM request.
-// Cached / reasoning / cost fields are populated by providers that report them
-// (mostly Anthropic and OpenAI via Bifrost) and stay zero otherwise.
+// TokenUsage represents token usage statistics for an LLM request. Cached,
+// reasoning, and cost fields stay zero when the provider doesn't report them.
 type TokenUsage struct {
 	InputTokens       int64   `json:"input_tokens"`
 	OutputTokens      int64   `json:"output_tokens"`

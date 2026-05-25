@@ -3,9 +3,8 @@
 
 package llm
 
-// ModelInfo represents information about an available model.
-// InputTokenLimit / OutputTokenLimit / ContextLength are populated when the
-// provider reports them via Bifrost's ListModels response, otherwise nil.
+// ModelInfo represents information about an available model. The pointer
+// limit fields are nil when the provider doesn't report them.
 type ModelInfo struct {
 	ID               string `json:"id"`
 	DisplayName      string `json:"displayName"`

@@ -64,29 +64,23 @@ func TestOTelTracer_SpanLifecycleEmitsOTelSpan(t *testing.T) {
 	assert.Equal(t, "first_token", span.Events[0].Name)
 }
 
-func TestOTelTracer_PopulateLLMResponseAttributesEmitsRichUsage(t *testing.T) {
+func TestOTelTracer_PopulateLLMResponseAttributesGatesZeroRichUsage(t *testing.T) {
+	// Input/output token attributes always emit. Cached / reasoning / cost
+	// attributes are gated behind a > 0 check so spans from providers that
+	// don't expose them stay clean.
 	exporter := setupTracerProvider(t)
 	tracer := newOTelTracer()
 
 	_, handle := tracer.StartSpan(context.Background(), "bifrost call", bschemas.SpanKindLLMCall)
-
-	resp := &bschemas.BifrostResponse{
+	tracer.PopulateLLMResponseAttributes(nil, handle, &bschemas.BifrostResponse{
 		ChatResponse: &bschemas.BifrostChatResponse{
 			Usage: &bschemas.BifrostLLMUsage{
 				PromptTokens:     1200,
 				CompletionTokens: 350,
-				PromptTokensDetails: &bschemas.ChatPromptTokensDetails{
-					CachedReadTokens:  800,
-					CachedWriteTokens: 100,
-				},
-				CompletionTokensDetails: &bschemas.ChatCompletionTokensDetails{
-					ReasoningTokens: 64,
-				},
-				Cost: &bschemas.BifrostCost{TotalCost: 0.0123},
+				// No PromptTokensDetails / CompletionTokensDetails / Cost.
 			},
 		},
-	}
-	tracer.PopulateLLMResponseAttributes(nil, handle, resp, nil)
+	}, nil)
 	tracer.EndSpan(handle, bschemas.SpanStatusOk, "")
 
 	spans := exporter.GetSpans()
@@ -98,10 +92,15 @@ func TestOTelTracer_PopulateLLMResponseAttributesEmitsRichUsage(t *testing.T) {
 
 	assert.Equal(t, int64(1200), attrs["agents.llm.input_tokens"])
 	assert.Equal(t, int64(350), attrs["agents.llm.output_tokens"])
-	assert.Equal(t, int64(800), attrs["agents.llm.cached_read_tokens"])
-	assert.Equal(t, int64(100), attrs["agents.llm.cached_write_tokens"])
-	assert.Equal(t, int64(64), attrs["agents.llm.reasoning_tokens"])
-	assert.InDelta(t, 0.0123, attrs["agents.llm.cost"], 1e-9)
+	for _, key := range []string{
+		"agents.llm.cached_read_tokens",
+		"agents.llm.cached_write_tokens",
+		"agents.llm.reasoning_tokens",
+		"agents.llm.cost",
+	} {
+		_, present := attrs[key]
+		assert.False(t, present, "%s must not be emitted when the provider reports zero", key)
+	}
 }
 
 func TestOTelTracer_ErrorStatusPropagates(t *testing.T) {

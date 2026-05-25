@@ -85,10 +85,8 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
-    // Track the most recent admin-typed values so they can be restored when the
-    // selected model switches between Bifrost-known (disabled, auto-filled) and
-    // unknown (editable). Initialised from the stored service config and
-    // re-seeded whenever the parent swaps in a different service.
+    // Cached admin entries so toggling to a Bifrost-known model and back
+    // restores the prior manual values instead of the auto-detected ones.
     const [manualInputLimit, setManualInputLimit] = useState<number>(props.service.tokenLimit);
     const [manualOutputLimit, setManualOutputLimit] = useState<number>(props.service.outputTokenLimit);
     useEffect(() => {
@@ -177,8 +175,6 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         }
     }
 
-    // Find the currently-selected model in the fetched list so we can lock
-    // the token-limit inputs to provider-reported values when available.
     const selectedFetchedModel = availableModels.find((m) => m.id === props.service.defaultModel);
     const bifrostInputTokenLimit = selectedFetchedModel?.inputTokenLimit;
     const bifrostOutputTokenLimit = selectedFetchedModel?.outputTokenLimit;
@@ -186,10 +182,6 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     const outputAutoFromProvider = typeof bifrostOutputTokenLimit === 'number';
     const autoFromProviderHelpText = intl.formatMessage({defaultMessage: 'Auto-detected from provider'});
 
-    // The effective value carried in props.service is what gets persisted. When
-    // Bifrost reports a limit we want the persisted value to match the
-    // displayed one; when the model is unknown we restore the admin's most
-    // recent manual entry.
     const effectiveInputLimit = inputAutoFromProvider ? (bifrostInputTokenLimit as number) : manualInputLimit;
     const effectiveOutputLimit = outputAutoFromProvider ? (bifrostOutputTokenLimit as number) : manualOutputLimit;
 
@@ -197,8 +189,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         const inputDrift = props.service.tokenLimit !== effectiveInputLimit;
         const outputDrift = props.service.outputTokenLimit !== effectiveOutputLimit;
         if (inputDrift || outputDrift) {
-            // Apply both updates in a single onChange so neither field
-            // overwrites the other on subsequent renders.
+            // Single onChange — separate calls race when both fire on the same render.
             props.onChange({
                 ...props.service,
                 tokenLimit: effectiveInputLimit,

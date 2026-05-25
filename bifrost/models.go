@@ -67,9 +67,6 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 	return convertBifrostModels(resp.Data), nil
 }
 
-// convertBifrostModels maps Bifrost's Model entries into llm.ModelInfo,
-// stripping the provider prefix from the ID and carrying through the
-// per-model token-limit pointers when the provider populates them.
 func convertBifrostModels(in []schemas.Model) []llm.ModelInfo {
 	out := make([]llm.ModelInfo, 0, len(in))
 	for _, m := range in {

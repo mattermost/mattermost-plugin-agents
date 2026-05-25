@@ -285,8 +285,7 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 	llmFormattedTranscription := transcription.FormatForLLM()
 	tokens := llm.EstimateTokens(llmFormattedTranscription)
 	inputLimit := bot.LLM().InputTokenLimit()
-	// A zero limit means "no client-side truncation" — let the provider
-	// enforce its own cap and skip chunking entirely.
+	// Zero means "no client-side truncation" — skip chunking entirely.
 	tokenLimitWithMargin := 0
 	if inputLimit > 0 {
 		tokenLimitWithMargin = int(float64(inputLimit)*0.75) - ContextTokenMargin

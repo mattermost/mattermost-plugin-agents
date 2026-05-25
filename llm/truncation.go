@@ -13,10 +13,9 @@ const FunctionsTokenBudget = 200
 const TokenLimitBufferSize = 0.9
 const MinTokens = 100
 
-// SafetyCheckThreshold gates the post-truncation provider-side count call. We
-// only ask the provider for an exact count when the heuristic estimate is at
-// or above this fraction of the truncation budget; otherwise the heuristic is
-// confident enough.
+// SafetyCheckThreshold gates the provider-side count call. We only ask for an
+// exact count when the heuristic estimate is at or above this fraction of the
+// truncation budget.
 const SafetyCheckThreshold = 0.8
 
 type TruncationWrapper struct {
@@ -39,10 +38,9 @@ func (w *TruncationWrapper) ChatCompletionNoStream(ctx context.Context, request 
 	return w.wrapped.ChatCompletionNoStream(ctx, request, opts...)
 }
 
-// maybeTruncate applies the heuristic truncation and, when the wrapped model
-// can give us an exact count and our estimate is near the budget, asks the
-// provider to verify. If the provider count exceeds the raw input limit, the
-// oldest post is dropped and the provider is asked once more (bounded retry).
+// maybeTruncate heuristically truncates and, when the estimate is near the
+// budget and the model supports it, asks the provider to verify and drops the
+// oldest non-system post once if still over.
 func (w *TruncationWrapper) maybeTruncate(ctx context.Context, request *CompletionRequest, opts []LanguageModelOption) {
 	limit := w.wrapped.InputTokenLimit()
 	if limit <= 0 {
@@ -63,16 +61,13 @@ func (w *TruncationWrapper) maybeTruncate(ctx context.Context, request *Completi
 	if errors.Is(err, ErrUnsupportedTokenCount) || err != nil || count <= limit {
 		return
 	}
-	// Drop the oldest non-system post. System prompts carry behavioral
-	// instructions and must not silently disappear.
+	// System prompts carry behavioral instructions; never drop them.
 	if !dropOldestNonSystemPost(request) {
 		return
 	}
 	_, _ = w.wrapped.CountTokens(ctx, *request, opts...)
 }
 
-// dropOldestNonSystemPost removes the first non-system post from the request.
-// Returns true if a post was dropped, false if none was eligible.
 func dropOldestNonSystemPost(request *CompletionRequest) bool {
 	for i, post := range request.Posts {
 		if post.Role == PostRoleSystem {
