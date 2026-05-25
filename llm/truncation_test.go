@@ -13,203 +13,149 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// nearBudgetMessage returns a string whose EstimateTokens lands at roughly 300
-// tokens — using two of these posts puts the heuristic above 0.8 * budget
-// (576 for limit=1000) but below the budget itself, so the safety check runs
-// without Truncate partial-trimming.
+// Budget computed for limit=1000 is floor((1000 - FunctionsTokenBudget=200) * 0.9) = 720.
+// Safety threshold is 0.8 * 720 = 576. Two near-budget posts (~299 tokens each)
+// land between the threshold and the budget so the heuristic accepts both but
+// the safety check still runs.
 func nearBudgetMessage() string { return strings.Repeat("a ", 327) }
 
-func TestTruncationWrapperSkipsWhenLimitIsZero(t *testing.T) {
+// countResult lets each case script the sequence of CountTokens returns.
+type countResult struct {
+	count int
+	err   error
+}
+
+func TestTruncationWrapper(t *testing.T) {
 	longMessage := strings.Repeat("x", 4000)
-	request := CompletionRequest{
-		Posts: []Post{{Role: PostRoleUser, Message: longMessage}},
-	}
-
-	inner := &MockLanguageModel{}
-	inner.On("InputTokenLimit").Return(0)
-	// CountTokens must not be consulted when the limit is zero.
-	inner.On(
-		"ChatCompletion",
-		mock.Anything,
-		mock.MatchedBy(func(r CompletionRequest) bool {
-			return len(r.Posts) == 1 && r.Posts[0].Message == longMessage
-		}),
-		mock.Anything,
-	).Return(&TextStreamResult{}, nil).Once()
-
-	wrapper := NewLLMTruncationWrapper(inner)
-	_, err := wrapper.ChatCompletion(context.Background(), request)
-	require.NoError(t, err)
-	inner.AssertExpectations(t)
-}
-
-func TestTruncationWrapperSkipsWhenLimitIsZeroNoStream(t *testing.T) {
-	longMessage := strings.Repeat("x", 4000)
-	request := CompletionRequest{
-		Posts: []Post{{Role: PostRoleUser, Message: longMessage}},
-	}
-
-	inner := &MockLanguageModel{}
-	inner.On("InputTokenLimit").Return(0)
-	inner.On(
-		"ChatCompletionNoStream",
-		mock.Anything,
-		mock.MatchedBy(func(r CompletionRequest) bool {
-			return len(r.Posts) == 1 && r.Posts[0].Message == longMessage
-		}),
-		mock.Anything,
-	).Return("ok", nil).Once()
-
-	wrapper := NewLLMTruncationWrapper(inner)
-	result, err := wrapper.ChatCompletionNoStream(context.Background(), request)
-	require.NoError(t, err)
-	assert.Equal(t, "ok", result)
-	inner.AssertExpectations(t)
-}
-
-// Budget for limit=1000 is floor((1000 - FunctionsTokenBudget=200) * 0.9) = 720.
-// Safety threshold is 0.8 * 720 = 576.
-
-func TestTruncationWrapperSkipsSafetyCheckFarFromBudget(t *testing.T) {
-	// EstimateTokens("hi") ≈ 0. Heuristic total stays well below the safety
-	// threshold so CountTokens must not be called.
-	inner := &MockLanguageModel{}
-	inner.On("InputTokenLimit").Return(1000)
-	inner.On(
-		"ChatCompletion", mock.Anything, mock.Anything, mock.Anything,
-	).Return(&TextStreamResult{}, nil).Once()
-
-	wrapper := NewLLMTruncationWrapper(inner)
-	_, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
-		Posts: []Post{{Role: PostRoleUser, Message: "hi"}},
-	})
-	require.NoError(t, err)
-	inner.AssertNotCalled(t, "CountTokens", mock.Anything, mock.Anything, mock.Anything)
-}
-
-func TestTruncationWrapperCallsSafetyCheckNearBudget(t *testing.T) {
-	// Two near-budget posts push the heuristic above 576 but under budget=720,
-	// so Truncate keeps both and the safety check fires. Provider returns a
-	// count under the raw limit → request goes through unchanged.
-	msg := nearBudgetMessage()
-	inner := &MockLanguageModel{}
-	inner.On("InputTokenLimit").Return(1000)
-	inner.On("CountTokens", mock.Anything, mock.Anything, mock.Anything).Return(900, nil).Once()
-	inner.On(
-		"ChatCompletion",
-		mock.Anything,
-		mock.MatchedBy(func(r CompletionRequest) bool { return len(r.Posts) == 2 }),
-		mock.Anything,
-	).Return(&TextStreamResult{}, nil).Once()
-
-	wrapper := NewLLMTruncationWrapper(inner)
-	_, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
-		Posts: []Post{
-			{Role: PostRoleUser, Message: msg},
-			{Role: PostRoleUser, Message: msg},
-		},
-	})
-	require.NoError(t, err)
-	inner.AssertExpectations(t)
-}
-
-func TestTruncationWrapperDropsOldestWhenProviderCountExceedsLimit(t *testing.T) {
-	// First CountTokens returns 1100 (> 1000 raw limit) → drop oldest, retry.
-	// Second call returns 800 (under limit) → send the trimmed request.
-	// Both posts must be near-budget so the heuristic clears the safety threshold.
-	olderMsg := "older-" + nearBudgetMessage()
-	newerMsg := "newer-" + nearBudgetMessage()
-	inner := &MockLanguageModel{}
-	inner.On("InputTokenLimit").Return(1000)
-	inner.On(
-		"CountTokens", mock.Anything, mock.Anything, mock.Anything,
-	).Return(1100, nil).Once()
-	inner.On(
-		"CountTokens", mock.Anything, mock.Anything, mock.Anything,
-	).Return(800, nil).Once()
-	inner.On(
-		"ChatCompletion",
-		mock.Anything,
-		mock.MatchedBy(func(r CompletionRequest) bool {
-			// Oldest post dropped; only the newest remains.
-			return len(r.Posts) == 1 && strings.HasPrefix(r.Posts[0].Message, "newer-")
-		}),
-		mock.Anything,
-	).Return(&TextStreamResult{}, nil).Once()
-
-	wrapper := NewLLMTruncationWrapper(inner)
-	_, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
-		Posts: []Post{
-			{Role: PostRoleUser, Message: olderMsg},
-			{Role: PostRoleUser, Message: newerMsg},
-		},
-	})
-	require.NoError(t, err)
-	inner.AssertExpectations(t)
-}
-
-func TestTruncationWrapperPreservesSystemPromptOnOverflow(t *testing.T) {
-	// System post first, then two near-budget user posts. When the safety
-	// check trips, the user post (oldest non-system) must be dropped — the
-	// system prompt stays.
-	msg := nearBudgetMessage()
+	nearBudget := nearBudgetMessage()
 	systemPrompt := "you are a helpful assistant"
-	inner := &MockLanguageModel{}
-	inner.On("InputTokenLimit").Return(1000)
-	inner.On(
-		"CountTokens", mock.Anything, mock.Anything, mock.Anything,
-	).Return(1100, nil).Once()
-	inner.On(
-		"CountTokens", mock.Anything, mock.Anything, mock.Anything,
-	).Return(800, nil).Once()
-	inner.On(
-		"ChatCompletion",
-		mock.Anything,
-		mock.MatchedBy(func(r CompletionRequest) bool {
-			// System post survives at index 0; one user post remains.
-			return len(r.Posts) == 2 &&
-				r.Posts[0].Role == PostRoleSystem &&
-				r.Posts[0].Message == systemPrompt &&
-				r.Posts[1].Role == PostRoleUser
-		}),
-		mock.Anything,
-	).Return(&TextStreamResult{}, nil).Once()
 
-	wrapper := NewLLMTruncationWrapper(inner)
-	_, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
-		Posts: []Post{
-			{Role: PostRoleSystem, Message: systemPrompt},
-			{Role: PostRoleUser, Message: "older-" + msg},
-			{Role: PostRoleUser, Message: "newer-" + msg},
+	tests := []struct {
+		name string
+		// posts is the initial request payload.
+		posts []Post
+		// inputTokenLimit drives the wrapper's truncation decision.
+		inputTokenLimit int
+		// countTokensReturns is the scripted sequence of CountTokens returns.
+		// Empty means the wrapper must not call CountTokens at all.
+		countTokensReturns []countResult
+		// expectedPostCount is the post count expected in the final downstream
+		// call to the wrapped model.
+		expectedPostCount int
+		// expectedFirstPost optionally asserts a property of Posts[0] (used to
+		// check system-prompt preservation).
+		expectedFirstPost *Post
+		// useNoStream exercises ChatCompletionNoStream instead of ChatCompletion.
+		useNoStream bool
+	}{
+		{
+			name:               "skips truncation when limit is zero",
+			posts:              []Post{{Role: PostRoleUser, Message: longMessage}},
+			inputTokenLimit:    0,
+			countTokensReturns: nil, // CountTokens must not be consulted
+			expectedPostCount:  1,
 		},
-	})
-	require.NoError(t, err)
-	inner.AssertExpectations(t)
-}
-
-func TestTruncationWrapperSkipsSafetyCheckWhenUnsupported(t *testing.T) {
-	// Heuristic near budget, but provider returns ErrUnsupportedTokenCount.
-	// The wrapper must not retry and must not drop messages.
-	msg := nearBudgetMessage()
-	inner := &MockLanguageModel{}
-	inner.On("InputTokenLimit").Return(1000)
-	inner.On(
-		"CountTokens", mock.Anything, mock.Anything, mock.Anything,
-	).Return(0, ErrUnsupportedTokenCount).Once()
-	inner.On(
-		"ChatCompletion",
-		mock.Anything,
-		mock.MatchedBy(func(r CompletionRequest) bool { return len(r.Posts) == 2 }),
-		mock.Anything,
-	).Return(&TextStreamResult{}, nil).Once()
-
-	wrapper := NewLLMTruncationWrapper(inner)
-	_, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
-		Posts: []Post{
-			{Role: PostRoleUser, Message: msg},
-			{Role: PostRoleUser, Message: msg},
+		{
+			name:               "skips truncation when limit is zero (NoStream)",
+			posts:              []Post{{Role: PostRoleUser, Message: longMessage}},
+			inputTokenLimit:    0,
+			countTokensReturns: nil,
+			expectedPostCount:  1,
+			useNoStream:        true,
 		},
-	})
-	require.NoError(t, err)
-	inner.AssertExpectations(t)
+		{
+			name:               "skips safety check when heuristic is far from budget",
+			posts:              []Post{{Role: PostRoleUser, Message: "hi"}},
+			inputTokenLimit:    1000,
+			countTokensReturns: nil,
+			expectedPostCount:  1,
+		},
+		{
+			name: "runs safety check near budget and sends when count is under limit",
+			posts: []Post{
+				{Role: PostRoleUser, Message: nearBudget},
+				{Role: PostRoleUser, Message: nearBudget},
+			},
+			inputTokenLimit:    1000,
+			countTokensReturns: []countResult{{count: 900}},
+			expectedPostCount:  2,
+		},
+		{
+			name: "drops oldest when provider count exceeds limit and retries once",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "older-" + nearBudget},
+				{Role: PostRoleUser, Message: "newer-" + nearBudget},
+			},
+			inputTokenLimit:    1000,
+			countTokensReturns: []countResult{{count: 1100}, {count: 800}},
+			expectedPostCount:  1,
+			expectedFirstPost:  &Post{Role: PostRoleUser, Message: "newer-" + nearBudget},
+		},
+		{
+			name: "preserves system prompt on overflow drop",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: systemPrompt},
+				{Role: PostRoleUser, Message: "older-" + nearBudget},
+				{Role: PostRoleUser, Message: "newer-" + nearBudget},
+			},
+			inputTokenLimit:    1000,
+			countTokensReturns: []countResult{{count: 1100}, {count: 800}},
+			expectedPostCount:  2,
+			expectedFirstPost:  &Post{Role: PostRoleSystem, Message: systemPrompt},
+		},
+		{
+			name: "skips safety check when provider returns unsupported error",
+			posts: []Post{
+				{Role: PostRoleUser, Message: nearBudget},
+				{Role: PostRoleUser, Message: nearBudget},
+			},
+			inputTokenLimit:    1000,
+			countTokensReturns: []countResult{{err: ErrUnsupportedTokenCount}},
+			expectedPostCount:  2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inner := &MockLanguageModel{}
+			inner.On("InputTokenLimit").Return(tt.inputTokenLimit)
+			for _, r := range tt.countTokensReturns {
+				inner.On(
+					"CountTokens", mock.Anything, mock.Anything, mock.Anything,
+				).Return(r.count, r.err).Once()
+			}
+
+			matcher := mock.MatchedBy(func(r CompletionRequest) bool {
+				if len(r.Posts) != tt.expectedPostCount {
+					return false
+				}
+				if tt.expectedFirstPost != nil {
+					if r.Posts[0].Role != tt.expectedFirstPost.Role ||
+						r.Posts[0].Message != tt.expectedFirstPost.Message {
+						return false
+					}
+				}
+				return true
+			})
+
+			wrapper := NewLLMTruncationWrapper(inner)
+			req := CompletionRequest{Posts: tt.posts}
+			if tt.useNoStream {
+				inner.On("ChatCompletionNoStream", mock.Anything, matcher, mock.Anything).
+					Return("ok", nil).Once()
+				result, err := wrapper.ChatCompletionNoStream(context.Background(), req)
+				require.NoError(t, err)
+				assert.Equal(t, "ok", result)
+			} else {
+				inner.On("ChatCompletion", mock.Anything, matcher, mock.Anything).
+					Return(&TextStreamResult{}, nil).Once()
+				_, err := wrapper.ChatCompletion(context.Background(), req)
+				require.NoError(t, err)
+			}
+			inner.AssertExpectations(t)
+			if tt.countTokensReturns == nil {
+				inner.AssertNotCalled(t, "CountTokens", mock.Anything, mock.Anything, mock.Anything)
+			}
+		})
+	}
 }

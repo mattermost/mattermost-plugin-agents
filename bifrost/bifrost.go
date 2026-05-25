@@ -32,6 +32,10 @@ const (
 	DefaultMaxTokens        = 8192
 	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
+	// CountTokensTimeout caps the synchronous preflight count-tokens call so a
+	// wedged provider cannot block request handling before the main completion
+	// even starts. The endpoint is meant to be fast (typically <500ms).
+	CountTokensTimeout = 30 * time.Second
 )
 
 type webSearchFallbackSource struct {
@@ -640,7 +644,8 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 		return 0, fmt.Errorf("failed to build count tokens request: %w", err)
 	}
 
-	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, CountTokensTimeout)
+	defer cancel()
 	resp, bifrostErr := b.client.CountTokensRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
 		msg := "unknown error"

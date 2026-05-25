@@ -163,6 +163,39 @@ describe('ServiceFields token-limit inputs', () => {
         expect(restored.disabled).toBe(false);
     });
 
+    it('re-seeds manual state when the parent swaps in a different service', async () => {
+        fetchModels.mockResolvedValue([]);
+
+        const serviceA = {...baseService, id: 'svc-a', defaultModel: 'custom-a', tokenLimit: 50000};
+        const serviceB = {...baseService, id: 'svc-b', defaultModel: 'custom-b', tokenLimit: 12345};
+        const onChange = jest.fn();
+
+        const {rerender} = render(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={serviceA}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect((screen.getByDisplayValue('50000') as HTMLInputElement).disabled).toBe(false));
+
+        // Parent swaps the service. The new service's tokenLimit must surface
+        // through the editable input, not the stale 50000 from the previous one.
+        rerender(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={serviceB}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+
+        const swapped = await waitFor(() => screen.getByDisplayValue('12345') as HTMLInputElement);
+        expect(swapped.disabled).toBe(false);
+    });
+
     it('leaves both inputs editable when the selected model is not in the fetched list', async () => {
         fetchModels.mockResolvedValue([
             {

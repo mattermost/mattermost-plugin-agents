@@ -87,9 +87,15 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
 
     // Track the most recent admin-typed values so they can be restored when the
     // selected model switches between Bifrost-known (disabled, auto-filled) and
-    // unknown (editable). Initialised from the stored service config.
+    // unknown (editable). Initialised from the stored service config and
+    // re-seeded whenever the parent swaps in a different service.
     const [manualInputLimit, setManualInputLimit] = useState<number>(props.service.tokenLimit);
     const [manualOutputLimit, setManualOutputLimit] = useState<number>(props.service.outputTokenLimit);
+    useEffect(() => {
+        setManualInputLimit(props.service.tokenLimit);
+        setManualOutputLimit(props.service.outputTokenLimit);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [props.service.id]);
 
     const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex';
 
