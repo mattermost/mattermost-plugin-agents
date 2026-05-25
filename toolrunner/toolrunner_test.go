@@ -592,6 +592,54 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 	assert.True(t, foundSystemMessage, "final request must include the iteration-limit system message")
 }
 
+// TestToolRunner_MaxRoundsExhausted_ProviderIgnoresToolsDisabled covers the
+// defense-in-depth case where the model returns tool calls during the forced
+// synthesis round (e.g. tool_choice="none" not honored). The runner must drop
+// the tool calls and emit the fallback message so the caller receives a
+// non-empty final response.
+func TestToolRunner_MaxRoundsExhausted_ProviderIgnoresToolsDisabled(t *testing.T) {
+	responses := make([]testResponse, MaxToolRounds)
+	for i := 0; i < MaxToolRounds-1; i++ {
+		responses[i] = testResponse{
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			},
+		}
+	}
+	// Final round: model misbehaves and returns ONLY a tool call (text empty)
+	// despite the runner having set WithToolsDisabled.
+	responses[MaxToolRounds-1] = testResponse{
+		events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+				{ID: "tc-final", Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+			}},
+			{Type: llm.EventTypeEnd},
+		},
+	}
+
+	inner := &testLLM{responses: responses}
+	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	text, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Equal(t, ToolIterationLimitFallbackMessage, text, "fallback text must be emitted when synthesis round produced no text")
+
+	// MaxToolRounds-1 tool turns; the final round's tool call was ignored.
+	assert.Len(t, result.ToolTurns, MaxToolRounds-1)
+	assert.Equal(t, MaxToolRounds, inner.callCount, "still exactly MaxToolRounds LLM calls")
+}
+
 func TestToolRunner_ReasoningPreservedInToolTurn(t *testing.T) {
 	// Verify that reasoning from a tool-call round is captured in the ToolTurn
 	// and forwarded to the LLM in the next request.

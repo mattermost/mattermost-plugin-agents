@@ -21,6 +21,13 @@ import (
 // infinite loops from models that keep requesting tools.
 const MaxToolRounds = 10
 
+// ToolIterationLimitFallbackMessage is emitted as text when the iteration cap
+// is hit and the forced tools-disabled synthesis call produces no usable text
+// (e.g., the model returned only a tool_use block despite tool_choice="none").
+// Without this fallback, the caller would receive only the intermediate
+// per-round "Let me search..." preambles with no closing answer.
+const ToolIterationLimitFallbackMessage = "I reached the maximum number of tool-use iterations without producing a final answer. The information gathered so far is above. Please ask a more focused question or break the task into smaller steps."
+
 // ToolRunner manages the call-execute-recall loop for LLM tool use.
 // It calls the LLM, checks for tool calls in the stream, executes
 // approved ones, appends results back to the request, and calls again.
@@ -173,6 +180,13 @@ func (r *ToolRunner) runLoop(
 ) {
 	stream := firstStream
 
+	// synthesisForced tracks whether the iteration-cap branch has fired and
+	// added WithToolsDisabled to currentOpts. Once set, the runner refuses to
+	// execute any further tool calls (defense-in-depth: the LLM/provider may
+	// still emit tool_use blocks despite tool_choice="none"), and falls back
+	// to a synthetic message if the model produced no text either.
+	var synthesisForced bool
+
 	for round := 0; round < MaxToolRounds; round++ {
 		r.debug("toolrunner: round start", "round", round, "posts", len(request.Posts))
 
@@ -246,12 +260,26 @@ func (r *ToolRunner) runLoop(
 			"input_tokens", usage.InputTokens,
 			"output_tokens", usage.OutputTokens,
 			"stream_error", streamErr != nil,
+			"synthesis_forced", synthesisForced,
 		)
 
 		if streamErr != nil {
 			r.debug("toolrunner: stream error mid-round, terminating", "round", round, "error", streamErr.Error())
 			r.deliverToolTurns(result, onToolTurns)
 			return
+		}
+
+		// Defense-in-depth: if we forced a tools-disabled synthesis, refuse to
+		// execute any tool calls the provider returned anyway (some models
+		// still emit tool_use blocks despite tool_choice="none" when the
+		// conversation history is heavily tool-focused). Drop them so we fall
+		// into the "no tool calls = final response" branch below.
+		if synthesisForced && len(toolCalls) > 0 {
+			r.debug("toolrunner: provider returned tool calls during forced synthesis; ignoring",
+				"round", round,
+				"ignored_tool_call_count", len(toolCalls),
+			)
+			toolCalls = nil
 		}
 
 		// No tool calls = final response.
@@ -263,8 +291,19 @@ func (r *ToolRunner) runLoop(
 				"text_len", text.Len(),
 				"tool_turns_so_far", len(result.ToolTurns),
 				"empty_response", text.Len() == 0 && len(result.ToolTurns) > 0,
+				"synthesis_forced", synthesisForced,
 			)
 			r.deliverToolTurns(result, onToolTurns)
+			// If we forced a synthesis but the model produced nothing usable,
+			// emit a fallback string so the caller still gets a final message
+			// instead of just the intermediate "Let me search..." preambles.
+			if synthesisForced && text.Len() == 0 {
+				r.debug("toolrunner: emitting fallback message for empty forced synthesis", "round", round)
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeText,
+					Value: ToolIterationLimitFallbackMessage,
+				}
+			}
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 			return
 		}
@@ -344,6 +383,7 @@ func (r *ToolRunner) runLoop(
 			)
 			request.Posts = llm.EnsureToolIterationLimitSystemMessage(request.Posts)
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())
+			synthesisForced = true
 		}
 	}
 }

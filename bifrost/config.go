@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
@@ -79,7 +80,8 @@ func filterNativeToolsForServiceType(serviceType string, tools []string) []strin
 }
 
 // NewFromServiceConfig creates a LLM instance from ServiceConfig and BotConfig.
-func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (*LLM, error) {
+// log is optional; pass nil to disable diagnostic logging from the adapter.
+func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, log *pluginapi.LogService) (*LLM, error) {
 	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
 	if err != nil {
 		return nil, err
@@ -131,6 +133,8 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		ReasoningEnabled:   botConfig.ReasoningEnabled,
 		ReasoningEffort:    botConfig.ReasoningEffort,
 		ThinkingBudget:     botConfig.ThinkingBudget,
+
+		Log: log,
 	}
 
 	// Use bot's model if specified, otherwise use service's default model

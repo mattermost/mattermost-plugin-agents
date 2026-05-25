@@ -20,6 +20,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -63,6 +64,17 @@ type LLM struct {
 
 	// UseResponsesAPI enables OpenAI Responses API for native tools support
 	useResponsesAPI bool
+
+	// log is optional; nil-safe via the debug() helper.
+	log *pluginapi.LogService
+}
+
+// debug emits a Debug-level log entry when a logger is configured. Safe to
+// call when b.log is nil.
+func (b *LLM) debug(msg string, kvs ...any) {
+	if b.log != nil {
+		b.log.Debug(msg, kvs...)
+	}
 }
 
 // Config holds the configuration for creating a LLM instance.
@@ -94,6 +106,10 @@ type Config struct {
 
 	// UseResponsesAPI enables OpenAI Responses API for native tools support
 	UseResponsesAPI bool
+
+	// Log is optional; when set, the bifrost adapter emits debug logs through
+	// it (e.g. when tool_choice="none" is applied to the outbound request).
+	Log *pluginapi.LogService
 }
 
 // providerAccount implements the Bifrost Account interface for a single provider.
@@ -266,6 +282,7 @@ func New(cfg Config) (*LLM, error) {
 		reasoningEffort:    cfg.ReasoningEffort,
 		thinkingBudget:     cfg.ThinkingBudget,
 		useResponsesAPI:    cfg.UseResponsesAPI,
+		log:                cfg.Log,
 	}, nil
 }
 
@@ -873,7 +890,16 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 		if cfg.ToolsDisabled {
 			none := string(schemas.ChatToolChoiceTypeNone)
 			params.ToolChoice = &schemas.ChatToolChoice{ChatToolChoiceStr: &none}
+			b.debug("bifrost: chat request — tools_disabled with history tool_use, set tool_choice=none",
+				"tool_count", len(tools),
+				"posts", len(request.Posts),
+			)
 		}
+	} else if cfg.ToolsDisabled {
+		b.debug("bifrost: chat request — tools_disabled, no tools in outbound request",
+			"posts", len(request.Posts),
+			"has_history_tool_use", hasToolUseHistory(request.Posts),
+		)
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildChatReasoning(cfg)
@@ -1562,7 +1588,16 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 		if cfg.ToolsDisabled {
 			none := string(schemas.ResponsesToolChoiceTypeNone)
 			params.ToolChoice = &schemas.ResponsesToolChoice{ResponsesToolChoiceStr: &none}
+			b.debug("bifrost: responses request — tools_disabled with history tool_use, set tool_choice=none",
+				"tool_count", len(tools),
+				"posts", len(request.Posts),
+			)
 		}
+	} else if cfg.ToolsDisabled {
+		b.debug("bifrost: responses request — tools_disabled, no tools in outbound request",
+			"posts", len(request.Posts),
+			"has_history_tool_use", hasToolUseHistory(request.Posts),
+		)
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildResponsesReasoning(cfg)

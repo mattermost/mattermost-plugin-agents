@@ -409,7 +409,7 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
 	// Create the correct model using Bifrost for all providers
 	var result llm.LanguageModel
-	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig)
+	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, &b.pluginAPI.Log)
 	if err != nil {
 		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
 		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
