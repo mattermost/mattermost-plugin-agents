@@ -176,8 +176,8 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     const selectedFetchedModel = availableModels.find((m) => m.id === props.service.defaultModel);
     const bifrostInputTokenLimit = selectedFetchedModel?.inputTokenLimit;
     const bifrostOutputTokenLimit = selectedFetchedModel?.outputTokenLimit;
-    const inputAutoFromProvider = bifrostInputTokenLimit !== undefined;
-    const outputAutoFromProvider = bifrostOutputTokenLimit !== undefined;
+    const inputAutoFromProvider = typeof bifrostInputTokenLimit === 'number';
+    const outputAutoFromProvider = typeof bifrostOutputTokenLimit === 'number';
     const autoFromProviderHelpText = intl.formatMessage({defaultMessage: 'Auto-detected from provider'});
 
     // The effective value carried in props.service is what gets persisted. When

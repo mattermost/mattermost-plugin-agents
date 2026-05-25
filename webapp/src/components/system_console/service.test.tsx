@@ -108,6 +108,7 @@ describe('ServiceFields token-limit inputs', () => {
                 id: 'claude-sonnet-4-5',
                 displayName: 'Claude Sonnet 4.5',
                 outputTokenLimit: 8192,
+
                 // inputTokenLimit missing — should stay editable.
             },
         ]);
