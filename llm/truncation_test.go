@@ -45,6 +45,8 @@ func TestTruncationWrapper(t *testing.T) {
 		// expectedFirstPost optionally asserts a property of Posts[0] (used to
 		// check system-prompt preservation).
 		expectedFirstPost *Post
+		// expectedSecondPost optionally asserts a property of Posts[1].
+		expectedSecondPost *Post
 		// useNoStream exercises ChatCompletionNoStream instead of ChatCompletion.
 		useNoStream bool
 	}{
@@ -95,6 +97,7 @@ func TestTruncationWrapper(t *testing.T) {
 			countTokensReturns: []countResult{{count: 1100}, {count: 800}},
 			expectedPostCount:  2,
 			expectedFirstPost:  &Post{Role: PostRoleSystem, Message: systemPrompt},
+			expectedSecondPost: &Post{Role: PostRoleUser, Message: "newer-" + nearBudget},
 		},
 		{
 			name: "skips safety check when provider returns unsupported error",
@@ -125,6 +128,13 @@ func TestTruncationWrapper(t *testing.T) {
 				if tt.expectedFirstPost != nil {
 					if r.Posts[0].Role != tt.expectedFirstPost.Role ||
 						r.Posts[0].Message != tt.expectedFirstPost.Message {
+						return false
+					}
+				}
+				if tt.expectedSecondPost != nil {
+					if len(r.Posts) < 2 ||
+						r.Posts[1].Role != tt.expectedSecondPost.Role ||
+						r.Posts[1].Message != tt.expectedSecondPost.Message {
 						return false
 					}
 				}
