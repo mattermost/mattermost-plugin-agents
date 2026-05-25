@@ -1366,39 +1366,39 @@ func TestConvertToBifrostRequestToolChoiceNone(t *testing.T) {
 	noneStr := string(schemas.ChatToolChoiceTypeNone)
 
 	tests := []struct {
-		name            string
-		toolsDisabled   bool
-		toolUseHistory  bool
-		expectTools     bool
-		expectChoice    *string
+		name           string
+		toolsDisabled  bool
+		toolUseHistory bool
+		expectTools    bool
+		expectChoice   *string
 	}{
 		{
-			name:            "tools enabled — tools included, no tool_choice override",
-			toolsDisabled:   false,
-			toolUseHistory:  false,
-			expectTools:     true,
-			expectChoice:    nil,
+			name:           "tools enabled — tools included, no tool_choice override",
+			toolsDisabled:  false,
+			toolUseHistory: false,
+			expectTools:    true,
+			expectChoice:   nil,
 		},
 		{
-			name:            "tools disabled, no history — tools omitted, no tool_choice",
-			toolsDisabled:   true,
-			toolUseHistory:  false,
-			expectTools:     false,
-			expectChoice:    nil,
+			name:           "tools disabled, no history — tools omitted, no tool_choice",
+			toolsDisabled:  true,
+			toolUseHistory: false,
+			expectTools:    false,
+			expectChoice:   nil,
 		},
 		{
-			name:            "tools disabled with history tool_use — tools kept, tool_choice none",
-			toolsDisabled:   true,
-			toolUseHistory:  true,
-			expectTools:     true,
-			expectChoice:    &noneStr,
+			name:           "tools disabled with history tool_use — tools kept, tool_choice none",
+			toolsDisabled:  true,
+			toolUseHistory: true,
+			expectTools:    true,
+			expectChoice:   &noneStr,
 		},
 		{
-			name:            "tools enabled with history tool_use — tools included, no override",
-			toolsDisabled:   false,
-			toolUseHistory:  true,
-			expectTools:     true,
-			expectChoice:    nil,
+			name:           "tools enabled with history tool_use — tools included, no override",
+			toolsDisabled:  false,
+			toolUseHistory: true,
+			expectTools:    true,
+			expectChoice:   nil,
 		},
 	}
 
@@ -1443,32 +1443,32 @@ func TestConvertToBifrostResponsesRequestToolChoiceNone(t *testing.T) {
 	noneStr := string(schemas.ResponsesToolChoiceTypeNone)
 
 	tests := []struct {
-		name             string
-		toolsDisabled    bool
-		toolUseHistory   bool
-		expectFuncTools  bool
-		expectChoice     *string
+		name            string
+		toolsDisabled   bool
+		toolUseHistory  bool
+		expectFuncTools bool
+		expectChoice    *string
 	}{
 		{
-			name:             "tools enabled — function tools included, no tool_choice override",
-			toolsDisabled:    false,
-			toolUseHistory:   false,
-			expectFuncTools:  true,
-			expectChoice:     nil,
+			name:            "tools enabled — function tools included, no tool_choice override",
+			toolsDisabled:   false,
+			toolUseHistory:  false,
+			expectFuncTools: true,
+			expectChoice:    nil,
 		},
 		{
-			name:             "tools disabled, no history — function tools omitted, no tool_choice",
-			toolsDisabled:    true,
-			toolUseHistory:   false,
-			expectFuncTools:  false,
-			expectChoice:     nil,
+			name:            "tools disabled, no history — function tools omitted, no tool_choice",
+			toolsDisabled:   true,
+			toolUseHistory:  false,
+			expectFuncTools: false,
+			expectChoice:    nil,
 		},
 		{
-			name:             "tools disabled with history tool_use — function tools kept, tool_choice none",
-			toolsDisabled:    true,
-			toolUseHistory:   true,
-			expectFuncTools:  true,
-			expectChoice:     &noneStr,
+			name:            "tools disabled with history tool_use — function tools kept, tool_choice none",
+			toolsDisabled:   true,
+			toolUseHistory:  true,
+			expectFuncTools: true,
+			expectChoice:    &noneStr,
 		},
 	}
 
