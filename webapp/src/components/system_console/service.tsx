@@ -62,6 +62,9 @@ function serviceTypeToDisplayName(intl: IntlShape, serviceType: string): string 
 type ModelInfo = {
     id: string
     displayName: string
+    inputTokenLimit?: number
+    outputTokenLimit?: number
+    contextLength?: number
 }
 
 type ServiceFieldsProps = {
@@ -69,7 +72,7 @@ type ServiceFieldsProps = {
     onChange: (service: LLMService) => void
 }
 
-const ServiceFields = (props: ServiceFieldsProps) => {
+export const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
     const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale';
@@ -81,6 +84,12 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
+
+    // Track the most recent admin-typed values so they can be restored when the
+    // selected model switches between Bifrost-known (disabled, auto-filled) and
+    // unknown (editable). Initialised from the stored service config.
+    const [manualInputLimit, setManualInputLimit] = useState<number>(props.service.tokenLimit);
+    const [manualOutputLimit, setManualOutputLimit] = useState<number>(props.service.outputTokenLimit);
 
     const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex';
 
@@ -161,6 +170,36 @@ const ServiceFields = (props: ServiceFieldsProps) => {
             loadModelsHelpText = modelsFetchError;
         }
     }
+
+    // Find the currently-selected model in the fetched list so we can lock
+    // the token-limit inputs to provider-reported values when available.
+    const selectedFetchedModel = availableModels.find((m) => m.id === props.service.defaultModel);
+    const bifrostInputTokenLimit = selectedFetchedModel?.inputTokenLimit;
+    const bifrostOutputTokenLimit = selectedFetchedModel?.outputTokenLimit;
+    const inputAutoFromProvider = bifrostInputTokenLimit !== undefined;
+    const outputAutoFromProvider = bifrostOutputTokenLimit !== undefined;
+    const autoFromProviderHelpText = intl.formatMessage({defaultMessage: 'Auto-detected from provider'});
+
+    // The effective value carried in props.service is what gets persisted. When
+    // Bifrost reports a limit we want the persisted value to match the
+    // displayed one; when the model is unknown we restore the admin's most
+    // recent manual entry.
+    const effectiveInputLimit = inputAutoFromProvider ? (bifrostInputTokenLimit as number) : manualInputLimit;
+    const effectiveOutputLimit = outputAutoFromProvider ? (bifrostOutputTokenLimit as number) : manualOutputLimit;
+
+    useEffect(() => {
+        if (props.service.tokenLimit !== effectiveInputLimit) {
+            props.onChange({...props.service, tokenLimit: effectiveInputLimit});
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [effectiveInputLimit]);
+
+    useEffect(() => {
+        if (props.service.outputTokenLimit !== effectiveOutputLimit) {
+            props.onChange({...props.service, outputTokenLimit: effectiveOutputLimit});
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [effectiveOutputLimit]);
 
     return (
         <>
@@ -312,20 +351,26 @@ const ServiceFields = (props: ServiceFieldsProps) => {
             <TextItem
                 label={intl.formatMessage({defaultMessage: 'Input token limit'})}
                 type='number'
-                value={props.service.tokenLimit.toString()}
+                value={effectiveInputLimit.toString()}
+                disabled={inputAutoFromProvider}
+                helptext={inputAutoFromProvider ? autoFromProviderHelpText : ''}
                 onChange={(e) => {
                     const value = parseInt(e.target.value, 10);
                     const tokenLimit = isNaN(value) ? 0 : value;
+                    setManualInputLimit(tokenLimit);
                     props.onChange({...props.service, tokenLimit});
                 }}
             />
             <TextItem
                 label={intl.formatMessage({defaultMessage: 'Output token limit'})}
                 type='number'
-                value={props.service.outputTokenLimit?.toString() || getDefaultOutputTokenLimit()}
+                value={(outputAutoFromProvider ? effectiveOutputLimit : (effectiveOutputLimit || parseInt(getDefaultOutputTokenLimit(), 10))).toString()}
+                disabled={outputAutoFromProvider}
+                helptext={outputAutoFromProvider ? autoFromProviderHelpText : ''}
                 onChange={(e) => {
                     const value = parseInt(e.target.value, 10);
                     const outputTokenLimit = isNaN(value) ? 0 : value;
+                    setManualOutputLimit(outputTokenLimit);
                     props.onChange({...props.service, outputTokenLimit});
                 }}
             />

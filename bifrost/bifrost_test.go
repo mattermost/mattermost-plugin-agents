@@ -1350,3 +1350,118 @@ func TestEnvProxyRouting(t *testing.T) {
 	assert.True(t, proxyHit.Load(), "request should have been tunneled through the proxy")
 	assert.True(t, backendHit.Load(), "request should have reached the backend")
 }
+
+func TestConvertChatUsage(t *testing.T) {
+	usage := &schemas.BifrostLLMUsage{
+		PromptTokens:     1200,
+		CompletionTokens: 350,
+		TotalTokens:      1550,
+		PromptTokensDetails: &schemas.ChatPromptTokensDetails{
+			CachedReadTokens:  800,
+			CachedWriteTokens: 100,
+		},
+		CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
+			ReasoningTokens: 64,
+		},
+		Cost: &schemas.BifrostCost{
+			TotalCost: 0.0123,
+		},
+	}
+
+	got := convertChatUsage(usage)
+	assert.Equal(t, int64(1200), got.InputTokens)
+	assert.Equal(t, int64(350), got.OutputTokens)
+	assert.Equal(t, int64(800), got.CachedReadTokens)
+	assert.Equal(t, int64(100), got.CachedWriteTokens)
+	assert.Equal(t, int64(64), got.ReasoningTokens)
+	assert.InDelta(t, 0.0123, got.Cost, 1e-9)
+}
+
+func TestCountRequestTokens(t *testing.T) {
+	var backendHit atomic.Bool
+	var receivedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHit.Store(true)
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 42}`))
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	count, err := llmClient.CountRequestTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 42, count)
+	assert.True(t, backendHit.Load(), "count_tokens endpoint should have been hit")
+	assert.Equal(t, "/v1/messages/count_tokens", receivedPath)
+}
+
+func TestOutputTokenLimit(t *testing.T) {
+	tests := []struct {
+		name             string
+		outputTokenLimit int
+		expected         int
+	}{
+		{name: "zero returned as-is", outputTokenLimit: 0, expected: 0},
+		{name: "configured value returned as-is", outputTokenLimit: 4096, expected: 4096},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{outputTokenLimit: tt.outputTokenLimit}
+			assert.Equal(t, tt.expected, b.OutputTokenLimit())
+		})
+	}
+}
+
+func TestInputTokenLimit(t *testing.T) {
+	tests := []struct {
+		name            string
+		inputTokenLimit int
+		provider        schemas.ModelProvider
+		expected        int
+	}{
+		{
+			name:            "zero means no client-side truncation",
+			inputTokenLimit: 0,
+			provider:        schemas.OpenAI,
+			expected:        0,
+		},
+		{
+			name:            "configured value returned as-is",
+			inputTokenLimit: 12345,
+			provider:        schemas.Anthropic,
+			expected:        12345,
+		},
+		{
+			name:            "provider field is not consulted for zero",
+			inputTokenLimit: 0,
+			provider:        schemas.Bedrock,
+			expected:        0,
+		},
+		{
+			name:            "provider field is not consulted for non-zero",
+			inputTokenLimit: 50000,
+			provider:        schemas.Bedrock,
+			expected:        50000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{inputTokenLimit: tt.inputTokenLimit, provider: tt.provider}
+			assert.Equal(t, tt.expected, b.InputTokenLimit())
+		})
+	}
+}

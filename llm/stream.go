@@ -27,10 +27,16 @@ const (
 	EventTypeUsage
 )
 
-// TokenUsage represents token usage statistics for an LLM request
+// TokenUsage represents token usage statistics for an LLM request.
+// Cached / reasoning / cost fields are populated by providers that report them
+// (mostly Anthropic and OpenAI via Bifrost) and stay zero otherwise.
 type TokenUsage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
+	InputTokens       int64   `json:"input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CachedReadTokens  int64   `json:"cached_read_tokens,omitempty"`
+	CachedWriteTokens int64   `json:"cached_write_tokens,omitempty"`
+	ReasoningTokens   int64   `json:"reasoning_tokens,omitempty"`
+	Cost              float64 `json:"cost,omitempty"`
 }
 
 // ReasoningData represents the complete reasoning/thinking data including signature

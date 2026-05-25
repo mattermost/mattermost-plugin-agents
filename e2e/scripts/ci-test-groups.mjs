@@ -78,6 +78,7 @@ const groups = {
         'tests/rhs-core/file-upload-drag-drop.spec.ts',
         'tests/system-console/mcp-panel.spec.ts',
         'tests/system-console/service-management-ui.spec.ts',
+        'tests/system-console/token-limit-auto-detect.spec.ts',
         'tests/rhs-core/direct-channel-creation.spec.ts',
         'tests/system-console/bot-management-ui.spec.ts',
         'tests/semantic-search/search-entry-points.spec.ts',

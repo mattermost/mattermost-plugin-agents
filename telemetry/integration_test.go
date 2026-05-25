@@ -117,6 +117,7 @@ func (f *fakeLLM) ChatCompletionNoStream(ctx context.Context, request llm.Comple
 
 func (f *fakeLLM) CountTokens(text string) int { return len(text) / 4 }
 func (f *fakeLLM) InputTokenLimit() int        { return 100000 }
+func (f *fakeLLM) OutputTokenLimit() int       { return 8192 }
 
 // fakeLLMError simulates an LLM that produces an error span.
 type fakeLLMError struct {
@@ -154,6 +155,7 @@ func (f *fakeLLMError) ChatCompletionNoStream(ctx context.Context, request llm.C
 
 func (f *fakeLLMError) CountTokens(text string) int { return len(text) / 4 }
 func (f *fakeLLMError) InputTokenLimit() int        { return 100000 }
+func (f *fakeLLMError) OutputTokenLimit() int       { return 8192 }
 
 func TestLLMChatCompletionSpan(t *testing.T) {
 	exporter, cleanup := setupTestTracing(t)

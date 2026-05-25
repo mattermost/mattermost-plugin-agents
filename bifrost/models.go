@@ -64,8 +64,15 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 		return []llm.ModelInfo{}, nil
 	}
 
-	models := make([]llm.ModelInfo, 0, len(resp.Data))
-	for _, m := range resp.Data {
+	return convertBifrostModels(resp.Data), nil
+}
+
+// convertBifrostModels maps Bifrost's Model entries into llm.ModelInfo,
+// stripping the provider prefix from the ID and carrying through the
+// per-model token-limit pointers when the provider populates them.
+func convertBifrostModels(in []schemas.Model) []llm.ModelInfo {
+	out := make([]llm.ModelInfo, 0, len(in))
+	for _, m := range in {
 		modelID := m.ID
 		if idx := strings.Index(modelID, "/"); idx >= 0 {
 			modelID = modelID[idx+1:]
@@ -74,13 +81,15 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 		if m.Name != nil && *m.Name != "" {
 			displayName = *m.Name
 		}
-		models = append(models, llm.ModelInfo{
-			ID:          modelID,
-			DisplayName: displayName,
+		out = append(out, llm.ModelInfo{
+			ID:               modelID,
+			DisplayName:      displayName,
+			InputTokenLimit:  m.MaxInputTokens,
+			OutputTokenLimit: m.MaxOutputTokens,
+			ContextLength:    m.ContextLength,
 		})
 	}
-
-	return models, nil
+	return out
 }
 
 // FetchModelsForServiceType fetches models for a given service type string.

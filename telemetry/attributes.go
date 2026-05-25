@@ -15,8 +15,12 @@ var (
 	LLMOperation = attribute.Key("agents.llm.operation")
 	LLMStreaming = attribute.Key("agents.llm.streaming")
 
-	LLMInputTokens  = attribute.Key("agents.llm.input_tokens")
-	LLMOutputTokens = attribute.Key("agents.llm.output_tokens")
+	LLMInputTokens       = attribute.Key("agents.llm.input_tokens")
+	LLMOutputTokens      = attribute.Key("agents.llm.output_tokens")
+	LLMCachedReadTokens  = attribute.Key("agents.llm.cached_read_tokens")
+	LLMCachedWriteTokens = attribute.Key("agents.llm.cached_write_tokens")
+	LLMReasoningTokens   = attribute.Key("agents.llm.reasoning_tokens")
+	LLMCost              = attribute.Key("agents.llm.cost")
 )
 
 // Attribute keys for agent context

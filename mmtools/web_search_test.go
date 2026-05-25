@@ -650,3 +650,4 @@ func (m *mockLanguageModel) ChatCompletionNoStream(_ context.Context, _ llm.Comp
 }
 func (m *mockLanguageModel) CountTokens(text string) int { return 0 }
 func (m *mockLanguageModel) InputTokenLimit() int        { return 1000 }
+func (m *mockLanguageModel) OutputTokenLimit() int       { return 1000 }

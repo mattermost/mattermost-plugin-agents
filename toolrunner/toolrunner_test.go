@@ -63,6 +63,7 @@ func (m *testLLM) ChatCompletionNoStream(ctx context.Context, req llm.Completion
 
 func (m *testLLM) CountTokens(_ string) int { return 1 }
 func (m *testLLM) InputTokenLimit() int     { return 4096 }
+func (m *testLLM) OutputTokenLimit() int    { return 4096 }
 
 // testToolDef defines a test tool for newTestToolStore.
 type testToolDef struct {
@@ -112,6 +113,7 @@ func (c *optCapturingLLM) ChatCompletionNoStream(ctx context.Context, req llm.Co
 
 func (c *optCapturingLLM) CountTokens(text string) int { return c.inner.CountTokens(text) }
 func (c *optCapturingLLM) InputTokenLimit() int        { return c.inner.InputTokenLimit() }
+func (c *optCapturingLLM) OutputTokenLimit() int       { return c.inner.OutputTokenLimit() }
 
 func TestToolRunner_NoToolCalls(t *testing.T) {
 	// LLM returns text only, no tool calls.

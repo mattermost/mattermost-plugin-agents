@@ -46,6 +46,10 @@ func (w *StructuredOutputFallbackWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
 }
 
+func (w *StructuredOutputFallbackWrapper) OutputTokenLimit() int {
+	return w.wrapped.OutputTokenLimit()
+}
+
 func hasJSONOutputSchema(opts []LanguageModelOption) bool {
 	var cfg LanguageModelConfig
 	for _, opt := range opts {

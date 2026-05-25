@@ -7,10 +7,58 @@ import (
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
+
+func TestConvertBifrostModels(t *testing.T) {
+	intPtr := func(v int) *int { return &v }
+	strPtr := func(s string) *string { return &s }
+
+	input := []schemas.Model{
+		{
+			ID:              "anthropic/claude-sonnet-4-5",
+			Name:            strPtr("Claude Sonnet 4.5"),
+			MaxInputTokens:  intPtr(200000),
+			MaxOutputTokens: intPtr(8192),
+			ContextLength:   intPtr(200000),
+		},
+		{
+			ID:            "openai/gpt-4o",
+			ContextLength: intPtr(128000),
+		},
+		{
+			// Provider gave us nothing — pointers stay nil.
+			ID: "custom-model",
+		},
+	}
+
+	got := convertBifrostModels(input)
+	require.Len(t, got, 3)
+
+	assert.Equal(t, "claude-sonnet-4-5", got[0].ID)
+	assert.Equal(t, "Claude Sonnet 4.5", got[0].DisplayName)
+	require.NotNil(t, got[0].InputTokenLimit)
+	assert.Equal(t, 200000, *got[0].InputTokenLimit)
+	require.NotNil(t, got[0].OutputTokenLimit)
+	assert.Equal(t, 8192, *got[0].OutputTokenLimit)
+	require.NotNil(t, got[0].ContextLength)
+	assert.Equal(t, 200000, *got[0].ContextLength)
+
+	assert.Equal(t, "gpt-4o", got[1].ID)
+	assert.Equal(t, "gpt-4o", got[1].DisplayName)
+	assert.Nil(t, got[1].InputTokenLimit, "MaxInputTokens not provided → nil")
+	assert.Nil(t, got[1].OutputTokenLimit, "MaxOutputTokens not provided → nil")
+	require.NotNil(t, got[1].ContextLength)
+	assert.Equal(t, 128000, *got[1].ContextLength)
+
+	assert.Equal(t, "custom-model", got[2].ID)
+	assert.Nil(t, got[2].InputTokenLimit)
+	assert.Nil(t, got[2].OutputTokenLimit)
+	assert.Nil(t, got[2].ContextLength)
+}
 
 func TestNormalizeFetchModelsAPIURL(t *testing.T) {
 	tests := []struct {

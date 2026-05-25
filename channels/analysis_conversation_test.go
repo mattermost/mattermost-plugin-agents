@@ -223,6 +223,7 @@ func (f *fakeLLM) ChatCompletionNoStream(_ context.Context, _ llm.CompletionRequ
 
 func (f *fakeLLM) CountTokens(_ string) int { return 0 }
 func (f *fakeLLM) InputTokenLimit() int     { return 100000 }
+func (f *fakeLLM) OutputTokenLimit() int    { return 8192 }
 
 // makeTool creates a minimal llm.Tool with a simple resolver for testing.
 func makeTool(name, result string) llm.Tool {

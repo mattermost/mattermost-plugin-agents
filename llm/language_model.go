@@ -32,6 +32,7 @@ type LanguageModel interface {
 
 	CountTokens(text string) int
 	InputTokenLimit() int
+	OutputTokenLimit() int
 }
 
 type LanguageModelConfig struct {
@@ -82,3 +83,13 @@ func WithReasoningDisabled() LanguageModelOption {
 }
 
 type LanguageModelWrapper func(LanguageModel) LanguageModel
+
+// TokenCounter is an optional interface implemented by LanguageModels that
+// support exact provider-side input token counting (Anthropic, OpenAI, Bedrock,
+// Vertex via Bifrost). Wrappers can type-assert and use it as a safety check
+// when the heuristic count is near the model's limit. Returns an error when
+// the underlying provider does not support count-tokens — callers should treat
+// that as "no exact count available" and continue with the heuristic.
+type TokenCounter interface {
+	CountRequestTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error)
+}

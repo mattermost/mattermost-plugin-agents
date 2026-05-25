@@ -41,6 +41,18 @@ func (m *MockLanguageModel) InputTokenLimit() int {
 	return args.Int(0)
 }
 
+func (m *MockLanguageModel) OutputTokenLimit() int {
+	args := m.Called()
+	return args.Int(0)
+}
+
+// CountRequestTokens lets MockLanguageModel satisfy the optional llm.TokenCounter
+// interface used by TruncationWrapper's safety check.
+func (m *MockLanguageModel) CountRequestTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	args := m.Called(ctx, request, opts)
+	return args.Int(0), args.Error(1)
+}
+
 type observedTokenUsage struct {
 	botName      string
 	teamID       string
@@ -314,6 +326,44 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 	}
 }
 
+func TestBuildTokenUsageLogKeyValuePairsIncludesRichUsageFields(t *testing.T) {
+	dimensions := tokenUsageDimensions{
+		userID:           "user-1",
+		teamID:           "team-1",
+		channelID:        "channel-1",
+		channelType:      "open",
+		botName:          "Agent Bot",
+		botUsername:      "agent",
+		botUserID:        "bot-user-1",
+		model:            "claude-sonnet-4-5",
+		serviceType:      "anthropic",
+		operation:        OperationConversation,
+		operationSubType: SubTypeStreaming,
+	}
+	usage := TokenUsage{
+		InputTokens:       1000,
+		OutputTokens:      300,
+		CachedReadTokens:  800,
+		CachedWriteTokens: 100,
+		ReasoningTokens:   64,
+		Cost:              0.0123,
+	}
+
+	fields := buildTokenUsageLogKeyValuePairs(dimensions, usage)
+
+	// Schema version must be bumped because the field set changed.
+	assert.Equal(t, 2, TokenUsageLogSchemaVersion)
+
+	keyed := map[string]any{}
+	for i := 0; i+1 < len(fields); i += 2 {
+		keyed[fields[i].(string)] = fields[i+1]
+	}
+	assert.Equal(t, int64(800), keyed["cached_read_tokens"])
+	assert.Equal(t, int64(100), keyed["cached_write_tokens"])
+	assert.Equal(t, int64(64), keyed["reasoning_tokens"])
+	assert.Equal(t, 0.0123, keyed["cost"])
+}
+
 func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 	dimensions := tokenUsageDimensions{
 		userID:           "user-1",
@@ -348,6 +398,10 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 		"input_tokens", int64(11),
 		"output_tokens", int64(7),
 		"total_tokens", int64(18),
+		"cached_read_tokens", int64(0),
+		"cached_write_tokens", int64(0),
+		"reasoning_tokens", int64(0),
+		"cost", float64(0),
 	}
 
 	actual := buildTokenUsageLogKeyValuePairs(dimensions, usage)

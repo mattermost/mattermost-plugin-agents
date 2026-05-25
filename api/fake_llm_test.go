@@ -146,6 +146,11 @@ func (f *FakeLLM) InputTokenLimit() int {
 	return 100000 // Default reasonable limit
 }
 
+// OutputTokenLimit returns a default output token limit for tests.
+func (f *FakeLLM) OutputTokenLimit() int {
+	return 8192
+}
+
 func (f *FakeLLM) LastRequest() llm.CompletionRequest {
 	f.mu.RLock()
 	defer f.mu.RUnlock()

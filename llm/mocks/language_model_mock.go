@@ -256,3 +256,47 @@ func (_c *MockLanguageModel_InputTokenLimit_Call) RunAndReturn(run func() int) *
 	_c.Call.Return(run)
 	return _c
 }
+
+// OutputTokenLimit provides a mock function for the type MockLanguageModel
+func (_mock *MockLanguageModel) OutputTokenLimit() int {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for OutputTokenLimit")
+	}
+
+	var r0 int
+	if returnFunc, ok := ret.Get(0).(func() int); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+	return r0
+}
+
+// MockLanguageModel_OutputTokenLimit_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OutputTokenLimit'
+type MockLanguageModel_OutputTokenLimit_Call struct {
+	*mock.Call
+}
+
+// OutputTokenLimit is a helper method to define mock.On call
+func (_e *MockLanguageModel_Expecter) OutputTokenLimit() *MockLanguageModel_OutputTokenLimit_Call {
+	return &MockLanguageModel_OutputTokenLimit_Call{Call: _e.mock.On("OutputTokenLimit")}
+}
+
+func (_c *MockLanguageModel_OutputTokenLimit_Call) Run(run func()) *MockLanguageModel_OutputTokenLimit_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockLanguageModel_OutputTokenLimit_Call) Return(n int) *MockLanguageModel_OutputTokenLimit_Call {
+	_c.Call.Return(n)
+	return _c
+}
+
+func (_c *MockLanguageModel_OutputTokenLimit_Call) RunAndReturn(run func() int) *MockLanguageModel_OutputTokenLimit_Call {
+	_c.Call.Return(run)
+	return _c
+}

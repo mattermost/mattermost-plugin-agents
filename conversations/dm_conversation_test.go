@@ -300,6 +300,7 @@ func (f *dmTestLLM) ChatCompletionNoStream(_ context.Context, request llm.Comple
 
 func (f *dmTestLLM) CountTokens(string) int { return 0 }
 func (f *dmTestLLM) InputTokenLimit() int   { return 100000 }
+func (f *dmTestLLM) OutputTokenLimit() int  { return 8192 }
 
 // dmMakeTextStream creates a TextStreamResult that emits the given text and closes.
 func dmMakeTextStream(text string) *llm.TextStreamResult {

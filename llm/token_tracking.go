@@ -178,6 +178,10 @@ func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage Toke
 		"input_tokens", usage.InputTokens,
 		"output_tokens", usage.OutputTokens,
 		"total_tokens", totalTokens,
+		"cached_read_tokens", usage.CachedReadTokens,
+		"cached_write_tokens", usage.CachedWriteTokens,
+		"reasoning_tokens", usage.ReasoningTokens,
+		"cost", usage.Cost,
 	}
 }
 
@@ -331,4 +335,9 @@ func (w *TokenUsageLoggingWrapper) CountTokens(text string) int {
 // InputTokenLimit delegates to the wrapped model
 func (w *TokenUsageLoggingWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
+}
+
+// OutputTokenLimit delegates to the wrapped model
+func (w *TokenUsageLoggingWrapper) OutputTokenLimit() int {
+	return w.wrapped.OutputTokenLimit()
 }

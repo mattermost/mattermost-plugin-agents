@@ -43,3 +43,7 @@ func (w *LanguageModelTestLogWrapper) CountTokens(text string) int {
 func (w *LanguageModelTestLogWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
 }
+
+func (w *LanguageModelTestLogWrapper) OutputTokenLimit() int {
+	return w.wrapped.OutputTokenLimit()
+}

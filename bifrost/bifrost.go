@@ -20,7 +20,9 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
@@ -537,21 +539,108 @@ func (b *LLM) CountTokens(text string) int {
 	return int((charCount + wordCount) / 2.0)
 }
 
-// InputTokenLimit returns the maximum number of input tokens supported.
+// InputTokenLimit returns the configured maximum number of input tokens.
+// Zero means "no client-side truncation" — the provider's own limit applies.
 func (b *LLM) InputTokenLimit() int {
-	if b.inputTokenLimit > 0 {
-		return b.inputTokenLimit
+	return b.inputTokenLimit
+}
+
+// OutputTokenLimit returns the configured maximum number of output tokens.
+// Zero means the request-building layer falls back to DefaultMaxTokens.
+func (b *LLM) OutputTokenLimit() int {
+	return b.outputTokenLimit
+}
+
+// setTokenUsageSpanAttributes mirrors setUsageAttributes (which operates on a
+// raw Bifrost usage payload) but consumes our already-converted TokenUsage so
+// the streaming handlers in this file can record the same per-request span
+// detail.
+func setTokenUsageSpanAttributes(span trace.Span, usage llm.TokenUsage) {
+	attrs := []attribute.KeyValue{
+		telemetry.LLMInputTokens.Int64(usage.InputTokens),
+		telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
+	}
+	if usage.CachedReadTokens > 0 {
+		attrs = append(attrs, telemetry.LLMCachedReadTokens.Int64(usage.CachedReadTokens))
+	}
+	if usage.CachedWriteTokens > 0 {
+		attrs = append(attrs, telemetry.LLMCachedWriteTokens.Int64(usage.CachedWriteTokens))
+	}
+	if usage.ReasoningTokens > 0 {
+		attrs = append(attrs, telemetry.LLMReasoningTokens.Int64(usage.ReasoningTokens))
+	}
+	if usage.Cost > 0 {
+		attrs = append(attrs, telemetry.LLMCost.Float64(usage.Cost))
+	}
+	span.SetAttributes(attrs...)
+}
+
+// convertChatUsage maps Bifrost's chat-completions usage payload onto our
+// internal TokenUsage shape, including cached / reasoning / cost detail when
+// the provider supplied it.
+func convertChatUsage(u *schemas.BifrostLLMUsage) llm.TokenUsage {
+	if u == nil {
+		return llm.TokenUsage{}
+	}
+	usage := llm.TokenUsage{
+		InputTokens:  int64(u.PromptTokens),
+		OutputTokens: int64(u.CompletionTokens),
+	}
+	if u.PromptTokensDetails != nil {
+		usage.CachedReadTokens = int64(u.PromptTokensDetails.CachedReadTokens)
+		usage.CachedWriteTokens = int64(u.PromptTokensDetails.CachedWriteTokens)
+	}
+	if u.CompletionTokensDetails != nil {
+		usage.ReasoningTokens = int64(u.CompletionTokensDetails.ReasoningTokens)
+	}
+	if u.Cost != nil {
+		usage.Cost = u.Cost.TotalCost
+	}
+	return usage
+}
+
+// convertResponsesUsage mirrors convertChatUsage for the Responses API payload.
+func convertResponsesUsage(u *schemas.ResponsesResponseUsage) llm.TokenUsage {
+	if u == nil {
+		return llm.TokenUsage{}
+	}
+	usage := llm.TokenUsage{
+		InputTokens:  int64(u.InputTokens),
+		OutputTokens: int64(u.OutputTokens),
+	}
+	if u.InputTokensDetails != nil {
+		usage.CachedReadTokens = int64(u.InputTokensDetails.CachedReadTokens)
+		usage.CachedWriteTokens = int64(u.InputTokensDetails.CachedWriteTokens)
+	}
+	if u.OutputTokensDetails != nil {
+		usage.ReasoningTokens = int64(u.OutputTokensDetails.ReasoningTokens)
+	}
+	if u.Cost != nil {
+		usage.Cost = u.Cost.TotalCost
+	}
+	return usage
+}
+
+// CountRequestTokens asks the provider for an exact input-token count for the
+// given request. Supported on Anthropic, OpenAI, Bedrock and Vertex; other
+// providers return an UnsupportedOperationError that the caller should treat as
+// "no exact count available" and fall back to a heuristic.
+func (b *LLM) CountRequestTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
+	cfg := b.createConfig(opts)
+	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	if err != nil {
+		return 0, fmt.Errorf("failed to build count tokens request: %w", err)
 	}
 
-	// Default limits based on provider
-	switch b.provider {
-	case schemas.OpenAI, schemas.Anthropic:
-		return 128000
-	case schemas.Bedrock:
-		return 200000
-	default:
-		return 128000
+	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+	resp, bifrostErr := b.client.CountTokensRequest(bifrostCtx, bifrostReq)
+	if bifrostErr != nil {
+		return 0, llm.SanitizeProviderError(fmt.Errorf("bifrost count tokens error: %s", bifrostErr.Error.Message), b.apiKey)
 	}
+	if resp == nil {
+		return 0, fmt.Errorf("bifrost count tokens returned nil response")
+	}
+	return resp.InputTokens, nil
 }
 
 // streamChat handles the streaming chat completion.
@@ -738,15 +827,9 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 
 			// Handle usage data
 			if resp.Usage != nil {
-				usage := llm.TokenUsage{
-					InputTokens:  int64(resp.Usage.PromptTokens),
-					OutputTokens: int64(resp.Usage.CompletionTokens),
-				}
+				usage := convertChatUsage(resp.Usage)
 				if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-					span.SetAttributes(
-						telemetry.LLMInputTokens.Int64(usage.InputTokens),
-						telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
-					)
+					setTokenUsageSpanAttributes(span, usage)
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeUsage,
 						Value: usage,
@@ -1899,15 +1982,9 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 				// Handle usage data from completed response
 				if resp.Response != nil && resp.Response.Usage != nil {
-					usage := llm.TokenUsage{
-						InputTokens:  int64(resp.Response.Usage.InputTokens),
-						OutputTokens: int64(resp.Response.Usage.OutputTokens),
-					}
+					usage := convertResponsesUsage(resp.Response.Usage)
 					if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-						span.SetAttributes(
-							telemetry.LLMInputTokens.Int64(usage.InputTokens),
-							telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
-						)
+						setTokenUsageSpanAttributes(span, usage)
 						output <- llm.TextStreamEvent{
 							Type:  llm.EventTypeUsage,
 							Value: usage,

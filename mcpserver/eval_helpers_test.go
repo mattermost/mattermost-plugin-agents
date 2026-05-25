@@ -542,6 +542,10 @@ func (w *evalStreamLogger) InputTokenLimit() int {
 	return w.inner.InputTokenLimit()
 }
 
+func (w *evalStreamLogger) OutputTokenLimit() int {
+	return w.inner.OutputTokenLimit()
+}
+
 // agenticEvalSetup holds the components needed for agentic flow evals.
 type agenticEvalSetup struct {
 	llm          llm.LanguageModel

@@ -105,6 +105,7 @@ func (t *testLLM) ChatCompletionNoStream(_ context.Context, _ llm.CompletionRequ
 
 func (t *testLLM) CountTokens(_ string) int { return 0 }
 func (t *testLLM) InputTokenLimit() int     { return 100000 }
+func (t *testLLM) OutputTokenLimit() int    { return 8192 }
 
 func stringPtr(s string) *string { return &s }
 

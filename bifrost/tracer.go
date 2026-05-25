@@ -143,10 +143,7 @@ func (t *otelTracer) PopulateLLMResponseAttributes(_ *bschemas.BifrostContext, h
 		return
 	}
 	if usage := chatUsage(resp); usage != nil {
-		h.span.SetAttributes(
-			telemetry.LLMInputTokens.Int64(int64(usage.PromptTokens)),
-			telemetry.LLMOutputTokens.Int64(int64(usage.CompletionTokens)),
-		)
+		setUsageAttributes(h.span, usage)
 	}
 	if bErr != nil && bErr.Error != nil {
 		h.span.SetStatus(otelcodes.Error, bErr.Error.Message)
@@ -319,6 +316,32 @@ func (t *otelTracer) Stop() {
 	t.streamFirstAt = map[string]time.Time{}
 	t.streamResponse = map[string]*bschemas.BifrostResponse{}
 	t.mu.Unlock()
+}
+
+// setUsageAttributes copies token-count detail from a Bifrost usage payload onto
+// the active span. Cached / reasoning / cost attributes are only set when the
+// provider reported a non-zero value, to keep span attribute noise low for
+// providers that don't expose them.
+func setUsageAttributes(span trace.Span, usage *bschemas.BifrostLLMUsage) {
+	attrs := []attribute.KeyValue{
+		telemetry.LLMInputTokens.Int64(int64(usage.PromptTokens)),
+		telemetry.LLMOutputTokens.Int64(int64(usage.CompletionTokens)),
+	}
+	if d := usage.PromptTokensDetails; d != nil {
+		if d.CachedReadTokens > 0 {
+			attrs = append(attrs, telemetry.LLMCachedReadTokens.Int64(int64(d.CachedReadTokens)))
+		}
+		if d.CachedWriteTokens > 0 {
+			attrs = append(attrs, telemetry.LLMCachedWriteTokens.Int64(int64(d.CachedWriteTokens)))
+		}
+	}
+	if d := usage.CompletionTokensDetails; d != nil && d.ReasoningTokens > 0 {
+		attrs = append(attrs, telemetry.LLMReasoningTokens.Int64(int64(d.ReasoningTokens)))
+	}
+	if usage.Cost != nil && usage.Cost.TotalCost > 0 {
+		attrs = append(attrs, telemetry.LLMCost.Float64(usage.Cost.TotalCost))
+	}
+	span.SetAttributes(attrs...)
 }
 
 // chatUsage returns the chat-completion usage struct from a BifrostResponse,
