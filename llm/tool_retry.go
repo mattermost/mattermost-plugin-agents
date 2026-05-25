@@ -9,7 +9,7 @@ const MaxConsecutiveToolCallFailures = 3
 
 const ToolRetryLimitSystemMessage = "The last 3 tool attempts failed. Do not call any more tools. Explain the latest error to the user and ask for guidance or missing information."
 
-const ToolIterationLimitSystemMessage = "You have reached the maximum number of tool-use iterations. You must now respond with a text answer — do not call any more tools. Summarize what you learned from your previous tool results. If you could not find what the user asked for, say so explicitly and describe what you searched for, so the user understands what was attempted. Produce a substantive response even if the answer is that the information was not available."
+const ToolIterationLimitSystemMessage = "You have used all available tool calls. Respond with a text answer now — do not emit any more tool calls. Use the information already returned by your previous tool calls to answer the user's question. If your searches returned no useful results, explicitly say so and describe what you searched for so the user understands what was attempted. You must produce a non-empty written response."
 
 // CountTrailingFailedToolCalls counts consecutive trailing tool executions that
 // failed. A successful tool execution resets the streak. Posts without executed

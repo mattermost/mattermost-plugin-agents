@@ -633,7 +633,9 @@ func TestToolRunner_MaxRoundsExhausted_ProviderIgnoresToolsDisabled(t *testing.T
 
 	text, readErr := result.Stream.ReadAll()
 	require.NoError(t, readErr)
-	assert.Equal(t, ToolIterationLimitFallbackMessage, text, "fallback text must be emitted when synthesis round produced no text")
+	assert.Contains(t, text, fmt.Sprintf("loop_tool×%d", MaxToolRounds-1),
+		"fallback text must include per-tool call counts so the caller has context")
+	assert.Contains(t, text, "more focused question", "fallback text must include the recovery guidance")
 
 	// MaxToolRounds-1 tool turns; the final round's tool call was ignored.
 	assert.Len(t, result.ToolTurns, MaxToolRounds-1)

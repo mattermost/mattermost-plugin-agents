@@ -90,7 +90,7 @@ func TestNewFromServiceConfigOpenAIForcesResponsesAPI(t *testing.T) {
 			bot := llm.BotConfig{
 				EnabledNativeTools: []string{"web_search"},
 			}
-			llmInstance, err := NewFromServiceConfig(service, bot, nil)
+			llmInstance, err := NewFromServiceConfig(service, bot)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantUseResponsesAPI, llmInstance.useResponsesAPI)
 		})
@@ -124,7 +124,7 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 			bot := llm.BotConfig{
 				EnabledNativeTools: []string{"web_search"},
 			}
-			llmInstance, err := NewFromServiceConfig(service, bot, nil)
+			llmInstance, err := NewFromServiceConfig(service, bot)
 			require.NoError(t, err)
 			if tt.wantTools {
 				assert.Equal(t, []string{"web_search"}, llmInstance.enabledNativeTools)
