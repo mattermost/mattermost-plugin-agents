@@ -148,6 +148,45 @@ func TestTruncationWrapperDropsOldestWhenProviderCountExceedsLimit(t *testing.T)
 	inner.AssertExpectations(t)
 }
 
+func TestTruncationWrapperPreservesSystemPromptOnOverflow(t *testing.T) {
+	// System post first, then two near-budget user posts. When the safety
+	// check trips, the user post (oldest non-system) must be dropped — the
+	// system prompt stays.
+	msg := nearBudgetMessage()
+	systemPrompt := "you are a helpful assistant"
+	inner := &MockLanguageModel{}
+	inner.On("InputTokenLimit").Return(1000)
+	inner.On(
+		"CountTokens", mock.Anything, mock.Anything, mock.Anything,
+	).Return(1100, nil).Once()
+	inner.On(
+		"CountTokens", mock.Anything, mock.Anything, mock.Anything,
+	).Return(800, nil).Once()
+	inner.On(
+		"ChatCompletion",
+		mock.Anything,
+		mock.MatchedBy(func(r CompletionRequest) bool {
+			// System post survives at index 0; one user post remains.
+			return len(r.Posts) == 2 &&
+				r.Posts[0].Role == PostRoleSystem &&
+				r.Posts[0].Message == systemPrompt &&
+				r.Posts[1].Role == PostRoleUser
+		}),
+		mock.Anything,
+	).Return(&TextStreamResult{}, nil).Once()
+
+	wrapper := NewLLMTruncationWrapper(inner)
+	_, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
+		Posts: []Post{
+			{Role: PostRoleSystem, Message: systemPrompt},
+			{Role: PostRoleUser, Message: "older-" + msg},
+			{Role: PostRoleUser, Message: "newer-" + msg},
+		},
+	})
+	require.NoError(t, err)
+	inner.AssertExpectations(t)
+}
+
 func TestTruncationWrapperSkipsSafetyCheckWhenUnsupported(t *testing.T) {
 	// Heuristic near budget, but provider returns ErrUnsupportedTokenCount.
 	// The wrapper must not retry and must not drop messages.

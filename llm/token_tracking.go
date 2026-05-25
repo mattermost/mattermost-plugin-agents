@@ -107,6 +107,10 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 				hasUsage = true
 				aggregateUsage.InputTokens += usage.InputTokens
 				aggregateUsage.OutputTokens += usage.OutputTokens
+				aggregateUsage.CachedReadTokens += usage.CachedReadTokens
+				aggregateUsage.CachedWriteTokens += usage.CachedWriteTokens
+				aggregateUsage.ReasoningTokens += usage.ReasoningTokens
+				aggregateUsage.Cost += usage.Cost
 				continue
 			default:
 				interceptedStream <- event

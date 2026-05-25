@@ -188,18 +188,19 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     const effectiveOutputLimit = outputAutoFromProvider ? (bifrostOutputTokenLimit as number) : manualOutputLimit;
 
     useEffect(() => {
-        if (props.service.tokenLimit !== effectiveInputLimit) {
-            props.onChange({...props.service, tokenLimit: effectiveInputLimit});
+        const inputDrift = props.service.tokenLimit !== effectiveInputLimit;
+        const outputDrift = props.service.outputTokenLimit !== effectiveOutputLimit;
+        if (inputDrift || outputDrift) {
+            // Apply both updates in a single onChange so neither field
+            // overwrites the other on subsequent renders.
+            props.onChange({
+                ...props.service,
+                tokenLimit: effectiveInputLimit,
+                outputTokenLimit: effectiveOutputLimit,
+            });
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [effectiveInputLimit]);
-
-    useEffect(() => {
-        if (props.service.outputTokenLimit !== effectiveOutputLimit) {
-            props.onChange({...props.service, outputTokenLimit: effectiveOutputLimit});
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [effectiveOutputLimit]);
+    }, [effectiveInputLimit, effectiveOutputLimit]);
 
     return (
         <>

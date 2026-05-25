@@ -284,12 +284,18 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error) {
 	llmFormattedTranscription := transcription.FormatForLLM()
 	tokens := llm.EstimateTokens(llmFormattedTranscription)
-	tokenLimitWithMargin := int(float64(bot.LLM().InputTokenLimit())*0.75) - ContextTokenMargin
-	if tokenLimitWithMargin < 0 {
-		tokenLimitWithMargin = ContextTokenMargin / 2
+	inputLimit := bot.LLM().InputTokenLimit()
+	// A zero limit means "no client-side truncation" — let the provider
+	// enforce its own cap and skip chunking entirely.
+	tokenLimitWithMargin := 0
+	if inputLimit > 0 {
+		tokenLimitWithMargin = int(float64(inputLimit)*0.75) - ContextTokenMargin
+		if tokenLimitWithMargin < 0 {
+			tokenLimitWithMargin = ContextTokenMargin / 2
+		}
 	}
 	isChunked := false
-	if tokens > tokenLimitWithMargin {
+	if tokenLimitWithMargin > 0 && tokens > tokenLimitWithMargin {
 		s.pluginAPI.Log.Debug("Transcription too long, summarizing in chunks.", "tokens", tokens, "limit", tokenLimitWithMargin)
 		chunks := chunking.SplitPlaintextOnSentences(llmFormattedTranscription, tokenLimitWithMargin*4)
 		summarizedChunks := make([]string, 0, len(chunks))

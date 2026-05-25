@@ -250,18 +250,13 @@ func New(cfg Config) (*LLM, error) {
 		streamingTimeout = DefaultStreamingTimeout
 	}
 
-	outputLimit := cfg.OutputTokenLimit
-	if outputLimit == 0 {
-		outputLimit = DefaultMaxTokens
-	}
-
 	return &LLM{
 		client:             client,
 		provider:           cfg.Provider,
 		apiKey:             cfg.APIKey,
 		defaultModel:       cfg.DefaultModel,
 		inputTokenLimit:    cfg.InputTokenLimit,
-		outputTokenLimit:   outputLimit,
+		outputTokenLimit:   cfg.OutputTokenLimit,
 		streamingTimeout:   streamingTimeout,
 		enabledNativeTools: cfg.EnabledNativeTools,
 		reasoningEnabled:   cfg.ReasoningEnabled,
@@ -279,10 +274,17 @@ func (b *LLM) Shutdown() {
 }
 
 // GetDefaultConfig returns the default language model configuration.
+// When OutputTokenLimit is unset (0), MaxGeneratedTokens substitutes
+// DefaultMaxTokens so providers that require a value (e.g. Anthropic) still
+// receive one.
 func (b *LLM) GetDefaultConfig() llm.LanguageModelConfig {
+	maxGenerated := b.outputTokenLimit
+	if maxGenerated == 0 {
+		maxGenerated = DefaultMaxTokens
+	}
 	return llm.LanguageModelConfig{
 		Model:              b.defaultModel,
-		MaxGeneratedTokens: b.outputTokenLimit,
+		MaxGeneratedTokens: maxGenerated,
 	}
 }
 
@@ -641,7 +643,11 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 	resp, bifrostErr := b.client.CountTokensRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		return 0, llm.SanitizeProviderError(fmt.Errorf("bifrost count tokens error: %s", bifrostErr.Error.Message), b.apiKey)
+		msg := "unknown error"
+		if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
+			msg = bifrostErr.Error.Message
+		}
+		return 0, llm.SanitizeProviderError(fmt.Errorf("bifrost count tokens error: %s", msg), b.apiKey)
 	}
 	if resp == nil {
 		return 0, fmt.Errorf("bifrost count tokens returned nil response")

@@ -63,11 +63,25 @@ func (w *TruncationWrapper) maybeTruncate(ctx context.Context, request *Completi
 	if errors.Is(err, ErrUnsupportedTokenCount) || err != nil || count <= limit {
 		return
 	}
-	if len(request.Posts) <= 1 {
+	// Drop the oldest non-system post. System prompts carry behavioral
+	// instructions and must not silently disappear.
+	if !dropOldestNonSystemPost(request) {
 		return
 	}
-	request.Posts = request.Posts[1:] // drop oldest
 	_, _ = w.wrapped.CountTokens(ctx, *request, opts...)
+}
+
+// dropOldestNonSystemPost removes the first non-system post from the request.
+// Returns true if a post was dropped, false if none was eligible.
+func dropOldestNonSystemPost(request *CompletionRequest) bool {
+	for i, post := range request.Posts {
+		if post.Role == PostRoleSystem {
+			continue
+		}
+		request.Posts = append(request.Posts[:i], request.Posts[i+1:]...)
+		return true
+	}
+	return false
 }
 
 func (w *TruncationWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
