@@ -248,10 +248,6 @@ func (s *Store) CleanupDeletedConversations() error {
 	if err != nil {
 		return fmt.Errorf("failed to delete turns for deleted conversations: %w", err)
 	}
-	_, err = tx.Exec("DELETE FROM LLM_LoadedMCPTools WHERE ConversationID IN (SELECT ID FROM LLM_Conversations WHERE DeleteAt > 0)")
-	if err != nil {
-		return fmt.Errorf("failed to delete loaded MCP tools for deleted conversations: %w", err)
-	}
 	_, err = tx.Exec("DELETE FROM LLM_Conversations WHERE DeleteAt > 0")
 	if err != nil {
 		return fmt.Errorf("failed to delete soft-deleted conversations: %w", err)
