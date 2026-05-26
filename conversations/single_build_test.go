@@ -149,3 +149,47 @@ func TestAttachConversationID_DoesNotMaterializeTools(t *testing.T) {
 	require.True(t, llmCtx.Tools.IsUnloadedMCPTool("jira__get_issue"),
 		"AttachConversationID must not touch the unloaded-set bookkeeping")
 }
+
+// TestAttachConversationID_DoesNotReintroducePreFilteredMCPServers pins that the
+// DM handler does not need a second RemoveToolsByServerOrigin pass after
+// AttachConversationID. buildConversationContextWithTools removes tools whose
+// ServerOrigin is in DisabledMCPServerOrigins for DM/group channels; nothing
+// between that build and AttachConversationID (or AttachConversationID itself)
+// is allowed to re-introduce them.
+func TestAttachConversationID_DoesNotReintroducePreFilteredMCPServers(t *testing.T) {
+	const disabledOrigin = "https://jira.example.com"
+	provider := &countingMCPToolProvider{tools: []llm.Tool{
+		{
+			Name:         "jira__get_issue",
+			Description:  "fetch Jira issue details",
+			ServerOrigin: disabledOrigin,
+			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+			Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+				return "ok", nil
+			},
+		},
+	}}
+	builder := newSingleBuildLLMContextBuilder(t, provider)
+
+	c := &Conversations{contextBuilder: builder}
+	bot := loadedStateBot(nil)
+	user := &model.User{Id: "user-id", Username: "user"}
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+
+	llmCtx := c.buildConversationContextWithTools(
+		context.Background(),
+		bot, user, channel,
+		"",
+		"",
+		builder.WithLLMContextDisabledMCPServers([]string{disabledOrigin}),
+	)
+	require.NotNil(t, llmCtx)
+	require.NotNil(t, llmCtx.Tools)
+	require.Nil(t, llmCtx.Tools.GetTool("jira__get_issue"),
+		"buildConversationContextWithTools must drop tools from disabled MCP servers for DM/group channels")
+
+	c.contextBuilder.AttachConversationID(llmCtx, bot, "conv-4")
+	require.Equal(t, "conv-4", llmCtx.ConversationID)
+	require.Nil(t, llmCtx.Tools.GetTool("jira__get_issue"),
+		"AttachConversationID must not re-introduce tools from disabled MCP servers")
+}
