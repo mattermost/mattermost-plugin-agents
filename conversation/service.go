@@ -415,6 +415,8 @@ func (s *Service) BuildCompletionRequest(
 		}
 	}
 
+	context.RestoreMCPDynamicTools(DeriveLoadedMCPTools(turns))
+
 	posts := make([]llm.Post, 0, len(turns)+1)
 
 	// System prompt is always first.
@@ -674,6 +676,8 @@ func (s *Service) BuildChannelMentionRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
+
+	context.RestoreMCPDynamicTools(DeriveLoadedMCPTools(turns))
 
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
 

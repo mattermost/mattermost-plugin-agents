@@ -12,7 +12,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
@@ -75,7 +74,7 @@ func dynamicWorkflowStream(events ...llm.TextStreamEvent) *llm.TextStreamResult 
 	return &llm.TextStreamResult{Stream: stream}
 }
 
-func TestDynamicMCPStrictSearchLoadCall(t *testing.T) {
+func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 	const origin = "https://jira.example.com"
 
 	tests := []struct {
@@ -111,7 +110,6 @@ func TestDynamicMCPStrictSearchLoadCall(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			convStore, conv := loadedStateConversationStore()
-			loadedStore := &loadedStateStore{}
 			resolverCalls := 0
 			jiraTool := llm.Tool{
 				Name:         "jira__get_issue",
@@ -132,7 +130,6 @@ func TestDynamicMCPStrictSearchLoadCall(t *testing.T) {
 			}
 
 			builder := newChannelFollowUpTestBuilder(t, []llm.Tool{jiraTool}, &channelFollowUpTestConfig{})
-			builder.SetLoadedMCPToolStore(loadedStore)
 			lm := &dynamicWorkflowLLM{}
 			bot := loadedStateBot(lm)
 			llmContext := builder.BuildLLMContextUserRequest(
@@ -175,17 +172,6 @@ func TestDynamicMCPStrictSearchLoadCall(t *testing.T) {
 			require.Equal(t, tt.expectedText, text)
 			require.Equal(t, tt.expectedBusinessToolCall, foundBusinessToolCall)
 			require.Equal(t, tt.expectedResolverCalls, resolverCalls)
-			require.Len(t, loadedStore.rows, 1, "load_tool should persist the newly loaded tool")
-			require.Equal(t, store.LoadedMCPTool{
-				ConversationID: conv.ID,
-				BotID:          "bot-id",
-				UserID:         "user-id",
-				ToolName:       "jira__get_issue",
-				ServerOrigin:   origin,
-				BareName:       "get_issue",
-				CreatedAt:      loadedStore.rows[0].CreatedAt,
-				UpdatedAt:      loadedStore.rows[0].UpdatedAt,
-			}, loadedStore.rows[0])
 
 			require.Len(t, lm.requests, tt.expectedLLMRequests)
 			require.NotNil(t, lm.requests[2].Context.Tools.GetTool("jira__get_issue"), "load_tool must materialize the schema before the business call")
@@ -200,6 +186,11 @@ func TestDynamicMCPStrictSearchLoadCall(t *testing.T) {
 			require.Contains(t, loadResultBlocks[0].Content, `"loaded":true`)
 			require.Contains(t, loadResultBlocks[0].Content, `"name":"jira__get_issue"`)
 
+			var loadPayload mcp.LoadToolResult
+			require.NoError(t, json.Unmarshal([]byte(loadResultBlocks[0].Content), &loadPayload))
+			require.True(t, loadPayload.Loaded)
+			require.Equal(t, "jira__get_issue", loadPayload.Name)
+
 			if tt.expectedBusinessToolEvent {
 				var searchBlocks []conversation.ContentBlock
 				require.NoError(t, json.Unmarshal(turns[0].Content, &searchBlocks))
@@ -210,6 +201,9 @@ func TestDynamicMCPStrictSearchLoadCall(t *testing.T) {
 				require.NoError(t, json.Unmarshal(turns[5].Content, &businessResultBlocks))
 				require.Equal(t, "JIRA-1 details", businessResultBlocks[0].Content)
 				require.Equal(t, conversation.StatusSuccess, businessResultBlocks[0].Status)
+
+				derived := conversation.DeriveLoadedMCPTools(turns)
+				require.Equal(t, []string{"jira__get_issue"}, derived)
 			}
 		})
 	}

@@ -11,7 +11,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -36,7 +35,7 @@ func (p *countingMCPToolProvider) Calls() int {
 	return int(atomic.LoadInt32(&p.calls))
 }
 
-func newSingleBuildLLMContextBuilder(t *testing.T, mcpProvider llmcontext.MCPToolProvider, loadedStore llmcontext.LoadedMCPToolStore) *llmcontext.Builder {
+func newSingleBuildLLMContextBuilder(t *testing.T, mcpProvider llmcontext.MCPToolProvider) *llmcontext.Builder {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
@@ -46,16 +45,12 @@ func newSingleBuildLLMContextBuilder(t *testing.T, mcpProvider llmcontext.MCPToo
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
-	builder := llmcontext.NewLLMContextBuilder(
+	return llmcontext.NewLLMContextBuilder(
 		pluginapi.NewClient(mockAPI, nil),
 		&channelFollowUpTestToolProvider{},
 		mcpProvider,
 		&channelFollowUpTestConfig{},
 	)
-	if loadedStore != nil {
-		builder.SetLoadedMCPToolStore(loadedStore)
-	}
-	return builder
 }
 
 // TestBuildConversationContextWithTools_MentionShapeBuildsOnce asserts that the
@@ -74,8 +69,7 @@ func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) 
 			},
 		},
 	}}
-	loadedStore := &loadedStateStore{}
-	builder := newSingleBuildLLMContextBuilder(t, provider, loadedStore)
+	builder := newSingleBuildLLMContextBuilder(t, provider)
 
 	c := &Conversations{contextBuilder: builder}
 	bot := loadedStateBot(nil)
@@ -98,7 +92,7 @@ func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) 
 // MCP pipeline.
 func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 	provider := &countingMCPToolProvider{}
-	builder := newSingleBuildLLMContextBuilder(t, provider, nil)
+	builder := newSingleBuildLLMContextBuilder(t, provider)
 
 	c := &Conversations{contextBuilder: builder}
 	bot := loadedStateBot(nil)
@@ -114,12 +108,12 @@ func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 	require.Equal(t, 1, provider.Calls(), "AttachConversationID must not trigger a second GetToolsForUser pass on the DM path")
 }
 
-// TestAttachConversationID_RestoresLoadedToolsAfterLateBinding ensures that
-// loaded MCP tools are surfaced via the late-bound conversation ID without
-// rebuilding the registry, including the unloaded-set bookkeeping (the
-// restored tool must no longer appear as unloaded).
-func TestAttachConversationID_RestoresLoadedToolsAfterLateBinding(t *testing.T) {
-	const convID = "conv-attach"
+// TestAttachConversationID_DoesNotMaterializeTools pins that AttachConversationID
+// is a pure late-bind of the conversation ID. Restoration of dynamically loaded
+// MCP tools is the caller's responsibility (via RestoreMCPDynamicTools) and is
+// driven from retained turns, not from anything AttachConversationID does.
+func TestAttachConversationID_DoesNotMaterializeTools(t *testing.T) {
+	const convID = "conv-3"
 	provider := &countingMCPToolProvider{tools: []llm.Tool{
 		{
 			Name:         "jira__get_issue",
@@ -131,10 +125,7 @@ func TestAttachConversationID_RestoresLoadedToolsAfterLateBinding(t *testing.T) 
 			},
 		},
 	}}
-	loadedStore := &loadedStateStore{rows: []store.LoadedMCPTool{
-		{ConversationID: convID, BotID: "bot-id", UserID: "user-id", ToolName: "jira__get_issue"},
-	}}
-	builder := newSingleBuildLLMContextBuilder(t, provider, loadedStore)
+	builder := newSingleBuildLLMContextBuilder(t, provider)
 
 	c := &Conversations{contextBuilder: builder}
 	bot := loadedStateBot(nil)
@@ -145,20 +136,16 @@ func TestAttachConversationID_RestoresLoadedToolsAfterLateBinding(t *testing.T) 
 	require.NotNil(t, llmCtx)
 	require.NotNil(t, llmCtx.Tools)
 
-	// Before late-binding, the loaded MCP tool is not yet visible because the
-	// conversation does not exist; restoreLoadedMCPTools no-ops on the empty
-	// ConversationID. The tool is recorded as unloaded.
-	require.Nil(t, llmCtx.Tools.GetTool("jira__get_issue"))
+	require.Nil(t, llmCtx.Tools.GetTool("jira__get_issue"),
+		"strict registry must not surface dynamic MCP tools until they are restored")
 	require.True(t, llmCtx.Tools.IsUnloadedMCPTool("jira__get_issue"),
-		"prior to AttachConversationID, the loaded tool should still appear as unloaded")
+		"dynamic MCP tools must appear as unloaded before restoration")
 
 	c.contextBuilder.AttachConversationID(llmCtx, bot, convID)
 	require.Equal(t, convID, llmCtx.ConversationID)
-	require.Equal(t, 1, provider.Calls(), "registry replay must not re-fetch MCP tools")
-
-	// After late-binding, the persisted loaded tool is surfaced and removed
-	// from the unloaded set.
-	require.NotNil(t, llmCtx.Tools.GetTool("jira__get_issue"))
-	require.False(t, llmCtx.Tools.IsUnloadedMCPTool("jira__get_issue"),
-		"AttachConversationID must drop restored tools from the unloaded set")
+	require.Equal(t, 1, provider.Calls(), "AttachConversationID must not trigger a second GetToolsForUser pass")
+	require.Nil(t, llmCtx.Tools.GetTool("jira__get_issue"),
+		"AttachConversationID is a thin late-bind and must not materialize MCP tools")
+	require.True(t, llmCtx.Tools.IsUnloadedMCPTool("jira__get_issue"),
+		"AttachConversationID must not touch the unloaded-set bookkeeping")
 }
