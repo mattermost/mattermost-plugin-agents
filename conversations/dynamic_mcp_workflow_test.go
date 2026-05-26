@@ -218,7 +218,18 @@ func TestDynamicMCPMetaToolsBypassApproval(t *testing.T) {
 	})
 	shouldExecute := (&Conversations{}).shouldAutoExecuteTool(&llm.Context{Tools: store}, true)
 
-	require.True(t, shouldExecute(llm.ToolCall{Name: mcp.SearchToolsName}))
-	require.True(t, shouldExecute(llm.ToolCall{Name: mcp.LoadToolName}))
-	require.False(t, shouldExecute(llm.ToolCall{Name: "jira__transition_issue"}))
+	cases := []struct {
+		name           string
+		toolCallName   string
+		expectAutoExec bool
+	}{
+		{name: "search_tools meta-tool bypasses approval", toolCallName: mcp.SearchToolsName, expectAutoExec: true},
+		{name: "load_tool meta-tool bypasses approval", toolCallName: mcp.LoadToolName, expectAutoExec: true},
+		{name: "business tool requires approval", toolCallName: "jira__transition_issue", expectAutoExec: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expectAutoExec, shouldExecute(llm.ToolCall{Name: tc.toolCallName}))
+		})
+	}
 }
