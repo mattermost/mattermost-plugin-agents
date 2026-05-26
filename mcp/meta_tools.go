@@ -50,32 +50,11 @@ type LoadToolResult struct {
 	Error   string                  `json:"error,omitempty"`
 }
 
-type LoadedToolRecorder func(llmContext *llm.Context, entry ToolRegistryEntry) error
-
-type MetaToolOption func(*metaToolOptions)
-
-type metaToolOptions struct {
-	loadedToolRecorder LoadedToolRecorder
-}
-
-func WithLoadedToolRecorder(recorder LoadedToolRecorder) MetaToolOption {
-	return func(options *metaToolOptions) {
-		options.loadedToolRecorder = recorder
-	}
-}
-
 func IsMCPMetaTool(name string) bool {
 	return name == SearchToolsName || name == LoadToolName
 }
 
-func NewMetaTools(registry *ToolRegistry, opts ...MetaToolOption) []llm.Tool {
-	options := metaToolOptions{}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&options)
-		}
-	}
-
+func NewMetaTools(registry *ToolRegistry) []llm.Tool {
 	return []llm.Tool{
 		{
 			Name:        SearchToolsName,
@@ -87,7 +66,7 @@ func NewMetaTools(registry *ToolRegistry, opts ...MetaToolOption) []llm.Tool {
 			Name:        LoadToolName,
 			Description: "Use this internal helper with exact names returned by search_tools. After loading, the selected MCP tool can be called by that exact name.",
 			Schema:      llm.NewJSONSchemaFromStruct[LoadToolArgs](),
-			Resolver:    loadToolResolver(registry, options.loadedToolRecorder),
+			Resolver:    loadToolResolver(registry),
 		},
 	}
 }
@@ -129,7 +108,7 @@ func searchToolsResolver(registry *ToolRegistry) llm.ToolResolver {
 	}
 }
 
-func loadToolResolver(registry *ToolRegistry, recorder LoadedToolRecorder) llm.ToolResolver {
+func loadToolResolver(registry *ToolRegistry) llm.ToolResolver {
 	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		observe := func(result string) {
 			if llmContext != nil {
@@ -184,13 +163,6 @@ func loadToolResolver(registry *ToolRegistry, recorder LoadedToolRecorder) llm.T
 				Loaded: false,
 				Error:  "cannot load tool without a visible tool store",
 			})
-		}
-
-		if recorder != nil {
-			if err := recorder(llmContext, entry); err != nil {
-				observe("error")
-				return "", err
-			}
 		}
 
 		llmContext.Tools.AddTools([]llm.Tool{entry.Tool})

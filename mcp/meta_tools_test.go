@@ -206,45 +206,6 @@ func TestLoadToolNilContextOrToolStoreReturnsJSONError(t *testing.T) {
 	require.Contains(t, result.Error, "tool store")
 }
 
-func TestLoadToolCallsLoadedToolRecorder(t *testing.T) {
-	registry := NewToolRegistry([]llm.Tool{
-		testRegistryTool("jira__get_issue", "Get issue", "https://jira.example.com"),
-	})
-	var recorded ToolRegistryEntry
-	loadTool := metaToolByName(t, NewMetaTools(registry, WithLoadedToolRecorder(func(_ *llm.Context, entry ToolRegistryEntry) error {
-		recorded = entry
-		return nil
-	})), LoadToolName)
-	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
-
-	resultJSON, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
-	require.NoError(t, err)
-
-	var result LoadToolResult
-	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
-	require.True(t, result.Loaded)
-	require.Equal(t, "jira__get_issue", recorded.Name)
-	require.Equal(t, "get_issue", recorded.BareName)
-	require.Equal(t, "https://jira.example.com", recorded.ServerOrigin)
-}
-
-func TestLoadToolRecorderErrorReturnsResolverError(t *testing.T) {
-	registry := NewToolRegistry([]llm.Tool{
-		testRegistryTool("jira__get_issue", "Get issue", "https://jira.example.com"),
-	})
-	recorderErr := errors.New("persist loaded tool")
-	loadTool := metaToolByName(t, NewMetaTools(registry, WithLoadedToolRecorder(func(_ *llm.Context, _ ToolRegistryEntry) error {
-		return recorderErr
-	})), LoadToolName)
-	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
-
-	resultJSON, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
-
-	require.Empty(t, resultJSON)
-	require.ErrorIs(t, err, recorderErr)
-	require.Nil(t, llmContext.Tools.GetTool("jira__get_issue"))
-}
-
 func TestLoadToolDoesNotMutateRegistryToolSchema(t *testing.T) {
 	tool := testRegistryTool("jira__get_issue", "Original schema description", "https://jira.example.com")
 	tool.Schema = map[string]any{"source": "original"}
@@ -274,6 +235,38 @@ func TestLoadToolDoesNotMutateRegistryToolSchema(t *testing.T) {
 	require.True(t, loadResult.Loaded)
 	require.Equal(t, map[string]any{"source": "original"}, loadResult.Schema)
 	require.Equal(t, "Original schema description", llmContext.Tools.GetTool("jira__get_issue").Description)
+}
+
+func TestLoadToolResultWireShape(t *testing.T) {
+	registry := NewToolRegistry([]llm.Tool{
+		testRegistryTool("jira__get_issue", "Get a Jira issue", "https://jira.example.com"),
+	})
+	loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
+	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+
+	t.Run("success", func(t *testing.T) {
+		resultJSON, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
+		require.NoError(t, err)
+
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal([]byte(resultJSON), &raw))
+		require.Equal(t, true, raw["loaded"])
+		require.Equal(t, "jira__get_issue", raw["name"])
+		require.NotContains(t, raw, "error")
+		require.NotContains(t, raw, "matches")
+	})
+
+	t.Run("miss", func(t *testing.T) {
+		resultJSON, err := loadTool.Resolver(&llm.Context{Tools: llm.NewToolStore(nil, false)}, metaToolArgs(`{"name":"jira__unknown"}`))
+		require.NoError(t, err)
+
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal([]byte(resultJSON), &raw))
+		require.Equal(t, false, raw["loaded"])
+		require.Equal(t, "tool not found", raw["error"])
+		require.NotContains(t, raw, "name")
+		require.NotContains(t, raw, "schema")
+	})
 }
 
 func TestMetaToolsNilRegistryResolvers(t *testing.T) {
@@ -409,19 +402,6 @@ func TestLoadToolTelemetry(t *testing.T) {
 			return errors.New("decode")
 		})
 		require.Error(t, err)
-		require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "load", result: "error"}}, telemetry.events)
-	})
-
-	t.Run("recorder error", func(t *testing.T) {
-		telemetry := &fakeMCPDynamicTelemetry{}
-		recorderErr := errors.New("persist loaded tool")
-		loadTool := metaToolByName(t, NewMetaTools(registry, WithLoadedToolRecorder(func(_ *llm.Context, _ ToolRegistryEntry) error {
-			return recorderErr
-		})), LoadToolName)
-		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(nil, false), MCPDynamicToolTelemetry: telemetry}
-
-		_, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
-		require.ErrorIs(t, err, recorderErr)
 		require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "load", result: "error"}}, telemetry.events)
 	})
 }
