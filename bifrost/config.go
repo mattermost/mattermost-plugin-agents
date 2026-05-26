@@ -91,8 +91,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
 	}
 
-	// Empty APIURL is passed through so bifrost applies its per-provider
-	// default; duplicating those defaults here drifts from upstream.
+	// Don't fill in per-provider defaults here; bifrost has its own and they drift.
 	apiURL := normalizeOpenAIBaseURL(provider, serviceConfig.APIURL)
 	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
 

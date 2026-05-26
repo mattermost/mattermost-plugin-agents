@@ -10,18 +10,10 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
-// bifrostErrorString builds a human-readable description of a *schemas.BifrostError,
-// falling back through the available fields so that an empty Error.Message (which
-// happens when the provider returns a body that doesn't match bifrost's error
-// shape, or for transport/cancellation paths) doesn't leave the operator with
-// an empty string.
-//
-// Priority:
-//  1. Error.Message if non-empty.
-//  2. The wrapped Go error's string (Error.Error.Error()) if set.
-//  3. A synthesized string built from StatusCode, Type/Error.Type, and Error.Code.
-//
-// The result is always non-empty.
+// bifrostErrorString returns a non-empty description of a bifrost error.
+// Error.Message is blank when the provider response body doesn't match bifrost's
+// expected error shape, and on transport/cancellation paths — so fall back to
+// the wrapped Go error, then to status/type/code, before giving up.
 func bifrostErrorString(bifrostErr *schemas.BifrostError) string {
 	if bifrostErr == nil {
 		return "<nil bifrost error>"
