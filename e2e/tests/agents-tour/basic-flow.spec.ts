@@ -139,4 +139,75 @@ test.describe('Agents Tour - Basic Flow', () => {
 
         await expectTourFinished(page, pulsatingDot, tourPopover);
     });
+
+    test('Pulsing dot stays aligned with the Agents icon after a layout shift (MM-67439)', async ({page}) => {
+        const mmPage = new MattermostPage(page);
+        await mmPage.login(mattermost.url(), username, password);
+        await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
+
+        const appBarIcon = page.locator('#app-bar-icon-mattermost-ai');
+        const pulsatingDot = page.getByTestId('agents-tour-dot');
+        await expect(appBarIcon).toBeVisible({timeout: 20000});
+        await expect(pulsatingDot).toBeVisible({timeout: 20000});
+
+        type Measurement = {iconY: number; iconX: number; dx: number; dy: number};
+        const measure = async (): Promise<Measurement | null> => {
+            return page.evaluate(() => {
+                const icon = document.getElementById('app-bar-icon-mattermost-ai');
+                const dot = document.querySelector('[data-testid="agents-tour-dot"]') as HTMLElement | null;
+                if (!icon || !dot) {
+                    return null;
+                }
+                const i = icon.getBoundingClientRect();
+                const d = dot.getBoundingClientRect();
+                return {
+                    iconY: i.y,
+                    iconX: i.x,
+                    dx: Math.abs((d.x + d.width / 2) - (i.x + i.width / 2)),
+                    dy: Math.abs((d.y + d.height / 2) - (i.y + i.height / 2)),
+                };
+            });
+        };
+
+        const aligned = (m: Measurement | null) => m !== null && m.dx < 20 && m.dy < 20;
+
+        // Baseline: wait for the dot to align with the icon (handles the
+        // AgentsTour's 500ms mount delay without a hardcoded sleep).
+        await expect.poll(async () => aligned(await measure()), {timeout: 5000}).toBe(true);
+        const before = await measure();
+        expect(before).not.toBeNull();
+
+        try {
+            // Simulate a top-of-page layout shift the way an admin announcement
+            // banner being shown (or dismissed) would: move the agents icon
+            // without firing a window resize event.
+            await page.evaluate(() => {
+                const style = document.createElement('style');
+                style.id = 'mm-67439-test-shift';
+                style.textContent = '#app-bar-icon-mattermost-ai { margin-top: 80px !important; }';
+                document.head.appendChild(style);
+            });
+
+            // Poll until the icon has actually moved and the dot has caught up.
+            await expect.poll(async () => {
+                const m = await measure();
+                return m !== null && (m.iconY - before!.iconY) > 40 && aligned(m);
+            }, {timeout: 2000}).toBe(true);
+
+            // Reverse the shift to cover the "dismissed banner" direction:
+            // the icon moves back up and the dot must follow.
+            await page.evaluate(() => {
+                document.getElementById('mm-67439-test-shift')?.remove();
+            });
+
+            await expect.poll(async () => {
+                const m = await measure();
+                return m !== null && Math.abs(m.iconY - before!.iconY) < 5 && aligned(m);
+            }, {timeout: 2000}).toBe(true);
+        } finally {
+            await page.evaluate(() => {
+                document.getElementById('mm-67439-test-shift')?.remove();
+            });
+        }
+    });
 });
