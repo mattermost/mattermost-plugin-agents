@@ -26,6 +26,8 @@ func TestConvertBifrostModels(t *testing.T) {
 			ContextLength:   intPtr(200000),
 		},
 		{
+			// OpenAI only publishes ContextLength; the converter must use it
+			// as the InputTokenLimit so the UI can auto-fill.
 			ID:            "openai/gpt-4o",
 			ContextLength: intPtr(128000),
 		},
@@ -49,7 +51,8 @@ func TestConvertBifrostModels(t *testing.T) {
 
 	assert.Equal(t, "gpt-4o", got[1].ID)
 	assert.Equal(t, "gpt-4o", got[1].DisplayName)
-	assert.Nil(t, got[1].InputTokenLimit, "MaxInputTokens not provided → nil")
+	require.NotNil(t, got[1].InputTokenLimit, "InputTokenLimit must fall back to ContextLength")
+	assert.Equal(t, 128000, *got[1].InputTokenLimit)
 	assert.Nil(t, got[1].OutputTokenLimit, "MaxOutputTokens not provided → nil")
 	require.NotNil(t, got[1].ContextLength)
 	assert.Equal(t, 128000, *got[1].ContextLength)
