@@ -108,6 +108,7 @@ func createAgentBody(overrides map[string]any) map[string]any {
 		"username":              "my-agent",
 		"serviceID":             "svc-1",
 		"autoEnableNewMCPTools": true,
+		"mcpDynamicToolLoading": true,
 	}
 	for k, v := range overrides {
 		body[k] = v
@@ -132,6 +133,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"adminUserIDs":            cfg.AdminUserIDs,
 		"enabledMCPTools":         cfg.EnabledMCPTools,
 		"autoEnableNewMCPTools":   cfg.AutoEnableNewMCPTools,
+		"mcpDynamicToolLoading":   cfg.MCPDynamicToolLoading,
 		"model":                   cfg.Model,
 		"enableVision":            cfg.EnableVision,
 		"disableTools":            cfg.DisableTools,
@@ -240,6 +242,81 @@ func TestCreateAgentAutoEnableAllMCPTools(t *testing.T) {
 	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
 	assert.True(t, agent.AutoEnableNewMCPTools)
+}
+
+func TestCreateAgentMCPDynamicToolLoadingDefaultsTrueWhenOmitted(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+		UserId:      "bot-user-id-created",
+		Username:    "my-agent",
+		DisplayName: "My Agent",
+		Description: "User-created AI agent",
+	}, nil)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := createAgentBody(nil)
+	delete(body, "mcpDynamicToolLoading")
+	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
+	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+
+	var agent llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+	assert.True(t, agent.MCPDynamicToolLoading)
+	assert.True(t, e.agentStore.agents[agent.ID].MCPDynamicToolLoading)
+}
+
+func TestCreateAgentMCPDynamicToolLoadingPersistsExplicitFalse(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+		UserId:      "bot-user-id-created",
+		Username:    "my-agent",
+		DisplayName: "My Agent",
+		Description: "User-created AI agent",
+	}, nil)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(map[string]any{
+		"mcpDynamicToolLoading": false,
+	}), testUserID)
+	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+
+	var agent llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+	assert.False(t, agent.MCPDynamicToolLoading)
+	assert.False(t, e.agentStore.agents[agent.ID].MCPDynamicToolLoading)
+}
+
+func TestCreateAgentMCPDynamicToolLoadingPersistsExplicitTrue(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+		UserId:      "bot-user-id-created",
+		Username:    "my-agent",
+		DisplayName: "My Agent",
+		Description: "User-created AI agent",
+	}, nil)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(map[string]any{
+		"mcpDynamicToolLoading": true,
+	}), testUserID)
+	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+
+	var agent llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+	assert.True(t, agent.MCPDynamicToolLoading)
+	assert.True(t, e.agentStore.agents[agent.ID].MCPDynamicToolLoading)
 }
 
 func TestCreateAgentNoMCPToolsByDefault(t *testing.T) {
@@ -816,6 +893,133 @@ func TestUpdateAgentFlipsAutoEnableOff(t *testing.T) {
 	assert.Equal(t, "read_post", updated.EnabledMCPTools[0].ToolName)
 }
 
+func TestUpdateAgentMCPDynamicToolLoadingPersistsExplicitFalse(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	stored := &llm.BotConfig{
+		ID:                    "agent-1",
+		CreatorID:             testUserID,
+		BotUserID:             "bot-1",
+		DisplayName:           "Agent",
+		Name:                  "my-agent",
+		ServiceID:             "svc-1",
+		MCPDynamicToolLoading: true,
+	}
+	e.agentStore.agents["agent-1"] = stored
+
+	body := updateAgentBodyFromStored(stored, map[string]any{
+		"mcpDynamicToolLoading": false,
+	})
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	updated := e.agentStore.agents["agent-1"]
+	require.NotNil(t, updated)
+	assert.False(t, updated.MCPDynamicToolLoading)
+
+	var response llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&response))
+	assert.False(t, response.MCPDynamicToolLoading)
+}
+
+func TestUpdateAgentMCPDynamicToolLoadingPreservesWhenOmittedFromBody(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	stored := &llm.BotConfig{
+		ID:                    "agent-1",
+		CreatorID:             testUserID,
+		BotUserID:             "bot-1",
+		DisplayName:           "Agent",
+		Name:                  "my-agent",
+		ServiceID:             "svc-1",
+		MCPDynamicToolLoading: false,
+	}
+	e.agentStore.agents["agent-1"] = stored
+
+	body := updateAgentBodyFromStored(stored, nil)
+	delete(body, "mcpDynamicToolLoading")
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	updated := e.agentStore.agents["agent-1"]
+	require.NotNil(t, updated)
+	assert.False(t, updated.MCPDynamicToolLoading)
+}
+
+func TestGetAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
+		ID:                    "agent-1",
+		CreatorID:             testUserID,
+		BotUserID:             "bot-1",
+		DisplayName:           "Agent",
+		Name:                  "my-agent",
+		ServiceID:             "svc-1",
+		MCPDynamicToolLoading: false,
+	}
+
+	recorder := doRequest(e.api, http.MethodGet, "/agents/agent-1", nil, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var agent llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agent))
+	assert.False(t, agent.MCPDynamicToolLoading)
+}
+
+func TestListAgentsMCPDynamicToolLoadingRoundTrip(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
+		ID:                    "agent-1",
+		CreatorID:             "other-user",
+		DisplayName:           "Dynamic On",
+		UserAccessLevel:       llm.UserAccessLevelAll,
+		MCPDynamicToolLoading: true,
+	}
+	e.agentStore.agents["agent-2"] = &llm.BotConfig{
+		ID:                    "agent-2",
+		CreatorID:             "other-user",
+		DisplayName:           "Dynamic Off",
+		UserAccessLevel:       llm.UserAccessLevelAll,
+		MCPDynamicToolLoading: false,
+	}
+
+	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var agents []*llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
+	require.Len(t, agents, 2)
+
+	byID := map[string]*llm.BotConfig{}
+	for _, agent := range agents {
+		byID[agent.ID] = agent
+	}
+	assert.True(t, byID["agent-1"].MCPDynamicToolLoading)
+	assert.False(t, byID["agent-2"].MCPDynamicToolLoading)
+}
+
 func TestUpdateAgentEmptyAllowlistAllowsNone(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
@@ -917,22 +1121,24 @@ func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
 var _ = multipart.NewWriter
 
 func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
+	mcpDynamicToolLoading := false
 	req := CreateAgentRequest{
-		DisplayName:        "My Agent",
-		Username:           "my-agent",
-		ServiceID:          "svc-1",
-		CustomInstructions: "Be brief",
-		ChannelAccessLevel: int(llm.ChannelAccessLevelAllow),
-		ChannelIDs:         []string{"c1", "c2"},
-		UserAccessLevel:    int(llm.UserAccessLevelBlock),
-		UserIDs:            []string{"u1"},
-		TeamIDs:            []string{"t1"},
-		AdminUserIDs:       []string{"admin-1"},
-		EnabledMCPTools:    []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
-		Model:              "gpt-4",
-		EnableVision:       true,
-		ReasoningEffort:    "high",
-		ThinkingBudget:     4096,
+		DisplayName:           "My Agent",
+		Username:              "my-agent",
+		ServiceID:             "svc-1",
+		CustomInstructions:    "Be brief",
+		ChannelAccessLevel:    int(llm.ChannelAccessLevelAllow),
+		ChannelIDs:            []string{"c1", "c2"},
+		UserAccessLevel:       int(llm.UserAccessLevelBlock),
+		UserIDs:               []string{"u1"},
+		TeamIDs:               []string{"t1"},
+		AdminUserIDs:          []string{"admin-1"},
+		EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
+		MCPDynamicToolLoading: &mcpDynamicToolLoading,
+		Model:                 "gpt-4",
+		EnableVision:          true,
+		ReasoningEffort:       "high",
+		ThinkingBudget:        4096,
 	}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
@@ -944,6 +1150,7 @@ func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 	assert.Contains(t, s, `"channelAccessLevel"`)
 	assert.Contains(t, s, `"adminUserIDs"`)
 	assert.Contains(t, s, `"enabledMCPTools"`)
+	assert.Contains(t, s, `"mcpDynamicToolLoading":false`)
 	assert.Contains(t, s, `"reasoningEffort"`)
 	assert.NotContains(t, s, `"display_name"`)
 	assert.NotContains(t, s, `"service_id"`)
@@ -956,6 +1163,8 @@ func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, req.ServiceID, decoded.ServiceID)
 	assert.Equal(t, req.AdminUserIDs, decoded.AdminUserIDs)
 	assert.Equal(t, req.EnabledMCPTools, decoded.EnabledMCPTools)
+	require.NotNil(t, decoded.MCPDynamicToolLoading)
+	assert.False(t, *decoded.MCPDynamicToolLoading)
 	assert.True(t, decoded.EnableVision)
 }
 
@@ -981,6 +1190,7 @@ func TestBotConfigJSONRoundTrip(t *testing.T) {
 	assert.Contains(t, s, `"createAt":100`)
 	assert.Contains(t, s, `"updateAt":200`)
 	assert.Contains(t, s, `"enabledMCPTools":null`)
+	assert.Contains(t, s, `"mcpDynamicToolLoading":false`)
 	assert.NotContains(t, s, `"deleteAt"`) // omitempty
 
 	// Round-trip
@@ -990,6 +1200,7 @@ func TestBotConfigJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, cfg.BotUserID, decoded.BotUserID)
 	assert.Equal(t, cfg.CreatorID, decoded.CreatorID)
 	assert.Equal(t, cfg.AdminUserIDs, decoded.AdminUserIDs)
+	assert.False(t, decoded.MCPDynamicToolLoading)
 	assert.Nil(t, decoded.EnabledMCPTools)
 }
 
