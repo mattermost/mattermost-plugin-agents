@@ -810,7 +810,6 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
-	reasoning := &schemas.ChatReasoning{}
 
 	switch b.provider {
 	case schemas.Anthropic:
@@ -818,11 +817,12 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		reasoning.MaxTokens = Ptr(budget)
+		return &schemas.ChatReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
 		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
 		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
 		// When an explicit budget is set use it; otherwise fall back to effort.
+		reasoning := &schemas.ChatReasoning{}
 		if b.thinkingBudget > 0 {
 			reasoning.MaxTokens = Ptr(b.thinkingBudget)
 		} else {
@@ -832,14 +832,12 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 			}
 			reasoning.Effort = Ptr(effort)
 		}
+		return reasoning
 	default:
-		effort := b.reasoningEffort
-		if effort == "" {
-			effort = "medium"
-		}
-		reasoning.Effort = Ptr(effort)
+		// OpenAI/Azure reasoning goes through the Responses API; providers that
+		// reach chat completions here (Cohere, Mistral, Bedrock) reject reasoning_effort.
+		return nil
 	}
-	return reasoning
 }
 
 // calculateThinkingBudget computes the thinking budget for Anthropic models.
