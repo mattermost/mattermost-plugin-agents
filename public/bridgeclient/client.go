@@ -52,9 +52,10 @@ type CompletionRequest struct {
 	// tools are not discoverable or allowlistable via the bridge).
 	// When provided on agent endpoints, only these eligible tools may run without approval.
 	AllowedTools []string `json:"allowed_tools,omitempty"`
-	// UseAgentSystemPrompt prepends the targeted agent's configured system prompt
-	// before the supplied posts. It is supported only on agent completion endpoints.
-	UseAgentSystemPrompt bool `json:"use_agent_system_prompt,omitempty"`
+	// UseAgentCustomInstructions prepends the targeted agent's stored custom
+	// instructions as a system post before the supplied posts. Supported only on
+	// agent endpoints.
+	UseAgentCustomInstructions bool `json:"use_agent_custom_instructions,omitempty"`
 	// Operation optionally overrides the default operation used for token usage logging.
 	// If empty, the bridge chooses an operation based on endpoint type (agent/service).
 	Operation string `json:"operation,omitempty"`

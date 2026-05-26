@@ -70,7 +70,7 @@ response, err := client.AgentCompletion("bot-user-id", request)
 response, err := client.ServiceCompletion("openai", request)
 ```
 
-`allowed_tools` and `use_agent_system_prompt` are supported only on agent endpoints. Service endpoints reject them.
+`allowed_tools` and `use_agent_custom_instructions` are supported only on agent endpoints. Service endpoints reject them.
 
 ### Streaming
 
@@ -131,22 +131,22 @@ When `AllowedTools` is provided:
 - tools must come from enabled MCP servers or embedded MCP servers (built-in agent tools are not exposed for bridge allowlists)
 - empty lists and blank tool names are rejected by the bridge API
 
-### Agent system prompt
+### Agent custom instructions
 
-Set `UseAgentSystemPrompt` to have the bridge prepend the targeted agent's configured system prompt, including its custom instructions, before the posts supplied in the request. This keeps callers in sync with the agent's current configuration without copying those instructions into every request.
+Set `UseAgentCustomInstructions` to have the bridge prepend the targeted agent's configured custom instructions before the posts supplied in the request. This keeps callers in sync with the agent's current configuration without copying those instructions into every request.
 
 ```go
 request := bridgeclient.CompletionRequest{
     Posts: []bridgeclient.Post{
         {Role: "user", Message: "Summarize this incident"},
     },
-    UseAgentSystemPrompt: true,
+    UseAgentCustomInstructions: true,
 }
 
 response, err := client.AgentCompletion("bot-user-id", request)
 ```
 
-`UseAgentSystemPrompt` is valid only on agent completion endpoints. Service completion endpoints reject requests that set it.
+`UseAgentCustomInstructions` is valid only on agent completion endpoints. Service completion endpoints reject requests that set it. Callers can still supply their own system post in addition to the prepended custom instructions.
 
 ## Permission Checking
 

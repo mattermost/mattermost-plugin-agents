@@ -243,24 +243,35 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 	}
 }
 
-func TestBridgeClientAgentCompletionUseAgentSystemPrompt(t *testing.T) {
+func TestBridgeClientAgentCompletionUseAgentCustomInstructions(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
+	const customInstructions = "Always prefix summaries with AGENT-PROMPT:"
+
 	tests := []struct {
-		name                    string
-		useAgentSystemPrompt    bool
-		expectAgentSystemPrompt bool
+		name                         string
+		useAgentCustomInstructions   bool
+		customInstructions           string
+		expectCustomInstructionsPost bool
 	}{
 		{
-			name:                    "prepends configured agent system prompt",
-			useAgentSystemPrompt:    true,
-			expectAgentSystemPrompt: true,
+			name:                         "prepends configured agent custom instructions",
+			useAgentCustomInstructions:   true,
+			customInstructions:           customInstructions,
+			expectCustomInstructionsPost: true,
 		},
 		{
-			name:                    "omitted flag leaves posts unchanged",
-			useAgentSystemPrompt:    false,
-			expectAgentSystemPrompt: false,
+			name:                         "empty custom instructions leaves posts unchanged",
+			useAgentCustomInstructions:   true,
+			customInstructions:           "",
+			expectCustomInstructionsPost: false,
+		},
+		{
+			name:                         "omitted flag leaves posts unchanged",
+			useAgentCustomInstructions:   false,
+			customInstructions:           customInstructions,
+			expectCustomInstructionsPost: false,
 		},
 	}
 
@@ -273,7 +284,7 @@ func TestBridgeClientAgentCompletionUseAgentSystemPrompt(t *testing.T) {
 				Name:               "testbot",
 				DisplayName:        "Test Bot",
 				UserAccessLevel:    llm.UserAccessLevelAll,
-				CustomInstructions: "Always prefix summaries with AGENT-PROMPT:",
+				CustomInstructions: tc.customInstructions,
 			}
 			e.setupTestBot(botConfig)
 
@@ -290,17 +301,16 @@ func TestBridgeClientAgentCompletionUseAgentSystemPrompt(t *testing.T) {
 					{Role: "system", Message: "automation system prompt"},
 					{Role: "user", Message: "summarize this"},
 				},
-				UseAgentSystemPrompt: tc.useAgentSystemPrompt,
+				UseAgentCustomInstructions: tc.useAgentCustomInstructions,
 			})
 			require.NoError(t, err)
 			require.Equal(t, "ok", result)
 
 			request := fakeLLM.LastRequest()
-			if tc.expectAgentSystemPrompt {
+			if tc.expectCustomInstructionsPost {
 				require.Len(t, request.Posts, 3)
 				require.Equal(t, llm.PostRoleSystem, request.Posts[0].Role)
-				require.Contains(t, request.Posts[0].Message, "You are called Test Bot")
-				require.Contains(t, request.Posts[0].Message, "Always prefix summaries with AGENT-PROMPT:")
+				require.Equal(t, customInstructions, request.Posts[0].Message)
 				require.Equal(t, "automation system prompt", request.Posts[1].Message)
 				require.Equal(t, "summarize this", request.Posts[2].Message)
 				return
@@ -616,18 +626,18 @@ func TestBridgeClientServiceCompletion(t *testing.T) {
 			errorMsg:      "no bot found for service",
 		},
 		{
-			name:    "use agent system prompt rejected",
+			name:    "use agent custom instructions rejected",
 			service: "test-service-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
 				},
-				UseAgentSystemPrompt: true,
+				UseAgentCustomInstructions: true,
 			},
 			serviceConfig: llm.ServiceConfig{ID: "test-service-id", Name: "Test Service"},
 			fakeLLM:       NewFakeLLM("test"),
 			expectError:   true,
-			errorMsg:      "use_agent_system_prompt is only supported for agent completion endpoints",
+			errorMsg:      "use_agent_custom_instructions is only supported for agent completion endpoints",
 		},
 	}
 
@@ -754,13 +764,13 @@ func TestBridgeClientServiceCompletionStream(t *testing.T) {
 			errorMsg:    "allowed_tools is only supported for agent completion endpoints",
 		},
 		{
-			name:    "use agent system prompt not supported on service stream endpoint",
+			name:    "use agent custom instructions not supported on service stream endpoint",
 			service: "openai-service",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
 				},
-				UseAgentSystemPrompt: true,
+				UseAgentCustomInstructions: true,
 			},
 			serviceConfig: llm.ServiceConfig{
 				ID:   "openai-service",
@@ -768,7 +778,7 @@ func TestBridgeClientServiceCompletionStream(t *testing.T) {
 			},
 			fakeLLM:     NewFakeLLM("test"),
 			expectError: true,
-			errorMsg:    "use_agent_system_prompt is only supported for agent completion endpoints",
+			errorMsg:    "use_agent_custom_instructions is only supported for agent completion endpoints",
 		},
 	}
 
