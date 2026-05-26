@@ -703,6 +703,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 	tests := []struct {
 		name                  string
 		preRegistered         []mcp.PluginServerConfig
+		seededPersisted       []config.PluginServerConfig
 		body                  string
 		nilStoredConfig       bool
 		getErr                error
@@ -717,15 +718,11 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 		assertPersistedState  func(t *testing.T, savedCfg *config.Config)
 	}{
 		{
-			name: "happy path — saves full snapshot and broadcasts",
+			name: "happy path — persists only the edited entry and broadcasts",
 			preRegistered: []mcp.PluginServerConfig{
 				{
 					PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
 					Enabled: true, ExposeExternal: false,
-				},
-				{
-					PluginID: "com.mattermost.other", Name: "Other", Path: "/mcp",
-					Enabled: false, ExposeExternal: false,
 				},
 			},
 			body:                  `{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`,
@@ -736,22 +733,71 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectRegisterCalls:   1,
 			expectUnregisterCalls: 0,
 			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
-				require.Len(t, savedCfg.MCP.PluginServers, 2, "full snapshot includes all registered plugins")
+				require.Len(t, savedCfg.MCP.PluginServers, 1)
+
+				updated := savedCfg.MCP.PluginServers[0]
+				require.Equal(t, "com.mattermost.demo", updated.PluginID)
+				require.True(t, updated.Enabled, "Enabled preserved")
+				require.Len(t, updated.ToolConfigs, 1)
+				require.Equal(t, "echo", updated.ToolConfigs[0].Name)
+				require.False(t, updated.ToolConfigs[0].Enabled)
+			},
+		},
+		{
+			// Regression for MM-68980: admin updates one plugin while another
+			// plugin (with admin-customized config) is currently inactive in
+			// memory. The persisted entry for the inactive plugin must
+			// survive — replacing PluginServers with the in-memory snapshot
+			// would silently drop it and revert to plugin-supplied defaults
+			// on next re-registration.
+			name: "preserves persisted entries for plugins currently inactive in memory",
+			preRegistered: []mcp.PluginServerConfig{
+				{
+					PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+					Enabled: true, ExposeExternal: false,
+				},
+			},
+			seededPersisted: []config.PluginServerConfig{
+				{
+					PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+					Enabled: true, ExposeExternal: false,
+				},
+				{
+					PluginID: "com.mattermost.inactive", Name: "Inactive", Path: "/mcp",
+					Enabled: true, ExposeExternal: false,
+					ToolConfigs: []config.MCPToolConfig{
+						{Name: "destructive_tool", Policy: config.MCPToolPolicyAsk, Enabled: false},
+					},
+				},
+			},
+			body:                  `{"enabled": false}`,
+			expectStatus:          http.StatusOK,
+			expectSaveCalls:       1,
+			expectUpdateCalls:     1,
+			expectPublishCalls:    1,
+			expectRegisterCalls:   1,
+			expectUnregisterCalls: 0,
+			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
+				require.Len(t, savedCfg.MCP.PluginServers, 2,
+					"inactive plugin's persisted entry must not be dropped")
 
 				byID := map[string]config.PluginServerConfig{}
 				for _, ps := range savedCfg.MCP.PluginServers {
 					byID[ps.PluginID] = ps
 				}
 
-				updated := byID["com.mattermost.demo"]
-				require.True(t, updated.Enabled, "Enabled preserved")
-				require.Len(t, updated.ToolConfigs, 1)
-				require.Equal(t, "echo", updated.ToolConfigs[0].Name)
-				require.False(t, updated.ToolConfigs[0].Enabled)
+				demo, ok := byID["com.mattermost.demo"]
+				require.True(t, ok, "edited plugin must be persisted")
+				require.False(t, demo.Enabled, "edited Enabled flag must apply")
 
-				other := byID["com.mattermost.other"]
-				require.False(t, other.Enabled)
-				require.Empty(t, other.ToolConfigs)
+				inactive, ok := byID["com.mattermost.inactive"]
+				require.True(t, ok, "inactive plugin's persisted entry must be preserved")
+				require.True(t, inactive.Enabled, "inactive plugin's Enabled flag must be untouched")
+				require.Len(t, inactive.ToolConfigs, 1,
+					"inactive plugin's admin-set tool configs must be untouched")
+				require.Equal(t, "destructive_tool", inactive.ToolConfigs[0].Name)
+				require.False(t, inactive.ToolConfigs[0].Enabled,
+					"admin-disabled tool must remain disabled across unrelated updates")
 			},
 		},
 		{
@@ -833,6 +879,9 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			var seedCfg *config.Config
 			if !tt.nilStoredConfig {
 				seedCfg = &config.Config{}
+				if tt.seededPersisted != nil {
+					seedCfg.MCP.PluginServers = tt.seededPersisted
+				}
 			}
 			stores.configStore.cfg = seedCfg
 
