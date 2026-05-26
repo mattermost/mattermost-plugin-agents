@@ -60,7 +60,7 @@ func TestNormalizeFetchModelsAPIURL(t *testing.T) {
 			serviceType: llm.ServiceTypeMistral,
 			provider:    schemas.Mistral,
 			apiURL:      "",
-			expected:    "https://api.mistral.ai/v1",
+			expected:    "https://api.mistral.ai",
 		},
 	}
 

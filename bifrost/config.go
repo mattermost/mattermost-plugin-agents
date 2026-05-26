@@ -95,9 +95,10 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	apiURL := serviceConfig.APIURL
 
 	// Apply per-service default base URLs when the operator did not set one.
-	// Cohere uses bifrost's native provider, which appends "/v2/chat" to the
-	// base URL — so the host alone is correct here. Mistral uses the OpenAI
-	// provider against its v1 endpoint.
+	// Both Cohere and Mistral are routed to bifrost's native providers, which
+	// build the full request URL by appending their own path (e.g. "/v2/chat"
+	// for Cohere, "/v1/chat/completions" for Mistral). The base URL must be
+	// the host only — including a path suffix here would double it up.
 	switch serviceConfig.Type {
 	case llm.ServiceTypeCohere:
 		if apiURL == "" {
@@ -105,7 +106,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		}
 	case llm.ServiceTypeMistral:
 		if apiURL == "" {
-			apiURL = "https://api.mistral.ai/v1"
+			apiURL = "https://api.mistral.ai"
 		}
 	}
 

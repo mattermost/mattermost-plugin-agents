@@ -129,7 +129,7 @@ func normalizeFetchModelsAPIURL(serviceType string, provider schemas.ModelProvid
 		}
 	case llm.ServiceTypeMistral:
 		if apiURL == "" {
-			apiURL = "https://api.mistral.ai/v1"
+			apiURL = "https://api.mistral.ai"
 		}
 	}
 
