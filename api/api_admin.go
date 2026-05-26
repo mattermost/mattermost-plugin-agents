@@ -307,8 +307,14 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	}
 
 	// Render disabled plugin entries (with an empty tool list) so the admin UI
-	// can re-enable them.
+	// can re-enable them. Skip orphans hydrated from persisted config without
+	// a live source-plugin registration; surfacing them as "session not found"
+	// rows is misleading, and their persisted policy is preserved on disk
+	// regardless of whether they appear here.
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+		if !a.mcpClientManager.IsPluginRegistered(cfg.PluginID) {
+			continue
+		}
 		serverInfo := MCPServerInfo{
 			Name:        cfg.Name,
 			URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
@@ -475,12 +481,9 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	// Clone to avoid mutating the store's cached pointer.
 	cfg := existing.Clone()
 
-	// Merge the updated entry into the persisted list by PluginID. Replacing
-	// the full array with the in-memory snapshot would silently drop
-	// admin-set configuration for any plugin whose source plugin happens to
-	// be inactive (disabled, restarting, crashed, mid-upgrade) at the moment
-	// of this update — those entries are absent from ListPluginServers but
-	// still present on disk.
+	// Merge by PluginID against the persisted list rather than overwriting
+	// with the in-memory snapshot, which would silently drop entries for
+	// plugins that are persisted but currently inactive in memory.
 	merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
 	mergedIdx := -1
 	for i := range merged {

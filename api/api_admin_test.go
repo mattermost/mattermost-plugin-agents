@@ -495,6 +495,50 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 	}
 }
 
+func TestHandleGetMCPTools_OmitsOrphanPluginServers(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+	mockAPI.On("LogDebug", mock.Anything).Return().Maybe()
+
+	mgr := api.mcpClientManager.(*mockMCPClientManager)
+	mgr.pluginServers = []mcp.PluginServerConfig{
+		{PluginID: "com.mattermost.live", Name: "Live", Path: "/mcp", Enabled: true},
+		{PluginID: "com.mattermost.inactive", Name: "Inactive", Path: "/mcp", Enabled: true},
+	}
+	mgr.orphanPluginIDs = map[string]bool{"com.mattermost.inactive": true}
+	mgr.discoverPluginToolsResponse = []mcp.ToolInfo{{Name: "echo"}}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/mcp/tools", nil)
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	rawBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	var body MCPToolsResponse
+	require.NoError(t, json.Unmarshal(rawBody, &body))
+
+	pluginRows := []MCPServerInfo{}
+	for _, s := range body.Servers {
+		if s.ServerType == "plugin" {
+			pluginRows = append(pluginRows, s)
+		}
+	}
+	require.Len(t, pluginRows, 1, "orphan plugin must be omitted from admin tools listing")
+	require.Equal(t, "Live", pluginRows[0].Name)
+
+	require.Equal(t, 1, mgr.discoverPluginToolsCallCount,
+		"orphan plugin must not be probed; probing would surface a misleading session-not-found error")
+}
+
 func TestHandleUpdatePluginServer(t *testing.T) {
 	tests := []struct {
 		name                   string
