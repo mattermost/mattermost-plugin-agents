@@ -6,13 +6,11 @@ package llmcontext
 import (
 	stdcontext "context"
 	"encoding/json"
-	"sort"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	storepkg "github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -64,14 +62,6 @@ func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.ToolR
 	return p.overrides
 }
 
-type fakeLoadedMCPToolStore struct {
-	rows      []storepkg.LoadedMCPTool
-	upserts   []storepkg.LoadedMCPTool
-	deletes   []string
-	listCalls int
-	listErr   error
-}
-
 type contextTelemetryEvent struct {
 	botName string
 	event   string
@@ -84,50 +74,6 @@ type fakeMCPDynamicTelemetry struct {
 
 func (t *fakeMCPDynamicTelemetry) ObserveMCPDynamicToolEvent(botName, event, result string) {
 	t.events = append(t.events, contextTelemetryEvent{botName: botName, event: event, result: result})
-}
-
-func (s *fakeLoadedMCPToolStore) UpsertLoadedMCPTool(tool storepkg.LoadedMCPTool) error {
-	s.upserts = append(s.upserts, tool)
-	return nil
-}
-
-func (s *fakeLoadedMCPToolStore) ListLoadedMCPTools(conversationID, botID, userID string) ([]storepkg.LoadedMCPTool, error) {
-	s.listCalls++
-	if s.listErr != nil {
-		return nil, s.listErr
-	}
-
-	var result []storepkg.LoadedMCPTool
-	for _, row := range s.rows {
-		if row.ConversationID == conversationID && row.BotID == botID && row.UserID == userID {
-			result = append(result, row)
-		}
-	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].ToolName < result[j].ToolName
-	})
-	return result, nil
-}
-
-func (s *fakeLoadedMCPToolStore) DeleteLoadedMCPTool(conversationID, botID, userID, toolName string) error {
-	s.deletes = append(s.deletes, conversationID+"\x00"+botID+"\x00"+userID+"\x00"+toolName)
-	return nil
-}
-
-func (s *fakeLoadedMCPToolStore) DeleteLoadedMCPToolsByNames(conversationID, botID, userID string, toolNames []string) error {
-	for _, toolName := range toolNames {
-		s.deletes = append(s.deletes, conversationID+"\x00"+botID+"\x00"+userID+"\x00"+toolName)
-	}
-	return nil
-}
-
-func loadedMCPToolRow(toolName string) storepkg.LoadedMCPTool {
-	return storepkg.LoadedMCPTool{
-		ConversationID: "conv-id",
-		BotID:          "bot-id",
-		UserID:         "user-id",
-		ToolName:       toolName,
-	}
 }
 
 type contextTestConfigProvider struct{}
