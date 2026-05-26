@@ -78,8 +78,8 @@ func convertBifrostModels(in []schemas.Model) []llm.ModelInfo {
 		if m.Name != nil && *m.Name != "" {
 			displayName = *m.Name
 		}
-		// Providers that don't publish an explicit MaxInputTokens (notably
-		// OpenAI) report ContextLength instead; use it as the input cap.
+		// Cohere, Mistral, and Groq (via the OpenAI client) publish only
+		// ContextLength; fall back to it for the input cap.
 		inputLimit := m.MaxInputTokens
 		if inputLimit == nil {
 			inputLimit = m.ContextLength

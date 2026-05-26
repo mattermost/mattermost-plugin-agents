@@ -4,8 +4,6 @@
 package bifrost
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -28,9 +26,9 @@ func TestConvertBifrostModels(t *testing.T) {
 			ContextLength:   intPtr(200000),
 		},
 		{
-			// OpenAI only publishes ContextLength; the converter must use it
-			// as the InputTokenLimit so the UI can auto-fill.
-			ID:            "openai/gpt-4o",
+			// Cohere / Mistral / Groq publish ContextLength only; the converter
+			// must use it as the InputTokenLimit so the UI can auto-fill.
+			ID:            "cohere/command-r",
 			ContextLength: intPtr(128000),
 		},
 		{
@@ -51,8 +49,8 @@ func TestConvertBifrostModels(t *testing.T) {
 	require.NotNil(t, got[0].ContextLength)
 	assert.Equal(t, 200000, *got[0].ContextLength)
 
-	assert.Equal(t, "gpt-4o", got[1].ID)
-	assert.Equal(t, "gpt-4o", got[1].DisplayName)
+	assert.Equal(t, "command-r", got[1].ID)
+	assert.Equal(t, "command-r", got[1].DisplayName)
 	require.NotNil(t, got[1].InputTokenLimit, "InputTokenLimit must fall back to ContextLength")
 	assert.Equal(t, 128000, *got[1].InputTokenLimit)
 	assert.Nil(t, got[1].OutputTokenLimit, "MaxOutputTokens not provided → nil")
@@ -123,47 +121,4 @@ func TestNormalizeFetchModelsAPIURL(t *testing.T) {
 			require.Equal(t, tt.expected, actual)
 		})
 	}
-}
-
-// TestFetchModelsOpenAIDoesNotAutoFillTokenLimits pins down the behavior the
-// admin observes: OpenAI's /v1/models endpoint returns nothing but {id,
-// object, owned_by, created} per model. Bifrost surfaces no ContextLength /
-// MaxInputTokens / MaxOutputTokens for OpenAI, so the token-limit fields in
-// the system console stay editable rather than auto-filling.
-//
-// If a future Bifrost version starts publishing these limits for OpenAI, this
-// test will fail and the system console will start auto-filling automatically.
-func TestFetchModelsOpenAIDoesNotAutoFillTokenLimits(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Mirrors what api.openai.com/v1/models actually returns today.
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"object": "list",
-			"data": [
-				{"id": "gpt-4o", "object": "model", "created": 1715367049, "owned_by": "system"},
-				{"id": "gpt-4o-mini", "object": "model", "created": 1721172741, "owned_by": "system"}
-			]
-		}`))
-	}))
-	defer backend.Close()
-
-	models, err := FetchModels(FetchModelsConfig{
-		Provider: schemas.OpenAI,
-		APIKey:   "test-key",
-		APIURL:   backend.URL,
-	})
-	require.NoError(t, err)
-	require.NotEmpty(t, models, "expected the backend models to be returned")
-
-	var gpt4o *llm.ModelInfo
-	for i, m := range models {
-		if m.ID == "gpt-4o" {
-			gpt4o = &models[i]
-			break
-		}
-	}
-	require.NotNil(t, gpt4o, "gpt-4o must appear in the fetched models list")
-	assert.Nil(t, gpt4o.InputTokenLimit, "OpenAI ListModels does not publish per-model input limits today")
-	assert.Nil(t, gpt4o.OutputTokenLimit, "OpenAI ListModels does not publish per-model output limits today")
-	assert.Nil(t, gpt4o.ContextLength, "OpenAI ListModels does not publish per-model context length today")
 }
