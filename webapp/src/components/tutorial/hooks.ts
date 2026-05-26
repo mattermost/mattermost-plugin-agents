@@ -44,7 +44,7 @@ export function useMeasurePunchouts(
 
     useLayoutEffect(() => {
         if (!elementsAvailable) {
-            return undefined;
+            return () => { /* nothing to clean up */ };
         }
 
         let rafId: number;
@@ -65,6 +65,7 @@ export function useMeasurePunchouts(
         rafId = requestAnimationFrame(measure);
 
         return () => cancelAnimationFrame(rafId);
+
         // elementIds is stable across renders in practice; spreading it keeps
         // the effect honest if a caller ever passes a different list.
         // eslint-disable-next-line react-hooks/exhaustive-deps
