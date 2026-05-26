@@ -566,7 +566,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -621,7 +621,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 		}
 
 		if chunk.BifrostError != nil {
-			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
@@ -1563,7 +1563,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -1632,7 +1632,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		}
 
 		if chunk.BifrostError != nil {
-			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{

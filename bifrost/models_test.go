@@ -53,7 +53,7 @@ func TestNormalizeFetchModelsAPIURL(t *testing.T) {
 			serviceType: llm.ServiceTypeCohere,
 			provider:    schemas.Cohere,
 			apiURL:      "",
-			expected:    "https://api.cohere.ai/compatibility/v1",
+			expected:    "https://api.cohere.ai",
 		},
 		{
 			name:        "mistral default URL applied",

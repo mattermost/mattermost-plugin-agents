@@ -94,11 +94,14 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	// Determine the API URL
 	apiURL := serviceConfig.APIURL
 
-	// For OpenAI Compatible services like Cohere and Mistral, set the appropriate base URL
+	// Apply per-service default base URLs when the operator did not set one.
+	// Cohere uses bifrost's native provider, which appends "/v2/chat" to the
+	// base URL — so the host alone is correct here. Mistral uses the OpenAI
+	// provider against its v1 endpoint.
 	switch serviceConfig.Type {
 	case llm.ServiceTypeCohere:
 		if apiURL == "" {
-			apiURL = "https://api.cohere.ai/compatibility/v1"
+			apiURL = "https://api.cohere.ai"
 		}
 	case llm.ServiceTypeMistral:
 		if apiURL == "" {

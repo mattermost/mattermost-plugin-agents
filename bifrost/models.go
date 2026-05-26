@@ -57,7 +57,7 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 
 	resp, bifrostErr := client.ListAllModels(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost list models error: %s", bifrostErr.Error.Message), cfg.APIKey)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost list models error: %s", bifrostErrorString(bifrostErr)), cfg.APIKey)
 	}
 
 	if resp == nil {
@@ -125,7 +125,7 @@ func normalizeFetchModelsAPIURL(serviceType string, provider schemas.ModelProvid
 	switch serviceType {
 	case llm.ServiceTypeCohere:
 		if apiURL == "" {
-			apiURL = "https://api.cohere.ai/compatibility/v1"
+			apiURL = "https://api.cohere.ai"
 		}
 	case llm.ServiceTypeMistral:
 		if apiURL == "" {
