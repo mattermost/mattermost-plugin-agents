@@ -91,26 +91,9 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
 	}
 
-	// Determine the API URL
-	apiURL := serviceConfig.APIURL
-
-	// Apply per-service default base URLs when the operator did not set one.
-	// Both Cohere and Mistral are routed to bifrost's native providers, which
-	// build the full request URL by appending their own path (e.g. "/v2/chat"
-	// for Cohere, "/v1/chat/completions" for Mistral). The base URL must be
-	// the host only — including a path suffix here would double it up.
-	switch serviceConfig.Type {
-	case llm.ServiceTypeCohere:
-		if apiURL == "" {
-			apiURL = "https://api.cohere.ai"
-		}
-	case llm.ServiceTypeMistral:
-		if apiURL == "" {
-			apiURL = "https://api.mistral.ai"
-		}
-	}
-
-	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
+	// Empty APIURL is passed through so bifrost applies its per-provider
+	// default; duplicating those defaults here drifts from upstream.
+	apiURL := normalizeOpenAIBaseURL(provider, serviceConfig.APIURL)
 	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
 
 	cfg := Config{

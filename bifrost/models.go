@@ -107,31 +107,14 @@ func FetchModelsForService(svc llm.ServiceConfig) ([]llm.ModelInfo, error) {
 		return nil, fmt.Errorf("model fetching not supported for service type: %s", svc.Type)
 	}
 
-	apiURL := normalizeFetchModelsAPIURL(svc.Type, provider, svc.APIURL)
-
 	return FetchModels(FetchModelsConfig{
 		Provider:              provider,
 		APIKey:                svc.APIKey,
-		APIURL:                apiURL,
+		APIURL:                normalizeOpenAIBaseURL(provider, svc.APIURL),
 		OrgID:                 svc.OrgID,
 		Region:                svc.Region,
 		VertexProjectID:       svc.VertexProjectID,
 		VertexProjectNumber:   svc.VertexProjectNumber,
 		VertexAuthCredentials: svc.VertexAuthCredentials,
 	})
-}
-
-func normalizeFetchModelsAPIURL(serviceType string, provider schemas.ModelProvider, apiURL string) string {
-	switch serviceType {
-	case llm.ServiceTypeCohere:
-		if apiURL == "" {
-			apiURL = "https://api.cohere.ai"
-		}
-	case llm.ServiceTypeMistral:
-		if apiURL == "" {
-			apiURL = "https://api.mistral.ai"
-		}
-	}
-
-	return normalizeOpenAIBaseURL(provider, apiURL)
 }
