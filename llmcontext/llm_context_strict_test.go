@@ -5,12 +5,10 @@ package llmcontext
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	storepkg "github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +37,6 @@ func TestStrictToolStoreInitialVisibility(t *testing.T) {
 }
 
 func TestStrictPreloadsExplicitMCPTools(t *testing.T) {
-	loadedStore := &fakeLoadedMCPToolStore{}
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{tools: []llm.Tool{
@@ -48,7 +45,6 @@ func TestStrictPreloadsExplicitMCPTools(t *testing.T) {
 			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
 		}},
 	)
-	builder.SetLoadedMCPToolStore(loadedStore)
 	bot := newTestBotWithConfig(llm.BotConfig{
 		ID:                    "bot-id",
 		Name:                  "matty",
@@ -72,7 +68,6 @@ func TestStrictPreloadsExplicitMCPTools(t *testing.T) {
 	require.False(t, context.Tools.IsUnloadedMCPTool("mattermost__read_channel"))
 	require.False(t, context.Tools.IsUnloadedMCPTool("mattermost__get_channel_info"))
 	require.True(t, context.Tools.IsUnloadedMCPTool("jira__get_issue"))
-	require.Empty(t, loadedStore.upserts)
 }
 
 func TestFlagOffAddsPreloadAliases(t *testing.T) {
@@ -405,323 +400,7 @@ func TestFlagOffIgnoresRetrievalOverrides(t *testing.T) {
 	require.Equal(t, "original upstream description", mustTool(t, context.Tools, "jira__get_issue").Description)
 }
 
-func TestStrictRestoresLoadedTools(t *testing.T) {
-	loadedStore := &fakeLoadedMCPToolStore{
-		rows: []storepkg.LoadedMCPTool{loadedMCPToolRow("jira__get_issue")},
-	}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
-			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
-		}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: true,
-	})
-
-	context := buildToolsContext(builder, bot, builder.WithLLMContextConversationID("conv-id"))
-
-	require.ElementsMatch(t, []string{"builtin", "jira__get_issue", mcp.SearchToolsName, mcp.LoadToolName}, toolNames(context.Tools))
-	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
-	require.Nil(t, context.Tools.GetTool("github__search"))
-	require.Equal(t, 1, loadedStore.listCalls)
-}
-
-func TestStrictDoesNotRestoreWithoutConversationID(t *testing.T) {
-	loadedStore := &fakeLoadedMCPToolStore{
-		rows: []storepkg.LoadedMCPTool{loadedMCPToolRow("jira__get_issue")},
-	}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
-		}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: true,
-	})
-
-	context := buildToolsContext(builder, bot)
-
-	require.ElementsMatch(t, []string{"builtin", mcp.SearchToolsName, mcp.LoadToolName}, toolNames(context.Tools))
-	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
-	require.Zero(t, loadedStore.listCalls)
-}
-
-func TestAttachConversationIDRestoresAndPersistsLoadedTools(t *testing.T) {
-	loadedStore := &fakeLoadedMCPToolStore{
-		rows: []storepkg.LoadedMCPTool{loadedMCPToolRow("jira__get_issue")},
-	}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
-			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
-		}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: true,
-	})
-	context := buildToolsContext(builder, bot)
-
-	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
-	builder.AttachConversationID(context, bot, "conv-id")
-
-	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
-	require.Equal(t, 1, loadedStore.listCalls)
-
-	loadTool := mustTool(t, context.Tools, mcp.LoadToolName)
-	resultJSON, err := loadTool.Resolver(context, contextToolArgs(`{"name":"github__search"}`))
-	require.NoError(t, err)
-
-	var result mcp.LoadToolResult
-	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
-	require.True(t, result.Loaded)
-	require.Len(t, loadedStore.upserts, 1)
-	assert.Equal(t, "conv-id", loadedStore.upserts[0].ConversationID)
-	assert.Equal(t, "github__search", loadedStore.upserts[0].ToolName)
-}
-
-func TestLoadToolPersistsLoadedName(t *testing.T) {
-	loadedStore := &fakeLoadedMCPToolStore{}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
-		}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: true,
-	})
-	context := buildToolsContext(builder, bot, builder.WithLLMContextConversationID("conv-id"))
-
-	loadTool := mustTool(t, context.Tools, mcp.LoadToolName)
-	resultJSON, err := loadTool.Resolver(context, contextToolArgs(`{"name":"jira__get_issue"}`))
-	require.NoError(t, err)
-
-	var result mcp.LoadToolResult
-	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
-	require.True(t, result.Loaded)
-	require.Len(t, loadedStore.upserts, 1)
-	assert.Equal(t, "conv-id", loadedStore.upserts[0].ConversationID)
-	assert.Equal(t, "bot-id", loadedStore.upserts[0].BotID)
-	assert.Equal(t, "user-id", loadedStore.upserts[0].UserID)
-	assert.Equal(t, "jira__get_issue", loadedStore.upserts[0].ToolName)
-	assert.Equal(t, "https://jira.example.com", loadedStore.upserts[0].ServerOrigin)
-	assert.Equal(t, "get_issue", loadedStore.upserts[0].BareName)
-	assert.NotZero(t, loadedStore.upserts[0].CreatedAt)
-	assert.Equal(t, loadedStore.upserts[0].CreatedAt, loadedStore.upserts[0].UpdatedAt)
-}
-
-func TestStrictDropsAndDeletesRevokedLoadedTool(t *testing.T) {
-	loadedStore := &fakeLoadedMCPToolStore{
-		rows: []storepkg.LoadedMCPTool{loadedMCPToolRow("github__search")},
-	}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
-		}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: true,
-	})
-
-	context := buildToolsContext(builder, bot, builder.WithLLMContextConversationID("conv-id"))
-
-	require.Nil(t, context.Tools.GetTool("github__search"))
-	require.Equal(t, []string{"conv-id\x00bot-id\x00user-id\x00github__search"}, loadedStore.deletes)
-}
-
-func TestStrictDoesNotPersistRawSchema(t *testing.T) {
-	loadedType := reflect.TypeOf(storepkg.LoadedMCPTool{})
-	_, hasSchema := loadedType.FieldByName("Schema")
-	require.False(t, hasSchema)
-
-	loadedStore := &fakeLoadedMCPToolStore{}
-	tool := testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details")
-	tool.Schema = map[string]any{"source": "current-registry"}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{tool}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: true,
-	})
-	context := buildToolsContext(builder, bot, builder.WithLLMContextConversationID("conv-id"))
-
-	loadTool := mustTool(t, context.Tools, mcp.LoadToolName)
-	_, err := loadTool.Resolver(context, contextToolArgs(`{"name":"jira__get_issue"}`))
-	require.NoError(t, err)
-
-	require.Len(t, loadedStore.upserts, 1)
-	require.Equal(t, "jira__get_issue", loadedStore.upserts[0].ToolName)
-}
-
-func TestStrictRestoresAfterBotAllowlist(t *testing.T) {
-	jiraOrigin := "https://jira.example.com"
-	githubOrigin := "https://github.example.com"
-	loadedStore := &fakeLoadedMCPToolStore{
-		rows: []storepkg.LoadedMCPTool{
-			loadedMCPToolRow("github__search"),
-			loadedMCPToolRow("jira__get_issue"),
-		},
-	}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("jira__get_issue", jiraOrigin, "fetch Jira issue details"),
-			testMCPTool("github__search", githubOrigin, "search GitHub code"),
-		}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: false,
-		EnabledMCPTools: []llm.EnabledMCPTool{
-			{ServerOrigin: jiraOrigin, ToolName: "get_issue"},
-		},
-		MCPDynamicToolLoading: true,
-	})
-
-	context := buildToolsContext(builder, bot, builder.WithLLMContextConversationID("conv-id"))
-
-	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
-	require.Nil(t, context.Tools.GetTool("github__search"))
-	require.Equal(t, []string{"conv-id\x00bot-id\x00user-id\x00github__search"}, loadedStore.deletes)
-}
-
-func TestStrictRestoresAfterUserDisabledFilter(t *testing.T) {
-	githubOrigin := "https://github.example.com"
-	loadedStore := &fakeLoadedMCPToolStore{
-		rows: []storepkg.LoadedMCPTool{
-			loadedMCPToolRow("github__search"),
-			loadedMCPToolRow("jira__get_issue"),
-		},
-	}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
-			testMCPTool("github__search", githubOrigin, "search GitHub code"),
-		}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: true,
-	})
-
-	context := buildToolsContext(
-		builder,
-		bot,
-		builder.WithLLMContextConversationID("conv-id"),
-		builder.WithLLMContextDisabledMCPServers([]string{"  " + githubOrigin + "/  "}),
-	)
-
-	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
-	require.Nil(t, context.Tools.GetTool("github__search"))
-	require.Equal(t, []string{"conv-id\x00bot-id\x00user-id\x00github__search"}, loadedStore.deletes)
-}
-
-func TestStrictOmitsButKeepsScopedFilteredLoadedTool(t *testing.T) {
-	loadedStore := &fakeLoadedMCPToolStore{
-		rows: []storepkg.LoadedMCPTool{loadedMCPToolRow("github__search")},
-	}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
-		}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: true,
-	})
-
-	context := buildToolsContext(
-		builder,
-		bot,
-		builder.WithLLMContextConversationID("conv-id"),
-		builder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
-			return tool.Name != "github__search"
-		}),
-	)
-
-	require.Nil(t, context.Tools.GetTool("github__search"))
-	require.Empty(t, loadedStore.deletes)
-}
-
-func TestFlagOffIgnoresLoadedState(t *testing.T) {
-	loadedStore := &fakeLoadedMCPToolStore{
-		rows: []storepkg.LoadedMCPTool{loadedMCPToolRow("jira__get_issue")},
-	}
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
-		}},
-	)
-	builder.SetLoadedMCPToolStore(loadedStore)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: false,
-	})
-
-	context := buildToolsContext(builder, bot, builder.WithLLMContextConversationID("conv-id"))
-
-	require.ElementsMatch(t, []string{"builtin", "jira__get_issue"}, toolNames(context.Tools))
-	require.Nil(t, context.Tools.GetTool(mcp.SearchToolsName))
-	require.Zero(t, loadedStore.listCalls)
-}
-
 func TestStrictMarksOnlyUnloadedMCPTools(t *testing.T) {
-	loadedStore := &fakeLoadedMCPToolStore{
-		rows: []storepkg.LoadedMCPTool{loadedMCPToolRow("jira__get_issue")},
-	}
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{tools: []llm.Tool{
@@ -729,7 +408,6 @@ func TestStrictMarksOnlyUnloadedMCPTools(t *testing.T) {
 			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
 		}},
 	)
-	builder.SetLoadedMCPToolStore(loadedStore)
 	bot := newTestBotWithConfig(llm.BotConfig{
 		ID:                    "bot-id",
 		Name:                  "matty",
@@ -738,7 +416,8 @@ func TestStrictMarksOnlyUnloadedMCPTools(t *testing.T) {
 		MCPDynamicToolLoading: true,
 	})
 
-	context := buildToolsContext(builder, bot, builder.WithLLMContextConversationID("conv-id"))
+	context := buildToolsContext(builder, bot)
+	context.RestoreMCPDynamicTools([]string{"jira__get_issue"})
 
 	require.NotNil(t, context.Tools.GetTool("builtin"))
 	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
@@ -1033,4 +712,274 @@ func TestStrictModePreservesAuthErrors(t *testing.T) {
 	require.Len(t, authErrors, 1)
 	require.Equal(t, origin, authErrors[0].ServerOrigin)
 	require.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
+}
+
+func TestRestoreMCPDynamicToolsAddsDerivedNamesToVisibleStore(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
+	require.Nil(t, context.Tools.GetTool("github__search"))
+
+	context.RestoreMCPDynamicTools([]string{"jira__get_issue"})
+
+	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
+	require.Nil(t, context.Tools.GetTool("github__search"))
+	assert.False(t, context.Tools.IsUnloadedMCPTool("jira__get_issue"))
+	assert.True(t, context.Tools.IsUnloadedMCPTool("github__search"))
+}
+
+func TestRestoreMCPDynamicToolsSkipsUnknownNames(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.NotPanics(t, func() {
+		context.RestoreMCPDynamicTools([]string{"github__nope", "jira__get_issue"})
+	})
+
+	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
+	require.Nil(t, context.Tools.GetTool("github__nope"))
+	assert.False(t, context.Tools.IsUnloadedMCPTool("github__nope"))
+}
+
+func TestRestoreMCPDynamicToolsSkipsBareNames(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	context.RestoreMCPDynamicTools([]string{"get_issue"})
+
+	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
+	require.Nil(t, context.Tools.GetTool("get_issue"))
+}
+
+func TestRestoreMCPDynamicToolsSkipsAllowlistFilteredNames(t *testing.T) {
+	jiraOrigin := "https://jira.example.com"
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", jiraOrigin, "fetch Jira issue details"),
+			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: false,
+		EnabledMCPTools: []llm.EnabledMCPTool{
+			{ServerOrigin: jiraOrigin, ToolName: "get_issue"},
+		},
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	context.RestoreMCPDynamicTools([]string{"github__search"})
+
+	require.Nil(t, context.Tools.GetTool("github__search"))
+	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
+}
+
+func TestRestoreMCPDynamicToolsSkipsUserDisabledOriginNames(t *testing.T) {
+	githubOrigin := "https://github.example.com"
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+			testMCPTool("github__search", githubOrigin, "search GitHub code"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot, builder.WithLLMContextDisabledMCPServers([]string{githubOrigin}))
+
+	context.RestoreMCPDynamicTools([]string{"github__search", "jira__get_issue"})
+
+	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
+	require.Nil(t, context.Tools.GetTool("github__search"))
+}
+
+func TestRestoreMCPDynamicToolsSkipsPredicateFilteredNames(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__safe_tool", "https://jira.example.com", "safe auto-run Jira tool"),
+			testMCPTool("jira__ask_tool", "https://jira.example.com", "dangerous ask-first Jira tool"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot, builder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
+		return tool.Name == "jira__safe_tool"
+	}))
+
+	context.RestoreMCPDynamicTools([]string{"jira__safe_tool", "jira__ask_tool"})
+
+	require.NotNil(t, context.Tools.GetTool("jira__safe_tool"))
+	require.Nil(t, context.Tools.GetTool("jira__ask_tool"))
+}
+
+func TestRestoreMCPDynamicToolsNoopWhenFlagOff(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: false,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
+	before := toolNames(context.Tools)
+
+	require.NotPanics(t, func() {
+		context.RestoreMCPDynamicTools([]string{"jira__get_issue"})
+	})
+
+	require.ElementsMatch(t, before, toolNames(context.Tools))
+	require.Nil(t, context.Tools.GetTool(mcp.SearchToolsName))
+	require.Nil(t, context.Tools.GetTool(mcp.LoadToolName))
+	assert.False(t, context.Tools.IsUnloadedMCPTool("jira__get_issue"))
+}
+
+func TestRestoreMCPDynamicToolsIgnoresEmptyAndNilNames(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+	before := toolNames(context.Tools)
+
+	context.RestoreMCPDynamicTools(nil)
+	require.ElementsMatch(t, before, toolNames(context.Tools))
+
+	context.RestoreMCPDynamicTools([]string{})
+	require.ElementsMatch(t, before, toolNames(context.Tools))
+}
+
+func TestRestoreMCPDynamicToolsLeavesRetainedHistoryAloneWhenFiltered(t *testing.T) {
+	githubOrigin := "https://github.example.com"
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+			testMCPTool("github__search", githubOrigin, "search GitHub code"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot, builder.WithLLMContextDisabledMCPServers([]string{githubOrigin}))
+
+	require.NotPanics(t, func() {
+		context.RestoreMCPDynamicTools([]string{"github__search"})
+	})
+
+	require.Nil(t, context.Tools.GetTool("github__search"))
+}
+
+func TestAttachConversationIDOnlySetsConversationID(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+	before := toolNames(context.Tools)
+	require.Empty(t, context.ConversationID)
+
+	builder.AttachConversationID(context, bot, "conv-id")
+
+	assert.Equal(t, "conv-id", context.ConversationID)
+	require.ElementsMatch(t, before, toolNames(context.Tools))
+
+	builder.AttachConversationID(context, bot, "")
+	assert.Equal(t, "conv-id", context.ConversationID)
+
+	require.NotPanics(t, func() {
+		builder.AttachConversationID(nil, bot, "other-id")
+	})
 }

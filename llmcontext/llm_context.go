@@ -13,7 +13,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	storepkg "github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -32,13 +31,6 @@ type MCPToolRetrievalOverrideProvider interface {
 	GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride
 }
 
-type LoadedMCPToolStore interface {
-	UpsertLoadedMCPTool(tool storepkg.LoadedMCPTool) error
-	ListLoadedMCPTools(conversationID, botID, userID string) ([]storepkg.LoadedMCPTool, error)
-	DeleteLoadedMCPTool(conversationID, botID, userID, toolName string) error
-	DeleteLoadedMCPToolsByNames(conversationID, botID, userID string, toolNames []string) error
-}
-
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
@@ -52,7 +44,6 @@ type Builder struct {
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
 
-	loadedMCPToolStore      LoadedMCPToolStore
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
 }
 
@@ -69,10 +60,6 @@ func NewLLMContextBuilder(
 		mcpToolProvider: mcpToolProvider,
 		configProvider:  configProvider,
 	}
-}
-
-func (b *Builder) SetLoadedMCPToolStore(store LoadedMCPToolStore) {
-	b.loadedMCPToolStore = store
 }
 
 func (b *Builder) SetMCPDynamicToolTelemetry(telemetry llm.MCPDynamicToolTelemetry) {
@@ -322,7 +309,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, bot *bots.Bot, us
 	}
 
 	if botCfg.MCPDynamicToolLoading {
-		b.buildStrictMCPToolStore(store, mcpTools, c, botIDForLoadedMCPTools(c, bot), userID, b.strictRegistryOptions()...)
+		b.buildStrictMCPToolStore(store, mcpTools, c, b.strictRegistryOptions()...)
 		return store
 	}
 
@@ -337,68 +324,46 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, bot *bots.Bot, us
 	return store
 }
 
-func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, botID, userID string, registryOpts ...mcp.ToolRegistryOption) {
-	registry := mcp.NewToolRegistry(mcpTools, registryOpts...)
-	if c != nil {
-		c.SetMCPDynamicToolRestorer(func(names []string) {
-			if c.Tools == nil {
-				return
-			}
-			for _, name := range names {
-				entry, ok := registry.Lookup(name)
-				if ok {
-					c.Tools.AddTools([]llm.Tool{entry.Tool})
-				}
-			}
-
-			entries := registry.List()
-			mcpTools := make([]llm.Tool, 0, len(entries))
-			for _, entry := range entries {
-				mcpTools = append(mcpTools, entry.Tool)
-			}
-			markUnloadedMCPTools(c.Tools, mcpTools)
-		})
+func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, registryOpts ...mcp.ToolRegistryOption) {
+	if c == nil {
+		return
 	}
-	b.restoreLoadedMCPTools(store, registry, c, botID, userID)
+	registry := mcp.NewToolRegistry(mcpTools, registryOpts...)
+
 	b.preloadMCPTools(store, mcpTools, c.ToolRuntime.PreloadedMCPTools)
 	markUnloadedMCPTools(store, mcpTools)
-	store.AddTools(mcp.NewMetaTools(registry, mcp.WithLoadedToolRecorder(b.loadedToolRecorder(c.ConversationID, botID, userID))))
+	store.AddTools(mcp.NewMetaTools(registry))
+
+	c.SetMCPDynamicToolRestorer(func(names []string) {
+		if store == nil || registry == nil || len(names) == 0 {
+			return
+		}
+		for _, name := range names {
+			entry, ok := registry.Lookup(name)
+			if !ok {
+				continue
+			}
+			store.AddTools([]llm.Tool{entry.Tool})
+		}
+		entries := registry.List()
+		recomputed := make([]llm.Tool, 0, len(entries))
+		for _, entry := range entries {
+			recomputed = append(recomputed, entry.Tool)
+		}
+		markUnloadedMCPTools(store, recomputed)
+	})
 }
 
-// AttachConversationID late-binds a ConversationID onto an already-built llm.Context
-// and, when strict MCP dynamic tool loading was used to build the original tool
-// store, replays loaded-tool restoration against the same registry. This lets
-// callers build the LLM context with tools BEFORE the conversation row exists
-// (so the system prompt can reference .Tools) and then surface the conversation
-// ID once it has been created, without a second GetToolsForUser pass.
-//
-// No-ops when c is nil, conversationID is empty, the tool store is missing, or
-// the strict registry was never stashed (dynamic loading off).
+// AttachConversationID late-binds a ConversationID onto an already-built
+// llm.Context. Tool restoration is invoked separately via
+// (*llm.Context).RestoreMCPDynamicTools by callers that derive loaded
+// tool names from retained turns.
 func (b *Builder) AttachConversationID(c *llm.Context, bot *bots.Bot, conversationID string) {
+	_ = bot
 	if c == nil || conversationID == "" {
 		return
 	}
 	c.ConversationID = conversationID
-
-	if c.Tools == nil || c.RequestingUser == nil {
-		return
-	}
-
-	botID := botIDForLoadedMCPTools(c, bot)
-	if b.loadedMCPToolStore == nil || botID == "" {
-		return
-	}
-
-	loaded, err := b.loadedMCPToolStore.ListLoadedMCPTools(c.ConversationID, botID, c.RequestingUser.Id)
-	if err != nil {
-		b.logWarn("Failed to list loaded MCP tools", "error", err.Error(), "conversation_id", c.ConversationID)
-		return
-	}
-	names := make([]string, 0, len(loaded))
-	for _, row := range loaded {
-		names = append(names, row.ToolName)
-	}
-	c.RestoreMCPDynamicTools(names)
 }
 
 func (b *Builder) preloadMCPTools(store *llm.ToolStore, available []llm.Tool, specs []llm.EnabledMCPTool) {
@@ -485,100 +450,6 @@ func markUnloadedMCPTools(publicStore *llm.ToolStore, mcpTools []llm.Tool) {
 		unloaded = append(unloaded, tool)
 	}
 	publicStore.SetUnloadedMCPTools(unloaded)
-}
-
-func botIDForLoadedMCPTools(c *llm.Context, bot *bots.Bot) string {
-	if c != nil && c.BotUserID != "" {
-		return c.BotUserID
-	}
-	if bot != nil && bot.GetMMBot() != nil {
-		return bot.GetMMBot().UserId
-	}
-	return ""
-}
-
-func (b *Builder) loadedToolRecorder(conversationID, botID, userID string) mcp.LoadedToolRecorder {
-	if b.loadedMCPToolStore == nil {
-		return nil
-	}
-
-	return func(llmContext *llm.Context, entry mcp.ToolRegistryEntry) error {
-		resolvedConversationID := conversationID
-		if llmContext != nil && llmContext.ConversationID != "" {
-			resolvedConversationID = llmContext.ConversationID
-		}
-		if resolvedConversationID == "" || botID == "" || userID == "" {
-			b.logWarn("Unable to persist loaded MCP tool without full context identity",
-				"conversation_id", resolvedConversationID,
-				"bot_id", botID,
-				"user_id", userID,
-				"tool_name", entry.Name,
-			)
-			return nil
-		}
-
-		now := model.GetMillis()
-		return b.loadedMCPToolStore.UpsertLoadedMCPTool(storepkg.LoadedMCPTool{
-			ConversationID: resolvedConversationID,
-			BotID:          botID,
-			UserID:         userID,
-			ToolName:       entry.Name,
-			ServerOrigin:   entry.ServerOrigin,
-			BareName:       entry.BareName,
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		})
-	}
-}
-
-func (b *Builder) restoreLoadedMCPTools(publicStore *llm.ToolStore, registry *mcp.ToolRegistry, c *llm.Context, botID, userID string) {
-	if b.loadedMCPToolStore == nil || publicStore == nil || registry == nil || c == nil ||
-		c.ConversationID == "" || botID == "" || userID == "" {
-		return
-	}
-
-	loaded, err := b.loadedMCPToolStore.ListLoadedMCPTools(c.ConversationID, botID, userID)
-	if err != nil {
-		b.logWarn("Failed to list loaded MCP tools", "error", err.Error(), "conversation_id", c.ConversationID)
-		return
-	}
-
-	deleteStale := c.ToolRuntime.KeepMCPTool == nil
-	var staleNames []string
-	for _, row := range loaded {
-		entry, ok := registry.Lookup(row.ToolName)
-		if ok {
-			publicStore.AddTools([]llm.Tool{entry.Tool})
-			continue
-		}
-
-		if !deleteStale {
-			b.logDebug("Omitting stale loaded MCP tool during scoped rebuild",
-				"conversation_id", c.ConversationID,
-				"tool_name", row.ToolName,
-			)
-			continue
-		}
-
-		staleNames = append(staleNames, row.ToolName)
-	}
-
-	if len(staleNames) == 0 {
-		return
-	}
-
-	if err := b.loadedMCPToolStore.DeleteLoadedMCPToolsByNames(c.ConversationID, botID, userID, staleNames); err != nil {
-		b.logWarn("Failed to delete stale loaded MCP tools",
-			"error", err.Error(),
-			"conversation_id", c.ConversationID,
-			"tool_names", staleNames,
-		)
-		return
-	}
-	b.logDebug("Deleted stale loaded MCP tools",
-		"conversation_id", c.ConversationID,
-		"tool_names", staleNames,
-	)
 }
 
 func (b *Builder) logWarn(message string, keyValuePairs ...any) {

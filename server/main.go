@@ -416,7 +416,6 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		&p.configuration,
 	)
-	contextBuilder.SetLoadedMCPToolStore(p.store)
 	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
 
 	conversationsService := conversations.New(
