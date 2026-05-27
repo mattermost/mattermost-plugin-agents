@@ -674,6 +674,15 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 	require.False(t, lastActivity.After(after))
 }
 
+func TestCacheableContextIgnoresParentCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+
+	cacheCtx := cacheableContext(ctx)
+	require.NoError(t, cacheCtx.Err())
+}
+
 func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {
 	before := time.Now()
 	userClients := &UserClients{clients: map[string]*Client{}}

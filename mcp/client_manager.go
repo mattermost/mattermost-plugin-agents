@@ -19,6 +19,13 @@ import (
 
 var ErrOAuthNotConfigured = errors.New("oauth not configured")
 
+func cacheableContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
+}
+
 // ClientManager manages MCP clients for multiple users
 type ClientManager struct {
 	config         Config
@@ -158,8 +165,9 @@ func (m *ClientManager) createAndStoreUserClientWithRefresh(ctx context.Context,
 
 	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 
-	// Let user client connect to remote servers only
-	mcpErrors := userClients.ConnectToRemoteServers(ctx, m.config.Servers, forceRefresh)
+	// Cacheable client creation must not inherit request cancellation; a canceled
+	// popover/tab close would otherwise poison initialRemoteConnectErrors until TTL.
+	mcpErrors := userClients.ConnectToRemoteServers(cacheableContext(ctx), m.config.Servers, forceRefresh)
 	userClients.initialRemoteConnectErrors = mcpErrors
 
 	// Store the client even if some servers failed to connect
