@@ -109,3 +109,31 @@ export interface ConversationResponse {
     operation: string;
     turns: Turn[];
 }
+
+// Composition mirrors the Go types in llm/composition.go. Per-source token
+// breakdown for the active conversation, used by the context-usage indicator.
+export type CompositionSource =
+    | 'system'
+    | 'history'
+    | 'tool_defs'
+    | 'tool_results'
+    | 'attachment'
+    | 'image';
+
+export interface CompositionComponent {
+    source: CompositionSource;
+    id?: string;
+    name?: string;
+    proportion: number;
+    tokens: number;
+}
+
+export type CompositionTotalSource = 'counted' | 'provider' | 'estimated';
+
+export interface Composition {
+    components: CompositionComponent[];
+    total: number;
+    total_source: CompositionTotalSource;
+    input_token_limit?: number;
+    model?: string;
+}

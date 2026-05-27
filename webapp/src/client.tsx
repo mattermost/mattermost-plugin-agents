@@ -7,7 +7,7 @@ import {ChannelWithTeamData} from '@mattermost/types/channels';
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
-import type {ConversationResponse} from '@/types/conversation';
+import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
 
 import manifest from './manifest';
@@ -325,6 +325,23 @@ export async function getConversation(conversationId: string): Promise<Conversat
     if (response.ok) {
         const raw = await response.json() as ConversationResponse;
         return normalizeConversationResponse(raw);
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getConversationContext(conversationId: string): Promise<Composition> {
+    const url = `${baseRoute()}/conversations/${conversationId}/context`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json() as Promise<Composition>;
     }
 
     throw new ClientError(Client4.url, {

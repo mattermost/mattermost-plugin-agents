@@ -5,12 +5,14 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/store"
@@ -20,6 +22,107 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// TestHandleGetConversationContext_TotalSource exercises the three branches
+// of the count-tokens fallback path so a regression like "Total is estimated
+// for Claude even though Anthropic supports CountTokens" can't slip back in.
+// The fake LLM stands in for the real bifrost-wrapped LanguageModel chain
+// and lets us pin each total_source value to its trigger.
+func TestHandleGetConversationContext_TotalSource(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	channelID := testChannelID
+	textBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
+		{Type: conversation.BlockTypeText, Text: "What is the weather?"},
+	})
+
+	setupConv := func(e *TestEnvironment, convID string) {
+		e.conversationStore.conversations[convID] = &store.Conversation{
+			ID:           convID,
+			UserID:       testUserID,
+			BotID:        testBotUserID,
+			ChannelID:    &channelID,
+			SystemPrompt: "you are a helpful assistant",
+			Operation:    "conversation",
+		}
+		e.conversationStore.turns[convID] = []store.Turn{
+			{ID: "turn-1", ConversationID: convID, Role: "user", Content: textBlocks, Sequence: 1},
+		}
+		e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+	}
+
+	doGet := func(t *testing.T, e *TestEnvironment, convID string) llm.Composition {
+		request := httptest.NewRequest(http.MethodGet, "/conversations/"+convID+"/context", nil)
+		request.Header.Add("Mattermost-User-ID", testUserID)
+		recorder := httptest.NewRecorder()
+		e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+		resp := recorder.Result()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var c llm.Composition
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&c))
+		return c
+	}
+
+	bindFakeLLM := func(t *testing.T, e *TestEnvironment, fake *FakeLLM) {
+		t.Helper()
+		mmBot := &model.Bot{UserId: testBotUserID, Username: "ai", DisplayName: "AI"}
+		bot := bots.NewBot(llm.BotConfig{Name: "ai", DisplayName: "AI"}, llm.ServiceConfig{}, mmBot, fake)
+		e.bots.SetBotsForTesting([]*bots.Bot{bot})
+	}
+
+	t.Run("counted when provider supports CountTokens", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+		e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+		setupConv(e, "conv-counted")
+		bindFakeLLM(t, e, &FakeLLM{TokenCount: 4242, TokenLimit: 200000})
+
+		c := doGet(t, e, "conv-counted")
+		assert.Equal(t, "counted", c.TotalSource,
+			"when bot.LLM().CountTokens returns a valid count, the response must say 'counted' — "+
+				"otherwise the webapp surfaces the misleading 'estimated' caveat")
+		assert.Equal(t, 4242, c.Total)
+		assert.Equal(t, 200000, c.InputTokenLimit)
+	})
+
+	t.Run("estimated when provider lacks CountTokens", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+		e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+		setupConv(e, "conv-unsupported")
+		bindFakeLLM(t, e, &FakeLLM{
+			CountTokensError: llm.ErrUnsupportedTokenCount,
+			TokenLimit:       200000,
+		})
+
+		c := doGet(t, e, "conv-unsupported")
+		assert.Equal(t, "estimated", c.TotalSource)
+		assert.Greater(t, c.Total, 0, "estimator must still produce a non-zero total")
+	})
+
+	t.Run("estimated when CountTokens errors (e.g. provider rejected request)", func(t *testing.T) {
+		// This is the path we currently swallow silently — covered here so
+		// any later change that surfaces the error in the response shape
+		// (or logs it loudly) has a baseline to compare against.
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+		e.mockAPI.On("LogError", mock.Anything).Maybe()
+		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		setupConv(e, "conv-rejected")
+		bindFakeLLM(t, e, &FakeLLM{
+			CountTokensError: errors.New("bifrost count tokens error: messages must alternate roles"),
+			TokenLimit:       200000,
+		})
+
+		c := doGet(t, e, "conv-rejected")
+		assert.Equal(t, "estimated", c.TotalSource,
+			"when CountTokens errors with a non-unsupported error, we still fall back to the estimator")
+	})
+}
 
 // TestHandleGetConversationContext pins the auth + response contract for the
 // per-thread composition endpoint. It must mirror handleGetConversation's

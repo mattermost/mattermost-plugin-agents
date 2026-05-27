@@ -22,12 +22,31 @@ function notifySubscribers() {
     subscribers.forEach((cb) => cb());
 }
 
+// Cross-cache invalidation: other modules (use_conversation_context) register
+// a listener at module init so anything that follows the conversation entity
+// stays in sync without each call site needing to remember every cache. The
+// alternative — duplicating calls at every invalidator — keeps drifting (the
+// context ring stuck on its first fetch was that bug).
+type InvalidationListener = (conversationId: string) => void;
+const invalidationListeners: InvalidationListener[] = [];
+
+export function onConversationInvalidated(listener: InvalidationListener): () => void {
+    invalidationListeners.push(listener);
+    return () => {
+        const idx = invalidationListeners.indexOf(listener);
+        if (idx >= 0) {
+            invalidationListeners.splice(idx, 1);
+        }
+    };
+}
+
 /** Force re-fetch of a specific conversation (called from WebSocket handler). */
 export function invalidateConversation(conversationId: string) {
     conversationCache.delete(conversationId);
     errorCache.delete(conversationId);
     inflightRequests.delete(conversationId);
     notifySubscribers();
+    invalidationListeners.forEach((l) => l(conversationId));
 }
 
 /** Clear all cached conversations. Exported for test cleanup only. */

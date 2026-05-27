@@ -4,7 +4,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -53,63 +51,27 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 		return
 	}
 
+	// Reuse the exact assembly path the production runtime uses
+	// (conversation.Service.BuildCompletionRequest delegates to this), so
+	// the breakdown reflects what providers actually see — including
+	// provider-specific shape requirements like Anthropic's alternating
+	// user/assistant roles, without which CountTokens would fail and the
+	// total would silently fall back to "estimated".
 	enableVision, maxFileSize := a.attachmentConfigForBot(conv.BotID)
-	inputs, err := composeInputsFromConversation(conv, turns, a.mmClient, enableVision, maxFileSize)
+	req, err := conversation.AssembleRequest(conv, turns, &llm.Context{}, a.mmClient, enableVision, maxFileSize)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to build composition: %w", err))
 		return
 	}
 
 	modelName, tokenLimit := a.modelMetadataForBot(conv.BotID)
-	total, totalSource := a.totalTokensForConversation(c, conv.BotID, inputs)
+	total, totalSource := a.totalTokensForRequest(c, conv.BotID, req)
 
-	composition := llm.ComputeComposition(inputs, total, totalSource)
+	composition := llm.ComputeComposition(req.Composition, total, totalSource)
 	composition.Model = modelName
 	composition.InputTokenLimit = tokenLimit
 
 	c.JSON(http.StatusOK, composition)
-}
-
-// composeInputsFromConversation walks stored turns and emits the same
-// CompositionInputs that BuildCompletionRequest would produce, minus the
-// tool_defs (which depend on per-user MCP state and aren't materialized
-// from stored data). Mirrors the merge of assistant + tool_result turns
-// from turnsToLLMPosts so tool_use/result content shows up under
-// tool_results in the breakdown.
-func composeInputsFromConversation(
-	conv *store.Conversation,
-	turns []store.Turn,
-	mmClient mmapi.Client,
-	enableVision bool,
-	maxFileSize int64,
-) ([]llm.CompositionInput, error) {
-	var inputs []llm.CompositionInput
-	if conv.SystemPrompt != "" {
-		inputs = append(inputs, llm.CompositionInput{Source: llm.SourceSystem, Text: conv.SystemPrompt})
-	}
-
-	for i := 0; i < len(turns); i++ {
-		turn := turns[i]
-		var blocks []conversation.ContentBlock
-		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
-		}
-		if turn.Role == "assistant" && i+1 < len(turns) && turns[i+1].Role == "tool_result" {
-			var nextBlocks []conversation.ContentBlock
-			if err := json.Unmarshal(turns[i+1].Content, &nextBlocks); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, err)
-			}
-			blocks = append(blocks, nextBlocks...)
-			i++
-		}
-		// Default to redactUnshared=true so the breakdown matches what a
-		// non-owner viewer would actually see flowed to the LLM. The auth
-		// check above doesn't differentiate owner vs. channel-member, so
-		// fail-safe redaction is the right default here.
-		_, postComposition := conversation.BlocksToPost(blocks, turn.Role, true, mmClient, enableVision, maxFileSize)
-		inputs = append(inputs, postComposition...)
-	}
-	return inputs, nil
 }
 
 // attachmentConfigForBot reads the bot's EnableVision and MaxFileSize for
@@ -133,6 +95,12 @@ func (a *API) attachmentConfigForBot(botID string) (bool, int64) {
 // modelMetadataForBot reads the bot's LanguageModel (if available) for the
 // model name and input token limit. Returns ("", 0) when the bot or LLM is
 // not wired up, which is the common path for unit tests.
+//
+// Logs a Warn when the token limit reports zero on a wired LLM, since the
+// webapp can't draw a ring without a denominator and there's no other path
+// to see why the meter was hidden. Common causes: the system console value
+// hasn't been persisted, or the bot was constructed before the service
+// config gained a limit and the config-update listener didn't refresh it.
 func (a *API) modelMetadataForBot(botID string) (string, int) {
 	if a.bots == nil {
 		return "", 0
@@ -146,30 +114,80 @@ func (a *API) modelMetadataForBot(botID string) (string, int) {
 	if lm == nil {
 		return cfg.Model, 0
 	}
-	return cfg.Model, lm.InputTokenLimit()
+	limit := lm.InputTokenLimit()
+	if limit == 0 {
+		a.pluginAPI.Log.Warn("context endpoint: bot reports zero input token limit",
+			"bot_id", botID,
+			"bot_name", cfg.Name,
+			"service_type", bot.GetService().Type,
+			"model", cfg.Model,
+			"hint", "set 'Input token limit' in the system console AI service page, "+
+				"or restart the plugin if a recently-saved value isn't taking effect",
+		)
+	}
+	return cfg.Model, limit
 }
 
-// totalTokensForConversation returns the authoritative token total. Prefers
-// the provider's CountTokens; falls back to summing EstimateTokens.
-func (a *API) totalTokensForConversation(c *gin.Context, botID string, inputs []llm.CompositionInput) (int, string) {
-	if a.bots != nil {
-		if bot := a.bots.GetBotByID(botID); bot != nil {
-			if lm := bot.LLM(); lm != nil {
-				req := llm.CompletionRequest{}
-				for _, in := range inputs {
-					req.Posts = append(req.Posts, llm.Post{Message: in.Text})
-				}
-				count, err := lm.CountTokens(c.Request.Context(), req)
-				if err == nil {
-					return count, llm.CompositionTotalCounted
-				}
-			}
-		}
+// totalTokensForRequest returns the authoritative token total. Prefers the
+// provider's CountTokens on the already-assembled request (so providers like
+// Anthropic that require alternating roles don't reject the shape); falls
+// back to summing EstimateTokens across composition inputs when the provider
+// can't count or no bot LLM is wired.
+//
+// Each fallback branch logs a Warn with enough context to diagnose without
+// also having to repro locally. The user-visible "Total is estimated" caveat
+// has no way to surface *why* we estimated — when a Claude session shows
+// "estimated" even though Anthropic supports CountTokens, these logs are the
+// only signal that tells us which step dropped out.
+func (a *API) totalTokensForRequest(c *gin.Context, botID string, req *llm.CompletionRequest) (int, string) {
+	count, ok := a.tryCountTokens(c, botID, req)
+	if ok {
+		return count, llm.CompositionTotalCounted
 	}
 
 	var sum int
-	for _, in := range inputs {
+	for _, in := range req.Composition {
 		sum += llm.EstimateTokens(in.Text)
 	}
 	return sum, llm.CompositionTotalEstimated
+}
+
+// tryCountTokens runs the provider's CountTokens path and returns ok=true on
+// success. The fallback paths each log a Warn so we can diagnose "Total is
+// estimated" reports from the field — the user-visible caveat has no room
+// to explain *why* we estimated.
+func (a *API) tryCountTokens(c *gin.Context, botID string, req *llm.CompletionRequest) (int, bool) {
+	if a.bots == nil {
+		a.pluginAPI.Log.Warn("context endpoint estimating tokens: bot lookup unavailable",
+			"bot_id", botID,
+		)
+		return 0, false
+	}
+	bot := a.bots.GetBotByID(botID)
+	if bot == nil {
+		a.pluginAPI.Log.Warn("context endpoint estimating tokens: bot not found",
+			"bot_id", botID,
+		)
+		return 0, false
+	}
+	lm := bot.LLM()
+	if lm == nil {
+		a.pluginAPI.Log.Warn("context endpoint estimating tokens: bot has no LLM wired",
+			"bot_id", botID,
+			"bot_name", bot.GetConfig().Name,
+		)
+		return 0, false
+	}
+	count, err := lm.CountTokens(c.Request.Context(), *req)
+	if err != nil {
+		a.pluginAPI.Log.Warn("context endpoint estimating tokens: provider CountTokens failed",
+			"bot_id", botID,
+			"bot_name", bot.GetConfig().Name,
+			"service_type", bot.GetService().Type,
+			"model", bot.GetConfig().Model,
+			"error", err.Error(),
+		)
+		return 0, false
+	}
+	return count, true
 }

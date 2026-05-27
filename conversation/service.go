@@ -373,7 +373,8 @@ type BuildOptions struct {
 }
 
 // BuildCompletionRequest builds an llm.CompletionRequest from the conversation's
-// system prompt and all its turns.
+// system prompt and all its turns. Thin wrapper around AssembleRequest that
+// fetches turns from the store and resolves the bot's attachment config.
 func (s *Service) BuildCompletionRequest(
 	conv *store.Conversation,
 	context *llm.Context,
@@ -383,7 +384,26 @@ func (s *Service) BuildCompletionRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
+	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
+	return AssembleRequest(conv, turns, context, s.mmClient, enableVision, maxFileSize, opts...)
+}
 
+// AssembleRequest builds the same CompletionRequest BuildCompletionRequest
+// does, but takes already-loaded turns and rendering config externally. Used
+// by callers (the context-introspection HTTP endpoint) that don't have a
+// full Service wired up but still need the exact same assembly — one Post
+// per turn, redaction defaults, ExcludeAfterPostID truncation, tool_defs
+// composition — so a divergence here can't silently change what providers
+// see versus what the breakdown reports.
+func AssembleRequest(
+	conv *store.Conversation,
+	turns []store.Turn,
+	context *llm.Context,
+	mmClient mmapi.Client,
+	enableVision bool,
+	maxFileSize int64,
+	opts ...BuildOptions,
+) (*llm.CompletionRequest, error) {
 	// Default: redact unshared tool_result content so privacy is the
 	// fail-safe. Callers whose LLM response will NOT reach other users
 	// (DM follow-ups) can opt in to full content via AllowUnsharedToolContent.
@@ -432,8 +452,7 @@ func (s *Service) BuildCompletionRequest(
 
 	composition = append(composition, toolDefsComposition(context)...)
 
-	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
-	turnPosts, turnComposition, err := turnsToLLMPosts(turns, redactUnshared, s.mmClient, enableVision, maxFileSize)
+	turnPosts, turnComposition, err := turnsToLLMPosts(turns, redactUnshared, mmClient, enableVision, maxFileSize)
 	if err != nil {
 		return nil, err
 	}

@@ -646,6 +646,16 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 	if err != nil {
 		return 0, fmt.Errorf("failed to build count tokens request: %w", err)
 	}
+	// Strip the parameter payload entirely. The count_tokens endpoint
+	// shares the body schema with the messages endpoint but rejects most
+	// of it: Anthropic 400s on native server tools (web_search,
+	// code_execution), OpenAI 400s on max_output_tokens ("Unknown
+	// parameter"). Neither tools nor generation knobs influence the input
+	// token count, so the safest path is to send only the messages +
+	// model — being off by the size of the tool definitions a real call
+	// would have included is far better than dropping to "estimated" for
+	// every bot configured with either provider.
+	bifrostReq.Params = nil
 
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, CountTokensTimeout)
 	defer cancel()
