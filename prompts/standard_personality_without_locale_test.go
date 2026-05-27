@@ -4,6 +4,7 @@
 package prompts_test
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"testing"
@@ -31,7 +32,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 		store.AddTools([]llm.Tool{{
 			Name:        name,
 			Description: "test tool",
-			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 				return "", nil
 			},
 		}})
@@ -127,14 +128,14 @@ func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiAndVertexOn
 		{
 			Name:        "search_users",
 			Description: "Look up users by name",
-			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 				return "", nil
 			},
 		},
 		{
 			Name:        "read_channel",
 			Description: "Read channel history",
-			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 				return "", nil
 			},
 		},

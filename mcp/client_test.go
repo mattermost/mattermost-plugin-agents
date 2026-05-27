@@ -229,15 +229,6 @@ func requireToolNames(t *testing.T, tools []llm.Tool, expectedNames ...string) {
 	require.ElementsMatch(t, expectedNames, names)
 }
 
-func cleanupTestClientManager(manager *ClientManager) {
-	manager.clientsMu.Lock()
-	defer manager.clientsMu.Unlock()
-	for _, userClient := range manager.clients {
-		userClient.Close()
-	}
-	manager.clients = make(map[string]*UserClients)
-}
-
 // TestCacheHitBehavior verifies that when tools are in cache,
 // they can be retrieved and reused correctly
 func TestCacheHitBehavior(t *testing.T) {
@@ -380,6 +371,31 @@ func TestNewClientDiscoversPaginatedRemoteTools(t *testing.T) {
 	}
 }
 
+func TestRemoteReconnectRefreshesToolCatalog(t *testing.T) {
+	server := newTestMCPServer(0, "tool_1")
+	httpServer := startStreamableMCPServer(t, server)
+	cache := newTestToolsCache()
+
+	client, err := NewClient(context.Background(), "user-id", ServerConfig{
+		Name:    "remote",
+		BaseURL: httpServer.URL,
+		Enabled: true,
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	require.Len(t, client.Tools(), 1)
+
+	addTestMCPTool(server, "new_tool")
+	require.NoError(t, client.session.Close())
+
+	result, err := client.CallTool(context.Background(), "tool_1", map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, result, "tool_1 ok")
+	require.Contains(t, client.Tools(), "new_tool")
+	require.Len(t, client.Tools(), 2)
+	require.Len(t, cache.GetTools("remote"), 2)
+}
+
 func TestNewClientUsesCacheWithoutPaginationCall(t *testing.T) {
 	var listCalls atomic.Int32
 	server := newStaticToolListMCPServer(2, "server_tool")
@@ -454,235 +470,4 @@ func TestNewClientErrorsOnEmptyRemoteToolCatalog(t *testing.T) {
 	require.Nil(t, client)
 	require.Contains(t, err.Error(), "no tools found")
 	require.Nil(t, cache.GetTools("empty"))
-}
-
-func TestRemoteToolListChangedInvalidatesCacheAndClientTools(t *testing.T) {
-	server := newTestMCPServer(2, "tool_1", "tool_2", "tool_3")
-	httpServer := startStreamableMCPServer(t, server)
-	cache := newTestToolsCache()
-
-	client, err := NewClient(context.Background(), "user-id", ServerConfig{
-		Name:    "paged",
-		BaseURL: httpServer.URL,
-		Enabled: true,
-	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-	require.NotEmpty(t, client.Tools())
-	require.NotNil(t, cache.GetTools("paged"))
-
-	addTestMCPTool(server, "new_tool")
-
-	require.Eventually(t, func() bool {
-		return len(client.Tools()) == 0 && cache.GetTools("paged") == nil
-	}, 5*time.Second, 10*time.Millisecond)
-}
-
-func TestRemoteToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T) {
-	server := newTestMCPServer(2, "tool_1", "tool_2")
-	httpServer := startStreamableMCPServer(t, server)
-	cache := newTestToolsCache()
-	manager := &ClientManager{
-		config: Config{
-			Servers: []ServerConfig{{
-				Name:    "paged",
-				BaseURL: httpServer.URL,
-				Enabled: true,
-			}},
-		},
-		log:          newTestLogService(),
-		clients:      make(map[string]*UserClients),
-		activity:     make(map[string]time.Time),
-		oauthManager: newTestOAuthManager(),
-		httpClient:   httpServer.Client(),
-		toolsCache:   cache,
-	}
-	t.Cleanup(func() { cleanupTestClientManager(manager) })
-
-	var tools []llm.Tool
-	var mcpErrors *Errors
-	require.Eventually(t, func() bool {
-		tools, mcpErrors = manager.GetToolsForUser(context.Background(), "user-id")
-		if mcpErrors != nil || len(cache.GetTools("paged")) != 2 {
-			return false
-		}
-		toolNames := make(map[string]bool, len(tools))
-		for _, tool := range tools {
-			toolNames[tool.Name] = true
-		}
-		return len(tools) == 2 && toolNames["paged__tool_1"] && toolNames["paged__tool_2"]
-	}, 5*time.Second, 10*time.Millisecond)
-	require.Nil(t, mcpErrors)
-	requireToolNames(t, tools, "paged__tool_1", "paged__tool_2")
-	require.Len(t, cache.GetTools("paged"), 2)
-
-	addTestMCPTool(server, "new_tool")
-
-	require.Eventually(t, func() bool {
-		manager.clientsMu.RLock()
-		userClient := manager.clients["user-id"]
-		manager.clientsMu.RUnlock()
-		if userClient == nil {
-			return false
-		}
-		client := userClient.clients["paged"]
-		return client != nil && len(client.Tools()) == 0 && cache.GetTools("paged") == nil
-	}, 5*time.Second, 10*time.Millisecond)
-
-	tools, mcpErrors = manager.GetToolsForUser(context.Background(), "user-id")
-	require.Nil(t, mcpErrors)
-	requireToolNames(t, tools, "paged__new_tool", "paged__tool_1", "paged__tool_2")
-	require.Len(t, cache.GetTools("paged"), 3)
-}
-
-func TestToolListChangedDuringRediscoveryKeepsClientDirty(t *testing.T) {
-	listBlocked := make(chan struct{})
-	releaseList := make(chan struct{})
-	var blocked atomic.Bool
-	server := newTestMCPServer(0, "tool_1")
-	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
-		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			result, err := next(ctx, method, req)
-			if err != nil || method != testListToolsMethod || !blocked.CompareAndSwap(false, true) {
-				return result, err
-			}
-
-			close(listBlocked)
-			select {
-			case <-releaseList:
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-			return result, nil
-		}
-	})
-	session := connectInMemoryTestSession(t, server)
-	cache := newTestToolsCache()
-	client := &Client{
-		session:    session,
-		config:     ServerConfig{Name: "server", BaseURL: "https://example.com"},
-		tools:      make(map[string]*mcp.Tool),
-		toolsDirty: true,
-		userID:     "user-id",
-		log:        newTestLogService(),
-		toolsCache: cache,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- client.ensureDiscoveredTools(context.Background())
-	}()
-
-	select {
-	case <-listBlocked:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for rediscovery to enter tools/list")
-	}
-
-	client.invalidateDiscoveredTools(context.Background(), cache, "server", true)
-	close(releaseList)
-
-	select {
-	case err := <-errCh:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for rediscovery to finish")
-	}
-
-	client.toolsMu.RLock()
-	require.True(t, client.toolsDirty)
-	client.toolsMu.RUnlock()
-	require.Empty(t, client.Tools())
-	require.Nil(t, cache.GetTools("server"))
-
-	addTestMCPTool(server, "tool_2")
-	require.NoError(t, client.ensureDiscoveredTools(context.Background()))
-
-	client.toolsMu.RLock()
-	require.False(t, client.toolsDirty)
-	client.toolsMu.RUnlock()
-	require.Contains(t, client.Tools(), "tool_1")
-	require.Contains(t, client.Tools(), "tool_2")
-	require.Len(t, cache.GetTools("server"), 2)
-}
-
-func TestRemoteToolListChangedWithNilCacheClearsClientTools(t *testing.T) {
-	server := newTestMCPServer(2, "tool_1", "tool_2", "tool_3")
-	httpServer := startStreamableMCPServer(t, server)
-
-	client, err := NewClient(context.Background(), "user-id", ServerConfig{
-		Name:    "paged",
-		BaseURL: httpServer.URL,
-		Enabled: true,
-	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-	require.NotEmpty(t, client.Tools())
-
-	addTestMCPTool(server, "new_tool")
-
-	require.Eventually(t, func() bool {
-		return len(client.Tools()) == 0
-	}, 5*time.Second, 10*time.Millisecond)
-}
-
-func TestRemoteToolListChangedForStaticOAuthSkipsSharedCacheInvalidation(t *testing.T) {
-	server := newTestMCPServer(2, "server_tool")
-	httpServer := startStreamableMCPServer(t, server)
-	cache := newTestToolsCache()
-	require.NoError(t, cache.SetTools("oauth-server", "OAuth Server", httpServer.URL, map[string]*mcp.Tool{
-		"cached_tool": {
-			Name:        "cached_tool",
-			Description: "Cached tool",
-			InputSchema: map[string]any{"type": "object"},
-		},
-	}, time.Now()))
-
-	client, err := NewClient(context.Background(), "user-id", ServerConfig{
-		Name:         "oauth-server",
-		BaseURL:      httpServer.URL,
-		Enabled:      true,
-		ClientID:     "client-id",
-		ClientSecret: "client-secret",
-	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-	require.Contains(t, client.Tools(), "server_tool")
-	require.NoError(t, cache.SetTools("oauth-server", "OAuth Server", httpServer.URL, map[string]*mcp.Tool{
-		"cached_after_connect": {
-			Name:        "cached_after_connect",
-			Description: "Cached after connect",
-			InputSchema: map[string]any{"type": "object"},
-		},
-	}, time.Now()))
-	require.NotNil(t, cache.GetTools("oauth-server"))
-
-	addTestMCPTool(server, "new_tool")
-
-	require.Eventually(t, func() bool {
-		return len(client.Tools()) == 0
-	}, 5*time.Second, 10*time.Millisecond)
-	require.NotNil(t, cache.GetTools("oauth-server"))
-}
-
-func TestRemoteToolListChangedNotificationStormIsIdempotent(t *testing.T) {
-	server := newTestMCPServer(2, "tool_1")
-	httpServer := startStreamableMCPServer(t, server)
-	cache := newTestToolsCache()
-
-	client, err := NewClient(context.Background(), "user-id", ServerConfig{
-		Name:    "storm",
-		BaseURL: httpServer.URL,
-		Enabled: true,
-	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-
-	addTestMCPTool(server, "storm_tool")
-	server.RemoveTools("storm_tool")
-	addTestMCPTool(server, "storm_tool")
-
-	require.Eventually(t, func() bool {
-		return len(client.Tools()) == 0 && cache.GetTools("storm") == nil
-	}, 5*time.Second, 10*time.Millisecond)
 }

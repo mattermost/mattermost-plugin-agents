@@ -120,7 +120,7 @@ func TestResolveToolUsesUniqueBareMCPToolName(t *testing.T) {
 	store.AddTools([]Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://mcp.atlassian.com",
-		Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *Context, _ ToolArgumentGetter) (string, error) {
 			return "issue result", nil
 		},
 	}})
@@ -137,14 +137,14 @@ func TestResolveToolBareMCPToolNameAmbiguous(t *testing.T) {
 		{
 			Name:         "jira__search",
 			ServerOrigin: "https://mcp.atlassian.com",
-			Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *Context, _ ToolArgumentGetter) (string, error) {
 				return "jira", nil
 			},
 		},
 		{
 			Name:         "github__search",
 			ServerOrigin: "https://api.githubcopilot.com",
-			Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *Context, _ ToolArgumentGetter) (string, error) {
 				return "github", nil
 			},
 		},
@@ -159,7 +159,7 @@ func TestGetToolKnownAndUnknown(t *testing.T) {
 	store := NewToolStore()
 	store.AddTools([]Tool{{
 		Name: "known",
-		Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *Context, _ ToolArgumentGetter) (string, error) {
 			return "ok", nil
 		},
 	}})
@@ -354,7 +354,7 @@ func TestWithBoundParamsPreservesServerOrigin(t *testing.T) {
 		Name:         "test_tool",
 		Description:  "A test tool",
 		ServerOrigin: "https://mcp.example.com",
-		Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *Context, _ ToolArgumentGetter) (string, error) {
 			return "result", nil
 		},
 	}

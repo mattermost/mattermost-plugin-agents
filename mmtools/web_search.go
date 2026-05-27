@@ -209,14 +209,14 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 	}
 
 	t := *s.sourceTool
-	t.Resolver = func(ctx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
-		return s.resolveSource(bot, ctx, argsGetter)
+	t.Resolver = func(ctx context.Context, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+		return s.resolveSource(ctx, bot, llmCtx, argsGetter)
 	}
 
 	return &t
 }
 
-func (s *webSearchService) resolve(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args WebSearchToolArgs
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for WebSearch tool: %w", err)
@@ -301,7 +301,7 @@ func (s *webSearchService) resolve(llmContext *llm.Context, argsGetter llm.ToolA
 	}
 
 	// Perform the search
-	searchResp, err := provider.Search(context.Background(), query, resultLimit)
+	searchResp, err := provider.Search(ctx, query, resultLimit)
 	if err != nil {
 		return "unable to perform web search", err
 	}
@@ -432,7 +432,7 @@ func (s *webSearchService) resolve(llmContext *llm.Context, argsGetter llm.ToolA
 	return builder.String(), nil
 }
 
-func (s *webSearchService) resolveSource(bot *bots.Bot, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (s *webSearchService) resolveSource(ctx context.Context, bot *bots.Bot, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args WebSearchSourceArgs
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for WebSearchFetchSource tool: %w", err)
@@ -503,7 +503,7 @@ func (s *webSearchService) resolveSource(bot *bots.Bot, llmContext *llm.Context,
 		return "web search is not properly configured", errors.New("web search http client is not configured")
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, pageURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
 	if err != nil {
 		s.logError("failed to create source fetch request", "error", err)
 		return "unable to create request", err
@@ -557,7 +557,7 @@ func (s *webSearchService) resolveSource(bot *bots.Bot, llmContext *llm.Context,
 	}
 
 	// Perform recursive summarization
-	summary, err := s.summarizeContent(bot, textContent)
+	summary, err := s.summarizeContent(ctx, bot, textContent)
 	if err != nil {
 		s.logWarn("recursive summarization failed, falling back to raw content with warnings", "error", err)
 		return s.wrapSourceContentWithContext(textContent, matchedResult, llmContext), nil
@@ -566,7 +566,7 @@ func (s *webSearchService) resolveSource(bot *bots.Bot, llmContext *llm.Context,
 	return s.formatSummarizedContent(summary, matchedResult), nil
 }
 
-func (s *webSearchService) summarizeContent(bot *bots.Bot, content string) (string, error) {
+func (s *webSearchService) summarizeContent(ctx context.Context, bot *bots.Bot, content string) (string, error) {
 	if bot == nil {
 		return "", errors.New("bot instance is nil")
 	}
@@ -606,7 +606,7 @@ func (s *webSearchService) summarizeContent(bot *bots.Bot, content string) (stri
 	}
 
 	// Use a reasonable token limit for the summary (e.g. 4000 tokens)
-	return languageModel.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(4000))
+	return languageModel.ChatCompletionNoStream(ctx, req, llm.WithMaxGeneratedTokens(4000))
 }
 
 func (s *webSearchService) formatSummarizedContent(summary string, matchedResult *WebSearchResult) string {

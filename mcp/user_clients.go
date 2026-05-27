@@ -224,15 +224,6 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 	for _, entry := range clientSnapshot {
 		serverID := entry.serverID
 		client := entry.client
-		if err := client.ensureDiscoveredTools(ctx); err != nil {
-			c.log.Warn("Failed to rediscover MCP tools after list_changed notification",
-				"userID", c.userID,
-				"serverID", serverID,
-				"server", client.config.Name,
-				"error", err)
-			continue
-		}
-
 		clientTools := client.Tools()
 		serverSlug := dedupeMCPServerSlug(mcpServerSlug(serverID, client), client.config.BaseURL, serverID, usedSlugs)
 		toolNames := make([]string, 0, len(clientTools))
@@ -347,8 +338,8 @@ func (c *UserClients) rememberOAuthNeededForToolCall(client *Client, err error) 
 }
 
 // createToolResolver creates a resolver function for the given tool
-func (c *UserClients) createToolResolver(client *Client, toolName string) func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
-	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (c *UserClients) createToolResolver(client *Client, toolName string) llm.ToolResolver {
+	return func(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		var args map[string]any
 		if err := argsGetter(&args); err != nil {
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
@@ -356,12 +347,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 
 		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
 
-		if llmContext == nil || llmContext.RequestContext == nil {
-			return "", errors.New("missing request context for MCP tool call")
-		}
-		callCtx := llmContext.RequestContext
-
-		result, err := client.CallToolWithMetadata(callCtx, toolName, args, metadata)
+		result, err := client.CallToolWithMetadata(ctx, toolName, args, metadata)
 		if err != nil {
 			c.rememberOAuthNeededForToolCall(client, err)
 			return result, err

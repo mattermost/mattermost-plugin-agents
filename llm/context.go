@@ -20,7 +20,7 @@ type ToolInfo struct {
 	ServerOrigin string
 }
 
-// Context represents the data necessary to build the context of the LLM.
+// Context represents the per-turn data necessary to build the context of the LLM.
 // For consumers none of the fields can be assumed to be present.
 type Context struct {
 	// Server
@@ -56,6 +56,13 @@ type Context struct {
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]interface{}
 
+	// ToolRuntime holds non-prompt tool execution state for this turn.
+	ToolRuntime ToolRuntimeContext
+}
+
+// ToolRuntimeContext holds request-scoped tool runtime state that should not be
+// rendered into the prompt.
+type ToolRuntimeContext struct {
 	// MCPDynamicToolLoading indicates this context uses strict MCP dynamic loading.
 	MCPDynamicToolLoading bool
 	// MCPDynamicToolTelemetry receives low-cardinality dynamic MCP tool events.
@@ -77,16 +84,7 @@ type Context struct {
 	// catalog and are request scoped.
 	PreloadedMCPTools []EnabledMCPTool
 
-	// MCPToolRegistry holds the strict MCP tool registry that was built
-	// alongside Tools, when MCP dynamic tool loading is enabled. It is stashed
-	// here so callers can replay loaded-tool restoration after the conversation
-	// row exists without rebuilding the entire tool store.
-	//
-	// Stored as `any` to avoid an llm -> mcp import cycle: the mcp package
-	// already imports llm, and the only consumer that needs the concrete type
-	// is the llmcontext package, which can import both. Type-assert to
-	// *mcp.ToolRegistry there.
-	MCPToolRegistry any
+	restoreMCPDynamicTools func(names []string)
 }
 
 type MCPDynamicToolTelemetry interface {
@@ -144,7 +142,7 @@ func (c *Context) CustomPromptVars() map[string]string {
 }
 
 func (c *Context) ObserveMCPDynamicToolEvent(event, result string) {
-	if c == nil || c.MCPDynamicToolTelemetry == nil {
+	if c == nil {
 		return
 	}
 
@@ -156,37 +154,98 @@ func (c *Context) ObserveMCPDynamicToolEvent(event, result string) {
 		botName = "unknown"
 	}
 
-	c.MCPDynamicToolTelemetry.ObserveMCPDynamicToolEvent(botName, event, result)
+	c.ToolRuntime.ObserveMCPDynamicToolEvent(botName, event, result)
+}
+
+func (t *ToolRuntimeContext) ObserveMCPDynamicToolEvent(botName, event, result string) {
+	if t == nil || t.MCPDynamicToolTelemetry == nil {
+		return
+	}
+
+	t.MCPDynamicToolTelemetry.ObserveMCPDynamicToolEvent(botName, event, result)
 }
 
 func (c *Context) MarkMCPDynamicToolSearch() {
 	if c == nil {
 		return
 	}
-	c.MCPDynamicToolSearchUsed = true
+	c.ToolRuntime.MarkMCPDynamicToolSearch()
+}
+
+func (t *ToolRuntimeContext) MarkMCPDynamicToolSearch() {
+	if t == nil {
+		return
+	}
+	t.MCPDynamicToolSearchUsed = true
 }
 
 func (c *Context) MarkMCPDynamicToolLoaded(name string) {
-	if c == nil || name == "" {
+	if c == nil {
 		return
 	}
-	if c.MCPDynamicLoadedToolNames == nil {
-		c.MCPDynamicLoadedToolNames = make(map[string]bool)
+	c.ToolRuntime.MarkMCPDynamicToolLoaded(name)
+}
+
+func (t *ToolRuntimeContext) MarkMCPDynamicToolLoaded(name string) {
+	if t == nil || name == "" {
+		return
 	}
-	c.MCPDynamicLoadedToolNames[name] = true
+	if t.MCPDynamicLoadedToolNames == nil {
+		t.MCPDynamicLoadedToolNames = make(map[string]bool)
+	}
+	t.MCPDynamicLoadedToolNames[name] = true
+}
+
+// RestoreMCPDynamicTools materializes the named MCP tools into c.Tools.
+func (c *Context) RestoreMCPDynamicTools(names []string) {
+	if c == nil {
+		return
+	}
+	c.ToolRuntime.RestoreMCPDynamicTools(names)
+}
+
+// RestoreMCPDynamicTools materializes the named MCP tools into the active tool store.
+func (t *ToolRuntimeContext) RestoreMCPDynamicTools(names []string) {
+	if t == nil || t.restoreMCPDynamicTools == nil || len(names) == 0 {
+		return
+	}
+	t.restoreMCPDynamicTools(names)
+}
+
+// SetMCPDynamicToolRestorer installs the strict MCP tool restorer.
+func (c *Context) SetMCPDynamicToolRestorer(fn func(names []string)) {
+	if c == nil {
+		return
+	}
+	c.ToolRuntime.SetMCPDynamicToolRestorer(fn)
+}
+
+// SetMCPDynamicToolRestorer installs the strict MCP tool restorer.
+func (t *ToolRuntimeContext) SetMCPDynamicToolRestorer(fn func(names []string)) {
+	if t == nil {
+		return
+	}
+	t.restoreMCPDynamicTools = fn
 }
 
 func (c *Context) ShouldRecordMCPDynamicSearchLoadCallSuccess(name string) bool {
-	if c == nil || name == "" || !c.MCPDynamicToolSearchUsed || !c.MCPDynamicLoadedToolNames[name] {
+	if c == nil {
 		return false
 	}
-	if c.MCPDynamicSearchLoadCallSuccessRecorded == nil {
-		c.MCPDynamicSearchLoadCallSuccessRecorded = make(map[string]bool)
-	}
-	if c.MCPDynamicSearchLoadCallSuccessRecorded[name] {
+	return c.ToolRuntime.ShouldRecordMCPDynamicSearchLoadCallSuccess(name)
+}
+
+func (t *ToolRuntimeContext) ShouldRecordMCPDynamicSearchLoadCallSuccess(name string) bool {
+	if t == nil || name == "" || !t.MCPDynamicToolSearchUsed || !t.MCPDynamicLoadedToolNames[name] {
 		return false
 	}
-	c.MCPDynamicSearchLoadCallSuccessRecorded[name] = true
+	if t.MCPDynamicSearchLoadCallSuccessRecorded == nil {
+		t.MCPDynamicSearchLoadCallSuccessRecorded = make(map[string]bool)
+	}
+	if t.MCPDynamicSearchLoadCallSuccessRecorded[name] {
+		return false
+	}
+	t.MCPDynamicSearchLoadCallSuccessRecorded[name] = true
 	return true
 }
 

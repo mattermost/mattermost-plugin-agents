@@ -112,7 +112,7 @@ func TestUserClientsGetToolsResolverUsesBareToolName(t *testing.T) {
 	tools := userClients.GetTools(context.Background())
 	requireToolNames(t, tools, "jira__search")
 
-	result, err := tools[0].Resolver(&llm.Context{RequestContext: context.Background()}, func(args any) error {
+	result, err := tools[0].Resolver(context.Background(), &llm.Context{}, func(args any) error {
 		*(args.(*map[string]any)) = map[string]any{}
 		return nil
 	})
@@ -151,16 +151,21 @@ func TestUserClientsGetToolsDeterministicSlugCollision(t *testing.T) {
 	requireToolNames(t, second, "jira__search", expectedDedupedName)
 }
 
-func TestUserClientsGetToolsPreservesRediscoveryBeforeRead(t *testing.T) {
+func TestUserClientsGetToolsUsesCachedCatalog(t *testing.T) {
 	server := newTestMCPServer(0, "old_tool")
 	session := connectInMemoryTestSession(t, server)
+	addTestMCPTool(server, "new_tool")
 	client := &Client{
-		session:    session,
-		config:     ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
-		tools:      make(map[string]*gomcp.Tool),
-		toolsDirty: true,
-		userID:     "user-id",
-		log:        newTestLogService(),
+		session: session,
+		config:  ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+		tools: map[string]*gomcp.Tool{
+			"old_tool": {
+				Name:        "old_tool",
+				Description: "Old tool",
+			},
+		},
+		userID: "user-id",
+		log:    newTestLogService(),
 	}
 	userClients := &UserClients{
 		userID: "user-id",
@@ -170,16 +175,9 @@ func TestUserClientsGetToolsPreservesRediscoveryBeforeRead(t *testing.T) {
 		},
 	}
 
-	addTestMCPTool(server, "new_tool")
-	require.NoError(t, client.ensureDiscoveredTools(context.Background()))
-	client.toolsMu.Lock()
-	client.toolsDirty = true
-	client.tools = make(map[string]*gomcp.Tool)
-	client.toolsMu.Unlock()
-
 	tools := userClients.GetTools(context.Background())
 
-	requireToolNames(t, tools, "jira__new_tool", "jira__old_tool")
+	requireToolNames(t, tools, "jira__old_tool")
 }
 
 func TestConnectToPluginServer_HappyPath(t *testing.T) {
@@ -262,7 +260,7 @@ func TestConnectToEmbeddedServerIfAvailable_Idempotent(t *testing.T) {
 	require.Same(t, firstClient, secondSnapshot[0].client)
 }
 
-func TestUserClientsGetToolsResolverUsesRequestContext(t *testing.T) {
+func TestUserClientsGetToolsResolverUsesResolverContext(t *testing.T) {
 	callCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -287,7 +285,7 @@ func TestUserClientsGetToolsResolverUsesRequestContext(t *testing.T) {
 	tools := userClients.GetTools(context.Background())
 	require.Len(t, tools, 1)
 
-	_, err := tools[0].Resolver(&llm.Context{RequestContext: callCtx}, func(args any) error {
+	_, err := tools[0].Resolver(callCtx, &llm.Context{}, func(args any) error {
 		*(args.(*map[string]any)) = map[string]any{}
 		return nil
 	})
@@ -295,7 +293,7 @@ func TestUserClientsGetToolsResolverUsesRequestContext(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestUserClientsGetToolsResolverRequiresRequestContext(t *testing.T) {
+func TestUserClientsGetToolsResolverDoesNotRequireRequestContext(t *testing.T) {
 	server := newTestMCPServer(0, "search")
 	session := connectInMemoryTestSession(t, server)
 	userClients := &UserClients{
@@ -317,11 +315,13 @@ func TestUserClientsGetToolsResolverRequiresRequestContext(t *testing.T) {
 	tools := userClients.GetTools(context.Background())
 	require.Len(t, tools, 1)
 
-	_, err := tools[0].Resolver(&llm.Context{}, func(args any) error {
+	result, err := tools[0].Resolver(context.Background(), &llm.Context{}, func(args any) error {
 		*(args.(*map[string]any)) = map[string]any{}
 		return nil
 	})
-	require.EqualError(t, err, "missing request context for MCP tool call")
+
+	require.NoError(t, err)
+	require.Equal(t, "search ok\n", result)
 }
 
 func TestPrepareToolCallMetadata_EmbeddedMergesCallMetadataAndBotUserID(t *testing.T) {

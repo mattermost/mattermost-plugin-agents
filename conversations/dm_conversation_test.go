@@ -602,7 +602,7 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 			Name:         "get_weather",
 			Description:  "Gets the weather",
 			ServerOrigin: "https://mcp.example.com",
-			Resolver: func(ctx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
 				return "72F and sunny", nil
 			},
 		},
@@ -893,7 +893,7 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 			Name:         "tool_a",
 			Description:  "A tool",
 			ServerOrigin: "https://example.com",
-			Resolver: func(ctx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
 				return "result", nil
 			},
 		},
