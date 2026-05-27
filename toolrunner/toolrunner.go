@@ -31,9 +31,8 @@ func New(lm llm.LanguageModel) *ToolRunner {
 	return &ToolRunner{llm: lm}
 }
 
-// finalAssistantText returns the assistant text for a text-only exit. When the
-// forced synthesis round emitted tool calls that were dropped, any preamble
-// text from that round is discarded.
+// finalAssistantText drops preamble text from a forced synthesis round that
+// still emitted (and had dropped) tool calls.
 func finalAssistantText(text string, synthesisForced bool, droppedToolCalls int) string {
 	if synthesisForced && droppedToolCalls > 0 {
 		return ""
@@ -61,10 +60,8 @@ type ToolRunResult struct {
 	ToolTurns []ToolTurn
 
 	// FinalText is the assistant text from the round where the loop exited
-	// because the model returned no tool calls. Empty when the run ended with
-	// unresolved tool calls, a stream error, or a failed forced synthesis
-	// (preamble only, tool calls dropped). Safe to read after the Stream has
-	// been fully consumed.
+	// with no tool calls. Empty on stream error, unresolved tool calls, or a
+	// failed forced synthesis. Read after Stream is fully consumed.
 	FinalText string
 }
 
@@ -165,10 +162,6 @@ func (r *ToolRunner) runLoop(
 ) {
 	stream := firstStream
 
-	// synthesisForced tracks whether the iteration-cap branch has fired and
-	// added WithToolsDisabled to currentOpts. Once set, the runner refuses to
-	// execute any further tool calls (defense-in-depth: the LLM/provider may
-	// still emit tool_use blocks despite tool_choice="none").
 	var synthesisForced bool
 
 	for round := 0; round < MaxToolRounds; round++ {
@@ -238,11 +231,7 @@ func (r *ToolRunner) runLoop(
 			return
 		}
 
-		// Defense-in-depth: if we forced a tools-disabled synthesis, refuse to
-		// execute any tool calls the provider returned anyway (some models
-		// still emit tool_use blocks despite tool_choice="none" when the
-		// conversation history is heavily tool-focused). Drop them so we fall
-		// into the "no tool calls = final response" branch below.
+		// Drop any tool calls the model returned on a forced synthesis round;
 		droppedToolCalls := 0
 		if synthesisForced && len(toolCalls) > 0 {
 			droppedToolCalls = len(toolCalls)
@@ -315,11 +304,8 @@ func (r *ToolRunner) runLoop(
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())
 		}
 
-		// If the next iteration is the last one, force it to be a tools-disabled
-		// synthesis so the caller always receives a final answer instead of an
-		// abrupt end after the cap is hit. Mirrors the trailing-failures pattern
-		// above: the final iteration's no-tool-calls early-return then streams
-		// the synthesis text and emits End.
+		// Force the last allowed round to be a tools-disabled synthesis so the
+		// caller always gets a final answer when the cap is hit.
 		if round == MaxToolRounds-2 {
 			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())

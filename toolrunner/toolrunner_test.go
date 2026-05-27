@@ -480,9 +480,6 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 }
 
 func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
-	// LLM returns tool calls for MaxToolRounds-1 rounds. The runner forces the
-	// final (MaxToolRounds-th) round to be a tools-disabled synthesis that
-	// returns text only.
 	responses := make([]testResponse, MaxToolRounds)
 	for i := 0; i < MaxToolRounds-1; i++ {
 		responses[i] = testResponse{
@@ -524,9 +521,7 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 }
 
 func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.T) {
-	// Same shape as MaxRoundsExhausted, but capture opts on every call and
-	// verify the final round is the synthesis call: tools disabled and the
-	// iteration-limit system message present in the request.
+	// Verify the final round disables tools and seeds the iteration-limit message.
 	responses := make([]testResponse, MaxToolRounds)
 	for i := 0; i < MaxToolRounds-1; i++ {
 		responses[i] = testResponse{
@@ -593,10 +588,8 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 	assert.True(t, foundUserMessage, "final request must include the iteration-limit user message")
 }
 
-// TestToolRunner_MaxRoundsExhausted_ProviderEmitsToolCallDuringSynthesis covers the
-// case where the model returns tool calls during the forced synthesis round
-// (e.g. tool_choice="none" not honored). The runner must drop the tool calls
-// without executing them and emit End with no synthetic fallback text.
+// When the provider ignores tool_choice="none" and returns tool calls on the
+// synthesis round, the runner drops them and emits End with no fallback text.
 func TestToolRunner_MaxRoundsExhausted_ProviderEmitsToolCallDuringSynthesis(t *testing.T) {
 	responses := make([]testResponse, MaxToolRounds)
 	for i := 0; i < MaxToolRounds-1; i++ {
@@ -609,8 +602,7 @@ func TestToolRunner_MaxRoundsExhausted_ProviderEmitsToolCallDuringSynthesis(t *t
 			},
 		}
 	}
-	// Final round: model misbehaves and returns ONLY a tool call (text empty)
-	// despite the runner having set WithToolsDisabled.
+	// Final round emits a tool call despite WithToolsDisabled.
 	responses[MaxToolRounds-1] = testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
