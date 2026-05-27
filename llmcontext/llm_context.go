@@ -34,7 +34,6 @@ type MCPToolRetrievalOverrideProvider interface {
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
-	GetEnableLLMTrace() bool
 }
 
 // Builder builds contexts for LLM requests
@@ -257,11 +256,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, bot *bots.Bot, us
 	}
 
 	// Create a tool store that requires user approval for tool calls
-	enableTrace := false
-	if b.configProvider != nil {
-		enableTrace = b.configProvider.GetEnableLLMTrace()
-	}
-	store := llm.NewToolStore(&b.pluginAPI.Log, enableTrace)
+	store := llm.NewToolStore()
 	botCfg := bot.GetConfig()
 
 	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)

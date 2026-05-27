@@ -389,11 +389,6 @@ func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore,
 				continue
 			}
 
-			if store != nil {
-				store.LogUnknownToolWarning(tc.Name, func(args any) error {
-					return json.Unmarshal(tc.Arguments, args)
-				})
-			}
 			toolResults[i] = ToolResult{
 				ToolCallID: tc.ID,
 				Name:       tc.Name,

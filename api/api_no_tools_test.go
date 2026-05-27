@@ -50,10 +50,6 @@ func (p *noToolsTestContextConfigProvider) GetServiceByID(string) (llm.ServiceCo
 	return llm.ServiceConfig{}, false
 }
 
-func (p *noToolsTestContextConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 type noToolsStreamingService struct {
 	newDMCalls int
 }
