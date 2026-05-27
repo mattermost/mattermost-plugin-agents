@@ -142,6 +142,7 @@ describe('AgentConfigView', () => {
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
                         structuredOutputEnabled: false,
+                        maxToolTurns: 30,
                     }}
                     services={services}
                     onBack={onBack}

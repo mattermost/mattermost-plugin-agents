@@ -42,7 +42,13 @@ export type AgentDraft = {
     reasoningEffort: string;
     thinkingBudget: number;
     structuredOutputEnabled: boolean;
+    maxToolTurns: number;
 }
+
+// DefaultMaxToolTurns mirrors llm.DefaultMaxToolTurns on the backend. Kept
+// here so the create form pre-populates the field even before any service is
+// selected.
+export const DefaultMaxToolTurns = 30;
 
 const emptyDraft: AgentDraft = {
     displayName: '',
@@ -65,6 +71,7 @@ const emptyDraft: AgentDraft = {
     reasoningEffort: 'medium',
     thinkingBudget: 0,
     structuredOutputEnabled: false,
+    maxToolTurns: DefaultMaxToolTurns,
 };
 
 function cloneDraft(draft: AgentDraft): AgentDraft {
@@ -109,6 +116,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         structuredOutputEnabled: draft.structuredOutputEnabled,
+        maxToolTurns: draft.maxToolTurns,
     };
 }
 
@@ -138,6 +146,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         structuredOutputEnabled: draft.structuredOutputEnabled,
+        maxToolTurns: draft.maxToolTurns,
     };
 }
 
@@ -163,6 +172,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         reasoningEffort: agent.reasoningEffort || 'medium',
         thinkingBudget: agent.thinkingBudget ?? 0,
         structuredOutputEnabled: agent.structuredOutputEnabled ?? false,
+        maxToolTurns: agent.maxToolTurns && agent.maxToolTurns > 0 ? agent.maxToolTurns : DefaultMaxToolTurns,
     };
 }
 
