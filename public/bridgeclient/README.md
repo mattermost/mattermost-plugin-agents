@@ -70,7 +70,7 @@ response, err := client.AgentCompletion("bot-user-id", request)
 response, err := client.ServiceCompletion("openai", request)
 ```
 
-`allowed_tools` and `use_agent_custom_instructions` are supported only on agent endpoints. Service endpoints reject them.
+`allowed_tools` is supported only on agent endpoints. Service endpoints reject it.
 
 ### Streaming
 
@@ -133,20 +133,7 @@ When `AllowedTools` is provided:
 
 ### Agent custom instructions
 
-Set `UseAgentCustomInstructions` to have the bridge prepend the targeted agent's configured custom instructions before the posts supplied in the request. This keeps callers in sync with the agent's current configuration without copying those instructions into every request.
-
-```go
-request := bridgeclient.CompletionRequest{
-    Posts: []bridgeclient.Post{
-        {Role: "user", Message: "Summarize this incident"},
-    },
-    UseAgentCustomInstructions: true,
-}
-
-response, err := client.AgentCompletion("bot-user-id", request)
-```
-
-`UseAgentCustomInstructions` is valid only on agent completion endpoints. Service completion endpoints reject requests that set it. Callers can still supply their own system post in addition to the prepended custom instructions.
+Agent completion endpoints automatically prepend the targeted agent's configured custom instructions as a system post before the posts you supply, when those instructions are non-empty. Callers can still supply their own system post in addition to the prepended custom instructions.
 
 ## Permission Checking
 

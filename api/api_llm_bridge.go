@@ -169,13 +169,11 @@ func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclien
 		return llm.CompletionRequest{}, err
 	}
 
-	if req.UseAgentCustomInstructions {
-		if instructions := strings.TrimSpace(bot.GetConfig().CustomInstructions); instructions != "" {
-			posts = append([]llm.Post{{
-				Role:    llm.PostRoleSystem,
-				Message: instructions,
-			}}, posts...)
-		}
+	if instructions := strings.TrimSpace(bot.GetConfig().CustomInstructions); instructions != "" {
+		posts = append([]llm.Post{{
+			Role:    llm.PostRoleSystem,
+			Message: instructions,
+		}}, posts...)
 	}
 
 	bridgeContext := llm.NewContext()
@@ -865,12 +863,6 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 		})
 		return
 	}
-	if req.UseAgentCustomInstructions {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "use_agent_custom_instructions is only supported for agent completion endpoints",
-		})
-		return
-	}
 
 	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
@@ -947,12 +939,6 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	if req.AllowedTools != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "allowed_tools is only supported for agent completion endpoints",
-		})
-		return
-	}
-	if req.UseAgentCustomInstructions {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "use_agent_custom_instructions is only supported for agent completion endpoints",
 		})
 		return
 	}

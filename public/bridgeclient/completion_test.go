@@ -34,7 +34,6 @@ func TestAgentCompletionSendsExpectedPayload(t *testing.T) {
 		require.Equal(t, 128, payload.MaxGeneratedTokens)
 		require.Equal(t, "json_schema", payload.JSONOutputFormat["type"])
 		require.Equal(t, []string{"weather_lookup"}, payload.AllowedTools)
-		require.True(t, payload.UseAgentCustomInstructions)
 		require.Equal(t, "zyxwvutsrqponmlkjihgfedcba", payload.UserID)
 		require.Equal(t, "mnopqrstuvwxabcdefghijkl", payload.ChannelID)
 
@@ -53,9 +52,8 @@ func TestAgentCompletionSendsExpectedPayload(t *testing.T) {
 		JSONOutputFormat: map[string]interface{}{
 			"type": "json_schema",
 		},
-		AllowedTools:         []string{"weather_lookup"},
-		UseAgentCustomInstructions: true,
-		UserID:               "zyxwvutsrqponmlkjihgfedcba",
+		AllowedTools: []string{"weather_lookup"},
+		UserID:       "zyxwvutsrqponmlkjihgfedcba",
 		ChannelID:            "mnopqrstuvwxabcdefghijkl",
 	})
 	require.NoError(t, err)

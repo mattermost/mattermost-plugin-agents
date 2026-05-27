@@ -243,7 +243,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 	}
 }
 
-func TestBridgeClientAgentCompletionUseAgentCustomInstructions(t *testing.T) {
+func TestBridgeClientAgentCompletionPrependsCustomInstructions(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
@@ -251,26 +251,17 @@ func TestBridgeClientAgentCompletionUseAgentCustomInstructions(t *testing.T) {
 
 	tests := []struct {
 		name                         string
-		useAgentCustomInstructions   bool
 		customInstructions           string
 		expectCustomInstructionsPost bool
 	}{
 		{
 			name:                         "prepends configured agent custom instructions",
-			useAgentCustomInstructions:   true,
 			customInstructions:           customInstructions,
 			expectCustomInstructionsPost: true,
 		},
 		{
 			name:                         "empty custom instructions leaves posts unchanged",
-			useAgentCustomInstructions:   true,
 			customInstructions:           "",
-			expectCustomInstructionsPost: false,
-		},
-		{
-			name:                         "omitted flag leaves posts unchanged",
-			useAgentCustomInstructions:   false,
-			customInstructions:           customInstructions,
 			expectCustomInstructionsPost: false,
 		},
 	}
@@ -301,7 +292,6 @@ func TestBridgeClientAgentCompletionUseAgentCustomInstructions(t *testing.T) {
 					{Role: "system", Message: "automation system prompt"},
 					{Role: "user", Message: "summarize this"},
 				},
-				UseAgentCustomInstructions: tc.useAgentCustomInstructions,
 			})
 			require.NoError(t, err)
 			require.Equal(t, "ok", result)
@@ -625,20 +615,6 @@ func TestBridgeClientServiceCompletion(t *testing.T) {
 			expectError:   true,
 			errorMsg:      "no bot found for service",
 		},
-		{
-			name:    "use agent custom instructions rejected",
-			service: "test-service-id",
-			request: bridgeclient.CompletionRequest{
-				Posts: []bridgeclient.Post{
-					{Role: "user", Message: "Hello"},
-				},
-				UseAgentCustomInstructions: true,
-			},
-			serviceConfig: llm.ServiceConfig{ID: "test-service-id", Name: "Test Service"},
-			fakeLLM:       NewFakeLLM("test"),
-			expectError:   true,
-			errorMsg:      "use_agent_custom_instructions is only supported for agent completion endpoints",
-		},
 	}
 
 	for _, tc := range tests {
@@ -762,23 +738,6 @@ func TestBridgeClientServiceCompletionStream(t *testing.T) {
 			fakeLLM:     NewFakeLLM("test"),
 			expectError: true,
 			errorMsg:    "allowed_tools is only supported for agent completion endpoints",
-		},
-		{
-			name:    "use agent custom instructions not supported on service stream endpoint",
-			service: "openai-service",
-			request: bridgeclient.CompletionRequest{
-				Posts: []bridgeclient.Post{
-					{Role: "user", Message: "Hello"},
-				},
-				UseAgentCustomInstructions: true,
-			},
-			serviceConfig: llm.ServiceConfig{
-				ID:   "openai-service",
-				Name: "OpenAI",
-			},
-			fakeLLM:     NewFakeLLM("test"),
-			expectError: true,
-			errorMsg:    "use_agent_custom_instructions is only supported for agent completion endpoints",
 		},
 	}
 
