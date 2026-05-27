@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestToolRegistryLookupAndList(t *testing.T) {
 	require.Equal(t, "Get a Jira issue", entry.RetrievalSummary)
 	require.Equal(t, tools[1].Schema, entry.Tool.Schema)
 
-	result, err := entry.Tool.Resolver(&llm.Context{}, func(args any) error { return nil })
+	result, err := entry.Tool.Resolver(context.Background(), &llm.Context{}, func(args any) error { return nil })
 	require.NoError(t, err)
 	require.Equal(t, "jira__get_issue resolved", result)
 }
@@ -227,7 +228,7 @@ func testRegistryTool(name, desc, origin string) llm.Tool {
 		Description:  desc,
 		Schema:       map[string]any{"name": name},
 		ServerOrigin: origin,
-		Resolver: func(context *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, context *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 			return name + " resolved", nil
 		},
 	}

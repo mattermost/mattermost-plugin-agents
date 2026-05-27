@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -72,7 +73,7 @@ func NewMetaTools(registry *ToolRegistry) []llm.Tool {
 }
 
 func searchToolsResolver(registry *ToolRegistry) llm.ToolResolver {
-	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+	return func(_ context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		observe := func(result string) {
 			if llmContext != nil {
 				llmContext.ObserveMCPDynamicToolEvent("search", result)
@@ -109,7 +110,7 @@ func searchToolsResolver(registry *ToolRegistry) llm.ToolResolver {
 }
 
 func loadToolResolver(registry *ToolRegistry) llm.ToolResolver {
-	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+	return func(_ context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		observe := func(result string) {
 			if llmContext != nil {
 				llmContext.ObserveMCPDynamicToolEvent("load", result)
