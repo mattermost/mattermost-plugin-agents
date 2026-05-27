@@ -343,7 +343,7 @@ The plugin supports distributed tracing via [OpenTelemetry](https://opentelemetr
 When enabled, the plugin creates spans for:
 
 - **HTTP requests**: Every API call to the plugin, with method, route, and status code (via otelgin middleware)
-- **LLM completions**: Provider, model, operation type, streaming status, input/output token counts, and errors
+- **LLM completions**: Provider, model, operation type, streaming status, input/output token counts, actual Bifrost request path (`chat` or `responses`), whether reasoning was attached, and Bifrost error metadata for failed requests
 - **Tool execution**: Tool name, ID, resolution status, and errors for both built-in and MCP tools
 - **MCP tool calls**: Remote MCP server and tool name
 - **Semantic search**: Search queries and result retrieval
@@ -423,6 +423,16 @@ Traces include these semantic attributes for filtering and analysis:
 | `agents.llm.operation` | Operation type | `conversation`, `title_generation` |
 | `agents.llm.input_tokens` | Input token count | `150` |
 | `agents.llm.output_tokens` | Output token count | `42` |
+| `agents.llm.path` | Actual Bifrost request path used for the completion | `chat`, `responses` |
+| `agents.llm.use_responses_api` | Whether the service configuration had Responses API routing enabled for this request | `true` |
+| `agents.llm.reasoning.sent` | Whether the outbound provider request included a reasoning block | `true` |
+| `agents.llm.reasoning.effort` | Reasoning effort sent to the provider, when applicable | `medium` |
+| `agents.llm.reasoning.max_tokens` | Thinking or reasoning budget sent to the provider, when applicable | `2048` |
+| `agents.llm.bifrost.is_bifrost_error` | Whether the failure came from a structured Bifrost/provider error | `true` |
+| `agents.llm.bifrost.status_code` | Upstream/provider status code captured on Bifrost failures | `400` |
+| `agents.llm.bifrost.error_type` | Bifrost or provider error type, when available | `upstream_error` |
+| `agents.llm.bifrost.error_code` | Bifrost or provider error code, when available | `UPSTREAM_DOWN` |
+| `agents.llm.bifrost.error_provider` | Provider name recorded on Bifrost failures, when available | `cohere` |
 | `agents.tool.name` | Tool being called | `web_search`, `read_channel` |
 | `agents.tool.id` | Tool call identifier | `call_abc123` |
 | `agents.mcp.server` | MCP server name | `github-server` |
@@ -431,6 +441,8 @@ Traces include these semantic attributes for filtering and analysis:
 | `agents.channel.id` | Channel ID | `abc123def456` |
 | `agents.post.id` | Post ID | `abc123def456` |
 | `agents.thread.root_post.id` | Root post ID for thread correlation | `abc123def456` |
+
+If a provider failure still appears as a generic `bifrost error` in logs, inspect `agents.llm.path`, `agents.llm.reasoning.*`, and `agents.llm.bifrost.*` on the `llm chat completion` span to confirm which path was used and what status, type, code, and provider Bifrost recorded.
 
 ### Backup and restore
 
