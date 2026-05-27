@@ -24,7 +24,7 @@ import {IntItem} from '@/components/system_console/number_items';
 import ReasoningConfigItem from '@/components/system_console/reasoning_config';
 import {LLMService} from '@/components/system_console/service';
 
-import {AgentDraft, DefaultMaxToolTurns} from '../agent_config_view';
+import {AgentDraft, DefaultMaxToolTurns, MaxAllowedMaxToolTurns} from '../agent_config_view';
 
 type Props = {
     draft: AgentDraft;
@@ -307,13 +307,15 @@ const ConfigTab = (props: Props) => {
                     label={intl.formatMessage({defaultMessage: 'Max tool turns'})}
                     value={draft.maxToolTurns}
                     min={1}
-                    max={200}
+                    max={MaxAllowedMaxToolTurns}
                     allowEmpty={true}
+                    clampOnChange={false}
                     defaultValue={DefaultMaxToolTurns}
                     placeholder={String(DefaultMaxToolTurns)}
                     onChange={(value: number) => onChange({maxToolTurns: value})}
                     helptext={intl.formatMessage({defaultMessage: 'Maximum number of consecutive tool-call/execute rounds the agent will run before stopping. Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn.'})}
                 />
+                {errors.maxToolTurns && <FieldError>{errors.maxToolTurns}</FieldError>}
 
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Custom instructions'})}

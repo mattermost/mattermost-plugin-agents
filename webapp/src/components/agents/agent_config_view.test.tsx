@@ -5,6 +5,7 @@ import React from 'react';
 import {fireEvent, render, screen, waitForElementToBeRemoved} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
+import {updateAgent} from '@/client';
 import {ServiceInfo} from '@/types/agents';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
@@ -14,7 +15,15 @@ jest.mock('react-intl', () => {
     return {
         ...actual,
         useIntl: () => ({
-            formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+            formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: Record<string, string | number>) => {
+                if (!values) {
+                    return defaultMessage;
+                }
+                return Object.entries(values).reduce(
+                    (message, [key, value]) => message.replace(`{${key}}`, String(value)),
+                    defaultMessage,
+                );
+            },
         }),
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
@@ -37,12 +46,20 @@ jest.mock('@/components/system_console/bot', () => ({
 
 jest.mock('./tabs/config_tab', () => ({
     __esModule: true,
-    default: ({draft, onChange}: {draft: AgentDraft; onChange: (updates: Partial<AgentDraft>) => void}) => (
-        <input
-            aria-label='Display Name'
-            value={draft.displayName}
-            onChange={(e) => onChange({displayName: e.target.value})}
-        />
+    default: ({draft, onChange, errors = {}}: {draft: AgentDraft; onChange: (updates: Partial<AgentDraft>) => void; errors?: Record<string, string>}) => (
+        <>
+            <input
+                aria-label='Display Name'
+                value={draft.displayName}
+                onChange={(e) => onChange({displayName: e.target.value})}
+            />
+            <input
+                aria-label='Max tool turns'
+                value={draft.maxToolTurns}
+                onChange={(e) => onChange({maxToolTurns: Number(e.target.value)})}
+            />
+            {errors.maxToolTurns && <div>{errors.maxToolTurns}</div>}
+        </>
     ),
 }));
 
@@ -86,6 +103,10 @@ function renderView(onBack = jest.fn()) {
 }
 
 describe('AgentConfigView', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
     test('confirms before dismissing unsaved changes from back button', async () => {
         const {onBack} = renderView();
 
@@ -202,5 +223,47 @@ describe('AgentConfigView', () => {
 
         expect(onBack).toHaveBeenCalledTimes(1);
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    });
+
+    test('blocks saving when maxToolTurns exceeds the hard cap', () => {
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={{
+                        id: 'agent_1',
+                        name: 'existingagent',
+                        displayName: 'Existing Agent',
+                        customInstructions: '',
+                        serviceID: 'svc_1',
+                        model: '',
+                        enableVision: true,
+                        disableTools: false,
+                        channelAccessLevel: 0,
+                        channelIDs: [],
+                        userAccessLevel: 0,
+                        userIDs: [],
+                        teamIDs: [],
+                        enabledNativeTools: ['web_search'],
+                        enabledMCPTools: [],
+                        autoEnableNewMCPTools: true,
+                        reasoningEnabled: true,
+                        reasoningEffort: 'medium',
+                        thinkingBudget: 0,
+                        structuredOutputEnabled: false,
+                        maxToolTurns: 30,
+                    }}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.change(screen.getByLabelText('Max tool turns'), {target: {value: '251'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(screen.getByText('Max tool turns must be between 1 and 250')).not.toBeNull();
+        expect(updateAgent).not.toHaveBeenCalled();
     });
 });

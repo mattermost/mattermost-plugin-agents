@@ -222,6 +222,7 @@
   "TpaMMxR8": "Team members can mention this bot with this username",
   "TqSTI0/T": "Enable",
   "TsXYsJCJ": "AWS Access Key ID (Optional)",
+  "U4Hdusol": "Max tool turns must be between 1 and {max}",
   "U5+MBCY8": "Client ID",
   "ULR2DAYE": "Would you like to post this summary to the original call thread? You can also ask Agents to make changes.",
   "UOFwNwYM": "Comma separated list of hostnames that LLMs are allowed to contact when using tools. Supports wildcards like *.mydomain.com. For instance to allow JIRA tool use to the Mattermost JIRA instance use mattermost.atlassian.net",

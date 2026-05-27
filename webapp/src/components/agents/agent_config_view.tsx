@@ -49,6 +49,7 @@ export type AgentDraft = {
 // here so the create form pre-populates the field even before any service is
 // selected.
 export const DefaultMaxToolTurns = 30;
+export const MaxAllowedMaxToolTurns = 250;
 
 const emptyDraft: AgentDraft = {
     displayName: '',
@@ -276,6 +277,12 @@ const AgentConfigView = (props: Props) => {
         }
         if (!draft.serviceId) {
             errs.serviceId = intl.formatMessage({defaultMessage: 'AI Service is required'});
+        }
+        if (draft.maxToolTurns < 1 || draft.maxToolTurns > MaxAllowedMaxToolTurns) {
+            errs.maxToolTurns = intl.formatMessage(
+                {defaultMessage: 'Max tool turns must be between 1 and {max}'},
+                {max: MaxAllowedMaxToolTurns},
+            );
         }
         return errs;
     }, [draft, intl]);

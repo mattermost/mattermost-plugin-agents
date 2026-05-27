@@ -22,7 +22,7 @@ const DefaultMaxToolTurns = 30
 
 // MaxAllowedMaxToolTurns caps user-provided MaxToolTurns to keep runaway loops bounded
 // even if a misconfigured agent requests an unreasonably high value.
-const MaxAllowedMaxToolTurns = 200
+const MaxAllowedMaxToolTurns = 250
 
 type ServiceConfig struct {
 	ID           string `json:"id"`
