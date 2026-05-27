@@ -156,4 +156,51 @@ describe('AgentConfigView', () => {
         expect(onBack).toHaveBeenCalledTimes(1);
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });
+
+    test('legacy agent with unset maxToolTurns is not treated as dirty in edit mode', () => {
+        // Pre-migration agents (or any record where maxToolTurns is 0) should
+        // load into the form with the runner default applied silently; this
+        // mirrors what the user would see if they re-saved. The form must not
+        // pop the discard dialog when the user presses Escape immediately.
+        const onBack = jest.fn();
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={{
+                        id: 'agent_legacy',
+                        name: 'legacyagent',
+                        displayName: 'Legacy Agent',
+                        customInstructions: '',
+                        serviceID: 'svc_1',
+                        model: '',
+                        enableVision: true,
+                        disableTools: false,
+                        channelAccessLevel: 0,
+                        channelIDs: [],
+                        userAccessLevel: 0,
+                        userIDs: [],
+                        teamIDs: [],
+                        enabledNativeTools: ['web_search'],
+                        enabledMCPTools: [],
+                        autoEnableNewMCPTools: true,
+                        reasoningEnabled: true,
+                        reasoningEffort: 'medium',
+                        thinkingBudget: 0,
+                        structuredOutputEnabled: false,
+                        maxToolTurns: 0,
+                    }}
+                    services={services}
+                    onBack={onBack}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.keyDown(document, {key: 'Escape'});
+
+        expect(onBack).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    });
 });
