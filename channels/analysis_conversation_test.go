@@ -232,7 +232,7 @@ func makeTool(name, result string) llm.Tool {
 	return llm.Tool{
 		Name:        name,
 		Description: "test tool",
-		Resolver: func(_ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 			return result, nil
 		},
 	}
@@ -243,7 +243,7 @@ func makeToolWithError(name, errMsg string) llm.Tool {
 	return llm.Tool{
 		Name:        name,
 		Description: "test tool that errors",
-		Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			return "", fmt.Errorf("%s", errMsg)
 		},
 	}

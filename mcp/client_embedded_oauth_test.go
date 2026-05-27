@@ -43,76 +43,6 @@ func TestEmbeddedCreateClientRequiresPluginAPIForSessionValidation(t *testing.T)
 	require.EqualError(t, err, "plugin API is required when sessionID is provided")
 }
 
-func TestEmbeddedToolListChangedInvalidatesCacheAndClientTools(t *testing.T) {
-	server := newTestMCPServer(2, "tool_1", "tool_2", "tool_3")
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	cache := newTestToolsCache()
-	require.NoError(t, cache.SetTools(EmbeddedClientKey, EmbeddedServerName, EmbeddedClientKey, map[string]*mcp.Tool{
-		"cached_tool": {
-			Name:        "cached_tool",
-			Description: "Cached tool",
-			InputSchema: map[string]any{"type": "object"},
-		},
-	}, time.Now()))
-
-	embeddedClient := NewEmbeddedServerClientWithCache(&fakeEmbeddedMCPServer{ctx: ctx, server: server}, newTestLogService(), nil, cache)
-	client, err := embeddedClient.CreateClient(context.Background(), "user-id", "")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-	require.NotEmpty(t, client.Tools())
-	require.NotNil(t, cache.GetTools(EmbeddedClientKey))
-
-	addTestMCPTool(server, "new_tool")
-
-	require.Eventually(t, func() bool {
-		return len(client.Tools()) == 0 && cache.GetTools(EmbeddedClientKey) == nil
-	}, 5*time.Second, 10*time.Millisecond)
-}
-
-func TestEmbeddedToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T) {
-	server := newTestMCPServer(2, "tool_1", "tool_2")
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	cache := newTestToolsCache()
-	pluginAPI := newTestPluginAPIForEmbeddedManager("user-id", "session-id")
-	embeddedClient := NewEmbeddedServerClientWithCache(&fakeEmbeddedMCPServer{ctx: ctx, server: server}, pluginAPI.Log, pluginAPI, cache)
-	manager := &ClientManager{
-		config: Config{
-			EmbeddedServer: EmbeddedServerConfig{Enabled: true},
-		},
-		log:            pluginAPI.Log,
-		pluginAPI:      pluginAPI,
-		clients:        make(map[string]*UserClients),
-		activity:       make(map[string]time.Time),
-		embeddedClient: embeddedClient,
-		toolsCache:     cache,
-	}
-	t.Cleanup(func() { cleanupTestClientManager(manager) })
-
-	tools, mcpErrors := manager.GetToolsForUser(context.Background(), "user-id")
-	require.Nil(t, mcpErrors)
-	requireToolNames(t, tools, "mattermost__tool_1", "mattermost__tool_2")
-
-	addTestMCPTool(server, "new_tool")
-
-	require.Eventually(t, func() bool {
-		manager.clientsMu.RLock()
-		userClient := manager.clients["user-id"]
-		manager.clientsMu.RUnlock()
-		if userClient == nil {
-			return false
-		}
-		client := userClient.clients[EmbeddedClientKey]
-		return client != nil && len(client.Tools()) == 0
-	}, 5*time.Second, 10*time.Millisecond)
-
-	tools, mcpErrors = manager.GetToolsForUser(context.Background(), "user-id")
-	require.Nil(t, mcpErrors)
-	requireToolNames(t, tools, "mattermost__new_tool", "mattermost__tool_1", "mattermost__tool_2")
-	require.Len(t, cache.GetTools(EmbeddedClientKey), 3)
-}
-
 func TestEmbeddedReconnectKeepsPaginatedDiscovery(t *testing.T) {
 	server := newTestMCPServer(2, "tool_1", "tool_2", "tool_3")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -132,12 +62,15 @@ func TestEmbeddedReconnectKeepsPaginatedDiscovery(t *testing.T) {
 	require.Len(t, client.Tools(), 3)
 
 	addTestMCPTool(server, "new_tool")
-	require.Eventually(t, func() bool {
-		return len(client.Tools()) == 0
-	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, client.session.Close())
+	result, err = client.CallTool(context.Background(), "tool_1", map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, result, "tool_1 ok")
+	require.Contains(t, client.Tools(), "new_tool")
+	require.Len(t, client.Tools(), 4)
 }
 
-func TestClientToolsReturnsCopyAndSurvivesConcurrentInvalidation(t *testing.T) {
+func TestClientToolsReturnsCopyAndSurvivesConcurrentUpdate(t *testing.T) {
 	client := &Client{
 		config: ServerConfig{Name: "server", BaseURL: "https://example.com"},
 		tools: map[string]*mcp.Tool{
@@ -159,7 +92,9 @@ func TestClientToolsReturnsCopyAndSurvivesConcurrentInvalidation(t *testing.T) {
 		}
 	}()
 	for i := 0; i < 100; i++ {
-		client.invalidateDiscoveredTools(context.Background(), nil, "server", false)
+		client.toolsMu.Lock()
+		client.tools = make(map[string]*mcp.Tool)
+		client.toolsMu.Unlock()
 	}
 	<-done
 	require.Empty(t, client.Tools())

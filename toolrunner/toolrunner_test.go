@@ -87,7 +87,7 @@ func newTestToolStore(tools ...testToolDef) *llm.ToolStore {
 			Name:         t.name,
 			Description:  "test tool",
 			ServerOrigin: t.serverOrigin,
-			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 				return result, toolErr
 			},
 		}

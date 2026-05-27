@@ -593,8 +593,7 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requesting
 }
 
 // mcpToolsToLLMTools converts MCP server tools into llm.Tool instances with resolvers
-// that call through the MCP protocol. This mirrors the production pattern in
-// mcp/user_clients.go:201 (createToolResolver).
+// that call through the MCP protocol.
 func mcpToolsToLLMTools(t *testing.T, mcpServer *gomcp.Server) []llm.Tool {
 	t.Helper()
 
@@ -611,8 +610,7 @@ func mcpToolsToLLMTools(t *testing.T, mcpServer *gomcp.Server) []llm.Tool {
 			Name:        tool.Name,
 			Description: tool.Description,
 			Schema:      tool.InputSchema,
-			Resolver: func(_ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
-				// Same pattern as production createToolResolver (mcp/user_clients.go:201)
+			Resolver: func(ctx context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 				var args map[string]any
 				if err := argsGetter(&args); err != nil {
 					return "", err

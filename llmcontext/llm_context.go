@@ -256,7 +256,7 @@ func (b *Builder) WithLLMContextDefaultTools(bot *bots.Bot) llm.ContextOption {
 }
 
 // WithLLMContextRequestContext threads request-scoped cancellation/deadlines into
-// MCP discovery and tool execution.
+// MCP tool discovery.
 func (b *Builder) WithLLMContextRequestContext(ctx stdcontext.Context) llm.ContextOption {
 	return func(c *llm.Context) {
 		c.RequestContext = ctx
