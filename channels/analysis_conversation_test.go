@@ -255,7 +255,7 @@ func makeChannelIDCaptureTool(name, result string, captured *string) llm.Tool {
 		Name:         name,
 		Description:  "test channel tool",
 		ServerOrigin: mcp.EmbeddedClientKey,
-		Resolver: func(_ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 			var args struct {
 				ChannelID string `json:"channel_id"`
 			}

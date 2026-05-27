@@ -122,10 +122,10 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		a.pluginAPI.Log.Error("Channel analysis failed: required embedded MCP tools not available",
 			"userID", userID,
 			"channelID", channel.Id,
-			"dynamicToolLoading", llmContext.MCPDynamicToolLoading,
+			"dynamicToolLoading", llmContext.ToolRuntime.MCPDynamicToolLoading,
 			"missingTools", missingTools,
 			"availableTools", availableTools)
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("channel analysis requires embedded MCP tool(s) %v which are not available (dynamic loading: %t, found %d tools: %v) - ensure embedded MCP server is enabled, authorized, and working", missingTools, llmContext.MCPDynamicToolLoading, len(availableTools), availableTools))
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("channel analysis requires embedded MCP tool(s) %v which are not available (dynamic loading: %t, found %d tools: %v) - ensure embedded MCP server is enabled, authorized, and working", missingTools, llmContext.ToolRuntime.MCPDynamicToolLoading, len(availableTools), availableTools))
 		return
 	}
 

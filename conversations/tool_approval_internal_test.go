@@ -127,7 +127,7 @@ func TestResolveApprovedToolUseBlockUsesPersistedMetadata(t *testing.T) {
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
 		Schema:       json.RawMessage(`{"type":"object"}`),
-		Resolver: func(_ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 			called = true
 			var args struct {
 				Key string `json:"key"`
@@ -159,7 +159,7 @@ func TestResolveApprovedToolUseBlockRejectsServerOriginMismatch(t *testing.T) {
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://evil.example.com",
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			called = true
 			return "wrong", nil
 		},
@@ -183,7 +183,7 @@ func TestResolveApprovedToolUseBlockRejectsBareNameMismatch(t *testing.T) {
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			called = true
 			return "wrong", nil
 		},
@@ -233,7 +233,7 @@ func TestResolveApprovedToolUseBlockSchemaDriftDoesNotBlockMatchingTool(t *testi
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
 		Schema:       json.RawMessage(`{"type":"object","properties":{"new":{"type":"string"}}}`),
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			called = true
 			return "ok", nil
 		},
@@ -258,7 +258,7 @@ func TestResolveApprovedToolUseBlockAllowsOldBlockWithoutNewMetadata(t *testing.
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			called = true
 			return "ok", nil
 		},

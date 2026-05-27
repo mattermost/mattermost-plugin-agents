@@ -102,10 +102,10 @@ func (c *Conversations) userMCPPreferenceContextOptions(userID string, logMessag
 }
 
 func removePreFilteredMCPServersFromVisibleStore(llmContext *llm.Context) {
-	if llmContext == nil || llmContext.Tools == nil || len(llmContext.DisabledMCPServerOrigins) == 0 {
+	if llmContext == nil || llmContext.Tools == nil || len(llmContext.ToolRuntime.DisabledMCPServerOrigins) == 0 {
 		return
 	}
-	llmContext.Tools.RemoveToolsByServerOrigin(llmContext.DisabledMCPServerOrigins)
+	llmContext.Tools.RemoveToolsByServerOrigin(llmContext.ToolRuntime.DisabledMCPServerOrigins)
 }
 
 // buildConversationContextWithTools assembles an LLM context for a bot

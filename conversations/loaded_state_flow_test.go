@@ -281,7 +281,7 @@ func loadedStateTool() llm.Tool {
 		Description:  "fetch Jira issue details",
 		ServerOrigin: "https://jira.example.com",
 		Schema:       map[string]any{"type": "object"},
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			return "restored-result", nil
 		},
 	}
@@ -289,7 +289,7 @@ func loadedStateTool() llm.Tool {
 
 func loadedStateTransitionTool(resolver llm.ToolResolver) llm.Tool {
 	if resolver == nil {
-		resolver = func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		resolver = func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			return "transitioned", nil
 		}
 	}
@@ -582,7 +582,7 @@ func TestHandleToolCallRestoresMultipleLoadsBeforeExecutingApprovedTool(t *testi
 	seedLoadToolPair(t, convStore, conv.ID, "load-2", "jira__transition_issue", &nextSeq)
 
 	var capturedCtx *llm.Context
-	transitionTool := loadedStateTransitionTool(func(ctx *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+	transitionTool := loadedStateTransitionTool(func(_ context.Context, ctx *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 		capturedCtx = ctx
 		return "transitioned", nil
 	})

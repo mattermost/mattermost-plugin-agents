@@ -69,7 +69,7 @@ func channelAnalysisMCPTool(name string) llm.Tool {
 		Name:         llm.NamespaceMCPToolName("mattermost", name),
 		Description:  name + " test tool",
 		ServerOrigin: mcp.EmbeddedClientKey,
-		Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			return name + " result", nil
 		},
 	}

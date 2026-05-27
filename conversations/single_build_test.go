@@ -64,7 +64,7 @@ func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) 
 			Description:  "fetch Jira issue details",
 			ServerOrigin: "https://jira.example.com",
 			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
-			Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 				return "ok", nil
 			},
 		},
@@ -120,7 +120,7 @@ func TestAttachConversationID_DoesNotMaterializeTools(t *testing.T) {
 			Description:  "fetch Jira issue details",
 			ServerOrigin: "https://jira.example.com",
 			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
-			Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 				return "ok", nil
 			},
 		},
@@ -164,7 +164,7 @@ func TestAttachConversationID_DoesNotReintroducePreFilteredMCPServers(t *testing
 			Description:  "fetch Jira issue details",
 			ServerOrigin: disabledOrigin,
 			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
-			Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 				return "ok", nil
 			},
 		},

@@ -212,9 +212,9 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 func TestDynamicMCPMetaToolsBypassApproval(t *testing.T) {
 	store := llm.NewNoTools()
 	store.AddTools([]llm.Tool{
-		{Name: mcp.SearchToolsName, Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "{}", nil }},
-		{Name: mcp.LoadToolName, Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "{}", nil }},
-		{Name: "jira__transition_issue", ServerOrigin: "https://jira.example.com", Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "ok", nil }},
+		{Name: mcp.SearchToolsName, Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "{}", nil }},
+		{Name: mcp.LoadToolName, Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "{}", nil }},
+		{Name: "jira__transition_issue", ServerOrigin: "https://jira.example.com", Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "ok", nil }},
 	})
 	shouldExecute := (&Conversations{}).shouldAutoExecuteTool(&llm.Context{Tools: store}, true)
 
