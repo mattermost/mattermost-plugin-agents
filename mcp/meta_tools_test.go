@@ -103,7 +103,7 @@ func TestSearchToolsUsesFilteredRegistryOnly(t *testing.T) {
 		testRegistryTool("jira__get_issue", "Get a Jira issue", "https://jira.example.com"),
 	})
 	searchTool := metaToolByName(t, NewMetaTools(registry), SearchToolsName)
-	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 	llmContext.Tools.AddTools([]llm.Tool{
 		testRegistryTool("github__create_pull_request", "Create a pull request", "https://github.example.com"),
 	})
@@ -121,7 +121,7 @@ func TestLoadToolExactLookupAddsToolToVisibleStore(t *testing.T) {
 	registry := NewToolRegistry([]llm.Tool{registryTool})
 	metaTools := NewMetaTools(registry)
 	loadTool := metaToolByName(t, metaTools, LoadToolName)
-	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 	llmContext.Tools.AddTools(metaTools)
 
 	resultJSON, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
@@ -140,7 +140,7 @@ func TestLoadToolDoesNotLoadBareName(t *testing.T) {
 		testRegistryTool("jira__search", "Search Jira", "https://jira.example.com"),
 	})
 	loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
-	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 
 	resultJSON, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"search"}`))
 	require.NoError(t, err)
@@ -158,7 +158,7 @@ func TestLoadToolMissReturnsClosestFilteredMatches(t *testing.T) {
 		testRegistryTool("mattermost__search_users", "Find people", "https://mattermost.example.com"),
 	})
 	loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
-	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 
 	resultJSON, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"search user"}`))
 	require.NoError(t, err)
@@ -176,7 +176,7 @@ func TestLoadToolEmptyNameReturnsJSONError(t *testing.T) {
 		testRegistryTool("jira__get_issue", "Get issue", "https://jira.example.com"),
 	})), LoadToolName)
 
-	resultJSON, err := loadTool.Resolver(&llm.Context{Tools: llm.NewToolStore(nil, false)}, metaToolArgs(`{"name":"   "}`))
+	resultJSON, err := loadTool.Resolver(&llm.Context{Tools: llm.NewToolStore()}, metaToolArgs(`{"name":"   "}`))
 	require.NoError(t, err)
 
 	var result LoadToolResult
@@ -220,7 +220,7 @@ func TestLoadToolDoesNotMutateRegistryToolSchema(t *testing.T) {
 	metaTools := NewMetaTools(registry)
 	searchTool := metaToolByName(t, metaTools, SearchToolsName)
 	loadTool := metaToolByName(t, metaTools, LoadToolName)
-	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 
 	searchJSON, err := searchTool.Resolver(llmContext, metaToolArgs(`{"query":"override"}`))
 	require.NoError(t, err)
@@ -242,7 +242,7 @@ func TestLoadToolResultWireShape(t *testing.T) {
 		testRegistryTool("jira__get_issue", "Get a Jira issue", "https://jira.example.com"),
 	})
 	loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
-	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 
 	t.Run("success", func(t *testing.T) {
 		resultJSON, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
@@ -257,7 +257,7 @@ func TestLoadToolResultWireShape(t *testing.T) {
 	})
 
 	t.Run("miss", func(t *testing.T) {
-		resultJSON, err := loadTool.Resolver(&llm.Context{Tools: llm.NewToolStore(nil, false)}, metaToolArgs(`{"name":"jira__unknown"}`))
+		resultJSON, err := loadTool.Resolver(&llm.Context{Tools: llm.NewToolStore()}, metaToolArgs(`{"name":"jira__unknown"}`))
 		require.NoError(t, err)
 
 		var raw map[string]any
@@ -278,7 +278,7 @@ func TestMetaToolsNilRegistryResolvers(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"tools":[]}`, searchJSON)
 
-	loadJSON, err := loadTool.Resolver(&llm.Context{Tools: llm.NewToolStore(nil, false)}, metaToolArgs(`{"name":"jira__get_issue"}`))
+	loadJSON, err := loadTool.Resolver(&llm.Context{Tools: llm.NewToolStore()}, metaToolArgs(`{"name":"jira__get_issue"}`))
 	require.NoError(t, err)
 	var loadResult LoadToolResult
 	require.NoError(t, json.Unmarshal([]byte(loadJSON), &loadResult))
@@ -354,7 +354,7 @@ func TestLoadToolTelemetry(t *testing.T) {
 		loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
 		llmContext := &llm.Context{
 			BotUsername:             "matty",
-			Tools:                   llm.NewToolStore(nil, false),
+			Tools:                   llm.NewToolStore(),
 			MCPDynamicToolTelemetry: telemetry,
 		}
 
@@ -366,7 +366,7 @@ func TestLoadToolTelemetry(t *testing.T) {
 	t.Run("miss", func(t *testing.T) {
 		telemetry := &fakeMCPDynamicTelemetry{}
 		loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
-		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(nil, false), MCPDynamicToolTelemetry: telemetry}
+		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(), MCPDynamicToolTelemetry: telemetry}
 
 		_, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__missing"}`))
 		require.NoError(t, err)
@@ -376,7 +376,7 @@ func TestLoadToolTelemetry(t *testing.T) {
 	t.Run("empty name", func(t *testing.T) {
 		telemetry := &fakeMCPDynamicTelemetry{}
 		loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
-		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(nil, false), MCPDynamicToolTelemetry: telemetry}
+		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(), MCPDynamicToolTelemetry: telemetry}
 
 		_, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"   "}`))
 		require.NoError(t, err)
@@ -396,7 +396,7 @@ func TestLoadToolTelemetry(t *testing.T) {
 	t.Run("decode error", func(t *testing.T) {
 		telemetry := &fakeMCPDynamicTelemetry{}
 		loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
-		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(nil, false), MCPDynamicToolTelemetry: telemetry}
+		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(), MCPDynamicToolTelemetry: telemetry}
 
 		_, err := loadTool.Resolver(llmContext, func(any) error {
 			return errors.New("decode")
@@ -413,7 +413,7 @@ func TestSearchLoadStateMarkers(t *testing.T) {
 	metaTools := NewMetaTools(registry)
 	searchTool := metaToolByName(t, metaTools, SearchToolsName)
 	loadTool := metaToolByName(t, metaTools, LoadToolName)
-	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 
 	_, err := searchTool.Resolver(llmContext, metaToolArgs(`{"query":"jira issue"}`))
 	require.NoError(t, err)
