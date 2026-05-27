@@ -4,6 +4,7 @@
 package llmcontext
 
 import (
+	stdcontext "context"
 	"encoding/json"
 	"testing"
 
@@ -312,7 +313,7 @@ func TestStrictToolStoreLoadMaterializesTool(t *testing.T) {
 	context := buildToolsContext(builder, bot)
 
 	loadTool := mustTool(t, context.Tools, mcp.LoadToolName)
-	resultJSON, err := loadTool.Resolver(context, contextToolArgs(`{"name":"jira__get_issue"}`))
+	resultJSON, err := loadTool.Resolver(stdcontext.Background(), context, contextToolArgs(`{"name":"jira__get_issue"}`))
 	require.NoError(t, err)
 
 	var result mcp.LoadToolResult
@@ -323,7 +324,7 @@ func TestStrictToolStoreLoadMaterializesTool(t *testing.T) {
 	loadedTool := mustTool(t, context.Tools, "jira__get_issue")
 	require.Equal(t, originalTool.Schema, loadedTool.Schema)
 	require.Equal(t, originalTool.ServerOrigin, loadedTool.ServerOrigin)
-	resolved, err := loadedTool.Resolver(context, contextToolArgs(`{}`))
+	resolved, err := loadedTool.Resolver(stdcontext.Background(), context, contextToolArgs(`{}`))
 	require.NoError(t, err)
 	require.Equal(t, "mcp:jira__get_issue", resolved)
 }
@@ -357,7 +358,7 @@ func TestLoadToolUsesOriginalDescriptionWithRetrievalOverride(t *testing.T) {
 	require.Equal(t, "override search-only summary", searchResult.Tools[0].Summary)
 
 	loadTool := mustTool(t, context.Tools, mcp.LoadToolName)
-	resultJSON, err := loadTool.Resolver(context, contextToolArgs(`{"name":"jira__get_issue"}`))
+	resultJSON, err := loadTool.Resolver(stdcontext.Background(), context, contextToolArgs(`{"name":"jira__get_issue"}`))
 	require.NoError(t, err)
 
 	var result mcp.LoadToolResult
@@ -499,7 +500,7 @@ func TestContextSetsMCPDynamicToolLoadingFlag(t *testing.T) {
 
 			context := builder.BuildLLMContextUserRequest(bot, testUser(), testChannel())
 
-			require.Equal(t, tt.enabled, context.MCPDynamicToolLoading)
+			require.Equal(t, tt.enabled, context.ToolRuntime.MCPDynamicToolLoading)
 		})
 	}
 }
@@ -635,7 +636,7 @@ func TestStrictRegistryAfterMCPToolPredicate(t *testing.T) {
 	require.Empty(t, searchToolNames(t, context.Tools, "ask"))
 
 	loadTool := mustTool(t, context.Tools, mcp.LoadToolName)
-	resultJSON, err := loadTool.Resolver(context, contextToolArgs(`{"name":"jira__ask_tool"}`))
+	resultJSON, err := loadTool.Resolver(stdcontext.Background(), context, contextToolArgs(`{"name":"jira__ask_tool"}`))
 	require.NoError(t, err)
 	var result mcp.LoadToolResult
 	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))

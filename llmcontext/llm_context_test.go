@@ -131,7 +131,7 @@ func testBuiltinTool(name string) llm.Tool {
 		Name:        name,
 		Description: name + " built-in",
 		Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ stdcontext.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			return "builtin:" + name, nil
 		},
 	}
@@ -143,7 +143,7 @@ func testMCPTool(name, origin, description string) llm.Tool {
 		Description:  description,
 		ServerOrigin: origin,
 		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ stdcontext.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			return "mcp:" + name, nil
 		},
 	}
@@ -192,7 +192,7 @@ func searchTools(t *testing.T, store *llm.ToolStore, query string) mcp.SearchToo
 	t.Helper()
 
 	searchTool := mustTool(t, store, mcp.SearchToolsName)
-	resultJSON, err := searchTool.Resolver(&llm.Context{Tools: store}, contextToolArgs(`{"query":"`+query+`"}`))
+	resultJSON, err := searchTool.Resolver(stdcontext.Background(), &llm.Context{Tools: store}, contextToolArgs(`{"query":"`+query+`"}`))
 	require.NoError(t, err)
 
 	var result mcp.SearchToolsResult
