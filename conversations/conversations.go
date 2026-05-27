@@ -185,7 +185,7 @@ type DMStreamResult struct {
 //
 // maxToolTurns bounds the tool-call-execute-recall loop for this bot; pass 0
 // or any non-positive value to use the system default
-// (toolrunner.DefaultMaxToolRounds).
+// (llm.DefaultMaxToolTurns).
 func (c *Conversations) ProcessDMRequest(
 	ctx stdcontext.Context,
 	convID string,

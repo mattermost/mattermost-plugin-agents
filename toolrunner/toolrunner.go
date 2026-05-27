@@ -14,11 +14,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// DefaultMaxToolRounds is the fallback ceiling on tool-call-execute-recall
-// iterations when no per-agent override is supplied. This prevents infinite
-// loops from models that keep requesting tools. Mirrors llm.DefaultMaxToolTurns.
-const DefaultMaxToolRounds = 30
-
 // ToolRunner manages the call-execute-recall loop for LLM tool use.
 // It calls the LLM, checks for tool calls in the stream, executes
 // approved ones, appends results back to the request, and calls again.
@@ -31,7 +26,7 @@ type ToolRunner struct {
 type Option func(*ToolRunner)
 
 // WithMaxRounds overrides the default maximum number of tool-call rounds.
-// Non-positive values fall back to DefaultMaxToolRounds.
+// Non-positive values fall back to llm.DefaultMaxToolTurns.
 func WithMaxRounds(n int) Option {
 	return func(r *ToolRunner) {
 		if n > 0 {
@@ -43,7 +38,7 @@ func WithMaxRounds(n int) Option {
 // New creates a ToolRunner bound to the given language model. Pass
 // WithMaxRounds to override the default per-agent tool-call ceiling.
 func New(lm llm.LanguageModel, opts ...Option) *ToolRunner {
-	r := &ToolRunner{llm: lm, maxRounds: DefaultMaxToolRounds}
+	r := &ToolRunner{llm: lm, maxRounds: llm.DefaultMaxToolTurns}
 	for _, opt := range opts {
 		opt(r)
 	}

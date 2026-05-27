@@ -480,7 +480,7 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 
 func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 	// LLM always returns tool calls, never text-only.
-	responses := make([]testResponse, DefaultMaxToolRounds+1)
+	responses := make([]testResponse, llm.DefaultMaxToolTurns+1)
 	for i := range responses {
 		responses[i] = testResponse{
 			events: []llm.TextStreamEvent{
@@ -503,14 +503,14 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 
-	// Should have exactly DefaultMaxToolRounds tool turns.
+	// Should have exactly llm.DefaultMaxToolTurns tool turns.
 	// (read stream first to ensure goroutine completes)
 	_, readErr := result.Stream.ReadAll()
 	assert.NoError(t, readErr)
-	assert.Len(t, result.ToolTurns, DefaultMaxToolRounds)
+	assert.Len(t, result.ToolTurns, llm.DefaultMaxToolTurns)
 
-	// LLM called DefaultMaxToolRounds times (not DefaultMaxToolRounds+1).
-	assert.Equal(t, DefaultMaxToolRounds, inner.callCount)
+	// LLM called llm.DefaultMaxToolTurns times (not llm.DefaultMaxToolTurns+1).
+	assert.Equal(t, llm.DefaultMaxToolTurns, inner.callCount)
 }
 
 func TestToolRunner_WithMaxRoundsOverrideClamps(t *testing.T) {
@@ -527,12 +527,12 @@ func TestToolRunner_WithMaxRoundsOverrideClamps(t *testing.T) {
 		{
 			name:          "non-positive override falls back to default",
 			opt:           WithMaxRounds(0),
-			expectedCalls: DefaultMaxToolRounds,
+			expectedCalls: llm.DefaultMaxToolTurns,
 		},
 		{
 			name:          "negative override falls back to default",
 			opt:           WithMaxRounds(-5),
-			expectedCalls: DefaultMaxToolRounds,
+			expectedCalls: llm.DefaultMaxToolTurns,
 		},
 	}
 
