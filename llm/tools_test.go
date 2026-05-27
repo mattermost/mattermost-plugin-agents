@@ -6,7 +6,6 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sort"
 	"testing"
 
@@ -110,110 +109,14 @@ func TestSanitizeNonPrintableChars(t *testing.T) {
 	}
 }
 
-func TestToolArgsForLogNilGetter(t *testing.T) {
-	assert.Equal(t, "{}", toolArgsForLog(nil))
-}
-
-type logEntry struct {
-	message string
-	fields  []any
-}
-
-type captureToolLog struct {
-	infos []logEntry
-	warns []logEntry
-}
-
-func (l *captureToolLog) Info(message string, keyValuePairs ...any) {
-	l.infos = append(l.infos, logEntry{message: message, fields: keyValuePairs})
-}
-
-func (l *captureToolLog) Warn(message string, keyValuePairs ...any) {
-	l.warns = append(l.warns, logEntry{message: message, fields: keyValuePairs})
-}
-
-type infoOnlyToolLog struct {
-	infos []logEntry
-}
-
-func (l *infoOnlyToolLog) Info(message string, keyValuePairs ...any) {
-	l.infos = append(l.infos, logEntry{message: message, fields: keyValuePairs})
-}
-
-func logFields(entry logEntry) map[string]any {
-	fields := make(map[string]any, len(entry.fields)/2)
-	for i := 0; i+1 < len(entry.fields); i += 2 {
-		key, ok := entry.fields[i].(string)
-		if ok {
-			fields[key] = entry.fields[i+1]
-		}
-	}
-	return fields
-}
-
 func rawArgsGetter(raw string) ToolArgumentGetter {
 	return func(args any) error {
 		return json.Unmarshal([]byte(raw), args)
 	}
 }
 
-func TestResolveToolUnknownWarnsWithoutTrace(t *testing.T) {
-	log := &captureToolLog{}
-	store := NewToolStore(log, false)
-
-	_, err := store.ResolveTool(context.Background(), "ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
-
-	require.EqualError(t, err, "unknown tool ghost_tool")
-	require.Len(t, log.warns, 1)
-	assert.Empty(t, log.infos)
-	assert.Equal(t, "unknown tool called", log.warns[0].message)
-	fields := logFields(log.warns[0])
-	assert.Equal(t, "ghost_tool", fields["name"])
-	assert.Equal(t, `{"query":"hello"}`, fields["args"])
-	assert.Equal(t, 0, fields["available_tool_count"])
-}
-
-func TestResolveToolUnknownPreservesTrace(t *testing.T) {
-	log := &captureToolLog{}
-	store := NewToolStore(log, true)
-
-	_, err := store.ResolveTool(context.Background(), "ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
-
-	require.EqualError(t, err, "unknown tool ghost_tool")
-	require.Len(t, log.warns, 1)
-	require.Len(t, log.infos, 1)
-	assert.Equal(t, "unknown tool called", log.warns[0].message)
-	assert.Equal(t, "unknown tool called", log.infos[0].message)
-	assert.Equal(t, `{"query":"hello"}`, logFields(log.infos[0])["args"])
-}
-
-func TestResolveToolUnknownWithInfoOnlyLoggerStillTracesWhenEnabled(t *testing.T) {
-	log := &infoOnlyToolLog{}
-	store := NewToolStore(log, true)
-
-	_, err := store.ResolveTool(context.Background(), "ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
-
-	require.EqualError(t, err, "unknown tool ghost_tool")
-	require.Len(t, log.infos, 1)
-	assert.Equal(t, "unknown tool called", log.infos[0].message)
-}
-
-func TestResolveToolUnknownLogsArgumentGetterError(t *testing.T) {
-	log := &captureToolLog{}
-	store := NewToolStore(log, true)
-	argsErr := errors.New("bad arguments")
-
-	_, err := store.ResolveTool(context.Background(), "ghost_tool", func(any) error { return argsErr }, &Context{})
-
-	require.EqualError(t, err, "unknown tool ghost_tool")
-	require.Len(t, log.warns, 1)
-	require.Len(t, log.infos, 1)
-	assert.Equal(t, "failed to get tool args: bad arguments", logFields(log.warns[0])["args"])
-	assert.Equal(t, "failed to get tool args: bad arguments", logFields(log.infos[0])["args"])
-}
-
 func TestResolveToolUsesUniqueBareMCPToolName(t *testing.T) {
-	store := NewToolStore(nil, false)
+	store := NewToolStore()
 	store.AddTools([]Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://mcp.atlassian.com",
@@ -229,7 +132,7 @@ func TestResolveToolUsesUniqueBareMCPToolName(t *testing.T) {
 }
 
 func TestResolveToolBareMCPToolNameAmbiguous(t *testing.T) {
-	store := NewToolStore(nil, false)
+	store := NewToolStore()
 	store.AddTools([]Tool{
 		{
 			Name:         "jira__search",
@@ -253,7 +156,7 @@ func TestResolveToolBareMCPToolNameAmbiguous(t *testing.T) {
 }
 
 func TestGetToolKnownAndUnknown(t *testing.T) {
-	store := NewToolStore(nil, false)
+	store := NewToolStore()
 	store.AddTools([]Tool{{
 		Name: "known",
 		Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
@@ -266,7 +169,7 @@ func TestGetToolKnownAndUnknown(t *testing.T) {
 }
 
 func TestGetToolUsesUniqueBareMCPToolName(t *testing.T) {
-	store := NewToolStore(nil, false)
+	store := NewToolStore()
 	store.AddTools([]Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://mcp.atlassian.com",
@@ -377,7 +280,7 @@ func TestGetServerOrigin(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store := NewToolStore(nil, false)
+			store := NewToolStore()
 			store.AddTools(tc.tools)
 			result := store.GetServerOrigin(tc.lookupName)
 			assert.Equal(t, tc.expectedURL, result)
@@ -569,7 +472,7 @@ func TestRemoveToolsByServerOrigin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var store *ToolStore
 			if tc.tools != nil {
-				store = NewToolStore(nil, false)
+				store = NewToolStore()
 				store.AddTools(tc.tools)
 			}
 
@@ -755,7 +658,7 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 				return
 			}
 
-			s := NewToolStore(nil, false)
+			s := NewToolStore()
 			s.AddTools(tt.tools)
 			s.RetainOnlyMCPTools(tt.allowlist)
 
