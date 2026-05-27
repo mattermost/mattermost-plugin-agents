@@ -78,6 +78,7 @@ type CreateAgentRequest struct {
 	ReasoningEffort         string               `json:"reasoningEffort"`
 	ThinkingBudget          int                  `json:"thinkingBudget"`
 	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
+	MaxToolTurns            int                  `json:"maxToolTurns"`
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid (full document replace, same shape as create).
@@ -103,6 +104,7 @@ type UpdateAgentRequest struct {
 	ReasoningEffort         string               `json:"reasoningEffort"`
 	ThinkingBudget          int                  `json:"thinkingBudget"`
 	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
+	MaxToolTurns            int                  `json:"maxToolTurns"`
 
 	usernameProvided bool
 }
@@ -255,6 +257,7 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 		ReasoningEffort:         req.ReasoningEffort,
 		ThinkingBudget:          req.ThinkingBudget,
 		StructuredOutputEnabled: req.StructuredOutputEnabled,
+		MaxToolTurns:            req.MaxToolTurns,
 	}
 }
 
@@ -280,6 +283,7 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.ReasoningEffort = req.ReasoningEffort
 	cfg.ThinkingBudget = req.ThinkingBudget
 	cfg.StructuredOutputEnabled = req.StructuredOutputEnabled
+	cfg.MaxToolTurns = req.MaxToolTurns
 	return displayNameChanged
 }
 

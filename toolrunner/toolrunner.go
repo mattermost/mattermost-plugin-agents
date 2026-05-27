@@ -14,21 +14,40 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// MaxToolRounds is the maximum number of tool-call-execute-recall iterations
-// before the runner gives up and returns whatever it has. This prevents
-// infinite loops from models that keep requesting tools.
-const MaxToolRounds = 10
+// DefaultMaxToolRounds is the fallback ceiling on tool-call-execute-recall
+// iterations when no per-agent override is supplied. This prevents infinite
+// loops from models that keep requesting tools. Mirrors llm.DefaultMaxToolTurns.
+const DefaultMaxToolRounds = 30
 
 // ToolRunner manages the call-execute-recall loop for LLM tool use.
 // It calls the LLM, checks for tool calls in the stream, executes
 // approved ones, appends results back to the request, and calls again.
 type ToolRunner struct {
-	llm llm.LanguageModel
+	llm       llm.LanguageModel
+	maxRounds int
 }
 
-// New creates a ToolRunner bound to the given language model.
-func New(lm llm.LanguageModel) *ToolRunner {
-	return &ToolRunner{llm: lm}
+// Option configures a ToolRunner at construction time.
+type Option func(*ToolRunner)
+
+// WithMaxRounds overrides the default maximum number of tool-call rounds.
+// Non-positive values fall back to DefaultMaxToolRounds.
+func WithMaxRounds(n int) Option {
+	return func(r *ToolRunner) {
+		if n > 0 {
+			r.maxRounds = n
+		}
+	}
+}
+
+// New creates a ToolRunner bound to the given language model. Pass
+// WithMaxRounds to override the default per-agent tool-call ceiling.
+func New(lm llm.LanguageModel, opts ...Option) *ToolRunner {
+	r := &ToolRunner{llm: lm, maxRounds: DefaultMaxToolRounds}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // ToolRunResult is the return value of Run(). It contains the final
@@ -148,7 +167,7 @@ func (r *ToolRunner) runLoop(
 ) {
 	stream := firstStream
 
-	for round := 0; round < MaxToolRounds; round++ {
+	for round := 0; round < r.maxRounds; round++ {
 		// For round > 0, make a new LLM call.
 		if round > 0 {
 			var err error
@@ -281,7 +300,7 @@ func (r *ToolRunner) runLoop(
 		}
 	}
 
-	// Exhausted MaxToolRounds.
+	// Exhausted max tool rounds.
 	r.deliverToolTurns(result, onToolTurns)
 	output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 }

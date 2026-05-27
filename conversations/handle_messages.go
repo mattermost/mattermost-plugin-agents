@@ -282,7 +282,7 @@ func (c *Conversations) handleMentionViaConversation(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM())
+	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
 	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
 	autoExec := c.shouldAutoExecuteTool(llmContext, false)
 	result, runErr := runner.Run(ctx, *completionRequest, func(tc llm.ToolCall) bool {
@@ -397,7 +397,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 
-	dmStream, err := c.ProcessDMRequest(ctx, convResult.ConversationID, bot.LLM(), llmContext)
+	dmStream, err := c.ProcessDMRequest(ctx, convResult.ConversationID, bot.LLM(), llmContext, bot.GetConfig().EffectiveMaxToolTurns())
 	if err != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to process DM request: %w", err)

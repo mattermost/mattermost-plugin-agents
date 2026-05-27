@@ -490,6 +490,7 @@ func TestDMNewConversation_CreatesConversationAndTurns(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil, // llmContext
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -551,6 +552,7 @@ func TestDMContinueConversation_ReadsTurnsNotPosts(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -632,6 +634,7 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		llmCtx,
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -709,6 +712,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -920,6 +924,7 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		&llm.Context{Tools: toolStore},
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -986,6 +991,7 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,
+		0,
 	)
 	require.NoError(t, err)
 

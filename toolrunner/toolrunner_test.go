@@ -480,7 +480,7 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 
 func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 	// LLM always returns tool calls, never text-only.
-	responses := make([]testResponse, MaxToolRounds+1)
+	responses := make([]testResponse, DefaultMaxToolRounds+1)
 	for i := range responses {
 		responses[i] = testResponse{
 			events: []llm.TextStreamEvent{
@@ -503,14 +503,68 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 
-	// Should have exactly MaxToolRounds tool turns.
+	// Should have exactly DefaultMaxToolRounds tool turns.
 	// (read stream first to ensure goroutine completes)
 	_, readErr := result.Stream.ReadAll()
 	assert.NoError(t, readErr)
-	assert.Len(t, result.ToolTurns, MaxToolRounds)
+	assert.Len(t, result.ToolTurns, DefaultMaxToolRounds)
 
-	// LLM called MaxToolRounds times (not MaxToolRounds+1).
-	assert.Equal(t, MaxToolRounds, inner.callCount)
+	// LLM called DefaultMaxToolRounds times (not DefaultMaxToolRounds+1).
+	assert.Equal(t, DefaultMaxToolRounds, inner.callCount)
+}
+
+func TestToolRunner_WithMaxRoundsOverrideClamps(t *testing.T) {
+	tests := []struct {
+		name          string
+		opt           Option
+		expectedCalls int
+	}{
+		{
+			name:          "explicit lower override clamps the loop",
+			opt:           WithMaxRounds(3),
+			expectedCalls: 3,
+		},
+		{
+			name:          "non-positive override falls back to default",
+			opt:           WithMaxRounds(0),
+			expectedCalls: DefaultMaxToolRounds,
+		},
+		{
+			name:          "negative override falls back to default",
+			opt:           WithMaxRounds(-5),
+			expectedCalls: DefaultMaxToolRounds,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			responses := make([]testResponse, tc.expectedCalls+5)
+			for i := range responses {
+				responses[i] = testResponse{
+					events: []llm.TextStreamEvent{
+						{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+							{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+						}},
+						{Type: llm.EventTypeEnd},
+					},
+				}
+			}
+			inner := &testLLM{responses: responses}
+			store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
+			runner := New(inner, tc.opt)
+			request := llm.CompletionRequest{
+				Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+				Context: &llm.Context{Tools: store},
+			}
+
+			result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+			require.NoError(t, err)
+			_, readErr := result.Stream.ReadAll()
+			require.NoError(t, readErr)
+			assert.Equal(t, tc.expectedCalls, inner.callCount)
+			assert.Len(t, result.ToolTurns, tc.expectedCalls)
+		})
+	}
 }
 
 func TestToolRunner_ReasoningPreservedInToolTurn(t *testing.T) {
