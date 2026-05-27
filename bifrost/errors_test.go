@@ -56,10 +56,10 @@ func TestBifrostErrorString(t *testing.T) {
 
 	t.Run("top-level Type used when ErrorField.Type empty", func(t *testing.T) {
 		err := &schemas.BifrostError{
-			Type:  strPtr("request_cancelled"),
+			Type:  strPtr("request_canceled"),
 			Error: &schemas.ErrorField{},
 		}
-		require.Equal(t, "empty bifrost error (type=request_cancelled)", bifrostErrorString(err))
+		require.Equal(t, "empty bifrost error (type=request_canceled)", bifrostErrorString(err))
 	})
 
 	t.Run("all fields empty still returns non-empty fallback", func(t *testing.T) {
