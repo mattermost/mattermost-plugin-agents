@@ -102,7 +102,7 @@ func (c *Channels) AnalyzeChannel(
 	boundGetChannelInfo := getChannelInfo.WithBoundParams(map[string]interface{}{"channel_id": channelID})
 
 	// Create scoped tool store with bound tools
-	scopedTools := llm.NewToolStore(nil, false)
+	scopedTools := llm.NewToolStore()
 	scopedTools.AddTools([]llm.Tool{boundReadChannel, boundGetChannelInfo})
 	context.Tools = scopedTools
 

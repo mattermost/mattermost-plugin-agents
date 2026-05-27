@@ -281,7 +281,7 @@ func testToolNames(store *llm.ToolStore) []string {
 }
 
 func TestRequiredEmbeddedToolByExactOrBareNameIgnoresSameNameNonEmbedded(t *testing.T) {
-	tools := llm.NewToolStore(nil, false)
+	tools := llm.NewToolStore()
 	tools.AddTools([]llm.Tool{
 		makeTool("read_channel", "remote posts"),
 		makeChannelIDCaptureTool("mattermost__read_channel", "embedded posts", new(string)),
@@ -292,7 +292,7 @@ func TestRequiredEmbeddedToolByExactOrBareNameIgnoresSameNameNonEmbedded(t *test
 	require.Equal(t, "read_channel", tool.Name)
 	require.Equal(t, mcp.EmbeddedClientKey, tool.ServerOrigin)
 
-	remoteOnly := llm.NewToolStore(nil, false)
+	remoteOnly := llm.NewToolStore()
 	remoteOnly.AddTools([]llm.Tool{makeTool("read_channel", "remote posts")})
 	_, ok = requiredEmbeddedToolByExactOrBareName(remoteOnly, "read_channel")
 	require.False(t, ok)
@@ -338,7 +338,7 @@ func TestAnalyzeChannelBindsNamespacedToolsAsBareAliases(t *testing.T) {
 
 	var readChannelID string
 	var getChannelInfoID string
-	tools := llm.NewToolStore(nil, false)
+	tools := llm.NewToolStore()
 	tools.AddTools([]llm.Tool{
 		makeChannelIDCaptureTool("mattermost__read_channel", "posts", &readChannelID),
 		makeChannelIDCaptureTool("mattermost__get_channel_info", "info", &getChannelInfoID),
@@ -391,7 +391,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{
 					makeTool("read_channel", "channel posts here"),
 					makeTool("get_channel_info", "channel info here"),
@@ -521,7 +521,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{
 					makeTool("read_channel", "posts data"),
 					makeTool("get_channel_info", "info data"),
@@ -567,7 +567,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{
 					makeToolWithError("read_channel", "connection refused"),
 					makeTool("get_channel_info", "info"),
@@ -612,7 +612,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{
 					makeTool("read_channel", "posts"),
 					makeTool("get_channel_info", "info"),
@@ -663,7 +663,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{makeTool("read_channel", "data")})
 
 				ctx := llm.NewContext()
@@ -699,7 +699,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 					},
 				}
 
-				tools := llm.NewToolStore(nil, false)
+				tools := llm.NewToolStore()
 				tools.AddTools([]llm.Tool{makeTool("read_channel", "data")})
 
 				ctx := llm.NewContext()
@@ -762,7 +762,7 @@ func TestAnalysisResultConversationID(t *testing.T) {
 		},
 	}
 
-	tools := llm.NewToolStore(nil, false)
+	tools := llm.NewToolStore()
 	tools.AddTools([]llm.Tool{
 		makeTool("read_channel", "posts"),
 		makeTool("get_channel_info", "info"),

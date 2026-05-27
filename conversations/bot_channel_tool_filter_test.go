@@ -72,10 +72,6 @@ func (c *channelFollowUpTestConfig) MCP() mcp.Config {
 	return mcp.Config{}
 }
 
-func (c *channelFollowUpTestConfig) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (c *channelFollowUpTestConfig) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
@@ -176,7 +172,7 @@ func TestApplyBotChannelAutoEverywhereToolFilter(t *testing.T) {
 	}
 
 	llmContext := &llm.Context{
-		Tools: llm.NewToolStore(nil, false),
+		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
 		{Name: "builtin", ServerOrigin: "", Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
@@ -229,7 +225,7 @@ func TestApplyToolAvailabilityBeforeBotChannelFilterPreservesDisabledToolsInfo(t
 	}
 
 	llmContext := &llm.Context{
-		Tools: llm.NewToolStore(nil, false),
+		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
 		{Name: "builtin", Description: "builtin tool", ServerOrigin: "", Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
@@ -258,7 +254,7 @@ func TestApplyBotChannelAutoEverywhereToolFilter_nilCheckerFailClosed(t *testing
 	c := &Conversations{toolPolicyChecker: nil}
 
 	llmContext := &llm.Context{
-		Tools: llm.NewToolStore(nil, false),
+		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
 		{Name: "builtin", ServerOrigin: "", Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
@@ -283,7 +279,7 @@ func TestBotChannelAutoEverywhereFilterKeepsMetaTools(t *testing.T) {
 	}
 
 	llmContext := &llm.Context{
-		Tools: llm.NewToolStore(nil, false),
+		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
 		{Name: mcp.SearchToolsName, Description: "search meta", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
@@ -312,7 +308,7 @@ func TestBotChannelAutoEverywhereFilterKeepsMetaToolsWithNilChecker(t *testing.T
 	c := &Conversations{toolPolicyChecker: nil}
 
 	llmContext := &llm.Context{
-		Tools: llm.NewToolStore(nil, false),
+		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
 		{Name: mcp.SearchToolsName, Description: "search meta", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
@@ -348,7 +344,7 @@ func TestBotChannelAutoEverywhereFilterDenormalizesNamespacedTool(t *testing.T) 
 	}
 
 	llmContext := &llm.Context{
-		Tools: llm.NewToolStore(nil, false),
+		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
 		{Name: "jira__safe_tool", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},

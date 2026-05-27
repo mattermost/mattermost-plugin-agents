@@ -48,7 +48,7 @@ func TestShouldAutoExecuteTool(t *testing.T) {
 					},
 				},
 			}
-			llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 			llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
 			callback := c.shouldAutoExecuteTool(llmCtx, tc.isDM)
 			got := callback(llm.ToolCall{Name: toolName, ServerOrigin: origin})
@@ -61,7 +61,7 @@ func TestShouldAutoExecuteTool(t *testing.T) {
 // no policy checker wired up, no tool should ever auto-execute.
 func TestShouldAutoExecuteTool_NilChecker(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: nil}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: "x", ServerOrigin: "y"}})
 	for _, isDM := range []bool{true, false} {
 		got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: "x", ServerOrigin: "y"})
@@ -94,7 +94,7 @@ func TestShouldAutoExecuteTool_NamespacedToolUsesBarePolicy(t *testing.T) {
 			},
 		},
 	}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: "example__example_tool", ServerOrigin: origin}})
 
 	got := c.shouldAutoExecuteTool(llmCtx, false)(llm.ToolCall{Name: "example__example_tool"})
@@ -133,7 +133,7 @@ func (c *countingPolicyChecker) GetToolPolicy(origin, toolName string) (string, 
 func TestShouldAutoExecuteTool_UnknownToolSkipsPolicyLookup(t *testing.T) {
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
 	c := &Conversations{toolPolicyChecker: checker}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 
 	got := c.shouldAutoExecuteTool(llmCtx, true)(llm.ToolCall{Name: "unknown_tool", ServerOrigin: "https://mcp.example.com"})
 
@@ -146,7 +146,7 @@ func TestShouldAutoExecuteTool_KnownToolUsesPolicy(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://mcp.example.com"
 	const toolName = "known_tool"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
 
 	got := c.shouldAutoExecuteTool(llmCtx, true)(llm.ToolCall{Name: toolName})
@@ -160,7 +160,7 @@ func TestShouldAutoExecuteToolDenormalizesNamespacedTool(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://mcp.atlassian.com"
 	const runtimeToolName = "jira__get_issue"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
 
 	got := c.shouldAutoExecuteTool(llmCtx, false)(llm.ToolCall{Name: runtimeToolName})
@@ -173,7 +173,7 @@ func TestShouldAutoExecuteToolDenormalizesNamespacedTool(t *testing.T) {
 func TestShouldAutoExecuteToolFailsClosedOnAmbiguousBareName(t *testing.T) {
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
 	c := &Conversations{toolPolicyChecker: checker}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{
 		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
 		{Name: "github__get_issue", ServerOrigin: "https://github.example.com"},
@@ -189,7 +189,7 @@ func TestShouldAutoExecuteToolUsesServerOriginToDisambiguateBareName(t *testing.
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://github.example.com"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{
 		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
 		{Name: "github__get_issue", ServerOrigin: origin},
@@ -219,7 +219,7 @@ func TestAllToolsAutoRunEverywhere_RespectsEnabledFlag(t *testing.T) {
 			},
 		},
 	}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
 
 	turns := []toolrunner.ToolTurn{{
@@ -240,7 +240,7 @@ func TestAllToolsAutoRunEverywhere_NamespacedToolUsesBarePolicy(t *testing.T) {
 			},
 		},
 	}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: "example__example_tool", ServerOrigin: origin}})
 
 	turns := []toolrunner.ToolTurn{{
@@ -277,7 +277,7 @@ func TestAllToolsAutoRunEverywhere_AllowsMetaTools(t *testing.T) {
 func TestAllToolsAutoRunEverywhere_UnknownToolReturnsFalse(t *testing.T) {
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
 	c := &Conversations{toolPolicyChecker: checker}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	turns := []toolrunner.ToolTurn{{
 		AssistantToolCalls: []llm.ToolCall{{Name: "unknown_tool", ServerOrigin: "https://mcp.example.com"}},
 	}}
@@ -303,7 +303,7 @@ func TestAllToolsAutoRunEverywhereMixedMetaAndAutoRunBusinessTool(t *testing.T) 
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://mcp.atlassian.com"
 	const runtimeToolName = "jira__get_issue"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
 	turns := []toolrunner.ToolTurn{{
 		AssistantToolCalls: []llm.ToolCall{
@@ -323,7 +323,7 @@ func TestAllToolsAutoRunEverywhereMixedMetaAndNonAutoBusinessTool(t *testing.T) 
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://mcp.atlassian.com"
 	const runtimeToolName = "jira__get_issue"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
 	turns := []toolrunner.ToolTurn{{
 		AssistantToolCalls: []llm.ToolCall{
@@ -342,7 +342,7 @@ func TestAllToolsAutoRunEverywhereDenormalizesNamespacedTool(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://mcp.atlassian.com"
 	const runtimeToolName = "jira__get_issue"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
 	turns := []toolrunner.ToolTurn{{
 		AssistantToolCalls: []llm.ToolCall{{Name: runtimeToolName}},
@@ -356,7 +356,7 @@ func TestAllToolsAutoRunEverywhereDenormalizesNamespacedTool(t *testing.T) {
 func TestAllToolsAutoRunEverywhereFailsClosedOnAmbiguousBareName(t *testing.T) {
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
 	c := &Conversations{toolPolicyChecker: checker}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{
 		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
 		{Name: "github__get_issue", ServerOrigin: "https://github.example.com"},
@@ -373,7 +373,7 @@ func TestAllToolsAutoRunEverywhereUsesServerOriginToDisambiguateBareName(t *test
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://github.example.com"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{
 		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
 		{Name: "github__get_issue", ServerOrigin: origin},

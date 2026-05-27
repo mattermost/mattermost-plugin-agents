@@ -194,7 +194,7 @@ func TestHandleChannelAnalysisPreloadsRequiredMCPTools(t *testing.T) {
 }
 
 func TestChannelAnalysisToolAvailabilityRequiresEmbeddedOrigin(t *testing.T) {
-	tools := llm.NewToolStore(nil, false)
+	tools := llm.NewToolStore()
 	tools.AddTools([]llm.Tool{
 		{Name: "read_channel", ServerOrigin: "https://remote.example.com"},
 		{Name: "get_channel_info", ServerOrigin: mcp.EmbeddedClientKey},
@@ -212,7 +212,7 @@ func TestChannelAnalysisToolAvailabilityRequiresEmbeddedOrigin(t *testing.T) {
 }
 
 func TestChannelAnalysisToolAvailabilityMatchesNamespacedBareName(t *testing.T) {
-	tools := llm.NewToolStore(nil, false)
+	tools := llm.NewToolStore()
 	tools.AddTools([]llm.Tool{
 		channelAnalysisMCPTool("read_channel"),
 		channelAnalysisMCPTool("get_channel_info"),

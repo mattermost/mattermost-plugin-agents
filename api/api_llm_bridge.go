@@ -362,7 +362,7 @@ func (a *API) prepareAgentBridgeCompletion(
 			return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("no eligible tools available for this agent")
 		}
 
-		scopedTools := llm.NewToolStore(nil, false)
+		scopedTools := llm.NewToolStore()
 		for _, name := range allowedToolNames {
 			tool := llmRequest.Context.Tools.GetTool(name)
 			if tool == nil {
