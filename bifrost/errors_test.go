@@ -15,62 +15,76 @@ func TestBifrostErrorString(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 	intPtr := func(i int) *int { return &i }
 
-	t.Run("nil error returns sentinel string", func(t *testing.T) {
-		require.Equal(t, "<nil bifrost error>", bifrostErrorString(nil))
-	})
-
-	t.Run("message populated returns message", func(t *testing.T) {
-		err := &schemas.BifrostError{
-			Error: &schemas.ErrorField{Message: "boom"},
-		}
-		require.Equal(t, "boom", bifrostErrorString(err))
-	})
-
-	t.Run("whitespace-only message falls through to wrapped error", func(t *testing.T) {
-		err := &schemas.BifrostError{
-			Error: &schemas.ErrorField{
-				Message: "   ",
-				Error:   errors.New("wrapped cause"),
+	tests := []struct {
+		name     string
+		input    *schemas.BifrostError
+		expected string
+	}{
+		{
+			name:     "nil error returns sentinel string",
+			input:    nil,
+			expected: "<nil bifrost error>",
+		},
+		{
+			name: "message populated returns message",
+			input: &schemas.BifrostError{
+				Error: &schemas.ErrorField{Message: "boom"},
 			},
-		}
-		require.Equal(t, "wrapped cause", bifrostErrorString(err))
-	})
-
-	t.Run("message empty but wrapped error populated returns wrapped error", func(t *testing.T) {
-		err := &schemas.BifrostError{
-			Error: &schemas.ErrorField{Error: errors.New("context deadline exceeded")},
-		}
-		require.Equal(t, "context deadline exceeded", bifrostErrorString(err))
-	})
-
-	t.Run("message and wrapped error empty falls back to status/type/code", func(t *testing.T) {
-		err := &schemas.BifrostError{
-			StatusCode: intPtr(502),
-			Error: &schemas.ErrorField{
-				Type: strPtr("upstream_error"),
-				Code: strPtr("UPSTREAM_DOWN"),
+			expected: "boom",
+		},
+		{
+			name: "whitespace-only message falls through to wrapped error",
+			input: &schemas.BifrostError{
+				Error: &schemas.ErrorField{
+					Message: "   ",
+					Error:   errors.New("wrapped cause"),
+				},
 			},
-		}
-		require.Equal(t, "empty bifrost error (status=502 type=upstream_error code=UPSTREAM_DOWN)", bifrostErrorString(err))
-	})
+			expected: "wrapped cause",
+		},
+		{
+			name: "message empty but wrapped error populated returns wrapped error",
+			input: &schemas.BifrostError{
+				Error: &schemas.ErrorField{Error: errors.New("context deadline exceeded")},
+			},
+			expected: "context deadline exceeded",
+		},
+		{
+			name: "message and wrapped error empty falls back to status/type/code",
+			input: &schemas.BifrostError{
+				StatusCode: intPtr(502),
+				Error: &schemas.ErrorField{
+					Type: strPtr("upstream_error"),
+					Code: strPtr("UPSTREAM_DOWN"),
+				},
+			},
+			expected: "empty bifrost error (status=502 type=upstream_error code=UPSTREAM_DOWN)",
+		},
+		{
+			name: "top-level Type used when ErrorField.Type empty",
+			input: &schemas.BifrostError{
+				Type:  strPtr("request_canceled"),
+				Error: &schemas.ErrorField{},
+			},
+			expected: "empty bifrost error (type=request_canceled)",
+		},
+		{
+			name: "all fields empty still returns non-empty fallback",
+			input: &schemas.BifrostError{
+				Error: &schemas.ErrorField{},
+			},
+			expected: "empty bifrost error",
+		},
+		{
+			name:     "nil ErrorField still returns non-empty fallback",
+			input:    &schemas.BifrostError{StatusCode: intPtr(500)},
+			expected: "empty bifrost error (status=500)",
+		},
+	}
 
-	t.Run("top-level Type used when ErrorField.Type empty", func(t *testing.T) {
-		err := &schemas.BifrostError{
-			Type:  strPtr("request_canceled"),
-			Error: &schemas.ErrorField{},
-		}
-		require.Equal(t, "empty bifrost error (type=request_canceled)", bifrostErrorString(err))
-	})
-
-	t.Run("all fields empty still returns non-empty fallback", func(t *testing.T) {
-		err := &schemas.BifrostError{
-			Error: &schemas.ErrorField{},
-		}
-		require.Equal(t, "empty bifrost error", bifrostErrorString(err))
-	})
-
-	t.Run("nil ErrorField still returns non-empty fallback", func(t *testing.T) {
-		err := &schemas.BifrostError{StatusCode: intPtr(500)}
-		require.Equal(t, "empty bifrost error (status=500)", bifrostErrorString(err))
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, bifrostErrorString(tt.input))
+		})
+	}
 }
