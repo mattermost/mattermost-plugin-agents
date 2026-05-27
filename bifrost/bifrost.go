@@ -569,6 +569,22 @@ func setTokenUsageSpanAttributes(span trace.Span, usage llm.TokenUsage) {
 	span.SetAttributes(attrs...)
 }
 
+// setCompositionSpanAttributes attaches per-source token attribution to the
+// span when the request carries Composition metadata. Aggregated buckets only
+// (system/history/tool_defs/tool_results/attachments/images) — per-file
+// detail goes to the token-usage log to keep span cardinality bounded.
+func setCompositionSpanAttributes(span trace.Span, request llm.CompletionRequest, usage llm.TokenUsage) {
+	if len(request.Composition) == 0 || usage.InputTokens <= 0 {
+		return
+	}
+	composition := llm.ComputeComposition(request.Composition, int(usage.InputTokens), llm.CompositionTotalProvider)
+	attrs := composition.SpanAttributes()
+	if len(attrs) == 0 {
+		return
+	}
+	span.SetAttributes(attrs...)
+}
+
 func convertChatUsage(u *schemas.BifrostLLMUsage) llm.TokenUsage {
 	if u == nil {
 		return llm.TokenUsage{}
@@ -845,6 +861,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 				usage := convertChatUsage(resp.Usage)
 				if usage.InputTokens > 0 || usage.OutputTokens > 0 {
 					setTokenUsageSpanAttributes(span, usage)
+					setCompositionSpanAttributes(span, request, usage)
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeUsage,
 						Value: usage,
@@ -2039,6 +2056,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 					usage := convertResponsesUsage(resp.Response.Usage)
 					if usage.InputTokens > 0 || usage.OutputTokens > 0 {
 						setTokenUsageSpanAttributes(span, usage)
+						setCompositionSpanAttributes(span, request, usage)
 						output <- llm.TextStreamEvent{
 							Type:  llm.EventTypeUsage,
 							Value: usage,

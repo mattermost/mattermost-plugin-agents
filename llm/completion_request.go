@@ -47,6 +47,14 @@ type CompletionRequest struct {
 	Context          *Context
 	Operation        string
 	OperationSubType string
+
+	// Composition lists, in assembly order, every piece of content that
+	// contributed to this request along with its source. Used to attribute
+	// the provider's post-call token total back to system / history /
+	// tool_defs / tool_results / per-attachment / per-image buckets via
+	// ComputeComposition. Populated by request builders; safe to leave nil
+	// for callers that don't care about attribution.
+	Composition []CompositionInput
 }
 
 func (b *CompletionRequest) Truncate(maxTokens int, countTokens func(string) int) bool {

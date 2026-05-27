@@ -282,6 +282,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.Use(a.MattermostAuthorizationRequired)
 
 	router.GET("/conversations/:conversationid", a.handleGetConversation)
+	router.GET("/conversations/:conversationid/context", a.handleGetConversationContext)
 
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
