@@ -254,9 +254,9 @@ func TestToolRunnerUnloadedToolErrorTelemetry(t *testing.T) {
 	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
 		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "get issue"}},
 		Context: &llm.Context{
-			BotUsername:             "matty",
-			Tools:                   store,
-			MCPDynamicToolTelemetry: telemetry,
+			BotUsername: "matty",
+			Tools:       store,
+			ToolRuntime: llm.ToolRuntimeContext{MCPDynamicToolTelemetry: telemetry},
 		},
 	}, alwaysExecute, nil)
 	require.NoError(t, err)
@@ -283,9 +283,9 @@ func TestToolRunnerSearchLoadCallSuccessTelemetry(t *testing.T) {
 	}
 	telemetry := &fakeMCPDynamicTelemetry{}
 	llmCtx := &llm.Context{
-		BotUsername:             "matty",
-		Tools:                   newTestToolStore(testToolDef{name: "jira__get_issue", result: "issue"}),
-		MCPDynamicToolTelemetry: telemetry,
+		BotUsername: "matty",
+		Tools:       newTestToolStore(testToolDef{name: "jira__get_issue", result: "issue"}),
+		ToolRuntime: llm.ToolRuntimeContext{MCPDynamicToolTelemetry: telemetry},
 	}
 	llmCtx.MarkMCPDynamicToolSearch()
 	llmCtx.MarkMCPDynamicToolLoaded("jira__get_issue")
@@ -324,9 +324,9 @@ func TestToolRunnerSearchLoadCallSuccessTelemetryOnlyOnce(t *testing.T) {
 	}
 	telemetry := &fakeMCPDynamicTelemetry{}
 	llmCtx := &llm.Context{
-		BotUsername:             "matty",
-		Tools:                   newTestToolStore(testToolDef{name: "jira__get_issue", result: "issue"}),
-		MCPDynamicToolTelemetry: telemetry,
+		BotUsername: "matty",
+		Tools:       newTestToolStore(testToolDef{name: "jira__get_issue", result: "issue"}),
+		ToolRuntime: llm.ToolRuntimeContext{MCPDynamicToolTelemetry: telemetry},
 	}
 	llmCtx.MarkMCPDynamicToolSearch()
 	llmCtx.MarkMCPDynamicToolLoaded("jira__get_issue")
@@ -363,7 +363,7 @@ func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {
 	store := llm.NewNoTools()
 	store.AddTools([]llm.Tool{{
 		Name: "safe_tool",
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			resolverCalls++
 			return "safe", nil
 		},
@@ -412,7 +412,7 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 		Description:  "Create a Jira issue",
 		ServerOrigin: "https://jira.example.com",
 		Schema:       schema,
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			t.Fatal("approval-required tool must not execute")
 			return "", nil
 		},
@@ -462,7 +462,7 @@ func TestToolRunner_MixedBatchSkippedDoesNotDisableToolsAfterRetryLimit(t *testi
 	store := llm.NewNoTools()
 	store.AddTools([]llm.Tool{{
 		Name: "safe_tool",
-		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			t.Fatal("available tools must not execute in mixed unavailable batches")
 			return "", nil
 		},

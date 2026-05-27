@@ -560,7 +560,7 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 	store := llm.NewNoTools()
 	store.AddTools([]llm.Tool{{
 		Name: "dangerous_tool",
-		Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			resolverCalls++
 			return "dangerous_result", nil
 		},
