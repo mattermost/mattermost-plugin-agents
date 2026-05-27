@@ -322,17 +322,7 @@ type ToolAuthError struct {
 type ToolStore struct {
 	tools            map[string]Tool
 	unloadedMCPTools map[string]ToolInfo
-	log              TraceLog
-	doTrace          bool
 	authErrors       []ToolAuthError
-}
-
-type TraceLog interface {
-	Info(message string, keyValuePairs ...any)
-}
-
-type warnTraceLog interface {
-	Warn(message string, keyValuePairs ...any)
 }
 
 // NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using generics
@@ -349,26 +339,13 @@ func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
 func NewNoTools() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
-		log:        nil,
-		doTrace:    false,
 		authErrors: []ToolAuthError{},
 	}
 }
 
-func NewToolStore(options ...any) *ToolStore {
-	var log TraceLog
-	var doTrace bool
-	if len(options) > 0 {
-		log, _ = options[0].(TraceLog)
-	}
-	if len(options) > 1 {
-		doTrace, _ = options[1].(bool)
-	}
-
+func NewToolStore() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
-		log:        log,
-		doTrace:    doTrace,
 		authErrors: []ToolAuthError{},
 	}
 }
@@ -416,15 +393,12 @@ func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter Too
 
 	tool, ok := s.lookupTool(name)
 	if !ok {
-		s.LogUnknownToolWarning(name, argsGetter)
-		s.TraceUnknown(name, argsGetter)
 		err := errors.New("unknown tool " + name)
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
 		return "", err
 	}
 	result, err := tool.Resolver(llmCtx, argsGetter)
-	s.TraceResolved(name, argsGetter, result, err)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
@@ -681,48 +655,6 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 		})
 	}
 	return result
-}
-
-func (s *ToolStore) TraceUnknown(name string, argsGetter ToolArgumentGetter) {
-	if s.log != nil && s.doTrace {
-		s.log.Info("unknown tool called", "name", name, "args", toolArgsForLog(argsGetter))
-	}
-}
-
-func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, result string, err error) {
-	if s.log != nil && s.doTrace {
-		s.log.Info("tool resolved", "name", name, "args", toolArgsForLog(argsGetter), "result", result, "error", err)
-	}
-}
-
-// maxToolArgsLogBytes caps the size of the JSON arg snippet we emit to logs.
-// Tool calls (especially failures) can carry large payloads; truncating keeps
-// log output bounded without losing the diagnostic head of the args.
-const maxToolArgsLogBytes = 512
-
-func (s *ToolStore) LogUnknownToolWarning(name string, argsGetter ToolArgumentGetter) {
-	if s == nil || s.log == nil {
-		return
-	}
-	warnLog, ok := s.log.(warnTraceLog)
-	if !ok {
-		return
-	}
-	warnLog.Warn("unknown tool called", "name", name, "args", toolArgsForLog(argsGetter), "available_tool_count", len(s.tools))
-}
-
-func toolArgsForLog(argsGetter ToolArgumentGetter) string {
-	if argsGetter == nil {
-		return "{}"
-	}
-	var raw json.RawMessage
-	if err := argsGetter(&raw); err != nil {
-		return fmt.Sprintf("failed to get tool args: %v", err)
-	}
-	if len(raw) > maxToolArgsLogBytes {
-		return string(raw[:maxToolArgsLogBytes]) + "...(truncated)"
-	}
-	return string(raw)
 }
 
 // AddAuthError adds an authentication error to the tool store
