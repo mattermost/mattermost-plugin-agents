@@ -31,16 +31,6 @@ type testResponse struct {
 	err    error // if non-nil, ChatCompletion returns this error
 }
 
-type testLogEntry struct {
-	message string
-	fields  []any
-}
-
-type testWarnLog struct {
-	infos []testLogEntry
-	warns []testLogEntry
-}
-
 type toolrunnerTelemetryEvent struct {
 	botName string
 	event   string
@@ -53,25 +43,6 @@ type fakeMCPDynamicTelemetry struct {
 
 func (t *fakeMCPDynamicTelemetry) ObserveMCPDynamicToolEvent(botName, event, result string) {
 	t.events = append(t.events, toolrunnerTelemetryEvent{botName: botName, event: event, result: result})
-}
-
-func (l *testWarnLog) Info(message string, keyValuePairs ...any) {
-	l.infos = append(l.infos, testLogEntry{message: message, fields: keyValuePairs})
-}
-
-func (l *testWarnLog) Warn(message string, keyValuePairs ...any) {
-	l.warns = append(l.warns, testLogEntry{message: message, fields: keyValuePairs})
-}
-
-func testLogFields(entry testLogEntry) map[string]any {
-	fields := make(map[string]any, len(entry.fields)/2)
-	for i := 0; i+1 < len(entry.fields); i += 2 {
-		key, ok := entry.fields[i].(string)
-		if ok {
-			fields[key] = entry.fields[i+1]
-		}
-	}
-	return fields
 }
 
 func (m *testLLM) ChatCompletion(_ context.Context, req llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
@@ -623,45 +594,6 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 	require.Len(t, botPost.ToolUse, 2)
 	assert.Equal(t, llm.ToolCallStatusError, botPost.ToolUse[0].Status)
 	assert.Equal(t, llm.ToolCallStatusError, botPost.ToolUse[1].Status)
-}
-
-func TestToolRunner_UnknownToolLogsWarningBeforeApprovalRouting(t *testing.T) {
-	inner := &testLLM{
-		responses: []testResponse{
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: "tc1", Name: "ghost_tool", Arguments: json.RawMessage(`{"query":"hello"}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			}},
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeText, Value: "Recovered"},
-				{Type: llm.EventTypeEnd},
-			}},
-		},
-	}
-
-	log := &testWarnLog{}
-	store := llm.NewToolStore(log, false)
-	runner := New(inner)
-	result, err := runner.Run(context.Background(), llm.CompletionRequest{
-		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run ghost"}},
-		Context: &llm.Context{Tools: store},
-	}, func(llm.ToolCall) bool {
-		t.Fatal("shouldExecute must not be called for unknown tools")
-		return true
-	}, nil)
-	require.NoError(t, err)
-
-	_, readErr := result.Stream.ReadAll()
-	require.NoError(t, readErr)
-	require.Len(t, log.warns, 1)
-	assert.Empty(t, log.infos)
-	assert.Equal(t, "unknown tool called", log.warns[0].message)
-	fields := testLogFields(log.warns[0])
-	assert.Equal(t, "ghost_tool", fields["name"])
-	assert.Equal(t, `{"query":"hello"}`, fields["args"])
-	assert.Equal(t, 0, fields["available_tool_count"])
 }
 
 func TestToolRunner_ToolExecutionError(t *testing.T) {

@@ -599,7 +599,7 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 
 	env.policyChecker.setAutoRun("https://mcp.example.com", "get_weather")
 
-	toolStore := llm.NewToolStore(nil, false)
+	toolStore := llm.NewToolStore()
 	toolStore.AddTools([]llm.Tool{
 		{
 			Name:         "get_weather",
@@ -689,7 +689,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 
 	// No auto-run policy -> manual approval required
 	// (default policy is "ask")
-	toolStore := llm.NewToolStore(nil, false)
+	toolStore := llm.NewToolStore()
 	toolStore.AddTools([]llm.Tool{
 		{
 			Name:         "run_dangerous",
@@ -984,7 +984,7 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 
 	env.policyChecker.setAutoRun("https://example.com", "tool_a")
 
-	toolStore := llm.NewToolStore(nil, false)
+	toolStore := llm.NewToolStore()
 	toolStore.AddTools([]llm.Tool{
 		{
 			Name:         "tool_a",

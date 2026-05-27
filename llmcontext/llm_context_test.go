@@ -82,10 +82,6 @@ func (p *contextTestConfigProvider) GetServiceByID(string) (llm.ServiceConfig, b
 	return llm.ServiceConfig{}, false
 }
 
-func (p *contextTestConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func newTestBot() *bots.Bot {
 	return newTestBotWithConfig(llm.BotConfig{ID: "bot-id", Name: "matty", DisplayName: "Matty"})
 }
