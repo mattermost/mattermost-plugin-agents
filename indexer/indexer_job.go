@@ -489,7 +489,7 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	lastID := ""
 
 	for {
-		// Query posts created after the cutoff
+		// Skip posts the live hook has already indexed so catch-up doesn't redo them.
 		query := `SELECT
 			Posts.Id as id,
 			Posts.Message as message,
@@ -507,6 +507,9 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 			AND Posts.Type = ''
 			AND (Posts.CreateAt, Posts.Id) > ($1, $2)
 			AND Posts.CreateAt <= $3
+			AND NOT EXISTS (
+				SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id
+			)
 		ORDER BY Posts.CreateAt ASC, Posts.Id ASC
 		LIMIT $4`
 

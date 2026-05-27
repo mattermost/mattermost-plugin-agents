@@ -100,12 +100,13 @@ func (a *API) handleCancelJob(c *gin.Context) {
 
 	jobStatus, err := a.indexerService.CancelJob()
 	if err != nil {
-		switch err.Error() {
-		case "not found":
+		if mmapi.IsKVNotFound(err) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "no_job",
 			})
 			return
+		}
+		switch err.Error() {
 		case "not running":
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "not_running",

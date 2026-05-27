@@ -91,22 +91,8 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
 	}
 
-	// Determine the API URL
-	apiURL := serviceConfig.APIURL
-
-	// For OpenAI Compatible services like Cohere and Mistral, set the appropriate base URL
-	switch serviceConfig.Type {
-	case llm.ServiceTypeCohere:
-		if apiURL == "" {
-			apiURL = "https://api.cohere.ai/compatibility/v1"
-		}
-	case llm.ServiceTypeMistral:
-		if apiURL == "" {
-			apiURL = "https://api.mistral.ai/v1"
-		}
-	}
-
-	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
+	// Don't fill in per-provider defaults here; bifrost has its own and they drift.
+	apiURL := normalizeOpenAIBaseURL(provider, serviceConfig.APIURL)
 	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
 
 	cfg := Config{

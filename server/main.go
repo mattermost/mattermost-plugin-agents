@@ -596,19 +596,11 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 }
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
-	// Handle indexing of updated posts
 	if p.indexerService != nil {
-		// Delete the old post from index
-		if err := p.indexerService.DeletePost(context.Background(), oldPost.Id); err != nil {
-			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
-		}
-
-		// Get channel to retrieve team ID
 		channel, err := p.API.GetChannel(newPost.ChannelId)
 		if err != nil {
 			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
 		} else {
-			// Index the updated post
 			if err := p.indexerService.IndexPost(context.Background(), newPost, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index updated post in vector database", "error", err)
 			}

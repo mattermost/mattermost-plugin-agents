@@ -5,15 +5,18 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -2232,6 +2235,159 @@ func TestConcurrentStoreOperations(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, count, "Should have exactly one document for the post after concurrent operations")
 	})
+}
+
+// Any non-duplicate error (e.g. a deadlock or serialization failure) also
+// fails the test so a regression can't hide behind a different error class.
+func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	addTestPosts(t, db, []string{"race_post"}, []int64{now})
+
+	ctx := context.Background()
+	const numGoroutines = 30
+	const numIterations = 10
+
+	var dupKeyCount, otherErrCount atomic.Int32
+	var sampleDupErr, sampleOtherErr atomic.Value
+
+	for iter := 0; iter < numIterations; iter++ {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(numGoroutines)
+		for i := 0; i < numGoroutines; i++ {
+			go func(idx int) {
+				defer wg.Done()
+				<-start
+				docs := []embeddings.PostDocument{{
+					PostID:    "race_post",
+					CreateAt:  now,
+					TeamID:    "team1",
+					ChannelID: "channel1",
+					UserID:    "user1",
+					Content:   fmt.Sprintf("iter %d worker %d", iter, idx),
+				}}
+				vecs := [][]float32{{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3}}
+				storeErr := pgVector.Store(ctx, docs, vecs)
+				if storeErr == nil {
+					return
+				}
+				var pqErr *pq.Error
+				if errors.As(storeErr, &pqErr) && pqErr.Code == "23505" {
+					dupKeyCount.Add(1)
+					sampleDupErr.Store(storeErr.Error())
+					return
+				}
+				otherErrCount.Add(1)
+				sampleOtherErr.Store(storeErr.Error())
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+	}
+
+	if got := dupKeyCount.Load(); got > 0 {
+		sample, _ := sampleDupErr.Load().(string)
+		t.Fatalf("Store returned duplicate key error under concurrent writes (%d occurrences); sample: %s", got, sample)
+	}
+	if got := otherErrCount.Load(); got > 0 {
+		sample, _ := sampleOtherErr.Load().(string)
+		t.Fatalf("Store returned non-duplicate-key error under concurrent writes (%d occurrences); sample: %s", got, sample)
+	}
+}
+
+// Concurrent Store calls for the same post_id with differing chunk counts
+// must never leave a mixed state (some chunks from one writer, some from
+// another). Without the advisory lock, writer A's DELETE can run against a
+// snapshot from before writer B commits, leaving B's chunk rows beyond A's
+// chunk count behind as orphans alongside A's freshly inserted rows.
+func TestStoreConcurrentChunkConsistency(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	const postID = "consistency_post"
+	addTestPosts(t, db, []string{postID}, []int64{now})
+
+	ctx := context.Background()
+	const numGoroutines = 20
+	const numIterations = 10
+
+	for iter := 0; iter < numIterations; iter++ {
+		start := make(chan struct{})
+		storeErrs := make([]error, numGoroutines)
+		var wg sync.WaitGroup
+		wg.Add(numGoroutines)
+		for i := 0; i < numGoroutines; i++ {
+			go func(idx int) {
+				defer wg.Done()
+				<-start
+
+				// Distinct chunk counts so writers' row sets overlap unevenly;
+				// tag encoded in content lets us detect mixed-writer states.
+				tag := fmt.Sprintf("iter%d-writer%d", iter, idx)
+				chunkCount := idx + 1
+
+				docs := make([]embeddings.PostDocument, chunkCount)
+				vecs := make([][]float32, chunkCount)
+				for j := 0; j < chunkCount; j++ {
+					docs[j] = embeddings.PostDocument{
+						PostID:    postID,
+						CreateAt:  now,
+						TeamID:    "team1",
+						ChannelID: "channel1",
+						UserID:    "user1",
+						Content:   fmt.Sprintf("%s/chunk%d", tag, j),
+						ChunkInfo: chunking.ChunkInfo{
+							IsChunk:     true,
+							ChunkIndex:  j,
+							TotalChunks: chunkCount,
+						},
+					}
+					vecs[j] = []float32{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3}
+				}
+				storeErrs[idx] = pgVector.Store(ctx, docs, vecs)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+
+		for i, err := range storeErrs {
+			require.NoErrorf(t, err, "iter %d: writer %d Store failed", iter, i)
+		}
+
+		var contents []string
+		err := db.Select(&contents, "SELECT content FROM llm_posts_embeddings WHERE post_id = $1 ORDER BY chunk_index", postID)
+		require.NoError(t, err)
+		require.NotEmpty(t, contents, "iter %d: at least one writer should have committed rows", iter)
+
+		// Every surviving row must belong to the same writer, and the count
+		// must equal that writer's TotalChunks — the winning Store must have
+		// replaced the row set atomically.
+		firstTag := strings.SplitN(contents[0], "/", 2)[0]
+		for _, c := range contents {
+			tag := strings.SplitN(c, "/", 2)[0]
+			if tag != firstTag {
+				t.Fatalf("iter %d: mixed-writer state: rows tagged with both %q and %q (rows=%v)",
+					iter, firstTag, tag, contents)
+			}
+		}
+
+		var winnerIdx int
+		_, err = fmt.Sscanf(firstTag, fmt.Sprintf("iter%d-writer%%d", iter), &winnerIdx)
+		require.NoErrorf(t, err, "iter %d: could not parse winning writer index from tag %q", iter, firstTag)
+		require.Equalf(t, winnerIdx+1, len(contents),
+			"iter %d: winner is writer%d (TotalChunks=%d) but found %d rows: %v",
+			iter, winnerIdx, winnerIdx+1, len(contents), contents)
+	}
 }
 
 func TestDeleteOrphaned(t *testing.T) {

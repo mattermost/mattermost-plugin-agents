@@ -49,12 +49,18 @@ type ServiceConfig struct {
 }
 
 // ServiceUsesResponsesAPI reports whether the Responses API path is used for this service.
-// Direct OpenAI always uses the Responses API (PR #617); other types follow UseResponsesAPI.
+// Direct OpenAI always uses it; OpenAI-compatible and Azure honor the operator toggle.
+// All other service types ignore UseResponsesAPI — a stale flag carried over from a
+// previous service type must not be allowed to route the request through Responses.
 func ServiceUsesResponsesAPI(cfg ServiceConfig) bool {
-	if cfg.Type == ServiceTypeOpenAI {
+	switch cfg.Type {
+	case ServiceTypeOpenAI:
 		return true
+	case ServiceTypeOpenAICompatible, ServiceTypeAzure:
+		return cfg.UseResponsesAPI
+	default:
+		return false
 	}
-	return cfg.UseResponsesAPI
 }
 
 type ChannelAccessLevel int

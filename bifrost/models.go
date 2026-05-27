@@ -57,7 +57,7 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 
 	resp, bifrostErr := client.ListAllModels(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost list models error: %s", bifrostErr.Error.Message), cfg.APIKey)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost list models error: %s", bifrostErrorString(bifrostErr)), cfg.APIKey)
 	}
 
 	if resp == nil {
@@ -107,31 +107,14 @@ func FetchModelsForService(svc llm.ServiceConfig) ([]llm.ModelInfo, error) {
 		return nil, fmt.Errorf("model fetching not supported for service type: %s", svc.Type)
 	}
 
-	apiURL := normalizeFetchModelsAPIURL(svc.Type, provider, svc.APIURL)
-
 	return FetchModels(FetchModelsConfig{
 		Provider:              provider,
 		APIKey:                svc.APIKey,
-		APIURL:                apiURL,
+		APIURL:                normalizeOpenAIBaseURL(provider, svc.APIURL),
 		OrgID:                 svc.OrgID,
 		Region:                svc.Region,
 		VertexProjectID:       svc.VertexProjectID,
 		VertexProjectNumber:   svc.VertexProjectNumber,
 		VertexAuthCredentials: svc.VertexAuthCredentials,
 	})
-}
-
-func normalizeFetchModelsAPIURL(serviceType string, provider schemas.ModelProvider, apiURL string) string {
-	switch serviceType {
-	case llm.ServiceTypeCohere:
-		if apiURL == "" {
-			apiURL = "https://api.cohere.ai/compatibility/v1"
-		}
-	case llm.ServiceTypeMistral:
-		if apiURL == "" {
-			apiURL = "https://api.mistral.ai/v1"
-		}
-	}
-
-	return normalizeOpenAIBaseURL(provider, apiURL)
 }

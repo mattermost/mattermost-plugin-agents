@@ -6,6 +6,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -47,10 +48,14 @@ func setupAgentTestEnvironment(t *testing.T) *TestEnvironment {
 
 // mockConfigStore is a minimal ConfigStore for agent tests.
 type mockConfigStore struct {
-	cfg *config.Config
+	cfg    *config.Config
+	getErr error
 }
 
 func (m *mockConfigStore) GetConfig() (*config.Config, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
 	return m.cfg, nil
 }
 
@@ -914,6 +919,174 @@ func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
 
 // Suppress unused import warnings for multipart (used for avatar test below)
 var _ = multipart.NewWriter
+
+// TestAgentSaveErrorsAreActionable confirms every failure path on the agent
+// save endpoints writes a JSON {"error": ...} body. The webapp surfaces this
+// message verbatim to the user, so an empty body or status-only response
+// leaks the misleading generic "Failed to save agent. Please try again." hint.
+func TestAgentSaveErrorsAreActionable(t *testing.T) {
+	tests := []struct {
+		name           string
+		setup          func(t *testing.T, e *TestEnvironment) (method, path string, body any)
+		expectedStatus int
+		errorContains  string
+	}{
+		{
+			name: "create rejects oversized custom instructions",
+			setup: func(_ *testing.T, e *TestEnvironment) (string, string, any) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+				oversized := make([]byte, llm.MaxCustomInstructionsRunes+1)
+				for i := range oversized {
+					oversized[i] = 'a'
+				}
+				body := createAgentBody(map[string]any{
+					"customInstructions": string(oversized),
+				})
+				return http.MethodPost, "/agents", body
+			},
+			expectedStatus: http.StatusBadRequest,
+			errorContains:  "customInstructions exceeds maximum length",
+		},
+		{
+			name: "create rejects invalid username",
+			setup: func(_ *testing.T, e *TestEnvironment) (string, string, any) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+				body := createAgentBody(map[string]any{"username": "1nvalid"})
+				return http.MethodPost, "/agents", body
+			},
+			expectedStatus: http.StatusBadRequest,
+			errorContains:  "invalid username",
+		},
+		{
+			name: "create rejects unknown service id",
+			setup: func(_ *testing.T, e *TestEnvironment) (string, string, any) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+				body := createAgentBody(map[string]any{"serviceID": "missing-service"})
+				return http.MethodPost, "/agents", body
+			},
+			expectedStatus: http.StatusBadRequest,
+			errorContains:  "missing-service",
+		},
+		{
+			name: "create returns reason when user lacks permission",
+			setup: func(_ *testing.T, e *TestEnvironment) (string, string, any) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+				return http.MethodPost, "/agents", createAgentBody(nil)
+			},
+			expectedStatus: http.StatusForbidden,
+			errorContains:  "does not have permission",
+		},
+		{
+			name: "update rejects oversized custom instructions",
+			setup: func(_ *testing.T, e *TestEnvironment) (string, string, any) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+				stored := &llm.BotConfig{
+					ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+					DisplayName: "Agent", Name: "my-agent", ServiceID: "svc-1",
+				}
+				e.agentStore.agents["agent-1"] = stored
+
+				oversized := make([]byte, llm.MaxCustomInstructionsRunes+1)
+				for i := range oversized {
+					oversized[i] = 'a'
+				}
+				body := updateAgentBodyFromStored(stored, map[string]any{
+					"customInstructions": string(oversized),
+				})
+				return http.MethodPut, "/agents/agent-1", body
+			},
+			expectedStatus: http.StatusBadRequest,
+			errorContains:  "customInstructions exceeds maximum length",
+		},
+		{
+			name: "update rejects username change",
+			setup: func(_ *testing.T, e *TestEnvironment) (string, string, any) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+				stored := &llm.BotConfig{
+					ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+					DisplayName: "Agent", Name: "original-user", ServiceID: "svc-1",
+				}
+				e.agentStore.agents["agent-1"] = stored
+
+				body := updateAgentBodyFromStored(stored, map[string]any{"username": "different-user"})
+				return http.MethodPut, "/agents/agent-1", body
+			},
+			expectedStatus: http.StatusBadRequest,
+			errorContains:  "username cannot be changed",
+		},
+		{
+			name: "create sanitizes internal server error responses",
+			setup: func(_ *testing.T, e *TestEnvironment) (string, string, any) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+				e.api.configStore = &mockConfigStore{getErr: errors.New("database connection secret-detail")}
+				return http.MethodPost, "/agents", createAgentBody(nil)
+			},
+			expectedStatus: http.StatusInternalServerError,
+			errorContains:  "internal server error",
+		},
+		{
+			name: "update returns reason when caller cannot manage agent",
+			setup: func(_ *testing.T, e *TestEnvironment) (string, string, any) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false)
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+				stored := &llm.BotConfig{
+					ID: "agent-1", CreatorID: "someone-else", BotUserID: "bot-1",
+					DisplayName: "Agent", Name: "their-agent", ServiceID: "svc-1",
+				}
+				e.agentStore.agents["agent-1"] = stored
+
+				body := updateAgentBodyFromStored(stored, map[string]any{"displayName": "Hijack"})
+				return http.MethodPut, "/agents/agent-1", body
+			},
+			expectedStatus: http.StatusForbidden,
+			errorContains:  "not authorized",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			method, path, body := tc.setup(t, e)
+			recorder := doRequest(e.api, method, path, body, testUserID)
+			resp := recorder.Result()
+
+			require.Equal(t, tc.expectedStatus, resp.StatusCode)
+			require.Equal(t, "application/json; charset=utf-8", resp.Header.Get("Content-Type"),
+				"agent endpoints must return a JSON error body so the UI can show an actionable message")
+
+			var payload agentErrorResponse
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload),
+				"error response body must be valid JSON")
+			require.NotEmpty(t, payload.Error, "error message must not be empty")
+			assert.Contains(t, payload.Error, tc.errorContains,
+				"error message must surface the actionable cause")
+		})
+	}
+}
 
 func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 	req := CreateAgentRequest{

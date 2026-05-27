@@ -490,6 +490,9 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -498,6 +501,19 @@ jobs:
         with:
           golangci-lint-version: "v1.54.2"
       - uses: mattermost/actions/plugin-ci/build@main
+      - uses: mattermost/actions/plugin-ci/build-fips@c7a06bc642f72fc227deb2cae3af03cff72c0f0d
+        with:
+          chainguard-identity: ${{ secrets.CHAINGUARD_IDENTITY }}
+      - name: build/upload-all
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: all-plugin-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/release-notes.md
+            dist-fips/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
 
   upload-s3-pr:
     needs: [lint]
