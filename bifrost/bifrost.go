@@ -557,15 +557,25 @@ func (b *LLM) InputTokenLimit() int {
 // streamChat handles the streaming chat completion.
 func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
 	span := telemetry.SpanFromContext(ctx)
+	span.SetAttributes(
+		telemetry.LLMPath.String("chat"),
+		telemetry.LLMUseResponsesAPI.Bool(b.useResponsesAPI),
+	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost request
 	bifrostReq := b.convertToBifrostRequest(request, cfg)
+	if bifrostReq.Params != nil {
+		recordReasoningSent(span, bifrostReq.Params.Reasoning)
+	} else {
+		recordReasoningSent(span, nil)
+	}
 
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
+		recordBifrostError(span, bifrostErr)
 		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -621,6 +631,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 		}
 
 		if chunk.BifrostError != nil {
+			recordBifrostError(span, chunk.BifrostError)
 			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -1545,6 +1556,10 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 // streamResponses handles the streaming Responses API completion.
 func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
 	span := telemetry.SpanFromContext(ctx)
+	span.SetAttributes(
+		telemetry.LLMPath.String("responses"),
+		telemetry.LLMUseResponsesAPI.Bool(b.useResponsesAPI),
+	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
@@ -1557,10 +1572,16 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		}
 		return
 	}
+	if bifrostReq.Params != nil {
+		recordResponsesReasoningSent(span, bifrostReq.Params.Reasoning)
+	} else {
+		recordResponsesReasoningSent(span, nil)
+	}
 
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
+		recordBifrostError(span, bifrostErr)
 		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -1630,6 +1651,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		}
 
 		if chunk.BifrostError != nil {
+			recordBifrostError(span, chunk.BifrostError)
 			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
