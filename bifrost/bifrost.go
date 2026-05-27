@@ -1482,7 +1482,6 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
-	reasoning := &schemas.ResponsesParametersReasoning{}
 
 	switch b.provider {
 	case schemas.Anthropic:
@@ -1490,12 +1489,13 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		reasoning.MaxTokens = Ptr(budget)
+		return &schemas.ResponsesParametersReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
 		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
 		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
 		// Prefer an explicit budget; otherwise fall back to effort. Enable summary
 		// so the provider returns reasoning text in the stream.
+		reasoning := &schemas.ResponsesParametersReasoning{Summary: Ptr("auto")}
 		if b.thinkingBudget > 0 {
 			reasoning.MaxTokens = Ptr(b.thinkingBudget)
 		} else {
@@ -1505,18 +1505,24 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 			}
 			reasoning.Effort = Ptr(effort)
 		}
-		reasoning.Summary = Ptr("auto")
-	default:
+		return reasoning
+	case schemas.OpenAI, schemas.Azure:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"
 		}
-		reasoning.Effort = Ptr(effort)
-		// Enable reasoning summaries so the provider returns reasoning text in the stream.
-		// Without this, providers like OpenAI will not include reasoning_summary events.
-		reasoning.Summary = Ptr("auto")
+		// Enable reasoning summaries so the provider returns reasoning text in
+		// the stream; without this OpenAI omits reasoning_summary events.
+		return &schemas.ResponsesParametersReasoning{
+			Effort:  Ptr(effort),
+			Summary: Ptr("auto"),
+		}
+	default:
+		// Bifrost will route a Responses-API request to chat completions for
+		// providers without native Responses support (e.g. Mistral). Those
+		// providers don't accept reasoning_effort, so drop it here too.
+		return nil
 	}
-	return reasoning
 }
 
 // convertToBifrostResponsesRequest converts our CompletionRequest to Bifrost's Responses API format.
