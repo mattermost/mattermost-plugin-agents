@@ -164,6 +164,15 @@ func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRe
 	return context, nil
 }
 
+func bridgeToolCatalogBot(bot *bots.Bot) *bots.Bot {
+	if bot == nil {
+		return nil
+	}
+	cfg := bot.GetConfig()
+	cfg.MCPDynamicToolLoading = false
+	return bots.NewBot(cfg, bot.GetService(), bot.GetMMBot(), bot.LLM())
+}
+
 func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
@@ -173,7 +182,7 @@ func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *b
 	bridgeContext := llm.NewContext()
 	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
 	if includeTools && a.contextBuilder != nil {
-		a.contextBuilder.WithLLMContextTools(ctx, bot)(bridgeContext)
+		a.contextBuilder.WithLLMContextTools(ctx, bridgeToolCatalogBot(bot))(bridgeContext)
 	}
 
 	resolvedOperation := operation
@@ -697,7 +706,7 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 	toolContext := llm.NewContext()
 	toolContext.RequestingUser = &model.User{Id: userID}
 	if a.contextBuilder != nil {
-		a.contextBuilder.WithLLMContextTools(c.Request.Context(), bot)(toolContext)
+		a.contextBuilder.WithLLMContextTools(c.Request.Context(), bridgeToolCatalogBot(bot))(toolContext)
 	}
 
 	var tools []bridgeclient.BridgeToolInfo
