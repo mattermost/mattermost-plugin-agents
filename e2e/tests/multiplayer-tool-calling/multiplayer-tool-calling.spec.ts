@@ -50,6 +50,7 @@ async function setupToolCallingContainer(provider: ProviderBundle): Promise<Matt
     const botConfig = {
         ...provider.bot,
         disableTools: false,
+        mcpDynamicToolLoading: false,
         enabledNativeTools: [],
         customInstructions: 'You have access to Mattermost tools including create_post and get_channel_info. When a user asks you to post a message or create a post in a channel, you MUST use get_channel_info to find the channel ID first, then use create_post to create the post. Always use your tools when the user asks you to take action. Never refuse to use tools.',
     };
