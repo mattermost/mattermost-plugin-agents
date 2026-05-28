@@ -58,7 +58,8 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 	// user/assistant roles, without which CountTokens would fail and the
 	// total would silently fall back to "estimated".
 	enableVision, maxFileSize := a.attachmentConfigForBot(conv.BotID)
-	req, err := conversation.AssembleRequest(conv, turns, &llm.Context{}, a.mmClient, enableVision, maxFileSize)
+	llmCtx := a.buildContextForConversation(userID, conv)
+	req, err := conversation.AssembleRequest(conv, turns, llmCtx, a.mmClient, enableVision, maxFileSize)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to build composition: %w", err))
 		return
@@ -72,6 +73,47 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 	composition.InputTokenLimit = tokenLimit
 
 	c.JSON(http.StatusOK, composition)
+}
+
+// buildContextForConversation builds an llm.Context that matches what the
+// runtime would assemble for this user + bot + channel — most importantly,
+// with Tools populated so AssembleRequest can emit per-tool composition
+// inputs (the "tool_defs" rows in the breakdown). Without this, the popover
+// silently drops tool_defs and under-reports context for tool-heavy bots.
+//
+// CountTokens itself still won't see tools (the bifrost adapter strips
+// Params on count_tokens because providers reject them), but the breakdown
+// can still attribute proportions to tool_defs from the runtime weighting.
+//
+// Returns an empty Context when the inputs needed to populate it aren't
+// available (e.g. unit tests that don't wire bots/contextBuilder, or the
+// user/channel lookup fails) — the endpoint degrades to history-only
+// composition rather than failing.
+func (a *API) buildContextForConversation(userID string, conv *store.Conversation) *llm.Context {
+	if a.contextBuilder == nil || a.bots == nil {
+		return &llm.Context{}
+	}
+	bot := a.bots.GetBotByID(conv.BotID)
+	if bot == nil {
+		return &llm.Context{}
+	}
+	user, err := a.pluginAPI.User.Get(userID)
+	if err != nil {
+		return &llm.Context{}
+	}
+	var channel *model.Channel
+	if conv.ChannelID != nil {
+		ch, chErr := a.pluginAPI.Channel.Get(*conv.ChannelID)
+		if chErr == nil {
+			channel = ch
+		}
+	}
+	return a.contextBuilder.BuildLLMContextUserRequest(
+		bot,
+		user,
+		channel,
+		a.contextBuilder.WithLLMContextTools(bot),
+	)
 }
 
 // attachmentConfigForBot reads the bot's EnableVision and MaxFileSize for
@@ -145,11 +187,7 @@ func (a *API) totalTokensForRequest(c *gin.Context, botID string, req *llm.Compl
 		return count, llm.CompositionTotalCounted
 	}
 
-	var sum int
-	for _, in := range req.Composition {
-		sum += llm.EstimateTokens(in.Text)
-	}
-	return sum, llm.CompositionTotalEstimated
+	return llm.EstimateRequestTokens(req.Composition), llm.CompositionTotalEstimated
 }
 
 // tryCountTokens runs the provider's CountTokens path and returns ok=true on

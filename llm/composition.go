@@ -169,6 +169,18 @@ func inputWeight(in CompositionInput) float64 {
 	return float64(EstimateTokens(in.Text))
 }
 
+// EstimateRequestTokens is the fallback total used when no provider counter is
+// available. It mirrors the same weighting as ComputeComposition, so an
+// image-heavy request still contributes via imageWeightPlaceholder rather than
+// silently rounding to zero (image CompositionInputs carry no Text).
+func EstimateRequestTokens(inputs []CompositionInput) int {
+	var sum float64
+	for _, in := range inputs {
+		sum += inputWeight(in)
+	}
+	return int(sum + 0.5)
+}
+
 // AggregateBySource returns the total tokens per source, rolling up
 // per-file attachment / image rows into single buckets. Used to populate
 // span attributes (one value per category) and to summarize the per-call
