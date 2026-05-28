@@ -41,10 +41,8 @@ export function clearConversationContextCache() {
     inflightRequests.clear();
 }
 
-// Subscribe to conversation invalidations so a refreshed conversation entity
-// (new turn finalized, tool approved, WS update from server) also clears the
-// matching composition. Without this, the ring stays stuck on its first fetch
-// even though the conversation it's measuring keeps growing.
+// Refresh the composition whenever the underlying conversation does, so the
+// indicator follows new turns and tool approvals.
 onConversationInvalidated(invalidateConversationContext);
 
 function fetchContext(id: string): Promise<Composition> {

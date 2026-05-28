@@ -31,10 +31,8 @@ var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
 // whose Shared flag is not true are replaced with an empty JSON object so the
 // LLM cannot paraphrase private tool parameters into a channel-visible reply.
 //
-// The returned composition slice tags every text-bearing block with its source
-// (history / tool_results / attachment / image) so callers like
-// BuildCompletionRequest can attribute the request's token cost back to its
-// origins. Callers that don't need composition can ignore the second return.
+// The second return tags each text-bearing block with its CompositionSource
+// for per-source token attribution.
 func BlocksToPost(
 	blocks []ContentBlock,
 	role string,
@@ -225,11 +223,9 @@ func BlocksToPost(
 	return post, composition
 }
 
-// toolDefsComposition emits one composition input per tool definition in the
-// context, so token cost attributed to "tool_defs" tracks the size of the
-// schemas the model receives. Mirroring how providers render tool
-// definitions exactly would be provider-specific; this serialization is good
-// enough for proportion math, where only relative size matters.
+// toolDefsComposition emits one composition input per tool definition. The
+// serialized form is approximate — only the relative size feeds proportion
+// math, not the exact wire format the provider uses.
 func toolDefsComposition(ctx *llm.Context) []llm.CompositionInput {
 	if ctx == nil || ctx.Tools == nil {
 		return nil

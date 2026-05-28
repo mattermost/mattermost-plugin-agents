@@ -388,13 +388,9 @@ func (s *Service) BuildCompletionRequest(
 	return AssembleRequest(conv, turns, context, s.mmClient, enableVision, maxFileSize, opts...)
 }
 
-// AssembleRequest builds the same CompletionRequest BuildCompletionRequest
-// does, but takes already-loaded turns and rendering config externally. Used
-// by callers (the context-introspection HTTP endpoint) that don't have a
-// full Service wired up but still need the exact same assembly — one Post
-// per turn, redaction defaults, ExcludeAfterPostID truncation, tool_defs
-// composition — so a divergence here can't silently change what providers
-// see versus what the breakdown reports.
+// AssembleRequest builds the CompletionRequest from already-loaded turns and
+// externally-supplied rendering config. Exported so callers without a full
+// Service (e.g. the /context endpoint) can reuse the runtime assembly path.
 func AssembleRequest(
 	conv *store.Conversation,
 	turns []store.Turn,

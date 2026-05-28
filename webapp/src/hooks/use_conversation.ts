@@ -22,11 +22,8 @@ function notifySubscribers() {
     subscribers.forEach((cb) => cb());
 }
 
-// Cross-cache invalidation: other modules (use_conversation_context) register
-// a listener at module init so anything that follows the conversation entity
-// stays in sync without each call site needing to remember every cache. The
-// alternative — duplicating calls at every invalidator — keeps drifting (the
-// context ring stuck on its first fetch was that bug).
+// Listener fan-out so satellite caches (use_conversation_context) stay in
+// sync without every invalidator having to know about each one.
 type InvalidationListener = (conversationId: string) => void;
 const invalidationListeners: InvalidationListener[] = [];
 

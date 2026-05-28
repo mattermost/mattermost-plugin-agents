@@ -23,11 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHandleGetConversationContext_TotalSource exercises the three branches
-// of the count-tokens fallback path so a regression like "Total is estimated
-// for Claude even though Anthropic supports CountTokens" can't slip back in.
-// The fake LLM stands in for the real bifrost-wrapped LanguageModel chain
-// and lets us pin each total_source value to its trigger.
+// TestHandleGetConversationContext_TotalSource pins each total_source value
+// (counted / estimated) to its trigger in the count-tokens fallback chain.
 func TestHandleGetConversationContext_TotalSource(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -50,9 +47,7 @@ func TestHandleGetConversationContext_TotalSource(t *testing.T) {
 			{ID: "turn-1", ConversationID: convID, Role: "user", Content: textBlocks, Sequence: 1},
 		}
 		e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
-		// buildContextForConversation looks up the requesting user and
-		// channel so the runtime's Tools (and per-tool composition rows)
-		// match what providers actually see.
+		// buildContextForConversation looks these up to populate Tools.
 		e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID}, nil).Maybe()
 		e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil).Maybe()
 		e.mockAPI.On("GetTeam", mock.AnythingOfType("string")).Return(&model.Team{}, nil).Maybe()
@@ -271,9 +266,7 @@ func TestHandleGetConversationContext(t *testing.T) {
 
 			tt.setup(e)
 			e.mockAPI.On("LogError", mock.Anything).Maybe()
-			// buildContextForConversation looks up the user/channel so the
-			// breakdown reflects runtime Tools; if the test wires a real bot
-			// path, these calls are needed.
+			// buildContextForConversation looks these up to populate Tools.
 			e.mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{Id: tt.userID}, nil).Maybe()
 			e.mockAPI.On("GetChannel", mock.AnythingOfType("string")).Return(&model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil).Maybe()
 			e.mockAPI.On("GetTeam", mock.AnythingOfType("string")).Return(&model.Team{}, nil).Maybe()

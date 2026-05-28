@@ -37,11 +37,8 @@ import AskChannelButton from './components/ask_channel_button';
 import {doSelectPost} from './hooks';
 import {invalidateConversation} from './hooks/use_conversation';
 
-// Importing use_conversation_context here is intentional even though we don't
-// use the export directly — its module init registers a listener with
-// onConversationInvalidated so that every invalidateConversation call also
-// clears the matching composition cache. Tree-shaking won't drop this since
-// we read the module's side effects.
+// Side-effect import: registers a listener so invalidateConversation also
+// clears the matching composition cache.
 import '@/hooks/use_conversation_context';
 import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_connection_events';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
@@ -197,8 +194,6 @@ export default class Plugin {
         registry.registerWebSocketEventHandler(
             'custom_mattermost-ai_conversation_updated',
             (msg: WebSocketMessage<{conversation_id: string}>) => {
-                // Fans out to use_conversation_context via the
-                // onConversationInvalidated listener it registers at module init.
                 invalidateConversation(msg.data.conversation_id);
             },
         );

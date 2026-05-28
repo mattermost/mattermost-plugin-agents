@@ -54,10 +54,8 @@ const RHSHeader = (props: Props) => {
     }
     const currentBotName = props.activeBot?.displayName ?? '';
 
-    // Anchor every right-side affordance in one flex group so the ring
-    // appearing/disappearing doesn't shove "New chat" or the bot picker
-    // around. The ring is always the leftmost item in the group; the
-    // tab-specific controls stay rightmost.
+    // All right-side controls share one flex group so the ring
+    // appearing/disappearing doesn't shift the others.
     return (
         <Header>
             {historyButton}

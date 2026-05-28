@@ -197,11 +197,8 @@ func TestComposition_SpanAttributes_OmitsZeroBuckets(t *testing.T) {
 
 func TestEstimateRequestTokens(t *testing.T) {
 	t.Run("image-only request returns the image placeholder weight", func(t *testing.T) {
-		// Regression: the prior fallback summed EstimateTokens(in.Text)
-		// only, so image inputs (which carry no Text) silently rounded to
-		// zero. Image-heavy requests under-reported total tokens or hit
-		// the zero-total "hidden indicator" branch on non-counting
-		// providers.
+		// Regression: image inputs carry no Text, so a fallback that only
+		// sums EstimateTokens(in.Text) would silently round to zero.
 		got := EstimateRequestTokens([]CompositionInput{
 			{Source: SourceImage, ID: "i1", Name: "diagram.png"},
 		})

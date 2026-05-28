@@ -24,10 +24,8 @@ const (
 	SourceImage       CompositionSource = "image"
 )
 
-// CompositionInput is a single piece of content contributed to a request,
-// captured during assembly. The token cost is derived later from these inputs
-// using EstimateTokens for proportions multiplied by the request's authoritative
-// total. ID and Name are populated for per-file sources (attachment, image).
+// CompositionInput is a single piece of content captured during assembly.
+// ID and Name are populated for per-file sources (attachment, image).
 type CompositionInput struct {
 	Source CompositionSource
 	ID     string
