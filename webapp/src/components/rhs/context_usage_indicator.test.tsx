@@ -100,6 +100,34 @@ describe('ContextUsageIndicator visibility', () => {
     });
 });
 
+describe('ContextUsageIndicator overflow', () => {
+    test('shows the overflow icon when utilization is over 100%', () => {
+        // Past the limit, the wrapper's TruncationWrapper starts dropping
+        // older messages. A literal "150%" alone reads like the meter is
+        // broken; the alert icon tells the user something different is
+        // happening.
+        mockComposition = {
+            components: [{source: 'history', proportion: 1, tokens: 300000}],
+            total: 300000,
+            total_source: 'provider',
+            input_token_limit: 200000,
+        };
+        const {container} = renderIndicator();
+        expect(container.querySelector('[data-testid="context-usage-overflow"]')).not.toBeNull();
+    });
+
+    test('hides the overflow icon at or below 100%', () => {
+        mockComposition = {
+            components: [{source: 'history', proportion: 1, tokens: 150000}],
+            total: 150000,
+            total_source: 'provider',
+            input_token_limit: 200000,
+        };
+        const {container} = renderIndicator();
+        expect(container.querySelector('[data-testid="context-usage-overflow"]')).toBeNull();
+    });
+});
+
 describe('ringColor thresholds', () => {
     const {ringColor, WarnAt, CritAt} = testOnly;
 

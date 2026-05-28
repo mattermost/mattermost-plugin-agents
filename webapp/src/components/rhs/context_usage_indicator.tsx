@@ -1,6 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import {AlertCircleOutlineIcon} from '@mattermost/compass-icons/components';
 import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
@@ -41,6 +42,7 @@ const ContextUsageIndicator = ({conversationId}: ContextUsageIndicatorProps) => 
 
     const color = hasLimit ? ringColor(utilization) : 'rgba(var(--center-channel-color-rgb), 0.72)';
     const pct = hasLimit ? Math.round(utilization * 100) : 0;
+    const isOver = hasLimit && utilization > 1;
     const cappedUtil = Math.min(utilization, 1);
     const arcOffset = RingCircumference * (1 - cappedUtil);
 
@@ -90,6 +92,14 @@ const ContextUsageIndicator = ({conversationId}: ContextUsageIndicatorProps) => 
                         </RingSvg>
                     )}
                     <Percent style={{color}}>{hasLimit ? `${pct}%` : formatTokens(composition.total)}</Percent>
+                    {isOver && (
+                        <OverflowIcon data-testid='context-usage-overflow'>
+                            <AlertCircleOutlineIcon
+                                size={14}
+                                color={color}
+                            />
+                        </OverflowIcon>
+                    )}
                 </IndicatorContent>
             }
             dotMenuButton={IndicatorButton}
@@ -121,6 +131,11 @@ const ContextUsageIndicator = ({conversationId}: ContextUsageIndicatorProps) => 
                         />
                     )}
                 </PopoverSubtitle>
+                {isOver && (
+                    <OverflowNote>
+                        <FormattedMessage defaultMessage='Context is over the limit — older messages are being dropped to fit.'/>
+                    </OverflowNote>
+                )}
                 {!hasLimit && (
                     <EstimatedNote>
                         <FormattedMessage defaultMessage='Provider does not publish a context window limit; utilization can&apos;t be computed.'/>
@@ -236,6 +251,11 @@ const Percent = styled.span`
     font-variant-numeric: tabular-nums;
 `;
 
+const OverflowIcon = styled.span`
+    display: inline-flex;
+    align-items: center;
+`;
+
 const IndicatorDropdown = styled(DropdownMenu)`
     width: 280px;
     padding: 12px;
@@ -263,6 +283,12 @@ const EstimatedNote = styled.div`
     font-size: 11px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
     font-style: italic;
+    margin-top: 4px;
+`;
+
+const OverflowNote = styled.div`
+    font-size: 12px;
+    color: var(--dnd-indicator);
     margin-top: 4px;
 `;
 
