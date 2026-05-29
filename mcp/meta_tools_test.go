@@ -33,6 +33,8 @@ func TestNewMetaToolsDefinitions(t *testing.T) {
 
 	require.Len(t, tools, 2)
 	require.Equal(t, []string{SearchToolsName, LoadToolName}, []string{tools[0].Name, tools[1].Name})
+	require.Equal(t, "Search available MCP tools by keyword.", tools[0].Description)
+	require.Equal(t, "Load an MCP tool by exact namespaced name.", tools[1].Description)
 	for _, tool := range tools {
 		require.NotEmpty(t, tool.Description)
 		require.NotNil(t, tool.Schema)
@@ -187,24 +189,44 @@ func TestLoadToolEmptyNameReturnsJSONError(t *testing.T) {
 	require.Empty(t, result.Matches)
 }
 
-func TestLoadToolNilContextOrToolStoreReturnsJSONError(t *testing.T) {
+func TestLoadToolInvariantFailuresReturnErrors(t *testing.T) {
 	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("jira__get_issue", "Get issue", "https://jira.example.com"),
 	})
-	loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
+	tests := []struct {
+		name       string
+		tool       llm.Tool
+		context    *llm.Context
+		wantErrMsg string
+	}{
+		{
+			name:       "missing LLM context",
+			tool:       metaToolByName(t, NewMetaTools(registry), LoadToolName),
+			context:    nil,
+			wantErrMsg: "missing LLM context",
+		},
+		{
+			name:       "missing registry",
+			tool:       metaToolByName(t, NewMetaTools(nil), LoadToolName),
+			context:    &llm.Context{Tools: llm.NewToolStore()},
+			wantErrMsg: "tool registry unavailable",
+		},
+		{
+			name:       "missing tool store",
+			tool:       metaToolByName(t, NewMetaTools(registry), LoadToolName),
+			context:    &llm.Context{},
+			wantErrMsg: "missing tool store",
+		},
+	}
 
-	resultJSON, err := loadTool.Resolver(context.Background(), nil, metaToolArgs(`{"name":"jira__get_issue"}`))
-	require.NoError(t, err)
-	var result LoadToolResult
-	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
-	require.False(t, result.Loaded)
-	require.Contains(t, result.Error, "LLM context")
-
-	resultJSON, err = loadTool.Resolver(context.Background(), &llm.Context{}, metaToolArgs(`{"name":"jira__get_issue"}`))
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
-	require.False(t, result.Loaded)
-	require.Contains(t, result.Error, "tool store")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.tool.Resolver(context.Background(), tt.context, metaToolArgs(`{"name":"jira__get_issue"}`))
+			require.Error(t, err)
+			require.Empty(t, result)
+			require.Contains(t, err.Error(), tt.wantErrMsg)
+		})
+	}
 }
 
 func TestLoadToolDoesNotMutateRegistryToolSchema(t *testing.T) {
@@ -279,13 +301,9 @@ func TestMetaToolsNilRegistryResolvers(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"tools":[]}`, searchJSON)
 
-	loadJSON, err := loadTool.Resolver(context.Background(), &llm.Context{Tools: llm.NewToolStore()}, metaToolArgs(`{"name":"jira__get_issue"}`))
-	require.NoError(t, err)
-	var loadResult LoadToolResult
-	require.NoError(t, json.Unmarshal([]byte(loadJSON), &loadResult))
-	require.False(t, loadResult.Loaded)
-	require.Equal(t, "tool registry is unavailable", loadResult.Error)
-	require.Empty(t, loadResult.Matches)
+	_, err = loadTool.Resolver(context.Background(), &llm.Context{Tools: llm.NewToolStore()}, metaToolArgs(`{"name":"jira__get_issue"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tool registry unavailable")
 }
 
 func TestSearchToolsTelemetry(t *testing.T) {
@@ -390,7 +408,7 @@ func TestLoadToolTelemetry(t *testing.T) {
 		llmContext := &llm.Context{BotUsername: "matty", ToolRuntime: llm.ToolRuntimeContext{MCPDynamicToolTelemetry: telemetry}}
 
 		_, err := loadTool.Resolver(context.Background(), llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
-		require.NoError(t, err)
+		require.Error(t, err)
 		require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "load", result: "error"}}, telemetry.events)
 	})
 
