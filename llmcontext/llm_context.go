@@ -237,7 +237,7 @@ func sanitizeUserProfileField(s string) string {
 // WithLLMContextSessionID removed: embedded MCP manages its own session lifecycle
 
 // getToolsStoreForUser returns a tool store for a specific user, including MCP tools.
-func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, bot *bots.Bot, userID string) *llm.ToolStore {
+func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, bot *bots.Bot, userID string) *llm.ToolStore {
 	// Check for nil bot, which is unexpected
 	if bot == nil {
 		b.pluginAPI.Log.Error("Unexpected nil bot when getting tool store for user", "userID", userID)
@@ -274,13 +274,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, bot *bots.Bot, us
 		}
 
 		// Get tools from all connected servers
-		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(ctx, userID)
-
-		// Add tools from successfully connected servers even if some had errors
-		// These will be disabled in non-DM channels via WithToolsDisabled()
-		if len(mcpTools) > 0 {
-			store.AddTools(mcpTools)
-		}
+		mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(ctx, userID)
 
 		// Per-agent MCP tool filtering: unless the agent is configured to pick up
 		// every MCP tool automatically, retain only tools listed in its allowlist.
@@ -549,7 +543,7 @@ func (b *Builder) WithLLMContextTools(ctx stdcontext.Context, bot *bots.Bot) llm
 			return
 		}
 
-		c.Tools = b.getToolsStoreForUser(ctx, bot, c.RequestingUser.Id)
+		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id)
 	}
 }
 

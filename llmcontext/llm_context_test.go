@@ -202,7 +202,7 @@ func searchTools(t *testing.T, store *llm.ToolStore, query string) mcp.SearchToo
 
 func buildToolsContext(builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
 	allOpts := append([]llm.ContextOption{}, opts...)
-	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(context.Background(), bot))
+	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(stdcontext.Background(), bot))
 	return builder.BuildLLMContextUserRequest(bot, testUser(), testChannel(), allOpts...)
 }
 
