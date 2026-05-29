@@ -158,6 +158,7 @@ The dirty-state check considers both form fields and a queued avatar upload, so 
 
 - Updating the agent's display name flows through to the linked Mattermost bot's display name immediately.
 - Updating the AI service, model, or instructions takes effect on the next agent turn — in-flight responses already streaming to a user are not interrupted.
+- Editing the shared AI service configuration in **System Console > Plugins > Agents** — for example changing token limits, API keys, or the service's default model — is also picked up automatically for agents that use that service. The updated values are used on subsequent turns, and plugin reactivation is not required.
 - Updating channel/user access rules takes effect immediately for new mentions; the next time a user `@mentions` the agent in a channel that is now blocked, the agent will refuse the request.
 
 ## Deleting an agent

@@ -76,6 +76,8 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
 | **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) always uses the Responses API, so this control isn't shown for that service type. |
 
+When you update a service configuration, agents that use that service pick up changes such as API keys, default models, and token limits automatically. This includes agents managed from the **Agents** page, and plugin reactivation is not required.
+
 #### Provider Specific Settings
 
 Each provider has specific configuration requirements:
