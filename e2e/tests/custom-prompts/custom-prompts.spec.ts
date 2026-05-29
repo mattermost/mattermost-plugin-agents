@@ -148,35 +148,17 @@ async function renderPromptViaAPI(
 }
 
 /**
- * Helper: open the Custom Prompts management modal through the real UI path
- * (formatting bar AI actions menu), with a Redux dispatch fallback for
- * environments where the formatting bar button is not available.
+ * Helper: open the Custom Prompts management modal via Redux. Modal tests
+ * assert modal behavior, not formatting-bar navigation.
  */
 async function openCustomPromptsModal(page) {
-    const postTextbox = page.getByTestId('post_textbox');
-    await postTextbox.click();
-
-    const aiButton = page.locator('#aiActionsMenu');
-    let openedViaUI = false;
-    if (await aiButton.isVisible({timeout: 3000}).catch(() => false)) {
-        await aiButton.click();
-        await page.getByText('Custom prompts').click();
-        const managePrompts = page.getByText('Manage prompts');
-        if (await managePrompts.isVisible({timeout: 3000}).catch(() => false)) {
-            await managePrompts.click();
-            openedViaUI = true;
+    await page.evaluate(() => {
+        const store = (window as any).store || (window as any).__store;
+        if (store?.dispatch) {
+            store.dispatch({type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: true});
         }
-    }
-
-    if (!openedViaUI) {
-        await page.evaluate(() => {
-            const store = (window as any).store || (window as any).__store;
-            if (store?.dispatch) {
-                store.dispatch({type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: true});
-            }
-        });
-    }
-    await expect(page.getByText('Custom Prompts')).toBeVisible({timeout: 10000});
+    });
+    await expect(page.getByText('Custom Prompts', {exact: true})).toBeVisible({timeout: 10000});
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +187,7 @@ test.describe('Custom Prompts Management Modal', () => {
         await openCustomPromptsModal(page);
 
         // Verify modal structure
-        await expect(page.getByText('Custom Prompts')).toBeVisible();
+        await expect(page.getByText('Custom Prompts', {exact: true})).toBeVisible();
         await expect(page.getByText('All Prompts')).toBeVisible();
         await expect(page.getByText('Your Prompts')).toBeVisible();
         await expect(page.getByPlaceholder('Search prompts')).toBeVisible();
@@ -445,11 +427,11 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
         }
 
         await aiButton.click();
-        await page.getByText('Custom prompts').click();
-        await expect(page.getByText('Manage prompts')).toBeVisible({timeout: 10000});
+        await page.getByText('Custom prompts', {exact: true}).click();
+        await expect(page.getByRole('menuitem', {name: 'Manage prompts'})).toBeVisible({timeout: 10000});
 
-        await expect(page.getByText('Formatting Bar Prompt')).toBeVisible({timeout: 10000});
-        await page.getByText('Formatting Bar Prompt').click();
+        await expect(page.getByRole('menuitem', {name: 'Formatting Bar Prompt'})).toBeVisible({timeout: 10000});
+        await page.getByRole('menuitem', {name: 'Formatting Bar Prompt'}).click();
 
         await expect(postTextbox).toHaveValue(/Inserted via formatting bar/, { timeout: 10000 });
     });
@@ -467,10 +449,10 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
         }
 
         await aiButton.click();
-        await page.getByText('Custom prompts').click();
-        await page.getByText('Manage prompts').click();
+        await page.getByText('Custom prompts', {exact: true}).click();
+        await page.getByRole('menuitem', {name: 'Manage prompts'}).click();
 
-        await expect(page.getByText('Custom Prompts')).toBeVisible({timeout: 10000});
+        await expect(page.getByText('Custom Prompts', {exact: true})).toBeVisible({timeout: 10000});
         await expect(page.getByText('All Prompts')).toBeVisible();
     });
 });
