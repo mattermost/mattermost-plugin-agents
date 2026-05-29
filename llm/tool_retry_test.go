@@ -111,6 +111,17 @@ func TestEnsureToolRetryLimitSystemMessage(t *testing.T) {
 				{Role: PostRoleUser, Message: "hello"},
 			},
 		},
+		{
+			name: "returns posts unchanged when retry message is embedded in system prompt",
+			posts: []Post{
+				{Role: PostRoleSystem, Message: "base prompt\n\n" + ToolRetryLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			expected: []Post{
+				{Role: PostRoleSystem, Message: "base prompt\n\n" + ToolRetryLimitSystemMessage},
+				{Role: PostRoleUser, Message: "hello"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -120,6 +131,52 @@ func TestEnsureToolRetryLimitSystemMessage(t *testing.T) {
 			if tt.assertInput != nil {
 				tt.assertInput(t, tt.posts)
 			}
+		})
+	}
+}
+
+func TestEnsureToolIterationLimitUserMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		posts    []Post
+		expected []Post
+	}{
+		{
+			name: "appends a user post when none exists",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			expected: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+				{Role: PostRoleUser, Message: ToolIterationLimitUserMessage},
+			},
+		},
+		{
+			name: "returns posts unchanged when user message already exists",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+				{Role: PostRoleUser, Message: ToolIterationLimitUserMessage},
+			},
+			expected: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+				{Role: PostRoleUser, Message: ToolIterationLimitUserMessage},
+			},
+		},
+		{
+			name: "returns posts unchanged when user message is embedded",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello\n\n" + ToolIterationLimitUserMessage},
+			},
+			expected: []Post{
+				{Role: PostRoleUser, Message: "hello\n\n" + ToolIterationLimitUserMessage},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := EnsureToolIterationLimitUserMessage(tt.posts)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

@@ -33,6 +33,26 @@ const WebsocketEventMCPConnectionUpdated = "mcp_connection_updated"
 // to protect against oversized payloads in the various ID slices and MCP tool lists.
 const MaxAgentRequestBodyBytes = 512 << 10 // 512 KiB
 
+// agentErrorResponse is the JSON body returned for failed agent requests. The
+// webapp surfaces Error directly to the user, so the message must be
+// human-readable and actionable.
+type agentErrorResponse struct {
+	Error string `json:"error"`
+}
+
+// abortAgentRequest writes a JSON error response with the given status code so
+// the webapp can surface the message instead of falling back to a generic
+// "Failed to save agent. Please try again." The error is also recorded on the
+// gin context so ginlogger captures it server-side.
+func abortAgentRequest(c *gin.Context, status int, err error) {
+	_ = c.Error(err)
+	publicMsg := err.Error()
+	if status >= http.StatusInternalServerError {
+		publicMsg = "internal server error"
+	}
+	c.AbortWithStatusJSON(status, agentErrorResponse{Error: publicMsg})
+}
+
 // CreateAgentRequest is the JSON body for POST /agents. Field values are stored as given (no server-side fill-in).
 // MCP tool access is controlled by two independent fields:
 //   - autoEnableNewMCPTools=true gives the agent every currently configured MCP tool and any added later.
@@ -128,11 +148,11 @@ func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
 	}
 	count, err := a.agentStore.CountActiveAgents()
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
 		return false
 	}
 	if count >= FreeTierAgentLimit {
-		c.AbortWithError(http.StatusForbidden, fmt.Errorf("creating more than %d self-service agent(s) requires an E20 or Enterprise license", FreeTierAgentLimit))
+		abortAgentRequest(c, http.StatusForbidden, fmt.Errorf("creating more than %d self-service agent(s) requires an E20 or Enterprise license", FreeTierAgentLimit))
 		return false
 	}
 	return true
@@ -179,11 +199,11 @@ func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
 func (a *API) loadPluginConfigForAgents(c *gin.Context) (*config.Config, bool) {
 	cfg, err := a.configStore.GetConfig()
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
 		return nil, false
 	}
 	if cfg == nil {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
+		abortAgentRequest(c, http.StatusInternalServerError, errors.New("no plugin configuration available"))
 		return nil, false
 	}
 	return cfg, true
@@ -204,7 +224,7 @@ func (a *API) validateAgentServiceID(c *gin.Context, serviceID string) (*config.
 		return nil, false
 	}
 	if !serviceIDExistsInConfig(cfg, serviceID) {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", serviceID))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", serviceID))
 		return nil, false
 	}
 	return cfg, true
@@ -292,7 +312,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
 	if !canCreateAgent(a.pluginAPI, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("user does not have permission to create agents"))
+		abortAgentRequest(c, http.StatusForbidden, errors.New("user does not have permission to create agents"))
 		return
 	}
 
@@ -306,15 +326,15 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
+			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
 			return
 		}
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
 	if !validUsernameRe.MatchString(req.Username) {
-		c.AbortWithError(http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
+		abortAgentRequest(c, http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
 		return
 	}
 
@@ -325,7 +345,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	// Validate the built config before creating the Mattermost bot account so an
 	// invalid request does not leave an orphan bot user behind.
 	if err := buildAgentConfigForCreate(req, userID, "").Validate(); err != nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
 		return
 	}
 
@@ -337,10 +357,10 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	if err := a.pluginAPI.Bot.Create(mmBot); err != nil {
 		var appErr *model.AppError
 		if errors.As(err, &appErr) && appErr.Id == "app.user.save.username_exists.app_error" {
-			c.AbortWithError(http.StatusConflict, fmt.Errorf("username %q is already taken", req.Username))
+			abortAgentRequest(c, http.StatusConflict, fmt.Errorf("username %q is already taken", req.Username))
 			return
 		}
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
 		return
 	}
 
@@ -350,7 +370,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		if _, deactivateErr := a.pluginAPI.Bot.UpdateActive(mmBot.UserId, false); deactivateErr != nil {
 			a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", mmBot.UserId, "error", deactivateErr.Error())
 		}
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
 		return
 	}
 
@@ -364,7 +384,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 
 	agents, err := a.agentStore.ListAgents()
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to list agents: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to list agents: %w", err))
 		return
 	}
 
@@ -385,7 +405,7 @@ func (a *API) handleGetAgent(c *gin.Context) {
 
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
 		return
 	}
 	if cfg == nil {
@@ -408,7 +428,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
 		return
 	}
 	if cfg == nil {
@@ -417,7 +437,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	}
 
 	if !canManageAgent(a.pluginAPI, cfg, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to modify this agent"))
+		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to modify this agent"))
 		return
 	}
 
@@ -427,15 +447,15 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
+			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
 			return
 		}
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
 	if req.usernameProvided && req.Username != cfg.Name {
-		c.AbortWithError(http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
+		abortAgentRequest(c, http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
 		return
 	}
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
@@ -444,12 +464,12 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	displayNameChanged := applyAgentUpdateRequest(cfg, req)
 
 	if err := cfg.Validate(); err != nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
 		return
 	}
 
 	if err := a.agentStore.UpdateAgent(cfg); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
 		return
 	}
 
@@ -474,7 +494,7 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
 		return
 	}
 	if cfg == nil {
@@ -483,12 +503,12 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	}
 
 	if !canManageAgent(a.pluginAPI, cfg, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to delete this agent"))
+		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to delete this agent"))
 		return
 	}
 
 	if err := a.agentStore.DeleteAgent(agentID); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to delete agent: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to delete agent: %w", err))
 		return
 	}
 
@@ -511,7 +531,7 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
 		return
 	}
 	if cfg == nil {
@@ -520,13 +540,13 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	}
 
 	if !canManageAgent(a.pluginAPI, cfg, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to modify this agent"))
+		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to modify this agent"))
 		return
 	}
 
 	file, _, err := c.Request.FormFile("image")
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("missing or invalid image file: %w", err))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("missing or invalid image file: %w", err))
 		return
 	}
 	defer file.Close()
@@ -535,16 +555,16 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	limitedReader := io.LimitReader(file, maxAvatarSize+1)
 	imageBytes, err := io.ReadAll(limitedReader)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read image: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to read image: %w", err))
 		return
 	}
 	if len(imageBytes) > maxAvatarSize {
-		c.AbortWithError(http.StatusRequestEntityTooLarge, errors.New("image file too large (max 10MB)"))
+		abortAgentRequest(c, http.StatusRequestEntityTooLarge, errors.New("image file too large (max 10MB)"))
 		return
 	}
 
 	if err := a.pluginAPI.User.SetProfileImage(cfg.BotUserID, bytes.NewReader(imageBytes)); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to set profile image: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to set profile image: %w", err))
 		return
 	}
 
@@ -555,13 +575,13 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 func (a *API) handleListServices(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	if !canConfigureAgentServices(a.pluginAPI, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("user does not have permission to list services"))
+		abortAgentRequest(c, http.StatusForbidden, errors.New("user does not have permission to list services"))
 		return
 	}
 
 	cfg, err := a.configStore.GetConfig()
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
 		return
 	}
 
@@ -594,23 +614,23 @@ type FetchModelsForServiceRequest struct {
 func (a *API) handleFetchModelsForService(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	if !canConfigureAgentServices(a.pluginAPI, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("user does not have permission to fetch models"))
+		abortAgentRequest(c, http.StatusForbidden, errors.New("user does not have permission to fetch models"))
 		return
 	}
 
 	var req FetchModelsForServiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
 	cfg, err := a.configStore.GetConfig()
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
 		return
 	}
 	if cfg == nil {
-		c.AbortWithError(http.StatusBadRequest, errors.New("no plugin configuration"))
+		abortAgentRequest(c, http.StatusBadRequest, errors.New("no plugin configuration"))
 		return
 	}
 
@@ -622,7 +642,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		}
 	}
 	if svc == nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", req.ServiceID))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", req.ServiceID))
 		return
 	}
 
@@ -633,7 +653,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		svc.Type == llm.ServiceTypeGemini ||
 		svc.Type == llm.ServiceTypeVertex
 	if !supportsModelFetching {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model listing not supported for service type %q", svc.Type))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("model listing not supported for service type %q", svc.Type))
 		return
 	}
 
@@ -648,13 +668,13 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		hasRequiredCredentials = svc.VertexProjectID != "" && svc.Region != ""
 	}
 	if !hasRequiredCredentials {
-		c.AbortWithError(http.StatusBadRequest, errors.New("service is missing credentials required to list models"))
+		abortAgentRequest(c, http.StatusBadRequest, errors.New("service is missing credentials required to list models"))
 		return
 	}
 
 	models, err := bifrost.FetchModelsForService(*svc)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return
 	}
 

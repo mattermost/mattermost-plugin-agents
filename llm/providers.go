@@ -22,22 +22,10 @@ type OpenAICompatibleProvider struct {
 
 	// UseMaxTokens uses max_tokens instead of max_completion_tokens.
 	UseMaxTokens bool
-
-	// FixedAPIURL overrides the service config's APIURL
-	// (for providers like Cohere/Mistral with fixed endpoints).
-	FixedAPIURL string
 }
 
 // openAICompatibleProviders is the registry of known OpenAI-compatible providers.
 var openAICompatibleProviders = map[string]OpenAICompatibleProvider{
-	ServiceTypeCohere: {
-		FixedAPIURL: "https://api.cohere.ai/compatibility/v1",
-	},
-	ServiceTypeMistral: {
-		FixedAPIURL:          "https://api.mistral.ai/v1",
-		DisableStreamOptions: true,
-		UseMaxTokens:         true,
-	},
 	ServiceTypeScale: {
 		DefaultModel:         "openai/gpt-4o",
 		DisableStreamOptions: true,

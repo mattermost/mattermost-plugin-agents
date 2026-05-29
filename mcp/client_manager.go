@@ -37,6 +37,9 @@ type ClientManager struct {
 	// pluginServersMu must not be held across PluginHTTP round trips.
 	pluginServersMu sync.RWMutex
 	pluginServers   map[string]PluginServerConfig // keyed by PluginID
+	// pluginRegistered marks entries with a live RegisterPluginServer call;
+	// orphan entries hydrated only from persisted config are absent.
+	pluginRegistered map[string]bool
 	// sourcePluginAPI is the agents-plugin mmapi.Client; used by
 	// PluginHTTPRoundTripper to dispatch to source plugins.
 	sourcePluginAPI mmapi.Client
@@ -46,13 +49,14 @@ type ClientManager struct {
 // sourcePluginAPI routes PluginHTTP to source plugins; may be nil.
 func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client, sourcePluginAPI mmapi.Client) *ClientManager {
 	manager := &ClientManager{
-		log:             log,
-		pluginAPI:       pluginAPI,
-		oauthManager:    oauthManager,
-		httpClient:      httpClient,
-		toolsCache:      NewToolsCache(&pluginAPI.KV, &log),
-		pluginServers:   make(map[string]PluginServerConfig),
-		sourcePluginAPI: sourcePluginAPI,
+		log:              log,
+		pluginAPI:        pluginAPI,
+		oauthManager:     oauthManager,
+		httpClient:       httpClient,
+		toolsCache:       NewToolsCache(&pluginAPI.KV, &log),
+		pluginServers:    make(map[string]PluginServerConfig),
+		pluginRegistered: make(map[string]bool),
+		sourcePluginAPI:  sourcePluginAPI,
 	}
 	manager.ReInit(config, embeddedServer)
 	return manager
@@ -327,12 +331,14 @@ func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
 	m.pluginServers[cfg.PluginID] = cfg
+	m.pluginRegistered[cfg.PluginID] = true
 }
 
 func (m *ClientManager) UnregisterPluginServer(pluginID string) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
 	delete(m.pluginServers, pluginID)
+	delete(m.pluginRegistered, pluginID)
 }
 
 func (m *ClientManager) ListPluginServers() []PluginServerConfig {
@@ -351,6 +357,15 @@ func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bo
 	defer m.pluginServersMu.RUnlock()
 	cfg, ok := m.pluginServers[pluginID]
 	return cfg, ok
+}
+
+// IsPluginRegistered reports whether the source plugin currently has a live
+// in-process registration. Returns false for entries hydrated only from
+// persisted config.
+func (m *ClientManager) IsPluginRegistered(pluginID string) bool {
+	m.pluginServersMu.RLock()
+	defer m.pluginServersMu.RUnlock()
+	return m.pluginRegistered[pluginID]
 }
 
 // syncPluginServersFromConfig merges persisted admin-owned plugin-server fields

@@ -47,6 +47,28 @@ function agentRoute(agentId: string): string {
     return `${baseRoute()}/agents/${agentId}`;
 }
 
+// readAgentErrorMessage extracts the server-provided error message from an
+// agent endpoint response body. The agent API returns `{"error": "..."}` for
+// non-2xx responses so the UI can surface actionable validation feedback
+// (oversized prompt, taken username, etc.) instead of a generic retry hint.
+async function readAgentErrorMessage(response: Response): Promise<string> {
+    try {
+        const data: unknown = await response.json();
+        if (
+            data !== null &&
+            typeof data === 'object' &&
+            'error' in data &&
+            typeof (data as {error?: unknown}).error === 'string'
+        ) {
+            return (data as {error: string}).error;
+        }
+    } catch {
+        // Body was empty or not JSON — fall through to empty string so the
+        // caller can apply a generic fallback.
+    }
+    return '';
+}
+
 export async function doReaction(postid: string) {
     const url = `${postRoute(postid)}/react`;
     const response = await fetch(url, Client4.getOptions({
@@ -811,7 +833,7 @@ export async function createAgent(agent: CreateAgentRequest): Promise<UserAgent>
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readAgentErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -829,7 +851,7 @@ export async function updateAgent(id: string, agent: UpdateAgentRequest): Promis
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readAgentErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -846,7 +868,7 @@ export async function deleteAgent(id: string): Promise<void> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readAgentErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -871,7 +893,7 @@ export async function uploadAgentAvatar(agentId: string, file: File): Promise<vo
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readAgentErrorMessage(response),
         status_code: response.status,
         url,
     });

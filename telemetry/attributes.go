@@ -21,6 +21,23 @@ var (
 	LLMCachedWriteTokens = attribute.Key("agents.llm.cached_write_tokens")
 	LLMReasoningTokens   = attribute.Key("agents.llm.reasoning_tokens")
 	LLMCost              = attribute.Key("agents.llm.cost")
+
+	// Routing — which bifrost code path the request took.
+	LLMPath            = attribute.Key("agents.llm.path")              // "chat" | "responses"
+	LLMUseResponsesAPI = attribute.Key("agents.llm.use_responses_api") // bot/service-level toggle
+
+	// Reasoning — what (if anything) was attached to the outbound request.
+	LLMReasoningEffort    = attribute.Key("agents.llm.reasoning.effort")
+	LLMReasoningMaxTokens = attribute.Key("agents.llm.reasoning.max_tokens")
+	LLMReasoningSent      = attribute.Key("agents.llm.reasoning.sent") // true when the request includes a reasoning block
+
+	// Bifrost error surface — populated when a request fails so opaque
+	// "bifrost error: …" log lines can be correlated with status/type/code.
+	LLMBifrostStatusCode    = attribute.Key("agents.llm.bifrost.status_code")
+	LLMBifrostErrorType     = attribute.Key("agents.llm.bifrost.error_type")
+	LLMBifrostErrorCode     = attribute.Key("agents.llm.bifrost.error_code")
+	LLMBifrostErrorProvider = attribute.Key("agents.llm.bifrost.error_provider")
+	LLMBifrostIsBifrostErr  = attribute.Key("agents.llm.bifrost.is_bifrost_error")
 )
 
 // Attribute keys for agent context

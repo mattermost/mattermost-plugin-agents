@@ -650,16 +650,26 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 // streamChat handles the streaming chat completion.
 func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
 	span := telemetry.SpanFromContext(ctx)
+	span.SetAttributes(
+		telemetry.LLMPath.String("chat"),
+		telemetry.LLMUseResponsesAPI.Bool(b.useResponsesAPI),
+	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost request
 	bifrostReq := b.convertToBifrostRequest(request, cfg)
+	if bifrostReq.Params != nil {
+		recordReasoningSent(span, bifrostReq.Params.Reasoning)
+	} else {
+		recordReasoningSent(span, nil)
+	}
 
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		recordBifrostError(span, bifrostErr)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -714,7 +724,8 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 		}
 
 		if chunk.BifrostError != nil {
-			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			recordBifrostError(span, chunk.BifrostError)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
@@ -897,7 +908,6 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
-	reasoning := &schemas.ChatReasoning{}
 
 	switch b.provider {
 	case schemas.Anthropic:
@@ -905,11 +915,12 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		reasoning.MaxTokens = Ptr(budget)
+		return &schemas.ChatReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
 		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
 		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
 		// When an explicit budget is set use it; otherwise fall back to effort.
+		reasoning := &schemas.ChatReasoning{}
 		if b.thinkingBudget > 0 {
 			reasoning.MaxTokens = Ptr(b.thinkingBudget)
 		} else {
@@ -919,14 +930,12 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 			}
 			reasoning.Effort = Ptr(effort)
 		}
+		return reasoning
 	default:
-		effort := b.reasoningEffort
-		if effort == "" {
-			effort = "medium"
-		}
-		reasoning.Effort = Ptr(effort)
+		// OpenAI/Azure reasoning goes through the Responses API; providers that
+		// reach chat completions here (Cohere, Mistral, Bedrock) reject reasoning_effort.
+		return nil
 	}
-	return reasoning
 }
 
 // calculateThinkingBudget computes the thinking budget for Anthropic models.
@@ -957,6 +966,10 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+		if cfg.ToolsDisabled {
+			none := string(schemas.ChatToolChoiceTypeNone)
+			params.ToolChoice = &schemas.ChatToolChoice{ChatToolChoiceStr: &none}
+		}
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildChatReasoning(cfg)
@@ -1189,9 +1202,23 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 	return parts
 }
 
+func hasToolUseHistory(posts []llm.Post) bool {
+	for _, post := range posts {
+		if len(post.ToolUse) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // convertTools converts llm.Tool to Bifrost ChatTool format.
 func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ChatTool {
-	if cfg.ToolsDisabled || request.Context == nil || request.Context.Tools == nil {
+	if request.Context == nil || request.Context.Tools == nil {
+		return nil
+	}
+	// Keep tools defined when the history has tool_use blocks; tool_choice="none"
+	// (set by the caller) forbids further calls.
+	if cfg.ToolsDisabled && !hasToolUseHistory(request.Posts) {
 		return nil
 	}
 
@@ -1514,8 +1541,10 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 		})
 	}
 
-	// Add custom function tools if available
-	if !cfg.ToolsDisabled && request.Context != nil && request.Context.Tools != nil {
+	// Keep function tools defined when the history has tool_use blocks; the
+	// caller sets tool_choice="none" to forbid further calls. See hasToolUseHistory.
+	keepFunctionTools := !cfg.ToolsDisabled || hasToolUseHistory(request.Posts)
+	if keepFunctionTools && request.Context != nil && request.Context.Tools != nil {
 		tools := request.Context.Tools.GetTools()
 		for _, tool := range tools {
 			var params *schemas.ToolFunctionParameters
@@ -1560,7 +1589,6 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
-	reasoning := &schemas.ResponsesParametersReasoning{}
 
 	switch b.provider {
 	case schemas.Anthropic:
@@ -1568,12 +1596,13 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		reasoning.MaxTokens = Ptr(budget)
+		return &schemas.ResponsesParametersReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
 		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
 		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
 		// Prefer an explicit budget; otherwise fall back to effort. Enable summary
 		// so the provider returns reasoning text in the stream.
+		reasoning := &schemas.ResponsesParametersReasoning{Summary: Ptr("auto")}
 		if b.thinkingBudget > 0 {
 			reasoning.MaxTokens = Ptr(b.thinkingBudget)
 		} else {
@@ -1583,18 +1612,24 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 			}
 			reasoning.Effort = Ptr(effort)
 		}
-		reasoning.Summary = Ptr("auto")
-	default:
+		return reasoning
+	case schemas.OpenAI, schemas.Azure:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"
 		}
-		reasoning.Effort = Ptr(effort)
-		// Enable reasoning summaries so the provider returns reasoning text in the stream.
-		// Without this, providers like OpenAI will not include reasoning_summary events.
-		reasoning.Summary = Ptr("auto")
+		// Enable reasoning summaries so the provider returns reasoning text in
+		// the stream; without this OpenAI omits reasoning_summary events.
+		return &schemas.ResponsesParametersReasoning{
+			Effort:  Ptr(effort),
+			Summary: Ptr("auto"),
+		}
+	default:
+		// Bifrost will route a Responses-API request to chat completions for
+		// providers without native Responses support (e.g. Mistral). Those
+		// providers don't accept reasoning_effort, so drop it here too.
+		return nil
 	}
-	return reasoning
 }
 
 // convertToBifrostResponsesRequest converts our CompletionRequest to Bifrost's Responses API format.
@@ -1615,6 +1650,10 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+		if cfg.ToolsDisabled {
+			none := string(schemas.ResponsesToolChoiceTypeNone)
+			params.ToolChoice = &schemas.ResponsesToolChoice{ResponsesToolChoiceStr: &none}
+		}
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildResponsesReasoning(cfg)
@@ -1634,6 +1673,10 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 // streamResponses handles the streaming Responses API completion.
 func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
 	span := telemetry.SpanFromContext(ctx)
+	span.SetAttributes(
+		telemetry.LLMPath.String("responses"),
+		telemetry.LLMUseResponsesAPI.Bool(b.useResponsesAPI),
+	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
@@ -1646,11 +1689,17 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		}
 		return
 	}
+	if bifrostReq.Params != nil {
+		recordResponsesReasoningSent(span, bifrostReq.Params.Reasoning)
+	} else {
+		recordResponsesReasoningSent(span, nil)
+	}
 
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		recordBifrostError(span, bifrostErr)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -1719,7 +1768,8 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		}
 
 		if chunk.BifrostError != nil {
-			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			recordBifrostError(span, chunk.BifrostError)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{

@@ -83,7 +83,7 @@ func (t *Transcriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 
 	resp, bifrostErr := t.client.TranscriptionRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost transcription error: %s", bifrostErr.Error.Message), t.apiKey)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost transcription error: %s", bifrostErrorString(bifrostErr)), t.apiKey)
 	}
 
 	if resp == nil || resp.Text == "" {

@@ -33,23 +33,43 @@ export function useMeasurePunchouts(
     offset?: PunchoutOffset,
 ): Punchout | null {
     const elementsAvailable = useElementAvailable(elementIds);
-    const [windowSize, setWindowSize] = useState<DOMRect>();
+
+    // Track the measured elements' bounding rects via rAF. The bounding rect
+    // of an element can change without a window resize event firing - for
+    // example when an announcement banner above the app is shown or
+    // dismissed, when the sidebar collapses, or when any sibling layout
+    // shifts. Polling on rAF is cheap (one getBoundingClientRect per element
+    // per frame) and only runs while a consumer of this hook is mounted.
+    const [rectsKey, setRectsKey] = useState<string>('');
 
     useLayoutEffect(() => {
-        let timeoutId: NodeJS.Timeout;
-        const updateSize = () => {
-            clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => {
-                setWindowSize(document.getElementById('root')?.getBoundingClientRect());
-            }, 100);
-        };
+        if (!elementsAvailable) {
+            return () => { /* nothing to clean up */ };
+        }
 
-        window.addEventListener('resize', updateSize);
-        return () => {
-            window.removeEventListener('resize', updateSize);
-            clearTimeout(timeoutId);
+        let rafId: number;
+        const measure = () => {
+            let key = '';
+            for (const id of elementIds) {
+                const el = document.getElementById(id);
+                if (!el) {
+                    key += '|';
+                    continue;
+                }
+                const r = el.getBoundingClientRect();
+                key += `${r.x},${r.y},${r.width},${r.height}|`;
+            }
+            setRectsKey((prev) => (prev === key ? prev : key));
+            rafId = requestAnimationFrame(measure);
         };
-    }, []);
+        rafId = requestAnimationFrame(measure);
+
+        return () => cancelAnimationFrame(rafId);
+
+        // elementIds is stable across renders in practice; spreading it keeps
+        // the effect honest if a caller ever passes a different list.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [elementsAvailable, ...elementIds]);
 
     return useMemo(() => {
         let minX = Number.MAX_SAFE_INTEGER;
@@ -76,7 +96,7 @@ export function useMeasurePunchouts(
             width: `${(maxX - minX) + (offset?.width ?? 0)}px`,
             height: `${(maxY - minY) + (offset?.height ?? 0)}px`,
         };
-    }, [...elementIds, ...additionalDeps, windowSize, elementsAvailable]);
+    }, [...elementIds, ...additionalDeps, rectsKey, elementsAvailable]);
 }
 
 export const useShowTutorialStep = (
