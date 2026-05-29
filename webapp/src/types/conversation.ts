@@ -117,13 +117,10 @@ export type CompositionSource =
     | 'history'
     | 'tool_defs'
     | 'tool_results'
-    | 'attachment'
     | 'image';
 
 export interface CompositionComponent {
     source: CompositionSource;
-    id?: string;
-    name?: string;
     proportion: number;
     tokens: number;
 }

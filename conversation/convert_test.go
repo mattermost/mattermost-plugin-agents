@@ -169,7 +169,7 @@ func TestBlocksToPost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, _ := BlocksToPost(tt.blocks, tt.role, false, nil, false, 0)
+			result := BlocksToPost(tt.blocks, tt.role, false, nil, false, 0)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -186,7 +186,7 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	}
 
 	t.Run("redactUnshared=false", func(t *testing.T) {
-		got, _ := BlocksToPost(blocks, "assistant", false, nil, false, 0)
+		got := BlocksToPost(blocks, "assistant", false, nil, false, 0)
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
 		args := map[string]string{}
@@ -203,7 +203,7 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	})
 
 	t.Run("redactUnshared=true", func(t *testing.T) {
-		got, _ := BlocksToPost(blocks, "assistant", true, nil, false, 0)
+		got := BlocksToPost(blocks, "assistant", true, nil, false, 0)
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
 		args := map[string]string{}
@@ -443,7 +443,7 @@ func TestPostToBlocksToPostRoundTrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			blocks := PostToBlocks(tt.post, tt.shared)
 			role := RoleToString(tt.post.Role)
-			roundTripped, _ := BlocksToPost(blocks, role, false, nil, false, 0)
+			roundTripped := BlocksToPost(blocks, role, false, nil, false, 0)
 
 			assert.Equal(t, tt.post.Role, roundTripped.Role)
 			assert.Equal(t, tt.post.Message, roundTripped.Message)
@@ -493,7 +493,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		require.Len(t, post.Files, 1, "an image block with vision enabled must produce exactly one entry in Post.Files")
 		assert.Equal(t, "image/png", post.Files[0].MimeType)
@@ -519,7 +519,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, false, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, false, 0)
 
 		assert.Empty(t, post.Files, "image block must be silently dropped when vision is disabled")
 	})
@@ -537,7 +537,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeImage, FileID: "img1", Filename: "vector.svg", MimeType: "image/svg+xml"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		require.Len(t, post.Files, 1)
 		mmClient.AssertNotCalled(t, "GetFile", "img1")
@@ -561,7 +561,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "foo.txt", MimeType: "text/plain"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		assert.Empty(t, post.Files, "non-image text file must NOT go through Post.Files")
 		assert.Contains(t, post.Message, "look at this")
@@ -582,7 +582,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "doc.pdf", MimeType: "application/pdf"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		assert.Contains(t, post.Message, "File Name: doc.pdf")
 		assert.Contains(t, post.Message, "Content: pre-extracted content")
@@ -605,7 +605,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "big.txt", MimeType: "text/plain"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
 
 		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
 			"reading exactly maxFileSize bytes must append the truncation marker so the LLM knows the content was cut")
@@ -625,7 +625,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "binary.pdf", MimeType: "application/pdf"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		assert.Equal(t, "see attached", post.Message,
 			"non-text non-image attachments without pre-extracted Content must be silently skipped")
@@ -654,7 +654,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "foo.txt", MimeType: "text/plain"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		require.Len(t, post.Files, 1, "exactly the image attachment should populate Post.Files")
 		assert.Equal(t, "image/png", post.Files[0].MimeType)
@@ -692,7 +692,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc-b", Filename: "b.txt", MimeType: "text/plain"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		idxA := strings.Index(post.Message, "File Name: a.txt")
 		idxB := strings.Index(post.Message, "File Name: b.txt")
@@ -719,7 +719,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeImage, FileID: "img1", Filename: "broken.png", MimeType: "image/png"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		// Pin that GetFile was actually attempted — production simply
 		// dropping the image without trying to fetch it would still leave
@@ -747,7 +747,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "under.txt", MimeType: "text/plain"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		assert.Contains(t, post.Message, "File Name: under.txt")
 		assert.NotContains(t, post.Message, "content truncated",
@@ -767,7 +767,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "boundary.txt", MimeType: "text/plain"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
 			"reading exactly DefaultMaxFileSize bytes must append the truncation marker (LimitReader saw the cap)")
@@ -786,7 +786,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "over.txt", MimeType: "text/plain"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
 			"a payload above DefaultMaxFileSize must be truncated with the marker")
@@ -802,7 +802,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		}
 
 		require.NotPanics(t, func() {
-			post, _ := BlocksToPost(blocks, "assistant", false, nil, false, 0)
+			post := BlocksToPost(blocks, "assistant", false, nil, false, 0)
 			assert.Equal(t, "hello", post.Message)
 			assert.Equal(t, "reason", post.Reasoning)
 			require.Len(t, post.ToolUse, 1)
@@ -829,7 +829,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "weird.png", MimeType: "image/png"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		mmClient.AssertNotCalled(t, "GetFile", "doc1")
 		assert.Empty(t, post.Files,
@@ -851,7 +851,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "extracted.pdf", MimeType: "application/pdf"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
 		mmClient.AssertNotCalled(t, "GetFile", "doc1",
 			"pre-extracted FileInfo.Content must short-circuit GetFile to avoid a redundant blob read")
@@ -878,7 +878,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "huge.pdf", MimeType: "application/pdf"},
 		}
 
-		post, _ := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
 
 		mmClient.AssertNotCalled(t, "GetFile", "doc1",
 			"the pre-extracted-content cap must not trigger a GetFile fetch")

@@ -369,7 +369,7 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fields := buildTokenUsageLogKeyValuePairs(dimensions, tt.usage, Composition{})
+			fields := buildTokenUsageLogKeyValuePairs(dimensions, tt.usage)
 			keyed := map[string]any{}
 			for i := 0; i+1 < len(fields); i += 2 {
 				keyed[fields[i].(string)] = fields[i+1]
@@ -384,56 +384,6 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 			assert.Equal(t, "claude-sonnet-4-5", keyed["model"])
 		})
 	}
-}
-
-func TestBuildTokenUsageLogKeyValuePairs_WithComposition(t *testing.T) {
-	dimensions := tokenUsageDimensions{
-		userID: "u", model: "m", operation: OperationConversation,
-	}
-	usage := TokenUsage{InputTokens: 1000, OutputTokens: 100}
-	composition := ComputeComposition(
-		[]CompositionInput{
-			{Source: SourceSystem, Text: "you are helpful"},
-			{Source: SourceHistory, Text: "what is the capital of france"},
-			{Source: SourceAttachment, ID: "f1", Name: "notes.txt", Text: "lorem ipsum dolor sit"},
-		},
-		int(usage.InputTokens),
-		CompositionTotalProvider,
-	)
-
-	fields := buildTokenUsageLogKeyValuePairs(dimensions, usage, composition)
-	keyed := map[string]any{}
-	for i := 0; i+1 < len(fields); i += 2 {
-		keyed[fields[i].(string)] = fields[i+1]
-	}
-
-	comps, ok := keyed["components"].([]CompositionComponent)
-	require.True(t, ok, "components field must be a []CompositionComponent for downstream log consumers")
-	require.NotEmpty(t, comps)
-
-	var sourceSet = map[CompositionSource]bool{}
-	for _, c := range comps {
-		sourceSet[c.Source] = true
-	}
-	assert.True(t, sourceSet[SourceSystem])
-	assert.True(t, sourceSet[SourceHistory])
-	assert.True(t, sourceSet[SourceAttachment])
-
-	assert.Equal(t, CompositionTotalProvider, keyed["composition_total_source"])
-}
-
-func TestBuildTokenUsageLogKeyValuePairs_OmitsComponentsWhenEmpty(t *testing.T) {
-	dimensions := tokenUsageDimensions{userID: "u"}
-	usage := TokenUsage{InputTokens: 10, OutputTokens: 1}
-
-	fields := buildTokenUsageLogKeyValuePairs(dimensions, usage, Composition{})
-	keyed := map[string]any{}
-	for i := 0; i+1 < len(fields); i += 2 {
-		keyed[fields[i].(string)] = fields[i+1]
-	}
-	_, hasComponents := keyed["components"]
-	assert.False(t, hasComponents,
-		"empty composition must not emit a components key — wastes log space and confuses dashboards")
 }
 
 func TestTokenUsageKeyValuePairsToMlogFields(t *testing.T) {

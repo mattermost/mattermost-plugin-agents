@@ -91,8 +91,6 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 	effectiveModel := extractRequestedModel(opts...)
 	dimensions := extractTokenUsageDimensions(request, w.botUsername, effectiveModel)
 
-	requestComposition := request.Composition
-
 	go func() {
 		defer close(interceptedStream)
 
@@ -120,8 +118,7 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 		}
 
 		if hasUsage {
-			composition := ComputeComposition(requestComposition, int(aggregateUsage.InputTokens), CompositionTotalProvider)
-			w.emitTokenUsage(dimensions, aggregateUsage, composition)
+			w.emitTokenUsage(dimensions, aggregateUsage)
 		}
 	}()
 
@@ -142,8 +139,8 @@ type tokenUsageDimensions struct {
 	operationSubType string
 }
 
-func (w *TokenUsageLoggingWrapper) emitTokenUsage(dimensions tokenUsageDimensions, usage TokenUsage, composition Composition) {
-	fields := buildTokenUsageLogKeyValuePairs(dimensions, usage, composition)
+func (w *TokenUsageLoggingWrapper) emitTokenUsage(dimensions tokenUsageDimensions, usage TokenUsage) {
+	fields := buildTokenUsageLogKeyValuePairs(dimensions, usage)
 
 	if pluginLogger := w.sinks.PluginLogger(); pluginLogger != nil {
 		pluginLogger.Info("LLM token usage", fields...)
@@ -164,9 +161,9 @@ func (w *TokenUsageLoggingWrapper) emitTokenUsage(dimensions tokenUsageDimension
 	}
 }
 
-func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage TokenUsage, composition Composition) []any {
+func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage TokenUsage) []any {
 	totalTokens := usage.InputTokens + usage.OutputTokens
-	fields := []any{
+	return []any{
 		"event", TokenUsageLogEvent,
 		"schema_version", TokenUsageLogSchemaVersion,
 		"user_id", dimensions.userID,
@@ -190,13 +187,6 @@ func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage Toke
 		"reasoning_tokens", usage.ReasoningTokens,
 		"cost", usage.Cost,
 	}
-	if len(composition.Components) > 0 {
-		fields = append(fields,
-			"components", composition.Components,
-			"composition_total_source", composition.TotalSource,
-		)
-	}
-	return fields
 }
 
 func tokenUsageKeyValuePairsToMlogFields(keyValuePairs []any) []mlog.Field {

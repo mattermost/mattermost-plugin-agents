@@ -7,7 +7,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
 
 import {useConversationContext} from '@/hooks/use_conversation_context';
-import type {CompositionComponent, CompositionSource} from '@/types/conversation';
+import type {CompositionSource} from '@/types/conversation';
 
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
 
@@ -148,10 +148,10 @@ const ContextUsageIndicator = ({conversationId}: ContextUsageIndicatorProps) => 
                 )}
             </PopoverHeader>
             <ComponentList>
-                {composition.components.map((c, i) => (
-                    <ComponentRow key={rowKey(c, i)}>
+                {composition.components.map((c) => (
+                    <ComponentRow key={c.source}>
                         <RowHeader>
-                            <RowLabel>{labelFor(intl, c)}</RowLabel>
+                            <RowLabel>{intl.formatMessage(sourceLabels[c.source])}</RowLabel>
                             <RowTokens>
                                 <FormattedMessage
                                     defaultMessage='{tokens} ({pct}%)'
@@ -195,30 +195,13 @@ function formatTokens(n: number): string {
     return String(n);
 }
 
-function rowKey(c: CompositionComponent, fallbackIndex: number): string {
-    if (c.id) {
-        return `${c.source}:${c.id}`;
-    }
-    return `${c.source}:${fallbackIndex}`;
-}
-
 const sourceLabels: Record<CompositionSource, {id: string; defaultMessage: string}> = {
     system: {id: 'context.source.system', defaultMessage: 'System prompt'},
     history: {id: 'context.source.history', defaultMessage: 'Conversation history'},
     tool_defs: {id: 'context.source.tool_defs', defaultMessage: 'Tool definitions'},
     tool_results: {id: 'context.source.tool_results', defaultMessage: 'Tool results'},
-    attachment: {id: 'context.source.attachment', defaultMessage: 'Attachment'},
     image: {id: 'context.source.image', defaultMessage: 'Image'},
 };
-
-function labelFor(intl: ReturnType<typeof useIntl>, c: CompositionComponent): string {
-    // Per-file rows surface the filename so users can spot which file is
-    // eating budget without hovering each row.
-    if ((c.source === 'attachment' || c.source === 'image') && c.name) {
-        return c.name;
-    }
-    return intl.formatMessage(sourceLabels[c.source]);
-}
 
 const IndicatorButton = styled(DotMenuButton)<{isActive: boolean}>`
     display: flex;

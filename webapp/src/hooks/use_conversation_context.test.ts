@@ -21,7 +21,7 @@ function makeComposition(overrides: Partial<Composition> = {}): Composition {
         components: [
             {source: 'system', proportion: 0.2, tokens: 200},
             {source: 'history', proportion: 0.5, tokens: 500},
-            {source: 'attachment', id: 'f1', name: 'notes.txt', proportion: 0.3, tokens: 300},
+            {source: 'image', proportion: 0.3, tokens: 300},
         ],
         total: 1000,
         total_source: 'provider',

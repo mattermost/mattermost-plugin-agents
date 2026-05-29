@@ -47,11 +47,6 @@ type CompletionRequest struct {
 	Context          *Context
 	Operation        string
 	OperationSubType string
-
-	// Composition tags each piece of content contributing to this request
-	// with its source, for per-source token attribution via
-	// ComputeComposition. Optional; nil disables attribution.
-	Composition []CompositionInput
 }
 
 func (b *CompletionRequest) Truncate(maxTokens int, countTokens func(string) int) bool {

@@ -30,9 +30,6 @@ var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
 // true is replaced with UnsharedToolResultRedaction, and tool_use arguments
 // whose Shared flag is not true are replaced with an empty JSON object so the
 // LLM cannot paraphrase private tool parameters into a channel-visible reply.
-//
-// The second return tags each text-bearing block with its CompositionSource
-// for per-source token attribution.
 func BlocksToPost(
 	blocks []ContentBlock,
 	role string,
@@ -40,7 +37,7 @@ func BlocksToPost(
 	mmClient mmapi.Client,
 	enableVision bool,
 	maxFileSize int64,
-) (llm.Post, []llm.CompositionInput) {
+) llm.Post {
 	post := llm.Post{
 		Role: RoleFromString(role),
 	}
@@ -52,23 +49,11 @@ func BlocksToPost(
 
 	var textParts []string
 	var fileContents []string
-	var composition []llm.CompositionInput
-
-	historySource := llm.SourceHistory
-	if post.Role == llm.PostRoleSystem {
-		historySource = llm.SourceSystem
-	}
 
 	for _, block := range blocks {
 		switch block.Type {
 		case BlockTypeText:
 			textParts = append(textParts, block.Text)
-			if block.Text != "" {
-				composition = append(composition, llm.CompositionInput{
-					Source: historySource,
-					Text:   block.Text,
-				})
-			}
 
 		case BlockTypeThinking:
 			// Last thinking block wins
@@ -108,13 +93,6 @@ func BlocksToPost(
 					Status: StatusFromString(block.Status),
 				})
 			}
-			if content != "" {
-				composition = append(composition, llm.CompositionInput{
-					Source: llm.SourceToolResults,
-					ID:     block.ToolUseID,
-					Text:   content,
-				})
-			}
 
 		case BlockTypeImage:
 			if !enableVision {
@@ -132,11 +110,6 @@ func BlocksToPost(
 				post.Files = append(post.Files, llm.File{
 					MimeType: fileInfo.MimeType,
 					Size:     fileInfo.Size,
-				})
-				composition = append(composition, llm.CompositionInput{
-					Source: llm.SourceImage,
-					ID:     fileInfo.Id,
-					Name:   fileInfo.Name,
 				})
 				continue
 			}
@@ -158,11 +131,6 @@ func BlocksToPost(
 				Size:     fileInfo.Size,
 				Data:     data,
 				Reader:   bytes.NewReader(data),
-			})
-			composition = append(composition, llm.CompositionInput{
-				Source: llm.SourceImage,
-				ID:     fileInfo.Id,
-				Name:   fileInfo.Name,
 			})
 
 		case BlockTypeFile:
@@ -201,12 +169,6 @@ func BlocksToPost(
 			}
 
 			fileContents = append(fileContents, "File Name: "+fileInfo.Name+"\nContent: "+content)
-			composition = append(composition, llm.CompositionInput{
-				Source: llm.SourceAttachment,
-				ID:     fileInfo.Id,
-				Name:   fileInfo.Name,
-				Text:   content,
-			})
 
 		case BlockTypeAnnotations:
 			// Not mapped to llm.Post
@@ -220,36 +182,7 @@ func BlocksToPost(
 		post.Message += "\nAttached File Contents:\n" + strings.Join(fileContents, "\n\n")
 	}
 
-	return post, composition
-}
-
-// toolDefsComposition emits one composition input per tool definition. The
-// serialized form is approximate — only the relative size feeds proportion
-// math, not the exact wire format the provider uses.
-func toolDefsComposition(ctx *llm.Context) []llm.CompositionInput {
-	if ctx == nil || ctx.Tools == nil {
-		return nil
-	}
-	tools := ctx.Tools.GetTools()
-	if len(tools) == 0 {
-		return nil
-	}
-	out := make([]llm.CompositionInput, 0, len(tools))
-	for _, t := range tools {
-		var schema string
-		if t.Schema != nil {
-			if b, err := json.Marshal(t.Schema); err == nil {
-				schema = string(b)
-			}
-		}
-		out = append(out, llm.CompositionInput{
-			Source: llm.SourceToolDefs,
-			ID:     t.Name,
-			Name:   t.Name,
-			Text:   t.Name + "\n" + t.Description + "\n" + schema,
-		})
-	}
-	return out
+	return post
 }
 
 // PostToBlocks converts an llm.Post into a slice of content blocks.

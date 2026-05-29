@@ -432,34 +432,23 @@ func AssembleRequest(
 	}
 
 	posts := make([]llm.Post, 0, len(turns)+1)
-	composition := make([]llm.CompositionInput, 0, len(turns)+1)
 
 	// System prompt is always first.
 	posts = append(posts, llm.Post{
 		Role:    llm.PostRoleSystem,
 		Message: conv.SystemPrompt,
 	})
-	if conv.SystemPrompt != "" {
-		composition = append(composition, llm.CompositionInput{
-			Source: llm.SourceSystem,
-			Text:   conv.SystemPrompt,
-		})
-	}
 
-	composition = append(composition, toolDefsComposition(context)...)
-
-	turnPosts, turnComposition, err := turnsToLLMPosts(turns, redactUnshared, mmClient, enableVision, maxFileSize)
+	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, mmClient, enableVision, maxFileSize)
 	if err != nil {
 		return nil, err
 	}
 	posts = append(posts, turnPosts...)
-	composition = append(composition, turnComposition...)
 
 	return &llm.CompletionRequest{
-		Posts:       posts,
-		Context:     context,
-		Operation:   conv.Operation,
-		Composition: composition,
+		Posts:     posts,
+		Context:   context,
+		Operation: conv.Operation,
 	}, nil
 }
 
@@ -488,28 +477,26 @@ func turnsToLLMPosts(
 	mmClient mmapi.Client,
 	enableVision bool,
 	maxFileSize int64,
-) ([]llm.Post, []llm.CompositionInput, error) {
+) ([]llm.Post, error) {
 	posts := make([]llm.Post, 0, len(turns))
-	var composition []llm.CompositionInput
 	for i := 0; i < len(turns); i++ {
 		turn := turns[i]
 		blocks, err := unmarshalBlocks(turn.Content)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
+			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
 		}
 		if turn.Role == "assistant" && i+1 < len(turns) && turns[i+1].Role == "tool_result" {
 			nextBlocks, err := unmarshalBlocks(turns[i+1].Content)
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, err)
+				return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, err)
 			}
 			blocks = append(blocks, nextBlocks...)
 			i++
 		}
-		post, postComposition := BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize)
+		post := BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize)
 		posts = append(posts, post)
-		composition = append(composition, postComposition...)
 	}
-	return posts, composition, nil
+	return posts, nil
 }
 
 // CreatePlaceholderAssistantTurn creates an empty assistant turn linked to the response post.
@@ -752,25 +739,15 @@ func (s *Service) BuildChannelMentionRequest(
 		}
 	}
 
-	composition := make([]llm.CompositionInput, 0, len(turns)+len(threadData.Posts)+1)
-	if conv.SystemPrompt != "" {
-		composition = append(composition, llm.CompositionInput{
-			Source: llm.SourceSystem,
-			Text:   conv.SystemPrompt,
-		})
-	}
-	composition = append(composition, toolDefsComposition(context)...)
-
 	// Emit any non-post turns that precede all post-linked turns
 	// (precedingSeq = 0). Route through turnsToLLMPosts so tool_use and
 	// tool_result within the same tool round merge into a single llm.Post,
 	// matching BuildCompletionRequest's behavior.
-	leadingPosts, leadingComposition, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared, s.mmClient, enableVision, maxFileSize)
+	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared, s.mmClient, enableVision, maxFileSize)
 	if err != nil {
 		return nil, err
 	}
 	posts = append(posts, leadingPosts...)
-	composition = append(composition, leadingComposition...)
 
 	for _, threadPost := range threadData.Posts {
 		if turnPostIDs[threadPost.Id] {
@@ -779,12 +756,11 @@ func (s *Service) BuildChannelMentionRequest(
 			// preceding assistant turn's tool_use blocks.
 			turn := turnByPostID[threadPost.Id]
 			run := append([]store.Turn{turn}, turnsByPrecedingPost[turn.Sequence]...)
-			runPosts, runComposition, err := turnsToLLMPosts(run, redactUnshared, s.mmClient, enableVision, maxFileSize)
+			runPosts, err := turnsToLLMPosts(run, redactUnshared, s.mmClient, enableVision, maxFileSize)
 			if err != nil {
 				return nil, err
 			}
 			posts = append(posts, runPosts...)
-			composition = append(composition, runComposition...)
 		} else {
 			// Render as user content with @username prefix, preserving any
 			// uploaded files on thread posts that are not stored turns.
@@ -793,9 +769,8 @@ func (s *Service) BuildChannelMentionRequest(
 				username = user.Username
 			}
 			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient)
-			post, postComposition := BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize)
+			post := BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize)
 			posts = append(posts, post)
-			composition = append(composition, postComposition...)
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break
@@ -803,9 +778,8 @@ func (s *Service) BuildChannelMentionRequest(
 	}
 
 	return &llm.CompletionRequest{
-		Posts:       posts,
-		Context:     context,
-		Operation:   conv.Operation,
-		Composition: composition,
+		Posts:     posts,
+		Context:   context,
+		Operation: conv.Operation,
 	}, nil
 }

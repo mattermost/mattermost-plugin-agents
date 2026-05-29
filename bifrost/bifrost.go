@@ -570,14 +570,17 @@ func setTokenUsageSpanAttributes(span trace.Span, usage llm.TokenUsage) {
 }
 
 // setCompositionSpanAttributes attaches per-source token attribution to the
-// span when the request carries Composition metadata. Aggregated buckets only
-// (system/history/tool_defs/tool_results/attachments/images) — per-file
-// detail goes to the token-usage log to keep span cardinality bounded.
+// span, derived from the request's posts and tools and scaled to the
+// provider's input-token total. One attribute per source.
 func setCompositionSpanAttributes(span trace.Span, request llm.CompletionRequest, usage llm.TokenUsage) {
-	if len(request.Composition) == 0 || usage.InputTokens <= 0 {
+	if usage.InputTokens <= 0 {
 		return
 	}
-	composition := llm.ComputeComposition(request.Composition, int(usage.InputTokens), llm.CompositionTotalProvider)
+	inputs := request.Composition()
+	if len(inputs) == 0 {
+		return
+	}
+	composition := llm.ComputeComposition(inputs, int(usage.InputTokens), llm.CompositionTotalProvider)
 	attrs := composition.SpanAttributes()
 	if len(attrs) == 0 {
 		return

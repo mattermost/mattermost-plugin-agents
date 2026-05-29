@@ -61,7 +61,7 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 	modelName, tokenLimit := a.modelMetadataForBot(conv.BotID)
 	total, totalSource := a.totalTokensForRequest(c, conv.BotID, req)
 
-	composition := llm.ComputeComposition(req.Composition, total, totalSource)
+	composition := llm.ComputeComposition(req.Composition(), total, totalSource)
 	composition.Model = modelName
 	composition.InputTokenLimit = tokenLimit
 
@@ -153,7 +153,7 @@ func (a *API) totalTokensForRequest(c *gin.Context, botID string, req *llm.Compl
 		return count, llm.CompositionTotalCounted
 	}
 
-	return llm.EstimateRequestTokens(req.Composition), llm.CompositionTotalEstimated
+	return llm.EstimateRequestTokens(req.Composition()), llm.CompositionTotalEstimated
 }
 
 // tryCountTokens runs the provider's CountTokens path. Each fallback branch
