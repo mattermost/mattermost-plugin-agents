@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render} from '@testing-library/react';
+import {render, fireEvent} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import type {Composition} from '@/types/conversation';
@@ -97,6 +97,20 @@ describe('ContextUsageIndicator visibility', () => {
 
         // 47000/200000 = 23.5%, rounds to 24%
         expect(container.textContent).toContain('24%');
+    });
+
+    test('opening the popover does not crash when components is null', () => {
+        // Go marshals a nil slice to JSON null, so components can arrive null
+        // with a positive total. Opening the breakdown must not throw.
+        mockComposition = {
+            components: null as unknown as Composition['components'],
+            total: 47000,
+            total_source: 'counted',
+            input_token_limit: 200000,
+        };
+        const {container, getByTestId} = renderIndicator();
+        fireEvent.click(getByTestId('context-usage-indicator'));
+        expect(container.textContent).toContain('Context window');
     });
 });
 

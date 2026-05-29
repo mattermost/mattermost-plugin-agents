@@ -148,7 +148,10 @@ const ContextUsageIndicator = ({conversationId}: ContextUsageIndicatorProps) => 
                 )}
             </PopoverHeader>
             <ComponentList>
-                {composition.components.map((c) => (
+                {/* Go marshals a nil slice to JSON null, so components can
+                    arrive null even though the type says array (e.g. a >0
+                    counted total with no taggable content). */}
+                {(composition.components ?? []).map((c) => (
                     <ComponentRow key={c.source}>
                         <RowHeader>
                             <RowLabel>{intl.formatMessage(sourceLabels[c.source])}</RowLabel>
