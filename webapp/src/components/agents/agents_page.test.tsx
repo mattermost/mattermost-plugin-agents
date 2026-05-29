@@ -13,7 +13,7 @@ jest.mock('./agents_license_gate', () => ({
 
 jest.mock('./agents_list', () => ({
     __esModule: true,
-    default: () => <div>Agents List</div>,
+    default: () => <div>{'Agents List'}</div>,
 }));
 
 describe('AgentsPage', () => {
@@ -32,12 +32,12 @@ describe('AgentsPage', () => {
     });
 
     it('does not toggle app__body on document.body', () => {
-        render(<AgentsPage />);
+        render(<AgentsPage/>);
         expect(document.body.classList.contains('app__body')).toBe(false);
     });
 
     it('adds channel-view to #root when missing', () => {
-        render(<AgentsPage />);
+        render(<AgentsPage/>);
         expect(root.classList.contains('channel-view')).toBe(true);
     });
 });
