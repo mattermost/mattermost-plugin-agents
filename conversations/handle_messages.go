@@ -194,8 +194,7 @@ func (c *Conversations) handleMentionViaConversation(
 	responseRootID string,
 ) error {
 	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextRequestContext(ctx),
-		c.contextBuilder.WithLLMContextTools(bot),
+		c.contextBuilder.WithLLMContextTools(ctx, bot),
 	}
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
 
@@ -340,8 +339,7 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 // handleDMViaConversation processes a DM message using the conversation entity model.
 func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
 	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextRequestContext(ctx),
-		c.contextBuilder.WithLLMContextTools(bot),
+		c.contextBuilder.WithLLMContextTools(ctx, bot),
 	}
 	webSearchParams := c.extractWebSearchContext(post)
 	if len(webSearchParams) > 0 {

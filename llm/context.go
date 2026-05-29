@@ -4,7 +4,6 @@
 package llm
 
 import (
-	stdcontext "context"
 	"fmt"
 	"strings"
 	"time"
@@ -36,10 +35,6 @@ type Context struct {
 
 	// User that is making the request
 	RequestingUser *model.User
-
-	// RequestContext carries the caller's request-scoped context for downstream
-	// work such as MCP tool discovery. May be nil in tests.
-	RequestContext stdcontext.Context
 
 	// ConversationID identifies the conversation whose context is being built.
 	ConversationID string
