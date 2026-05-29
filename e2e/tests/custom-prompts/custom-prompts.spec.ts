@@ -161,6 +161,21 @@ async function openCustomPromptsModal(page) {
     await expect(page.getByText('Custom Prompts', {exact: true})).toBeVisible({timeout: 10000});
 }
 
+async function openAiCustomPromptsSubmenu(page): Promise<boolean> {
+    const postTextbox = page.getByTestId('post_textbox');
+    await postTextbox.click();
+
+    const aiButton = page.locator('#aiActionsMenu');
+    if (!await aiButton.isVisible({timeout: 5000}).catch(() => false)) {
+        return false;
+    }
+
+    await aiButton.click();
+    await page.getByText('Custom prompts', {exact: true}).click();
+
+    return page.getByRole('menuitem', {name: 'Manage prompts'}).isVisible({timeout: 5000}).catch(() => false);
+}
+
 // ---------------------------------------------------------------------------
 // 1. Custom Prompts Management Modal
 // ---------------------------------------------------------------------------
@@ -415,41 +430,26 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
 
         await setupTestPage(page);
 
-        const postTextbox = page.getByTestId('post_textbox');
-        await postTextbox.click();
-
-        // The AI actions button is only present when the server includes the
-        // pluggable AI actions menu (custom mattermost build). Skip on stock images.
-        const aiButton = page.locator('#aiActionsMenu');
-        if (!await aiButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-            test.skip(true, 'AI Actions menu not available (requires custom server build)');
+        if (!await openAiCustomPromptsSubmenu(page)) {
+            test.skip(true, 'Custom prompts AI submenu not available in this server build');
             return;
         }
 
-        await aiButton.click();
-        await page.getByText('Custom prompts', {exact: true}).click();
-        await expect(page.getByRole('menuitem', {name: 'Manage prompts'})).toBeVisible({timeout: 10000});
-
+        const postTextbox = page.getByTestId('post_textbox');
         await expect(page.getByRole('menuitem', {name: 'Formatting Bar Prompt'})).toBeVisible({timeout: 10000});
         await page.getByRole('menuitem', {name: 'Formatting Bar Prompt'}).click();
 
-        await expect(postTextbox).toHaveValue(/Inserted via formatting bar/, { timeout: 10000 });
+        await expect(postTextbox).toHaveValue(/Inserted via formatting bar/, {timeout: 10000});
     });
 
     test('"Manage prompts" in the submenu opens the management modal', async ({page}) => {
         await setupTestPage(page);
 
-        const postTextbox = page.getByTestId('post_textbox');
-        await postTextbox.click();
-
-        const aiButton = page.locator('#aiActionsMenu');
-        if (!await aiButton.isVisible({timeout: 5000}).catch(() => false)) {
-            test.skip(true, 'AI Actions menu not available (requires custom server build)');
+        if (!await openAiCustomPromptsSubmenu(page)) {
+            test.skip(true, 'Custom prompts AI submenu not available in this server build');
             return;
         }
 
-        await aiButton.click();
-        await page.getByText('Custom prompts', {exact: true}).click();
         await page.getByRole('menuitem', {name: 'Manage prompts'}).click();
 
         await expect(page.getByText('Custom Prompts', {exact: true})).toBeVisible({timeout: 10000});
