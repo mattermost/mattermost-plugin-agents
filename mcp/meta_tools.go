@@ -59,13 +59,13 @@ func NewMetaTools(registry *ToolRegistry) []llm.Tool {
 	return []llm.Tool{
 		{
 			Name:        SearchToolsName,
-			Description: "Use this internal helper to find available MCP tools before loading one. It searches only tools available in the active filtered registry and returns exact names with summaries.",
+			Description: "Search available MCP tools by keyword.",
 			Schema:      llm.NewJSONSchemaFromStruct[SearchToolsArgs](),
 			Resolver:    searchToolsResolver(registry),
 		},
 		{
 			Name:        LoadToolName,
-			Description: "Use this internal helper with exact names returned by search_tools. After loading, the selected MCP tool can be called by that exact name.",
+			Description: "Load an MCP tool by exact namespaced name.",
 			Schema:      llm.NewJSONSchemaFromStruct[LoadToolArgs](),
 			Resolver:    loadToolResolver(registry),
 		},
@@ -133,17 +133,11 @@ func loadToolResolver(registry *ToolRegistry) llm.ToolResolver {
 		}
 
 		if llmContext == nil {
-			return marshalMetaToolResult(LoadToolResult{
-				Loaded: false,
-				Error:  "cannot load tool without an LLM context",
-			})
+			return "", fmt.Errorf("%s: missing LLM context", LoadToolName)
 		}
 		if registry == nil {
 			observe("error")
-			return marshalMetaToolResult(LoadToolResult{
-				Loaded: false,
-				Error:  "tool registry is unavailable",
-			})
+			return "", fmt.Errorf("%s: tool registry unavailable", LoadToolName)
 		}
 
 		entry, ok := registry.Lookup(name)
@@ -160,10 +154,7 @@ func loadToolResolver(registry *ToolRegistry) llm.ToolResolver {
 
 		if llmContext.Tools == nil {
 			observe("error")
-			return marshalMetaToolResult(LoadToolResult{
-				Loaded: false,
-				Error:  "cannot load tool without a visible tool store",
-			})
+			return "", fmt.Errorf("%s: missing tool store", LoadToolName)
 		}
 
 		llmContext.Tools.AddTools([]llm.Tool{entry.Tool})
