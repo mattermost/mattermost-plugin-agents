@@ -153,25 +153,30 @@ async function renderPromptViaAPI(
  * environments where the formatting bar button is not available.
  */
 async function openCustomPromptsModal(page) {
-    // Try the real UI path first: formatting bar AI actions menu
     const postTextbox = page.getByTestId('post_textbox');
     await postTextbox.click();
 
     const aiButton = page.locator('#aiActionsMenu');
-    if (await aiButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    let openedViaUI = false;
+    if (await aiButton.isVisible({timeout: 3000}).catch(() => false)) {
         await aiButton.click();
         await page.getByText('Custom prompts').click();
-        await page.getByText('Create a prompt').click();
-    } else {
-        // Fallback: dispatch Redux action directly (test environment)
+        const managePrompts = page.getByText('Manage prompts');
+        if (await managePrompts.isVisible({timeout: 3000}).catch(() => false)) {
+            await managePrompts.click();
+            openedViaUI = true;
+        }
+    }
+
+    if (!openedViaUI) {
         await page.evaluate(() => {
             const store = (window as any).store || (window as any).__store;
             if (store?.dispatch) {
-                store.dispatch({ type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: true });
+                store.dispatch({type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: true});
             }
         });
     }
-    await expect(page.getByText('Custom Prompts')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Custom Prompts')).toBeVisible({timeout: 10000});
 }
 
 // ---------------------------------------------------------------------------
@@ -441,30 +446,31 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
 
         await aiButton.click();
         await page.getByText('Custom prompts').click();
+        await expect(page.getByText('Manage prompts')).toBeVisible({timeout: 10000});
 
-        await expect(page.getByText('Formatting Bar Prompt')).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText('Formatting Bar Prompt')).toBeVisible({timeout: 10000});
         await page.getByText('Formatting Bar Prompt').click();
 
         await expect(postTextbox).toHaveValue(/Inserted via formatting bar/, { timeout: 10000 });
     });
 
-    test('"Create a prompt" in the submenu opens the management modal', async ({ page }) => {
+    test('"Manage prompts" in the submenu opens the management modal', async ({page}) => {
         await setupTestPage(page);
 
         const postTextbox = page.getByTestId('post_textbox');
         await postTextbox.click();
 
         const aiButton = page.locator('#aiActionsMenu');
-        if (!await aiButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+        if (!await aiButton.isVisible({timeout: 5000}).catch(() => false)) {
             test.skip(true, 'AI Actions menu not available (requires custom server build)');
             return;
         }
 
         await aiButton.click();
         await page.getByText('Custom prompts').click();
-        await page.getByText('Create a prompt').click();
+        await page.getByText('Manage prompts').click();
 
-        await expect(page.getByText('Custom Prompts')).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText('Custom Prompts')).toBeVisible({timeout: 10000});
         await expect(page.getByText('All Prompts')).toBeVisible();
     });
 });
