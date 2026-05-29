@@ -1542,10 +1542,9 @@ func TestCountTokensOmitsMaxOutputTokens(t *testing.T) {
 // TestCountTokensOmitsNativeServerTools pins down the fix for the
 // production failure surfaced via the /conversations/:id/context endpoint:
 // Anthropic's count_tokens endpoint rejects any request that carries native
-// server tools (web_search, code_execution, file_search). The body sent to
-// the count endpoint must have no tools at all — function tools are nice
-// to keep for accuracy but not worth the risk of a provider re-tightening
-// the rules later. Counts are a UI hint, not a billing source of truth.
+// server tools (web_search, file_search, code_interpreter), so those must be
+// stripped before the count call. Function tool definitions are kept (see
+// TestCountTokensKeepsFunctionTools) because they contribute to the count.
 func TestCountTokensOmitsNativeServerTools(t *testing.T) {
 	var recordedBody []byte
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1581,6 +1580,46 @@ func TestCountTokensOmitsNativeServerTools(t *testing.T) {
 			"Anthropic 400s the request otherwise and we fall back to estimated")
 	assert.NotContains(t, string(recordedBody), "code_execution")
 	assert.NotContains(t, string(recordedBody), "file_search")
+}
+
+// TestCountTokensKeepsFunctionTools pins the other half of the count_tokens
+// body shape: function (custom) tool definitions are part of the prompt and
+// consume input tokens, so they must reach the count endpoint. Dropping them
+// undercounts every tools-enabled bot and surfaces a misleadingly low number.
+func TestCountTokensKeepsFunctionTools(t *testing.T) {
+	var recordedBody []byte
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 55}`))
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	tools := llm.NewToolStore()
+	tools.AddTools([]llm.Tool{
+		{Name: "get_weather", Description: "Returns weather for a city", Schema: map[string]interface{}{"type": "object"}},
+	})
+
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+		Context: &llm.Context{Tools: tools},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 55, count)
+
+	require.NotEmpty(t, recordedBody)
+	assert.Contains(t, string(recordedBody), "get_weather",
+		"function tool definitions contribute to the input-token count and must reach count_tokens")
 }
 
 func TestCountTokensUnsupportedProviderShortCircuits(t *testing.T) {

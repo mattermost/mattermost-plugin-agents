@@ -649,10 +649,17 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 	if err != nil {
 		return 0, fmt.Errorf("failed to build count tokens request: %w", err)
 	}
-	// count_tokens shares the messages-endpoint schema but rejects most
-	// of the params (Anthropic 400s on native server tools, OpenAI 400s
-	// on max_output_tokens). None of them affect the input-token count.
-	bifrostReq.Params = nil
+	// count_tokens shares the messages-endpoint schema but rejects some
+	// params: OpenAI 400s on max_output_tokens, Anthropic 400s on native
+	// server tools (web_search, file_search, code_interpreter). Reasoning
+	// and response-format config don't change the input-token count, so we
+	// keep only the function tool definitions — those DO count, and omitting
+	// them undercounts every tools-enabled bot.
+	if bifrostReq.Params != nil {
+		bifrostReq.Params = &schemas.ResponsesParameters{
+			Tools: functionToolsForCount(bifrostReq.Params.Tools),
+		}
+	}
 
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, CountTokensTimeout)
 	defer cancel()
@@ -668,6 +675,19 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 		return 0, fmt.Errorf("bifrost count tokens returned nil response")
 	}
 	return resp.InputTokens, nil
+}
+
+// functionToolsForCount keeps only function (custom) tool definitions, which
+// contribute to the input-token count, and drops native server tools that the
+// count_tokens endpoint rejects.
+func functionToolsForCount(tools []schemas.ResponsesTool) []schemas.ResponsesTool {
+	var out []schemas.ResponsesTool
+	for _, t := range tools {
+		if t.Type == schemas.ResponsesToolTypeFunction {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // streamChat handles the streaming chat completion.
