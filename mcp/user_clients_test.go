@@ -293,7 +293,7 @@ func TestUserClientsGetToolsResolverUsesResolverContext(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestUserClientsGetToolsResolverDoesNotRequireRequestContext(t *testing.T) {
+func TestUserClientsGetToolsResolverWorksWithEmptyLLMContext(t *testing.T) {
 	server := newTestMCPServer(0, "search")
 	session := connectInMemoryTestSession(t, server)
 	userClients := &UserClients{

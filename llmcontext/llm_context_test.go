@@ -87,8 +87,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		newTestBot(),
 		user,
 		channel,
-		builder.WithLLMContextRequestContext(stdcontext.Background()),
-		builder.WithLLMContextDefaultTools(newTestBot()),
+		builder.WithLLMContextDefaultTools(stdcontext.Background(), newTestBot()),
 	)
 
 	require.Equal(t, 1, mcpProvider.calls)
@@ -163,8 +162,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 		bot,
 		user,
 		channel,
-		builder.WithLLMContextRequestContext(stdcontext.Background()),
-		builder.WithLLMContextDefaultTools(bot),
+		builder.WithLLMContextDefaultTools(stdcontext.Background(), bot),
 	)
 
 	require.Empty(t, context.Tools.GetTools())

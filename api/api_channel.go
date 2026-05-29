@@ -88,8 +88,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	opts := []llm.ContextOption{
-		a.contextBuilder.WithLLMContextRequestContext(c.Request.Context()),
-		a.contextBuilder.WithLLMContextDefaultTools(toolBot),
+		a.contextBuilder.WithLLMContextDefaultTools(c.Request.Context(), toolBot),
 	}
 
 	// If the channel is a DM/GM and we have a team ID from the client, use it for context
