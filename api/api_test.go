@@ -128,6 +128,9 @@ type mockMCPClientManager struct {
 	registerCalls   []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig
+	// orphanPluginIDs simulates entries present in pluginServers but with
+	// no live source-plugin registration (hydrated from persisted config).
+	orphanPluginIDs map[string]bool
 
 	discoverPluginToolsResponse  []mcp.ToolInfo
 	discoverPluginToolsErr       error
@@ -229,6 +232,18 @@ func (m *mockMCPClientManager) GetPluginServer(pluginID string) (mcp.PluginServe
 		}
 	}
 	return mcp.PluginServerConfig{}, false
+}
+
+func (m *mockMCPClientManager) IsPluginRegistered(pluginID string) bool {
+	if m.orphanPluginIDs[pluginID] {
+		return false
+	}
+	for _, existing := range m.pluginServers {
+		if existing.PluginID == pluginID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {

@@ -879,6 +879,10 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+		if cfg.ToolsDisabled {
+			none := string(schemas.ChatToolChoiceTypeNone)
+			params.ToolChoice = &schemas.ChatToolChoice{ChatToolChoiceStr: &none}
+		}
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildChatReasoning(cfg)
@@ -1111,9 +1115,23 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 	return parts
 }
 
+func hasToolUseHistory(posts []llm.Post) bool {
+	for _, post := range posts {
+		if len(post.ToolUse) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // convertTools converts llm.Tool to Bifrost ChatTool format.
 func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ChatTool {
-	if cfg.ToolsDisabled || request.Context == nil || request.Context.Tools == nil {
+	if request.Context == nil || request.Context.Tools == nil {
+		return nil
+	}
+	// Keep tools defined when the history has tool_use blocks; tool_choice="none"
+	// (set by the caller) forbids further calls.
+	if cfg.ToolsDisabled && !hasToolUseHistory(request.Posts) {
 		return nil
 	}
 
@@ -1436,8 +1454,10 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 		})
 	}
 
-	// Add custom function tools if available
-	if !cfg.ToolsDisabled && request.Context != nil && request.Context.Tools != nil {
+	// Keep function tools defined when the history has tool_use blocks; the
+	// caller sets tool_choice="none" to forbid further calls. See hasToolUseHistory.
+	keepFunctionTools := !cfg.ToolsDisabled || hasToolUseHistory(request.Posts)
+	if keepFunctionTools && request.Context != nil && request.Context.Tools != nil {
 		tools := request.Context.Tools.GetTools()
 		for _, tool := range tools {
 			var params *schemas.ToolFunctionParameters
@@ -1543,6 +1563,10 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+		if cfg.ToolsDisabled {
+			none := string(schemas.ResponsesToolChoiceTypeNone)
+			params.ToolChoice = &schemas.ResponsesToolChoice{ResponsesToolChoiceStr: &none}
+		}
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildResponsesReasoning(cfg)

@@ -28,6 +28,8 @@ export const IntItem: React.FC<NumberItemProps> = ({
     allowEmpty = false,
     defaultValue = 0,
     clampOnChange = true,
+    onFocus,
+    onBlur,
     ...restProps
 }) => {
     const [textValue, setTextValue] = useState('');
@@ -78,12 +80,12 @@ export const IntItem: React.FC<NumberItemProps> = ({
 
     const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
         setIsFocused(true);
-        restProps.onFocus?.(e);
+        onFocus?.(e);
     };
 
     const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
         setIsFocused(false);
-        restProps.onBlur?.(e);
+        onBlur?.(e);
     };
 
     return (

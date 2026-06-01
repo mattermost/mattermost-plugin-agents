@@ -1417,3 +1417,165 @@ func TestEnvProxyRouting(t *testing.T) {
 	assert.True(t, proxyHit.Load(), "request should have been tunneled through the proxy")
 	assert.True(t, backendHit.Load(), "request should have reached the backend")
 }
+
+// newSearchToolStore builds a one-tool store for tool_choice tests.
+func newSearchToolStore() *llm.ToolStore {
+	store := llm.NewToolStore()
+	store.AddTools([]llm.Tool{{
+		Name:        "search_posts",
+		Description: "search",
+		Resolver:    func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "", nil },
+	}})
+	return store
+}
+
+func TestConvertToBifrostRequestToolChoiceNone(t *testing.T) {
+	noneStr := string(schemas.ChatToolChoiceTypeNone)
+
+	tests := []struct {
+		name           string
+		toolsDisabled  bool
+		toolUseHistory bool
+		expectTools    bool
+		expectChoice   *string
+	}{
+		{
+			name:           "tools enabled — tools included, no tool_choice override",
+			toolsDisabled:  false,
+			toolUseHistory: false,
+			expectTools:    true,
+			expectChoice:   nil,
+		},
+		{
+			name:           "tools disabled, no history — tools omitted, no tool_choice",
+			toolsDisabled:  true,
+			toolUseHistory: false,
+			expectTools:    false,
+			expectChoice:   nil,
+		},
+		{
+			name:           "tools disabled with history tool_use — tools kept, tool_choice none",
+			toolsDisabled:  true,
+			toolUseHistory: true,
+			expectTools:    true,
+			expectChoice:   &noneStr,
+		},
+		{
+			name:           "tools enabled with history tool_use — tools included, no override",
+			toolsDisabled:  false,
+			toolUseHistory: true,
+			expectTools:    true,
+			expectChoice:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: schemas.Anthropic, defaultModel: "claude"}
+
+			posts := []llm.Post{{Role: llm.PostRoleUser, Message: "find video info"}}
+			if tt.toolUseHistory {
+				posts = append(posts, llm.Post{
+					Role:    llm.PostRoleBot,
+					Message: "Let me search",
+					ToolUse: []llm.ToolCall{{ID: "tc1", Name: "search_posts", Status: llm.ToolCallStatusAutoApproved}},
+				})
+			}
+			req := llm.CompletionRequest{
+				Posts:   posts,
+				Context: &llm.Context{Tools: newSearchToolStore()},
+			}
+			cfg := llm.LanguageModelConfig{Model: "claude", ToolsDisabled: tt.toolsDisabled}
+
+			got := b.convertToBifrostRequest(req, cfg)
+
+			if tt.expectTools {
+				require.NotEmpty(t, got.Params.Tools, "expected tools in request")
+			} else {
+				assert.Empty(t, got.Params.Tools, "expected no tools in request")
+			}
+
+			if tt.expectChoice == nil {
+				assert.Nil(t, got.Params.ToolChoice, "expected no tool_choice override")
+			} else {
+				require.NotNil(t, got.Params.ToolChoice)
+				require.NotNil(t, got.Params.ToolChoice.ChatToolChoiceStr)
+				assert.Equal(t, *tt.expectChoice, *got.Params.ToolChoice.ChatToolChoiceStr)
+			}
+		})
+	}
+}
+
+func TestConvertToBifrostResponsesRequestToolChoiceNone(t *testing.T) {
+	noneStr := string(schemas.ResponsesToolChoiceTypeNone)
+
+	tests := []struct {
+		name            string
+		toolsDisabled   bool
+		toolUseHistory  bool
+		expectFuncTools bool
+		expectChoice    *string
+	}{
+		{
+			name:            "tools enabled — function tools included, no tool_choice override",
+			toolsDisabled:   false,
+			toolUseHistory:  false,
+			expectFuncTools: true,
+			expectChoice:    nil,
+		},
+		{
+			name:            "tools disabled, no history — function tools omitted, no tool_choice",
+			toolsDisabled:   true,
+			toolUseHistory:  false,
+			expectFuncTools: false,
+			expectChoice:    nil,
+		},
+		{
+			name:            "tools disabled with history tool_use — function tools kept, tool_choice none",
+			toolsDisabled:   true,
+			toolUseHistory:  true,
+			expectFuncTools: true,
+			expectChoice:    &noneStr,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: schemas.OpenAI, defaultModel: "gpt-4", useResponsesAPI: true}
+
+			posts := []llm.Post{{Role: llm.PostRoleUser, Message: "find video info"}}
+			if tt.toolUseHistory {
+				posts = append(posts, llm.Post{
+					Role:    llm.PostRoleBot,
+					Message: "Let me search",
+					ToolUse: []llm.ToolCall{{ID: "tc1", Name: "search_posts", Status: llm.ToolCallStatusAutoApproved}},
+				})
+			}
+			req := llm.CompletionRequest{
+				Posts:   posts,
+				Context: &llm.Context{Tools: newSearchToolStore()},
+			}
+			cfg := llm.LanguageModelConfig{Model: "gpt-4", ToolsDisabled: tt.toolsDisabled}
+
+			got, err := b.convertToBifrostResponsesRequest(req, cfg)
+			require.NoError(t, err)
+
+			hasFunction := false
+			for _, tool := range got.Params.Tools {
+				if tool.Type == schemas.ResponsesToolTypeFunction {
+					hasFunction = true
+					break
+				}
+			}
+			assert.Equal(t, tt.expectFuncTools, hasFunction, "function tool presence mismatch")
+
+			if tt.expectChoice == nil {
+				assert.Nil(t, got.Params.ToolChoice, "expected no tool_choice override")
+			} else {
+				require.NotNil(t, got.Params.ToolChoice)
+				require.NotNil(t, got.Params.ToolChoice.ResponsesToolChoiceStr)
+				assert.Equal(t, *tt.expectChoice, *got.Params.ToolChoice.ResponsesToolChoiceStr)
+			}
+		})
+	}
+}

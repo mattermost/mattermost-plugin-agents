@@ -45,6 +45,15 @@ func New(lm llm.LanguageModel, opts ...Option) *ToolRunner {
 	return r
 }
 
+// finalAssistantText drops preamble text from a forced synthesis round that
+// still emitted (and had dropped) tool calls.
+func finalAssistantText(text string, synthesisForced bool, droppedToolCalls int) string {
+	if synthesisForced && droppedToolCalls > 0 {
+		return ""
+	}
+	return text
+}
+
 // ToolRunResult is the return value of Run(). It contains the final
 // stream (no more tool calls) and all intermediate tool rounds.
 type ToolRunResult struct {
@@ -63,6 +72,11 @@ type ToolRunResult struct {
 	// goroutine. It is safe to read after the Stream has been fully
 	// consumed (channel happens-before guarantees this).
 	ToolTurns []ToolTurn
+
+	// FinalText is the assistant text from the round where the loop exited
+	// with no tool calls. Empty on stream error, unresolved tool calls, or a
+	// failed forced synthesis. Read after Stream is fully consumed.
+	FinalText string
 }
 
 // ToolTurn represents one round of tool execution. Each round
@@ -162,6 +176,8 @@ func (r *ToolRunner) runLoop(
 ) {
 	stream := firstStream
 
+	var synthesisForced bool
+
 	for round := 0; round < r.maxRounds; round++ {
 		// For round > 0, make a new LLM call.
 		if round > 0 {
@@ -229,8 +245,16 @@ func (r *ToolRunner) runLoop(
 			return
 		}
 
+		// Drop any tool calls the model returned on a forced synthesis round;
+		droppedToolCalls := 0
+		if synthesisForced && len(toolCalls) > 0 {
+			droppedToolCalls = len(toolCalls)
+			toolCalls = nil
+		}
+
 		// No tool calls = final response.
 		if len(toolCalls) == 0 {
+			result.FinalText = finalAssistantText(text.String(), synthesisForced, droppedToolCalls)
 			r.deliverToolTurns(result, onToolTurns)
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 			return
@@ -293,11 +317,15 @@ func (r *ToolRunner) runLoop(
 			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())
 		}
-	}
 
-	// Exhausted max tool rounds.
-	r.deliverToolTurns(result, onToolTurns)
-	output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		// Force the last allowed round to be a tools-disabled synthesis so the
+		// caller always gets a final answer when the cap is hit.
+		if round == r.maxRounds-2 {
+			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
+			currentOpts = append(currentOpts, llm.WithToolsDisabled())
+			synthesisForced = true
+		}
+	}
 }
 
 // deliverToolTurns calls the onToolTurns callback if there are accumulated turns.
