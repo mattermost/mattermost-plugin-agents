@@ -118,9 +118,9 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			wantCount: 8,
 		},
 		{
-			name:      "Mattermost seeds 9 read tools",
+			name:      "Mattermost seeds 10 read tools",
 			baseURL:   EmbeddedClientKey,
-			wantCount: 9,
+			wantCount: 10,
 		},
 		{
 			name:    "unknown host returns nil",
@@ -161,9 +161,13 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			require.Len(t, got, tt.wantCount)
 			for _, cfg := range got {
 				require.True(t, cfg.Enabled)
-				if strings.Contains(tt.baseURL, "api.githubcopilot.com") {
+				switch {
+				case strings.Contains(tt.baseURL, "api.githubcopilot.com"):
 					require.True(t, cfg.Policy == ToolPolicyAutoRunInDM || cfg.Policy == ToolPolicyAsk)
-				} else {
+				case tt.baseURL == EmbeddedClientKey:
+					// read_file auto-runs everywhere; the rest auto-run in DMs.
+					require.True(t, cfg.Policy == ToolPolicyAutoRunInDM || cfg.Policy == ToolPolicyAutoRunEverywhere)
+				default:
 					require.Equal(t, ToolPolicyAutoRunInDM, cfg.Policy)
 				}
 				require.NotEmpty(t, cfg.Name)
@@ -201,6 +205,9 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 		configs := SeedVettedToolConfigs(EmbeddedClientKey)
 		requireToolConfig(t, configs, "search_posts", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "search_users", ToolPolicyAutoRunInDM, true)
+		// read_file auto-runs everywhere so reading an attached file never needs
+		// approval, matching the pre-lazy-loading auto-inline behavior.
+		requireToolConfig(t, configs, "read_file", ToolPolicyAutoRunEverywhere, true)
 		requireNoToolConfig(t, configs, "create_post")
 	})
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/evals"
+	"github.com/mattermost/mattermost-plugin-agents/files"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/testhelpers"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
@@ -635,4 +636,68 @@ func mcpToolsToLLMTools(t *testing.T, mcpServer *gomcp.Server) []llm.Tool {
 		})
 	}
 	return tools
+}
+
+// client4FileContentService implements tools.FileContentService using a Client4
+// admin connection. The eval container has no plugin installed, so the production
+// HTTPFileContentService callback would 404; this reads files directly over REST
+// instead, exercising the real files.Slice ranging logic. Per-user permission
+// enforcement is covered by unit tests, so this trusts the admin token.
+type client4FileContentService struct {
+	serverURL string
+	token     string
+}
+
+func (s *client4FileContentService) GetContent(ctx context.Context, _ string, fileID string, offset, limit int) (files.Content, error) {
+	client := model.NewAPIv4Client(s.serverURL)
+	client.SetToken(s.token)
+
+	info, _, err := client.GetFileInfo(ctx, fileID)
+	if err != nil {
+		return files.Content{}, err
+	}
+
+	// Client4 cannot read server-extracted document text (FileInfo.Content is
+	// json:"-"), so only plain-text files are readable here — which is all the
+	// eval seeds for the readable cases. Non-text files report no extractable
+	// text, exactly as production does.
+	if !strings.HasPrefix(info.MimeType, "text/") {
+		return files.Content{Name: info.Name, MimeType: info.MimeType, HasText: false}, nil
+	}
+
+	data, _, err := client.GetFile(ctx, fileID)
+	if err != nil {
+		return files.Content{}, err
+	}
+
+	return files.Slice(info.Name, info.MimeType, string(data), offset, limit), nil
+}
+
+// seedFileScenario creates a team and channel (the admin is a member as the
+// creator), uploads a file with the given content, and attaches it to a post.
+// Returns the team, channel, and the attached file's info.
+func seedFileScenario(t *testing.T, serverURL, adminToken, filename string, content []byte) (*model.Team, *model.Channel, *model.FileInfo) {
+	t.Helper()
+
+	ctx := context.Background()
+	adminClient := model.NewAPIv4Client(serverURL)
+	adminClient.SetToken(adminToken)
+
+	suffix := model.NewId()[:8]
+	team := testhelpers.CreateTestTeam(t, adminClient, "file-eval-"+suffix, "File Eval Team")
+	channel := testhelpers.CreateTestChannel(t, adminClient, team.Id, "file-eval-"+suffix, "File Eval")
+
+	upload, _, err := adminClient.UploadFile(ctx, content, channel.Id, filename)
+	require.NoError(t, err, "Failed to upload file")
+	require.NotEmpty(t, upload.FileInfos, "Upload should return file info")
+	fileInfo := upload.FileInfos[0]
+
+	_, _, err = adminClient.CreatePost(ctx, &model.Post{
+		ChannelId: channel.Id,
+		Message:   "Here's the file.",
+		FileIds:   []string{fileInfo.Id},
+	})
+	require.NoError(t, err, "Failed to create post with file attachment")
+
+	return team, channel, fileInfo
 }

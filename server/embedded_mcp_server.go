@@ -24,8 +24,9 @@ type EmbeddedMCPServer struct {
 }
 
 // NewEmbeddedMCPServer creates a new embedded MCP server instance
-// searchService is optional and can be nil if semantic search is not available
-func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService) (*EmbeddedMCPServer, error) {
+// searchService and fileContentService are optional and can be nil when the
+// corresponding capability is unavailable
+func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) (*EmbeddedMCPServer, error) {
 	// Get site URL from plugin configuration
 	siteURL := ""
 	if config := pluginAPI.Configuration.GetConfig(); config != nil && config.ServiceSettings.SiteURL != nil {
@@ -58,7 +59,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 	mcpLogger := NewPluginAPILoggerAdapter(logger)
 
 	// Create the in-memory MCP server
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, searchService)
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, searchService, fileContentService)
 	if err != nil {
 		return nil, err
 	}

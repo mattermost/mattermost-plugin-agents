@@ -23,6 +23,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/files"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -128,6 +129,7 @@ type API struct {
 	meetingsService       *meetings.Service
 	indexerService        *indexer.Indexer
 	searchService         *search.Search
+	fileService           *files.Service
 	pluginAPI             *pluginapi.Client
 	metricsService        metrics.Metrics
 	metricsHandler        http.Handler
@@ -200,6 +202,7 @@ func New(
 		meetingsService:       meetingsService,
 		indexerService:        indexerService,
 		searchService:         searchService,
+		fileService:           files.New(mmClient),
 		pluginAPI:             pluginAPI,
 		metricsService:        metricsService,
 		metricsHandler:        metrics.NewMetricsHandler(metricsService),
@@ -312,6 +315,11 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks.
 	router.POST("/search/raw", a.handleRawSearch)
+
+	// Raw file content endpoint returns a ranged slice of a file's text after
+	// checking the requesting user's channel permission. Used by the MCP server
+	// for external read_file callbacks.
+	router.POST("/files/content", a.handleRawFileContent)
 
 	// Custom prompts routes — available to all authenticated users
 	promptsRouter := router.Group("/custom-prompts")

@@ -124,6 +124,18 @@ func askToolConfigs(toolNames []string) []ToolConfig {
 	return configs
 }
 
+func autoRunEverywhereToolConfigs(toolNames []string) []ToolConfig {
+	configs := make([]ToolConfig, 0, len(toolNames))
+	for _, toolName := range toolNames {
+		configs = append(configs, ToolConfig{
+			Name:    toolName,
+			Policy:  ToolPolicyAutoRunEverywhere,
+			Enabled: true,
+		})
+	}
+	return configs
+}
+
 // githubSecurityAskTools are GitHub Copilot MCP reads that surface vulnerability
 // and secret-scanning posture; they default to ask rather than auto-run.
 var githubSecurityAskTools = map[string]struct{}{
@@ -242,14 +254,29 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"whoami",
 })
 
-var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
-	"read_post",
-	"read_channel",
-	"get_channel_info",
-	"get_channel_members",
-	"get_team_info",
-	"get_team_members",
-	"search_posts",
-	"search_users",
-	"get_user_channels",
-})
+var mattermostVettedToolConfigs = buildMattermostVettedToolConfigs()
+
+func buildMattermostVettedToolConfigs() []ToolConfig {
+	// Read-only Mattermost tools auto-run in DMs but ask before running in a
+	// channel, where their results would be visible to everyone.
+	configs := autoRunInDMToolConfigs([]string{
+		"read_post",
+		"read_channel",
+		"get_channel_info",
+		"get_channel_members",
+		"get_team_info",
+		"get_team_members",
+		"search_posts",
+		"search_users",
+		"get_user_channels",
+	})
+
+	// read_file auto-runs everywhere. Before lazy file loading, an attachment's
+	// extracted content was inlined into the prompt automatically — in DMs and
+	// channels alike, with no approval. Fetching it on demand via read_file
+	// preserves that behavior rather than introducing an approval step for
+	// content the user already attached and the bot could already read.
+	configs = append(configs, autoRunEverywhereToolConfigs([]string{"read_file"})...)
+
+	return configs
+}

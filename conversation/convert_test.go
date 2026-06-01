@@ -6,6 +6,7 @@ package conversation
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -588,47 +589,79 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		assert.Contains(t, post.Message, "Content: pre-extracted content")
 	})
 
-	t.Run("text/plain file at exactly maxFileSize gets truncation marker", func(t *testing.T) {
-		const maxBytes = int64(8)
-		body := "ABCDEFGH" // exactly 8 bytes
-
+	t.Run("large text file is surfaced as a descriptor without reading it", func(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id:       "doc1",
-			Name:     "big.txt",
+			Name:     "bigdoc.txt",
 			MimeType: "text/plain",
-			Size:     int64(len(body)),
+			Size:     InlineFileMaxBytes + 1,
 		}, nil)
-		mmClient.On("GetFile", "doc1").Return(newFakeReadCloser(body), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "big.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
-
-		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
-			"reading exactly maxFileSize bytes must append the truncation marker so the LLM knows the content was cut")
-	})
-
-	t.Run("non-text non-image MIME with empty Content is skipped without GetFile", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id:       "doc1",
-			Name:     "binary.pdf",
-			MimeType: "application/pdf",
-		}, nil)
-		// No GetFile expectation — mockery fails if it is called.
+		// No GetFile expectation — the inline-vs-descriptor decision is made
+		// from metadata alone, so a large file is never downloaded here.
 
 		blocks := []ContentBlock{
 			{Type: BlockTypeText, Text: "see attached"},
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "binary.pdf", MimeType: "application/pdf"},
+			{Type: BlockTypeFile, FileID: "doc1", Filename: "bigdoc.txt", MimeType: "text/plain"},
 		}
 
 		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
-		assert.Equal(t, "see attached", post.Message,
-			"non-text non-image attachments without pre-extracted Content must be silently skipped")
+		// Pin the full assembled suffix: the header sentence the read_file tool
+		// relies on, the per-entry header, and every descriptor field.
+		expected := "see attached\n" +
+			"Attached files (call the read_file tool with the File ID to read their contents):\n" +
+			fmt.Sprintf("**Attached File 1**:\nName: bigdoc.txt\nFile ID: doc1\nType: text/plain\nSize: %d bytes", InlineFileMaxBytes+1)
+		assert.Equal(t, expected, post.Message)
+		mmClient.AssertNotCalled(t, "GetFile", "doc1")
+	})
+
+	t.Run("large pre-extracted content is surfaced as a descriptor", func(t *testing.T) {
+		bigContent := strings.Repeat("x", int(InlineFileMaxBytes)+1)
+
+		mmClient := mmapimocks.NewMockClient(t)
+		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+			Id:       "doc1",
+			Name:     "huge.pdf",
+			MimeType: "application/pdf",
+			Content:  bigContent,
+		}, nil)
+		// No GetFile expectation — pre-extracted content is measured directly.
+
+		blocks := []ContentBlock{
+			{Type: BlockTypeFile, FileID: "doc1", Filename: "huge.pdf", MimeType: "application/pdf"},
+		}
+
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+
+		assert.Contains(t, post.Message, "File ID: doc1")
+		assert.NotContains(t, post.Message, bigContent,
+			"the descriptor must not inline the extracted content")
+		assert.NotContains(t, post.Message, "Attached File Contents:",
+			"a partial inline of the extracted content would still be a regression")
+	})
+
+	t.Run("binary file with no extractable text is surfaced as a descriptor without GetFile", func(t *testing.T) {
+		mmClient := mmapimocks.NewMockClient(t)
+		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+			Id:       "doc1",
+			Name:     "archive.zip",
+			MimeType: "application/zip",
+		}, nil)
+		// No GetFile expectation — a binary with no extractable text still gets
+		// a metadata descriptor so the LLM is aware of it.
+
+		blocks := []ContentBlock{
+			{Type: BlockTypeText, Text: "see attached"},
+			{Type: BlockTypeFile, FileID: "doc1", Filename: "archive.zip", MimeType: "application/zip"},
+		}
+
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+
+		assert.Contains(t, post.Message, "see attached")
+		assert.Contains(t, post.Message, "Name: archive.zip")
+		assert.Contains(t, post.Message, "File ID: doc1")
+		mmClient.AssertNotCalled(t, "GetFile", "doc1")
 	})
 
 	t.Run("multiple mixed blocks: text + image + text/plain file", func(t *testing.T) {
@@ -731,31 +764,11 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			"text content must still appear when an image attachment fails to load")
 	})
 
-	// The maxFileSize=0 → DefaultMaxFileSize boundary trio. We pin the
-	// constant by name so this test has to be updated alongside any change
-	// to DefaultMaxFileSize.
-	t.Run("maxFileSize=0 default: payload of DefaultMaxFileSize-1 bytes has no truncation marker", func(t *testing.T) {
-		body := strings.Repeat("A", int(DefaultMaxFileSize-1))
-
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "under.txt", MimeType: "text/plain", Size: int64(len(body)),
-		}, nil)
-		mmClient.On("GetFile", "doc1").Return(newFakeReadCloser(body), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "under.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		assert.Contains(t, post.Message, "File Name: under.txt")
-		assert.NotContains(t, post.Message, "content truncated",
-			"a payload of DefaultMaxFileSize-1 bytes must NOT be marked truncated")
-	})
-
-	t.Run("maxFileSize=0 default: payload of exactly DefaultMaxFileSize bytes gets truncation marker", func(t *testing.T) {
-		body := strings.Repeat("A", int(DefaultMaxFileSize))
+	// Pin the inline-vs-descriptor boundary by name: a file whose readable size
+	// is at or below InlineFileMaxBytes is inlined; one byte over becomes a
+	// descriptor (covered by "large text file is surfaced as a descriptor").
+	t.Run("text file at exactly InlineFileMaxBytes is inlined", func(t *testing.T) {
+		body := strings.Repeat("A", int(InlineFileMaxBytes))
 
 		mmClient := mmapimocks.NewMockClient(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
@@ -769,27 +782,10 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 
 		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
 
-		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
-			"reading exactly DefaultMaxFileSize bytes must append the truncation marker (LimitReader saw the cap)")
-	})
-
-	t.Run("maxFileSize=0 default: payload of DefaultMaxFileSize+1 bytes gets truncation marker", func(t *testing.T) {
-		body := strings.Repeat("A", int(DefaultMaxFileSize+1))
-
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "over.txt", MimeType: "text/plain", Size: int64(len(body)),
-		}, nil)
-		mmClient.On("GetFile", "doc1").Return(newFakeReadCloser(body), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "over.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
-			"a payload above DefaultMaxFileSize must be truncated with the marker")
+		assert.Contains(t, post.Message, "Attached File Contents:")
+		assert.Contains(t, post.Message, "File Name: boundary.txt")
+		assert.NotContains(t, post.Message, "read_file",
+			"a file at the inline threshold must be inlined, not described")
 	})
 
 	t.Run("nil mmClient is safe when no file or image blocks are present", func(t *testing.T) {
@@ -813,9 +809,9 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	t.Run("BlockTypeFile with image/* MIME goes through file path, not image path", func(t *testing.T) {
 		// Dispatch must be by block.Type, not by MimeType — a malformed
 		// block (Type=file but MimeType=image/png) must not be sent to
-		// the LLM as an image. With empty FileInfo.Content and a
-		// non-text MIME, the file-text path skips the block, so GetFile
-		// must NOT be called.
+		// the LLM as an image. With empty FileInfo.Content and a non-text
+		// MIME there is no extractable text, so the block is surfaced as a
+		// metadata descriptor and GetFile must NOT be called.
 		mmClient := mmapimocks.NewMockClient(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id: "doc1", Name: "weird.png", MimeType: "image/png",
@@ -834,8 +830,9 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		mmClient.AssertNotCalled(t, "GetFile", "doc1")
 		assert.Empty(t, post.Files,
 			"a BlockTypeFile must never populate Post.Files even when its MimeType says image/*")
-		assert.Equal(t, "see attached", post.Message,
-			"a non-text non-image file block with empty Content must be silently skipped")
+		assert.Contains(t, post.Message, "see attached")
+		assert.Contains(t, post.Message, "File ID: doc1",
+			"a file block with no extractable text is surfaced as a metadata descriptor")
 	})
 
 	t.Run("FileInfo.Content non-empty wins over GetFile (explicit AssertNotCalled)", func(t *testing.T) {
@@ -856,33 +853,5 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		mmClient.AssertNotCalled(t, "GetFile", "doc1",
 			"pre-extracted FileInfo.Content must short-circuit GetFile to avoid a redundant blob read")
 		assert.Contains(t, post.Message, "Content: server-extracted text")
-	})
-
-	t.Run("pre-extracted FileInfo.Content larger than maxFileSize gets truncation marker", func(t *testing.T) {
-		// Mattermost's server-side text extraction is itself bounded, but
-		// a per-bot MaxFileSize lower than the server's cap could be
-		// silently violated by the pre-extracted-content shortcut. Cap it
-		// the same way the GetFile branch does.
-		const maxBytes = int64(8)
-		oversized := strings.Repeat("X", int(maxBytes)+1) // 9 bytes vs maxBytes=8
-
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "huge.pdf", MimeType: "application/pdf",
-			Content: oversized,
-		}, nil)
-		// GetFile must NOT be called — pre-extracted content path still
-		// short-circuits the byte fetch even when the cap clips it.
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "huge.pdf", MimeType: "application/pdf"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
-
-		mmClient.AssertNotCalled(t, "GetFile", "doc1",
-			"the pre-extracted-content cap must not trigger a GetFile fetch")
-		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
-			"FileInfo.Content longer than effectiveMax must be truncated with the marker")
 	})
 }

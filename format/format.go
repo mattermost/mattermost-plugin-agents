@@ -322,3 +322,29 @@ func WriteTeam(w *strings.Builder, entry TeamEntry) {
 		fmt.Fprintf(w, "Member Count: %d\n", entry.MemberCount)
 	}
 }
+
+// FileDescriptorEntry holds metadata for a file attachment surfaced to the LLM
+// without inlining its contents. The File ID is included so the model can pass
+// it to the read_file tool to fetch the contents on demand.
+type FileDescriptorEntry struct {
+	HeaderLabel string          // e.g. "Attached File 1"; empty to omit
+	FileInfo    *model.FileInfo // the source file
+}
+
+// WriteFileDescriptor writes a compact file metadata descriptor to the builder.
+func WriteFileDescriptor(w *strings.Builder, entry FileDescriptorEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+
+	fmt.Fprintf(w, "Name: %s\n", entry.FileInfo.Name)
+	fmt.Fprintf(w, "File ID: %s\n", entry.FileInfo.Id)
+
+	if entry.FileInfo.MimeType != "" {
+		fmt.Fprintf(w, "Type: %s\n", entry.FileInfo.MimeType)
+	}
+
+	fmt.Fprintf(w, "Size: %d bytes\n", entry.FileInfo.Size)
+
+	w.WriteString("\n")
+}
