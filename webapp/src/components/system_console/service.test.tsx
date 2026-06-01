@@ -177,6 +177,42 @@ describe('ServiceFields token-limit inputs', () => {
         expect(swapped.disabled).toBe(false);
     });
 
+    it('re-seeds manual state when the parent updates token limits without changing the id', async () => {
+        fetchModels.mockResolvedValue([]);
+
+        // Unknown model keeps both inputs in manual mode.
+        const service = {...baseService, defaultModel: 'custom-unknown', tokenLimit: 50000, outputTokenLimit: 4096};
+        const onChange = jest.fn();
+
+        const {rerender} = render(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={service}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect((screen.getByDisplayValue('50000') as HTMLInputElement).disabled).toBe(false));
+
+        // The parent persists a new token limit on the same service. The updated
+        // value must surface instead of the stale cached 50000.
+        rerender(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={{...service, tokenLimit: 9000}}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+
+        const updated = await waitFor(() => screen.getByDisplayValue('9000') as HTMLInputElement);
+        expect(updated.disabled).toBe(false);
+
+        // The stale value must never be written back over the new upstream one.
+        expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({tokenLimit: 50000}));
+    });
+
     it('leaves both inputs editable when the selected model is not in the fetched list', async () => {
         fetchModels.mockResolvedValue([
             {

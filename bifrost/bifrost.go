@@ -611,20 +611,15 @@ func convertResponsesUsage(u *schemas.ResponsesResponseUsage) llm.TokenUsage {
 	return usage
 }
 
-var providersSupportingCountTokens = map[schemas.ModelProvider]struct{}{
-	schemas.OpenAI:    {},
-	schemas.Anthropic: {},
-	schemas.Bedrock:   {},
-	schemas.Vertex:    {},
-}
+// bifrostUnsupportedOperationCode is the error Code Bifrost returns when a
+// provider doesn't implement an operation (see providers/utils.NewUnsupportedOperationError).
+// Bifrost exposes no capability query, so we detect this at call time rather than
+// maintaining our own provider allowlist that would drift as Bifrost adds support.
+const bifrostUnsupportedOperationCode = "unsupported_operation"
 
 // CountTokens returns llm.ErrUnsupportedTokenCount when the provider lacks a
 // count-tokens endpoint, signaling callers to fall back to llm.EstimateTokens.
 func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
-	if _, ok := providersSupportingCountTokens[b.provider]; !ok {
-		return 0, llm.ErrUnsupportedTokenCount
-	}
-
 	cfg := b.createConfig(opts)
 	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
 	if err != nil {
@@ -635,6 +630,9 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 	defer cancel()
 	resp, bifrostErr := b.client.CountTokensRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
+		if bifrostErr.Error != nil && bifrostErr.Error.Code != nil && *bifrostErr.Error.Code == bifrostUnsupportedOperationCode {
+			return 0, llm.ErrUnsupportedTokenCount
+		}
 		msg := "unknown error"
 		if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
 			msg = bifrostErr.Error.Message
