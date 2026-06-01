@@ -46,7 +46,7 @@ func (a *API) handleRawFileContent(c *gin.Context) {
 	}
 
 	var req RawFileContentRequest
-	if err := c.BindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}

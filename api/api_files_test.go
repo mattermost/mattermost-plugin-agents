@@ -28,82 +28,99 @@ func TestHandleRawFileContent(t *testing.T) {
 	channelID := model.NewId()
 	fileID := model.NewId()
 
-	doPost := func(t *testing.T, a *API, body any) *httptest.ResponseRecorder {
-		t.Helper()
-		b, err := json.Marshal(body)
-		require.NoError(t, err)
-		rec := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(rec)
-		req := httptest.NewRequest(http.MethodPost, "/files/content", bytes.NewReader(b))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Mattermost-User-Id", userID)
-		c.Request = req
-		a.handleRawFileContent(c)
-		return rec
+	tests := []struct {
+		name           string
+		nilService     bool
+		setup          func(m *mocks.MockClient)
+		request        RawFileContentRequest
+		omitUserHeader bool
+		wantStatus     int
+		assertResp     func(t *testing.T, resp RawFileContentResponse)
+	}{
+		{
+			name:       "service unavailable returns 503",
+			nilService: true,
+			request:    RawFileContentRequest{FileID: fileID},
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "invalid file id returns 400",
+			request:    RawFileContentRequest{FileID: "too-short"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "no channel permission returns 403",
+			setup: func(m *mocks.MockClient) {
+				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, ChannelId: channelID}, nil)
+				m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(false)
+			},
+			request:    RawFileContentRequest{FileID: fileID},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "success returns content json",
+			setup: func(m *mocks.MockClient) {
+				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
+					Id: fileID, ChannelId: channelID, Name: "notes.txt", MimeType: "text/plain", Content: "hello world",
+				}, nil)
+				m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
+			},
+			request:    RawFileContentRequest{FileID: fileID},
+			wantStatus: http.StatusOK,
+			assertResp: func(t *testing.T, resp RawFileContentResponse) {
+				assert.True(t, resp.HasText)
+				assert.Equal(t, "hello world", resp.Text)
+				assert.Equal(t, "notes.txt", resp.Name)
+				assert.Equal(t, 11, resp.TotalRunes)
+				assert.False(t, resp.HasMore)
+			},
+		},
+		{
+			// The requesting user comes from the authenticated header, never the
+			// body. With no header the permission check runs against an empty user
+			// and must fail closed rather than leak the file.
+			name: "missing user header is forbidden",
+			setup: func(m *mocks.MockClient) {
+				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, ChannelId: channelID}, nil)
+				m.EXPECT().HasPermissionToChannel("", channelID, model.PermissionReadChannel).Return(false)
+			},
+			request:        RawFileContentRequest{FileID: fileID},
+			omitUserHeader: true,
+			wantStatus:     http.StatusForbidden,
+		},
 	}
 
-	t.Run("service unavailable returns 503", func(t *testing.T) {
-		a := &API{fileService: nil}
-		rec := doPost(t, a, RawFileContentRequest{FileID: fileID})
-		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &API{}
+			if !tt.nilService {
+				m := mocks.NewMockClient(t)
+				if tt.setup != nil {
+					tt.setup(m)
+				}
+				a.fileService = files.New(m)
+			}
 
-	t.Run("invalid file id returns 400", func(t *testing.T) {
-		m := mocks.NewMockClient(t)
-		a := &API{fileService: files.New(m)}
-		rec := doPost(t, a, RawFileContentRequest{FileID: "too-short"})
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
-	})
+			body, err := json.Marshal(tt.request)
+			require.NoError(t, err)
 
-	t.Run("no channel permission returns 403", func(t *testing.T) {
-		m := mocks.NewMockClient(t)
-		m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, ChannelId: channelID}, nil)
-		m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(false)
-		a := &API{fileService: files.New(m)}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			req := httptest.NewRequest(http.MethodPost, "/files/content", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if !tt.omitUserHeader {
+				req.Header.Set("Mattermost-User-Id", userID)
+			}
+			c.Request = req
 
-		rec := doPost(t, a, RawFileContentRequest{FileID: fileID})
-		assert.Equal(t, http.StatusForbidden, rec.Code)
-	})
+			a.handleRawFileContent(c)
 
-	t.Run("success returns content json", func(t *testing.T) {
-		m := mocks.NewMockClient(t)
-		m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
-			Id: fileID, ChannelId: channelID, Name: "notes.txt", MimeType: "text/plain", Content: "hello world",
-		}, nil)
-		m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
-		a := &API{fileService: files.New(m)}
-
-		rec := doPost(t, a, RawFileContentRequest{FileID: fileID})
-		require.Equal(t, http.StatusOK, rec.Code)
-
-		var resp RawFileContentResponse
-		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
-		assert.True(t, resp.HasText)
-		assert.Equal(t, "hello world", resp.Text)
-		assert.Equal(t, "notes.txt", resp.Name)
-		assert.Equal(t, 11, resp.TotalRunes)
-		assert.False(t, resp.HasMore)
-	})
-
-	t.Run("missing user header is forbidden", func(t *testing.T) {
-		// The requesting user comes from the authenticated header, never the
-		// body. With no header the permission check runs against an empty user
-		// and must fail closed rather than leak the file.
-		m := mocks.NewMockClient(t)
-		m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, ChannelId: channelID}, nil)
-		m.EXPECT().HasPermissionToChannel("", channelID, model.PermissionReadChannel).Return(false)
-		a := &API{fileService: files.New(m)}
-
-		b, err := json.Marshal(RawFileContentRequest{FileID: fileID})
-		require.NoError(t, err)
-		rec := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(rec)
-		req := httptest.NewRequest(http.MethodPost, "/files/content", bytes.NewReader(b))
-		req.Header.Set("Content-Type", "application/json")
-		// Intentionally no Mattermost-User-Id header.
-		c.Request = req
-		a.handleRawFileContent(c)
-
-		assert.Equal(t, http.StatusForbidden, rec.Code)
-	})
+			require.Equal(t, tt.wantStatus, rec.Code)
+			if tt.assertResp != nil {
+				var resp RawFileContentResponse
+				require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+				tt.assertResp(t, resp)
+			}
+		})
+	}
 }
