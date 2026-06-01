@@ -17,7 +17,7 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:11.5.1";
+const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:release-11.8";
 
 type PluginConfig = Record<string, unknown>;
 type PluginConfigInput = PluginConfig | {config: PluginConfig};
