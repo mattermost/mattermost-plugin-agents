@@ -94,18 +94,19 @@ func TestBuildSupportPacket(t *testing.T) {
 
 	t.Run("telemetry enabled flag", func(t *testing.T) {
 		tests := []struct {
+			name            string
 			telemetryOutput string
 			wantEnabled     bool
 		}{
-			{"", false},
-			{"off", false},
-			{"logs", true},
-			{"otlp", true},
+			{"empty", "", false},
+			{"off", "off", false},
+			{"logs", "logs", true},
+			{"otlp", "otlp", true},
 		}
 
 		store := stubAgentCounter{}
 		for _, tt := range tests {
-			t.Run(tt.telemetryOutput, func(t *testing.T) {
+			t.Run(tt.name, func(t *testing.T) {
 				cfg := &config.Config{TelemetryOutput: tt.telemetryOutput}
 				packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
 				require.NoError(t, err)
@@ -116,17 +117,18 @@ func TestBuildSupportPacket(t *testing.T) {
 
 	t.Run("embedding search enabled flag", func(t *testing.T) {
 		tests := []struct {
+			name          string
 			embeddingType string
 			wantEnabled   bool
 		}{
-			{"", false},
-			{"postgres", true},
-			{"other", true},
+			{"empty", "", false},
+			{"postgres", "postgres", true},
+			{"other", "other", true},
 		}
 
 		store := stubAgentCounter{}
 		for _, tt := range tests {
-			t.Run(tt.embeddingType, func(t *testing.T) {
+			t.Run(tt.name, func(t *testing.T) {
 				cfg := &config.Config{
 					EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{Type: tt.embeddingType},
 				}
