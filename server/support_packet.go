@@ -10,10 +10,16 @@ import (
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 
+	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
+
+// agentCounter is the subset of the store used by support packet generation.
+type agentCounter interface {
+	CountActiveAgents() (int, error)
+}
 
 // SupportPacket contains diagnostics data included in the Mattermost Support Packet.
 type SupportPacket struct {
@@ -42,12 +48,30 @@ type SupportPacket struct {
 }
 
 func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, error) {
+	packet, err := buildSupportPacket(p.store, p.configuration.Config(), manifest.Version)
+	if err != nil {
+		// Non-fatal: return whatever partial data we have.
+		p.pluginAPI.Log.Warn("Support packet generated with errors", "error", err)
+	}
+
+	body, marshalErr := yaml.Marshal(packet)
+	if marshalErr != nil {
+		return nil, errors.Wrap(marshalErr, "failed to marshal diagnostics")
+	}
+
+	return []*model.FileData{{
+		Filename: filepath.Join(manifest.Id, "diagnostics.yaml"),
+		Body:     body,
+	}}, err
+}
+
+// buildSupportPacket assembles the diagnostics struct from config and the store.
+// It returns a partially-populated packet alongside any non-fatal errors.
+func buildSupportPacket(store agentCounter, cfg *config.Config, version string) (*SupportPacket, error) {
 	var result *multierror.Error
 
-	cfg := p.configuration.Config()
-
 	var totalAgents *int
-	agentCount, err := p.store.CountActiveAgents()
+	agentCount, err := store.CountActiveAgents()
 	if err != nil {
 		result = multierror.Append(result, errors.Wrap(err, "failed to get agent count for Support Packet"))
 	} else {
@@ -68,8 +92,8 @@ func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, erro
 
 	telemetryMode := telemetry.OutputMode(cfg.TelemetryOutput)
 
-	packet := SupportPacket{
-		Version: manifest.Version,
+	return &SupportPacket{
+		Version: version,
 
 		TotalAgents: totalAgents,
 
@@ -87,15 +111,5 @@ func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, erro
 		WebSearchEnabled:                cfg.WebSearch.Enabled,
 		EmbeddingSearchEnabled:          cfg.EmbeddingSearchConfig.Type != "",
 		TelemetryEnabled:                telemetryMode != "" && telemetryMode != telemetry.OutputModeOff,
-	}
-
-	body, err := yaml.Marshal(packet)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to marshal diagnostics")
-	}
-
-	return []*model.FileData{{
-		Filename: filepath.Join(manifest.Id, "diagnostics.yaml"),
-		Body:     body,
-	}}, result.ErrorOrNil()
+	}, result.ErrorOrNil()
 }
