@@ -34,6 +34,8 @@ require (
 	golang.org/x/net v0.53.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/text v0.36.0
+	github.com/hashicorp/go-multierror v1.1.1
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
