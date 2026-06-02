@@ -23,11 +23,12 @@ export interface LLMBot {
     lastIconUpdate: number;
     dmChannelID: string;
     channelAccessLevel: ChannelAccessLevel;
-    channelIDs: string[] | null; // backend omits/nulls this when no channels are configured
+
+    // Server sends nil Go slices as JSON null (no teamIDs field on /ai_bots).
+    channelIDs: string[] | null;
     userAccessLevel: UserAccessLevel;
-    userIDs: string[];
-    teamIDs: string[];
-    enabledMCPTools: EnabledMCPTool[];
+    userIDs: string[] | null;
+    enabledMCPTools: EnabledMCPTool[] | null;
     autoEnableNewMCPTools: boolean;
 }
 

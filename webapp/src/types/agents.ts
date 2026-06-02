@@ -39,12 +39,14 @@ export type UserAgent = {
     enableVision: boolean;
     disableTools: boolean;
     channelAccessLevel: ChannelAccessLevel;
-    channelIDs: string[] | null; // backend omits/nulls this when no channels are configured
+
+    // Server sends nil Go slices as JSON null.
+    channelIDs: string[] | null;
     userAccessLevel: UserAccessLevel;
-    userIDs: string[];
-    teamIDs: string[];
-    enabledNativeTools: string[];
-    enabledMCPTools: EnabledTool[];
+    userIDs: string[] | null;
+    teamIDs: string[] | null;
+    enabledNativeTools: string[] | null;
+    enabledMCPTools: EnabledTool[] | null;
     autoEnableNewMCPTools: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
