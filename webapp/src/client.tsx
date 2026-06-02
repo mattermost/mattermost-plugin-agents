@@ -372,7 +372,7 @@ export async function getBotProfilePictureUrl(username: string) {
     return getProfilePictureUrl(user.id, user.last_picture_update);
 }
 
-export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string) {
+export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string): Promise<{postid: string; channelid: string}> {
     const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${botUsername}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
@@ -743,7 +743,7 @@ export async function getChannelInterval(
     presetPrompt: string,
     prompt?: string,
     botUsername?: string,
-) {
+): Promise<{postid: string; channelid: string}> {
     const url = `${channelRoute(channelID)}/interval${botUsername ? `?botUsername=${botUsername}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
