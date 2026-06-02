@@ -11,17 +11,12 @@ import AgentsList from './agents_list';
 
 export const AGENTS_ROUTE = `/plug/${manifest.id}/agents`;
 
-// Product mainComponent — rendered by registerProduct when the route matches.
-// No URL-matching or overlay needed; Mattermost's product routing handles it.
 const AgentsPage = () => {
     useEffect(() => {
-        // The host webapp owns `app__body` on document.body (see MM-67913 / Boards #188).
-        // ChannelController normally sets `channel-view` on #root, but it's not loaded in
-        // product views. Without it the global header loses its themed colors.
         const root = document.getElementById('root');
-        if (root && !root.classList.contains('channel-view')) {
-            root.classList.add('channel-view');
-        }
+
+        document.body.classList.add('app__body');
+        root?.classList.add('channel-view');
     }, []);
 
     return (
