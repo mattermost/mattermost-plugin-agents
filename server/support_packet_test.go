@@ -48,120 +48,117 @@ func fullTestConfig() *config.Config {
 	}
 }
 
-func TestBuildSupportPacket_HappyPath(t *testing.T) {
-	store := stubAgentCounter{count: 7}
-	cfg := fullTestConfig()
+func TestBuildSupportPacket(t *testing.T) {
+	t.Run("happy path", func(t *testing.T) {
+		store := stubAgentCounter{count: 7}
+		cfg := fullTestConfig()
 
-	packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
+		packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
 
-	require.NoError(t, err)
-	require.NotNil(t, packet)
+		require.NoError(t, err)
+		require.NotNil(t, packet)
 
-	assert.Equal(t, 7, *packet.TotalAgents)
-	assert.Equal(t, 2, packet.TotalLLMServices)
-	assert.Equal(t, []string{"openai", "anthropic"}, packet.LLMServiceTypes)
-	assert.True(t, packet.MCPEnabled)
-	assert.Equal(t, 3, packet.TotalMCPServers)
-	assert.Equal(t, 2, packet.EnabledMCPServers)
-	assert.True(t, packet.EnableCallSummary)
-	assert.True(t, packet.EnableTokenUsageLogging)
-	assert.True(t, packet.EnableChannelMentionToolCalling)
-	assert.True(t, packet.AllowNativeWebSearchInChannels)
-	assert.True(t, packet.WebSearchEnabled)
-	assert.True(t, packet.EmbeddingSearchEnabled)
-	assert.True(t, packet.TelemetryEnabled)
-}
+		assert.Equal(t, 7, *packet.TotalAgents)
+		assert.Equal(t, 2, packet.TotalLLMServices)
+		assert.Equal(t, []string{"openai", "anthropic"}, packet.LLMServiceTypes)
+		assert.True(t, packet.MCPEnabled)
+		assert.Equal(t, 3, packet.TotalMCPServers)
+		assert.Equal(t, 2, packet.EnabledMCPServers)
+		assert.True(t, packet.EnableCallSummary)
+		assert.True(t, packet.EnableTokenUsageLogging)
+		assert.True(t, packet.EnableChannelMentionToolCalling)
+		assert.True(t, packet.AllowNativeWebSearchInChannels)
+		assert.True(t, packet.WebSearchEnabled)
+		assert.True(t, packet.EmbeddingSearchEnabled)
+		assert.True(t, packet.TelemetryEnabled)
+	})
 
-func TestBuildSupportPacket_StoreError(t *testing.T) {
-	store := stubAgentCounter{err: errors.New("db unavailable")}
-	cfg := fullTestConfig()
+	t.Run("store error omits agent count but returns other fields", func(t *testing.T) {
+		store := stubAgentCounter{err: errors.New("db unavailable")}
+		cfg := fullTestConfig()
 
-	packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
+		packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "db unavailable")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "db unavailable")
 
-	// Packet is still returned with all config-derived fields populated.
-	require.NotNil(t, packet)
-	assert.Nil(t, packet.TotalAgents, "TotalAgents must be omitted when the count fails")
-	assert.Equal(t, 2, packet.TotalLLMServices)
-	assert.True(t, packet.TelemetryEnabled)
+		require.NotNil(t, packet)
+		assert.Nil(t, packet.TotalAgents, "TotalAgents must be omitted when the count fails")
+		assert.Equal(t, 2, packet.TotalLLMServices)
+		assert.True(t, packet.TelemetryEnabled)
 
-	// Verify TotalAgents is absent from the marshalled YAML.
-	body, marshalErr := yaml.Marshal(packet)
-	require.NoError(t, marshalErr)
-	assert.NotContains(t, string(body), "total_agents")
-}
+		body, marshalErr := yaml.Marshal(packet)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(body), "total_agents")
+	})
 
-func TestBuildSupportPacket_TelemetryEnabled(t *testing.T) {
-	tests := []struct {
-		telemetryOutput string
-		wantEnabled     bool
-	}{
-		{"", false},
-		{"off", false},
-		{"logs", true},
-		{"otlp", true},
-	}
+	t.Run("telemetry enabled flag", func(t *testing.T) {
+		tests := []struct {
+			telemetryOutput string
+			wantEnabled     bool
+		}{
+			{"", false},
+			{"off", false},
+			{"logs", true},
+			{"otlp", true},
+		}
 
-	store := stubAgentCounter{count: 0}
+		store := stubAgentCounter{}
+		for _, tt := range tests {
+			t.Run(tt.telemetryOutput, func(t *testing.T) {
+				cfg := &config.Config{TelemetryOutput: tt.telemetryOutput}
+				packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantEnabled, packet.TelemetryEnabled)
+			})
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.telemetryOutput, func(t *testing.T) {
-			cfg := &config.Config{TelemetryOutput: tt.telemetryOutput}
-			packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantEnabled, packet.TelemetryEnabled)
-		})
-	}
-}
+	t.Run("embedding search enabled flag", func(t *testing.T) {
+		tests := []struct {
+			embeddingType string
+			wantEnabled   bool
+		}{
+			{"", false},
+			{"postgres", true},
+			{"other", true},
+		}
 
-func TestBuildSupportPacket_EmbeddingSearchEnabled(t *testing.T) {
-	tests := []struct {
-		embeddingType string
-		wantEnabled   bool
-	}{
-		{"", false},
-		{"postgres", true},
-		{"other", true},
-	}
+		store := stubAgentCounter{}
+		for _, tt := range tests {
+			t.Run(tt.embeddingType, func(t *testing.T) {
+				cfg := &config.Config{
+					EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{Type: tt.embeddingType},
+				}
+				packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantEnabled, packet.EmbeddingSearchEnabled)
+			})
+		}
+	})
 
-	store := stubAgentCounter{count: 0}
+	t.Run("MCP server counting", func(t *testing.T) {
+		tests := []struct {
+			name        string
+			servers     []config.MCPServerConfig
+			wantTotal   int
+			wantEnabled int
+		}{
+			{"no servers", nil, 0, 0},
+			{"all disabled", []config.MCPServerConfig{{Enabled: false}, {Enabled: false}}, 2, 0},
+			{"all enabled", []config.MCPServerConfig{{Enabled: true}, {Enabled: true}}, 2, 2},
+			{"mixed", []config.MCPServerConfig{{Enabled: true}, {Enabled: false}, {Enabled: true}}, 3, 2},
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.embeddingType, func(t *testing.T) {
-			cfg := &config.Config{
-				EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{Type: tt.embeddingType},
-			}
-			packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantEnabled, packet.EmbeddingSearchEnabled)
-		})
-	}
-}
-
-func TestBuildSupportPacket_MCPServerCounting(t *testing.T) {
-	tests := []struct {
-		name            string
-		servers         []config.MCPServerConfig
-		wantTotal       int
-		wantEnabled     int
-	}{
-		{"no servers", nil, 0, 0},
-		{"all disabled", []config.MCPServerConfig{{Enabled: false}, {Enabled: false}}, 2, 0},
-		{"all enabled", []config.MCPServerConfig{{Enabled: true}, {Enabled: true}}, 2, 2},
-		{"mixed", []config.MCPServerConfig{{Enabled: true}, {Enabled: false}, {Enabled: true}}, 3, 2},
-	}
-
-	store := stubAgentCounter{count: 0}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{MCP: config.MCPConfig{Servers: tt.servers}}
-			packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantTotal, packet.TotalMCPServers)
-			assert.Equal(t, tt.wantEnabled, packet.EnabledMCPServers)
-		})
-	}
+		store := stubAgentCounter{}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				cfg := &config.Config{MCP: config.MCPConfig{Servers: tt.servers}}
+				packet, err := buildSupportPacket(store, cfg, "1.0.0-test")
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantTotal, packet.TotalMCPServers)
+				assert.Equal(t, tt.wantEnabled, packet.EnabledMCPServers)
+			})
+		}
+	})
 }
