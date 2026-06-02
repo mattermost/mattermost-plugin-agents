@@ -24,10 +24,6 @@ const AgentsPage = () => {
         if (root && !root.classList.contains('channel-view')) {
             root.classList.add('channel-view');
         }
-
-        return () => {
-            document.body.classList.remove('app__body');
-        };
     }, []);
 
     return (
