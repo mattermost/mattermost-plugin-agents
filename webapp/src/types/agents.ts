@@ -39,7 +39,7 @@ export type UserAgent = {
     enableVision: boolean;
     disableTools: boolean;
     channelAccessLevel: ChannelAccessLevel;
-    channelIDs: string[];
+    channelIDs: string[] | null; // backend omits/nulls this when no channels are configured
     userAccessLevel: UserAccessLevel;
     userIDs: string[];
     teamIDs: string[];
