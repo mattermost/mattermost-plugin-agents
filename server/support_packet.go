@@ -10,6 +10,7 @@ import (
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
@@ -18,12 +19,12 @@ import (
 type SupportPacket struct {
 	Version string `yaml:"version"`
 
-	// Agent counts
-	TotalAgents int `yaml:"total_agents"`
+	// Agent counts — omitted (not printed) when the DB query fails.
+	TotalAgents *int `yaml:"total_agents,omitempty"`
 
 	// LLM service configuration (no secrets)
-	TotalLLMServices      int      `yaml:"total_llm_services"`
-	LLMServiceTypes       []string `yaml:"llm_service_types"`
+	TotalLLMServices int      `yaml:"total_llm_services"`
+	LLMServiceTypes  []string `yaml:"llm_service_types"`
 
 	// MCP configuration
 	MCPEnabled        bool `yaml:"mcp_enabled"`
@@ -45,9 +46,12 @@ func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, erro
 
 	cfg := p.configuration.Config()
 
+	var totalAgents *int
 	agentCount, err := p.store.CountActiveAgents()
 	if err != nil {
 		result = multierror.Append(result, errors.Wrap(err, "failed to get agent count for Support Packet"))
+	} else {
+		totalAgents = &agentCount
 	}
 
 	serviceTypes := make([]string, 0, len(cfg.Services))
@@ -62,13 +66,15 @@ func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, erro
 		}
 	}
 
+	telemetryMode := telemetry.OutputMode(cfg.TelemetryOutput)
+
 	packet := SupportPacket{
 		Version: manifest.Version,
 
-		TotalAgents: agentCount,
+		TotalAgents: totalAgents,
 
-		TotalLLMServices:      len(cfg.Services),
-		LLMServiceTypes:       serviceTypes,
+		TotalLLMServices: len(cfg.Services),
+		LLMServiceTypes:  serviceTypes,
 
 		MCPEnabled:        cfg.MCP.Enabled,
 		TotalMCPServers:   len(cfg.MCP.Servers),
@@ -80,7 +86,7 @@ func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, erro
 		AllowNativeWebSearchInChannels:  cfg.AllowNativeWebSearchInChannels,
 		WebSearchEnabled:                cfg.WebSearch.Enabled,
 		EmbeddingSearchEnabled:          cfg.EmbeddingSearchConfig.Type != "",
-		TelemetryEnabled:                cfg.TelemetryOutput != "",
+		TelemetryEnabled:                telemetryMode != "" && telemetryMode != telemetry.OutputModeOff,
 	}
 
 	body, err := yaml.Marshal(packet)
