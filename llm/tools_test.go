@@ -799,3 +799,67 @@ func TestToolStoreUnloadedMCPTools(t *testing.T) {
 	store.SetUnloadedMCPTools(nil)
 	assert.False(t, store.IsUnloadedMCPTool("github__search"))
 }
+
+func TestToolStoreLoadMCPTools(t *testing.T) {
+	tests := []struct {
+		name        string
+		unloaded    []Tool
+		loadNames   []string
+		wantLoaded  []string
+		wantInStore []string
+	}{
+		{
+			name:        "exact name moves tool from unloaded to loaded",
+			unloaded:    []Tool{{Name: "jira__get_issue", Description: "Get a Jira issue"}},
+			loadNames:   []string{"jira__get_issue"},
+			wantLoaded:  []string{"jira__get_issue"},
+			wantInStore: []string{"jira__get_issue"},
+		},
+		{
+			name:        "bare name does not load",
+			unloaded:    []Tool{{Name: "jira__get_issue", Description: "Get a Jira issue"}},
+			loadNames:   []string{"get_issue"},
+			wantLoaded:  nil,
+			wantInStore: nil,
+		},
+		{
+			name:        "unknown name loads nothing",
+			unloaded:    []Tool{{Name: "jira__get_issue", Description: "Get a Jira issue"}},
+			loadNames:   []string{"github__search"},
+			wantLoaded:  nil,
+			wantInStore: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewNoTools()
+			store.SetUnloadedMCPTools(tt.unloaded)
+
+			loaded := store.LoadMCPTools(tt.loadNames)
+
+			loadedNames := make([]string, 0, len(loaded))
+			for _, tool := range loaded {
+				loadedNames = append(loadedNames, tool.Name)
+			}
+			assert.ElementsMatch(t, tt.wantLoaded, loadedNames)
+
+			for _, name := range tt.wantInStore {
+				assert.NotNil(t, store.GetTool(name))
+				assert.False(t, store.IsUnloadedMCPTool(name))
+			}
+		})
+	}
+}
+
+func TestToolStoreLoadMCPToolsNilsEmptiedMap(t *testing.T) {
+	store := NewNoTools()
+	store.SetUnloadedMCPTools([]Tool{{Name: "jira__get_issue", Description: "Get a Jira issue"}})
+
+	loaded := store.LoadMCPTools([]string{"jira__get_issue"})
+	require.Len(t, loaded, 1)
+
+	// The only unloaded tool was loaded, so the unloaded set is now empty.
+	assert.False(t, store.IsUnloadedMCPTool("jira__get_issue"))
+	assert.Nil(t, store.LoadMCPTools([]string{"jira__get_issue"}))
+}

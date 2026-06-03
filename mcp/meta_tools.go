@@ -135,36 +135,43 @@ func loadToolResolver(registry *ToolRegistry) llm.ToolResolver {
 		if llmContext == nil {
 			return "", fmt.Errorf("%s: missing LLM context", LoadToolName)
 		}
+		if llmContext.Tools == nil {
+			observe("error")
+			return "", fmt.Errorf("%s: missing tool store", LoadToolName)
+		}
 		if registry == nil {
 			observe("error")
 			return "", fmt.Errorf("%s: tool registry unavailable", LoadToolName)
 		}
 
-		entry, ok := registry.Lookup(name)
-		if !ok {
-			observe("miss")
+		loaded := llmContext.Tools.LoadMCPTools([]string{name})
+		if len(loaded) == 1 {
+			llmContext.MarkMCPDynamicToolLoaded(loaded[0].Name)
+			observe("loaded")
 			return marshalMetaToolResult(LoadToolResult{
-				Loaded: false,
-				Error:  "tool not found",
-				Matches: searchResultsToMetaToolItems(
-					registry.ClosestMatches(name, DefaultMCPToolSearchLimit),
-				),
+				Loaded: true,
+				Name:   loaded[0].Name,
+				Schema: loaded[0].Schema,
 			})
 		}
 
-		if llmContext.Tools == nil {
-			observe("error")
-			return "", fmt.Errorf("%s: missing tool store", LoadToolName)
+		// Already-loaded tools are idempotent successes.
+		if existing := llmContext.Tools.GetTool(name); existing != nil {
+			observe("loaded")
+			return marshalMetaToolResult(LoadToolResult{
+				Loaded: true,
+				Name:   name,
+				Schema: existing.Schema,
+			})
 		}
 
-		llmContext.Tools.AddTools([]llm.Tool{entry.Tool})
-
-		llmContext.MarkMCPDynamicToolLoaded(entry.Name)
-		observe("loaded")
+		observe("miss")
 		return marshalMetaToolResult(LoadToolResult{
-			Loaded: true,
-			Name:   entry.Name,
-			Schema: entry.Tool.Schema,
+			Loaded: false,
+			Error:  "tool not found",
+			Matches: searchResultsToMetaToolItems(
+				registry.ClosestMatches(name, DefaultMCPToolSearchLimit),
+			),
 		})
 	}
 }

@@ -321,7 +321,7 @@ type ToolAuthError struct {
 
 type ToolStore struct {
 	tools            map[string]Tool
-	unloadedMCPTools map[string]ToolInfo
+	unloadedMCPTools map[string]Tool
 	authErrors       []ToolAuthError
 }
 
@@ -429,19 +429,39 @@ func (s *ToolStore) SetUnloadedMCPTools(tools []Tool) {
 		return
 	}
 
-	s.unloadedMCPTools = make(map[string]ToolInfo, len(tools))
+	s.unloadedMCPTools = make(map[string]Tool, len(tools))
 	for _, tool := range tools {
 		if tool.Name == "" || s.GetTool(tool.Name) != nil {
 			continue
 		}
-		s.unloadedMCPTools[tool.Name] = ToolInfo{
-			Name:        tool.Name,
-			Description: tool.Description,
-		}
+		s.unloadedMCPTools[tool.Name] = tool
 	}
 	if len(s.unloadedMCPTools) == 0 {
 		s.unloadedMCPTools = nil
 	}
+}
+
+// LoadMCPTools moves the named tools from the unloaded MCP set into the active
+// tool store, returning the tools that were loaded. Names must be exact
+// (namespaced) registry names; bare names are ignored.
+func (s *ToolStore) LoadMCPTools(names []string) []Tool {
+	if s == nil || len(names) == 0 || len(s.unloadedMCPTools) == 0 {
+		return nil
+	}
+	loaded := make([]Tool, 0, len(names))
+	for _, name := range names {
+		tool, ok := s.unloadedMCPTools[name]
+		if !ok {
+			continue
+		}
+		s.tools[tool.Name] = tool
+		delete(s.unloadedMCPTools, tool.Name)
+		loaded = append(loaded, tool)
+	}
+	if len(s.unloadedMCPTools) == 0 {
+		s.unloadedMCPTools = nil
+	}
+	return loaded
 }
 
 func (s *ToolStore) IsUnloadedMCPTool(name string) bool {
@@ -456,32 +476,36 @@ func (s *ToolStore) GetUnloadedMCPToolInfo(name string) (ToolInfo, bool) {
 	if s == nil || s.GetTool(name) != nil {
 		return ToolInfo{}, false
 	}
-	return s.lookupUnloadedMCPTool(name)
-}
-
-func (s *ToolStore) lookupUnloadedMCPTool(name string) (ToolInfo, bool) {
-	info, ok := s.unloadedMCPTools[name]
-	if ok {
-		return info, true
-	}
-	if !IsBareMCPToolName(name) {
+	tool, ok := s.lookupUnloadedMCPTool(name)
+	if !ok {
 		return ToolInfo{}, false
 	}
+	return ToolInfo{Name: tool.Name, Description: tool.Description}, true
+}
 
-	var matched ToolInfo
+func (s *ToolStore) lookupUnloadedMCPTool(name string) (Tool, bool) {
+	tool, ok := s.unloadedMCPTools[name]
+	if ok {
+		return tool, true
+	}
+	if !IsBareMCPToolName(name) {
+		return Tool{}, false
+	}
+
+	var matched Tool
 	found := false
-	for toolName, info := range s.unloadedMCPTools {
+	for toolName, tool := range s.unloadedMCPTools {
 		if BareMCPToolName(toolName) != name {
 			continue
 		}
 		if found {
-			return ToolInfo{}, false
+			return Tool{}, false
 		}
-		matched = info
+		matched = tool
 		found = true
 	}
 	if !found {
-		return ToolInfo{}, false
+		return Tool{}, false
 	}
 	return matched, true
 }
