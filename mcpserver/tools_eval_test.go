@@ -436,7 +436,7 @@ func withFileDescriptor(userMessage string, fileInfo *model.FileInfo) string {
 	var b strings.Builder
 	b.WriteString(userMessage)
 	b.WriteString("\n\nAttached files (call the read_file tool with the File ID to read their contents):\n")
-	format.WriteFileDescriptor(&b, format.FileDescriptorEntry{HeaderLabel: "Attached File 1", FileInfo: fileInfo})
+	format.WriteFileDescriptor(&b, format.FileDescriptorEntry{Number: 1, FileInfo: fileInfo})
 	return b.String()
 }
 

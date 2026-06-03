@@ -672,9 +672,9 @@ func TestWriteFileDescriptor(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "full metadata with header",
+			name: "numbered header with full metadata",
 			entry: FileDescriptorEntry{
-				HeaderLabel: "Attached File 1",
+				Number: 1,
 				FileInfo: &model.FileInfo{
 					Id:       "fileid1234567890123456789a",
 					Name:     "report.pdf",
@@ -685,7 +685,7 @@ func TestWriteFileDescriptor(t *testing.T) {
 			expected: "**Attached File 1**:\nName: report.pdf\nFile ID: fileid1234567890123456789a\nType: application/pdf\nSize: 2412345 bytes\n\n",
 		},
 		{
-			name: "no header and no mime type",
+			name: "zero number omits header, no mime type",
 			entry: FileDescriptorEntry{
 				FileInfo: &model.FileInfo{
 					Id:   "fileid1234567890123456789b",

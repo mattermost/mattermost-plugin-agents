@@ -6,7 +6,6 @@ package conversation
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 
@@ -169,8 +168,8 @@ func BlocksToPost(
 			if inlineSize < 0 || inlineSize > InlineFileMaxBytes {
 				var b strings.Builder
 				format.WriteFileDescriptor(&b, format.FileDescriptorEntry{
-					HeaderLabel: fmt.Sprintf("Attached File %d", len(descriptors)+1),
-					FileInfo:    fileInfo,
+					Number:   len(descriptors) + 1,
+					FileInfo: fileInfo,
 				})
 				descriptors = append(descriptors, strings.TrimRight(b.String(), "\n"))
 				continue

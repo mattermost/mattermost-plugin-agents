@@ -327,14 +327,16 @@ func WriteTeam(w *strings.Builder, entry TeamEntry) {
 // without inlining its contents. The File ID is included so the model can pass
 // it to the read_file tool to fetch the contents on demand.
 type FileDescriptorEntry struct {
-	HeaderLabel string          // e.g. "Attached File 1"; empty to omit
-	FileInfo    *model.FileInfo // the source file
+	// Number is the 1-based position of the file in the attachment list; it
+	// renders as an "Attached File N" header. A zero value omits the header.
+	Number   int
+	FileInfo *model.FileInfo // the source file
 }
 
 // WriteFileDescriptor writes a compact file metadata descriptor to the builder.
 func WriteFileDescriptor(w *strings.Builder, entry FileDescriptorEntry) {
-	if entry.HeaderLabel != "" {
-		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	if entry.Number > 0 {
+		fmt.Fprintf(w, "**Attached File %d**:\n", entry.Number)
 	}
 
 	fmt.Fprintf(w, "Name: %s\n", entry.FileInfo.Name)
