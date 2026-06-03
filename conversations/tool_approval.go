@@ -104,7 +104,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		"Failed to load user tool preferences for tool approval",
 	)
 
-	llmContext.RestoreMCPDynamicTools(conversation.DeriveLoadedMCPTools(turns))
+	llmContext.Tools.LoadMCPTools(conversation.DeriveLoadedMCPTools(turns))
 
 	// Execute approved tools and build results.
 	var toolResults []toolrunner.ToolResult

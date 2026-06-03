@@ -273,13 +273,14 @@ func TestPostToBlocksPreservesToolIdentityMetadata(t *testing.T) {
 }
 
 func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
+	// Persisted block omits the bare name on purpose: rehydration must derive
+	// it from the namespaced catalog entry, not echo a value the test pre-set.
 	blocks := []ContentBlock{{
 		Type:         BlockTypeToolUse,
 		ID:           "tc1",
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{"key":"MM-1"}`),
-		MCPBareName:  "get_issue",
 		Status:       StatusPending,
 		Shared:       BoolPtr(true),
 	}}

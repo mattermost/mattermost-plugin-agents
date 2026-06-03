@@ -110,7 +110,7 @@ func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 
 // TestAttachConversationID_DoesNotMaterializeTools pins that AttachConversationID
 // is a pure late-bind of the conversation ID. Restoration of dynamically loaded
-// MCP tools is the caller's responsibility (via RestoreMCPDynamicTools) and is
+// MCP tools is the caller's responsibility (via Tools.LoadMCPTools) and is
 // driven from retained turns, not from anything AttachConversationID does.
 func TestAttachConversationID_DoesNotMaterializeTools(t *testing.T) {
 	const convID = "conv-3"

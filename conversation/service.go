@@ -415,7 +415,9 @@ func (s *Service) BuildCompletionRequest(
 		}
 	}
 
-	context.RestoreMCPDynamicTools(DeriveLoadedMCPTools(turns))
+	if context != nil {
+		context.Tools.LoadMCPTools(DeriveLoadedMCPTools(turns))
+	}
 
 	posts := make([]llm.Post, 0, len(turns)+1)
 
@@ -677,7 +679,9 @@ func (s *Service) BuildChannelMentionRequest(
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
 
-	context.RestoreMCPDynamicTools(DeriveLoadedMCPTools(turns))
+	if context != nil {
+		context.Tools.LoadMCPTools(DeriveLoadedMCPTools(turns))
+	}
 
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
 
