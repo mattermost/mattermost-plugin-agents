@@ -293,7 +293,7 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 		ServerOrigin: "https://jira.example.com",
 	}})
 
-	post := blocksToPost(blocks, "assistant", false, nil, false, 0, toolStore)
+	post := blocksToPost(blocks, "assistant", postConversionOptions{toolStore: toolStore})
 
 	require.Len(t, post.ToolUse, 1)
 	toolCall := post.ToolUse[0]

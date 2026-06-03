@@ -439,7 +439,16 @@ func AssembleRequest(
 		Message: conv.SystemPrompt,
 	})
 
-	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, mmClient, enableVision, maxFileSize, toolsFromContext(context))
+	conversionOpts := postConversionOptions{
+		redactUnshared: redactUnshared,
+		mmClient:       mmClient,
+		enableVision:   enableVision,
+		maxFileSize:    maxFileSize,
+	}
+	if context != nil {
+		conversionOpts.toolStore = context.Tools
+	}
+	turnPosts, err := turnsToLLMPosts(turns, conversionOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -473,11 +482,7 @@ func (s *Service) attachmentConfigForBot(botID string) (bool, int64) {
 // Anthropic rejects with "text content blocks must be non-empty".
 func turnsToLLMPosts(
 	turns []store.Turn,
-	redactUnshared bool,
-	mmClient mmapi.Client,
-	enableVision bool,
-	maxFileSize int64,
-	toolStore *llm.ToolStore,
+	conversionOpts postConversionOptions,
 ) ([]llm.Post, error) {
 	posts := make([]llm.Post, 0, len(turns))
 	for i := 0; i < len(turns); i++ {
@@ -494,7 +499,7 @@ func turnsToLLMPosts(
 			blocks = append(blocks, nextBlocks...)
 			i++
 		}
-		post := blocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize, toolStore)
+		post := blocksToPost(blocks, turn.Role, conversionOpts)
 		if turn.Role == "assistant" {
 			// Anthropic signed thinking must be replayed byte-for-byte. Our stored
 			// content blocks intentionally normalize assistant output (merge text
@@ -507,13 +512,6 @@ func turnsToLLMPosts(
 		posts = append(posts, post)
 	}
 	return posts, nil
-}
-
-func toolsFromContext(context *llm.Context) *llm.ToolStore {
-	if context == nil {
-		return nil
-	}
-	return context.Tools
 }
 
 // CreatePlaceholderAssistantTurn creates an empty assistant turn linked to the response post.
@@ -760,8 +758,16 @@ func (s *Service) BuildChannelMentionRequest(
 	// (precedingSeq = 0). Route through turnsToLLMPosts so tool_use and
 	// tool_result within the same tool round merge into a single llm.Post,
 	// matching BuildCompletionRequest's behavior.
-	toolStore := toolsFromContext(context)
-	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared, s.mmClient, enableVision, maxFileSize, toolStore)
+	conversionOpts := postConversionOptions{
+		redactUnshared: redactUnshared,
+		mmClient:       s.mmClient,
+		enableVision:   enableVision,
+		maxFileSize:    maxFileSize,
+	}
+	if context != nil {
+		conversionOpts.toolStore = context.Tools
+	}
+	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], conversionOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -774,7 +780,7 @@ func (s *Service) BuildChannelMentionRequest(
 			// preceding assistant turn's tool_use blocks.
 			turn := turnByPostID[threadPost.Id]
 			run := append([]store.Turn{turn}, turnsByPrecedingPost[turn.Sequence]...)
-			runPosts, err := turnsToLLMPosts(run, redactUnshared, s.mmClient, enableVision, maxFileSize, toolStore)
+			runPosts, err := turnsToLLMPosts(run, conversionOpts)
 			if err != nil {
 				return nil, err
 			}
