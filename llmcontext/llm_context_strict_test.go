@@ -418,7 +418,7 @@ func TestStrictMarksOnlyUnloadedMCPTools(t *testing.T) {
 	})
 
 	context := buildToolsContext(builder, bot)
-	context.RestoreMCPDynamicTools([]string{"jira__get_issue"})
+	context.Tools.LoadMCPTools([]string{"jira__get_issue"})
 
 	require.NotNil(t, context.Tools.GetTool("builtin"))
 	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
@@ -715,7 +715,7 @@ func TestStrictModePreservesAuthErrors(t *testing.T) {
 	require.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
 }
 
-func TestRestoreMCPDynamicToolsAddsDerivedNamesToVisibleStore(t *testing.T) {
+func TestLoadMCPToolsAddsDerivedNamesToVisibleStore(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{tools: []llm.Tool{
@@ -736,7 +736,7 @@ func TestRestoreMCPDynamicToolsAddsDerivedNamesToVisibleStore(t *testing.T) {
 	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
 	require.Nil(t, context.Tools.GetTool("github__search"))
 
-	context.RestoreMCPDynamicTools([]string{"jira__get_issue"})
+	context.Tools.LoadMCPTools([]string{"jira__get_issue"})
 
 	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
 	require.Nil(t, context.Tools.GetTool("github__search"))
@@ -744,7 +744,7 @@ func TestRestoreMCPDynamicToolsAddsDerivedNamesToVisibleStore(t *testing.T) {
 	assert.True(t, context.Tools.IsUnloadedMCPTool("github__search"))
 }
 
-func TestRestoreMCPDynamicToolsSkipsUnknownNames(t *testing.T) {
+func TestLoadMCPToolsSkipsUnknownNames(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{tools: []llm.Tool{
@@ -762,7 +762,7 @@ func TestRestoreMCPDynamicToolsSkipsUnknownNames(t *testing.T) {
 	context := buildToolsContext(builder, bot)
 
 	require.NotPanics(t, func() {
-		context.RestoreMCPDynamicTools([]string{"github__nope", "jira__get_issue"})
+		context.Tools.LoadMCPTools([]string{"github__nope", "jira__get_issue"})
 	})
 
 	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
@@ -770,7 +770,7 @@ func TestRestoreMCPDynamicToolsSkipsUnknownNames(t *testing.T) {
 	assert.False(t, context.Tools.IsUnloadedMCPTool("github__nope"))
 }
 
-func TestRestoreMCPDynamicToolsSkipsBareNames(t *testing.T) {
+func TestLoadMCPToolsSkipsBareNames(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{tools: []llm.Tool{
@@ -787,13 +787,13 @@ func TestRestoreMCPDynamicToolsSkipsBareNames(t *testing.T) {
 
 	context := buildToolsContext(builder, bot)
 
-	context.RestoreMCPDynamicTools([]string{"get_issue"})
+	context.Tools.LoadMCPTools([]string{"get_issue"})
 
 	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
 	require.Nil(t, context.Tools.GetTool("get_issue"))
 }
 
-func TestRestoreMCPDynamicToolsSkipsAllowlistFilteredNames(t *testing.T) {
+func TestLoadMCPToolsSkipsAllowlistFilteredNames(t *testing.T) {
 	jiraOrigin := "https://jira.example.com"
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
@@ -815,13 +815,13 @@ func TestRestoreMCPDynamicToolsSkipsAllowlistFilteredNames(t *testing.T) {
 
 	context := buildToolsContext(builder, bot)
 
-	context.RestoreMCPDynamicTools([]string{"github__search"})
+	context.Tools.LoadMCPTools([]string{"github__search"})
 
 	require.Nil(t, context.Tools.GetTool("github__search"))
 	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
 }
 
-func TestRestoreMCPDynamicToolsSkipsUserDisabledOriginNames(t *testing.T) {
+func TestLoadMCPToolsSkipsUserDisabledOriginNames(t *testing.T) {
 	githubOrigin := "https://github.example.com"
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
@@ -840,13 +840,13 @@ func TestRestoreMCPDynamicToolsSkipsUserDisabledOriginNames(t *testing.T) {
 
 	context := buildToolsContext(builder, bot, builder.WithLLMContextDisabledMCPServers([]string{githubOrigin}))
 
-	context.RestoreMCPDynamicTools([]string{"github__search", "jira__get_issue"})
+	context.Tools.LoadMCPTools([]string{"github__search", "jira__get_issue"})
 
 	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
 	require.Nil(t, context.Tools.GetTool("github__search"))
 }
 
-func TestRestoreMCPDynamicToolsSkipsPredicateFilteredNames(t *testing.T) {
+func TestLoadMCPToolsSkipsPredicateFilteredNames(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{tools: []llm.Tool{
@@ -866,13 +866,13 @@ func TestRestoreMCPDynamicToolsSkipsPredicateFilteredNames(t *testing.T) {
 		return tool.Name == "jira__safe_tool"
 	}))
 
-	context.RestoreMCPDynamicTools([]string{"jira__safe_tool", "jira__ask_tool"})
+	context.Tools.LoadMCPTools([]string{"jira__safe_tool", "jira__ask_tool"})
 
 	require.NotNil(t, context.Tools.GetTool("jira__safe_tool"))
 	require.Nil(t, context.Tools.GetTool("jira__ask_tool"))
 }
 
-func TestRestoreMCPDynamicToolsNoopWhenFlagOff(t *testing.T) {
+func TestLoadMCPToolsNoopWhenFlagOff(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{tools: []llm.Tool{
@@ -893,7 +893,7 @@ func TestRestoreMCPDynamicToolsNoopWhenFlagOff(t *testing.T) {
 	before := toolNames(context.Tools)
 
 	require.NotPanics(t, func() {
-		context.RestoreMCPDynamicTools([]string{"jira__get_issue"})
+		context.Tools.LoadMCPTools([]string{"jira__get_issue"})
 	})
 
 	require.ElementsMatch(t, before, toolNames(context.Tools))
@@ -902,7 +902,7 @@ func TestRestoreMCPDynamicToolsNoopWhenFlagOff(t *testing.T) {
 	assert.False(t, context.Tools.IsUnloadedMCPTool("jira__get_issue"))
 }
 
-func TestRestoreMCPDynamicToolsIgnoresEmptyAndNilNames(t *testing.T) {
+func TestLoadMCPToolsIgnoresEmptyAndNilNames(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{tools: []llm.Tool{
@@ -920,14 +920,14 @@ func TestRestoreMCPDynamicToolsIgnoresEmptyAndNilNames(t *testing.T) {
 	context := buildToolsContext(builder, bot)
 	before := toolNames(context.Tools)
 
-	context.RestoreMCPDynamicTools(nil)
+	context.Tools.LoadMCPTools(nil)
 	require.ElementsMatch(t, before, toolNames(context.Tools))
 
-	context.RestoreMCPDynamicTools([]string{})
+	context.Tools.LoadMCPTools([]string{})
 	require.ElementsMatch(t, before, toolNames(context.Tools))
 }
 
-func TestRestoreMCPDynamicToolsLeavesRetainedHistoryAloneWhenFiltered(t *testing.T) {
+func TestLoadMCPToolsLeavesRetainedHistoryAloneWhenFiltered(t *testing.T) {
 	githubOrigin := "https://github.example.com"
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
@@ -947,7 +947,7 @@ func TestRestoreMCPDynamicToolsLeavesRetainedHistoryAloneWhenFiltered(t *testing
 	context := buildToolsContext(builder, bot, builder.WithLLMContextDisabledMCPServers([]string{githubOrigin}))
 
 	require.NotPanics(t, func() {
-		context.RestoreMCPDynamicTools([]string{"github__search"})
+		context.Tools.LoadMCPTools([]string{"github__search"})
 	})
 
 	require.Nil(t, context.Tools.GetTool("github__search"))

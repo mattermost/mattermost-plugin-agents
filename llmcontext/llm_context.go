@@ -209,7 +209,7 @@ func sanitizeUserProfileField(s string) string {
 // WithLLMContextSessionID removed: embedded MCP manages its own session lifecycle
 
 // getToolsStoreForUser returns a tool store for a specific user, including MCP tools.
-func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, bot *bots.Bot, userID string) *llm.ToolStore {
+func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, bot *bots.Bot, userID string, forceConcrete bool) *llm.ToolStore {
 	// Check for nil bot, which is unexpected
 	if bot == nil {
 		b.pluginAPI.Log.Error("Unexpected nil bot when getting tool store for user", "userID", userID)
@@ -269,7 +269,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		}
 	}
 
-	if botCfg.MCPDynamicToolLoading {
+	if botCfg.MCPDynamicToolLoading && !forceConcrete {
 		b.buildStrictMCPToolStore(store, mcpTools, c, b.strictRegistryOptions()...)
 		return store
 	}
@@ -294,25 +294,6 @@ func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.T
 	b.preloadMCPTools(store, mcpTools, c.ToolRuntime.PreloadedMCPTools)
 	markUnloadedMCPTools(store, mcpTools)
 	store.AddTools(mcp.NewMetaTools(registry))
-
-	c.SetMCPDynamicToolRestorer(func(names []string) {
-		if store == nil || registry == nil || len(names) == 0 {
-			return
-		}
-		for _, name := range names {
-			entry, ok := registry.Lookup(name)
-			if !ok {
-				continue
-			}
-			store.AddTools([]llm.Tool{entry.Tool})
-		}
-		entries := registry.List()
-		recomputed := make([]llm.Tool, 0, len(entries))
-		for _, entry := range entries {
-			recomputed = append(recomputed, entry.Tool)
-		}
-		markUnloadedMCPTools(store, recomputed)
-	})
 }
 
 func (b *Builder) preloadMCPTools(store *llm.ToolStore, available []llm.Tool, specs []llm.EnabledMCPTool) {
@@ -462,7 +443,20 @@ func (b *Builder) WithLLMContextTools(ctx stdcontext.Context, bot *bots.Bot) llm
 			return
 		}
 
-		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id)
+		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id, false)
+	}
+}
+
+// WithLLMContextConcreteTools adds the requester's tools but forces concrete MCP
+// tools instead of dynamic-loading meta-tools. Bridge catalog APIs need the full
+// concrete MCP tool list regardless of the bot's dynamic-loading setting.
+func (b *Builder) WithLLMContextConcreteTools(ctx stdcontext.Context, bot *bots.Bot) llm.ContextOption {
+	return func(c *llm.Context) {
+		if c.RequestingUser == nil {
+			b.pluginAPI.Log.Error("Cannot add tools to context: RequestingUser is nil")
+			return
+		}
+		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id, true)
 	}
 }
 
