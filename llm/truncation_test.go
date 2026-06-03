@@ -19,6 +19,11 @@ import (
 // the safety check still runs.
 func nearBudgetMessage() string { return strings.Repeat("a ", 327) }
 
+// midBudgetMessage estimates to ~210 tokens, so three of them (~630) survive the
+// heuristic budget (720) but together clear the safety threshold (576). This lets
+// a case exercise repeated provider-count drops without the heuristic pre-trimming.
+func midBudgetMessage() string { return strings.Repeat("a ", 229) }
+
 // countResult lets each case script the sequence of CountTokens returns.
 type countResult struct {
 	count int
@@ -28,6 +33,7 @@ type countResult struct {
 func TestTruncationWrapper(t *testing.T) {
 	longMessage := strings.Repeat("x", 4000)
 	nearBudget := nearBudgetMessage()
+	midBudget := midBudgetMessage()
 	systemPrompt := "you are a helpful assistant"
 
 	tests := []struct {
@@ -98,6 +104,18 @@ func TestTruncationWrapper(t *testing.T) {
 			expectedPostCount:  2,
 			expectedFirstPost:  &Post{Role: PostRoleSystem, Message: systemPrompt},
 			expectedSecondPost: &Post{Role: PostRoleUser, Message: "newer-" + nearBudget},
+		},
+		{
+			name: "keeps dropping oldest until provider count is under limit",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "oldest-" + midBudget},
+				{Role: PostRoleUser, Message: "middle-" + midBudget},
+				{Role: PostRoleUser, Message: "newest-" + midBudget},
+			},
+			inputTokenLimit:    1000,
+			countTokensReturns: []countResult{{count: 1100}, {count: 1050}, {count: 800}},
+			expectedPostCount:  1,
+			expectedFirstPost:  &Post{Role: PostRoleUser, Message: "newest-" + midBudget},
 		},
 		{
 			name: "skips safety check when provider returns unsupported error",

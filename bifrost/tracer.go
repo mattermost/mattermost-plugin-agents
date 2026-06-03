@@ -14,6 +14,7 @@ import (
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 )
 
@@ -146,7 +147,9 @@ func (t *otelTracer) PopulateLLMResponseAttributes(_ *bschemas.BifrostContext, h
 		setUsageAttributes(h.span, usage)
 	}
 	if bErr != nil && bErr.Error != nil {
-		h.span.SetStatus(otelcodes.Error, bErr.Error.Message)
+		// Sanitize before recording: provider error messages can echo back API
+		// keys, which would otherwise be exported in the span status.
+		h.span.SetStatus(otelcodes.Error, llm.SanitizeProviderErrorMessage(bErr.Error.Message, ""))
 	}
 }
 

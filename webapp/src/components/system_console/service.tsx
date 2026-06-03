@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import styled from 'styled-components';
 import {useIntl, type IntlShape} from 'react-intl';
 
@@ -89,11 +89,32 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     // restores the prior manual values instead of the auto-detected ones.
     const [manualInputLimit, setManualInputLimit] = useState<number>(props.service.tokenLimit);
     const [manualOutputLimit, setManualOutputLimit] = useState<number>(props.service.outputTokenLimit);
+
+    // Tracks the limits we last wrote back via onChange so the sync effect below
+    // can distinguish an external/upstream change from our own auto write-back
+    // and avoid clobbering (or oscillating with) the cached manual entries.
+    const lastWrittenLimits = useRef({input: props.service.tokenLimit, output: props.service.outputTokenLimit});
+
+    // Hard-reset the cache when the edited service changes identity.
     useEffect(() => {
         setManualInputLimit(props.service.tokenLimit);
         setManualOutputLimit(props.service.outputTokenLimit);
+        lastWrittenLimits.current = {input: props.service.tokenLimit, output: props.service.outputTokenLimit};
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props.service.id]);
+
+    // Re-seed the cache when the service's limits change upstream without the id
+    // changing (e.g. the parent reloads a saved service). Changes we authored
+    // ourselves via the write-effect below are skipped, since adopting an
+    // auto-detected value here would overwrite the admin's manual entry.
+    useEffect(() => {
+        if (props.service.tokenLimit !== lastWrittenLimits.current.input) {
+            setManualInputLimit(props.service.tokenLimit);
+        }
+        if (props.service.outputTokenLimit !== lastWrittenLimits.current.output) {
+            setManualOutputLimit(props.service.outputTokenLimit);
+        }
+    }, [props.service.tokenLimit, props.service.outputTokenLimit]);
 
     const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex';
 
@@ -189,6 +210,10 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         const inputDrift = props.service.tokenLimit !== effectiveInputLimit;
         const outputDrift = props.service.outputTokenLimit !== effectiveOutputLimit;
         if (inputDrift || outputDrift) {
+            // Record our own write so the re-seed effect above doesn't treat it
+            // as an external change and clobber the cached manual entries.
+            lastWrittenLimits.current = {input: effectiveInputLimit, output: effectiveOutputLimit};
+
             // Single onChange — separate calls race when both fire on the same render.
             props.onChange({
                 ...props.service,

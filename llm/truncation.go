@@ -5,7 +5,6 @@ package llm
 
 import (
 	"context"
-	"errors"
 	"math"
 )
 
@@ -58,14 +57,21 @@ func (w *TruncationWrapper) maybeTruncate(ctx context.Context, request *Completi
 	}
 
 	count, err := w.wrapped.CountTokens(ctx, *request, opts...)
-	if errors.Is(err, ErrUnsupportedTokenCount) || err != nil || count <= limit {
+	if err != nil {
 		return
 	}
-	// System prompts carry behavioral instructions; never drop them.
-	if !dropOldestNonSystemPost(request) {
-		return
+	// System prompts carry behavioral instructions; never drop them. Keep
+	// dropping the oldest non-system post and re-counting until the request
+	// fits within the limit or there's nothing left to drop.
+	for count > limit {
+		if !dropOldestNonSystemPost(request) {
+			return
+		}
+		count, err = w.wrapped.CountTokens(ctx, *request, opts...)
+		if err != nil {
+			return
+		}
 	}
-	_, _ = w.wrapped.CountTokens(ctx, *request, opts...)
 }
 
 func dropOldestNonSystemPost(request *CompletionRequest) bool {

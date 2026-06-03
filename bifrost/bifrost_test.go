@@ -1622,7 +1622,7 @@ func TestCountTokensKeepsFunctionTools(t *testing.T) {
 		"function tool definitions contribute to the input-token count and must reach count_tokens")
 }
 
-func TestCountTokensUnsupportedProviderShortCircuits(t *testing.T) {
+func TestCountTokensUnsupportedProvider(t *testing.T) {
 	var backendHit atomic.Bool
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendHit.Store(true)
@@ -1630,13 +1630,14 @@ func TestCountTokensUnsupportedProviderShortCircuits(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	// Cohere is not in providersSupportingCountTokens; CountTokens must
-	// return ErrUnsupportedTokenCount without contacting the backend.
+	// Mistral doesn't implement count-tokens in Bifrost; it returns the
+	// "unsupported_operation" error synchronously. CountTokens must classify
+	// that as ErrUnsupportedTokenCount without contacting the backend.
 	llmClient, err := New(Config{
-		Provider:         schemas.Cohere,
+		Provider:         schemas.Mistral,
 		APIKey:           "test-key",
 		APIURL:           backend.URL,
-		DefaultModel:     "command-r",
+		DefaultModel:     "mistral-large-latest",
 		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
