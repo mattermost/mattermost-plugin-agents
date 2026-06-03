@@ -161,16 +161,14 @@ func TestContentBlockUnknownTypePreserved(t *testing.T) {
 
 func TestContentBlockToolUseWithApprovalMetadataRoundTrip(t *testing.T) {
 	block := ContentBlock{
-		Type:            BlockTypeToolUse,
-		ID:              "tc_approval",
-		Name:            "jira__get_issue",
-		ServerOrigin:    "https://jira.example.com",
-		Input:           json.RawMessage(`{"key":"MM-1"}`),
-		InputSchema:     json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`),
-		MCPBareName:     "get_issue",
-		ToolDescription: "Get a Jira issue",
-		Status:          StatusPending,
-		Shared:          BoolPtr(false),
+		Type:         BlockTypeToolUse,
+		ID:           "tc_approval",
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Input:        json.RawMessage(`{"key":"MM-1"}`),
+		MCPBareName:  "get_issue",
+		Status:       StatusPending,
+		Shared:       BoolPtr(false),
 	}
 
 	data, err := json.Marshal(block)
@@ -181,9 +179,7 @@ func TestContentBlockToolUseWithApprovalMetadataRoundTrip(t *testing.T) {
 		"name": "jira__get_issue",
 		"server_origin": "https://jira.example.com",
 		"input": {"key": "MM-1"},
-		"input_schema": {"type":"object","properties":{"key":{"type":"string"}}},
 		"mcp_bare_name": "get_issue",
-		"tool_description": "Get a Jira issue",
 		"status": "pending",
 		"shared": false
 	}`, string(data))
@@ -195,25 +191,22 @@ func TestContentBlockToolUseWithApprovalMetadataRoundTrip(t *testing.T) {
 
 func TestFilterForNonRequesterRedactsApprovalMetadata(t *testing.T) {
 	blocks := []ContentBlock{{
-		Type:            BlockTypeToolUse,
-		ID:              "tc_private",
-		Name:            "jira__get_issue",
-		Input:           json.RawMessage(`{"key":"MM-1"}`),
-		InputSchema:     json.RawMessage(`{"type":"object"}`),
-		MCPBareName:     "get_issue",
-		ToolDescription: "Get a Jira issue",
-		Status:          StatusPending,
-		Shared:          BoolPtr(false),
+		Type:        BlockTypeToolUse,
+		ID:          "tc_private",
+		Name:        "jira__get_issue",
+		Input:       json.RawMessage(`{"key":"MM-1"}`),
+		MCPBareName: "get_issue",
+		Status:      StatusPending,
+		Shared:      BoolPtr(false),
 	}}
 
 	result := FilterForNonRequester(blocks)
 
 	require.Len(t, result, 1)
 	assert.Nil(t, result[0].Input)
-	assert.Nil(t, result[0].InputSchema)
 	assert.Empty(t, result[0].MCPBareName)
-	assert.Empty(t, result[0].ToolDescription)
-	assert.NotNil(t, blocks[0].InputSchema, "original block must not be mutated")
+	assert.NotNil(t, blocks[0].Input, "original block must not be mutated")
+	assert.Equal(t, "get_issue", blocks[0].MCPBareName, "original block must not be mutated")
 }
 
 func TestFilterForNonRequester(t *testing.T) {

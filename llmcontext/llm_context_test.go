@@ -451,16 +451,6 @@ func TestWithLLMContextRequestingUser_NilUser(t *testing.T) {
 	assert.Nil(t, ctx.RequestingUser)
 }
 
-func TestNormalizeMCPServerOrigin(t *testing.T) {
-	assert.Equal(t, "https://example.com", normalizeMCPServerOrigin("https://example.com/"))
-	assert.Equal(t, "https://example.com", normalizeMCPServerOrigin("  https://example.com/  "))
-}
-
-func TestNormalizeMCPServerOrigins(t *testing.T) {
-	assert.Equal(t, []string{"https://example.com", "https://other.example.com"},
-		normalizeMCPServerOrigins([]string{" https://example.com/ ", "", "https://example.com", "https://other.example.com///"}))
-}
-
 func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {
 	allowlist := []llm.EnabledMCPTool{
 		{ServerOrigin: "https://allowed.example/", ToolName: "t1"},

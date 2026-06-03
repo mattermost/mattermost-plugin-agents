@@ -141,40 +141,12 @@ func (b *Builder) WithLLMContextConversationID(conversationID string) llm.Contex
 	}
 }
 
-// normalizeMCPServerOrigin trims whitespace and trailing slashes so allowlist
-// ServerOrigin values match ToolAuthError.ServerOrigin across formatting variants.
-func normalizeMCPServerOrigin(s string) string {
-	return strings.TrimRight(strings.TrimSpace(s), "/")
-}
-
-func normalizeMCPServerOrigins(origins []string) []string {
-	if len(origins) == 0 {
-		return nil
-	}
-
-	normalized := make([]string, 0, len(origins))
-	seen := make(map[string]struct{}, len(origins))
-	for _, origin := range origins {
-		origin = normalizeMCPServerOrigin(origin)
-		if origin == "" {
-			continue
-		}
-		if _, ok := seen[origin]; ok {
-			continue
-		}
-		seen[origin] = struct{}{}
-		normalized = append(normalized, origin)
-	}
-
-	return normalized
-}
-
 // toolAuthErrorMatchesAllowlist reports whether authErr refers to a server that still
 // appears in the per-agent MCP allowlist (by ServerOrigin).
 func toolAuthErrorMatchesAllowlist(authErr llm.ToolAuthError, allowlist []llm.EnabledMCPTool) bool {
-	errOrigin := normalizeMCPServerOrigin(authErr.ServerOrigin)
+	errOrigin := llm.NormalizeMCPServerOrigin(authErr.ServerOrigin)
 	for i := range allowlist {
-		if normalizeMCPServerOrigin(allowlist[i].ServerOrigin) == errOrigin {
+		if llm.NormalizeMCPServerOrigin(allowlist[i].ServerOrigin) == errOrigin {
 			return true
 		}
 	}
@@ -189,7 +161,7 @@ func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []ll
 
 func (b *Builder) WithLLMContextDisabledMCPServers(origins []string) llm.ContextOption {
 	return func(c *llm.Context) {
-		normalized := normalizeMCPServerOrigins(origins)
+		normalized := llm.NormalizeMCPServerOrigins(origins)
 		if len(normalized) == 0 {
 			return
 		}
@@ -281,7 +253,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		// This runs AFTER admin policy (filterToolsByConfig inside GetToolsForUser)
 		// and BEFORE per-user/channel filtering and strict registry construction.
 		if !botCfg.AutoEnableNewMCPTools {
-			mcpTools = retainOnlyAllowedMCPTools(mcpTools, botCfg.EnabledMCPTools)
+			mcpTools = llm.FilterMCPToolsByEnabledAllowlist(mcpTools, botCfg.EnabledMCPTools)
 		}
 		mcpTools = filterMCPToolsByDisabledOrigins(mcpTools, c.ToolRuntime.DisabledMCPServerOrigins)
 		mcpTools = filterMCPToolsByPredicate(mcpTools, c.ToolRuntime.KeepMCPTool)
@@ -343,28 +315,16 @@ func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.T
 	})
 }
 
-// AttachConversationID late-binds a ConversationID onto an already-built
-// llm.Context. Tool restoration is invoked separately via
-// (*llm.Context).RestoreMCPDynamicTools by callers that derive loaded
-// tool names from retained turns.
-func (b *Builder) AttachConversationID(c *llm.Context, bot *bots.Bot, conversationID string) {
-	_ = bot
-	if c == nil || conversationID == "" {
-		return
-	}
-	c.ConversationID = conversationID
-}
-
 func (b *Builder) preloadMCPTools(store *llm.ToolStore, available []llm.Tool, specs []llm.EnabledMCPTool) {
 	if store == nil || len(available) == 0 || len(specs) == 0 {
 		return
 	}
 
 	for _, spec := range specs {
-		specOrigin := normalizeMCPServerOrigin(spec.ServerOrigin)
+		specOrigin := llm.NormalizeMCPServerOrigin(spec.ServerOrigin)
 		var matches []llm.Tool
 		for _, tool := range available {
-			if specOrigin != normalizeMCPServerOrigin(tool.ServerOrigin) {
+			if specOrigin != llm.NormalizeMCPServerOrigin(tool.ServerOrigin) {
 				continue
 			}
 			if llm.MCPToolNameMatches(tool.Name, spec.ToolName) {
@@ -458,7 +418,7 @@ func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.
 		return tools
 	}
 
-	normalizedDisabled := normalizeMCPServerOrigins(disabled)
+	normalizedDisabled := llm.NormalizeMCPServerOrigins(disabled)
 	if len(normalizedDisabled) == 0 {
 		return tools
 	}
@@ -470,7 +430,7 @@ func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.
 
 	filtered := make([]llm.Tool, 0, len(tools))
 	for _, tool := range tools {
-		if disabledSet[normalizeMCPServerOrigin(tool.ServerOrigin)] {
+		if disabledSet[llm.NormalizeMCPServerOrigin(tool.ServerOrigin)] {
 			continue
 		}
 		filtered = append(filtered, tool)
@@ -486,47 +446,6 @@ func filterMCPToolsByPredicate(tools []llm.Tool, keep func(llm.Tool) bool) []llm
 	filtered := make([]llm.Tool, 0, len(tools))
 	for _, tool := range tools {
 		if keep(tool) {
-			filtered = append(filtered, tool)
-		}
-	}
-	return filtered
-}
-
-func retainOnlyAllowedMCPTools(tools []llm.Tool, allowlist []llm.EnabledMCPTool) []llm.Tool {
-	if len(tools) == 0 {
-		return tools
-	}
-
-	// Build the allowlist set in the shape FilterMCPToolsByAllowlist expects
-	// (key: "serverOrigin\x00toolName"). Wildcard entries grant every runtime
-	// tool from that origin, so pre-expand them by walking the tool list once.
-	allowed := make(map[string]bool, len(allowlist))
-	wildcardOrigins := make(map[string]bool, len(allowlist))
-	for _, t := range allowlist {
-		origin := normalizeMCPServerOrigin(t.ServerOrigin)
-		if t.ToolName == llm.MCPServerToolWildcard {
-			wildcardOrigins[origin] = true
-			continue
-		}
-		allowed[origin+"\x00"+t.ToolName] = true
-	}
-	if len(wildcardOrigins) > 0 {
-		for _, tool := range tools {
-			origin := normalizeMCPServerOrigin(tool.ServerOrigin)
-			if wildcardOrigins[origin] {
-				allowed[origin+"\x00"+tool.Name] = true
-			}
-		}
-	}
-
-	filtered := make([]llm.Tool, 0, len(tools))
-	for _, tool := range tools {
-		if tool.ServerOrigin == "" {
-			filtered = append(filtered, tool)
-			continue
-		}
-		origin := normalizeMCPServerOrigin(tool.ServerOrigin)
-		if allowed[origin+"\x00"+tool.Name] || allowed[origin+"\x00"+llm.BareMCPToolName(tool.Name)] {
 			filtered = append(filtered, tool)
 		}
 	}

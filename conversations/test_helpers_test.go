@@ -21,6 +21,8 @@ type fakeMMClient struct {
 	users                map[string]*model.User
 	postThreads          map[string]*model.PostList
 	kv                   map[string]interface{}
+	createdPosts         []*model.Post
+	allowCreatePost      bool
 	updatedPosts         []*model.Post
 	kvDeletes            []string
 	posts                map[string]*model.Post
@@ -45,8 +47,12 @@ func (c *fakeMMClient) GetPostThread(postID string) (*model.PostList, error) {
 	return postList, nil
 }
 
-func (c *fakeMMClient) CreatePost(_ *model.Post) error {
-	return errors.New("not implemented")
+func (c *fakeMMClient) CreatePost(post *model.Post) error {
+	if !c.allowCreatePost {
+		return errors.New("not implemented")
+	}
+	c.createdPosts = append(c.createdPosts, post.Clone())
+	return nil
 }
 
 func (c *fakeMMClient) UpdatePost(post *model.Post) error {
@@ -223,10 +229,16 @@ func (s *fakeStreamingService) StreamToNewDM(context.Context, string, *llm.TextS
 	return nil
 }
 
-func (s *fakeStreamingService) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
+func (s *fakeStreamingService) StreamToPost(_ context.Context, stream *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
+	if stream != nil {
+		_, _ = stream.ReadAll()
+	}
 }
 
-func (s *fakeStreamingService) StreamContinuationToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
+func (s *fakeStreamingService) StreamContinuationToPost(_ context.Context, stream *llm.TextStreamResult, _ *model.Post, _ string, _ string) {
+	if stream != nil {
+		_, _ = stream.ReadAll()
+	}
 }
 
 func (s *fakeStreamingService) StopStreaming(string) {}

@@ -111,6 +111,14 @@ func (c *Context) SetBotFields(displayName, username, userID, defaultModel, serv
 	c.CustomInstructions = customInstructions
 }
 
+// SetConversationID late-binds a conversation ID onto an existing context.
+func (c *Context) SetConversationID(conversationID string) {
+	if c == nil || conversationID == "" {
+		return
+	}
+	c.ConversationID = conversationID
+}
+
 // CustomPromptVars returns a flat map of whitelisted variables for use in
 // user-created custom prompt templates. Only safe, useful fields are exposed.
 func (c *Context) CustomPromptVars() map[string]string {

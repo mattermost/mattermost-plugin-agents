@@ -953,7 +953,7 @@ func TestRestoreMCPDynamicToolsLeavesRetainedHistoryAloneWhenFiltered(t *testing
 	require.Nil(t, context.Tools.GetTool("github__search"))
 }
 
-func TestAttachConversationIDOnlySetsConversationID(t *testing.T) {
+func TestSetConversationIDOnlySetsConversationID(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{tools: []llm.Tool{
@@ -972,15 +972,16 @@ func TestAttachConversationIDOnlySetsConversationID(t *testing.T) {
 	before := toolNames(context.Tools)
 	require.Empty(t, context.ConversationID)
 
-	builder.AttachConversationID(context, bot, "conv-id")
+	context.SetConversationID("conv-id")
 
 	assert.Equal(t, "conv-id", context.ConversationID)
 	require.ElementsMatch(t, before, toolNames(context.Tools))
 
-	builder.AttachConversationID(context, bot, "")
+	context.SetConversationID("")
 	assert.Equal(t, "conv-id", context.ConversationID)
 
 	require.NotPanics(t, func() {
-		builder.AttachConversationID(nil, bot, "other-id")
+		var nilContext *llm.Context
+		nilContext.SetConversationID("other-id")
 	})
 }

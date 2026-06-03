@@ -77,8 +77,6 @@ func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
 	assert.Equal(t, "jira__get_issue", blocks[0].Name)
 	assert.Equal(t, "https://jira.example.com", blocks[0].ServerOrigin)
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
-	assert.Equal(t, "Get a Jira issue", blocks[0].ToolDescription)
-	assert.JSONEq(t, `{"type":"object"}`, string(blocks[0].InputSchema))
 }
 
 func TestUnmarshalBlocks(t *testing.T) {

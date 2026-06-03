@@ -38,6 +38,18 @@ func BlocksToPost(
 	enableVision bool,
 	maxFileSize int64,
 ) llm.Post {
+	return blocksToPost(blocks, role, redactUnshared, mmClient, enableVision, maxFileSize, nil)
+}
+
+func blocksToPost(
+	blocks []ContentBlock,
+	role string,
+	redactUnshared bool,
+	mmClient mmapi.Client,
+	enableVision bool,
+	maxFileSize int64,
+	toolStore *llm.ToolStore,
+) llm.Post {
 	post := llm.Post{
 		Role: RoleFromString(role),
 	}
@@ -69,17 +81,15 @@ func BlocksToPost(
 			toolCall := llm.ToolCall{
 				ID:           block.ID,
 				Name:         block.Name,
-				Description:  block.ToolDescription,
 				ServerOrigin: block.ServerOrigin,
 				Arguments:    arguments,
 				MCPBareName:  block.MCPBareName,
 				Status:       StatusFromString(block.Status),
 			}
 			if redactToolUse {
-				toolCall.Description = ""
 				toolCall.MCPBareName = ""
-			} else if len(block.InputSchema) > 0 {
-				toolCall.Schema = block.InputSchema
+			} else {
+				enrichToolCallFromStore(&toolCall, toolStore)
 			}
 			post.ToolUse = append(post.ToolUse, toolCall)
 
@@ -195,6 +205,29 @@ func BlocksToPost(
 	return post
 }
 
+func enrichToolCallFromStore(toolCall *llm.ToolCall, toolStore *llm.ToolStore) {
+	if toolCall == nil || toolStore == nil {
+		return
+	}
+
+	tool := toolStore.GetTool(toolCall.Name)
+	if tool == nil && toolCall.MCPBareName != "" {
+		tool = toolStore.GetTool(toolCall.MCPBareName)
+	}
+	if tool == nil {
+		return
+	}
+
+	toolCall.Description = tool.Description
+	toolCall.Schema = tool.Schema
+	if toolCall.ServerOrigin == "" {
+		toolCall.ServerOrigin = tool.ServerOrigin
+	}
+	if toolCall.MCPBareName == "" && tool.ServerOrigin != "" {
+		toolCall.MCPBareName = llm.BareMCPToolName(tool.Name)
+	}
+}
+
 // PostToBlocks converts an llm.Post into a slice of content blocks.
 // This is used when writing turns to the database from stream events or the current llm.Post model.
 // The shared parameter controls whether tool blocks get shared=true or shared=false.
@@ -221,16 +254,14 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 	// 3. For each ToolUse: a tool_use block, optionally followed by a tool_result block
 	for _, tc := range post.ToolUse {
 		blocks = append(blocks, ContentBlock{
-			Type:            BlockTypeToolUse,
-			ID:              tc.ID,
-			Name:            tc.Name,
-			ServerOrigin:    tc.ServerOrigin,
-			Input:           tc.Arguments,
-			InputSchema:     marshalToolSchema(tc.Schema),
-			MCPBareName:     tc.MCPBareName,
-			ToolDescription: tc.Description,
-			Status:          StatusToString(tc.Status),
-			Shared:          BoolPtr(shared),
+			Type:         BlockTypeToolUse,
+			ID:           tc.ID,
+			Name:         tc.Name,
+			ServerOrigin: tc.ServerOrigin,
+			Input:        tc.Arguments,
+			MCPBareName:  tc.MCPBareName,
+			Status:       StatusToString(tc.Status),
+			Shared:       BoolPtr(shared),
 		})
 
 		if tc.Result != "" {
@@ -245,24 +276,6 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 	}
 
 	return blocks
-}
-
-func marshalToolSchema(schema any) json.RawMessage {
-	if schema == nil {
-		return nil
-	}
-	if raw, ok := schema.(json.RawMessage); ok {
-		trimmed := bytes.TrimSpace(raw)
-		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-			return nil
-		}
-		return append(json.RawMessage(nil), trimmed...)
-	}
-	data, err := json.Marshal(schema)
-	if err != nil || len(data) == 0 || string(data) == "null" {
-		return nil
-	}
-	return json.RawMessage(data)
 }
 
 // RoleFromString converts a turn role string to an llm.PostRole.

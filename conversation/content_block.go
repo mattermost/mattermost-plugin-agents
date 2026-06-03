@@ -42,15 +42,13 @@ type ContentBlock struct {
 	Citations []Citation `json:"citations,omitempty"` // text blocks only
 
 	// ToolUse fields
-	ID              string          `json:"id,omitempty"`
-	Name            string          `json:"name,omitempty"`
-	ServerOrigin    string          `json:"server_origin,omitempty"`
-	Input           json.RawMessage `json:"input,omitempty"`
-	InputSchema     json.RawMessage `json:"input_schema,omitempty"`
-	MCPBareName     string          `json:"mcp_bare_name,omitempty"`
-	ToolDescription string          `json:"tool_description,omitempty"`
-	Status          string          `json:"status,omitempty"`
-	Shared          *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
+	ID           string          `json:"id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	ServerOrigin string          `json:"server_origin,omitempty"`
+	Input        json.RawMessage `json:"input,omitempty"`
+	MCPBareName  string          `json:"mcp_bare_name,omitempty"`
+	Status       string          `json:"status,omitempty"`
+	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
 
 	// DecidedAt (tool_result blocks) records when the share/keep-private
 	// decision was made — either by the user clicking Share or Keep Private
@@ -115,9 +113,7 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 		case BlockTypeToolUse:
 			if block.Shared == nil || !*block.Shared {
 				result[i].Input = nil
-				result[i].InputSchema = nil
 				result[i].MCPBareName = ""
-				result[i].ToolDescription = ""
 			}
 		case BlockTypeToolResult:
 			if block.Shared == nil || !*block.Shared {
