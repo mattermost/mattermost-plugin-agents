@@ -252,9 +252,9 @@ func TestCreateAgentMCPDynamicToolLoading(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "defaults true when omitted",
+			name:     "defaults false when omitted",
 			omit:     true,
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "persists explicit false",
@@ -887,10 +887,16 @@ func TestUpdateAgentMCPDynamicToolLoading(t *testing.T) {
 			expectedValue: false,
 		},
 		{
-			name:          "preserves when omitted from body",
-			storedValue:   false,
+			name:          "overwrites with false when omitted from body",
+			storedValue:   true,
 			omit:          true,
 			expectedValue: false,
+		},
+		{
+			name:          "persists explicit true",
+			storedValue:   false,
+			body:          map[string]any{"mcpDynamicToolLoading": true},
+			expectedValue: true,
 		},
 	}
 
@@ -1097,7 +1103,6 @@ func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
 var _ = multipart.NewWriter
 
 func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
-	mcpDynamicToolLoading := false
 	req := CreateAgentRequest{
 		DisplayName:           "My Agent",
 		Username:              "my-agent",
@@ -1110,7 +1115,7 @@ func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 		TeamIDs:               []string{"t1"},
 		AdminUserIDs:          []string{"admin-1"},
 		EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
-		MCPDynamicToolLoading: &mcpDynamicToolLoading,
+		MCPDynamicToolLoading: false,
 		Model:                 "gpt-4",
 		EnableVision:          true,
 		ReasoningEffort:       "high",
@@ -1139,8 +1144,7 @@ func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, req.ServiceID, decoded.ServiceID)
 	assert.Equal(t, req.AdminUserIDs, decoded.AdminUserIDs)
 	assert.Equal(t, req.EnabledMCPTools, decoded.EnabledMCPTools)
-	require.NotNil(t, decoded.MCPDynamicToolLoading)
-	assert.False(t, *decoded.MCPDynamicToolLoading)
+	assert.False(t, decoded.MCPDynamicToolLoading)
 	assert.True(t, decoded.EnableVision)
 }
 
