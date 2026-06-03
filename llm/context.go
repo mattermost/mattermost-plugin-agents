@@ -78,8 +78,6 @@ type ToolRuntimeContext struct {
 	// predefined flows. They are selected only from the already-authorized MCP
 	// catalog and are request scoped.
 	PreloadedMCPTools []EnabledMCPTool
-
-	restoreMCPDynamicTools func(names []string)
 }
 
 type MCPDynamicToolTelemetry interface {
@@ -189,38 +187,6 @@ func (t *ToolRuntimeContext) MarkMCPDynamicToolLoaded(name string) {
 		t.MCPDynamicLoadedToolNames = make(map[string]bool)
 	}
 	t.MCPDynamicLoadedToolNames[name] = true
-}
-
-// RestoreMCPDynamicTools materializes the named MCP tools into c.Tools.
-func (c *Context) RestoreMCPDynamicTools(names []string) {
-	if c == nil {
-		return
-	}
-	c.ToolRuntime.RestoreMCPDynamicTools(names)
-}
-
-// RestoreMCPDynamicTools materializes the named MCP tools into the active tool store.
-func (t *ToolRuntimeContext) RestoreMCPDynamicTools(names []string) {
-	if t == nil || t.restoreMCPDynamicTools == nil || len(names) == 0 {
-		return
-	}
-	t.restoreMCPDynamicTools(names)
-}
-
-// SetMCPDynamicToolRestorer installs the strict MCP tool restorer.
-func (c *Context) SetMCPDynamicToolRestorer(fn func(names []string)) {
-	if c == nil {
-		return
-	}
-	c.ToolRuntime.SetMCPDynamicToolRestorer(fn)
-}
-
-// SetMCPDynamicToolRestorer installs the strict MCP tool restorer.
-func (t *ToolRuntimeContext) SetMCPDynamicToolRestorer(fn func(names []string)) {
-	if t == nil {
-		return
-	}
-	t.restoreMCPDynamicTools = fn
 }
 
 func (c *Context) ShouldRecordMCPDynamicSearchLoadCallSuccess(name string) bool {

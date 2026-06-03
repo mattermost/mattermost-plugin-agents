@@ -169,25 +169,3 @@ func TestContextMCPDynamicSearchLoadCallSuccessState(t *testing.T) {
 	assert.True(t, c.ShouldRecordMCPDynamicSearchLoadCallSuccess("jira__get_issue"))
 	assert.False(t, c.ShouldRecordMCPDynamicSearchLoadCallSuccess("jira__get_issue"))
 }
-
-func TestContextRestoreMCPDynamicTools(t *testing.T) {
-	var nilContext *Context
-	nilContext.RestoreMCPDynamicTools([]string{"jira__get_issue"})
-	nilContext.SetMCPDynamicToolRestorer(func([]string) {
-		t.Fatal("nil context should not install a restorer")
-	})
-
-	c := &Context{}
-	c.RestoreMCPDynamicTools([]string{"jira__get_issue"})
-
-	var restored []string
-	c.SetMCPDynamicToolRestorer(func(names []string) {
-		restored = append(restored, names...)
-	})
-
-	c.RestoreMCPDynamicTools(nil)
-	assert.Empty(t, restored)
-
-	c.RestoreMCPDynamicTools([]string{"jira__get_issue"})
-	assert.Equal(t, []string{"jira__get_issue"}, restored)
-}
