@@ -8,7 +8,7 @@ This guide covers installing, configuring, and managing the Mattermost Agents pl
 
 Before installing the Agents plugin, ensure your environment meets these requirements:
 
-- Mattermost Server v10.0+
+- Mattermost Server v11.8.0+
 - PostgreSQL database
 - For semantic search: PostgreSQL with pgvector extension
 - Network access to your chosen LLM provider
