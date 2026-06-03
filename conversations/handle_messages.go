@@ -195,6 +195,7 @@ func (c *Conversations) handleMentionViaConversation(
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextTools(ctx, bot),
 	}
+	contextOpts = c.withUserDisabledMCPServerOptions(contextOpts, postingUser.Id, channel, "mention")
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
 
 	toolsDisabled := !allowToolsInChannel
