@@ -480,7 +480,7 @@ func (s *ToolStore) GetUnloadedMCPToolInfo(name string) (ToolInfo, bool) {
 	if !ok {
 		return ToolInfo{}, false
 	}
-	return ToolInfo{Name: tool.Name, Description: tool.Description}, true
+	return ToolInfo{Name: tool.Name, Description: tool.Description, ServerOrigin: tool.ServerOrigin}, true
 }
 
 func (s *ToolStore) lookupUnloadedMCPTool(name string) (Tool, bool) {
