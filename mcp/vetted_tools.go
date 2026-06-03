@@ -100,6 +100,27 @@ func cloneToolConfigs(src []ToolConfig) []ToolConfig {
 	return dst
 }
 
+// mergeSeedConfigs appends seed entries for tool names missing from stored, so
+// stored entries win. Inputs are not mutated.
+func mergeSeedConfigs(stored, seed []ToolConfig) []ToolConfig {
+	if len(stored) == 0 {
+		return seed
+	}
+
+	present := make(map[string]bool, len(stored))
+	merged := make([]ToolConfig, 0, len(stored)+len(seed))
+	for _, tc := range stored {
+		present[tc.Name] = true
+		merged = append(merged, tc)
+	}
+	for _, tc := range seed {
+		if !present[tc.Name] {
+			merged = append(merged, tc)
+		}
+	}
+	return merged
+}
+
 func autoRunInDMToolConfigs(toolNames []string) []ToolConfig {
 	configs := make([]ToolConfig, 0, len(toolNames))
 	for _, toolName := range toolNames {
@@ -118,18 +139,6 @@ func askToolConfigs(toolNames []string) []ToolConfig {
 		configs = append(configs, ToolConfig{
 			Name:    toolName,
 			Policy:  ToolPolicyAsk,
-			Enabled: true,
-		})
-	}
-	return configs
-}
-
-func autoRunEverywhereToolConfigs(toolNames []string) []ToolConfig {
-	configs := make([]ToolConfig, 0, len(toolNames))
-	for _, toolName := range toolNames {
-		configs = append(configs, ToolConfig{
-			Name:    toolName,
-			Policy:  ToolPolicyAutoRunEverywhere,
 			Enabled: true,
 		})
 	}
@@ -254,29 +263,19 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"whoami",
 })
 
-var mattermostVettedToolConfigs = buildMattermostVettedToolConfigs()
-
-func buildMattermostVettedToolConfigs() []ToolConfig {
-	// Read-only Mattermost tools auto-run in DMs but ask before running in a
-	// channel, where their results would be visible to everyone.
-	configs := autoRunInDMToolConfigs([]string{
-		"read_post",
-		"read_channel",
-		"get_channel_info",
-		"get_channel_members",
-		"get_team_info",
-		"get_team_members",
-		"search_posts",
-		"search_users",
-		"get_user_channels",
-	})
-
-	// read_file auto-runs everywhere. Before lazy file loading, an attachment's
-	// extracted content was inlined into the prompt automatically — in DMs and
-	// channels alike, with no approval. Fetching it on demand via read_file
-	// preserves that behavior rather than introducing an approval step for
-	// content the user already attached and the bot could already read.
-	configs = append(configs, autoRunEverywhereToolConfigs([]string{"read_file"})...)
-
-	return configs
-}
+// Read-only Mattermost tools auto-run in DMs but ask in channels, where results
+// are visible to everyone. read_file belongs here (not auto-run-everywhere): it
+// only checks the caller's own access, so auto-running it in a channel could
+// surface a file the channel can't see.
+var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
+	"read_post",
+	"read_channel",
+	"get_channel_info",
+	"get_channel_members",
+	"get_team_info",
+	"get_team_members",
+	"search_posts",
+	"search_users",
+	"get_user_channels",
+	"read_file",
+})
