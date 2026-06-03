@@ -138,7 +138,7 @@ const ContextUsageIndicator = ({conversationId}: ContextUsageIndicatorProps) => 
                 )}
                 {!hasLimit && (
                     <EstimatedNote>
-                        <FormattedMessage defaultMessage='Provider does not publish a context window limit; utilization can&apos;t be computed.'/>
+                        <FormattedMessage defaultMessage="Provider does not publish a context window limit; utilization can't be computed."/>
                     </EstimatedNote>
                 )}
                 {composition.total_source === 'estimated' && (
