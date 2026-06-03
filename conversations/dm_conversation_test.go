@@ -359,6 +359,8 @@ type dmTestEnv struct {
 	policyChecker *dmPolicyChecker
 	streamService *fakeStreamingService
 	mockAPI       *plugintest.API
+	mmClient      *fakeMMClient
+	mcpMgr        *testMCPClientManager
 	botID         string
 	userID        string
 	channelID     string
@@ -410,6 +412,16 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		Name: botUserID + "__" + userID,
 	}
 	user := &model.User{Id: userID, Username: "testuser", Locale: "en"}
+	mmClient := &fakeMMClient{
+		users: map[string]*model.User{
+			userID: user,
+		},
+		channels: map[string]*model.Channel{
+			channelID: channel,
+		},
+		kv:              make(map[string]interface{}),
+		allowCreatePost: true,
+	}
 
 	i18nBundle := i18n.Init()
 	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
@@ -425,10 +437,24 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 
 	convFakeStore := newFakeConvStore()
 	convSvc := conversation.NewService(convFakeStore, promptsManager, nil, botsService)
+	botsService.SetBotsForTesting([]*bots.Bot{
+		bots.NewBot(
+			llm.BotConfig{
+				ID:                    botID,
+				Name:                  "ai",
+				DisplayName:           "AI",
+				AutoEnableNewMCPTools: true,
+				MCPDynamicToolLoading: true,
+			},
+			llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
+			&model.Bot{UserId: botUserID, Username: "ai", DisplayName: "AI"},
+			fLLM,
+		),
+	})
 
 	convs := conversations.New(
 		promptsManager,
-		nil, // mmClient -- will be overridden below
+		mmClient,
 		streamSvc,
 		contextBuilder,
 		botsService,
@@ -449,6 +475,8 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		policyChecker: policyChecker,
 		streamService: streamSvc,
 		mockAPI:       mockAPI,
+		mmClient:      mmClient,
+		mcpMgr:        mcpMgr,
 		botID:         botID,
 		userID:        userID,
 		channelID:     channelID,
@@ -458,10 +486,106 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 }
 
 // testMCPClientManager implements llmcontext.MCPClientManager for testing.
-type testMCPClientManager struct{}
+type testMCPClientManager struct {
+	tools  []llm.Tool
+	errors *mcp.Errors
+}
 
 func (m *testMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
-	return nil, nil
+	return m.tools, m.errors
+}
+
+func dmMetaToolArgs(raw string) llm.ToolArgumentGetter {
+	return func(args any) error {
+		return json.Unmarshal([]byte(raw), args)
+	}
+}
+
+func dmSearchToolNames(t *testing.T, llmCtx *llm.Context, query string) []string {
+	t.Helper()
+
+	searchTool := llmCtx.Tools.GetTool(mcp.SearchToolsName)
+	require.NotNil(t, searchTool)
+
+	resultJSON, err := searchTool.Resolver(context.Background(), llmCtx, dmMetaToolArgs(`{"query":"`+query+`"}`))
+	require.NoError(t, err)
+
+	var result mcp.SearchToolsResult
+	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
+
+	names := make([]string, 0, len(result.Tools))
+	for _, tool := range result.Tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+func dmLoadTool(t *testing.T, llmCtx *llm.Context, name string) mcp.LoadToolResult {
+	t.Helper()
+
+	loadTool := llmCtx.Tools.GetTool(mcp.LoadToolName)
+	require.NotNil(t, loadTool)
+
+	resultJSON, err := loadTool.Resolver(context.Background(), llmCtx, dmMetaToolArgs(`{"name":"`+name+`"}`))
+	require.NoError(t, err)
+
+	var result mcp.LoadToolResult
+	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
+	return result
+}
+
+func TestDMMessagePostedDisabledMCPServerNotReachableByDynamicMetaTools(t *testing.T) {
+	const (
+		githubOrigin = "https://github.example.com"
+		jiraOrigin   = "https://jira.example.com"
+	)
+
+	env := setupDMTestEnv(t, dmMakeTextStream("Done"))
+	env.mcpMgr.tools = []llm.Tool{
+		{
+			Name:         "github__search_code",
+			Description:  "Search GitHub code",
+			ServerOrigin: githubOrigin,
+			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+			Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+				return "github result", nil
+			},
+		},
+		{
+			Name:         "jira__get_issue",
+			Description:  "Get a Jira issue",
+			ServerOrigin: jiraOrigin,
+			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+			Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+				return "jira result", nil
+			},
+		},
+	}
+	_, err := mcp.SaveUserPreferences(env.mmClient, env.userID, &mcp.UserToolProviderPreferences{
+		DisabledServers: []string{githubOrigin},
+	})
+	require.NoError(t, err)
+
+	env.conversations.MessageHasBeenPosted(nil, &model.Post{
+		Id:        "post1",
+		UserId:    env.userID,
+		ChannelId: env.channelID,
+		Message:   "Use a tool",
+	})
+
+	env.fakeLLM.mu.Lock()
+	require.Len(t, env.fakeLLM.requests, 1)
+	llmCtx := env.fakeLLM.requests[0].Context
+	env.fakeLLM.mu.Unlock()
+	require.NotNil(t, llmCtx)
+	require.NotNil(t, llmCtx.Tools)
+
+	assert.Empty(t, dmSearchToolNames(t, llmCtx, "github"))
+	assert.Contains(t, dmSearchToolNames(t, llmCtx, "jira"), "jira__get_issue")
+	assert.False(t, dmLoadTool(t, llmCtx, "github__search_code").Loaded)
+	assert.True(t, dmLoadTool(t, llmCtx, "jira__get_issue").Loaded)
+	assert.Nil(t, llmCtx.Tools.GetTool("github__search_code"))
+	assert.NotNil(t, llmCtx.Tools.GetTool("jira__get_issue"))
 }
 
 // --- Test: new DM creates conversation entity and returns stream ----------

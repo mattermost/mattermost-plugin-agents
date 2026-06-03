@@ -169,6 +169,7 @@ func bridgeToolCatalogBot(bot *bots.Bot) *bots.Bot {
 		return nil
 	}
 	cfg := bot.GetConfig()
+	// Bridge catalog APIs need concrete MCP tools, not dynamic-loading meta-tools.
 	cfg.MCPDynamicToolLoading = false
 	return bots.NewBot(cfg, bot.GetService(), bot.GetMMBot(), bot.LLM())
 }

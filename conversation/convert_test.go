@@ -181,15 +181,13 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{"q":"public"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
 		{Type: BlockTypeToolResult, ToolUseID: "t-shared", Content: "PUBLIC", Status: StatusSuccess, Shared: BoolPtr(true)},
 		{
-			Type:            BlockTypeToolUse,
-			ID:              "t-private",
-			Name:            "read_dm",
-			Input:           json.RawMessage(`{"channel":"secret-dm"}`),
-			InputSchema:     json.RawMessage(`{"type":"object"}`),
-			MCPBareName:     "read_dm",
-			ToolDescription: "Read a DM",
-			Status:          StatusSuccess,
-			Shared:          BoolPtr(false),
+			Type:        BlockTypeToolUse,
+			ID:          "t-private",
+			Name:        "read_dm",
+			Input:       json.RawMessage(`{"channel":"secret-dm"}`),
+			MCPBareName: "read_dm",
+			Status:      StatusSuccess,
+			Shared:      BoolPtr(false),
 		},
 		{Type: BlockTypeToolResult, ToolUseID: "t-private", Content: "SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
 		{Type: BlockTypeToolUse, ID: "t-nilshared", Name: "foo", Input: json.RawMessage(`{"token":"xyz"}`), Status: StatusSuccess},
@@ -241,7 +239,7 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	})
 }
 
-func TestPostToBlocksPreservesToolSchemaMetadata(t *testing.T) {
+func TestPostToBlocksPreservesToolIdentityMetadata(t *testing.T) {
 	post := llm.Post{
 		Role: llm.PostRoleBot,
 		ToolUse: []llm.ToolCall{{
@@ -268,42 +266,34 @@ func TestPostToBlocksPreservesToolSchemaMetadata(t *testing.T) {
 	assert.Equal(t, "jira__get_issue", blocks[0].Name)
 	assert.Equal(t, "https://jira.example.com", blocks[0].ServerOrigin)
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
-	assert.Equal(t, "Get a Jira issue", blocks[0].ToolDescription)
-	assert.JSONEq(t, `{"type":"object","properties":{"key":{"type":"string"}}}`, string(blocks[0].InputSchema))
+
+	data, err := json.Marshal(blocks[0])
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "input_schema")
+	assert.NotContains(t, string(data), "tool_description")
 }
 
-func TestPostToBlocksOmitsRawNullToolSchema(t *testing.T) {
-	post := llm.Post{
-		Role: llm.PostRoleBot,
-		ToolUse: []llm.ToolCall{{
-			ID:        "tc1",
-			Name:      "jira__get_issue",
-			Arguments: json.RawMessage(`{"key":"MM-1"}`),
-			Schema:    json.RawMessage(` null `),
-		}},
-	}
-
-	blocks := PostToBlocks(post, false)
-
-	require.Len(t, blocks, 1)
-	assert.Nil(t, blocks[0].InputSchema)
-}
-
-func TestBlocksToPostPreservesToolSchemaMetadata(t *testing.T) {
+func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 	blocks := []ContentBlock{{
-		Type:            BlockTypeToolUse,
-		ID:              "tc1",
-		Name:            "jira__get_issue",
-		ServerOrigin:    "https://jira.example.com",
-		Input:           json.RawMessage(`{"key":"MM-1"}`),
-		InputSchema:     json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`),
-		MCPBareName:     "get_issue",
-		ToolDescription: "Get a Jira issue",
-		Status:          StatusPending,
-		Shared:          BoolPtr(true),
+		Type:         BlockTypeToolUse,
+		ID:           "tc1",
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Input:        json.RawMessage(`{"key":"MM-1"}`),
+		MCPBareName:  "get_issue",
+		Status:       StatusPending,
+		Shared:       BoolPtr(true),
 	}}
+	toolStore := llm.NewToolStore()
+	schema := json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`)
+	toolStore.AddTools([]llm.Tool{{
+		Name:         "jira__get_issue",
+		Description:  "Get a Jira issue",
+		Schema:       schema,
+		ServerOrigin: "https://jira.example.com",
+	}})
 
-	post := BlocksToPost(blocks, "assistant", false, nil, false, 0)
+	post := blocksToPost(blocks, "assistant", false, nil, false, 0, toolStore)
 
 	require.Len(t, post.ToolUse, 1)
 	toolCall := post.ToolUse[0]

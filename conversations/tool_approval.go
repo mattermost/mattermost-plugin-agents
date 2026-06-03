@@ -13,7 +13,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
@@ -101,17 +100,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
 		c.contextBuilder.WithLLMContextConversationID(convID),
 	}
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
-
-	// Apply user-disabled-provider filtering for DM/group channels.
 	if isDM || channel.Type == model.ChannelTypeGroup {
-		prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
-		if prefsErr != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences for tool approval", "error", prefsErr.Error())
-		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
-			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-		}
+		contextOpts = c.withUserDisabledMCPServerOptions(contextOpts, user.Id, channel, "tool_approval")
 	}
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
 
 	// Execute approved tools and build results.
 	var toolResults []toolrunner.ToolResult
@@ -426,17 +418,10 @@ func (c *Conversations) streamToolFollowUp(
 		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
 		c.contextBuilder.WithLLMContextConversationID(conv.ID),
 	}
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
-
-	// Apply user-disabled-provider filtering for DM/group channels.
 	if isDM || channel.Type == model.ChannelTypeGroup {
-		prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
-		if prefsErr != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences for tool follow-up", "error", prefsErr.Error())
-		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
-			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-		}
+		contextOpts = c.withUserDisabledMCPServerOptions(contextOpts, user.Id, channel, "tool_follow_up")
 	}
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
 
 	toolsDisabled := !isDM
 	if !isDM && c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling() {

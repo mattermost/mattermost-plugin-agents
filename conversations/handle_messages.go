@@ -12,7 +12,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
@@ -230,7 +229,7 @@ func (c *Conversations) handleMentionViaConversation(
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
 	}
-	c.contextBuilder.AttachConversationID(llmContext, bot, convResult.Conversation.ID)
+	llmContext.SetConversationID(convResult.Conversation.ID)
 	if channelToolsAutoRunEverywhereOnly {
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
@@ -349,6 +348,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
+	contextOpts = c.withUserDisabledMCPServerOptions(contextOpts, postingUser.Id, channel, "dm")
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
 	if llmContext.Parameters == nil {
 		llmContext.Parameters = make(map[string]interface{})
@@ -358,17 +358,6 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	}
 	if _, hasQueries := llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey]; !hasQueries {
 		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
-	}
-
-	var disabledMCPServerOrigins []string
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
-		if err != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences", "error", err.Error(), "userID", postingUser.Id)
-		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
-			disabledMCPServerOrigins = prefs.DisabledServers
-			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-		}
 	}
 
 	responseRootID := post.Id
@@ -381,10 +370,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
-	c.contextBuilder.AttachConversationID(llmContext, bot, convResult.ConversationID)
-	if len(disabledMCPServerOrigins) > 0 && llmContext.Tools != nil {
-		llmContext.Tools.RemoveToolsByServerOrigin(disabledMCPServerOrigins)
-	}
+	llmContext.SetConversationID(convResult.ConversationID)
 
 	// Anchor this run's trace to the user turn ID. Link to the previous user
 	// turn (if any) so consecutive DMs are navigable in Tempo.

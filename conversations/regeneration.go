@@ -11,7 +11,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
@@ -254,17 +253,8 @@ func (c *Conversations) regenerateViaConversation(
 		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
 		c.contextBuilder.WithLLMContextConversationID(conv.ID),
 	}
+	contextOpts = c.withUserDisabledMCPServerOptions(contextOpts, user.Id, channel, "regeneration")
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
-
-	// Apply user-disabled-provider filtering for DM/group channels only.
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
-		if prefsErr != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences on regen, proceeding without filtering", "error", prefsErr.Error(), "userID", user.Id)
-		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
-			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-		}
-	}
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	toolsDisabled := !isDM

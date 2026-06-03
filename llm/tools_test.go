@@ -517,6 +517,16 @@ func TestIsBareMCPToolName(t *testing.T) {
 	assert.False(t, IsBareMCPToolName(""))
 }
 
+func TestNormalizeMCPServerOrigin(t *testing.T) {
+	assert.Equal(t, "https://example.com", NormalizeMCPServerOrigin("https://example.com/"))
+	assert.Equal(t, "https://example.com", NormalizeMCPServerOrigin("  https://example.com/  "))
+}
+
+func TestNormalizeMCPServerOrigins(t *testing.T) {
+	assert.Equal(t, []string{"https://example.com", "https://other.example.com"},
+		NormalizeMCPServerOrigins([]string{" https://example.com/ ", "", "https://example.com", "https://other.example.com///"}))
+}
+
 func TestRetainOnlyMCPTools(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -638,6 +648,18 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 				{ServerOrigin: "https://mcp.atlassian.com", ToolName: MCPServerToolWildcard},
 			},
 			wantToolNames: []string{"builtin_search", "jira__get_issue", "jira__create_issue"},
+		},
+		{
+			name: "normalizes server origins before matching",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira__get_issue", ServerOrigin: "https://mcp.atlassian.com/"},
+				{Name: "github__search", ServerOrigin: "https://api.githubcopilot.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: " https://mcp.atlassian.com ", ToolName: "get_issue"},
+			},
+			wantToolNames: []string{"builtin_search", "jira__get_issue"},
 		},
 		{
 			name:  "nil ToolStore is safe",
@@ -765,6 +787,26 @@ func TestFilterMCPToolsByAllowlist(t *testing.T) {
 	}
 }
 
+func TestFilterMCPToolsByEnabledAllowlist(t *testing.T) {
+	tools := []Tool{
+		{Name: "builtin_search", ServerOrigin: ""},
+		{Name: "jira__get_issue", ServerOrigin: "https://mcp.atlassian.com/"},
+		{Name: "jira__create_issue", ServerOrigin: "https://mcp.atlassian.com"},
+		{Name: "github__search", ServerOrigin: "https://api.githubcopilot.com"},
+		{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"},
+	}
+	allowlist := []EnabledMCPTool{
+		{ServerOrigin: " https://mcp.atlassian.com ", ToolName: MCPServerToolWildcard},
+		{ServerOrigin: "https://api.githubcopilot.com/", ToolName: "search"},
+	}
+	input := append([]Tool(nil), tools...)
+
+	got := FilterMCPToolsByEnabledAllowlist(tools, allowlist)
+
+	assert.Equal(t, []Tool{tools[0], tools[1], tools[2], tools[3]}, got)
+	assert.Equal(t, input, tools)
+}
+
 func TestToolStoreUnloadedMCPTools(t *testing.T) {
 	var nilStore *ToolStore
 	nilStore.SetUnloadedMCPTools([]Tool{{Name: "jira__get_issue"}})
@@ -781,11 +823,11 @@ func TestToolStoreUnloadedMCPTools(t *testing.T) {
 	assert.True(t, store.IsUnloadedMCPTool("jira__get_issue"))
 	info, ok := store.GetUnloadedMCPToolInfo("jira__get_issue")
 	require.True(t, ok)
-	assert.Equal(t, ToolInfo{Name: "jira__get_issue", Description: "Get a Jira issue"}, info)
+	assert.Equal(t, ToolInfo{Name: "jira__get_issue", Description: "Get a Jira issue", ServerOrigin: "https://jira.example.com"}, info)
 	assert.True(t, store.IsUnloadedMCPTool("get_issue"))
 	info, ok = store.GetUnloadedMCPToolInfo("get_issue")
 	require.True(t, ok)
-	assert.Equal(t, ToolInfo{Name: "jira__get_issue", Description: "Get a Jira issue"}, info)
+	assert.Equal(t, ToolInfo{Name: "jira__get_issue", Description: "Get a Jira issue", ServerOrigin: "https://jira.example.com"}, info)
 
 	store.AddTools([]Tool{{Name: "jira__get_issue", Description: "loaded", ServerOrigin: "https://jira.example.com"}})
 	assert.False(t, store.IsUnloadedMCPTool("jira__get_issue"))
@@ -862,4 +904,19 @@ func TestToolStoreLoadMCPToolsNilsEmptiedMap(t *testing.T) {
 	// The only unloaded tool was loaded, so the unloaded set is now empty.
 	assert.False(t, store.IsUnloadedMCPTool("jira__get_issue"))
 	assert.Nil(t, store.LoadMCPTools([]string{"jira__get_issue"}))
+}
+
+func TestRemoveToolsByServerOriginPrunesUnloadedMCPTools(t *testing.T) {
+	store := NewNoTools()
+	store.AddTools([]Tool{{Name: "builtin"}})
+	store.SetUnloadedMCPTools([]Tool{
+		{Name: "jira__get_issue", Description: "Get a Jira issue", ServerOrigin: "https://jira.example.com"},
+		{Name: "github__search", Description: "Search GitHub", ServerOrigin: "https://github.example.com"},
+	})
+
+	store.RemoveToolsByServerOrigin([]string{"https://github.example.com/"})
+
+	assert.True(t, store.IsUnloadedMCPTool("jira__get_issue"))
+	assert.False(t, store.IsUnloadedMCPTool("github__search"))
+	assert.NotNil(t, store.GetTool("builtin"))
 }
