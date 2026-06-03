@@ -25,45 +25,30 @@ const UnsharedToolResultRedaction = "[result not shared by user]"
 // require a JSON object while stripping any sensitive parameter values.
 var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
 
+// PostConversionOptions configures how BlocksToPost converts content blocks.
+type PostConversionOptions struct {
+	RedactUnshared bool
+	MMClient       mmapi.Client
+	EnableVision   bool
+	MaxFileSize    int64
+	ToolStore      *llm.ToolStore
+}
+
 // BlocksToPost converts a slice of content blocks and a role string into an llm.Post.
-// When redactUnshared is true, tool_result content whose Shared flag is not
+// When opts.RedactUnshared is true, tool_result content whose Shared flag is not
 // true is replaced with UnsharedToolResultRedaction, and tool_use arguments
 // whose Shared flag is not true are replaced with an empty JSON object so the
 // LLM cannot paraphrase private tool parameters into a channel-visible reply.
 func BlocksToPost(
 	blocks []ContentBlock,
 	role string,
-	redactUnshared bool,
-	mmClient mmapi.Client,
-	enableVision bool,
-	maxFileSize int64,
-) llm.Post {
-	return blocksToPost(blocks, role, postConversionOptions{
-		redactUnshared: redactUnshared,
-		mmClient:       mmClient,
-		enableVision:   enableVision,
-		maxFileSize:    maxFileSize,
-	})
-}
-
-type postConversionOptions struct {
-	redactUnshared bool
-	mmClient       mmapi.Client
-	enableVision   bool
-	maxFileSize    int64
-	toolStore      *llm.ToolStore
-}
-
-func blocksToPost(
-	blocks []ContentBlock,
-	role string,
-	opts postConversionOptions,
+	opts PostConversionOptions,
 ) llm.Post {
 	post := llm.Post{
 		Role: RoleFromString(role),
 	}
 
-	effectiveMax := opts.maxFileSize
+	effectiveMax := opts.MaxFileSize
 	if effectiveMax <= 0 {
 		effectiveMax = DefaultMaxFileSize
 	}
@@ -83,7 +68,7 @@ func blocksToPost(
 
 		case BlockTypeToolUse:
 			arguments := block.Input
-			redactToolUse := opts.redactUnshared && (block.Shared == nil || !*block.Shared)
+			redactToolUse := opts.RedactUnshared && (block.Shared == nil || !*block.Shared)
 			if redactToolUse {
 				arguments = unsharedToolUseArgumentsRedaction
 			}
@@ -98,13 +83,13 @@ func blocksToPost(
 			if redactToolUse {
 				toolCall.MCPBareName = ""
 			} else {
-				enrichToolCallFromStore(&toolCall, opts.toolStore)
+				enrichToolCallFromStore(&toolCall, opts.ToolStore)
 			}
 			post.ToolUse = append(post.ToolUse, toolCall)
 
 		case BlockTypeToolResult:
 			content := block.Content
-			if opts.redactUnshared && (block.Shared == nil || !*block.Shared) {
+			if opts.RedactUnshared && (block.Shared == nil || !*block.Shared) {
 				content = UnsharedToolResultRedaction
 			}
 			merged := false
@@ -124,15 +109,15 @@ func blocksToPost(
 			}
 
 		case BlockTypeImage:
-			if !opts.enableVision {
+			if !opts.EnableVision {
 				continue
 			}
-			if opts.mmClient == nil {
+			if opts.MMClient == nil {
 				continue
 			}
-			fileInfo, err := opts.mmClient.GetFileInfo(block.FileID)
+			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil {
-				opts.mmClient.LogError("failed to get file info for image attachment", "error", err)
+				opts.MMClient.LogError("failed to get file info for image attachment", "error", err)
 				continue
 			}
 			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
@@ -142,17 +127,17 @@ func blocksToPost(
 				})
 				continue
 			}
-			reader, err := opts.mmClient.GetFile(block.FileID)
+			reader, err := opts.MMClient.GetFile(block.FileID)
 			if err != nil {
-				opts.mmClient.LogError("failed to get file for image attachment", "error", err)
+				opts.MMClient.LogError("failed to get file for image attachment", "error", err)
 				continue
 			}
 			data, err := io.ReadAll(reader)
 			if closeErr := reader.Close(); closeErr != nil {
-				opts.mmClient.LogError("failed to close image attachment reader", "error", closeErr)
+				opts.MMClient.LogError("failed to close image attachment reader", "error", closeErr)
 			}
 			if err != nil {
-				opts.mmClient.LogError("failed to read image attachment", "error", err)
+				opts.MMClient.LogError("failed to read image attachment", "error", err)
 				continue
 			}
 			post.Files = append(post.Files, llm.File{
@@ -163,12 +148,12 @@ func blocksToPost(
 			})
 
 		case BlockTypeFile:
-			if opts.mmClient == nil {
+			if opts.MMClient == nil {
 				continue
 			}
-			fileInfo, err := opts.mmClient.GetFileInfo(block.FileID)
+			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil {
-				opts.mmClient.LogError("failed to get file info for file attachment", "error", err)
+				opts.MMClient.LogError("failed to get file info for file attachment", "error", err)
 				continue
 			}
 
@@ -179,14 +164,14 @@ func blocksToPost(
 				}
 				content = trimmed
 			} else if strings.HasPrefix(fileInfo.MimeType, "text/") {
-				reader, err := opts.mmClient.GetFile(block.FileID)
+				reader, err := opts.MMClient.GetFile(block.FileID)
 				if err != nil {
-					opts.mmClient.LogError("failed to get file for file attachment", "error", err)
+					opts.MMClient.LogError("failed to get file for file attachment", "error", err)
 					continue
 				}
 				body, err := io.ReadAll(io.LimitReader(reader, effectiveMax))
 				if err != nil {
-					opts.mmClient.LogError("failed to read file content", "error", err)
+					opts.MMClient.LogError("failed to read file content", "error", err)
 					continue
 				}
 				content = string(body)

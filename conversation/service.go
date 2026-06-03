@@ -424,14 +424,14 @@ func (s *Service) BuildCompletionRequest(
 	})
 
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
-	conversionOpts := postConversionOptions{
-		redactUnshared: redactUnshared,
-		mmClient:       s.mmClient,
-		enableVision:   enableVision,
-		maxFileSize:    maxFileSize,
+	conversionOpts := PostConversionOptions{
+		RedactUnshared: redactUnshared,
+		MMClient:       s.mmClient,
+		EnableVision:   enableVision,
+		MaxFileSize:    maxFileSize,
 	}
 	if context != nil {
-		conversionOpts.toolStore = context.Tools
+		conversionOpts.ToolStore = context.Tools
 	}
 	turnPosts, err := turnsToLLMPosts(turns, conversionOpts)
 	if err != nil {
@@ -467,7 +467,7 @@ func (s *Service) attachmentConfigForBot(botID string) (bool, int64) {
 // Anthropic rejects with "text content blocks must be non-empty".
 func turnsToLLMPosts(
 	turns []store.Turn,
-	conversionOpts postConversionOptions,
+	conversionOpts PostConversionOptions,
 ) ([]llm.Post, error) {
 	posts := make([]llm.Post, 0, len(turns))
 	for i := 0; i < len(turns); i++ {
@@ -484,7 +484,7 @@ func turnsToLLMPosts(
 			blocks = append(blocks, nextBlocks...)
 			i++
 		}
-		post := blocksToPost(blocks, turn.Role, conversionOpts)
+		post := BlocksToPost(blocks, turn.Role, conversionOpts)
 		if turn.Role == "assistant" {
 			// Anthropic signed thinking must be replayed byte-for-byte. Our stored
 			// content blocks intentionally normalize assistant output (merge text
@@ -743,14 +743,14 @@ func (s *Service) BuildChannelMentionRequest(
 	// (precedingSeq = 0). Route through turnsToLLMPosts so tool_use and
 	// tool_result within the same tool round merge into a single llm.Post,
 	// matching BuildCompletionRequest's behavior.
-	conversionOpts := postConversionOptions{
-		redactUnshared: redactUnshared,
-		mmClient:       s.mmClient,
-		enableVision:   enableVision,
-		maxFileSize:    maxFileSize,
+	conversionOpts := PostConversionOptions{
+		RedactUnshared: redactUnshared,
+		MMClient:       s.mmClient,
+		EnableVision:   enableVision,
+		MaxFileSize:    maxFileSize,
 	}
 	if context != nil {
-		conversionOpts.toolStore = context.Tools
+		conversionOpts.ToolStore = context.Tools
 	}
 	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], conversionOpts)
 	if err != nil {
@@ -778,7 +778,7 @@ func (s *Service) BuildChannelMentionRequest(
 				username = user.Username
 			}
 			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient)
-			posts = append(posts, BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize))
+			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: s.mmClient, EnableVision: enableVision, MaxFileSize: maxFileSize}))
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break
