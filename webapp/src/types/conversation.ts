@@ -128,7 +128,7 @@ export interface CompositionComponent {
 export type CompositionTotalSource = 'counted' | 'provider' | 'estimated';
 
 export interface Composition {
-    components: CompositionComponent[];
+    components: CompositionComponent[] | null; // null: Go marshals a nil slice to JSON null
     total: number;
     total_source: CompositionTotalSource;
     input_token_limit?: number;

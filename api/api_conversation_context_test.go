@@ -72,57 +72,62 @@ func TestHandleGetConversationContext_TotalSource(t *testing.T) {
 		e.bots.SetBotsForTesting([]*bots.Bot{bot})
 	}
 
-	t.Run("counted when provider supports CountTokens", func(t *testing.T) {
-		e := SetupTestEnvironment(t)
-		defer e.Cleanup(t)
-		e.mockAPI.On("LogError", mock.Anything).Maybe()
+	tests := []struct {
+		name                string
+		convID              string
+		fake                *FakeLLM
+		expectedTotalSource string
+		// assertComposition runs the per-case checks beyond total_source.
+		assertComposition func(t *testing.T, c llm.Composition)
+	}{
+		{
+			name:                "counted when provider supports CountTokens",
+			convID:              "conv-counted",
+			fake:                &FakeLLM{TokenCount: 4242, TokenLimit: 200000},
+			expectedTotalSource: "counted",
+			assertComposition: func(t *testing.T, c llm.Composition) {
+				assert.Equal(t, 4242, c.Total)
+				assert.Equal(t, 200000, c.InputTokenLimit)
+			},
+		},
+		{
+			name:                "estimated when provider lacks CountTokens",
+			convID:              "conv-unsupported",
+			fake:                &FakeLLM{CountTokensError: llm.ErrUnsupportedTokenCount, TokenLimit: 200000},
+			expectedTotalSource: "estimated",
+			assertComposition: func(t *testing.T, c llm.Composition) {
+				assert.Greater(t, c.Total, 0, "estimator must still produce a non-zero total")
+			},
+		},
+		{
+			// This is the path we currently swallow silently — covered here so
+			// any later change that surfaces the error in the response shape
+			// (or logs it loudly) has a baseline to compare against.
+			name:                "estimated when CountTokens errors (e.g. provider rejected request)",
+			convID:              "conv-rejected",
+			fake:                &FakeLLM{CountTokensError: errors.New("bifrost count tokens error: messages must alternate roles"), TokenLimit: 200000},
+			expectedTotalSource: "estimated",
+		},
+	}
 
-		setupConv(e, "conv-counted")
-		bindFakeLLM(t, e, &FakeLLM{TokenCount: 4242, TokenLimit: 200000})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
 
-		c := doGet(t, e, "conv-counted")
-		assert.Equal(t, "counted", c.TotalSource,
-			"when bot.LLM().CountTokens returns a valid count, the response must say 'counted' — "+
-				"otherwise the webapp surfaces the misleading 'estimated' caveat")
-		assert.Equal(t, 4242, c.Total)
-		assert.Equal(t, 200000, c.InputTokenLimit)
-	})
+			setupConv(e, tt.convID)
+			bindFakeLLM(t, e, tt.fake)
 
-	t.Run("estimated when provider lacks CountTokens", func(t *testing.T) {
-		e := SetupTestEnvironment(t)
-		defer e.Cleanup(t)
-		e.mockAPI.On("LogError", mock.Anything).Maybe()
-
-		setupConv(e, "conv-unsupported")
-		bindFakeLLM(t, e, &FakeLLM{
-			CountTokensError: llm.ErrUnsupportedTokenCount,
-			TokenLimit:       200000,
+			c := doGet(t, e, tt.convID)
+			assert.Equal(t, tt.expectedTotalSource, c.TotalSource,
+				"total_source must reflect whether the provider's CountTokens produced the total — "+
+					"otherwise the webapp surfaces the wrong trustworthiness caveat")
+			if tt.assertComposition != nil {
+				tt.assertComposition(t, c)
+			}
 		})
-
-		c := doGet(t, e, "conv-unsupported")
-		assert.Equal(t, "estimated", c.TotalSource)
-		assert.Greater(t, c.Total, 0, "estimator must still produce a non-zero total")
-	})
-
-	t.Run("estimated when CountTokens errors (e.g. provider rejected request)", func(t *testing.T) {
-		// This is the path we currently swallow silently — covered here so
-		// any later change that surfaces the error in the response shape
-		// (or logs it loudly) has a baseline to compare against.
-		e := SetupTestEnvironment(t)
-		defer e.Cleanup(t)
-		e.mockAPI.On("LogError", mock.Anything).Maybe()
-		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
-
-		setupConv(e, "conv-rejected")
-		bindFakeLLM(t, e, &FakeLLM{
-			CountTokensError: errors.New("bifrost count tokens error: messages must alternate roles"),
-			TokenLimit:       200000,
-		})
-
-		c := doGet(t, e, "conv-rejected")
-		assert.Equal(t, "estimated", c.TotalSource,
-			"when CountTokens errors with a non-unsupported error, we still fall back to the estimator")
-	})
+	}
 }
 
 // TestHandleGetConversationContext pins the auth + response contract for the

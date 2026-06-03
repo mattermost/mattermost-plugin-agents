@@ -10,8 +10,8 @@ import {GlobalState} from '@mattermost/types/store';
  * Mattermost root post id by scanning posts in the thread for the
  * conversation_id prop the plugin writes onto every bot post.
  *
- * Returns undefined when no bot post is in Redux yet (e.g. a fresh thread
- * the user hasn't opened, or one where the assistant has not replied).
+ * Returns an empty string ('') when no bot post is in Redux yet (e.g. a fresh
+ * thread the user hasn't opened, or one where the assistant has not replied).
  */
 export function useConversationIdForThread(rootPostId: string | null | undefined): string {
     return useSelector<GlobalState, string>((state) => {

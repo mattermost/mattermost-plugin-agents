@@ -91,7 +91,7 @@ const ContextUsageIndicator = ({conversationId}: ContextUsageIndicatorProps) => 
                             />
                         </RingSvg>
                     )}
-                    <Percent style={{color}}>{hasLimit ? `${pct}%` : formatTokens(composition.total)}</Percent>
+                    <Percent $color={color}>{hasLimit ? `${pct}%` : formatTokens(composition.total)}</Percent>
                     {isOver && (
                         <OverflowIcon data-testid='context-usage-overflow'>
                             <AlertCircleOutlineIcon
@@ -166,7 +166,7 @@ const ContextUsageIndicator = ({conversationId}: ContextUsageIndicatorProps) => 
                             </RowTokens>
                         </RowHeader>
                         <RowBarTrack>
-                            <RowBarFill style={{width: `${Math.max(1, c.proportion * 100)}%`}}/>
+                            <RowBarFill $widthPct={Math.max(1, c.proportion * 100)}/>
                         </RowBarTrack>
                     </ComponentRow>
                 ))}
@@ -233,8 +233,9 @@ const RingSvg = styled.svg`
     flex-shrink: 0;
 `;
 
-const Percent = styled.span`
+const Percent = styled.span<{$color: string}>`
     font-variant-numeric: tabular-nums;
+    color: ${(props) => props.$color};
 `;
 
 const OverflowIcon = styled.span`
@@ -322,7 +323,8 @@ const RowBarTrack = styled.div`
     overflow: hidden;
 `;
 
-const RowBarFill = styled.div`
+const RowBarFill = styled.div<{$widthPct: number}>`
+    width: ${(props) => props.$widthPct}%;
     height: 100%;
     background: rgba(var(--button-bg-rgb), 0.72);
     border-radius: 2px;

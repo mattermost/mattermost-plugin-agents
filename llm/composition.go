@@ -98,18 +98,29 @@ func ComputeComposition(inputs []CompositionInput, total int, totalSource string
 		return c
 	}
 
+	// A running remainder keeps the per-source buckets summing to exactly total.
 	c.Components = make([]CompositionComponent, 0, len(compositionOrder))
+	remaining := total
+	remainingWeight := totalWeight
 	for _, src := range compositionOrder {
 		w := weights[src]
 		if w == 0 {
 			continue
 		}
-		prop := w / totalWeight
+		tokens := 0
+		if remainingWeight > 0 {
+			tokens = int(float64(remaining)*w/remainingWeight + 0.5)
+			if tokens > remaining {
+				tokens = remaining
+			}
+		}
 		c.Components = append(c.Components, CompositionComponent{
 			Source:     src,
-			Proportion: prop,
-			Tokens:     int(prop*float64(total) + 0.5),
+			Proportion: w / totalWeight,
+			Tokens:     tokens,
 		})
+		remaining -= tokens
+		remainingWeight -= w
 	}
 	return c
 }

@@ -183,7 +183,12 @@ func (a *API) tryCountTokens(c *gin.Context, botID string, req *llm.CompletionRe
 	}
 	count, err := lm.CountTokens(c.Request.Context(), *req)
 	if err != nil {
-		a.pluginAPI.Log.Warn("context endpoint estimating tokens: provider CountTokens failed",
+		// Unsupported counting is an expected capability miss, not a failure.
+		level := a.pluginAPI.Log.Warn
+		if errors.Is(err, llm.ErrUnsupportedTokenCount) {
+			level = a.pluginAPI.Log.Debug
+		}
+		level("context endpoint estimating tokens: provider CountTokens failed",
 			"bot_id", botID,
 			"bot_name", bot.GetConfig().Name,
 			"service_type", bot.GetService().Type,

@@ -90,8 +90,22 @@ func TestComputeComposition(t *testing.T) {
 		for _, comp := range c.Components {
 			sumTokens += comp.Tokens
 		}
-		// Rounding can cost at most 1 token per row.
-		assert.InDelta(t, 100, sumTokens, 2)
+		assert.Equal(t, 100, sumTokens)
+	})
+
+	t.Run("buckets sum to total exactly despite rounding", func(t *testing.T) {
+		// Three equal sources with total=2 would overshoot to 3 under naive rounding.
+		inputs := []CompositionInput{
+			{Source: SourceSystem, Text: "aaaa"},
+			{Source: SourceHistory, Text: "aaaa"},
+			{Source: SourceToolResults, Text: "aaaa"},
+		}
+		c := ComputeComposition(inputs, 2, CompositionTotalCounted)
+		var sumTokens int
+		for _, comp := range c.Components {
+			sumTokens += comp.Tokens
+		}
+		assert.Equal(t, 2, sumTokens)
 	})
 
 	t.Run("zero total still returns proportions", func(t *testing.T) {
