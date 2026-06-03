@@ -170,7 +170,7 @@ func TestBlocksToPost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := BlocksToPost(tt.blocks, tt.role, false, nil, false, 0)
+			result := BlocksToPost(tt.blocks, tt.role, PostConversionOptions{})
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -195,7 +195,7 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	}
 
 	t.Run("redactUnshared=false", func(t *testing.T) {
-		got := BlocksToPost(blocks, "assistant", false, nil, false, 0)
+		got := BlocksToPost(blocks, "assistant", PostConversionOptions{})
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
 		args := map[string]string{}
@@ -212,7 +212,7 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	})
 
 	t.Run("redactUnshared=true", func(t *testing.T) {
-		got := BlocksToPost(blocks, "assistant", true, nil, false, 0)
+		got := BlocksToPost(blocks, "assistant", PostConversionOptions{RedactUnshared: true})
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
 		args := map[string]string{}
@@ -293,7 +293,7 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 		ServerOrigin: "https://jira.example.com",
 	}})
 
-	post := blocksToPost(blocks, "assistant", postConversionOptions{toolStore: toolStore})
+	post := BlocksToPost(blocks, "assistant", PostConversionOptions{ToolStore: toolStore})
 
 	require.Len(t, post.ToolUse, 1)
 	toolCall := post.ToolUse[0]
@@ -526,7 +526,7 @@ func TestPostToBlocksToPostRoundTrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			blocks := PostToBlocks(tt.post, tt.shared)
 			role := RoleToString(tt.post.Role)
-			roundTripped := BlocksToPost(blocks, role, false, nil, false, 0)
+			roundTripped := BlocksToPost(blocks, role, PostConversionOptions{})
 
 			assert.Equal(t, tt.post.Role, roundTripped.Role)
 			assert.Equal(t, tt.post.Message, roundTripped.Message)
@@ -925,7 +925,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			}
 
 			if tt.nilClient {
-				post := BlocksToPost(tt.blocks, role, false, nil, tt.enableVision, 0)
+				post := BlocksToPost(tt.blocks, role, PostConversionOptions{EnableVision: tt.enableVision})
 				tt.assert(t, nil, post)
 				return
 			}
@@ -935,7 +935,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 				tt.setup(mmClient)
 			}
 
-			post := BlocksToPost(tt.blocks, role, false, mmClient, tt.enableVision, 0)
+			post := BlocksToPost(tt.blocks, role, PostConversionOptions{MMClient: mmClient, EnableVision: tt.enableVision})
 			tt.assert(t, mmClient, post)
 		})
 	}
