@@ -334,6 +334,37 @@ Post indexing occurs automatically during initial setup and when changing embedd
    - Trigger reindexing when changing embedding providers.
    - Check indexing status.
 
+### Conversation context inspection
+
+The authenticated plugin API exposes `GET /conversations/:conversationid/context` to inspect how the plugin composes input context for a conversation without making an LLM call. This is useful for diagnosing prompt pressure, understanding why a conversation is near a model limit, and checking how much context is consumed before the model replies.
+
+Access mirrors normal conversation access:
+
+- **Threadless or direct conversations**: only the conversation owner can call the endpoint.
+- **Channel-backed conversations**: any user who can read the channel can call the endpoint.
+
+The response includes these top-level fields:
+
+- `total`: total input tokens for the assembled request.
+- `total_source`: how `total` was obtained. `counted` means the provider returned an exact pre-call token count. `estimated` means the plugin had to fall back to estimation because the provider could not return an exact pre-call count.
+- `model`: the configured model for the conversation's agent.
+- `input_token_limit`: the configured input token limit for that model.
+- `components`: the per-source context breakdown.
+
+Per-source components are reported in these categories:
+
+- `system`: system prompt content.
+- `history`: conversation history. Attached-file text that is added to the prompt is currently counted here.
+- `tool_defs`: tool definitions included with the request.
+- `tool_results`: prior tool output included with the request.
+- `image`: image inputs included with the request.
+
+Notes:
+
+- The endpoint prefers the provider's `CountTokens` implementation when available and falls back to estimation otherwise.
+- File-related context accounting is intentionally incomplete in this release and may change in a future update.
+- Tool definitions count toward context usage, so tool-enabled agents can show substantial input-token usage even before the model produces a reply.
+
 ### OpenTelemetry tracing
 
 The plugin supports distributed tracing via [OpenTelemetry](https://opentelemetry.io/) to provide visibility into request latency, LLM call performance, tool execution, and error diagnosis.
@@ -422,6 +453,11 @@ Traces include these semantic attributes for filtering and analysis:
 | `agents.llm.model` | Model identifier | `gpt-4o`, `claude-3-opus` |
 | `agents.llm.operation` | Operation type | `conversation`, `title_generation` |
 | `agents.llm.input_tokens` | Input token count | `150` |
+| `agents.llm.tokens.system` | Input tokens attributed to system prompts | `35` |
+| `agents.llm.tokens.history` | Input tokens attributed to conversation history | `82` |
+| `agents.llm.tokens.tool_defs` | Input tokens attributed to tool definitions included with the request | `410` |
+| `agents.llm.tokens.tool_results` | Input tokens attributed to tool output included with the request | `96` |
+| `agents.llm.tokens.images` | Input tokens attributed to image inputs | `512` |
 | `agents.llm.output_tokens` | Output token count | `42` |
 | `agents.tool.name` | Tool being called | `web_search`, `read_channel` |
 | `agents.tool.id` | Tool call identifier | `call_abc123` |

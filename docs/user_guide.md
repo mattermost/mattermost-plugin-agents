@@ -39,6 +39,10 @@ You can have conversations with Agents in several ways:
 
 When you attach files in the Agents pane, direct messages, or channel @mentions, Agents can use them as conversation context. Images are included only when vision is enabled for the bot. Other files contribute text only when Mattermost can read text from them, such as plain-text files or files with extracted text. Very large attachment text may be shortened, and if one attachment can't be read, that attachment is skipped while the conversation continues.
 
+In active Agents pane conversations, the header can show a context usage indicator that updates automatically as the conversation changes. When the model publishes an input token limit, the indicator shows a ring with a percentage once usage reaches 5% of that limit. Select it to open a breakdown of the current context, including the system prompt, conversation history, tool definitions, tool results, and images. If the provider doesn't publish a context limit, the indicator shows only the total token count and no ring.
+
+If context usage goes over 100%, the breakdown shows an alert that older messages are being dropped to fit. If the total is estimated rather than counted exactly, the breakdown says so. When available, extracted text from attached files is included under **Conversation history** in this breakdown. File-related context accounting is still evolving and may change in a future release.
+
 > **Note:** Whether AI-generated links are clickable depends on your system admin configuration. Treat links in AI responses with caution and verify destinations before opening them.
 
 ### Select an agent
