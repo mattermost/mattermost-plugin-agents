@@ -15,6 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	dmPreferenceGithubOrigin = "https://github.example.com"
+	dmPreferenceJiraOrigin   = "https://jira.example.com"
+)
+
 func dmMetaToolArgs(raw string) llm.ToolArgumentGetter {
 	return func(args any) error {
 		return json.Unmarshal([]byte(raw), args)
@@ -54,18 +59,12 @@ func dmLoadTool(t *testing.T, llmCtx *llm.Context, name string) mcp.LoadToolResu
 	return result
 }
 
-func TestDMMessagePostedDisabledMCPServerNotReachableByDynamicMetaTools(t *testing.T) {
-	const (
-		githubOrigin = "https://github.example.com"
-		jiraOrigin   = "https://jira.example.com"
-	)
-
-	env := setupDMTestEnv(t, dmMakeTextStream("Done"))
+func configureDMPreferenceMCPTools(env *dmTestEnv) {
 	env.mcpMgr.tools = []llm.Tool{
 		{
 			Name:         "github__search_code",
 			Description:  "Search GitHub code",
-			ServerOrigin: githubOrigin,
+			ServerOrigin: dmPreferenceGithubOrigin,
 			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
 			Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
 				return "github result", nil
@@ -74,17 +73,42 @@ func TestDMMessagePostedDisabledMCPServerNotReachableByDynamicMetaTools(t *testi
 		{
 			Name:         "jira__get_issue",
 			Description:  "Get a Jira issue",
-			ServerOrigin: jiraOrigin,
+			ServerOrigin: dmPreferenceJiraOrigin,
 			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
 			Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
 				return "jira result", nil
 			},
 		},
 	}
+}
+
+func saveDisabledGithubPreference(t *testing.T, env *dmTestEnv) {
+	t.Helper()
+
 	_, err := mcp.SaveUserPreferences(env.mmClient, env.userID, &mcp.UserToolProviderPreferences{
-		DisabledServers: []string{githubOrigin},
+		DisabledServers: []string{dmPreferenceGithubOrigin},
 	})
 	require.NoError(t, err)
+}
+
+func assertGithubDisabledJiraReachable(t *testing.T, llmCtx *llm.Context) {
+	t.Helper()
+
+	require.NotNil(t, llmCtx)
+	require.NotNil(t, llmCtx.Tools)
+
+	assert.Empty(t, dmSearchToolNames(t, llmCtx, "github"))
+	assert.Contains(t, dmSearchToolNames(t, llmCtx, "jira"), "jira__get_issue")
+	assert.False(t, dmLoadTool(t, llmCtx, "github__search_code").Loaded)
+	assert.True(t, dmLoadTool(t, llmCtx, "jira__get_issue").Loaded)
+	assert.Nil(t, llmCtx.Tools.GetTool("github__search_code"))
+	assert.NotNil(t, llmCtx.Tools.GetTool("jira__get_issue"))
+}
+
+func TestDMMessagePostedDisabledMCPServerNotReachableByDynamicMetaTools(t *testing.T) {
+	env := setupDMTestEnv(t, dmMakeTextStream("Done"))
+	configureDMPreferenceMCPTools(env)
+	saveDisabledGithubPreference(t, env)
 
 	env.conversations.MessageHasBeenPosted(nil, &model.Post{
 		Id:        "post1",
@@ -97,13 +121,37 @@ func TestDMMessagePostedDisabledMCPServerNotReachableByDynamicMetaTools(t *testi
 	require.Len(t, env.fakeLLM.requests, 1)
 	llmCtx := env.fakeLLM.requests[0].Context
 	env.fakeLLM.mu.Unlock()
-	require.NotNil(t, llmCtx)
-	require.NotNil(t, llmCtx.Tools)
 
-	assert.Empty(t, dmSearchToolNames(t, llmCtx, "github"))
-	assert.Contains(t, dmSearchToolNames(t, llmCtx, "jira"), "jira__get_issue")
-	assert.False(t, dmLoadTool(t, llmCtx, "github__search_code").Loaded)
-	assert.True(t, dmLoadTool(t, llmCtx, "jira__get_issue").Loaded)
-	assert.Nil(t, llmCtx.Tools.GetTool("github__search_code"))
-	assert.NotNil(t, llmCtx.Tools.GetTool("jira__get_issue"))
+	assertGithubDisabledJiraReachable(t, llmCtx)
+}
+
+func TestGroupDMMentionPostedDisabledMCPServerNotReachableByDynamicMetaTools(t *testing.T) {
+	env := setupDMTestEnv(t, dmMakeTextStream("Done"))
+	env.channel.Type = model.ChannelTypeGroup
+	configureDMPreferenceMCPTools(env)
+	saveDisabledGithubPreference(t, env)
+
+	post := &model.Post{
+		Id:        "post1",
+		UserId:    env.userID,
+		ChannelId: env.channelID,
+		Message:   "@ai use a tool",
+	}
+	env.mmClient.postThreads = map[string]*model.PostList{
+		post.Id: {
+			Order: []string{post.Id},
+			Posts: map[string]*model.Post{
+				post.Id: post,
+			},
+		},
+	}
+
+	env.conversations.MessageHasBeenPosted(nil, post)
+
+	env.fakeLLM.mu.Lock()
+	require.Len(t, env.fakeLLM.requests, 1)
+	llmCtx := env.fakeLLM.requests[0].Context
+	env.fakeLLM.mu.Unlock()
+
+	assertGithubDisabledJiraReachable(t, llmCtx)
 }
