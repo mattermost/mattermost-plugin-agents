@@ -71,10 +71,12 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
 | **API Key** | Your provider's API key (requirements vary by provider) |
 | **Default Model** | Default model to use for this service |
-| **Input Token Limit** | Maximum tokens allowed in input |
-| **Output Token Limit** | Maximum tokens allowed in output |
+| **Input Token Limit** | Maximum tokens allowed in input. When provider metadata includes an input limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an input limit, the field stays editable and Mattermost uses the saved manual value. Set this manually for models without provider metadata if you want Mattermost to enforce a request-size limit before sending upstream. A value of `0` means Mattermost does not apply client-side truncation. |
+| **Output Token Limit** | Maximum tokens allowed in output. When provider metadata includes an output limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an output limit, the field stays editable and Mattermost uses the saved manual value. |
 | **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
 | **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) always uses the Responses API, so this control isn't shown for that service type. |
+
+Input and output token limits are detected independently, so one field can be auto-detected while the other remains editable. If you switch back from an auto-detected model to an unknown or custom model, Mattermost restores the previously saved manual values.
 
 #### Provider Specific Settings
 
@@ -303,8 +305,12 @@ The Agents plugin can track token usage for all LLM interactions to support bill
 - **Input Tokens**: Number of tokens in the request to the LLM
 - **Output Tokens**: Number of tokens in the LLM response
 - **Total Tokens**: Combined input and output token count
+- **Cached Read Tokens**: Number of prompt tokens served from provider cache, when reported
+- **Cached Write Tokens**: Number of prompt tokens written to provider cache, when reported
+- **Reasoning Tokens**: Number of tokens used for provider reasoning or thinking, when reported
+- **Cost**: Provider-reported request cost, when reported
 
-To enable token usage tracking, navigate to **System Console > Plugins > Agents** and set **Enable Token Usage Logging** to **True**. When enabled, log files automatically rotate when they reach 100MB in size, and rotated log files are compressed to save disk space. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking and resource planning. All major LLM providers (OpenAI, Anthropic) report usage data that gets captured by this logging system.
+To enable token usage tracking, navigate to **System Console > Plugins > Agents** and set **Enable Token Usage Logging** to **True**. When enabled, log files automatically rotate when they reach 100MB in size, and rotated log files are compressed to save disk space. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking, chargeback, resource planning, and debugging. Providers that report usage data populate these fields. When a provider does not expose cached token, reasoning token, or cost details, those values remain `0`.
 
 #### Converting token usage logs for analysis
 
@@ -319,8 +325,8 @@ jq -s '.' logs/agents/token_usage.log > token_usage.json
 **Convert to CSV format:**
 
 ```bash
-echo "timestamp,user_id,team_id,bot_username,input_tokens,output_tokens,total_tokens" > token_usage.csv
-jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_tokens, .total_tokens] | @csv' logs/agents/token_usage.log >> token_usage.csv
+echo "timestamp,user_id,team_id,bot_username,input_tokens,output_tokens,total_tokens,cached_read_tokens,cached_write_tokens,reasoning_tokens,cost" > token_usage.csv
+jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_tokens, .total_tokens, (.cached_read_tokens // 0), (.cached_write_tokens // 0), (.reasoning_tokens // 0), (.cost // 0)] | @csv' logs/agents/token_usage.log >> token_usage.csv
 ```
 
 ### Post indexing
@@ -414,7 +420,7 @@ The connection currently uses insecure (non-TLS) gRPC. For TLS-terminated endpoi
 
 #### Custom span attributes
 
-Traces include these semantic attributes for filtering and analysis:
+Traces include these semantic attributes for filtering and analysis. Cached token, reasoning token, and cost attributes are added only when the provider reports non-zero values:
 
 | Attribute | Description | Example |
 |-----------|-------------|---------|
@@ -423,6 +429,10 @@ Traces include these semantic attributes for filtering and analysis:
 | `agents.llm.operation` | Operation type | `conversation`, `title_generation` |
 | `agents.llm.input_tokens` | Input token count | `150` |
 | `agents.llm.output_tokens` | Output token count | `42` |
+| `agents.llm.cached_read_tokens` | Cached read token count, when reported | `800` |
+| `agents.llm.cached_write_tokens` | Cached write token count, when reported | `100` |
+| `agents.llm.reasoning_tokens` | Reasoning token count, when reported | `64` |
+| `agents.llm.cost` | Provider-reported request cost, when reported | `0.0123` |
 | `agents.tool.name` | Tool being called | `web_search`, `read_channel` |
 | `agents.tool.id` | Tool call identifier | `call_abc123` |
 | `agents.mcp.server` | MCP server name | `github-server` |
