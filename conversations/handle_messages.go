@@ -12,6 +12,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
@@ -79,6 +80,74 @@ func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUse
 		return hasToolPolicyChecker
 	}
 	return !isAutomatedInvoker(post, postingUser)
+}
+
+func (c *Conversations) userMCPPreferenceContextOptions(userID string, logMessage string) []llm.ContextOption {
+	if c.contextBuilder == nil || c.mmClient == nil || userID == "" {
+		return nil
+	}
+
+	prefs, err := mcp.LoadUserPreferences(c.mmClient, userID)
+	if err != nil {
+		c.mmClient.LogWarn(logMessage, "error", err.Error(), "userID", userID)
+		return nil
+	}
+	if len(prefs.DisabledServers) == 0 {
+		return nil
+	}
+
+	return []llm.ContextOption{
+		c.contextBuilder.WithLLMContextDisabledMCPServers(prefs.DisabledServers),
+	}
+}
+
+func removePreFilteredMCPServersFromVisibleStore(llmContext *llm.Context) {
+	if llmContext == nil || llmContext.Tools == nil || len(llmContext.ToolRuntime.DisabledMCPServerOrigins) == 0 {
+		return
+	}
+	llmContext.Tools.RemoveToolsByServerOrigin(llmContext.ToolRuntime.DisabledMCPServerOrigins)
+}
+
+// buildConversationContextWithTools assembles an LLM context for a bot
+// interaction in a single pass. It applies user MCP preferences for
+// DM/group channels, the caller's extra options, optional late-binding of
+// the conversation ID, and WithLLMContextTools. After the build it also
+// runs the post-build steps that all four conversation entry points share
+// (filtered visible-store cleanup for DM/group channels).
+//
+// Pass conversationID == "" to defer late-binding; the caller should call
+// b.contextBuilder.AttachConversationID once the conversation row exists.
+// Pass prefsLogMessage == "" to skip the user MCP preferences lookup.
+func (c *Conversations) buildConversationContextWithTools(
+	ctx context.Context,
+	bot *bots.Bot,
+	user *model.User,
+	channel *model.Channel,
+	conversationID string,
+	prefsLogMessage string,
+	extraOpts ...llm.ContextOption,
+) *llm.Context {
+	isDMOrGroup := channel != nil && (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup)
+
+	opts := make([]llm.ContextOption, 0, len(extraOpts)+4)
+	if isDMOrGroup && prefsLogMessage != "" && user != nil {
+		opts = append(opts, c.userMCPPreferenceContextOptions(user.Id, prefsLogMessage)...)
+	}
+	opts = append(opts, extraOpts...)
+	if conversationID != "" {
+		opts = append(opts, c.contextBuilder.WithLLMContextConversationID(conversationID))
+	}
+	opts = append(opts, c.contextBuilder.WithLLMContextTools(ctx, bot))
+
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, opts...)
+
+	if isDMOrGroup {
+		// Pre-build filtering protects strict registries; post-build removal preserves
+		// existing visible-store behavior for flag-off contexts.
+		removePreFilteredMCPServersFromVisibleStore(llmContext)
+	}
+
+	return llmContext
 }
 
 func (c *Conversations) MessageHasBeenPosted(_ *plugin.Context, post *model.Post) {
@@ -192,11 +261,23 @@ func (c *Conversations) handleMentionViaConversation(
 	channelToolsAutoRunEverywhereOnly bool,
 	responseRootID string,
 ) error {
-	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextTools(ctx, bot),
+	var extraOpts []llm.ContextOption
+	if channelToolsAutoRunEverywhereOnly {
+		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
+			return botChannelAutoEverywhereKeepTool(c.toolPolicyChecker, tool)
+		}))
 	}
-	contextOpts = c.withUserDisabledMCPServerOptions(contextOpts, postingUser.Id, channel, "mention")
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
+	// Build the context once WITH tools (no ConversationID yet) so the system
+	// prompt can reference .Tools and .DisabledToolsInfo. The conversation ID
+	// is late-bound below via AttachConversationID after the conversation row
+	// has been created.
+	llmContext := c.buildConversationContextWithTools(
+		ctx,
+		bot, postingUser, channel,
+		"", // conversationID late-bound after GetOrCreateConversation
+		"Failed to load user tool preferences",
+		extraOpts...,
+	)
 
 	toolsDisabled := !allowToolsInChannel
 	if llmContext != nil {
@@ -230,7 +311,7 @@ func (c *Conversations) handleMentionViaConversation(
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
 	}
-	llmContext.SetConversationID(convResult.Conversation.ID)
+	c.contextBuilder.AttachConversationID(llmContext, bot, convResult.Conversation.ID)
 	if channelToolsAutoRunEverywhereOnly {
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
@@ -342,24 +423,20 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
 func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
-	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextTools(ctx, bot),
+	var extraOpts []llm.ContextOption
+	if webSearchParams := c.extractWebSearchContext(post); len(webSearchParams) > 0 {
+		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
-	webSearchParams := c.extractWebSearchContext(post)
-	if len(webSearchParams) > 0 {
-		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
-	}
-	contextOpts = c.withUserDisabledMCPServerOptions(contextOpts, postingUser.Id, channel, "dm")
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
-	if llmContext.Parameters == nil {
-		llmContext.Parameters = make(map[string]interface{})
-	}
-	if _, hasCount := llmContext.Parameters[mmtools.WebSearchCountKey]; !hasCount {
-		llmContext.Parameters[mmtools.WebSearchCountKey] = 0
-	}
-	if _, hasQueries := llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey]; !hasQueries {
-		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
-	}
+	// Build the context once WITH tools (no ConversationID yet); the
+	// conversation ID is late-bound below via AttachConversationID.
+	llmContext := c.buildConversationContextWithTools(
+		ctx,
+		bot, postingUser, channel,
+		"", // conversationID late-bound after CreateOrGetDMConversation
+		"Failed to load user tool preferences",
+		extraOpts...,
+	)
+	ensureDMWebSearchTracking(llmContext)
 
 	responseRootID := post.Id
 	if post.RootId != "" {
@@ -371,7 +448,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
-	llmContext.SetConversationID(convResult.ConversationID)
+	c.contextBuilder.AttachConversationID(llmContext, bot, convResult.ConversationID)
 
 	// Anchor this run's trace to the user turn ID. Link to the previous user
 	// turn (if any) so consecutive DMs are navigable in Tempo.
@@ -414,6 +491,21 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	}
 
 	return nil
+}
+
+func ensureDMWebSearchTracking(llmContext *llm.Context) {
+	if llmContext == nil {
+		return
+	}
+	if llmContext.Parameters == nil {
+		llmContext.Parameters = make(map[string]interface{})
+	}
+	if _, hasCount := llmContext.Parameters[mmtools.WebSearchCountKey]; !hasCount {
+		llmContext.Parameters[mmtools.WebSearchCountKey] = 0
+	}
+	if _, hasQueries := llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey]; !hasQueries {
+		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
+	}
 }
 
 func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
@@ -477,8 +569,10 @@ func (c *Conversations) fallbackLocale(userLocale string) string {
 	if userLocale != "" {
 		return userLocale
 	}
-	if config := c.mmClient.GetConfig(); config != nil && config.LocalizationSettings.DefaultServerLocale != nil && *config.LocalizationSettings.DefaultServerLocale != "" {
-		return *config.LocalizationSettings.DefaultServerLocale
+	if c.mmClient != nil {
+		if config := c.mmClient.GetConfig(); config != nil && config.LocalizationSettings.DefaultServerLocale != nil && *config.LocalizationSettings.DefaultServerLocale != "" {
+			return *config.LocalizationSettings.DefaultServerLocale
+		}
 	}
 	return "en"
 }

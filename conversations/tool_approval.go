@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
@@ -95,15 +96,15 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 
-	// Build LLM context with tools for execution.
-	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
-		c.contextBuilder.WithLLMContextConversationID(convID),
-	}
-	if isDM || channel.Type == model.ChannelTypeGroup {
-		contextOpts = c.withUserDisabledMCPServerOptions(contextOpts, user.Id, channel, "tool_approval")
-	}
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
+	// Build the execution context bound to this conversation.
+	llmContext := c.buildConversationContextWithTools(
+		ctx,
+		bot, user, channel,
+		conv.ID,
+		"Failed to load user tool preferences for tool approval",
+	)
+
+	llmContext.Tools.LoadMCPTools(conversation.DeriveLoadedMCPTools(turns))
 
 	// Execute approved tools and build results.
 	var toolResults []toolrunner.ToolResult
@@ -118,21 +119,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 
 		if slices.Contains(acceptedToolIDs, block.ID) {
-			toolCtx, toolSpan := telemetry.Tracer().Start(ctx, "resolve tool",
-				trace.WithAttributes(
-					telemetry.ToolName.String(block.Name),
-					telemetry.ToolID.String(block.ID),
-				),
-			)
-			result, resolveErr := llmContext.Tools.ResolveTool(toolCtx, block.Name, func(args any) error {
-				return json.Unmarshal(block.Input, args)
-			}, llmContext)
-			if resolveErr != nil {
-				toolSpan.SetAttributes(telemetry.ToolStatus.String("error"))
-			} else {
-				toolSpan.SetAttributes(telemetry.ToolStatus.String("success"))
-			}
-			toolSpan.End()
+			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -349,13 +336,17 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 			switch blocks[i].Type {
 			case conversation.BlockTypeToolUse:
 				if acceptedSet[blocks[i].ID] {
-					blocks[i].Shared = conversation.BoolPtr(true)
-					modified = true
+					if _, ok := clickedPostToolUseIDs[blocks[i].ID]; ok {
+						blocks[i].Shared = conversation.BoolPtr(true)
+						modified = true
+					}
 				}
 			case conversation.BlockTypeToolResult:
 				if acceptedSet[blocks[i].ToolUseID] {
-					blocks[i].Shared = conversation.BoolPtr(true)
-					modified = true
+					if _, ok := clickedPostToolUseIDs[blocks[i].ToolUseID]; ok {
+						blocks[i].Shared = conversation.BoolPtr(true)
+						modified = true
+					}
 				}
 				if _, ok := clickedPostToolUseIDs[blocks[i].ToolUseID]; ok && blocks[i].DecidedAt == nil {
 					blocks[i].DecidedAt = conversation.Int64Ptr(now)
@@ -414,14 +405,15 @@ func (c *Conversations) streamToolFollowUp(
 	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
 	defer span.End()
 
-	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
-		c.contextBuilder.WithLLMContextConversationID(conv.ID),
-	}
-	if isDM || channel.Type == model.ChannelTypeGroup {
-		contextOpts = c.withUserDisabledMCPServerOptions(contextOpts, user.Id, channel, "tool_follow_up")
-	}
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
+	channelToolFilterOpts, channelToolsAutoRunEverywhereOnly := c.channelFollowUpMCPToolFilterContextOptions(isDM, conv)
+	// Build the execution context bound to this conversation.
+	llmContext := c.buildConversationContextWithTools(
+		ctx,
+		bot, user, channel,
+		conv.ID,
+		"Failed to load user tool preferences for tool follow-up",
+		channelToolFilterOpts...,
+	)
 
 	toolsDisabled := !isDM
 	if !isDM && c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling() {
@@ -431,15 +423,8 @@ func (c *Conversations) streamToolFollowUp(
 		llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
 	}
 
-	if !isDM && !toolsDisabled && conv.RootPostID != nil {
-		if rootPost, rootErr := c.mmClient.GetPost(*conv.RootPostID); rootErr == nil {
-			if rootUser, userErr := c.mmClient.GetUser(rootPost.UserId); userErr == nil {
-				configEnabled := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
-				if configEnabled && isBotActivateAI(rootPost, rootUser) && c.toolPolicyChecker != nil {
-					c.applyBotChannelAutoEverywhereToolFilter(llmContext)
-				}
-			}
-		}
+	if !isDM && !toolsDisabled && channelToolsAutoRunEverywhereOnly {
+		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
 
 	completionReq, err := c.convService.BuildCompletionRequest(conv, llmContext)
@@ -476,6 +461,31 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	return nil
+}
+
+func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, block conversation.ContentBlock) (string, error) {
+	if llmContext == nil || llmContext.Tools == nil {
+		return "", fmt.Errorf("tool %s is no longer available", block.Name)
+	}
+
+	tool := llmContext.Tools.GetTool(block.Name)
+	if tool == nil {
+		if llmContext.Tools.IsUnloadedMCPTool(block.Name) {
+			return "", errors.New(mcp.UnloadedMCPToolUserHint(block.Name))
+		}
+		return "", fmt.Errorf("tool %s is no longer available", block.Name)
+	}
+
+	if block.ServerOrigin != "" && tool.ServerOrigin != block.ServerOrigin {
+		return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
+	}
+	if block.MCPBareName != "" && llm.BareMCPToolName(block.Name) != block.MCPBareName {
+		return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
+	}
+
+	return llmContext.Tools.ResolveTool(ctx, block.Name, func(args any) error {
+		return json.Unmarshal(block.Input, args)
+	}, llmContext)
 }
 
 // findPendingToolTurn returns the assistant turn linked to clickedPostID along
