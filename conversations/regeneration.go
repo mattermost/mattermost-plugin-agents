@@ -278,17 +278,20 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	// BuildCompletionRequest redacts unshared tool output by default.
-	// DMs opt in to the full content because their follow-up stream is
-	// scoped to the requester; DM tool_results are always shared=true so
-	// nothing would actually be redacted either way, this just documents
-	// intent.
+	// Build the request BEFORE scrubbing — ExcludeAfterPostID needs the anchor.
+	// AllowUnsharedToolContent on DMs is a no-op (DM tool_results are shared)
+	// but documents intent.
 	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{
 		ExcludeAfterPostID:       post.Id,
 		AllowUnsharedToolContent: isDM,
 	})
 	if buildErr != nil {
 		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)
+	}
+
+	// Scrub the prior generation so the stream runs identically to a first.
+	if delErr := c.convService.DeleteResponseTurns(conv.ID, post.Id); delErr != nil {
+		c.mmClient.LogError("Failed to scrub prior response turns on regen", "error", delErr.Error(), "post_id", post.Id, "conversation_id", conv.ID)
 	}
 
 	var opts []llm.LanguageModelOption

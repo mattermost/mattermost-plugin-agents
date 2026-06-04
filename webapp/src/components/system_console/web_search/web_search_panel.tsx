@@ -25,7 +25,7 @@ export type WebSearchConfig = {
     provider: string;
     google: WebSearchGoogleConfig;
     brave: WebSearchBraveConfig;
-    domainDenylist: string[];
+    domainDenylist: string[] | null; // server sends nil Go slice as JSON null
 };
 
 type Props = {

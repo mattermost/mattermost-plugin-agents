@@ -22,10 +22,10 @@ func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string) (st
 // origins. Unknown or disabled origins never auto-execute.
 func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool) {
 	if serverBaseURL == EmbeddedClientKey {
-		toolConfigs := cfg.EmbeddedServer.ToolConfigs
-		if len(toolConfigs) == 0 {
-			toolConfigs = SeedVettedToolConfigs(EmbeddedClientKey)
-		}
+		// Backfill the vetted seed for embedded tools the admin hasn't stored a
+		// config for, so tools added after an install first saved its configs
+		// still get their default policy. Stored entries win.
+		toolConfigs := mergeSeedConfigs(cfg.EmbeddedServer.ToolConfigs, SeedVettedToolConfigs(EmbeddedClientKey))
 		embeddedCfg := &ServerConfig{
 			Name:        EmbeddedServerName,
 			Enabled:     true,

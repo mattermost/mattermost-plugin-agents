@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/metrics"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -58,16 +59,27 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestS
 
 func TestHandleGetJobStatusIncludesStale(t *testing.T) {
 	tests := []struct {
-		name           string
-		indexerNil     bool
-		jobStatus      *indexer.JobStatus
-		expectedStatus int
-		expectedStale  bool
+		name              string
+		indexerNil        bool
+		jobStatus         *indexer.JobStatus
+		expectedStatus    int
+		expectedStale     bool
+		expectedBodyField string // optional: when set, asserts JSON contains {"status": <field>}
 	}{
 		{
-			name:           "returns 404 when indexer is nil",
-			indexerNil:     true,
-			expectedStatus: http.StatusNotFound,
+			name:              "returns 404 when indexer is nil",
+			indexerNil:        true,
+			expectedStatus:    http.StatusNotFound,
+			expectedBodyField: "no_job",
+		},
+		{
+			// Fresh install: missing KV key must surface as 404 with
+			// {"status":"no_job"} (the contract use_job_status.tsx relies on).
+			name:              "returns 404 with no_job when no job has ever run",
+			indexerNil:        false,
+			jobStatus:         nil,
+			expectedStatus:    http.StatusNotFound,
+			expectedBodyField: "no_job",
 		},
 		{
 			name:       "running job with recent heartbeat is not stale",
@@ -121,8 +133,43 @@ func TestHandleGetJobStatusIncludesStale(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, tt.expectedStale, response.IsStale)
 			}
+			if tt.expectedBodyField != "" {
+				var body map[string]string
+				err := json.NewDecoder(resp.Body).Decode(&body)
+				require.NoError(t, err)
+				require.Equal(t, tt.expectedBodyField, body["status"])
+			}
 		})
 	}
+}
+
+// Fresh install: clicking Cancel when no job has ever run must surface as
+// 404 {"status":"no_job"}, not a 500. Pre-fix, the wrapper masked the
+// missing key as a present-but-zero JobStatus and CancelJob returned
+// "not running" — which the handler matched. The wrapper fix promotes the
+// missing key to ErrKVNotFound, so the handler must branch on
+// IsKVNotFound or fall through to a 500.
+func TestHandleCancelJob_FreshInstallReturns404NoJob(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+	api.indexerService = createMockIndexer(t, &mockIndexerService{jobStatus: nil})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/reindex/cancel", nil)
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Equal(t, "no_job", body["status"])
 }
 
 func TestHandleIndexHealthCheck(t *testing.T) {
@@ -250,13 +297,6 @@ func TestHandleFetchModelsVertexAndGeminiValidation(t *testing.T) {
 	}
 }
 
-// notFoundError simulates the "not found" error that the indexer checks for
-type notFoundError struct{}
-
-func (e notFoundError) Error() string {
-	return "not found"
-}
-
 // mockIndexerService holds the mock configuration for creating test indexers
 type mockIndexerService struct {
 	jobStatus *indexer.JobStatus
@@ -269,13 +309,10 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 	mockMutexAPI := &plugintest.API{}
 	mockClient := mocks.NewMockClient(t)
 
-	// Setup mock for GetJobStatus - always handle the ReindexJobKey
 	if mockService.jobStatus == nil {
-		// No job exists - return "not found" error
 		mockClient.On("KVGet", indexer.ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Return(notFoundError{}).Maybe()
+			Return(mmapi.ErrKVNotFound).Maybe()
 	} else {
-		// Job exists - populate the status
 		mockClient.On("KVGet", indexer.ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(1).(*indexer.JobStatus)
@@ -456,6 +493,50 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			require.False(t, hasField, "exposeExternal must be omitted from admin tools payloads")
 		})
 	}
+}
+
+func TestHandleGetMCPTools_OmitsOrphanPluginServers(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+	mockAPI.On("LogDebug", mock.Anything).Return().Maybe()
+
+	mgr := api.mcpClientManager.(*mockMCPClientManager)
+	mgr.pluginServers = []mcp.PluginServerConfig{
+		{PluginID: "com.mattermost.live", Name: "Live", Path: "/mcp", Enabled: true},
+		{PluginID: "com.mattermost.inactive", Name: "Inactive", Path: "/mcp", Enabled: true},
+	}
+	mgr.orphanPluginIDs = map[string]bool{"com.mattermost.inactive": true}
+	mgr.discoverPluginToolsResponse = []mcp.ToolInfo{{Name: "echo"}}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/mcp/tools", nil)
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	rawBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	var body MCPToolsResponse
+	require.NoError(t, json.Unmarshal(rawBody, &body))
+
+	pluginRows := []MCPServerInfo{}
+	for _, s := range body.Servers {
+		if s.ServerType == "plugin" {
+			pluginRows = append(pluginRows, s)
+		}
+	}
+	require.Len(t, pluginRows, 1, "orphan plugin must be omitted from admin tools listing")
+	require.Equal(t, "Live", pluginRows[0].Name)
+
+	require.Equal(t, 1, mgr.discoverPluginToolsCallCount,
+		"orphan plugin must not be probed; probing would surface a misleading session-not-found error")
 }
 
 func TestHandleUpdatePluginServer(t *testing.T) {
@@ -666,6 +747,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 	tests := []struct {
 		name                  string
 		preRegistered         []mcp.PluginServerConfig
+		seededPersisted       []config.PluginServerConfig
 		body                  string
 		nilStoredConfig       bool
 		getErr                error
@@ -680,15 +762,11 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 		assertPersistedState  func(t *testing.T, savedCfg *config.Config)
 	}{
 		{
-			name: "happy path — saves full snapshot and broadcasts",
+			name: "happy path — persists only the edited entry and broadcasts",
 			preRegistered: []mcp.PluginServerConfig{
 				{
 					PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
 					Enabled: true, ExposeExternal: false,
-				},
-				{
-					PluginID: "com.mattermost.other", Name: "Other", Path: "/mcp",
-					Enabled: false, ExposeExternal: false,
 				},
 			},
 			body:                  `{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`,
@@ -699,22 +777,71 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectRegisterCalls:   1,
 			expectUnregisterCalls: 0,
 			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
-				require.Len(t, savedCfg.MCP.PluginServers, 2, "full snapshot includes all registered plugins")
+				require.Len(t, savedCfg.MCP.PluginServers, 1)
+
+				updated := savedCfg.MCP.PluginServers[0]
+				require.Equal(t, "com.mattermost.demo", updated.PluginID)
+				require.True(t, updated.Enabled, "Enabled preserved")
+				require.Len(t, updated.ToolConfigs, 1)
+				require.Equal(t, "echo", updated.ToolConfigs[0].Name)
+				require.False(t, updated.ToolConfigs[0].Enabled)
+			},
+		},
+		{
+			// Regression for MM-68980: admin updates one plugin while another
+			// plugin (with admin-customized config) is currently inactive in
+			// memory. The persisted entry for the inactive plugin must
+			// survive — replacing PluginServers with the in-memory snapshot
+			// would silently drop it and revert to plugin-supplied defaults
+			// on next re-registration.
+			name: "preserves persisted entries for plugins currently inactive in memory",
+			preRegistered: []mcp.PluginServerConfig{
+				{
+					PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+					Enabled: true, ExposeExternal: false,
+				},
+			},
+			seededPersisted: []config.PluginServerConfig{
+				{
+					PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+					Enabled: true, ExposeExternal: false,
+				},
+				{
+					PluginID: "com.mattermost.inactive", Name: "Inactive", Path: "/mcp",
+					Enabled: true, ExposeExternal: false,
+					ToolConfigs: []config.MCPToolConfig{
+						{Name: "destructive_tool", Policy: config.MCPToolPolicyAsk, Enabled: false},
+					},
+				},
+			},
+			body:                  `{"enabled": false}`,
+			expectStatus:          http.StatusOK,
+			expectSaveCalls:       1,
+			expectUpdateCalls:     1,
+			expectPublishCalls:    1,
+			expectRegisterCalls:   1,
+			expectUnregisterCalls: 0,
+			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
+				require.Len(t, savedCfg.MCP.PluginServers, 2,
+					"inactive plugin's persisted entry must not be dropped")
 
 				byID := map[string]config.PluginServerConfig{}
 				for _, ps := range savedCfg.MCP.PluginServers {
 					byID[ps.PluginID] = ps
 				}
 
-				updated := byID["com.mattermost.demo"]
-				require.True(t, updated.Enabled, "Enabled preserved")
-				require.Len(t, updated.ToolConfigs, 1)
-				require.Equal(t, "echo", updated.ToolConfigs[0].Name)
-				require.False(t, updated.ToolConfigs[0].Enabled)
+				demo, ok := byID["com.mattermost.demo"]
+				require.True(t, ok, "edited plugin must be persisted")
+				require.False(t, demo.Enabled, "edited Enabled flag must apply")
 
-				other := byID["com.mattermost.other"]
-				require.False(t, other.Enabled)
-				require.Empty(t, other.ToolConfigs)
+				inactive, ok := byID["com.mattermost.inactive"]
+				require.True(t, ok, "inactive plugin's persisted entry must be preserved")
+				require.True(t, inactive.Enabled, "inactive plugin's Enabled flag must be untouched")
+				require.Len(t, inactive.ToolConfigs, 1,
+					"inactive plugin's admin-set tool configs must be untouched")
+				require.Equal(t, "destructive_tool", inactive.ToolConfigs[0].Name)
+				require.False(t, inactive.ToolConfigs[0].Enabled,
+					"admin-disabled tool must remain disabled across unrelated updates")
 			},
 		},
 		{
@@ -796,6 +923,9 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			var seedCfg *config.Config
 			if !tt.nilStoredConfig {
 				seedCfg = &config.Config{}
+				if tt.seededPersisted != nil {
+					seedCfg.MCP.PluginServers = tt.seededPersisted
+				}
 			}
 			stores.configStore.cfg = seedCfg
 

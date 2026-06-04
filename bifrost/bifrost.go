@@ -20,7 +20,9 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
@@ -30,7 +32,23 @@ const (
 	DefaultMaxTokens        = 8192
 	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
+	// CountTokensTimeout caps the count-tokens preflight so a wedged provider
+	// can't block the request handler.
+	CountTokensTimeout = 30 * time.Second
 )
+
+type webSearchFallbackSource struct {
+	URL   string
+	Title string
+}
+
+type pendingAnnotationPosition struct {
+	index        int
+	missingStart bool
+	missingEnd   bool
+}
+
+const missingContentIndex = -1
 
 // LLM implements the llm.LanguageModel interface using the Bifrost gateway.
 type LLM struct {
@@ -41,7 +59,6 @@ type LLM struct {
 	inputTokenLimit  int
 	outputTokenLimit int
 	streamingTimeout time.Duration
-	sendUserID       bool
 
 	// Native tools and reasoning configuration
 	enabledNativeTools []string
@@ -73,7 +90,6 @@ type Config struct {
 	InputTokenLimit  int
 	OutputTokenLimit int
 	StreamingTimeout time.Duration
-	SendUserID       bool
 
 	// Native tools and reasoning configuration
 	EnabledNativeTools []string
@@ -201,6 +217,16 @@ func toolArgsToJSON(s string) json.RawMessage {
 	return json.RawMessage(s)
 }
 
+func readFileData(file llm.File) ([]byte, error) {
+	if len(file.Data) > 0 {
+		return file.Data, nil
+	}
+	if file.Reader == nil {
+		return nil, fmt.Errorf("file reader is nil")
+	}
+	return io.ReadAll(file.Reader)
+}
+
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
 	account := &providerAccount{
@@ -227,20 +253,14 @@ func New(cfg Config) (*LLM, error) {
 		streamingTimeout = DefaultStreamingTimeout
 	}
 
-	outputLimit := cfg.OutputTokenLimit
-	if outputLimit == 0 {
-		outputLimit = DefaultMaxTokens
-	}
-
 	return &LLM{
 		client:             client,
 		provider:           cfg.Provider,
 		apiKey:             cfg.APIKey,
 		defaultModel:       cfg.DefaultModel,
 		inputTokenLimit:    cfg.InputTokenLimit,
-		outputTokenLimit:   outputLimit,
+		outputTokenLimit:   cfg.OutputTokenLimit,
 		streamingTimeout:   streamingTimeout,
-		sendUserID:         cfg.SendUserID,
 		enabledNativeTools: cfg.EnabledNativeTools,
 		reasoningEnabled:   cfg.ReasoningEnabled,
 		reasoningEffort:    cfg.ReasoningEffort,
@@ -257,10 +277,16 @@ func (b *LLM) Shutdown() {
 }
 
 // GetDefaultConfig returns the default language model configuration.
+// MaxGeneratedTokens substitutes DefaultMaxTokens when unset because some
+// providers (Anthropic) require it.
 func (b *LLM) GetDefaultConfig() llm.LanguageModelConfig {
+	maxGenerated := b.outputTokenLimit
+	if maxGenerated == 0 {
+		maxGenerated = DefaultMaxTokens
+	}
 	return llm.LanguageModelConfig{
 		Model:              b.defaultModel,
-		MaxGeneratedTokens: b.outputTokenLimit,
+		MaxGeneratedTokens: maxGenerated,
 	}
 }
 
@@ -509,44 +535,182 @@ func (b *LLM) ChatCompletionNoStream(ctx context.Context, request llm.Completion
 	return result.ReadAll()
 }
 
-// CountTokens estimates the token count for the given text.
-func (b *LLM) CountTokens(text string) int {
-	// Approximation based on character and word counts
-	charCount := float64(len(text)) / 4.0
-	wordCount := float64(len(strings.Fields(text))) / 0.75
-	return int((charCount + wordCount) / 2.0)
+// InputTokenLimit returns the configured maximum number of input tokens.
+// Zero means "no client-side truncation" — the provider's own limit applies.
+func (b *LLM) InputTokenLimit() int {
+	return b.inputTokenLimit
 }
 
-// InputTokenLimit returns the maximum number of input tokens supported.
-func (b *LLM) InputTokenLimit() int {
-	if b.inputTokenLimit > 0 {
-		return b.inputTokenLimit
+// OutputTokenLimit returns the configured maximum number of output tokens.
+// Zero means the request-building layer falls back to DefaultMaxTokens.
+func (b *LLM) OutputTokenLimit() int {
+	return b.outputTokenLimit
+}
+
+// setTokenUsageSpanAttributes is the converted-TokenUsage counterpart of
+// setUsageAttributes in tracer.go.
+func setTokenUsageSpanAttributes(span trace.Span, usage llm.TokenUsage) {
+	attrs := []attribute.KeyValue{
+		telemetry.LLMInputTokens.Int64(usage.InputTokens),
+		telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
+	}
+	if usage.CachedReadTokens > 0 {
+		attrs = append(attrs, telemetry.LLMCachedReadTokens.Int64(usage.CachedReadTokens))
+	}
+	if usage.CachedWriteTokens > 0 {
+		attrs = append(attrs, telemetry.LLMCachedWriteTokens.Int64(usage.CachedWriteTokens))
+	}
+	if usage.ReasoningTokens > 0 {
+		attrs = append(attrs, telemetry.LLMReasoningTokens.Int64(usage.ReasoningTokens))
+	}
+	if usage.Cost > 0 {
+		attrs = append(attrs, telemetry.LLMCost.Float64(usage.Cost))
+	}
+	span.SetAttributes(attrs...)
+}
+
+// setCompositionSpanAttributes attaches per-source token attribution to the
+// span, derived from the request's posts and tools and scaled to the
+// provider's input-token total. One attribute per source.
+func setCompositionSpanAttributes(span trace.Span, request llm.CompletionRequest, usage llm.TokenUsage) {
+	if usage.InputTokens <= 0 {
+		return
+	}
+	inputs := request.Composition()
+	if len(inputs) == 0 {
+		return
+	}
+	composition := llm.ComputeComposition(inputs, int(usage.InputTokens), llm.CompositionTotalProvider)
+	attrs := composition.SpanAttributes()
+	if len(attrs) == 0 {
+		return
+	}
+	span.SetAttributes(attrs...)
+}
+
+func convertChatUsage(u *schemas.BifrostLLMUsage) llm.TokenUsage {
+	if u == nil {
+		return llm.TokenUsage{}
+	}
+	usage := llm.TokenUsage{
+		InputTokens:  int64(u.PromptTokens),
+		OutputTokens: int64(u.CompletionTokens),
+	}
+	if u.PromptTokensDetails != nil {
+		usage.CachedReadTokens = int64(u.PromptTokensDetails.CachedReadTokens)
+		usage.CachedWriteTokens = int64(u.PromptTokensDetails.CachedWriteTokens)
+	}
+	if u.CompletionTokensDetails != nil {
+		usage.ReasoningTokens = int64(u.CompletionTokensDetails.ReasoningTokens)
+	}
+	if u.Cost != nil {
+		usage.Cost = u.Cost.TotalCost
+	}
+	return usage
+}
+
+func convertResponsesUsage(u *schemas.ResponsesResponseUsage) llm.TokenUsage {
+	if u == nil {
+		return llm.TokenUsage{}
+	}
+	usage := llm.TokenUsage{
+		InputTokens:  int64(u.InputTokens),
+		OutputTokens: int64(u.OutputTokens),
+	}
+	if u.InputTokensDetails != nil {
+		usage.CachedReadTokens = int64(u.InputTokensDetails.CachedReadTokens)
+		usage.CachedWriteTokens = int64(u.InputTokensDetails.CachedWriteTokens)
+	}
+	if u.OutputTokensDetails != nil {
+		usage.ReasoningTokens = int64(u.OutputTokensDetails.ReasoningTokens)
+	}
+	if u.Cost != nil {
+		usage.Cost = u.Cost.TotalCost
+	}
+	return usage
+}
+
+// bifrostUnsupportedOperationCode is the error Code Bifrost returns when a
+// provider doesn't implement an operation (see providers/utils.NewUnsupportedOperationError).
+// Bifrost exposes no capability query, so we detect this at call time rather than
+// maintaining our own provider allowlist that would drift as Bifrost adds support.
+const bifrostUnsupportedOperationCode = "unsupported_operation"
+
+// CountTokens returns llm.ErrUnsupportedTokenCount when the provider lacks a
+// count-tokens endpoint, signaling callers to fall back to llm.EstimateTokens.
+func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
+	cfg := b.createConfig(opts)
+	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	if err != nil {
+		return 0, fmt.Errorf("failed to build count tokens request: %w", err)
+	}
+	// count_tokens shares the messages-endpoint schema but rejects some
+	// params: OpenAI 400s on max_output_tokens, Anthropic 400s on native
+	// server tools (web_search, file_search, code_interpreter). Reasoning
+	// and response-format config don't change the input-token count, so we
+	// keep only the function tool definitions — those DO count, and omitting
+	// them undercounts every tools-enabled bot.
+	if bifrostReq.Params != nil {
+		bifrostReq.Params = &schemas.ResponsesParameters{
+			Tools: functionToolsForCount(bifrostReq.Params.Tools),
+		}
 	}
 
-	// Default limits based on provider
-	switch b.provider {
-	case schemas.OpenAI, schemas.Anthropic:
-		return 128000
-	case schemas.Bedrock:
-		return 200000
-	default:
-		return 128000
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, CountTokensTimeout)
+	defer cancel()
+	resp, bifrostErr := b.client.CountTokensRequest(bifrostCtx, bifrostReq)
+	if bifrostErr != nil {
+		if bifrostErr.Error != nil && bifrostErr.Error.Code != nil && *bifrostErr.Error.Code == bifrostUnsupportedOperationCode {
+			return 0, llm.ErrUnsupportedTokenCount
+		}
+		msg := "unknown error"
+		if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
+			msg = bifrostErr.Error.Message
+		}
+		return 0, llm.SanitizeProviderError(fmt.Errorf("bifrost count tokens error: %s", msg), b.apiKey)
 	}
+	if resp == nil {
+		return 0, fmt.Errorf("bifrost count tokens returned nil response")
+	}
+	return resp.InputTokens, nil
+}
+
+// functionToolsForCount keeps only function (custom) tool definitions, which
+// contribute to the input-token count, and drops native server tools that the
+// count_tokens endpoint rejects.
+func functionToolsForCount(tools []schemas.ResponsesTool) []schemas.ResponsesTool {
+	var out []schemas.ResponsesTool
+	for _, t := range tools {
+		if t.Type == schemas.ResponsesToolTypeFunction {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // streamChat handles the streaming chat completion.
 func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
 	span := telemetry.SpanFromContext(ctx)
+	span.SetAttributes(
+		telemetry.LLMPath.String("chat"),
+		telemetry.LLMUseResponsesAPI.Bool(b.useResponsesAPI),
+	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost request
 	bifrostReq := b.convertToBifrostRequest(request, cfg)
+	if bifrostReq.Params != nil {
+		recordReasoningSent(span, bifrostReq.Params.Reasoning)
+	} else {
+		recordReasoningSent(span, nil)
+	}
 
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		recordBifrostError(span, bifrostErr)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -601,7 +765,8 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 		}
 
 		if chunk.BifrostError != nil {
-			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			recordBifrostError(span, chunk.BifrostError)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
@@ -718,15 +883,10 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 
 			// Handle usage data
 			if resp.Usage != nil {
-				usage := llm.TokenUsage{
-					InputTokens:  int64(resp.Usage.PromptTokens),
-					OutputTokens: int64(resp.Usage.CompletionTokens),
-				}
+				usage := convertChatUsage(resp.Usage)
 				if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-					span.SetAttributes(
-						telemetry.LLMInputTokens.Int64(usage.InputTokens),
-						telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
-					)
+					setTokenUsageSpanAttributes(span, usage)
+					setCompositionSpanAttributes(span, request, usage)
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeUsage,
 						Value: usage,
@@ -790,7 +950,6 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
-	reasoning := &schemas.ChatReasoning{}
 
 	switch b.provider {
 	case schemas.Anthropic:
@@ -798,11 +957,12 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		reasoning.MaxTokens = Ptr(budget)
+		return &schemas.ChatReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
 		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
 		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
 		// When an explicit budget is set use it; otherwise fall back to effort.
+		reasoning := &schemas.ChatReasoning{}
 		if b.thinkingBudget > 0 {
 			reasoning.MaxTokens = Ptr(b.thinkingBudget)
 		} else {
@@ -812,14 +972,12 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 			}
 			reasoning.Effort = Ptr(effort)
 		}
+		return reasoning
 	default:
-		effort := b.reasoningEffort
-		if effort == "" {
-			effort = "medium"
-		}
-		reasoning.Effort = Ptr(effort)
+		// OpenAI/Azure reasoning goes through the Responses API; providers that
+		// reach chat completions here (Cohere, Mistral, Bedrock) reject reasoning_effort.
+		return nil
 	}
-	return reasoning
 }
 
 // calculateThinkingBudget computes the thinking budget for Anthropic models.
@@ -850,6 +1008,10 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+		if cfg.ToolsDisabled {
+			none := string(schemas.ChatToolChoiceTypeNone)
+			params.ToolChoice = &schemas.ChatToolChoice{ChatToolChoiceStr: &none}
+		}
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildChatReasoning(cfg)
@@ -905,8 +1067,13 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				},
 			}
 
-			// Add reasoning details for thinking-enabled conversations
-			if post.Reasoning != "" {
+			// Add reasoning details for thinking-enabled conversations.
+			// Anthropic requires historical thinking blocks to include a valid
+			// provider-issued signature. If a previous stream failed before the
+			// signature arrived, we persist partial reasoning for display only; do
+			// not replay it to Anthropic as an unsigned thinking block. Other
+			// providers may accept unsigned reasoning, so preserve it for them.
+			if post.Reasoning != "" && (b.provider != schemas.Anthropic || post.ReasoningSignature != "") {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}
@@ -1054,7 +1221,7 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 			continue
 		}
 
-		data, err := io.ReadAll(file.Reader)
+		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, schemas.ChatContentBlock{
 				Type: schemas.ChatContentBlockTypeText,
@@ -1077,9 +1244,23 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 	return parts
 }
 
+func hasToolUseHistory(posts []llm.Post) bool {
+	for _, post := range posts {
+		if len(post.ToolUse) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // convertTools converts llm.Tool to Bifrost ChatTool format.
 func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ChatTool {
-	if cfg.ToolsDisabled || request.Context == nil || request.Context.Tools == nil {
+	if request.Context == nil || request.Context.Tools == nil {
+		return nil
+	}
+	// Keep tools defined when the history has tool_use blocks; tool_choice="none"
+	// (set by the caller) forbids further calls.
+	if cfg.ToolsDisabled && !hasToolUseHistory(request.Posts) {
 		return nil
 	}
 
@@ -1210,13 +1391,7 @@ func buildResponsesTextConfig(schema *jsonschema.Schema) (*schemas.ResponsesText
 
 // isValidImageType checks if the MIME type is supported.
 func isValidImageType(mimeType string) bool {
-	validTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
-	}
-	return validTypes[mimeType]
+	return llm.IsSupportedImageMimeType(mimeType)
 }
 
 // Ptr is a helper function to create a pointer to a value.
@@ -1355,7 +1530,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 			continue
 		}
 
-		data, err := io.ReadAll(file.Reader)
+		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, schemas.ResponsesMessageContentBlock{
 				Type: schemas.ResponsesInputMessageContentBlockTypeText,
@@ -1408,8 +1583,10 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 		})
 	}
 
-	// Add custom function tools if available
-	if !cfg.ToolsDisabled && request.Context != nil && request.Context.Tools != nil {
+	// Keep function tools defined when the history has tool_use blocks; the
+	// caller sets tool_choice="none" to forbid further calls. See hasToolUseHistory.
+	keepFunctionTools := !cfg.ToolsDisabled || hasToolUseHistory(request.Posts)
+	if keepFunctionTools && request.Context != nil && request.Context.Tools != nil {
 		tools := request.Context.Tools.GetTools()
 		for _, tool := range tools {
 			var params *schemas.ToolFunctionParameters
@@ -1454,7 +1631,6 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
-	reasoning := &schemas.ResponsesParametersReasoning{}
 
 	switch b.provider {
 	case schemas.Anthropic:
@@ -1462,12 +1638,13 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		reasoning.MaxTokens = Ptr(budget)
+		return &schemas.ResponsesParametersReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
 		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
 		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
 		// Prefer an explicit budget; otherwise fall back to effort. Enable summary
 		// so the provider returns reasoning text in the stream.
+		reasoning := &schemas.ResponsesParametersReasoning{Summary: Ptr("auto")}
 		if b.thinkingBudget > 0 {
 			reasoning.MaxTokens = Ptr(b.thinkingBudget)
 		} else {
@@ -1477,18 +1654,24 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 			}
 			reasoning.Effort = Ptr(effort)
 		}
-		reasoning.Summary = Ptr("auto")
-	default:
+		return reasoning
+	case schemas.OpenAI, schemas.Azure:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"
 		}
-		reasoning.Effort = Ptr(effort)
-		// Enable reasoning summaries so the provider returns reasoning text in the stream.
-		// Without this, providers like OpenAI will not include reasoning_summary events.
-		reasoning.Summary = Ptr("auto")
+		// Enable reasoning summaries so the provider returns reasoning text in
+		// the stream; without this OpenAI omits reasoning_summary events.
+		return &schemas.ResponsesParametersReasoning{
+			Effort:  Ptr(effort),
+			Summary: Ptr("auto"),
+		}
+	default:
+		// Bifrost will route a Responses-API request to chat completions for
+		// providers without native Responses support (e.g. Mistral). Those
+		// providers don't accept reasoning_effort, so drop it here too.
+		return nil
 	}
-	return reasoning
 }
 
 // convertToBifrostResponsesRequest converts our CompletionRequest to Bifrost's Responses API format.
@@ -1509,6 +1692,10 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+		if cfg.ToolsDisabled {
+			none := string(schemas.ResponsesToolChoiceTypeNone)
+			params.ToolChoice = &schemas.ResponsesToolChoice{ResponsesToolChoiceStr: &none}
+		}
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildResponsesReasoning(cfg)
@@ -1528,6 +1715,10 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 // streamResponses handles the streaming Responses API completion.
 func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
 	span := telemetry.SpanFromContext(ctx)
+	span.SetAttributes(
+		telemetry.LLMPath.String("responses"),
+		telemetry.LLMUseResponsesAPI.Bool(b.useResponsesAPI),
+	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
@@ -1540,11 +1731,17 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		}
 		return
 	}
+	if bifrostReq.Params != nil {
+		recordResponsesReasoningSent(span, bifrostReq.Params.Reasoning)
+	} else {
+		recordResponsesReasoningSent(span, nil)
+	}
 
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
+		recordBifrostError(span, bifrostErr)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -1572,8 +1769,10 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 	// Annotation buffer and text position tracking
 	var annotations []llm.Annotation
-	var textLen int       // cumulative byte length of all streamed text
-	var blockStartPos int // byte position where current text block started
+	var fallbackSources []webSearchFallbackSource
+	pendingAnnotationPositions := make(map[int][]pendingAnnotationPosition)
+	var textLen int       // cumulative UTF-16 length of all streamed text
+	var blockStartPos int // UTF-16 position where current text block started
 
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
@@ -1611,7 +1810,8 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		}
 
 		if chunk.BifrostError != nil {
-			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
+			recordBifrostError(span, chunk.BifrostError)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
@@ -1644,7 +1844,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 						Type:  llm.EventTypeText,
 						Value: *resp.Delta,
 					}
-					textLen += len(*resp.Delta)
+					textLen += llm.UTF16CodeUnitCount(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
@@ -1675,8 +1875,10 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				if resp.Annotation != nil {
 					if ann := convertBifrostAnnotation(resp.Annotation, len(annotations)+1); ann != nil {
 						// Bifrost doesn't provide output-text positions during Anthropic streaming.
-						// Compute them from tracked block boundaries, matching the approach used by
-						// the old Anthropic SDK implementation (extractAnnotations).
+						// Attach those citations to the current text block and correct the end
+						// position when output_text.done arrives.
+						missingStart := resp.Annotation.StartIndex == nil
+						missingEnd := resp.Annotation.EndIndex == nil
 						if resp.Annotation.StartIndex == nil {
 							ann.StartIndex = blockStartPos
 						}
@@ -1684,6 +1886,20 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 							ann.EndIndex = textLen
 						}
 						annotations = append(annotations, *ann)
+						if missingStart || missingEnd {
+							contentIndex := missingContentIndex
+							if resp.ContentIndex != nil {
+								contentIndex = *resp.ContentIndex
+							}
+							pendingAnnotationPositions[contentIndex] = append(
+								pendingAnnotationPositions[contentIndex],
+								pendingAnnotationPosition{
+									index:        len(annotations) - 1,
+									missingStart: missingStart,
+									missingEnd:   missingEnd,
+								},
+							)
+						}
 					}
 				}
 
@@ -1694,6 +1910,17 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				// Text block complete - emit accumulated annotations and advance block position.
 				// Keep the annotation buffer so subsequent output_text_done events can include
 				// citations accumulated across the full response.
+				contentIndex := missingContentIndex
+				if resp.ContentIndex != nil {
+					contentIndex = *resp.ContentIndex
+				}
+				flushPendingAnnotationPositions(
+					annotations,
+					pendingAnnotationPositions,
+					contentIndex,
+					blockStartPos,
+					textLen,
+				)
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
@@ -1772,6 +1999,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemDone:
+				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
 				// Output item completed - finalize function call if any
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
@@ -1808,6 +2036,13 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				}
 
 				// Emit any accumulated annotations
+				for contentIndex, positions := range pendingAnnotationPositions {
+					applyPendingAnnotationPositions(annotations, positions, blockStartPos, textLen)
+					delete(pendingAnnotationPositions, contentIndex)
+				}
+				if len(annotations) == 0 && len(fallbackSources) > 0 {
+					annotations = buildFallbackAnnotations(fallbackSources, textLen)
+				}
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
@@ -1843,15 +2078,10 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 				// Handle usage data from completed response
 				if resp.Response != nil && resp.Response.Usage != nil {
-					usage := llm.TokenUsage{
-						InputTokens:  int64(resp.Response.Usage.InputTokens),
-						OutputTokens: int64(resp.Response.Usage.OutputTokens),
-					}
+					usage := convertResponsesUsage(resp.Response.Usage)
 					if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-						span.SetAttributes(
-							telemetry.LLMInputTokens.Int64(usage.InputTokens),
-							telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
-						)
+						setTokenUsageSpanAttributes(span, usage)
+						setCompositionSpanAttributes(span, request, usage)
 						output <- llm.TextStreamEvent{
 							Type:  llm.EventTypeUsage,
 							Value: usage,
@@ -1928,4 +2158,75 @@ func convertBifrostAnnotation(ann *schemas.ResponsesOutputMessageContentTextAnno
 	}
 
 	return result
+}
+
+func appendFirstWebSearchFallbackSource(sources []webSearchFallbackSource, item *schemas.ResponsesMessage) []webSearchFallbackSource {
+	if item == nil || item.Type == nil || *item.Type != schemas.ResponsesMessageTypeWebSearchCall {
+		return sources
+	}
+	if item.Action == nil || item.Action.ResponsesWebSearchToolCallAction == nil {
+		return sources
+	}
+
+	for _, source := range item.Action.ResponsesWebSearchToolCallAction.Sources {
+		if source.URL == "" || hasFallbackSource(sources, source.URL) {
+			continue
+		}
+		title := ""
+		if source.Title != nil {
+			title = *source.Title
+		}
+		sources = append(sources, webSearchFallbackSource{
+			URL:   source.URL,
+			Title: title,
+		})
+	}
+	return sources
+}
+
+func hasFallbackSource(sources []webSearchFallbackSource, url string) bool {
+	for _, source := range sources {
+		if source.URL == url {
+			return true
+		}
+	}
+	return false
+}
+
+func buildFallbackAnnotations(sources []webSearchFallbackSource, endIndex int) []llm.Annotation {
+	annotations := make([]llm.Annotation, 0, len(sources))
+	for i, source := range sources {
+		annotations = append(annotations, llm.Annotation{
+			Type:       llm.AnnotationTypeURLCitation,
+			StartIndex: endIndex,
+			EndIndex:   endIndex,
+			URL:        source.URL,
+			Title:      source.Title,
+			Index:      i + 1,
+		})
+	}
+	return annotations
+}
+
+func applyPendingAnnotationPositions(annotations []llm.Annotation, positions []pendingAnnotationPosition, startIndex, endIndex int) {
+	for _, position := range positions {
+		if position.index < 0 || position.index >= len(annotations) {
+			continue
+		}
+		if position.missingStart {
+			annotations[position.index].StartIndex = startIndex
+		}
+		if position.missingEnd {
+			annotations[position.index].EndIndex = endIndex
+		}
+	}
+}
+
+func flushPendingAnnotationPositions(
+	annotations []llm.Annotation,
+	pending map[int][]pendingAnnotationPosition,
+	contentIndex, startIndex, endIndex int,
+) {
+	applyPendingAnnotationPositions(annotations, pending[contentIndex], startIndex, endIndex)
+	delete(pending, contentIndex)
 }

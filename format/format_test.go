@@ -664,3 +664,44 @@ func TestAgentList(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteFileDescriptor(t *testing.T) {
+	tests := []struct {
+		name     string
+		entry    FileDescriptorEntry
+		expected string
+	}{
+		{
+			name: "numbered header with full metadata",
+			entry: FileDescriptorEntry{
+				Number: 1,
+				FileInfo: &model.FileInfo{
+					Id:       "fileid1234567890123456789a",
+					Name:     "report.pdf",
+					MimeType: "application/pdf",
+					Size:     2412345,
+				},
+			},
+			expected: "**Attached File 1**:\nName: report.pdf\nFile ID: fileid1234567890123456789a\nType: application/pdf\nSize: 2412345 bytes\n\n",
+		},
+		{
+			name: "zero number omits header, no mime type",
+			entry: FileDescriptorEntry{
+				FileInfo: &model.FileInfo{
+					Id:   "fileid1234567890123456789b",
+					Name: "data.bin",
+					Size: 10,
+				},
+			},
+			expected: "Name: data.bin\nFile ID: fileid1234567890123456789b\nSize: 10 bytes\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			WriteFileDescriptor(&buf, tt.entry)
+			assert.Equal(t, tt.expected, buf.String())
+		})
+	}
+}

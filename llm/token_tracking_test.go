@@ -31,12 +31,17 @@ func (m *MockLanguageModel) ChatCompletionNoStream(ctx context.Context, request 
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockLanguageModel) CountTokens(text string) int {
-	args := m.Called(text)
-	return args.Int(0)
+func (m *MockLanguageModel) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	args := m.Called(ctx, request, opts)
+	return args.Int(0), args.Error(1)
 }
 
 func (m *MockLanguageModel) InputTokenLimit() int {
+	args := m.Called()
+	return args.Int(0)
+}
+
+func (m *MockLanguageModel) OutputTokenLimit() int {
 	args := m.Called()
 	return args.Int(0)
 }
@@ -323,41 +328,67 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 		botName:          "Agent Bot",
 		botUsername:      "agent",
 		botUserID:        "bot-user-1",
-		model:            "gpt-4.1",
-		serviceType:      "openai",
+		model:            "claude-sonnet-4-5",
+		serviceType:      "anthropic",
 		operation:        OperationConversation,
 		operationSubType: SubTypeStreaming,
 	}
-	usage := TokenUsage{InputTokens: 11, OutputTokens: 7}
 
-	expected := []any{
-		"event", TokenUsageLogEvent,
-		"schema_version", TokenUsageLogSchemaVersion,
-		"user_id", "user-1",
-		"team_id", "team-1",
-		"channel_id", "channel-1",
-		"channel_type", "open",
-		"agent_name", "Agent Bot",
-		"agent_username", "agent",
-		"bot_username", "agent",
-		"agent_user_id", "bot-user-1",
-		"model", "gpt-4.1",
-		"service_type", "openai",
-		"operation", OperationConversation,
-		"operation_subtype", SubTypeStreaming,
-		"input_tokens", int64(11),
-		"output_tokens", int64(7),
-		"total_tokens", int64(18),
+	tests := []struct {
+		name  string
+		usage TokenUsage
+		want  map[string]any
+	}{
+		{
+			name:  "rich usage fields populated",
+			usage: TokenUsage{InputTokens: 1000, OutputTokens: 300, CachedReadTokens: 800, CachedWriteTokens: 100, ReasoningTokens: 64, Cost: 0.0123},
+			want: map[string]any{
+				"input_tokens":        int64(1000),
+				"output_tokens":       int64(300),
+				"total_tokens":        int64(1300),
+				"cached_read_tokens":  int64(800),
+				"cached_write_tokens": int64(100),
+				"reasoning_tokens":    int64(64),
+				"cost":                0.0123,
+			},
+		},
+		{
+			name:  "zero usage emits zeros for every numeric field",
+			usage: TokenUsage{},
+			want: map[string]any{
+				"input_tokens":        int64(0),
+				"output_tokens":       int64(0),
+				"total_tokens":        int64(0),
+				"cached_read_tokens":  int64(0),
+				"cached_write_tokens": int64(0),
+				"reasoning_tokens":    int64(0),
+				"cost":                float64(0),
+			},
+		},
 	}
 
-	actual := buildTokenUsageLogKeyValuePairs(dimensions, usage)
-	assert.Equal(t, expected, actual)
-
-	expectedMlogFields := make([]mlog.Field, 0, len(expected)/2)
-	for i := 0; i+1 < len(expected); i += 2 {
-		expectedMlogFields = append(expectedMlogFields, mlog.Any(expected[i].(string), expected[i+1]))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fields := buildTokenUsageLogKeyValuePairs(dimensions, tt.usage)
+			keyed := map[string]any{}
+			for i := 0; i+1 < len(fields); i += 2 {
+				keyed[fields[i].(string)] = fields[i+1]
+			}
+			for key, want := range tt.want {
+				assert.Equal(t, want, keyed[key], "field %s", key)
+			}
+			// Dimensions and meta keys must always be present.
+			assert.Equal(t, TokenUsageLogEvent, keyed["event"])
+			assert.Equal(t, TokenUsageLogSchemaVersion, keyed["schema_version"])
+			assert.Equal(t, "user-1", keyed["user_id"])
+			assert.Equal(t, "claude-sonnet-4-5", keyed["model"])
+		})
 	}
-	assert.Equal(t, expectedMlogFields, tokenUsageKeyValuePairsToMlogFields(actual))
+}
+
+func TestTokenUsageKeyValuePairsToMlogFields(t *testing.T) {
+	out := tokenUsageKeyValuePairsToMlogFields([]any{"foo", "bar", "n", int64(42)})
+	assert.Equal(t, []mlog.Field{mlog.Any("foo", "bar"), mlog.Any("n", int64(42))}, out)
 }
 
 func TestTokenTrackingWrapper_DefaultOperationSubType(t *testing.T) {
@@ -450,9 +481,11 @@ func TestTokenTrackingWrapper_DelegatedMethods(t *testing.T) {
 	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-llm", sinks, nil)
 
 	t.Run("CountTokens delegates to wrapped model", func(t *testing.T) {
-		mockLLM.On("CountTokens", "test text").Return(42)
+		req := CompletionRequest{Posts: []Post{{Role: PostRoleUser, Message: "test text"}}}
+		mockLLM.On("CountTokens", mock.Anything, req, mock.Anything).Return(42, nil)
 
-		result := wrapper.CountTokens("test text")
+		result, err := wrapper.CountTokens(context.Background(), req)
+		require.NoError(t, err)
 		assert.Equal(t, 42, result)
 
 		mockLLM.AssertExpectations(t)

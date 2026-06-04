@@ -22,12 +22,28 @@ function notifySubscribers() {
     subscribers.forEach((cb) => cb());
 }
 
+// Listener fan-out so satellite caches (use_conversation_context) stay in
+// sync without every invalidator having to know about each one.
+type InvalidationListener = (conversationId: string) => void;
+const invalidationListeners: InvalidationListener[] = [];
+
+export function onConversationInvalidated(listener: InvalidationListener): () => void {
+    invalidationListeners.push(listener);
+    return () => {
+        const idx = invalidationListeners.indexOf(listener);
+        if (idx >= 0) {
+            invalidationListeners.splice(idx, 1);
+        }
+    };
+}
+
 /** Force re-fetch of a specific conversation (called from WebSocket handler). */
 export function invalidateConversation(conversationId: string) {
     conversationCache.delete(conversationId);
     errorCache.delete(conversationId);
     inflightRequests.delete(conversationId);
     notifySubscribers();
+    invalidationListeners.forEach((l) => l(conversationId));
 }
 
 /** Clear all cached conversations. Exported for test cleanup only. */
@@ -42,13 +58,23 @@ function fetchConversation(id: string): Promise<ConversationResponse> {
     if (existing) {
         return existing;
     }
-    const promise = getConversation(id).then((data) => {
+
+    // Identity-check the inflight promise so a fetch evicted mid-flight by
+    // invalidateConversation can't overwrite the newer fetch's result.
+    const settle = (data: ConversationResponse) => {
+        if (inflightRequests.get(id) !== promise) {
+            return data;
+        }
         conversationCache.set(id, data);
         errorCache.delete(id);
         inflightRequests.delete(id);
         notifySubscribers();
         return data;
-    }).catch((err) => {
+    };
+    const fail = (err: Error): never => {
+        if (inflightRequests.get(id) !== promise) {
+            throw err;
+        }
         errorCache.set(id, err);
         inflightRequests.delete(id);
 
@@ -57,7 +83,8 @@ function fetchConversation(id: string): Promise<ConversationResponse> {
         // loading=true since the dedup path made them skip their own fetch.
         notifySubscribers();
         throw err;
-    });
+    };
+    const promise: Promise<ConversationResponse> = getConversation(id).then(settle, fail);
     inflightRequests.set(id, promise);
     return promise;
 }

@@ -14,6 +14,7 @@ import (
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 )
 
@@ -143,13 +144,12 @@ func (t *otelTracer) PopulateLLMResponseAttributes(_ *bschemas.BifrostContext, h
 		return
 	}
 	if usage := chatUsage(resp); usage != nil {
-		h.span.SetAttributes(
-			telemetry.LLMInputTokens.Int64(int64(usage.PromptTokens)),
-			telemetry.LLMOutputTokens.Int64(int64(usage.CompletionTokens)),
-		)
+		setUsageAttributes(h.span, usage)
 	}
 	if bErr != nil && bErr.Error != nil {
-		h.span.SetStatus(otelcodes.Error, bErr.Error.Message)
+		// Sanitize before recording: provider error messages can echo back API
+		// keys, which would otherwise be exported in the span status.
+		h.span.SetStatus(otelcodes.Error, llm.SanitizeProviderErrorMessage(bErr.Error.Message, ""))
 	}
 }
 
@@ -319,6 +319,30 @@ func (t *otelTracer) Stop() {
 	t.streamFirstAt = map[string]time.Time{}
 	t.streamResponse = map[string]*bschemas.BifrostResponse{}
 	t.mu.Unlock()
+}
+
+// setUsageAttributes only emits cached / reasoning / cost attributes when the
+// value is non-zero so spans from providers that don't expose them stay clean.
+func setUsageAttributes(span trace.Span, usage *bschemas.BifrostLLMUsage) {
+	attrs := []attribute.KeyValue{
+		telemetry.LLMInputTokens.Int64(int64(usage.PromptTokens)),
+		telemetry.LLMOutputTokens.Int64(int64(usage.CompletionTokens)),
+	}
+	if d := usage.PromptTokensDetails; d != nil {
+		if d.CachedReadTokens > 0 {
+			attrs = append(attrs, telemetry.LLMCachedReadTokens.Int64(int64(d.CachedReadTokens)))
+		}
+		if d.CachedWriteTokens > 0 {
+			attrs = append(attrs, telemetry.LLMCachedWriteTokens.Int64(int64(d.CachedWriteTokens)))
+		}
+	}
+	if d := usage.CompletionTokensDetails; d != nil && d.ReasoningTokens > 0 {
+		attrs = append(attrs, telemetry.LLMReasoningTokens.Int64(int64(d.ReasoningTokens)))
+	}
+	if usage.Cost != nil && usage.Cost.TotalCost > 0 {
+		attrs = append(attrs, telemetry.LLMCost.Float64(usage.Cost.TotalCost))
+	}
+	span.SetAttributes(attrs...)
 }
 
 // chatUsage returns the chat-completion usage struct from a BifrostResponse,

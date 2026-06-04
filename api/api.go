@@ -23,6 +23,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/files"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -70,6 +71,7 @@ type MCPClientManager interface {
 	UnregisterPluginServer(pluginID string)
 	ListPluginServers() []mcp.PluginServerConfig
 	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
+	IsPluginRegistered(pluginID string) bool
 
 	DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
 }
@@ -127,6 +129,7 @@ type API struct {
 	meetingsService       *meetings.Service
 	indexerService        *indexer.Indexer
 	searchService         *search.Search
+	fileService           *files.Service
 	pluginAPI             *pluginapi.Client
 	metricsService        metrics.Metrics
 	metricsHandler        http.Handler
@@ -199,6 +202,7 @@ func New(
 		meetingsService:       meetingsService,
 		indexerService:        indexerService,
 		searchService:         searchService,
+		fileService:           files.New(mmClient),
 		pluginAPI:             pluginAPI,
 		metricsService:        metricsService,
 		metricsHandler:        metrics.NewMetricsHandler(metricsService),
@@ -281,6 +285,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.Use(a.MattermostAuthorizationRequired)
 
 	router.GET("/conversations/:conversationid", a.handleGetConversation)
+	router.GET("/conversations/:conversationid/context", a.handleGetConversationContext)
 
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
@@ -311,6 +316,11 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// Used by the MCP server for external search callbacks.
 	router.POST("/search/raw", a.handleRawSearch)
 
+	// Raw file content endpoint returns a ranged slice of a file's text after
+	// checking the requesting user's channel permission. Used by the MCP server
+	// for external read_file callbacks.
+	router.POST("/files/content", a.handleRawFileContent)
+
 	// Custom prompts routes — available to all authenticated users
 	promptsRouter := router.Group("/custom-prompts")
 	promptsRouter.POST("", a.handleCreateCustomPrompt)
@@ -335,6 +345,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/tool_call", a.handleToolCall)
 	postRouter.POST("/tool_result", a.handleToolResult)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
+	postRouter.POST("/loop_in_agent", a.handleLoopInAgent)
 
 	channelRouter := botRequiredRouter.Group("/channel/:channelid")
 	channelRouter.Use(a.channelAuthorizationRequired)

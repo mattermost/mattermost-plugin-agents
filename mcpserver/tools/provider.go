@@ -67,19 +67,20 @@ type SemanticSearchService interface {
 
 // MattermostToolProvider provides Mattermost tools following the mmtools pattern
 type MattermostToolProvider struct {
-	authProvider     auth.AuthenticationProvider
-	logger           logger.Logger
-	mmServerURL      string // Mattermost server URL for API communication (internal URL if set, otherwise external)
-	devMode          bool
-	accessMode       AccessMode
-	trackAIGenerated bool                  // Whether to add ai_generated_by props to posts
-	searchService    SemanticSearchService // Optional semantic search service, can be nil
+	authProvider       auth.AuthenticationProvider
+	logger             logger.Logger
+	mmServerURL        string // Mattermost server URL for API communication (internal URL if set, otherwise external)
+	devMode            bool
+	accessMode         AccessMode
+	trackAIGenerated   bool                  // Whether to add ai_generated_by props to posts
+	searchService      SemanticSearchService // Optional semantic search service, can be nil
+	fileContentService FileContentService    // Optional file content service for read_file, can be nil
 }
 
 // NewMattermostToolProvider creates a new tool provider
 // Now accepts a ServerConfig interface to avoid circular dependencies
 // searchService is optional and can be nil if semantic search is not available
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode, searchService SemanticSearchService) *MattermostToolProvider {
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	serverURL := config.GetMMInternalServerURL()
 	if serverURL == "" {
@@ -87,13 +88,14 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 	}
 
 	return &MattermostToolProvider{
-		authProvider:     authProvider,
-		logger:           logger,
-		mmServerURL:      serverURL,
-		devMode:          config.GetDevMode(),
-		accessMode:       accessMode,
-		trackAIGenerated: config.GetTrackAIGenerated(),
-		searchService:    searchService,
+		authProvider:       authProvider,
+		logger:             logger,
+		mmServerURL:        serverURL,
+		devMode:            config.GetDevMode(),
+		accessMode:         accessMode,
+		trackAIGenerated:   config.GetTrackAIGenerated(),
+		searchService:      searchService,
+		fileContentService: fileContentService,
 	}
 }
 
@@ -105,6 +107,7 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	mcpTools = append(mcpTools, p.getChannelTools()...)
 	mcpTools = append(mcpTools, p.getTeamTools()...)
 	mcpTools = append(mcpTools, p.getSearchTools()...)
+	mcpTools = append(mcpTools, p.getFileTools()...)
 	mcpTools = append(mcpTools, p.getAgentTools()...)
 
 	// Automation tools are always registered; availability is checked dynamically

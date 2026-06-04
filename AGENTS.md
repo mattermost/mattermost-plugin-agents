@@ -15,8 +15,7 @@ Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go 1.2
 - Lint only: `make check-style`
 - All unit tests: `make test`
 - Single Go test: `go test -v ./<pkg> -run TestName`
-- Build & deploy plugin to a running Mattermost (linux-amd64 only by default): `make deploy`
-  Set `MAKE_ALL_PLATFORMS=1` only if you're deploying to a Mac- or Windows-native server.
+- Build & deploy plugin to a running Mattermost: `make deploy`
 - E2E (self-contained, no env setup needed; slow, defer to CI when possible): `make e2e`
 - Single e2e spec: `cd e2e && npx playwright test tests/path/spec.ts --reporter=list`
 - Prompt evals (non-interactive): `make evals-ci`

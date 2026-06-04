@@ -16,10 +16,13 @@ import {useBotlist} from '@/bots';
 
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
+import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
+
 import type {UserMCPServerInfo} from './tool_provider_popover';
 import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
 import RHSNewTab from './rhs_new_tab';
+import RhsFileDropZone from './rhs_file_drop_zone';
 
 const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
     height: 100%;
@@ -106,6 +109,7 @@ export default function RHS() {
     }, [dispatch]);
 
     const {bots, activeBot, setActiveBot} = useBotlist();
+    const activeConversationId = useConversationIdForThread(selectedPostId);
 
     // No bots available - hide the RHS entirely
     if (bots && bots.length === 0) {
@@ -113,10 +117,12 @@ export default function RHS() {
     }
 
     let content = null;
+    let wrapInDropZone = false;
     if (selectedPostId) {
         if (currentTab !== 'thread') {
             setCurrentTab('thread');
         }
+        wrapInDropZone = true;
         content = (
             <ThreadViewer
                 data-testid='rhs-thread-viewer'
@@ -151,6 +157,7 @@ export default function RHS() {
             content = null;
         }
     } else if (currentTab === 'new') {
+        wrapInDropZone = true;
         content = (
             <RHSNewTab
                 data-testid='rhs-new-tab'
@@ -174,8 +181,11 @@ export default function RHS() {
                 disabledServers={disabledServers}
                 onDisabledServersChange={setDisabledServers}
                 preloadedServers={preloadedServers}
+                activeConversationId={activeConversationId}
             />
-            {content}
+            {wrapInDropZone ? (
+                <RhsFileDropZone>{content}</RhsFileDropZone>
+            ) : content}
         </RhsContainer>
     );
 }

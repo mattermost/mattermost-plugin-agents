@@ -33,10 +33,17 @@ HAS_PUBLIC :=
 $(info Note: public/ directory contains Go modules, not HTTP assets - skipping bundle)
 
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
+BUNDLE_DIR ?= dist
+SERVER_DIST_SRC ?= server/dist
 
 # Include custom makefile, if present
 ifneq ($(wildcard build/custom.mk),)
 	include build/custom.mk
+endif
+
+# Presence of build/fips.mk is the per-plugin FIPS opt-in marker.
+ifneq ($(wildcard build/fips.mk),)
+	include build/fips.mk
 endif
 
 ifneq ($(MM_DEBUG),)
@@ -319,36 +326,36 @@ endif
 ## Generates a tar bundle of the plugin for install.
 .PHONY: bundle
 bundle:
-	rm -rf dist/
-	mkdir -p dist/$(PLUGIN_ID)
-	./build/bin/manifest dist
+	rm -rf $(BUNDLE_DIR)/
+	mkdir -p $(BUNDLE_DIR)/$(PLUGIN_ID)
+	./build/bin/manifest dist $(BUNDLE_DIR)
 ifneq ($(wildcard LICENSE.txt),)
-	cp -r LICENSE.txt dist/$(PLUGIN_ID)/
+	cp -r LICENSE.txt $(BUNDLE_DIR)/$(PLUGIN_ID)/
 endif
 ifneq ($(wildcard NOTICE.txt),)
-	cp -r NOTICE.txt dist/$(PLUGIN_ID)/
+	cp -r NOTICE.txt $(BUNDLE_DIR)/$(PLUGIN_ID)/
 endif
 ifneq ($(wildcard $(ASSETS_DIR)/.),)
-	cp -r $(ASSETS_DIR) dist/$(PLUGIN_ID)/
+	cp -r $(ASSETS_DIR) $(BUNDLE_DIR)/$(PLUGIN_ID)/
 endif
 ifneq ($(HAS_PUBLIC),)
-	cp -r public dist/$(PLUGIN_ID)/
+	cp -r public $(BUNDLE_DIR)/$(PLUGIN_ID)/
 endif
 ifneq ($(HAS_SERVER),)
-	mkdir -p dist/$(PLUGIN_ID)/server
-	cp -r server/dist dist/$(PLUGIN_ID)/server/
+	mkdir -p $(BUNDLE_DIR)/$(PLUGIN_ID)/server/dist
+	cp -r $(SERVER_DIST_SRC)/. $(BUNDLE_DIR)/$(PLUGIN_ID)/server/dist/
 endif
 ifneq ($(HAS_WEBAPP),)
-	mkdir -p dist/$(PLUGIN_ID)/webapp
-	cp -r webapp/dist dist/$(PLUGIN_ID)/webapp/
+	mkdir -p $(BUNDLE_DIR)/$(PLUGIN_ID)/webapp
+	cp -r webapp/dist $(BUNDLE_DIR)/$(PLUGIN_ID)/webapp/
 endif
 ifeq ($(shell uname),Darwin)
-	cd dist && tar --disable-copyfile -cvzf $(BUNDLE_NAME) $(PLUGIN_ID)
+	cd $(BUNDLE_DIR) && tar --disable-copyfile -cvzf $(BUNDLE_NAME) $(PLUGIN_ID)
 else
-	cd dist && tar -cvzf $(BUNDLE_NAME) $(PLUGIN_ID)
+	cd $(BUNDLE_DIR) && tar -cvzf $(BUNDLE_NAME) $(PLUGIN_ID)
 endif
 
-	@echo plugin built at: dist/$(BUNDLE_NAME)
+	@echo plugin built at: $(BUNDLE_DIR)/$(BUNDLE_NAME)
 
 ## Builds the server for Linux amd64 only (CI optimized).
 .PHONY: server-ci
@@ -370,16 +377,9 @@ dist: apply server webapp bundle
 .PHONY: dist-ci
 dist-ci: apply server-ci webapp bundle
 
-## Builds and installs the plugin to a server. Builds linux-amd64 only by
-## default (the platform of most Mattermost server deployments). Set
-## MAKE_ALL_PLATFORMS=1 to build all supported OS/arch combinations — needed
-## when deploying to a Mac- or Windows-native Mattermost.
+## Builds and installs the plugin to a server.
 .PHONY: deploy
-ifeq ($(MAKE_ALL_PLATFORMS),)
-deploy: dist-ci
-else
 deploy: dist
-endif
 	./build/bin/pluginctl deploy $(PLUGIN_ID) dist/$(BUNDLE_NAME)
 
 ## Builds the MCP server binary.
@@ -558,9 +558,12 @@ mock:
 .PHONY: clean
 clean:
 	rm -fr dist/
+	rm -fr dist-fips/
 ifneq ($(HAS_SERVER),)
 	rm -fr server/coverage.txt
 	rm -fr server/dist
+	rm -fr server/dist-fips
+	rm -fr server/dist-fips-staged
 endif
 ifneq ($(HAS_WEBAPP),)
 	rm -fr webapp/junit.xml
@@ -589,7 +592,7 @@ help:
 	@printf "  \033[36m%-22s\033[0m %s\n" "check-style-fix" "Lint and auto-fix what's fixable; re-extracts i18n strings"
 	@printf "  \033[36m%-22s\033[0m %s\n" "test" "Run all unit tests"
 	@printf "  \033[36m%-22s\033[0m %s\n" "e2e" "Run Playwright e2e suite (slow, defer to CI when possible)"
-	@printf "  \033[36m%-22s\033[0m %s\n" "deploy" "Build linux-amd64 and deploy to a running Mattermost"
+	@printf "  \033[36m%-22s\033[0m %s\n" "deploy" "Build and deploy to a running Mattermost"
 	@printf "\nAll documented targets:\n\n"
 	@awk '/^## / { sub(/^## /, "", $$0); if (doc == "") doc=$$0; next } \
 	      /^## *$$/ { next } \

@@ -23,6 +23,11 @@ type FakeLLM struct {
 	StreamEvents []llm.TextStreamEvent
 	// TokenCount to return from CountTokens
 	TokenCount int
+	// CountTokensError, when set, is returned from CountTokens. Takes
+	// precedence over TokenCount so tests can exercise the
+	// estimator-fallback branch (provider unsupported, network failure,
+	// invalid request shape, etc.).
+	CountTokensError error
 	// TokenLimit to return from InputTokenLimit
 	TokenLimit int
 
@@ -129,13 +134,18 @@ func (f *FakeLLM) ChatCompletionNoStream(_ context.Context, conversation llm.Com
 	return f.Response, nil
 }
 
-// CountTokens implements token counting (returns configured value or basic estimate)
-func (f *FakeLLM) CountTokens(text string) int {
-	if f.TokenCount > 0 {
-		return f.TokenCount
+// CountTokens implements the LanguageModel real-count contract. The fake does
+// not call out to a provider, so it returns ErrUnsupportedTokenCount by
+// default; callers can set TokenCount for a counted return, or
+// CountTokensError to exercise the estimator-fallback branch.
+func (f *FakeLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	if f.CountTokensError != nil {
+		return 0, f.CountTokensError
 	}
-	// Simple estimate: ~4 characters per token
-	return len(text) / 4
+	if f.TokenCount > 0 {
+		return f.TokenCount, nil
+	}
+	return 0, llm.ErrUnsupportedTokenCount
 }
 
 // InputTokenLimit implements token limit getter
@@ -144,6 +154,11 @@ func (f *FakeLLM) InputTokenLimit() int {
 		return f.TokenLimit
 	}
 	return 100000 // Default reasonable limit
+}
+
+// OutputTokenLimit returns a default output token limit for tests.
+func (f *FakeLLM) OutputTokenLimit() int {
+	return 8192
 }
 
 func (f *FakeLLM) LastRequest() llm.CompletionRequest {

@@ -22,6 +22,7 @@ export interface ToolCall {
     id: string;
     name: string;
     description: string;
+    server_origin?: string; // omitempty on the server; present only for MCP tools
     arguments?: JSONValue;
     result?: string;
     status: ToolCallStatus;

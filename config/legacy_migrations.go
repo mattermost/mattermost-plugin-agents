@@ -234,7 +234,6 @@ func servicesAreIdentical(a, b llm.ServiceConfig) bool {
 		a.APIURL != b.APIURL ||
 		a.InputTokenLimit != b.InputTokenLimit ||
 		a.StreamingTimeoutSeconds != b.StreamingTimeoutSeconds ||
-		a.SendUserID != b.SendUserID ||
 		a.OutputTokenLimit != b.OutputTokenLimit ||
 		a.UseResponsesAPI != b.UseResponsesAPI {
 		return false

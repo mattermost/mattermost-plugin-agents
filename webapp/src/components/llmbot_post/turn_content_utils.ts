@@ -79,6 +79,32 @@ function collectResponseTurns(
     return out;
 }
 
+// Index every tool_result block in the conversation by tool_use_id so a
+// tool_use can be paired regardless of which turn its result lives in.
+function buildToolResultMap(conversation: ConversationResponse): Map<string, ContentBlock> {
+    const resultMap = new Map<string, ContentBlock>();
+    for (const t of conversation.turns) {
+        for (const block of t.content) {
+            if (block.type === BlockTypeToolResult && block.tool_use_id) {
+                resultMap.set(block.tool_use_id, block);
+            }
+        }
+    }
+    return resultMap;
+}
+
+function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, ContentBlock>): ToolCall {
+    const resultBlock = block.id ? resultMap.get(block.id) : undefined; // eslint-disable-line no-undefined
+    return {
+        id: block.id ?? '',
+        name: block.name ?? '',
+        description: '',
+        arguments: (block.input as ToolCall['arguments']) ?? undefined, // eslint-disable-line no-undefined
+        result: resultBlock?.content ?? undefined, // eslint-disable-line no-undefined
+        status: statusStringToEnum(block.status),
+    };
+}
+
 /**
  * Build a ToolCall[] from every tool_use block across the turns that belong
  * to a given post's response, pairing each with its matching tool_result by
@@ -107,29 +133,8 @@ export function extractToolCallsForPost(
         return [];
     }
 
-    // Results may land AFTER the anchor when the user just approved
-    // previously pending tool calls, so search every turn by tool_use_id
-    // rather than only the collected response range.
-    const resultMap = new Map<string, ContentBlock>();
-    for (const t of conversation.turns) {
-        for (const block of t.content) {
-            if (block.type === BlockTypeToolResult && block.tool_use_id) {
-                resultMap.set(block.tool_use_id, block);
-            }
-        }
-    }
-
-    return toolUseBlocks.map((block: ContentBlock): ToolCall => {
-        const resultBlock = block.id ? resultMap.get(block.id) : undefined; // eslint-disable-line no-undefined
-        return {
-            id: block.id ?? '',
-            name: block.name ?? '',
-            description: '',
-            arguments: (block.input as ToolCall['arguments']) ?? undefined, // eslint-disable-line no-undefined
-            result: resultBlock?.content ?? undefined, // eslint-disable-line no-undefined
-            status: statusStringToEnum(block.status),
-        };
-    });
+    const resultMap = buildToolResultMap(conversation);
+    return toolUseBlocks.map((block) => toolUseBlockToToolCall(block, resultMap));
 }
 
 /** Extract reasoning summary text and signature from thinking content blocks. */
@@ -222,4 +227,47 @@ export function hasAutoApprovedToolsForPost(
             (b: ContentBlock) => b.type === BlockTypeToolUse && b.status === StatusAutoApproved,
         ),
     );
+}
+
+// One assistant turn in a response. The post renders these as a vertical
+// sequence: text → tools → text → tools → final text.
+export interface Round {
+    id: string;
+    text: string;
+    toolCalls: ToolCall[];
+    reasoning: {summary: string; signature: string};
+    annotations: Annotation[];
+}
+
+export function buildRoundsFromTurns(
+    conversation: ConversationResponse,
+    postId: string,
+): Round[] {
+    const turns = collectResponseTurns(conversation, postId);
+    if (turns.length === 0) {
+        return [];
+    }
+
+    const resultMap = buildToolResultMap(conversation);
+    const rounds: Round[] = [];
+    for (const turn of turns) {
+        if (turn.role !== 'assistant') {
+            continue;
+        }
+        const text = turn.content.
+            filter((b) => b.type === BlockTypeText).
+            map((b) => b.text ?? '').
+            join('');
+        const toolCalls = turn.content.
+            filter((b) => b.type === BlockTypeToolUse).
+            map((block) => toolUseBlockToToolCall(block, resultMap));
+        rounds.push({
+            id: turn.id,
+            text,
+            toolCalls,
+            reasoning: extractReasoningFromTurn(turn),
+            annotations: extractAnnotationsFromTurn(turn),
+        });
+    }
+    return rounds;
 }

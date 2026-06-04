@@ -302,12 +302,17 @@ const AgentConfigView = (props: Props) => {
             setAvatarFile(null);
             onSaved(savedAgent);
         } catch (e: any) {
-            const message = e?.message || '';
+            const message = (typeof e?.message === 'string' ? e.message : '').trim();
             if (e?.status_code === 409 || (message.includes('username') && (message.includes('taken') || message.includes('conflict')))) {
                 setErrors({username: intl.formatMessage({defaultMessage: 'This username is already taken'})});
                 setActiveTab('config');
-            } else if (e?.status_code === 403) {
+            } else if (e?.status_code === 403 && !message) {
                 setErrors({general: intl.formatMessage({defaultMessage: 'You do not have permission to perform this action.'})});
+            } else if (message) {
+                // Prefer the server-provided message so validation errors
+                // (e.g. oversized custom instructions) surface verbatim
+                // instead of a misleading "please try again" hint.
+                setErrors({general: message});
             } else {
                 setErrors({general: intl.formatMessage({defaultMessage: 'Failed to save agent. Please try again.'})});
             }

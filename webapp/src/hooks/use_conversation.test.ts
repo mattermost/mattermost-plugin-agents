@@ -27,36 +27,30 @@ function makeConversation(overrides: Partial<ConversationResponse> = {}): Conver
         turns: [
             {
                 id: 'turn_1',
-                conversation_id: 'conv_123',
                 post_id: 'post_001',
                 role: 'user',
                 content: [{type: 'text', text: 'Hello'}],
                 tokens_in: 0,
                 tokens_out: 0,
                 sequence: 1,
-                created_at: 1000,
             },
             {
                 id: 'turn_2',
-                conversation_id: 'conv_123',
                 post_id: 'post_002',
                 role: 'assistant',
                 content: [{type: 'text', text: 'Hi there'}],
                 tokens_in: 100,
                 tokens_out: 50,
                 sequence: 2,
-                created_at: 2000,
             },
             {
                 id: 'turn_3',
-                conversation_id: 'conv_123',
                 post_id: 'post_003',
                 role: 'assistant',
                 content: [{type: 'text', text: 'Anything else?'}],
                 tokens_in: 150,
                 tokens_out: 30,
                 sequence: 3,
-                created_at: 3000,
             },
         ],
         ...overrides,
@@ -267,6 +261,42 @@ describe('useConversation', () => {
             expect(result.current.conversation).toEqual(fixture);
         });
         expect(result.current.error).toBeNull();
+    });
+
+    // Two close-together invalidates can race; stale fetch must not clobber.
+    test('a stale fetch resolving after a newer fetch must not overwrite cache', async () => {
+        const stale = makeConversation({title: 'stale'});
+        const fresh = makeConversation({title: 'fresh'});
+
+        let resolveStale: (data: ConversationResponse) => void;
+        let resolveFresh: (data: ConversationResponse) => void;
+        getConversation.
+            mockReturnValueOnce(new Promise<ConversationResponse>((r) => {
+                resolveStale = r;
+            })).
+            mockReturnValueOnce(new Promise<ConversationResponse>((r) => {
+                resolveFresh = r;
+            }));
+
+        const {result} = renderHook(() => useConversation('conv_123'));
+        expect(result.current.loading).toBe(true);
+
+        act(() => {
+            invalidateConversation('conv_123');
+        });
+
+        await act(async () => {
+            resolveFresh!(fresh);
+        });
+        await waitFor(() => {
+            expect(result.current.conversation).toEqual(fresh);
+        });
+
+        await act(async () => {
+            resolveStale!(stale);
+        });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(result.current.conversation).toEqual(fresh);
     });
 });
 

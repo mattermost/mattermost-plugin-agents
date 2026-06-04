@@ -19,7 +19,6 @@ const TourContainer = styled.div`
 
 const AgentsTour: React.FC = () => {
     const {bots} = useBotlist();
-    const [mounted, setMounted] = useState(false);
     const [dismissed, setDismissed] = useState(false);
 
     const showStep = useShowTutorialStep(
@@ -27,6 +26,20 @@ const AgentsTour: React.FC = () => {
         TutorialTourCategories.AGENTS_TOUR,
         true,
     );
+
+    if (!bots || bots.length === 0) {
+        return null;
+    }
+
+    if (!showStep || dismissed) {
+        return null;
+    }
+
+    return <AgentsTourBody onDismiss={() => setDismissed(true)}/>;
+};
+
+const AgentsTourBody: React.FC<{onDismiss: () => void}> = ({onDismiss}) => {
+    const [mounted, setMounted] = useState(false);
 
     const targetPunchout = useMeasurePunchouts(
         [AGENTS_ICON_ID],
@@ -38,14 +51,6 @@ const AgentsTour: React.FC = () => {
         const timer = setTimeout(() => setMounted(true), 500);
         return () => clearTimeout(timer);
     }, []);
-
-    if (!bots || bots.length === 0) {
-        return null;
-    }
-
-    if (!showStep || dismissed) {
-        return null;
-    }
 
     if (!targetPunchout) {
         return null;
@@ -78,7 +83,7 @@ const AgentsTour: React.FC = () => {
                 pulsatingDotPlacement='left'
                 width={352}
                 offset={[-5, 12]}
-                onFinish={() => setDismissed(true)}
+                onFinish={onDismiss}
             />
         </TourContainer>
     );

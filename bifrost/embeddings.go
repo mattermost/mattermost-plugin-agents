@@ -73,7 +73,7 @@ func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost embedding error: %s", bifrostErr.Error.Message), p.apiKey)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost embedding error: %s", bifrostErrorString(bifrostErr)), p.apiKey)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {
@@ -108,7 +108,7 @@ func (p *EmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []s
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost batch embedding error: %s", bifrostErr.Error.Message), p.apiKey)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost batch embedding error: %s", bifrostErrorString(bifrostErr)), p.apiKey)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {

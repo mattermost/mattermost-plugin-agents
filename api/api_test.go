@@ -128,6 +128,9 @@ type mockMCPClientManager struct {
 	registerCalls   []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig
+	// orphanPluginIDs simulates entries present in pluginServers but with
+	// no live source-plugin registration (hydrated from persisted config).
+	orphanPluginIDs map[string]bool
 
 	discoverPluginToolsResponse  []mcp.ToolInfo
 	discoverPluginToolsErr       error
@@ -229,6 +232,18 @@ func (m *mockMCPClientManager) GetPluginServer(pluginID string) (mcp.PluginServe
 		}
 	}
 	return mcp.PluginServerConfig{}, false
+}
+
+func (m *mockMCPClientManager) IsPluginRegistered(pluginID string) bool {
+	if m.orphanPluginIDs[pluginID] {
+		return false
+	}
+	for _, existing := range m.pluginServers {
+		if existing.PluginID == pluginID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
@@ -645,6 +660,7 @@ func TestPostRouter(t *testing.T) {
 		"summarize_transcription": "/post/postid/summarize_transcription",
 		"stop":                    "/post/postid/stop",
 		"regenerate":              "/post/postid/regenerate",
+		"loop_in_agent":           "/post/postid/loop_in_agent",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request
@@ -827,6 +843,7 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 		"summarize transcription": "/post/postid/summarize_transcription?botUsername=thebot",
 		"regen":                   "/post/postid/regenerate",
 		"postback summary":        "/post/postid/postback_summary",
+		"loop in agent":           "/post/postid/loop_in_agent?botUsername=thebot",
 		"cancel":                  "/admin/reindex/cancel",
 	} {
 		t.Run(urlName, func(t *testing.T) {

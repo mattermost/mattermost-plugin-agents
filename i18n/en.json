@@ -1,5 +1,9 @@
 [
   {
+    "id": "agents.agent_mention_reminder_fallback",
+    "translation": "To respond to an agent you must @mention them."
+  },
+  {
     "id": "agents.no_longer_access_error",
     "translation": "Sorry, you no longer have access to the original thread."
   },

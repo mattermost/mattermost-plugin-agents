@@ -5,10 +5,15 @@ import React, {useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
+import {useSelector} from 'react-redux';
+import {GlobalState} from '@mattermost/types/store';
 
 import {TertiaryButton} from '../assets/buttons';
 import {getMCPTools, getVettedToolSeed} from '../../client';
 
+import manifest from '@/manifest';
+
+import {CopyableTextItem} from './copyable_text_item';
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
 import {BooleanItem, ItemList, TextItem} from './item';
@@ -37,7 +42,7 @@ export type MCPEmbeddedServerConfig = {
 export type MCPConfig = {
     enabled: boolean;
     enablePluginServer: boolean;
-    servers: MCPServerConfig[];
+    servers: MCPServerConfig[] | null; // server sends nil Go slice as JSON null
     embeddedServer: MCPEmbeddedServerConfig;
     idleTimeoutMinutes?: number;
 };
@@ -350,6 +355,13 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
 
+    const configuredSiteURL = useSelector<GlobalState, string | undefined>(
+        (state) => state.entities.general.config.SiteURL,
+    );
+    const normalizedConfiguredSiteURL = configuredSiteURL?.trim();
+    const siteURL = normalizedConfiguredSiteURL ? normalizedConfiguredSiteURL.replace(/\/+$/, '') : window.location.origin;
+    const oauthCallbackURL = `${siteURL}/plugins/${manifest.id}/oauth/callback`;
+
     // Tool-affecting config fingerprint (must be declared before prefetch effect)
     const configFingerprint = JSON.stringify({
         servers: normalizedServers.map((s) => ({
@@ -420,10 +432,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     // Generate a server name
     const generateServerName = () => {
         const prefix = 'MCP Server ';
-        let counter = config.servers.length + 1;
+        let counter = normalizedServers.length + 1;
 
         // Make sure the name is unique
-        const isNameTaken = (name: string) => config.servers.some((server) => server.name === name);
+        const isNameTaken = (name: string) => normalizedServers.some((server) => server.name === name);
 
         while (isNameTaken(`${prefix}${counter}`)) {
             counter++;
@@ -440,7 +452,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         onChange({
             ...config,
             servers: [
-                ...config.servers,
+                ...normalizedServers,
                 {
                     ...defaultServerConfig,
                     name: serverName,
@@ -451,7 +463,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // Update a server's configuration
     const updateServer = (serverIndex: number, serverConfig: MCPServerConfig) => {
-        const updatedServers = [...config.servers];
+        const updatedServers = [...normalizedServers];
         updatedServers[serverIndex] = serverConfig;
 
         onChange({
@@ -462,7 +474,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // Delete a server
     const deleteServer = (serverIndex: number) => {
-        const newServers = config.servers.filter((_, index) => index !== serverIndex);
+        const newServers = normalizedServers.filter((_, index) => index !== serverIndex);
 
         onChange({
             ...config,
@@ -535,14 +547,19 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 }}
                                 helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times. Default: 30 minutes'})}
                             />
+                            <CopyableTextItem
+                                label={intl.formatMessage({defaultMessage: 'MCP OAuth Callback URL'})}
+                                value={oauthCallbackURL}
+                                helptext={intl.formatMessage({defaultMessage: 'Register this redirect URI in the remote MCP server\u2019s OAuth application so authorization callbacks return to this Mattermost instance.'})}
+                            />
                         </ItemList>
                         <ServersList>
-                            {!Array.isArray(config.servers) || config.servers.length < 1 ? (
+                            {!Array.isArray(normalizedServers) || normalizedServers.length < 1 ? (
                                 <EmptyState>
                                     <FormattedMessage defaultMessage='No remote MCP servers configured. Add a server to connect to external MCP tools.'/>
                                 </EmptyState>
                             ) : (
-                                config.servers.map((serverConfig, index) => (
+                                normalizedServers.map((serverConfig, index) => (
                                     <MCPServer
                                         key={index}
                                         serverIndex={index}

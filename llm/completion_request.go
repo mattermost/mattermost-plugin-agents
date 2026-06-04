@@ -12,7 +12,17 @@ import (
 type File struct {
 	MimeType string
 	Size     int64
+	Data     []byte
 	Reader   io.Reader
+}
+
+func IsSupportedImageMimeType(mimeType string) bool {
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
 }
 
 type PostRole int

@@ -142,7 +142,6 @@ test.describe.skip('Bot Native Tools', () => {
                     defaultModel: 'gpt-4',
                     tokenLimit: 16384,
                     streamingTimeoutSeconds: 30,
-                    sendUserId: false,
                     outputTokenLimit: 4096,
                     useResponsesAPI: true,
                 }
@@ -240,7 +239,6 @@ test.describe.skip('Bot Native Tools', () => {
                     defaultModel: 'gpt-4',
                     tokenLimit: 16384,
                     streamingTimeoutSeconds: 30,
-                    sendUserId: false,
                     outputTokenLimit: 4096,
                     useResponsesAPI: false,
                 }
@@ -313,9 +311,8 @@ test.describe.skip('Bot Native Tools', () => {
         }
 
         // 14. Find the True radio button for Use Responses API within the service card
-        // The radios in the service card are: Send User ID (True/False), Use Responses API (True/False)
-        // So the "Use Responses API - True" radio is the 3rd radio (index 2)
-        const useResponsesAPITrue = serviceCard.getByRole('radio').nth(2);
+        const useResponsesAPISetting = serviceCard.locator('label').filter({hasText: 'Use Responses API'}).locator('xpath=following-sibling::div[1]');
+        const useResponsesAPITrue = useResponsesAPISetting.locator('input[type="radio"][value="true"]');
         await expect(useResponsesAPITrue).toBeVisible();
 
         // 15. Enable 'Use Responses API' by clicking the True radio button
@@ -449,7 +446,6 @@ test.describe.skip('Bot Native Tools', () => {
                     defaultModel: 'gpt-4',
                     tokenLimit: 16384,
                     streamingTimeoutSeconds: 30,
-                    sendUserId: false,
                     outputTokenLimit: 4096,
                     useResponsesAPI: true,
                 }

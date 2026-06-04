@@ -7,7 +7,7 @@ import {ChannelWithTeamData} from '@mattermost/types/channels';
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
-import type {ConversationResponse} from '@/types/conversation';
+import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
 
 import manifest from './manifest';
@@ -45,6 +45,28 @@ function channelRoute(channelid: string): string {
 
 function agentRoute(agentId: string): string {
     return `${baseRoute()}/agents/${agentId}`;
+}
+
+// readAgentErrorMessage extracts the server-provided error message from an
+// agent endpoint response body. The agent API returns `{"error": "..."}` for
+// non-2xx responses so the UI can surface actionable validation feedback
+// (oversized prompt, taken username, etc.) instead of a generic retry hint.
+async function readAgentErrorMessage(response: Response): Promise<string> {
+    try {
+        const data: unknown = await response.json();
+        if (
+            data !== null &&
+            typeof data === 'object' &&
+            'error' in data &&
+            typeof (data as {error?: unknown}).error === 'string'
+        ) {
+            return (data as {error: string}).error;
+        }
+    } catch {
+        // Body was empty or not JSON — fall through to empty string so the
+        // caller can apply a generic fallback.
+    }
+    return '';
 }
 
 export async function doReaction(postid: string) {
@@ -230,6 +252,23 @@ export async function doPostbackSummary(postid: string) {
     });
 }
 
+export async function doLoopInAgent(postid: string, botUsername: string) {
+    const url = `${postRoute(postid)}/loop_in_agent?botUsername=${encodeURIComponent(botUsername)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function viewMyChannel(channelID: string) {
     return Client4.viewMyChannel(channelID);
 }
@@ -295,6 +334,23 @@ export async function getConversation(conversationId: string): Promise<Conversat
     });
 }
 
+export async function getConversationContext(conversationId: string): Promise<Composition> {
+    const url = `${baseRoute()}/conversations/${conversationId}/context`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json() as Promise<Composition>;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function getAIBots() {
     const url = `${baseRoute()}/ai_bots`;
     const response = await fetch(url, Client4.getOptions({
@@ -333,7 +389,7 @@ export async function getBotProfilePictureUrl(username: string) {
     return getProfilePictureUrl(user.id, user.last_picture_update);
 }
 
-export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string) {
+export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string): Promise<{postid: string; channelid: string}> {
     const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${botUsername}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
@@ -704,7 +760,7 @@ export async function getChannelInterval(
     presetPrompt: string,
     prompt?: string,
     botUsername?: string,
-) {
+): Promise<{postid: string; channelid: string}> {
     const url = `${channelRoute(channelID)}/interval${botUsername ? `?botUsername=${botUsername}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
@@ -794,7 +850,7 @@ export async function createAgent(agent: CreateAgentRequest): Promise<UserAgent>
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readAgentErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -812,7 +868,7 @@ export async function updateAgent(id: string, agent: UpdateAgentRequest): Promis
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readAgentErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -829,7 +885,7 @@ export async function deleteAgent(id: string): Promise<void> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readAgentErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -854,7 +910,7 @@ export async function uploadAgentAvatar(agentId: string, file: File): Promise<vo
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readAgentErrorMessage(response),
         status_code: response.status,
         url,
     });

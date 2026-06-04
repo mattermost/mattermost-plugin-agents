@@ -152,6 +152,10 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 		return c.handleDMs(ctx, bot, channel, postingUser, post)
 	}
 
+	// Reply in a thread that did not @mention an agent: when the previous post
+	// was authored by an agent, nudge the user with an ephemeral reminder.
+	c.maybeNotifyAgentMentionNeeded(post, channel)
+
 	return nil
 }
 
@@ -430,6 +434,23 @@ func (c *Conversations) streamResponseToExistingPost(ctx context.Context, stream
 	go func() {
 		defer c.streamingService.FinishStreaming(post.Id)
 		c.streamingService.StreamToPost(streamCtx, stream, post, locale, postingUser.Id)
+	}()
+
+	return nil
+}
+
+// streamContinuationToExistingPost streams a tool-approval follow-up.
+// See streamingService.StreamContinuationToPost.
+func (c *Conversations) streamContinuationToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel) error {
+	streamCtx, err := c.streamingService.GetStreamingContext(ctx, post.Id)
+	if err != nil {
+		return err
+	}
+
+	locale := c.responseLocale(postingUser, channel)
+	go func() {
+		defer c.streamingService.FinishStreaming(post.Id)
+		c.streamingService.StreamContinuationToPost(streamCtx, stream, post, locale, postingUser.Id)
 	}()
 
 	return nil

@@ -57,15 +57,19 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 
 	resp, bifrostErr := client.ListAllModels(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost list models error: %s", bifrostErr.Error.Message), cfg.APIKey)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost list models error: %s", bifrostErrorString(bifrostErr)), cfg.APIKey)
 	}
 
 	if resp == nil {
 		return []llm.ModelInfo{}, nil
 	}
 
-	models := make([]llm.ModelInfo, 0, len(resp.Data))
-	for _, m := range resp.Data {
+	return convertBifrostModels(resp.Data), nil
+}
+
+func convertBifrostModels(in []schemas.Model) []llm.ModelInfo {
+	out := make([]llm.ModelInfo, 0, len(in))
+	for _, m := range in {
 		modelID := m.ID
 		if idx := strings.Index(modelID, "/"); idx >= 0 {
 			modelID = modelID[idx+1:]
@@ -74,13 +78,21 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 		if m.Name != nil && *m.Name != "" {
 			displayName = *m.Name
 		}
-		models = append(models, llm.ModelInfo{
-			ID:          modelID,
-			DisplayName: displayName,
+		// Cohere, Mistral, and Groq (via the OpenAI client) publish only
+		// ContextLength; fall back to it for the input cap.
+		inputLimit := m.MaxInputTokens
+		if inputLimit == nil {
+			inputLimit = m.ContextLength
+		}
+		out = append(out, llm.ModelInfo{
+			ID:               modelID,
+			DisplayName:      displayName,
+			InputTokenLimit:  inputLimit,
+			OutputTokenLimit: m.MaxOutputTokens,
+			ContextLength:    m.ContextLength,
 		})
 	}
-
-	return models, nil
+	return out
 }
 
 // FetchModelsForServiceType fetches models for a given service type string.
@@ -107,31 +119,14 @@ func FetchModelsForService(svc llm.ServiceConfig) ([]llm.ModelInfo, error) {
 		return nil, fmt.Errorf("model fetching not supported for service type: %s", svc.Type)
 	}
 
-	apiURL := normalizeFetchModelsAPIURL(svc.Type, provider, svc.APIURL)
-
 	return FetchModels(FetchModelsConfig{
 		Provider:              provider,
 		APIKey:                svc.APIKey,
-		APIURL:                apiURL,
+		APIURL:                normalizeOpenAIBaseURL(provider, svc.APIURL),
 		OrgID:                 svc.OrgID,
 		Region:                svc.Region,
 		VertexProjectID:       svc.VertexProjectID,
 		VertexProjectNumber:   svc.VertexProjectNumber,
 		VertexAuthCredentials: svc.VertexAuthCredentials,
 	})
-}
-
-func normalizeFetchModelsAPIURL(serviceType string, provider schemas.ModelProvider, apiURL string) string {
-	switch serviceType {
-	case llm.ServiceTypeCohere:
-		if apiURL == "" {
-			apiURL = "https://api.cohere.ai/compatibility/v1"
-		}
-	case llm.ServiceTypeMistral:
-		if apiURL == "" {
-			apiURL = "https://api.mistral.ai/v1"
-		}
-	}
-
-	return normalizeOpenAIBaseURL(provider, apiURL)
 }

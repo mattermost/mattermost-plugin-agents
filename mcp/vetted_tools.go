@@ -100,6 +100,27 @@ func cloneToolConfigs(src []ToolConfig) []ToolConfig {
 	return dst
 }
 
+// mergeSeedConfigs appends seed entries for tool names missing from stored, so
+// stored entries win. Inputs are not mutated.
+func mergeSeedConfigs(stored, seed []ToolConfig) []ToolConfig {
+	if len(stored) == 0 {
+		return seed
+	}
+
+	present := make(map[string]bool, len(stored))
+	merged := make([]ToolConfig, 0, len(stored)+len(seed))
+	for _, tc := range stored {
+		present[tc.Name] = true
+		merged = append(merged, tc)
+	}
+	for _, tc := range seed {
+		if !present[tc.Name] {
+			merged = append(merged, tc)
+		}
+	}
+	return merged
+}
+
 func autoRunInDMToolConfigs(toolNames []string) []ToolConfig {
 	configs := make([]ToolConfig, 0, len(toolNames))
 	for _, toolName := range toolNames {
@@ -242,6 +263,10 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"whoami",
 })
 
+// Read-only Mattermost tools auto-run in DMs but ask in channels, where results
+// are visible to everyone. read_file belongs here (not auto-run-everywhere): it
+// only checks the caller's own access, so auto-running it in a channel could
+// surface a file the channel can't see.
 var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"read_post",
 	"read_channel",
@@ -252,4 +277,5 @@ var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"search_posts",
 	"search_users",
 	"get_user_channels",
+	"read_file",
 })

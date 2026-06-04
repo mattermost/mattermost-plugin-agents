@@ -126,7 +126,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             let changed = false;
 
             const updatedServers = await Promise.all(
-                updatedConfig.servers.map(async (sc) => {
+                (updatedConfig.servers ?? []).map(async (sc) => {
                     let seeded: MCPToolConfig[] = [];
                     try {
                         seeded = await getVettedToolSeed(sc.baseURL);
@@ -207,7 +207,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             };
         }
 
-        return mcpConfig.servers.find((sc) =>
+        return (mcpConfig.servers ?? []).find((sc) =>
             sc.name === server.name || sc.baseURL === server.url,
         ) || null;
     };
@@ -261,7 +261,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             return;
         }
 
-        const updatedServers = mcpConfig.servers.map((sc) => {
+        const updatedServers = (mcpConfig.servers ?? []).map((sc) => {
             if (sc.name === updatedServerConfig.name || sc.baseURL === updatedServerConfig.baseURL) {
                 return updatedServerConfig;
             }

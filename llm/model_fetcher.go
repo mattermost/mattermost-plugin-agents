@@ -3,8 +3,12 @@
 
 package llm
 
-// ModelInfo represents information about an available model
+// ModelInfo represents information about an available model. The pointer
+// limit fields are nil when the provider doesn't report them.
 type ModelInfo struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"displayName"`
+	ID               string `json:"id"`
+	DisplayName      string `json:"displayName"`
+	InputTokenLimit  *int   `json:"inputTokenLimit,omitempty"`
+	OutputTokenLimit *int   `json:"outputTokenLimit,omitempty"`
+	ContextLength    *int   `json:"contextLength,omitempty"`
 }

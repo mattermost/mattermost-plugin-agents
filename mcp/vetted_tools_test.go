@@ -118,9 +118,9 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			wantCount: 8,
 		},
 		{
-			name:      "Mattermost seeds 9 read tools",
+			name:      "Mattermost seeds 10 read tools",
 			baseURL:   EmbeddedClientKey,
-			wantCount: 9,
+			wantCount: 10,
 		},
 		{
 			name:    "unknown host returns nil",
@@ -161,9 +161,10 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			require.Len(t, got, tt.wantCount)
 			for _, cfg := range got {
 				require.True(t, cfg.Enabled)
-				if strings.Contains(tt.baseURL, "api.githubcopilot.com") {
+				switch {
+				case strings.Contains(tt.baseURL, "api.githubcopilot.com"):
 					require.True(t, cfg.Policy == ToolPolicyAutoRunInDM || cfg.Policy == ToolPolicyAsk)
-				} else {
+				default:
 					require.Equal(t, ToolPolicyAutoRunInDM, cfg.Policy)
 				}
 				require.NotEmpty(t, cfg.Name)
@@ -201,8 +202,58 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 		configs := SeedVettedToolConfigs(EmbeddedClientKey)
 		requireToolConfig(t, configs, "search_posts", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "search_users", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "read_file", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "create_post")
 	})
+}
+
+func TestMergeSeedConfigs(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored []ToolConfig
+		seed   []ToolConfig
+		want   []ToolConfig
+	}{
+		{
+			name:   "empty stored returns the seed",
+			stored: nil,
+			seed:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+			want:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+		},
+		{
+			name:   "tool missing from stored is appended from the seed",
+			stored: []ToolConfig{{Name: "search_posts", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+			seed:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+			want: []ToolConfig{
+				{Name: "search_posts", Policy: ToolPolicyAutoRunInDM, Enabled: true},
+				{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true},
+			},
+		},
+		{
+			// Conflicting non-default values on both sides prove the stored
+			// entry wins (rather than coinciding with the unconfigured default)
+			// and that no duplicate read_file reaches last-match-wins resolution.
+			name:   "stored entry wins over a conflicting seed entry",
+			stored: []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunEverywhere, Enabled: false}},
+			seed:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+			want:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunEverywhere, Enabled: false}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Callers pass the live config slice as stored, so the merge must
+			// not mutate its inputs.
+			storedBefore := append([]ToolConfig(nil), tt.stored...)
+			seedBefore := append([]ToolConfig(nil), tt.seed...)
+
+			got := mergeSeedConfigs(tt.stored, tt.seed)
+
+			require.Equal(t, tt.want, got)
+			require.Equal(t, storedBefore, tt.stored)
+			require.Equal(t, seedBefore, tt.seed)
+		})
+	}
 }
 
 func requireToolConfig(t *testing.T, configs []ToolConfig, name, policy string, enabled bool) {

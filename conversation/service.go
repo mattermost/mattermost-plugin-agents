@@ -28,8 +28,11 @@ type Store interface {
 	CreateTurn(turn *store.Turn) error
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
+	UpdateTurnPostID(id string, postID *string) error
+	DeleteResponseTurns(conversationID, postID string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
 }
 
@@ -211,6 +214,23 @@ func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
 	return s.store.CreateTurnAutoSequence(turn)
 }
 
+// GetTurnByPostID returns the assistant turn anchored to postID, or nil.
+func (s *Service) GetTurnByPostID(postID string) (*store.Turn, error) {
+	return s.store.GetTurnByPostID(postID)
+}
+
+// UpdateTurnPostID sets or clears the PostID on a turn.
+func (s *Service) UpdateTurnPostID(id string, postID *string) error {
+	return s.store.UpdateTurnPostID(id, postID)
+}
+
+// DeleteResponseTurns removes the post's anchor and any assistant/tool_result
+// turns between it and the originating user turn. Callers must build any
+// completion request before calling this — ExcludeAfterPostID needs the anchor.
+func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
+	return s.store.DeleteResponseTurns(conversationID, postID)
+}
+
 // UpdateConversationRootPostID sets the RootPostID on a conversation.
 // Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) error {
@@ -353,7 +373,8 @@ type BuildOptions struct {
 }
 
 // BuildCompletionRequest builds an llm.CompletionRequest from the conversation's
-// system prompt and all its turns.
+// system prompt and all its turns. Thin wrapper around AssembleRequest that
+// fetches turns from the store and resolves the bot's attachment config.
 func (s *Service) BuildCompletionRequest(
 	conv *store.Conversation,
 	context *llm.Context,
@@ -363,22 +384,49 @@ func (s *Service) BuildCompletionRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
+	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
+	return AssembleRequest(conv, turns, context, s.mmClient, enableVision, maxFileSize, opts...)
+}
 
+// AssembleRequest builds the CompletionRequest from already-loaded turns and
+// externally-supplied rendering config. Exported so callers without a full
+// Service (e.g. the /context endpoint) can reuse the runtime assembly path.
+func AssembleRequest(
+	conv *store.Conversation,
+	turns []store.Turn,
+	context *llm.Context,
+	mmClient mmapi.Client,
+	enableVision bool,
+	maxFileSize int64,
+	opts ...BuildOptions,
+) (*llm.CompletionRequest, error) {
 	// Default: redact unshared tool_result content so privacy is the
 	// fail-safe. Callers whose LLM response will NOT reach other users
 	// (DM follow-ups) can opt in to full content via AllowUnsharedToolContent.
 	redactUnshared := true
 	if len(opts) > 0 {
 		redactUnshared = !opts[0].AllowUnsharedToolContent
-		// If ExcludeAfterPostID is set, truncate the turn slice at (and including)
-		// the turn whose PostID matches, so that turn and all subsequent turns are dropped.
+		// Truncate back to right after the originating user turn. Stopping
+		// at the anchor alone would leave demoted continuation turns at the
+		// tail; bifrost rejects an assistant-ended request as prefill.
 		if opts[0].ExcludeAfterPostID != "" {
 			excludeID := opts[0].ExcludeAfterPostID
+			anchorIdx := -1
 			for i, turn := range turns {
-				if turn.PostID != nil && *turn.PostID == excludeID {
-					turns = turns[:i]
+				if turn.Role == "assistant" && turn.PostID != nil && *turn.PostID == excludeID {
+					anchorIdx = i
 					break
 				}
+			}
+			if anchorIdx >= 0 {
+				truncateAt := anchorIdx
+				for i := anchorIdx - 1; i >= 0; i-- {
+					if turns[i].Role == "user" {
+						truncateAt = i + 1
+						break
+					}
+				}
+				turns = turns[:truncateAt]
 			}
 		}
 	}
@@ -391,8 +439,7 @@ func (s *Service) BuildCompletionRequest(
 		Message: conv.SystemPrompt,
 	})
 
-	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
-	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, s.mmClient, enableVision, maxFileSize)
+	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, mmClient, enableVision, maxFileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -446,7 +493,8 @@ func turnsToLLMPosts(
 			blocks = append(blocks, nextBlocks...)
 			i++
 		}
-		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize))
+		post := BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize)
+		posts = append(posts, post)
 	}
 	return posts, nil
 }
@@ -721,7 +769,8 @@ func (s *Service) BuildChannelMentionRequest(
 				username = user.Username
 			}
 			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient)
-			posts = append(posts, BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize))
+			post := BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize)
+			posts = append(posts, post)
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break
