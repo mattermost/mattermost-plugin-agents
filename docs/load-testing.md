@@ -51,7 +51,7 @@ Configure MCP tool policies so relevant tools use **`auto_run_everywhere`** (see
 
 Integration is **cross-repository**:
 
-- This repo exposes `github.com/mattermost/mattermost-plugin-agents/loadtest` for blank-import registration and the Agents SimulController.
+- This repo exposes `github.com/mattermost/mattermost-plugin-agents/loadtest/controller` (a standalone nested Go module) for blank-import registration of the Agents SimulController.
 - mattermost-load-test-ng must import that package and include **`mattermost-ai`** in `EnabledPlugins` for the simulated server configuration.
 
 **Plugin ID:** `mattermost-ai` (not `agents`).
@@ -108,6 +108,8 @@ From the Agents plugin repository:
 
 ```bash
 go test ./loadtest/... ./bots/... ./toolrunner/... -race
+# The SimulController lives in a separate nested module, so test it on its own:
+(cd loadtest/controller && go test ./... -race)
 ```
 
 Run an integrated mattermost-load-test-ng scenario only after both this branch (or equivalent) and the ng-side wiring branch are available; remove or document any temporary `replace` directives first.
@@ -117,7 +119,7 @@ Run an integrated mattermost-load-test-ng scenario only after both this branch (
 | Symptom | What to check |
 |--------|----------------|
 | Plugin fails to start or bot LLM errors mentioning `loadtest profile` | Fix `loadTestMockConfig` JSON (unknown fields are rejected). Validate weights sum positively and reference existing latency profile keys. |
-| No simulated agent traffic | Confirm `EnabledPlugins` includes **`mattermost-ai`**. Confirm ng imports `github.com/mattermost/mattermost-plugin-agents/loadtest`. |
+| No simulated agent traffic | Confirm `EnabledPlugins` includes **`mattermost-ai`**. Confirm ng imports `github.com/mattermost/mattermost-plugin-agents/loadtest/controller`. |
 | Actions never hit the agent user | Verify `agentUsername` / `agentUserID` match a real bot user in the test data set; check simulator logs for target resolution errors. |
 | Tool calls hang or never execute | Ensure MCP tools use **`auto_run_everywhere`** for load-test channels/users so approvals do not block automation. |
 | Need to confirm mock parameters | Search logs for `Initialized load-test mock LLM` and read `profile_summary` (initialization-time only). |
