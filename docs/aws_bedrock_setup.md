@@ -155,6 +155,8 @@ The Mattermost Agents plugin may be pre-packaged with your Mattermost installati
    b. Upload the `.tar.gz` file under **Upload Plugin** in Plugin Management.
    c. Once uploaded, select **Enable** to activate the plugin.
 
+If your deployment requires a FIPS-compliant plugin package, use the separate Linux amd64 FIPS bundle instead of the standard plugin bundle. The `mmctl` example below installs the standard bundle.
+
 Alternatively, install via `mmctl` on the server:
 
 ```bash

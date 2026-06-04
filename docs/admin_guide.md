@@ -25,6 +25,8 @@ From Mattermost v10.3, Agents comes installed automatically and ready for you to
 
 For the most recent features and improvements, you can download and install the latest plugin version from the [GitHub releases page](https://github.com/mattermost/mattermost-plugin-agents/releases). 
 
+If your deployment requires a FIPS-compliant plugin package, use the separate Linux amd64 FIPS bundle instead of the standard plugin bundle.
+
 Install the plugin through the System Console by navigating to **System Console > Plugin Management**, clicking **Upload Plugin**, selecting the downloaded plugin file (.tar.gz), and clicking **Upload**. Enable the plugin after upload completes, then configure plugin settings as detailed in the Configuration section below.
 
 ## Configuration
