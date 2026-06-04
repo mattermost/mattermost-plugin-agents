@@ -13,7 +13,6 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )

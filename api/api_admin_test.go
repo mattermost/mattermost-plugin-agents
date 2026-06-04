@@ -135,7 +135,7 @@ func TestHandleGetJobStatusIncludesStale(t *testing.T) {
 // missing key to ErrKVNotFound, so the handler must branch on
 // IsKVNotFound or fall through to a 500.
 func TestHandleCancelJob_FreshInstallReturns404NoJob(t *testing.T) {
-	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	api, mockAPI := setupAdminTestEnvironment(t)
 	defer mockAPI.AssertExpectations(t)
 
 	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
