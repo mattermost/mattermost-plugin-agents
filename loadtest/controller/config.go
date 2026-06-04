@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package loadtest
+package controller
 
 import (
 	"encoding/json"
@@ -75,11 +75,6 @@ func ReadConfigFromEnv() (Config, error) {
 func (c Config) Validate() error {
 	if err := defaults.Validate(&c); err != nil {
 		return err
-	}
-	if len(c.MockProfile) > 0 {
-		if _, err := ParseProfile(c.MockProfile); err != nil {
-			return fmt.Errorf("mockProfile: %w", err)
-		}
 	}
 
 	needChannel := (c.TriggerMode == TriggerModeBoth || c.TriggerMode == TriggerModeChannelMention) &&
