@@ -726,7 +726,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 			Name:         "run_dangerous",
 			Description:  "Runs a dangerous command",
 			ServerOrigin: "https://mcp.example.com",
-			Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, ctx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
 				return "should not execute", nil
 			},
 		},

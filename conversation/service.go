@@ -431,6 +431,10 @@ func AssembleRequest(
 		}
 	}
 
+	if context != nil {
+		context.Tools.LoadMCPTools(DeriveLoadedMCPTools(turns))
+	}
+
 	posts := make([]llm.Post, 0, len(turns)+1)
 
 	// System prompt is always first.
@@ -688,6 +692,10 @@ func (s *Service) BuildChannelMentionRequest(
 	turns, err := s.store.GetTurnsForConversation(conv.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
+	}
+
+	if context != nil {
+		context.Tools.LoadMCPTools(DeriveLoadedMCPTools(turns))
 	}
 
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)

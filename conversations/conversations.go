@@ -202,6 +202,7 @@ func (c *Conversations) ProcessDMRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conversation: %w", err)
 	}
+	llmCtx.ConversationID = convID
 	completionReq, err := c.convService.BuildCompletionRequest(conv, llmCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
@@ -225,6 +226,40 @@ func (c *Conversations) ProcessDMRequest(
 	return &DMStreamResult{Stream: stream}, nil
 }
 
+func llmToolsFromContext(llmCtx *llm.Context) *llm.ToolStore {
+	if llmCtx == nil {
+		return nil
+	}
+	return llmCtx.Tools
+}
+
+// resolveToolStoreLookupName returns a name recognized by the store for the
+// given tool call name, preferring an exact match and otherwise only falling
+// back to a unique bare MCP name match.
+func resolveToolStoreLookupName(store *llm.ToolStore, name, serverOrigin string) string {
+	if store == nil || name == "" {
+		return ""
+	}
+	if store.GetTool(name) != nil {
+		return name
+	}
+	wantBare := llm.BareMCPToolName(name)
+	match := ""
+	for _, tool := range store.GetTools() {
+		if llm.BareMCPToolName(tool.Name) != wantBare {
+			continue
+		}
+		if serverOrigin != "" && tool.ServerOrigin != serverOrigin {
+			continue
+		}
+		if match != "" {
+			return ""
+		}
+		match = tool.Name
+	}
+	return match
+}
+
 // shouldAutoExecuteTool returns a callback that decides whether a tool call
 // should be auto-executed based on the tool policy and the conversation
 // context. In DMs, both auto_run and auto_run_everywhere bypass approval.
@@ -239,11 +274,16 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 		if c.toolPolicyChecker == nil {
 			return false
 		}
-		origin := tc.ServerOrigin
-		if origin == "" && llmCtx.Tools != nil {
-			origin = llmCtx.Tools.GetServerOrigin(tc.Name)
+		toolStore := llmToolsFromContext(llmCtx)
+		storeName := resolveToolStoreLookupName(toolStore, tc.Name, tc.ServerOrigin)
+		if llmCtx == nil || toolStore == nil || storeName == "" {
+			return false
 		}
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
+		origin := tc.ServerOrigin
+		if origin == "" {
+			origin = toolStore.GetServerOrigin(storeName)
+		}
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, llm.BareMCPToolName(storeName))
 		if !enabled {
 			return false
 		}
@@ -258,27 +298,32 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 // tool turns has an auto_run_everywhere policy.  When true, tool results can
 // be written with shared=true so the result-approval UI is skipped.
 func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, llmCtx *llm.Context) bool {
-	if c.toolPolicyChecker == nil {
-		return false
-	}
-	sawTool := false
+	sawToolCall := false
 	for _, turn := range turns {
 		for _, tc := range turn.AssistantToolCalls {
-			sawTool = true
+			sawToolCall = true
 			if isMCPMetaToolCall(tc, llmCtx) {
 				continue
 			}
-			origin := tc.ServerOrigin
-			if origin == "" && llmCtx.Tools != nil {
-				origin = llmCtx.Tools.GetServerOrigin(tc.Name)
+			if c.toolPolicyChecker == nil {
+				return false
 			}
-			policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
+			toolStore := llmToolsFromContext(llmCtx)
+			storeName := resolveToolStoreLookupName(toolStore, tc.Name, tc.ServerOrigin)
+			if llmCtx == nil || toolStore == nil || storeName == "" {
+				return false
+			}
+			origin := tc.ServerOrigin
+			if origin == "" {
+				origin = toolStore.GetServerOrigin(storeName)
+			}
+			policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, llm.BareMCPToolName(storeName))
 			if !enabled || !mcp.IsToolPolicyAutoRunEverywhere(policy) {
 				return false
 			}
 		}
 	}
-	return sawTool
+	return sawToolCall
 }
 
 func isMCPMetaToolCall(tc llm.ToolCall, llmCtx *llm.Context) bool {

@@ -113,6 +113,7 @@ func createAgentBody(overrides map[string]any) map[string]any {
 		"username":              "my-agent",
 		"serviceID":             "svc-1",
 		"autoEnableNewMCPTools": true,
+		"mcpDynamicToolLoading": true,
 	}
 	for k, v := range overrides {
 		body[k] = v
@@ -137,6 +138,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"adminUserIDs":            cfg.AdminUserIDs,
 		"enabledMCPTools":         cfg.EnabledMCPTools,
 		"autoEnableNewMCPTools":   cfg.AutoEnableNewMCPTools,
+		"mcpDynamicToolLoading":   cfg.MCPDynamicToolLoading,
 		"model":                   cfg.Model,
 		"enableVision":            cfg.EnableVision,
 		"disableTools":            cfg.DisableTools,
@@ -245,6 +247,60 @@ func TestCreateAgentAutoEnableAllMCPTools(t *testing.T) {
 	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
 	assert.True(t, agent.AutoEnableNewMCPTools)
+}
+
+func TestCreateAgentMCPDynamicToolLoading(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     map[string]any
+		omit     bool
+		expected bool
+	}{
+		{
+			name:     "defaults false when omitted",
+			omit:     true,
+			expected: false,
+		},
+		{
+			name:     "persists explicit false",
+			body:     map[string]any{"mcpDynamicToolLoading": false},
+			expected: false,
+		},
+		{
+			name:     "persists explicit true",
+			body:     map[string]any{"mcpDynamicToolLoading": true},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+				UserId:      "bot-user-id-created",
+				Username:    "my-agent",
+				DisplayName: "My Agent",
+				Description: "User-created AI agent",
+			}, nil)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			body := createAgentBody(tt.body)
+			if tt.omit {
+				delete(body, "mcpDynamicToolLoading")
+			}
+			recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
+			require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+
+			var agent llm.BotConfig
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+			assert.Equal(t, tt.expected, agent.MCPDynamicToolLoading)
+			assert.Equal(t, tt.expected, e.agentStore.agents[agent.ID].MCPDynamicToolLoading)
+		})
+	}
 }
 
 func TestCreateAgentNoMCPToolsByDefault(t *testing.T) {
@@ -821,6 +877,136 @@ func TestUpdateAgentFlipsAutoEnableOff(t *testing.T) {
 	assert.Equal(t, "read_post", updated.EnabledMCPTools[0].ToolName)
 }
 
+func TestUpdateAgentMCPDynamicToolLoading(t *testing.T) {
+	tests := []struct {
+		name          string
+		storedValue   bool
+		body          map[string]any
+		omit          bool
+		expectedValue bool
+	}{
+		{
+			name:          "persists explicit false",
+			storedValue:   true,
+			body:          map[string]any{"mcpDynamicToolLoading": false},
+			expectedValue: false,
+		},
+		{
+			name:          "overwrites with false when omitted from body",
+			storedValue:   true,
+			omit:          true,
+			expectedValue: false,
+		},
+		{
+			name:          "persists explicit true",
+			storedValue:   false,
+			body:          map[string]any{"mcpDynamicToolLoading": true},
+			expectedValue: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			stored := &llm.BotConfig{
+				ID:                    "agent-1",
+				CreatorID:             testUserID,
+				BotUserID:             "bot-1",
+				DisplayName:           "Agent",
+				Name:                  "my-agent",
+				ServiceID:             "svc-1",
+				MCPDynamicToolLoading: tt.storedValue,
+			}
+			e.agentStore.agents["agent-1"] = stored
+
+			body := updateAgentBodyFromStored(stored, tt.body)
+			if tt.omit {
+				delete(body, "mcpDynamicToolLoading")
+			}
+
+			recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+			updated := e.agentStore.agents["agent-1"]
+			require.NotNil(t, updated)
+			assert.Equal(t, tt.expectedValue, updated.MCPDynamicToolLoading)
+
+			var response llm.BotConfig
+			require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&response))
+			assert.Equal(t, tt.expectedValue, response.MCPDynamicToolLoading)
+		})
+	}
+}
+
+func TestGetAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
+		ID:                    "agent-1",
+		CreatorID:             testUserID,
+		BotUserID:             "bot-1",
+		DisplayName:           "Agent",
+		Name:                  "my-agent",
+		ServiceID:             "svc-1",
+		MCPDynamicToolLoading: false,
+	}
+
+	recorder := doRequest(e.api, http.MethodGet, "/agents/agent-1", nil, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var agent llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agent))
+	assert.False(t, agent.MCPDynamicToolLoading)
+}
+
+func TestListAgentsMCPDynamicToolLoadingRoundTrip(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
+		ID:                    "agent-1",
+		CreatorID:             "other-user",
+		DisplayName:           "Dynamic On",
+		UserAccessLevel:       llm.UserAccessLevelAll,
+		MCPDynamicToolLoading: true,
+	}
+	e.agentStore.agents["agent-2"] = &llm.BotConfig{
+		ID:                    "agent-2",
+		CreatorID:             "other-user",
+		DisplayName:           "Dynamic Off",
+		UserAccessLevel:       llm.UserAccessLevelAll,
+		MCPDynamicToolLoading: false,
+	}
+
+	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var agents []*llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
+	require.Len(t, agents, 2)
+
+	byID := map[string]*llm.BotConfig{}
+	for _, agent := range agents {
+		byID[agent.ID] = agent
+	}
+	assert.True(t, byID["agent-1"].MCPDynamicToolLoading)
+	assert.False(t, byID["agent-2"].MCPDynamicToolLoading)
+}
+
 func TestUpdateAgentEmptyAllowlistAllowsNone(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
@@ -1091,21 +1277,22 @@ func TestAgentSaveErrorsAreActionable(t *testing.T) {
 
 func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 	req := CreateAgentRequest{
-		DisplayName:        "My Agent",
-		Username:           "my-agent",
-		ServiceID:          "svc-1",
-		CustomInstructions: "Be brief",
-		ChannelAccessLevel: int(llm.ChannelAccessLevelAllow),
-		ChannelIDs:         []string{"c1", "c2"},
-		UserAccessLevel:    int(llm.UserAccessLevelBlock),
-		UserIDs:            []string{"u1"},
-		TeamIDs:            []string{"t1"},
-		AdminUserIDs:       []string{"admin-1"},
-		EnabledMCPTools:    []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
-		Model:              "gpt-4",
-		EnableVision:       true,
-		ReasoningEffort:    "high",
-		ThinkingBudget:     4096,
+		DisplayName:           "My Agent",
+		Username:              "my-agent",
+		ServiceID:             "svc-1",
+		CustomInstructions:    "Be brief",
+		ChannelAccessLevel:    int(llm.ChannelAccessLevelAllow),
+		ChannelIDs:            []string{"c1", "c2"},
+		UserAccessLevel:       int(llm.UserAccessLevelBlock),
+		UserIDs:               []string{"u1"},
+		TeamIDs:               []string{"t1"},
+		AdminUserIDs:          []string{"admin-1"},
+		EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
+		MCPDynamicToolLoading: false,
+		Model:                 "gpt-4",
+		EnableVision:          true,
+		ReasoningEffort:       "high",
+		ThinkingBudget:        4096,
 	}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
@@ -1117,6 +1304,7 @@ func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 	assert.Contains(t, s, `"channelAccessLevel"`)
 	assert.Contains(t, s, `"adminUserIDs"`)
 	assert.Contains(t, s, `"enabledMCPTools"`)
+	assert.Contains(t, s, `"mcpDynamicToolLoading":false`)
 	assert.Contains(t, s, `"reasoningEffort"`)
 	assert.NotContains(t, s, `"display_name"`)
 	assert.NotContains(t, s, `"service_id"`)
@@ -1129,6 +1317,7 @@ func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, req.ServiceID, decoded.ServiceID)
 	assert.Equal(t, req.AdminUserIDs, decoded.AdminUserIDs)
 	assert.Equal(t, req.EnabledMCPTools, decoded.EnabledMCPTools)
+	assert.False(t, decoded.MCPDynamicToolLoading)
 	assert.True(t, decoded.EnableVision)
 }
 
@@ -1154,6 +1343,7 @@ func TestBotConfigJSONRoundTrip(t *testing.T) {
 	assert.Contains(t, s, `"createAt":100`)
 	assert.Contains(t, s, `"updateAt":200`)
 	assert.Contains(t, s, `"enabledMCPTools":null`)
+	assert.Contains(t, s, `"mcpDynamicToolLoading":false`)
 	assert.NotContains(t, s, `"deleteAt"`) // omitempty
 
 	// Round-trip
@@ -1163,6 +1353,7 @@ func TestBotConfigJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, cfg.BotUserID, decoded.BotUserID)
 	assert.Equal(t, cfg.CreatorID, decoded.CreatorID)
 	assert.Equal(t, cfg.AdminUserIDs, decoded.AdminUserIDs)
+	assert.False(t, decoded.MCPDynamicToolLoading)
 	assert.Nil(t, decoded.EnabledMCPTools)
 }
 

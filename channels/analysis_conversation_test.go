@@ -11,6 +11,8 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -199,14 +201,16 @@ func (b *testBotLookup) GetBotConfigByID(string) (bool, int64, bool) {
 // fakeLLM implements llm.LanguageModel for tests. It returns a sequence of
 // pre-configured streams, one per call to ChatCompletion.
 type fakeLLM struct {
-	calls   [][]llm.TextStreamEvent // events to return per call
-	callIdx int
+	calls    [][]llm.TextStreamEvent // events to return per call
+	requests []llm.CompletionRequest
+	callIdx  int
 }
 
-func (f *fakeLLM) ChatCompletion(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (f *fakeLLM) ChatCompletion(_ context.Context, request llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	if f.callIdx >= len(f.calls) {
 		return nil, fmt.Errorf("unexpected call #%d to ChatCompletion", f.callIdx)
 	}
+	f.requests = append(f.requests, request)
 	events := f.calls[f.callIdx]
 	f.callIdx++
 	ch := make(chan llm.TextStreamEvent, len(events))
@@ -249,6 +253,54 @@ func makeToolWithError(name, errMsg string) llm.Tool {
 	}
 }
 
+func makeChannelIDCaptureTool(name, result string, captured *string) llm.Tool {
+	return llm.Tool{
+		Name:         name,
+		Description:  "test channel tool",
+		ServerOrigin: mcp.EmbeddedClientKey,
+		Resolver: func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+			var args struct {
+				ChannelID string `json:"channel_id"`
+			}
+			if err := argsGetter(&args); err != nil {
+				return "", err
+			}
+			*captured = args.ChannelID
+			return result, nil
+		},
+	}
+}
+
+func testToolNames(store *llm.ToolStore) []string {
+	if store == nil {
+		return nil
+	}
+	tools := store.GetTools()
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+func TestRequiredEmbeddedToolByExactOrBareNameIgnoresSameNameNonEmbedded(t *testing.T) {
+	tools := llm.NewToolStore()
+	tools.AddTools([]llm.Tool{
+		makeTool("read_channel", "remote posts"),
+		makeChannelIDCaptureTool("mattermost__read_channel", "embedded posts", new(string)),
+	})
+
+	tool, ok := requiredEmbeddedToolByExactOrBareName(tools, "read_channel")
+	require.True(t, ok)
+	require.Equal(t, "read_channel", tool.Name)
+	require.Equal(t, mcp.EmbeddedClientKey, tool.ServerOrigin)
+
+	remoteOnly := llm.NewToolStore()
+	remoteOnly.AddTools([]llm.Tool{makeTool("read_channel", "remote posts")})
+	_, ok = requiredEmbeddedToolByExactOrBareName(remoteOnly, "read_channel")
+	require.False(t, ok)
+}
+
 // textStreamEvents creates a simple text+end event sequence.
 func textStreamEvents(text string) []llm.TextStreamEvent {
 	return []llm.TextStreamEvent{
@@ -272,6 +324,55 @@ func toolCallStreamEvents(toolCallID, toolName string, args json.RawMessage) []l
 func setupConvSvc(s *inMemoryStore) *conversation.Service {
 	bots := &testBotLookup{botUserIDs: map[string]bool{}}
 	return conversation.NewService(s, nil, nil, bots)
+}
+
+func TestAnalyzeChannelBindsNamespacedToolsAsBareAliases(t *testing.T) {
+	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+
+	memStore := newInMemoryStore()
+	convSvc := setupConvSvc(memStore)
+	fakeLM := &fakeLLM{
+		calls: [][]llm.TextStreamEvent{
+			toolCallStreamEvents("tc1", "read_channel", json.RawMessage(`{"channel_id":"attacker-controlled"}`)),
+			textStreamEvents("Bound summary."),
+		},
+	}
+
+	var readChannelID string
+	var getChannelInfoID string
+	tools := llm.NewToolStore()
+	tools.AddTools([]llm.Tool{
+		makeChannelIDCaptureTool("mattermost__read_channel", "posts", &readChannelID),
+		makeChannelIDCaptureTool("mattermost__get_channel_info", "info", &getChannelInfoID),
+		makeTool("unrelated", "should not be exposed"),
+	})
+
+	ctx := llm.NewContext()
+	ctx.Channel = &model.Channel{Id: "chanBound", DisplayName: "Bound Channel", Type: model.ChannelTypeOpen}
+	ctx.RequestingUser = &model.User{Id: "user-bound"}
+	ctx.Tools = tools
+
+	ch := New(fakeLM, promptsObj, nil, nil, convSvc)
+	result, err := ch.AnalyzeChannel(context.Background(), ctx, "chanBound", "user-bound", "bot-bound", map[string]any{"AnalysisType": "summary"})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	text, err := result.Stream.ReadAll()
+	require.NoError(t, err)
+	require.Equal(t, "Bound summary.", text)
+	require.Equal(t, "chanBound", readChannelID)
+	require.Empty(t, getChannelInfoID)
+	require.NotEmpty(t, fakeLM.requests)
+	require.NotEmpty(t, fakeLM.requests[0].Posts)
+	require.Equal(t, llm.PostRoleSystem, fakeLM.requests[0].Posts[0].Role)
+	assert.Contains(t, fakeLM.requests[0].Posts[0].Message, "read_channel tool")
+	assert.NotContains(t, fakeLM.requests[0].Posts[0].Message, "search_tools(query)")
+	assert.NotContains(t, fakeLM.requests[0].Posts[0].Message, "load_tool(name)")
+	require.ElementsMatch(t, []string{"read_channel", "get_channel_info"}, testToolNames(fakeLM.requests[0].Context.Tools))
+	for _, tool := range fakeLM.requests[0].Context.Tools.GetTools() {
+		require.Equal(t, mcp.EmbeddedClientKey, tool.ServerOrigin)
+	}
 }
 
 func TestAnalyzeChannelAndInterval(t *testing.T) {
