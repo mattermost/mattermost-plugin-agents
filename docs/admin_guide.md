@@ -513,7 +513,7 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
    - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
    - Remote MCP servers, including URL, custom headers, OAuth client settings, and per-server enablement.
 
-3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Plugin-registered MCP servers appear as separate plugin rows in this tab.
+3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Plugin-registered MCP servers appear as separate plugin rows in this tab. The built-in `read_file` tool also appears here. By default it auto-runs in direct messages and requires approval in channels, and admins can change that policy like any other tool.
 4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
 
 The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
@@ -637,6 +637,7 @@ The built-in Mattermost MCP server provides the following native Mattermost tool
 - **read_post**: Read a specific post and its thread
 - **read_channel**: Retrieve recent posts from a channel
 - **search_posts**: Search across Mattermost content with optional team/channel filters
+- **read_file**: Read the text contents of a Mattermost file attachment by File ID, returning extracted text for supported documents such as PDF and Office files and raw text for plain-text files; supports `offset` and `limit` for paged reads
 - **create_post**: Create new posts or replies in channels
 - **dm**: Send a direct message to a user
 - **group_message**: Send a message to a group conversation
@@ -649,6 +650,8 @@ The built-in Mattermost MCP server provides the following native Mattermost tool
 - **get_user_channels**: List the channels the current user is a member of
 - **get_team_members**: List all members of a team
 - **list_agents**: List the AI agents (bots) available to the current user, including each agent's ID, display name, and username
+
+Large readable attachments are surfaced to the model as file metadata, including name, type, size, and File ID, instead of being inlined automatically. The model can then call **read_file** to fetch the text on demand. Some files may still have no extractable text content.
 
 When the Channel Automation plugin is installed, the MCP server also exposes the following tools. They proxy requests to that plugin; execution follows the same MCP tool policies as other tools and each user's Mattermost permissions.
 
