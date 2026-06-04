@@ -84,6 +84,8 @@ When Agents use external tools or integrations, Mattermost may prompt you to rev
 
 By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, each tool call may require approval before execution or run automatically. A single Agent response can include both auto-approved tools and tools still waiting for approval. In that case, the auto-approved badge applies only to the individual tool that ran automatically, while pending tools continue to show **Accept** and **Reject** options. Tool results are shown after execution, and if a result needs a visibility decision, you'll see **Share** and **Keep private** options.
 
+When dynamic MCP tool loading is enabled for an agent, the model can first search for tools with `search_tools`, load a selected tool with `load_tool`, and then call that tool. The `search_tools` and `load_tool` steps can run automatically without showing an approval card, but any loaded business tool still follows the normal approval policy. Search and load only surface tools already available to that agent in the current conversation, so they don't expand access beyond your permissions, provider connection status, workspace configuration, and context. After a tool is loaded, it stays available for the rest of the same conversation, including follow-up turns and regenerated responses.
+
 Only the person who started the conversation can approve or reject tool calls. In direct messages with an agent, approved tool results are shared automatically because only you can view that conversation.
 
 In channels, tool approval can be a two-step process. After you approve a tool call and it runs, Mattermost can prompt you again to decide whether the tool arguments and results should be shared with the channel or kept private. If you choose **Keep Private**, other channel members don't see that tool data, and the channel-visible follow-up response is generated without the private content.
@@ -100,7 +102,7 @@ Depending on your workspace configuration, available tools in direct messages, a
 - MCP tools provided by compatible installed Mattermost plugins that register tools with Agents, after an admin enables those plugin tools
 - MCP tools provided by separately configured remote MCP servers, after an admin enables them
 
-Tool availability depends on your user permissions, provider connection status, workspace configuration, and context.
+Tool availability depends on the current agent, your user permissions, provider connection status, workspace configuration, and conversation context.
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 

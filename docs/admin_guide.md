@@ -554,6 +554,8 @@ The **Automatically enable all MCP tools** option remains the broadest setting. 
 
 Enabling a server or tool for an agent controls what the agent is allowed to use, but it does not bypass tool approval policies. Tool execution still follows the policy configured in the **Tools** tab and each user's Mattermost and provider permissions.
 
+When an agent uses dynamic MCP tool loading, the model discovers candidate MCP tools with `search_tools` and materializes a specific tool schema with `load_tool` only when needed. The searchable registry already reflects the current agent's MCP grants, admin tool enablement and policy, the current user's connection state, any MCP providers that user has disabled, and the current DM or channel context. `search_tools` and `load_tool` can auto-run as meta-tools, but the loaded MCP tool still follows its configured approval policy. Once loaded, a tool remains available for the rest of the conversation, including approval, follow-up, and regenerate flows, so later turns do not need to rediscover it.
+
 ### Management
 
 - **Connection Management**: The system automatically manages user connections to MCP servers
@@ -561,6 +563,8 @@ Enabling a server or tool for an agent controls what the agent is allowed to use
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
 - **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools
 - **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
+- **Dynamic Tool Loading**: In channel-visible follow-up flows, tool use remains limited to tools allowed in that context. In some channel flows, that means only tools allowed to auto-run in channels remain available.
+- **Channel Analysis**: Channel analysis uses the embedded Mattermost MCP tools `read_channel` and `get_channel_info`. If channel analysis fails because those tools are unavailable, verify that the embedded Mattermost MCP server and its built-in tools are enabled and working.
 
 ### OAuth-backed MCP servers
 
