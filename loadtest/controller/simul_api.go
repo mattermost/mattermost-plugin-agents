@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package loadtest
+package controller
 
 import (
 	"github.com/mattermost/mattermost-load-test-ng/loadtest/store"

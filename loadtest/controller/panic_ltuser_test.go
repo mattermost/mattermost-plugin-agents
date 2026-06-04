@@ -1,6 +1,9 @@
-// Code generated for loadtest tests - panic stubs for ltuser.User.
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
 
-package loadtest
+// Code generated for loadtest tests - panic stubs for ltuser.User. DO NOT EDIT.
+
+package controller
 
 import (
 	"encoding/json"

@@ -515,6 +515,20 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The nested loadtest/controller module is invisible to the root-module lint/build
+  # jobs above, so run its lint, tests, and go.mod drift check in a dedicated job.
+  loadtest-controller:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - run: make install-go-tools
+      - run: make loadtest-controller-build loadtest-controller-lint loadtest-controller-test loadtest-controller-mod-check
+
   upload-s3-pr:
     needs: [lint]
     if: github.event_name == 'pull_request'

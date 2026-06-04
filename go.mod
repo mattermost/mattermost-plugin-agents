@@ -5,14 +5,12 @@ go 1.26.2
 require (
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/asticode/go-astisub v0.39.0
-	github.com/blang/semver v3.5.1+incompatible
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/google/jsonschema-go v0.4.2
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.12.0
-	github.com/mattermost/mattermost-load-test-ng v1.32.0
 	github.com/mattermost/mattermost/server/public v0.3.1-0.20260402155910-d9d71af83e3f
 	github.com/mattermost/morph v1.1.0
 	github.com/mattermost/testcontainers-mattermost-go v0.1.0

@@ -1,10 +1,9 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package loadtest
+package controller
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -93,17 +92,6 @@ func TestConfigValidate(t *testing.T) {
 				TriggerFrequencyDM:             0.001,
 				AgentUsername:                  "bot",
 				TriggerMode:                    TriggerModeBoth,
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid mock profile",
-			config: Config{
-				TriggerFrequencyChannelMention: 0.001,
-				TriggerFrequencyDM:             0.001,
-				AgentUsername:                  "bot",
-				TriggerMode:                    TriggerModeBoth,
-				MockProfile:                    json.RawMessage(`{"not_a_profile":true}`),
 			},
 			wantErr: true,
 		},
