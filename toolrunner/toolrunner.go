@@ -329,18 +329,21 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 			resolveErr = fmt.Errorf("no tool store available")
 		case request.Context.Tools.IsUnloadedMCPTool(tc.Name):
 			resolveErr = fmt.Errorf("%s", mcp.UnloadedMCPToolUserHint(tc.Name))
-		case request.Context.Tools.GetTool(tc.Name) == nil:
-			resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
 		default:
+			lookup, ok := request.Context.Tools.LookupTool(tc.Name, tc.ServerOrigin)
+			if !ok {
+				resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
+				break
+			}
 			toolCtx, span := telemetry.Tracer().Start(ctx, "resolve tool",
 				trace.WithAttributes(
-					telemetry.ToolName.String(tc.Name),
+					telemetry.ToolName.String(lookup.RuntimeName),
 					telemetry.ToolID.String(tc.ID),
 				),
 			)
 			result, resolveErr = request.Context.Tools.ResolveTool(
 				toolCtx,
-				tc.Name,
+				lookup.RuntimeName,
 				func(args any) error { return json.Unmarshal(tc.Arguments, args) },
 				request.Context,
 			)
@@ -371,17 +374,18 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 	return toolResults
 }
 
-func toolStoreFromRequest(request llm.CompletionRequest) *llm.ToolStore {
-	if request.Context == nil {
-		return nil
+func toolCallAvailable(store *llm.ToolStore, tc llm.ToolCall) bool {
+	if store == nil {
+		return false
 	}
-	return request.Context.Tools
+	_, ok := store.LookupTool(tc.Name, tc.ServerOrigin)
+	return ok
 }
 
 func unavailableToolNames(toolCalls []llm.ToolCall, store *llm.ToolStore) []string {
 	unavailable := make([]string, 0)
 	for _, tc := range toolCalls {
-		if store == nil || store.GetTool(tc.Name) == nil {
+		if !toolCallAvailable(store, tc) {
 			unavailable = append(unavailable, tc.Name)
 		}
 	}
@@ -390,7 +394,7 @@ func unavailableToolNames(toolCalls []llm.ToolCall, store *llm.ToolStore) []stri
 
 func containsUnavailableTools(toolCalls []llm.ToolCall, store *llm.ToolStore) bool {
 	for _, tc := range toolCalls {
-		if store == nil || store.GetTool(tc.Name) == nil {
+		if !toolCallAvailable(store, tc) {
 			return true
 		}
 	}
@@ -437,6 +441,13 @@ func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore,
 	return toolResults
 }
 
+func toolStoreFromRequest(request llm.CompletionRequest) *llm.ToolStore {
+	if request.Context == nil {
+		return nil
+	}
+	return request.Context.Tools
+}
+
 func recordMCPDynamicSearchLoadCallSuccess(llmContext *llm.Context, toolCalls []llm.ToolCall, toolResults []ToolResult) {
 	if llmContext == nil {
 		return
@@ -463,19 +474,20 @@ func enrichToolCallsForApproval(toolCalls []llm.ToolCall, store *llm.ToolStore) 
 	}
 
 	for i := range enriched {
-		tool := store.GetTool(enriched[i].Name)
-		if tool == nil {
+		lookup, ok := store.LookupTool(enriched[i].Name, enriched[i].ServerOrigin)
+		if !ok {
 			continue
 		}
+		tool := lookup.Tool
 		if enriched[i].Description == "" {
 			enriched[i].Description = tool.Description
 		}
 		if enriched[i].ServerOrigin == "" {
-			enriched[i].ServerOrigin = tool.ServerOrigin
+			enriched[i].ServerOrigin = lookup.ServerOrigin
 		}
 		enriched[i].Schema = tool.Schema
 		if enriched[i].ServerOrigin != "" {
-			enriched[i].MCPBareName = llm.BareMCPToolName(enriched[i].Name)
+			enriched[i].MCPBareName = lookup.BareName
 		}
 	}
 	return enriched

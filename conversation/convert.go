@@ -232,21 +232,22 @@ func enrichToolCallFromStore(toolCall *llm.ToolCall, toolStore *llm.ToolStore) {
 		return
 	}
 
-	tool := toolStore.GetTool(toolCall.Name)
-	if tool == nil && toolCall.MCPBareName != "" {
-		tool = toolStore.GetTool(toolCall.MCPBareName)
+	lookup, ok := toolStore.LookupTool(toolCall.Name, toolCall.ServerOrigin)
+	if !ok && toolCall.MCPBareName != "" {
+		lookup, ok = toolStore.LookupTool(toolCall.MCPBareName, toolCall.ServerOrigin)
 	}
-	if tool == nil {
+	if !ok {
 		return
 	}
 
+	tool := lookup.Tool
 	toolCall.Description = tool.Description
 	toolCall.Schema = tool.Schema
 	if toolCall.ServerOrigin == "" {
-		toolCall.ServerOrigin = tool.ServerOrigin
+		toolCall.ServerOrigin = lookup.ServerOrigin
 	}
 	if toolCall.MCPBareName == "" && tool.ServerOrigin != "" {
-		toolCall.MCPBareName = llm.BareMCPToolName(tool.Name)
+		toolCall.MCPBareName = lookup.BareName
 	}
 }
 

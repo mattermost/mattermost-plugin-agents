@@ -6,6 +6,7 @@ package conversation
 import (
 	"encoding/json"
 
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 )
@@ -65,4 +66,12 @@ func DeriveLoadedMCPTools(turns []store.Turn) []string {
 	}
 
 	return names
+}
+
+// RestoreLoadedMCPToolsFromTurns loads MCP tools retained in conversation history.
+func RestoreLoadedMCPToolsFromTurns(toolStore *llm.ToolStore, turns []store.Turn) []llm.Tool {
+	if !toolStore.HasUnloadedMCPTools() {
+		return nil
+	}
+	return toolStore.LoadMCPTools(DeriveLoadedMCPTools(turns))
 }

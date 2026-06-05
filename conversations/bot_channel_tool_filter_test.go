@@ -488,5 +488,5 @@ func TestUserMCPPreferenceContextOptionsNormalizesDisabledServersBeforeBuild(t *
 	llmContext := &llm.Context{}
 	opts[0](llmContext)
 
-	require.Equal(t, []string{origin}, llmContext.ToolRuntime.DisabledMCPServerOrigins)
+	require.Equal(t, []string{origin}, llmContext.ToolCatalog.DisabledMCPServerOrigins)
 }

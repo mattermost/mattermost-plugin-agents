@@ -325,6 +325,14 @@ type ToolStore struct {
 	authErrors       []ToolAuthError
 }
 
+// ToolLookup describes how a tool call name resolved in a ToolStore.
+type ToolLookup struct {
+	Tool         Tool
+	RuntimeName  string
+	BareName     string
+	ServerOrigin string
+}
+
 // NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using generics
 // It's a helper function for tool providers that currently define schemas as structs
 func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
@@ -357,15 +365,17 @@ func (s *ToolStore) AddTools(tools []Tool) {
 	}
 }
 
-func (s *ToolStore) lookupTool(name string) (Tool, bool) {
+// LookupTool resolves exact names and unique bare MCP names, optionally scoped
+// to a server origin.
+func (s *ToolStore) LookupTool(name, serverOrigin string) (ToolLookup, bool) {
 	if s == nil || name == "" {
-		return Tool{}, false
+		return ToolLookup{}, false
 	}
-	if tool, ok := s.tools[name]; ok {
-		return tool, true
+	if tool, ok := s.tools[name]; ok && (serverOrigin == "" || tool.ServerOrigin == serverOrigin) {
+		return toolLookup(tool), true
 	}
 	if !IsBareMCPToolName(name) {
-		return Tool{}, false
+		return ToolLookup{}, false
 	}
 
 	var matched Tool
@@ -374,13 +384,33 @@ func (s *ToolStore) lookupTool(name string) (Tool, bool) {
 		if tool.ServerOrigin == "" || BareMCPToolName(toolName) != name {
 			continue
 		}
+		if serverOrigin != "" && tool.ServerOrigin != serverOrigin {
+			continue
+		}
 		if found {
-			return Tool{}, false
+			return ToolLookup{}, false
 		}
 		matched = tool
 		found = true
 	}
-	return matched, found
+	if !found {
+		return ToolLookup{}, false
+	}
+	return toolLookup(matched), true
+}
+
+func toolLookup(tool Tool) ToolLookup {
+	return ToolLookup{
+		Tool:         tool,
+		RuntimeName:  tool.Name,
+		BareName:     BareMCPToolName(tool.Name),
+		ServerOrigin: tool.ServerOrigin,
+	}
+}
+
+func (s *ToolStore) lookupTool(name string) (Tool, bool) {
+	lookup, ok := s.LookupTool(name, "")
+	return lookup.Tool, ok
 }
 
 func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
@@ -462,6 +492,10 @@ func (s *ToolStore) LoadMCPTools(names []string) []Tool {
 		s.unloadedMCPTools = nil
 	}
 	return loaded
+}
+
+func (s *ToolStore) HasUnloadedMCPTools() bool {
+	return s != nil && len(s.unloadedMCPTools) > 0
 }
 
 func (s *ToolStore) IsUnloadedMCPTool(name string) bool {

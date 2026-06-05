@@ -104,7 +104,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		"Failed to load user tool preferences for tool approval",
 	)
 
-	llmContext.Tools.LoadMCPTools(conversation.DeriveLoadedMCPTools(turns))
+	conversation.RestoreLoadedMCPToolsFromTurns(llmContext.Tools, turns)
 
 	// Execute approved tools and build results.
 	var toolResults []toolrunner.ToolResult
@@ -468,22 +468,27 @@ func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, b
 		return "", fmt.Errorf("tool %s is no longer available", block.Name)
 	}
 
-	tool := llmContext.Tools.GetTool(block.Name)
-	if tool == nil {
+	lookup, ok := llmContext.Tools.LookupTool(block.Name, block.ServerOrigin)
+	if !ok {
+		if existing, found := llmContext.Tools.LookupTool(block.Name, ""); found {
+			if block.ServerOrigin != "" && existing.ServerOrigin != block.ServerOrigin {
+				return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
+			}
+			if block.MCPBareName != "" && existing.BareName != block.MCPBareName {
+				return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
+			}
+		}
 		if llmContext.Tools.IsUnloadedMCPTool(block.Name) {
 			return "", errors.New(mcp.UnloadedMCPToolUserHint(block.Name))
 		}
 		return "", fmt.Errorf("tool %s is no longer available", block.Name)
 	}
 
-	if block.ServerOrigin != "" && tool.ServerOrigin != block.ServerOrigin {
-		return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
-	}
-	if block.MCPBareName != "" && llm.BareMCPToolName(block.Name) != block.MCPBareName {
+	if block.MCPBareName != "" && lookup.BareName != block.MCPBareName {
 		return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
 	}
 
-	return llmContext.Tools.ResolveTool(ctx, block.Name, func(args any) error {
+	return llmContext.Tools.ResolveTool(ctx, lookup.RuntimeName, func(args any) error {
 		return json.Unmarshal(block.Input, args)
 	}, llmContext)
 }

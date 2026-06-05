@@ -478,7 +478,7 @@ func TestFlagOffFullSchemaParity(t *testing.T) {
 	require.Nil(t, context.Tools.GetTool(mcp.LoadToolName))
 }
 
-func TestContextSetsMCPDynamicToolLoadingFlag(t *testing.T) {
+func TestContextSetsMCPDynamicToolLoadingCatalogFlag(t *testing.T) {
 	builder := newTestBuilder(t, &emptyToolProvider{}, nil)
 
 	tests := []struct {
@@ -500,7 +500,7 @@ func TestContextSetsMCPDynamicToolLoadingFlag(t *testing.T) {
 
 			context := builder.BuildLLMContextUserRequest(bot, testUser(), testChannel())
 
-			require.Equal(t, tt.enabled, context.ToolRuntime.MCPDynamicToolLoading)
+			require.Equal(t, tt.enabled, context.ToolCatalog.MCPDynamicToolLoading)
 		})
 	}
 }

@@ -432,7 +432,7 @@ func AssembleRequest(
 	}
 
 	if context != nil {
-		context.Tools.LoadMCPTools(DeriveLoadedMCPTools(turns))
+		RestoreLoadedMCPToolsFromTurns(context.Tools, turns)
 	}
 
 	posts := make([]llm.Post, 0, len(turns)+1)
@@ -695,7 +695,7 @@ func (s *Service) BuildChannelMentionRequest(
 	}
 
 	if context != nil {
-		context.Tools.LoadMCPTools(DeriveLoadedMCPTools(turns))
+		RestoreLoadedMCPToolsFromTurns(context.Tools, turns)
 	}
 
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)

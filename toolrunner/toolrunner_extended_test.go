@@ -438,6 +438,73 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 	assert.Empty(t, result.ToolTurns)
 }
 
+func TestEnrichToolCallsForApprovalUsesScopedCatalogMetadata(t *testing.T) {
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{
+		{Name: "jira__create_issue", Description: "Create a Jira issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
+		{Name: "github__create_issue", Description: "Create a GitHub issue", ServerOrigin: "https://github.example.com"},
+	})
+
+	enriched := enrichToolCallsForApproval([]llm.ToolCall{{
+		ID:           "tc1",
+		Name:         "create_issue",
+		ServerOrigin: "https://jira.example.com",
+		Arguments:    json.RawMessage(`{"summary":"bug"}`),
+	}}, store)
+
+	require.Len(t, enriched, 1)
+	assert.Equal(t, "Create a Jira issue", enriched[0].Description)
+	assert.Equal(t, "https://jira.example.com", enriched[0].ServerOrigin)
+	assert.Equal(t, "create_issue", enriched[0].MCPBareName)
+	assert.Equal(t, map[string]any{"type": "object"}, enriched[0].Schema)
+}
+
+func TestToolRunner_AutoExecutesScopedBareToolCall(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "create_issue", ServerOrigin: "https://jira.example.com", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "done"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{
+		{
+			Name:         "jira__create_issue",
+			ServerOrigin: "https://jira.example.com",
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "jira-result", nil
+			},
+		},
+		{
+			Name:         "github__create_issue",
+			ServerOrigin: "https://github.example.com",
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "github-result", nil
+			},
+		},
+	})
+
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "create"}},
+		Context: &llm.Context{Tools: store},
+	}, alwaysExecute, nil)
+	require.NoError(t, err)
+	_, _ = result.Stream.ReadAll()
+
+	require.Len(t, result.ToolTurns, 1)
+	require.Len(t, result.ToolTurns[0].ToolResults, 1)
+	assert.Equal(t, "jira-result", result.ToolTurns[0].ToolResults[0].Result)
+	assert.False(t, result.ToolTurns[0].ToolResults[0].IsError)
+}
+
 func TestToolRunner_MixedBatchSkippedDoesNotDisableToolsAfterRetryLimit(t *testing.T) {
 	responses := make([]testResponse, 2)
 	for i := range responses {

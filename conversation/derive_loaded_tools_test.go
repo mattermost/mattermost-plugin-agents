@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/stretchr/testify/require"
@@ -262,6 +263,24 @@ func TestDeriveLoadedMCPTools(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestRestoreLoadedMCPToolsFromTurns(t *testing.T) {
+	toolStore := llm.NewNoTools()
+	toolStore.SetUnloadedMCPTools([]llm.Tool{
+		{Name: "jira__get_issue"},
+		{Name: "github__search"},
+	})
+	turns := []store.Turn{
+		assistantTurn(t, 1, loadToolUseBlock("a", "jira__get_issue")),
+		resultTurn(t, 2, successfulLoadResultBlock("a", "jira__get_issue")),
+	}
+
+	loaded := RestoreLoadedMCPToolsFromTurns(toolStore, turns)
+
+	require.Equal(t, []llm.Tool{{Name: "jira__get_issue"}}, loaded)
+	require.NotNil(t, toolStore.GetTool("jira__get_issue"))
+	require.Nil(t, toolStore.GetTool("github__search"))
 }
 
 func mustMarshalLoadResult(t *testing.T, result mcp.LoadToolResult) string {

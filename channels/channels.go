@@ -115,33 +115,12 @@ func (c *Channels) AnalyzeChannel(
 }
 
 func requiredEmbeddedToolByExactOrBareName(store *llm.ToolStore, name string) (llm.Tool, bool) {
-	if store == nil {
+	lookup, ok := store.LookupTool(name, mcp.EmbeddedClientKey)
+	if !ok {
 		return llm.Tool{}, false
 	}
 
-	if tool := store.GetTool(name); tool != nil && tool.ServerOrigin == mcp.EmbeddedClientKey {
-		scopedTool := *tool
-		// Channel analysis exposes bound embedded tools under their bare names.
-		scopedTool.Name = name
-		return scopedTool, true
-	}
-
-	var match *llm.Tool
-	for _, tool := range store.GetTools() {
-		if tool.ServerOrigin != mcp.EmbeddedClientKey || llm.BareMCPToolName(tool.Name) != name {
-			continue
-		}
-		if match != nil {
-			return llm.Tool{}, false
-		}
-		tool := tool
-		match = &tool
-	}
-	if match == nil {
-		return llm.Tool{}, false
-	}
-
-	tool := *match
+	tool := lookup.Tool
 	// Channel analysis exposes bound embedded tools under their bare names.
 	tool.Name = name
 	return tool, true

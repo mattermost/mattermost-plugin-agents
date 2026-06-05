@@ -122,10 +122,10 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		a.pluginAPI.Log.Error("Channel analysis failed: required embedded MCP tools not available",
 			"userID", userID,
 			"channelID", channel.Id,
-			"dynamicToolLoading", llmContext.ToolRuntime.MCPDynamicToolLoading,
+			"dynamicToolLoading", llmContext.ToolCatalog.MCPDynamicToolLoading,
 			"missingTools", missingTools,
 			"availableTools", availableTools)
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("channel analysis requires embedded MCP tool(s) %v which are not available (dynamic loading: %t, found %d tools: %v) - ensure embedded MCP server is enabled, authorized, and working", missingTools, llmContext.ToolRuntime.MCPDynamicToolLoading, len(availableTools), availableTools))
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("channel analysis requires embedded MCP tool(s) %v which are not available (dynamic loading: %t, found %d tools: %v) - ensure embedded MCP server is enabled, authorized, and working", missingTools, llmContext.ToolCatalog.MCPDynamicToolLoading, len(availableTools), availableTools))
 		return
 	}
 
@@ -200,28 +200,11 @@ func channelAnalysisToolAvailability(store *llm.ToolStore) ([]string, []string) 
 	return available, missing
 }
 
-// hasRequiredChannelAnalysisTool relies on the channel-analysis MCP tools
-// being preloaded into the visible tool store via WithLLMContextPreloadedMCPTools
-// (see the contextBuilder call above). Preload re-aliases each match to the
-// bare tool name in `required.ToolName`, so the GetTool lookup here matches
-// directly. Any new entry path that skips preload risks namespaced runtime
-// names (e.g. "mattermost__read_channel") that won't match this lookup.
+// hasRequiredChannelAnalysisTool expects channel-analysis MCP tools to be
+// preloaded into the visible tool store by WithLLMContextPreloadedMCPTools.
 func hasRequiredChannelAnalysisTool(store *llm.ToolStore, required llm.EnabledMCPTool) bool {
-	if store == nil {
-		return false
-	}
-	if tool := store.GetTool(required.ToolName); tool != nil && tool.ServerOrigin == required.ServerOrigin {
-		return true
-	}
-	for _, tool := range store.GetTools() {
-		if tool.ServerOrigin != required.ServerOrigin {
-			continue
-		}
-		if tool.Name == required.ToolName || llm.BareMCPToolName(tool.Name) == required.ToolName {
-			return true
-		}
-	}
-	return false
+	_, ok := store.LookupTool(required.ToolName, required.ServerOrigin)
+	return ok
 }
 
 func (a *API) handleInterval(c *gin.Context) {

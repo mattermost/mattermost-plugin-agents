@@ -165,7 +165,7 @@ func (b *Builder) WithLLMContextDisabledMCPServers(origins []string) llm.Context
 		if len(normalized) == 0 {
 			return
 		}
-		c.ToolRuntime.DisabledMCPServerOrigins = normalized
+		c.ToolCatalog.DisabledMCPServerOrigins = normalized
 	}
 }
 
@@ -174,7 +174,7 @@ func (b *Builder) WithLLMContextMCPToolFilter(keep func(llm.Tool) bool) llm.Cont
 		if keep == nil {
 			return
 		}
-		c.ToolRuntime.KeepMCPTool = keep
+		c.ToolCatalog.KeepMCPTool = keep
 	}
 }
 
@@ -183,7 +183,7 @@ func (b *Builder) WithLLMContextMCPToolFilter(keep func(llm.Tool) bool) llm.Cont
 // authorized MCP catalog and must be configured before default tools are built.
 func (b *Builder) WithLLMContextPreloadedMCPTools(tools []llm.EnabledMCPTool) llm.ContextOption {
 	return func(c *llm.Context) {
-		c.ToolRuntime.PreloadedMCPTools = slices.Clone(tools)
+		c.ToolCatalog.PreloadedMCPTools = slices.Clone(tools)
 	}
 }
 
@@ -255,8 +255,8 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		if !botCfg.AutoEnableNewMCPTools {
 			mcpTools = llm.FilterMCPToolsByEnabledAllowlist(mcpTools, botCfg.EnabledMCPTools)
 		}
-		mcpTools = filterMCPToolsByDisabledOrigins(mcpTools, c.ToolRuntime.DisabledMCPServerOrigins)
-		mcpTools = filterMCPToolsByPredicate(mcpTools, c.ToolRuntime.KeepMCPTool)
+		mcpTools = filterMCPToolsByDisabledOrigins(mcpTools, c.ToolCatalog.DisabledMCPServerOrigins)
+		mcpTools = filterMCPToolsByPredicate(mcpTools, c.ToolCatalog.KeepMCPTool)
 
 		if mcpErrors != nil {
 			authErrors := mcpErrors.ToolAuthErrors
@@ -280,7 +280,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	if len(mcpTools) > 0 {
 		store.AddTools(mcpTools)
 	}
-	b.preloadMCPTools(store, mcpTools, c.ToolRuntime.PreloadedMCPTools)
+	b.preloadMCPTools(store, mcpTools, c.ToolCatalog.PreloadedMCPTools)
 
 	return store
 }
@@ -291,7 +291,7 @@ func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.T
 	}
 	registry := mcp.NewToolRegistry(mcpTools, registryOpts...)
 
-	b.preloadMCPTools(store, mcpTools, c.ToolRuntime.PreloadedMCPTools)
+	b.preloadMCPTools(store, mcpTools, c.ToolCatalog.PreloadedMCPTools)
 	markUnloadedMCPTools(store, mcpTools)
 	store.AddTools(mcp.NewMetaTools(registry))
 }
@@ -487,7 +487,7 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 			botUserID = mmbot.UserId
 		}
 		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
-		c.ToolRuntime.MCPDynamicToolLoading = bot.GetConfig().MCPDynamicToolLoading
+		c.ToolCatalog.MCPDynamicToolLoading = bot.GetConfig().MCPDynamicToolLoading
 		c.ToolRuntime.MCPDynamicToolTelemetry = b.mcpDynamicToolTelemetry
 	}
 }
