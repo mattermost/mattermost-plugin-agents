@@ -51,10 +51,19 @@ Configure MCP tool policies so relevant tools use **`auto_run_everywhere`** (see
 
 Integration is **cross-repository**:
 
-- This repo exposes `github.com/mattermost/mattermost-plugin-agents/loadtest/controller` (a standalone nested Go module) for blank-import registration of the Agents SimulController.
-- mattermost-load-test-ng must import that package and include **`mattermost-ai`** in `EnabledPlugins` for the simulated server configuration.
+- This repo exposes `github.com/mattermost/mattermost-plugin-agents/loadtest/controller` as a standalone nested Go module for blank-import registration of the Agents SimulController. This keeps mattermost-load-test-ng dependencies out of the production plugin build.
+- The controller is inert during normal plugin operation; it only activates when mattermost-load-test-ng imports and instantiates it.
+- mattermost-load-test-ng must add:
+
+  ```go
+  import _ "github.com/mattermost/mattermost-plugin-agents/loadtest/controller"
+  ```
+
+- mattermost-load-test-ng must include **`mattermost-ai`** in `EnabledPlugins` for the simulated server configuration.
 
 **Plugin ID:** `mattermost-ai` (not `agents`).
+
+**Minimum server version:** `7.8.0`.
 
 **Registered actions** (names matter for simulator wiring):
 
@@ -65,8 +74,11 @@ Integration is **cross-repository**:
 
 - Default file path: `./config/mattermost-ai-loadtest.json`
 - Override with environment variable: `MM_AGENTS_LOADTEST_CONFIG` pointing at a JSON file
+- Config read errors are returned through action responses; controller construction does not panic.
 
 **Trigger frequencies** (`triggerFrequencyChannelMention`, `triggerFrequencyDM`) are **relative weights** inside load-test-ng, not global percentages. For example, `0.001` is one-thousandth the weight of an action configured with frequency `1.0`. The simulator scales from the smallest non-zero frequency.
+
+Actions are omitted when their corresponding trigger frequency is `0`, even if `triggerMode` would otherwise allow them.
 
 Example `mattermost-ai-loadtest.json`:
 
@@ -81,6 +93,14 @@ Example `mattermost-ai-loadtest.json`:
   "mockProfile": null
 }
 ```
+
+Defaults are shown in the example above. `agentUserID` and `mockProfile` are optional.
+
+`triggerMode` accepts `both`, `channel_mention`, or `dm`. `promptProfile` accepts `mixed`, `read_search_heavy`, `short`, or `tool_heavy`; blank or unknown values fall back to `mixed`.
+
+When an enabled action has a non-zero frequency, configure at least one of `agentUsername` or `agentUserID`. If both are set, username resolution must match the configured ID.
+
+Channel mentions post to open/private channels only. If no suitable channel exists, the action skips without error. DMs message the agent user directly without an `@mention` in the body; if the agent user is the simulated user, the DM action skips without error.
 
 Optional `mockProfile` embeds the same JSON schema as `loadTestMockConfig` when your ng-side harness merges mock defaults with simulator config (validated via `loadtest.ParseProfile` on read).
 
@@ -119,7 +139,8 @@ Run an integrated mattermost-load-test-ng scenario only after both this branch (
 | Symptom | What to check |
 |--------|----------------|
 | Plugin fails to start or bot LLM errors mentioning `loadtest profile` | Fix `loadTestMockConfig` JSON (unknown fields are rejected). Validate weights sum positively and reference existing latency profile keys. |
-| No simulated agent traffic | Confirm `EnabledPlugins` includes **`mattermost-ai`**. Confirm ng imports `github.com/mattermost/mattermost-plugin-agents/loadtest/controller`. |
-| Actions never hit the agent user | Verify `agentUsername` / `agentUserID` match a real bot user in the test data set; check simulator logs for target resolution errors. |
+| No simulated agent traffic | Confirm `EnabledPlugins` includes **`mattermost-ai`**. Confirm ng blank-imports `github.com/mattermost/mattermost-plugin-agents/loadtest/controller`. Confirm the relevant trigger frequency is non-zero and allowed by `triggerMode`. |
+| Actions never hit the agent user | Verify `agentUsername` / `agentUserID` match a real bot user in the test data set. If both are configured, ensure they resolve to the same user. Check simulator action responses for target resolution or config read errors. |
+| Channel mentions or DMs skip without failing | Channel mentions skip when no open/private channel is available. DMs skip when the resolved agent user is the same as the simulated user. |
 | Tool calls hang or never execute | Ensure MCP tools use **`auto_run_everywhere`** for load-test channels/users so approvals do not block automation. |
 | Need to confirm mock parameters | Search logs for `Initialized load-test mock LLM` and read `profile_summary` (initialization-time only). |
