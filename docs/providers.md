@@ -16,6 +16,7 @@ The Mattermost Agents plugin currently supports these LLM providers:
 - Azure OpenAI
 - Google Gemini
 - Google Vertex AI
+- Load-test mock (`loadtest_mock`, admin configuration API only)
 
 ## General Configuration Concepts
 
@@ -349,3 +350,51 @@ Native Google Tools:
 - **Requests fail with `PERMISSION_DENIED`.** Confirm the service account has `roles/aiplatform.user` on the project, and that the Vertex AI API is enabled. For ADC deployments, confirm the bound principal (workload identity, instance SA, etc.) has the same role.
 - **Model not found in region.** Vertex model IDs are region-scoped. Check the model is available in your **GCP Region**, or switch to a region that has it.
 - **Web search returns no citations.** Confirm **Web Search** is checked under **Native Google Tools** for the agent, verify the selected model supports grounding, and make sure your Google Cloud project meets the current Vertex AI grounding prerequisites.
+
+## Load-test mock
+
+The Load-test mock service type, `loadtest_mock`, is for operator/admin load testing. It runs in-process, requires no external LLM provider, and does not use an API key.
+
+Configure this service type through the admin configuration API:
+
+- `GET /plugins/mattermost-ai/admin/config`
+- `PUT /plugins/mattermost-ai/admin/config`
+
+Set the service `type` to `loadtest_mock`. The optional `loadTestMockConfig` field is raw JSON that overlays the default read/search-heavy mock profile. If `loadTestMockConfig` is omitted, empty, or whitespace-only, the default profile is used.
+
+Synthetic tool calls emitted by the mock LLM use the same tool runner and Mattermost permission checks as real LLM responses.
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **Type** | Yes | Must be `loadtest_mock` |
+| **API Key** | No | Not used |
+| **Default Model** | No | Not used by the mock service |
+| **Load Test Mock Config** | No | Raw JSON profile overlay in `loadTestMockConfig` |
+
+Supported profile overlay fields are `name`, `seed`, `latency_profiles`, `profile_weights`, `reasoning_skip_probability`, `streaming_enabled`, `tool_use_probability`, `tool_weights`, `max_tool_rounds`, `tool_argument_profiles`, and `final_response_templates`.
+
+Invalid JSON, unknown fields, empty weight maps, negative weights, latency ranges where the minimum is greater than the maximum, probabilities outside `[0,1]`, `profile_weights` entries that reference unknown latency profiles, empty response templates, and `max_tool_rounds` values above `10` are rejected during service validation.
+
+### Example service configuration
+
+```json
+{
+  "id": "loadtest-mock",
+  "name": "Load-test mock",
+  "type": "loadtest_mock",
+  "loadTestMockConfig": {
+    "name": "read_search_heavy_default",
+    "streaming_enabled": true,
+    "tool_use_probability": 0.65,
+    "profile_weights": {
+      "realistic_default": 0.7,
+      "realistic_fast": 0.2,
+      "realistic_slow": 0.1
+    }
+  }
+}
+```
+
+When a bot initializes this service, the server log includes the bot name, service ID, and profile summary. The mock service requires no credentials.
