@@ -1683,7 +1683,7 @@ func newSearchToolStore() *llm.ToolStore {
 	store.AddTools([]llm.Tool{{
 		Name:        "search_posts",
 		Description: "search",
-		Resolver:    func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "", nil },
+		Resolver:    func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "", nil },
 	}})
 	return store
 }
