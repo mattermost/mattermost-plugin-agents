@@ -209,14 +209,14 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 	}
 
 	t := *s.sourceTool
-	t.Resolver = func(ctx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
-		return s.resolveSource(bot, ctx, argsGetter)
+	t.Resolver = func(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+		return s.resolveSource(ctx, bot, llmContext, argsGetter)
 	}
 
 	return &t
 }
 
-func (s *webSearchService) resolve(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args WebSearchToolArgs
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for WebSearch tool: %w", err)
@@ -301,7 +301,7 @@ func (s *webSearchService) resolve(llmContext *llm.Context, argsGetter llm.ToolA
 	}
 
 	// Perform the search
-	searchResp, err := provider.Search(context.Background(), query, resultLimit)
+	searchResp, err := provider.Search(ctx, query, resultLimit)
 	if err != nil {
 		return "unable to perform web search", err
 	}
@@ -432,7 +432,7 @@ func (s *webSearchService) resolve(llmContext *llm.Context, argsGetter llm.ToolA
 	return builder.String(), nil
 }
 
-func (s *webSearchService) resolveSource(bot *bots.Bot, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (s *webSearchService) resolveSource(ctx context.Context, bot *bots.Bot, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args WebSearchSourceArgs
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for WebSearchFetchSource tool: %w", err)
@@ -452,10 +452,10 @@ func (s *webSearchService) resolveSource(bot *bots.Bot, llmContext *llm.Context,
 	if llmContext != nil && llmContext.Parameters != nil {
 		if raw, ok := llmContext.Parameters[WebSearchContextKey]; ok {
 			if searchContexts, ok := raw.([]WebSearchContextValue); ok {
-				for _, ctx := range searchContexts {
-					for i := range ctx.Results {
-						if ctx.Results[i].URL == pageURL {
-							matchedResult = &ctx.Results[i]
+				for _, searchCtx := range searchContexts {
+					for i := range searchCtx.Results {
+						if searchCtx.Results[i].URL == pageURL {
+							matchedResult = &searchCtx.Results[i]
 							break
 						}
 					}
@@ -503,7 +503,7 @@ func (s *webSearchService) resolveSource(bot *bots.Bot, llmContext *llm.Context,
 		return "web search is not properly configured", errors.New("web search http client is not configured")
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, pageURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
 	if err != nil {
 		s.logError("failed to create source fetch request", "error", err)
 		return "unable to create request", err

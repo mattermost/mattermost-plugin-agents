@@ -201,7 +201,10 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	return client, nil
 }
 
-// NewClient creates a new MCP client for the given server and user and connects to the specified MCP server
+// NewClient creates a new MCP client for the given server and user and connects to the specified MCP server.
+// forceRefresh bypasses the shared tools cache read. Its sole purpose is to close the race where a concurrent
+// lookup repopulates the cache between a manual refresh's invalidation and this reconnect; a plain
+// post-invalidation rediscovery would otherwise cache-miss on its own.
 func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, forceRefresh bool) (*Client, error) {
 	c := &Client{
 		session:      nil,

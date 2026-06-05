@@ -606,7 +606,7 @@ func mcpToolsToLLMTools(t *testing.T, mcpServer *gomcp.Server) []llm.Tool {
 			Name:        tool.Name,
 			Description: tool.Description,
 			Schema:      tool.InputSchema,
-			Resolver: func(_ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 				// Same pattern as production createToolResolver (mcp/user_clients.go:201)
 				var args map[string]any
 				if err := argsGetter(&args); err != nil {

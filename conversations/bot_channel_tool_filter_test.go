@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -44,10 +45,10 @@ func TestApplyBotChannelAutoEverywhereToolFilter(t *testing.T) {
 		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
-		{Name: "builtin", ServerOrigin: "", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
-		{Name: "everywhere_tool", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
-		{Name: "auto_run_tool", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
-		{Name: "ask_tool", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "builtin", ServerOrigin: "", Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "everywhere_tool", ServerOrigin: origin, Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "auto_run_tool", ServerOrigin: origin, Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "ask_tool", ServerOrigin: origin, Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
 	})
 
 	c.applyBotChannelAutoEverywhereToolFilter(llmContext)
@@ -73,9 +74,9 @@ func TestApplyToolAvailabilityBeforeBotChannelFilterPreservesDisabledToolsInfo(t
 		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
-		{Name: "builtin", Description: "builtin tool", ServerOrigin: "", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
-		{Name: "everywhere_tool", Description: "auto everywhere", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
-		{Name: "ask_tool", Description: "needs approval", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "builtin", Description: "builtin tool", ServerOrigin: "", Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "everywhere_tool", Description: "auto everywhere", ServerOrigin: origin, Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "ask_tool", Description: "needs approval", ServerOrigin: origin, Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
 	})
 
 	toolsDisabled := applyToolAvailability(llmContext, false, true)
@@ -102,8 +103,8 @@ func TestApplyBotChannelAutoEverywhereToolFilter_nilCheckerFailClosed(t *testing
 		Tools: llm.NewToolStore(),
 	}
 	llmContext.Tools.AddTools([]llm.Tool{
-		{Name: "builtin", ServerOrigin: "", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
-		{Name: "mcp_tool", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "builtin", ServerOrigin: "", Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "mcp_tool", ServerOrigin: origin, Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
 	})
 
 	c.applyBotChannelAutoEverywhereToolFilter(llmContext)

@@ -594,7 +594,7 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 		}
 
 		// Should succeed (return content)
-		resp, err := service.resolveSource(mockBot, ctx, argsGetter)
+		resp, err := service.resolveSource(context.Background(), mockBot, ctx, argsGetter)
 		require.NoError(t, err)
 		require.Contains(t, resp, "Summarized content")
 	})
@@ -614,7 +614,7 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 			return nil
 		}
 
-		resp, err := service.resolveSource(mockBot, ctx, argsGetter)
+		resp, err := service.resolveSource(context.Background(), mockBot, ctx, argsGetter)
 		require.Error(t, err)
 		require.Equal(t, "url not in whitelist", err.Error())
 		require.Contains(t, resp, "you can only fetch URLs that were returned from web search results")
@@ -633,7 +633,7 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 			return nil
 		}
 
-		resp, err := service.resolveSource(mockBot, ctx, argsGetter)
+		resp, err := service.resolveSource(context.Background(), mockBot, ctx, argsGetter)
 		require.Error(t, err)
 		require.Equal(t, "no whitelist in context", err.Error())
 		require.Contains(t, resp, "you can only fetch URLs that were returned from web search results")

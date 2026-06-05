@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 	"testing"
@@ -264,7 +265,7 @@ func TestWithBoundParamsPreservesServerOrigin(t *testing.T) {
 		Name:         "test_tool",
 		Description:  "A test tool",
 		ServerOrigin: "https://mcp.example.com",
-		Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+		Resolver: func(_ context.Context, _ *Context, _ ToolArgumentGetter) (string, error) {
 			return "result", nil
 		},
 	}

@@ -148,11 +148,8 @@ func (m *ClientManager) Close() {
 }
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager.
-func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string) (*UserClients, *Errors) {
-	return m.createAndStoreUserClientWithRefresh(ctx, userID, false)
-}
-
-func (m *ClientManager) createAndStoreUserClientWithRefresh(ctx context.Context, userID string, forceRefresh bool) (*UserClients, *Errors) {
+// When forceRefresh is true the remote connect bypasses the shared tools cache.
+func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string, forceRefresh bool) (*UserClients, *Errors) {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
@@ -189,7 +186,7 @@ func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*U
 	}
 	m.clientsMu.Unlock()
 
-	return m.createAndStoreUserClient(ctx, userID)
+	return m.createAndStoreUserClient(ctx, userID, false)
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
@@ -197,13 +194,16 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	// Get or create client for this user (connects to remote servers only)
 	userClient, mcpErrors := m.getClientForUser(ctx, userID)
 
-	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
+	// Embedded and plugin connects intentionally receive the raw cancelable ctx:
+	// they run per-request and are not cached, so a canceled request should abort
+	// them. Only the remote connect uses cacheableContext(ctx) (in
+	// createAndStoreUserClient) because its result is cached across requests.
 	if m.embeddedClient != nil {
 		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
 		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
+			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient); embeddedErr != nil {
 				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
 			}
 		}
@@ -228,45 +228,24 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	return filtered, mcpErrors
 }
 
-// RefreshToolsForUser drops cached user clients and shared server tool lists before rediscovery.
+// RefreshToolsForUser drops cached user clients and shared server tool lists,
+// pre-warms a fresh user client, then delegates to GetToolsForUser for the
+// embedded/plugin connect + filtering it shares with the normal lookup path.
 func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors, error) {
 	if userID == "" {
 		return nil, nil, errors.New("userID is required")
 	}
 
-	refreshErr := m.invalidateSharedToolsCacheForRefresh()
-	if refreshErr != nil {
+	if refreshErr := m.invalidateSharedToolsCacheForRefresh(); refreshErr != nil {
 		m.log.Warn("Failed to invalidate shared MCP tools cache during user refresh; bypassing cache for rediscovery", "userID", userID, "error", refreshErr)
 	}
 	m.InvalidateUserClients(userID)
-	userClient, mcpErrors := m.createAndStoreUserClientWithRefresh(ctx, userID, true)
+	// Pre-warm the user client with a forced remote rediscovery; GetToolsForUser
+	// then reuses this cached client rather than rebuilding it.
+	m.createAndStoreUserClient(ctx, userID, true)
 
-	if m.embeddedClient != nil {
-		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
-		if ensureErr != nil {
-			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
-		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
-				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
-			}
-		}
-	}
-
-	pluginSnap := m.snapshotEnabledPluginServers()
-	for _, cfg := range pluginSnap {
-		if connectErr := userClient.ConnectToPluginServer(ctx, cfg, m.sourcePluginAPI); connectErr != nil {
-			m.log.Error("Failed to connect to plugin MCP server", "userID", userID, "pluginID", cfg.PluginID, "error", connectErr)
-			if mcpErrors == nil {
-				mcpErrors = &Errors{}
-			}
-			mcpErrors.Errors = append(mcpErrors.Errors, connectErr)
-			userClient.initialRemoteConnectErrors = mcpErrors
-		}
-	}
-
-	rawTools := userClient.GetTools()
-	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
-	return filtered, mcpErrors, nil
+	tools, mcpErrors := m.GetToolsForUser(ctx, userID)
+	return tools, mcpErrors, nil
 }
 
 func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {

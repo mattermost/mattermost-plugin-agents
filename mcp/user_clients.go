@@ -93,7 +93,7 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 
 // ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
 // If a connection already exists, it is reused.
-func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
+func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient) error {
 	if embeddedClient == nil {
 		return nil
 	}
@@ -267,19 +267,14 @@ func (c *UserClients) rememberOAuthNeededForToolCall(client *Client, err error) 
 }
 
 // createToolResolver creates a resolver function for the given tool
-func (c *UserClients) createToolResolver(client *Client, toolName string) func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
-	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (c *UserClients) createToolResolver(client *Client, toolName string) llm.ToolResolver {
+	return func(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		var args map[string]any
 		if err := argsGetter(&args); err != nil {
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
 		}
 
 		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
-
-		ctx := context.Background()
-		if llmContext != nil && llmContext.RequestContext != nil {
-			ctx = llmContext.RequestContext
-		}
 
 		result, err := client.CallToolWithMetadata(ctx, toolName, args, metadata)
 		if err != nil {

@@ -25,8 +25,8 @@ import (
 // It is the Resolver function that implements the actual functionality.
 //
 // The Schema field should contain a JSONSchema that defines the expected structure of the tool's arguments.
-// The Resolver function receives the conversation context and a way to access the parsed arguments,
-// and returns either a result that will be passed to the LLM or an error.
+// The Resolver function receives the request context, the conversation context, and a way to access the
+// parsed arguments, and returns either a result that will be passed to the LLM or an error.
 type Tool struct {
 	Name        string
 	Description string
@@ -45,7 +45,7 @@ type Tool struct {
 	CallMetadata map[string]any
 }
 
-type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string, error)
+type ToolResolver func(ctx context.Context, llmContext *Context, argsGetter ToolArgumentGetter) (string, error)
 
 // WithBoundParams creates a new Tool with parameters bound to fixed values.
 // Bound parameters are:
@@ -121,7 +121,7 @@ func wrapResolverWithBoundParams(original ToolResolver, params map[string]interf
 		return original
 	}
 
-	return func(context *Context, argsGetter ToolArgumentGetter) (string, error) {
+	return func(ctx context.Context, llmContext *Context, argsGetter ToolArgumentGetter) (string, error) {
 		wrappedGetter := func(args any) error {
 			// First unmarshal the original args
 			if err := argsGetter(args); err != nil {
@@ -130,7 +130,7 @@ func wrapResolverWithBoundParams(original ToolResolver, params map[string]interf
 			// Then inject bound params
 			return injectBoundParams(args, params)
 		}
-		return original(context, wrappedGetter)
+		return original(ctx, llmContext, wrappedGetter)
 	}
 }
 
@@ -366,15 +366,7 @@ func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter Too
 		span.SetStatus(otelcodes.Error, err.Error())
 		return "", err
 	}
-	if llmCtx != nil {
-		previousRequestContext := llmCtx.RequestContext
-		llmCtx.RequestContext = ctx
-		defer func() {
-			llmCtx.RequestContext = previousRequestContext
-		}()
-	}
-
-	result, err := tool.Resolver(llmCtx, argsGetter)
+	result, err := tool.Resolver(ctx, llmCtx, argsGetter)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
