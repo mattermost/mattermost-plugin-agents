@@ -458,6 +458,7 @@ func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotCo
 			return nil, fmt.Errorf("failed to parse load-test mock profile for bot %s: %w", botConfig.Name, err)
 		}
 		if b.pluginAPI != nil {
+			// Run-audit snapshot of the active mock profile (once per LLM init; not per request).
 			b.pluginAPI.Log.Info(
 				"Initialized load-test mock LLM",
 				"bot_name", botConfig.Name,

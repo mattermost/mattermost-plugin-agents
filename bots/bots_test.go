@@ -181,13 +181,18 @@ func TestGetBaseLLMLoadTestMockEmptyConfigUsesDefaultProfile(t *testing.T) {
 		"service_id", "loadtest-svc",
 		"profile_summary", mock.MatchedBy(func(s string) bool {
 			summary = s
-			return strings.Contains(s, "realistic_default") &&
+			return strings.Contains(s, "name=read_search_heavy_default") &&
+				strings.Contains(s, "streaming=true") &&
+				strings.Contains(s, "defaults_source=spikes/llm-latency-benchmark") &&
+				strings.Contains(s, "realistic_default") &&
 				strings.Contains(s, "realistic_fast") &&
 				strings.Contains(s, "realistic_slow") &&
 				strings.Contains(s, "0.7000") &&
 				strings.Contains(s, "0.2000") &&
 				strings.Contains(s, "0.1000") &&
-				strings.Contains(s, "reasoning_skip_p=0.1000")
+				strings.Contains(s, "reasoning_skip_p=0.1000") &&
+				strings.Contains(s, "post_limits=10,25,50,100") &&
+				strings.Contains(s, "status update")
 		}),
 	).Return().Once()
 
