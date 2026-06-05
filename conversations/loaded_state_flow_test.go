@@ -459,7 +459,6 @@ func TestHandleToolCallFailsSafelyWhenNoMatchingLoadTurn(t *testing.T) {
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{}`),
-		InputSchema:  json.RawMessage(`{"type":"object"}`),
 		MCPBareName:  "get_issue",
 		Status:       conversation.StatusPending,
 	}}
@@ -523,7 +522,6 @@ func TestHandleToolCallRejectsServerOriginMismatchEvenAfterLoad(t *testing.T) {
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://different.example.com",
 		Input:        json.RawMessage(`{}`),
-		InputSchema:  json.RawMessage(`{"type":"object"}`),
 		MCPBareName:  "get_issue",
 		Status:       conversation.StatusPending,
 	}}

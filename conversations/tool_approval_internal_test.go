@@ -144,7 +144,6 @@ func TestResolveApprovedToolUseBlockUsesPersistedMetadata(t *testing.T) {
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{"key":"MM-1"}`),
-		InputSchema:  json.RawMessage(`{"type":"object"}`),
 		MCPBareName:  "get_issue",
 	})
 
@@ -243,7 +242,6 @@ func TestResolveApprovedToolUseBlockSchemaDriftDoesNotBlockMatchingTool(t *testi
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{}`),
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"old":{"type":"string"}}}`),
 		MCPBareName:  "get_issue",
 	})
 

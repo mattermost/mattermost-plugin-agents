@@ -141,15 +141,6 @@ func (b *Builder) WithLLMContextConversationID(conversationID string) llm.Contex
 	}
 }
 
-// AttachConversationID late-binds a conversation ID onto an existing context.
-func (b *Builder) AttachConversationID(c *llm.Context, bot *bots.Bot, conversationID string) {
-	_ = bot
-	if c == nil || conversationID == "" {
-		return
-	}
-	c.ConversationID = conversationID
-}
-
 // toolAuthErrorMatchesAllowlist reports whether authErr refers to a server that still
 // appears in the per-agent MCP allowlist (by ServerOrigin).
 func toolAuthErrorMatchesAllowlist(authErr llm.ToolAuthError, allowlist []llm.EnabledMCPTool) bool {

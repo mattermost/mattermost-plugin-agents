@@ -56,7 +56,7 @@ func newSingleBuildLLMContextBuilder(t *testing.T, mcpProvider llmcontext.MCPToo
 // TestBuildConversationContextWithTools_MentionShapeBuildsOnce asserts that the
 // shared helper used by the mention path performs a single GetToolsForUser
 // pass even when the caller has not yet learned the conversation ID, and
-// AttachConversationID does NOT trigger another pass.
+// late-binding the conversation ID does NOT trigger another pass.
 func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) {
 	provider := &countingMCPToolProvider{tools: []llm.Tool{
 		{
@@ -81,14 +81,14 @@ func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) 
 	require.NotNil(t, llmCtx.Tools)
 	require.Equal(t, 1, provider.Calls(), "initial build should call GetToolsForUser exactly once")
 
-	c.contextBuilder.AttachConversationID(llmCtx, bot, "conv-1")
+	llmCtx.SetConversationID("conv-1")
 	require.Equal(t, "conv-1", llmCtx.ConversationID)
-	require.Equal(t, 1, provider.Calls(), "AttachConversationID must not trigger a second GetToolsForUser pass")
+	require.Equal(t, 1, provider.Calls(), "SetConversationID must not trigger a second GetToolsForUser pass")
 }
 
 // TestBuildConversationContextWithTools_DMShapeBuildsOnce mirrors the DM path:
 // the helper applies user MCP preferences (DM/group), builds tools once with
-// no ConversationID, and the AttachConversationID step does not re-run the
+// no ConversationID, and the SetConversationID step does not re-run the
 // MCP pipeline.
 func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 	provider := &countingMCPToolProvider{}
@@ -103,16 +103,16 @@ func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
 	require.NotNil(t, llmCtx)
 	require.Equal(t, 1, provider.Calls(), "DM build should call GetToolsForUser exactly once")
 
-	c.contextBuilder.AttachConversationID(llmCtx, bot, "conv-2")
+	llmCtx.SetConversationID("conv-2")
 	require.Equal(t, "conv-2", llmCtx.ConversationID)
-	require.Equal(t, 1, provider.Calls(), "AttachConversationID must not trigger a second GetToolsForUser pass on the DM path")
+	require.Equal(t, 1, provider.Calls(), "SetConversationID must not trigger a second GetToolsForUser pass on the DM path")
 }
 
-// TestAttachConversationID_DoesNotMaterializeTools pins that AttachConversationID
+// TestLateBindConversationID_DoesNotMaterializeTools pins that SetConversationID
 // is a pure late-bind of the conversation ID. Restoration of dynamically loaded
 // MCP tools is the caller's responsibility (via Tools.LoadMCPTools) and is
-// driven from retained turns, not from anything AttachConversationID does.
-func TestAttachConversationID_DoesNotMaterializeTools(t *testing.T) {
+// driven from retained turns, not from anything SetConversationID does.
+func TestLateBindConversationID_DoesNotMaterializeTools(t *testing.T) {
 	const convID = "conv-3"
 	provider := &countingMCPToolProvider{tools: []llm.Tool{
 		{
@@ -141,22 +141,22 @@ func TestAttachConversationID_DoesNotMaterializeTools(t *testing.T) {
 	require.True(t, llmCtx.Tools.IsUnloadedMCPTool("jira__get_issue"),
 		"dynamic MCP tools must appear as unloaded before restoration")
 
-	c.contextBuilder.AttachConversationID(llmCtx, bot, convID)
+	llmCtx.SetConversationID(convID)
 	require.Equal(t, convID, llmCtx.ConversationID)
-	require.Equal(t, 1, provider.Calls(), "AttachConversationID must not trigger a second GetToolsForUser pass")
+	require.Equal(t, 1, provider.Calls(), "SetConversationID must not trigger a second GetToolsForUser pass")
 	require.Nil(t, llmCtx.Tools.GetTool("jira__get_issue"),
-		"AttachConversationID is a thin late-bind and must not materialize MCP tools")
+		"SetConversationID is a thin late-bind and must not materialize MCP tools")
 	require.True(t, llmCtx.Tools.IsUnloadedMCPTool("jira__get_issue"),
-		"AttachConversationID must not touch the unloaded-set bookkeeping")
+		"SetConversationID must not touch the unloaded-set bookkeeping")
 }
 
-// TestAttachConversationID_DoesNotReintroducePreFilteredMCPServers pins that the
+// TestLateBindConversationID_DoesNotReintroducePreFilteredMCPServers pins that the
 // DM handler does not need a second RemoveToolsByServerOrigin pass after
-// AttachConversationID. buildConversationContextWithTools removes tools whose
+// SetConversationID. buildConversationContextWithTools removes tools whose
 // ServerOrigin is in DisabledMCPServerOrigins for DM/group channels; nothing
-// between that build and AttachConversationID (or AttachConversationID itself)
+// between that build and SetConversationID (or SetConversationID itself)
 // is allowed to re-introduce them.
-func TestAttachConversationID_DoesNotReintroducePreFilteredMCPServers(t *testing.T) {
+func TestLateBindConversationID_DoesNotReintroducePreFilteredMCPServers(t *testing.T) {
 	const disabledOrigin = "https://jira.example.com"
 	provider := &countingMCPToolProvider{tools: []llm.Tool{
 		{
@@ -188,8 +188,8 @@ func TestAttachConversationID_DoesNotReintroducePreFilteredMCPServers(t *testing
 	require.Nil(t, llmCtx.Tools.GetTool("jira__get_issue"),
 		"buildConversationContextWithTools must drop tools from disabled MCP servers for DM/group channels")
 
-	c.contextBuilder.AttachConversationID(llmCtx, bot, "conv-4")
+	llmCtx.SetConversationID("conv-4")
 	require.Equal(t, "conv-4", llmCtx.ConversationID)
 	require.Nil(t, llmCtx.Tools.GetTool("jira__get_issue"),
-		"AttachConversationID must not re-introduce tools from disabled MCP servers")
+		"SetConversationID must not re-introduce tools from disabled MCP servers")
 }

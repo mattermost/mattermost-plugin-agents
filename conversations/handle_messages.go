@@ -116,7 +116,7 @@ func removePreFilteredMCPServersFromVisibleStore(llmContext *llm.Context) {
 // (filtered visible-store cleanup for DM/group channels).
 //
 // Pass conversationID == "" to defer late-binding; the caller should call
-// b.contextBuilder.AttachConversationID once the conversation row exists.
+// llmContext.SetConversationID once the conversation row exists.
 // Pass prefsLogMessage == "" to skip the user MCP preferences lookup.
 func (c *Conversations) buildConversationContextWithTools(
 	ctx context.Context,
@@ -269,7 +269,7 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 	// Build the context once WITH tools (no ConversationID yet) so the system
 	// prompt can reference .Tools and .DisabledToolsInfo. The conversation ID
-	// is late-bound below via AttachConversationID after the conversation row
+	// is late-bound below via SetConversationID after the conversation row
 	// has been created.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
@@ -311,7 +311,7 @@ func (c *Conversations) handleMentionViaConversation(
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
 	}
-	c.contextBuilder.AttachConversationID(llmContext, bot, convResult.Conversation.ID)
+	llmContext.SetConversationID(convResult.Conversation.ID)
 	if channelToolsAutoRunEverywhereOnly {
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
@@ -428,7 +428,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
 	// Build the context once WITH tools (no ConversationID yet); the
-	// conversation ID is late-bound below via AttachConversationID.
+	// conversation ID is late-bound below via SetConversationID.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, postingUser, channel,
@@ -448,7 +448,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
-	c.contextBuilder.AttachConversationID(llmContext, bot, convResult.ConversationID)
+	llmContext.SetConversationID(convResult.ConversationID)
 
 	// Anchor this run's trace to the user turn ID. Link to the previous user
 	// turn (if any) so consecutive DMs are navigable in Tempo.
