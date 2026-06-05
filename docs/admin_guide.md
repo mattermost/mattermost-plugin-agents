@@ -63,13 +63,13 @@ Enable this setting only in trusted or otherwise mitigated environments, such as
 
 Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication and model defaults. You can create multiple services for different providers or configurations, and share them across multiple agents.
 
-Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
+Navigate to **System Console > Plugins > Agents** and select **Add a Service**. API-only service types, such as `loadtest_mock`, are configured through `GET`/`PUT /plugins/mattermost-ai/admin/config`.
 
 | Setting | Description |
 |---------|-------------|
 | **Name** | Internal name for this service configuration |
-| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
-| **API Key** | Your provider's API key (requirements vary by provider) |
+| **Type** | LLM provider or service type (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible, Google Gemini, Google Vertex AI, Load-test mock) |
+| **API Key** | Your provider's API key, if required. Load-test mock does not use an API key. |
 | **Default Model** | Default model to use for this service |
 | **Input Token Limit** | Maximum tokens allowed in input. When provider metadata includes an input limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an input limit, the field stays editable and Mattermost uses the saved manual value. Set this manually for models without provider metadata if you want Mattermost to enforce a request-size limit before sending upstream. A value of `0` means Mattermost does not apply client-side truncation. |
 | **Output Token Limit** | Maximum tokens allowed in output. When provider metadata includes an output limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an output limit, the field stays editable and Mattermost uses the saved manual value. |
@@ -92,6 +92,7 @@ Each provider has specific configuration requirements:
 | **Mistral** | API Key | |
 | **Scale AI** | API Key, API URL | Account ID (required for ScaleGov) |
 | **Azure OpenAI** | API Key, API URL | |
+| **Load-test mock** | None | `loadTestMockConfig` profile overlay, configured through `GET`/`PUT /plugins/mattermost-ai/admin/config` |
 
 For AWS Bedrock, authentication can be configured using AWS credentials in the API Key/Secret fields, or by using IAM roles when running Mattermost on AWS infrastructure.
 
@@ -481,7 +482,9 @@ This separation allows multiple agents to share the same LLM service configurati
 }
 ```
 
-**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
+**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`, `gemini`, `vertex`, `loadtest_mock`
+
+Use `loadtest_mock` only for operator/admin load testing. It runs in-process, requires no external provider or API key, and accepts an optional `loadTestMockConfig` raw JSON profile overlay through the admin configuration API.
 
 **Legacy format:** Older configurations that stored bots in `config.bots`, or embedded service objects within bots, are migrated on plugin startup. After legacy bot migration completes, stored `config.bots` entries are removed to avoid duplicate bot registration.
 
