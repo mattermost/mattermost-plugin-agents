@@ -418,8 +418,18 @@ func (m *MockLLM) ChatCompletionNoStream(ctx context.Context, req llm.Completion
 	return sr.FinalText, nil
 }
 
-// CountTokens approximates tokens as ~4 characters with a minimum of 1 when non-empty.
-func (m *MockLLM) CountTokens(text string) int {
+// CountTokens approximates input tokens across the request's posts. The mock
+// always returns a count, so callers never fall back to EstimateTokens.
+func (m *MockLLM) CountTokens(_ context.Context, request llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	var b strings.Builder
+	for _, p := range request.Posts {
+		b.WriteString(p.Message)
+	}
+	return countTextTokens(b.String()), nil
+}
+
+// countTextTokens approximates tokens as ~4 characters with a minimum of 1 when non-empty.
+func countTextTokens(text string) int {
 	if len(text) == 0 {
 		return 0
 	}
@@ -432,6 +442,11 @@ func (m *MockLLM) CountTokens(text string) int {
 
 // InputTokenLimit returns a generous limit for load testing.
 func (m *MockLLM) InputTokenLimit() int {
+	return 100000
+}
+
+// OutputTokenLimit returns a generous limit for load testing.
+func (m *MockLLM) OutputTokenLimit() int {
 	return 100000
 }
 

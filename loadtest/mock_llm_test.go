@@ -481,7 +481,6 @@ func TestToolArgumentsVaryBySeed(t *testing.T) {
 
 func TestCountTokens(t *testing.T) {
 	t.Parallel()
-	m := NewMockLLM(fastTestProfile())
 	tests := []struct {
 		name  string
 		input string
@@ -495,11 +494,26 @@ func TestCountTokens(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			mock := NewMockLLM(fastTestProfile())
-			require.Equal(t, tt.want, mock.CountTokens(tt.input))
+			require.Equal(t, tt.want, countTextTokens(tt.input))
 		})
 	}
+}
+
+func TestCountTokensSumsPosts(t *testing.T) {
+	t.Parallel()
+	m := NewMockLLM(fastTestProfile())
+	n, err := m.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Message: "abcd"}, {Message: "efgh"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+}
+
+func TestMockLLMTokenLimits(t *testing.T) {
+	t.Parallel()
+	m := NewMockLLM(fastTestProfile())
 	require.Equal(t, 100000, m.InputTokenLimit())
+	require.Equal(t, 100000, m.OutputTokenLimit())
 }
 
 func TestCountToolRoundsExportedViaBehavior(t *testing.T) {

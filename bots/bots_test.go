@@ -4,6 +4,7 @@
 package bots
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -149,7 +150,9 @@ func TestGetLLMLoadTestMockUsesWrapperChain(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, model)
 	require.Equal(t, 100000, model.InputTokenLimit())
-	require.Equal(t, 1, model.CountTokens("abcd"))
+	n, err := model.CountTokens(context.Background(), llm.CompletionRequest{Posts: []llm.Post{{Message: "abcd"}}})
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
 }
 
 func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {
