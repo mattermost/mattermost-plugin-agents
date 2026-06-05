@@ -16,6 +16,8 @@ import {useBotlist} from '@/bots';
 
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
+import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
+
 import type {UserMCPServerInfo} from './tool_provider_popover';
 import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
@@ -107,6 +109,7 @@ export default function RHS() {
     }, [dispatch]);
 
     const {bots, activeBot, setActiveBot} = useBotlist();
+    const activeConversationId = useConversationIdForThread(selectedPostId);
 
     // No bots available - hide the RHS entirely
     if (bots && bots.length === 0) {
@@ -178,6 +181,7 @@ export default function RHS() {
                 disabledServers={disabledServers}
                 onDisabledServersChange={setDisabledServers}
                 preloadedServers={preloadedServers}
+                activeConversationId={activeConversationId}
             />
             {wrapInDropZone ? (
                 <RhsFileDropZone>{content}</RhsFileDropZone>

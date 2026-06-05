@@ -107,6 +107,10 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 				hasUsage = true
 				aggregateUsage.InputTokens += usage.InputTokens
 				aggregateUsage.OutputTokens += usage.OutputTokens
+				aggregateUsage.CachedReadTokens += usage.CachedReadTokens
+				aggregateUsage.CachedWriteTokens += usage.CachedWriteTokens
+				aggregateUsage.ReasoningTokens += usage.ReasoningTokens
+				aggregateUsage.Cost += usage.Cost
 				continue
 			default:
 				interceptedStream <- event
@@ -178,6 +182,10 @@ func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage Toke
 		"input_tokens", usage.InputTokens,
 		"output_tokens", usage.OutputTokens,
 		"total_tokens", totalTokens,
+		"cached_read_tokens", usage.CachedReadTokens,
+		"cached_write_tokens", usage.CachedWriteTokens,
+		"reasoning_tokens", usage.ReasoningTokens,
+		"cost", usage.Cost,
 	}
 }
 
@@ -324,11 +332,16 @@ func (w *TokenUsageLoggingWrapper) shouldTrackTokenUsage() bool {
 }
 
 // CountTokens delegates to the wrapped model
-func (w *TokenUsageLoggingWrapper) CountTokens(text string) int {
-	return w.wrapped.CountTokens(text)
+func (w *TokenUsageLoggingWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	return w.wrapped.CountTokens(ctx, request, opts...)
 }
 
 // InputTokenLimit delegates to the wrapped model
 func (w *TokenUsageLoggingWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
+}
+
+// OutputTokenLimit delegates to the wrapped model
+func (w *TokenUsageLoggingWrapper) OutputTokenLimit() int {
+	return w.wrapped.OutputTokenLimit()
 }

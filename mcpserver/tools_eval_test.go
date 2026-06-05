@@ -5,6 +5,7 @@ package mcpserver_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -12,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/evals"
+	"github.com/mattermost/mattermost-plugin-agents/files"
+	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
@@ -402,5 +405,148 @@ func TestBroadcastDMToTeamFlowEval(t *testing.T) {
 				break
 			}
 		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// read_file Evals
+//
+// These exercise the lazy file-loading flow: an attachment is shown to the LLM
+// as a metadata descriptor (what conversation assembly emits for a large file),
+// and the LLM must call read_file to fetch the contents on demand. The user
+// asks are intentionally vague — no file names, IDs, or tool hints — so the
+// model has to connect intent to the attached file itself.
+// ---------------------------------------------------------------------------
+
+// getAdminUser returns the user the MCP session authenticates as (the file
+// content service trusts this identity for reads).
+func getAdminUser(t *testing.T, suite *TestSuite) *model.User {
+	t.Helper()
+	client := model.NewAPIv4Client(suite.serverURL)
+	client.SetToken(suite.adminToken)
+	user, _, err := client.GetMe(context.Background(), "")
+	require.NoError(t, err, "Failed to get admin user")
+	return user
+}
+
+// withFileDescriptor appends the production-style attached-file metadata block
+// (what conversation assembly shows the LLM for a non-inlined file) to a user
+// message, so the eval prompt matches what the model sees in production.
+func withFileDescriptor(userMessage string, fileInfo *model.FileInfo) string {
+	var b strings.Builder
+	b.WriteString(userMessage)
+	b.WriteString("\n\nAttached files (call the read_file tool with the File ID to read their contents):\n")
+	format.WriteFileDescriptor(&b, format.FileDescriptorEntry{Number: 1, FileInfo: fileInfo})
+	return b.String()
+}
+
+func fileEvalService(suite *TestSuite) *client4FileContentService {
+	return &client4FileContentService{serverURL: suite.serverURL, token: suite.adminToken}
+}
+
+// TestReadFileOnDemandFlowEval: given only metadata for an attached checklist,
+// the LLM must read it and surface a fact that exists only inside the file.
+func TestReadFileOnDemandFlowEval(t *testing.T) {
+	evals.NumEvalsOrSkip(t)
+
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+
+	checklist := strings.Join([]string{
+		"Pre-launch checklist:",
+		"1. Freeze the deploy pipeline at 5pm Friday.",
+		"2. Notify the support team about the maintenance window.",
+		"3. Rotate the staging TLS certificate before the cutover.",
+		"4. Snapshot the primary database.",
+		"5. Update the public status page once traffic is migrated.",
+	}, "\n")
+
+	team, _, fileInfo := seedFileScenario(t, suite.serverURL, suite.adminToken, "launch-checklist.txt", []byte(checklist))
+	suite.CreateMCPServerWithFileService(false, fileEvalService(suite))
+	adminUser := getAdminUser(t, suite)
+
+	evals.Run(t, "read_file on-demand flow", func(e *evals.EvalT) {
+		runAgenticFlowEval(e, suite, adminUser, team,
+			withFileDescriptor(
+				// Vague, real-user phrasing: no file name, no ID, no mention of tools.
+				"I'm prepping for the Friday launch and I have a nagging feeling there's something I'm supposed to do with our certs beforehand. Can you check and remind me?",
+				fileInfo,
+			),
+			[]string{
+				"Mentions rotating (or renewing) the staging TLS certificate before the cutover",
+				"The answer is grounded in the attached checklist rather than generic launch advice",
+				"Does not claim it is unable to see, open, or read the attached file",
+			},
+			[]string{"read_file"},
+		)
+	})
+}
+
+// TestReadFilePagingFlowEval: the answer lives past a single read window, so the
+// LLM must page with offset to find it.
+func TestReadFilePagingFlowEval(t *testing.T) {
+	evals.NumEvalsOrSkip(t)
+
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+
+	// Build a log well past the max single-read window so the model cannot get
+	// the planted secret in one call and must page with offset to reach the end.
+	var log strings.Builder
+	for i := 0; i < 1500; i++ {
+		fmt.Fprintf(&log, "2026-05-01T10:%02d:%02dZ [info] request %d handled in %dms\n", i%60, i%60, i, i%200)
+	}
+	log.WriteString("2026-05-01T11:00:00Z [warn] leaked credential detected: api_key=zephyr-9931-omega\n")
+	for i := 0; i < 50; i++ {
+		log.WriteString("2026-05-01T11:00:01Z [info] worker shutting down\n")
+	}
+	require.Greater(t, len([]rune(log.String())), files.MaxReadRunes, "log must exceed one read window to force paging")
+
+	team, _, fileInfo := seedFileScenario(t, suite.serverURL, suite.adminToken, "server-debug.txt", []byte(log.String()))
+	suite.CreateMCPServerWithFileService(false, fileEvalService(suite))
+	adminUser := getAdminUser(t, suite)
+
+	evals.Run(t, "read_file paging flow", func(e *evals.EvalT) {
+		runAgenticFlowEval(e, suite, adminUser, team,
+			withFileDescriptor(
+				"Someone told me an API key accidentally got dumped into that debug log I shared. Dig through it and tell me exactly what the leaked key is.",
+				fileInfo,
+			),
+			[]string{
+				"States the leaked API key value zephyr-9931-omega",
+				"Does not fabricate a different API key or claim that no key could be found",
+			},
+			[]string{"read_file"},
+		)
+	})
+}
+
+// TestReadFileUnreadableBinaryEval: a binary attachment has no extractable text,
+// so the LLM must say it cannot read it instead of inventing contents.
+func TestReadFileUnreadableBinaryEval(t *testing.T) {
+	evals.NumEvalsOrSkip(t)
+
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+
+	// Bytes named .png are stored as image/png (extension-based), which has no
+	// server-extractable text — read_file reports no readable content.
+	pngBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05}
+	team, _, fileInfo := seedFileScenario(t, suite.serverURL, suite.adminToken, "architecture.png", pngBytes)
+	suite.CreateMCPServerWithFileService(false, fileEvalService(suite))
+	adminUser := getAdminUser(t, suite)
+
+	evals.Run(t, "read_file unreadable binary", func(e *evals.EvalT) {
+		runAgenticFlowEval(e, suite, adminUser, team,
+			withFileDescriptor(
+				"Can you take a look at the file I just dropped in and give me a quick rundown of what's in it?",
+				fileInfo,
+			),
+			[]string{
+				"Indicates it cannot read or extract the text contents of the file",
+				"Does not invent or describe specific contents of the file",
+			},
+			[]string{"read_file"},
+		)
 	})
 }

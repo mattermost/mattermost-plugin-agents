@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -521,6 +522,57 @@ func TestIsValidService(t *testing.T) {
 				ID:     "service-9",
 				Type:   "unknown", // bad - unsupported
 				APIKey: "sk-xyz",
+			},
+			want: false,
+		},
+		{
+			name: "Valid loadtest mock service minimal",
+			service: ServiceConfig{
+				ID:   "loadtest",
+				Type: ServiceTypeLoadTestMock,
+			},
+			want: true,
+		},
+		{
+			name: "Valid loadtest mock service with profile JSON",
+			service: ServiceConfig{
+				ID:                 "loadtest",
+				Type:               ServiceTypeLoadTestMock,
+				LoadTestMockConfig: json.RawMessage(`{"profile_weights":{"realistic_default":1,"realistic_fast":0,"realistic_slow":0}}`),
+			},
+			want: true,
+		},
+		{
+			name: "Invalid loadtest mock service missing ID",
+			service: ServiceConfig{
+				Type: ServiceTypeLoadTestMock,
+			},
+			want: false,
+		},
+		{
+			name: "Invalid loadtest mock service malformed JSON config",
+			service: ServiceConfig{
+				ID:                 "loadtest",
+				Type:               ServiceTypeLoadTestMock,
+				LoadTestMockConfig: json.RawMessage(`{`),
+			},
+			want: false,
+		},
+		{
+			name: "Invalid loadtest mock service unknown profile field",
+			service: ServiceConfig{
+				ID:                 "loadtest",
+				Type:               ServiceTypeLoadTestMock,
+				LoadTestMockConfig: json.RawMessage(`{"unknown_top_level":true}`),
+			},
+			want: false,
+		},
+		{
+			name: "Invalid loadtest mock service unknown latency profile weight",
+			service: ServiceConfig{
+				ID:                 "loadtest",
+				Type:               ServiceTypeLoadTestMock,
+				LoadTestMockConfig: json.RawMessage(`{"profile_weights":{"does_not_exist":1}}`),
 			},
 			want: false,
 		},

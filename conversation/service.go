@@ -373,7 +373,8 @@ type BuildOptions struct {
 }
 
 // BuildCompletionRequest builds an llm.CompletionRequest from the conversation's
-// system prompt and all its turns.
+// system prompt and all its turns. Thin wrapper around AssembleRequest that
+// fetches turns from the store and resolves the bot's attachment config.
 func (s *Service) BuildCompletionRequest(
 	conv *store.Conversation,
 	context *llm.Context,
@@ -383,7 +384,22 @@ func (s *Service) BuildCompletionRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
+	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
+	return AssembleRequest(conv, turns, context, s.mmClient, enableVision, maxFileSize, opts...)
+}
 
+// AssembleRequest builds the CompletionRequest from already-loaded turns and
+// externally-supplied rendering config. Exported so callers without a full
+// Service (e.g. the /context endpoint) can reuse the runtime assembly path.
+func AssembleRequest(
+	conv *store.Conversation,
+	turns []store.Turn,
+	context *llm.Context,
+	mmClient mmapi.Client,
+	enableVision bool,
+	maxFileSize int64,
+	opts ...BuildOptions,
+) (*llm.CompletionRequest, error) {
 	// Default: redact unshared tool_result content so privacy is the
 	// fail-safe. Callers whose LLM response will NOT reach other users
 	// (DM follow-ups) can opt in to full content via AllowUnsharedToolContent.
@@ -423,8 +439,7 @@ func (s *Service) BuildCompletionRequest(
 		Message: conv.SystemPrompt,
 	})
 
-	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
-	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, s.mmClient, enableVision, maxFileSize)
+	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, mmClient, enableVision, maxFileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -478,7 +493,8 @@ func turnsToLLMPosts(
 			blocks = append(blocks, nextBlocks...)
 			i++
 		}
-		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize))
+		post := BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize)
+		posts = append(posts, post)
 	}
 	return posts, nil
 }
@@ -753,7 +769,8 @@ func (s *Service) BuildChannelMentionRequest(
 				username = user.Username
 			}
 			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient)
-			posts = append(posts, BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize))
+			post := BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize)
+			posts = append(posts, post)
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break

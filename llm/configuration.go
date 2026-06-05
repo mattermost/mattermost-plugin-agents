@@ -46,6 +46,10 @@ type ServiceConfig struct {
 	// UseResponsesAPI determines whether to use the new OpenAI Responses API
 	// Only applicable to OpenAI and OpenAI-compatible services
 	UseResponsesAPI bool `json:"useResponsesAPI"`
+
+	// LoadTestMockConfig is raw JSON merged by loadtest.ParseProfile for ServiceTypeLoadTestMock.
+	// Nil, empty, or whitespace-only means the default read/search-heavy profile.
+	LoadTestMockConfig json.RawMessage `json:"loadTestMockConfig,omitempty"`
 }
 
 // ServiceUsesResponsesAPI reports whether the Responses API path is used for this service.
@@ -231,6 +235,8 @@ func IsValidService(service ServiceConfig) bool {
 			return true
 		}
 		return json.Valid([]byte(service.VertexAuthCredentials))
+	case ServiceTypeLoadTestMock:
+		return isValidLoadTestMockConfig(service.LoadTestMockConfig)
 	default:
 		return false
 	}

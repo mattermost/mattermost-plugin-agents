@@ -64,6 +64,45 @@ func TestOTelTracer_SpanLifecycleEmitsOTelSpan(t *testing.T) {
 	assert.Equal(t, "first_token", span.Events[0].Name)
 }
 
+func TestOTelTracer_PopulateLLMResponseAttributesGatesZeroRichUsage(t *testing.T) {
+	// Input/output token attributes always emit. Cached / reasoning / cost
+	// attributes are gated behind a > 0 check so spans from providers that
+	// don't expose them stay clean.
+	exporter := setupTracerProvider(t)
+	tracer := newOTelTracer()
+
+	_, handle := tracer.StartSpan(context.Background(), "bifrost call", bschemas.SpanKindLLMCall)
+	tracer.PopulateLLMResponseAttributes(nil, handle, &bschemas.BifrostResponse{
+		ChatResponse: &bschemas.BifrostChatResponse{
+			Usage: &bschemas.BifrostLLMUsage{
+				PromptTokens:     1200,
+				CompletionTokens: 350,
+				// No PromptTokensDetails / CompletionTokensDetails / Cost.
+			},
+		},
+	}, nil)
+	tracer.EndSpan(handle, bschemas.SpanStatusOk, "")
+
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	attrs := map[string]any{}
+	for _, a := range spans[0].Attributes {
+		attrs[string(a.Key)] = a.Value.AsInterface()
+	}
+
+	assert.Equal(t, int64(1200), attrs["agents.llm.input_tokens"])
+	assert.Equal(t, int64(350), attrs["agents.llm.output_tokens"])
+	for _, key := range []string{
+		"agents.llm.cached_read_tokens",
+		"agents.llm.cached_write_tokens",
+		"agents.llm.reasoning_tokens",
+		"agents.llm.cost",
+	} {
+		_, present := attrs[key]
+		assert.False(t, present, "%s must not be emitted when the provider reports zero", key)
+	}
+}
+
 func TestOTelTracer_ErrorStatusPropagates(t *testing.T) {
 	exporter := setupTracerProvider(t)
 	tracer := newOTelTracer()

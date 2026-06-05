@@ -36,6 +36,10 @@ import SearchButton from './components/search_button';
 import AskChannelButton from './components/ask_channel_button';
 import {doSelectPost} from './hooks';
 import {invalidateConversation} from './hooks/use_conversation';
+
+// Side-effect import: registers a listener so invalidateConversation also
+// clears the matching composition cache.
+import '@/hooks/use_conversation_context';
 import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_connection_events';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';

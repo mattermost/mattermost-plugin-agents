@@ -307,8 +307,14 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	}
 
 	// Render disabled plugin entries (with an empty tool list) so the admin UI
-	// can re-enable them.
+	// can re-enable them. Skip orphans hydrated from persisted config without
+	// a live source-plugin registration; surfacing them as "session not found"
+	// rows is misleading, and their persisted policy is preserved on disk
+	// regardless of whether they appear here.
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+		if !a.mcpClientManager.IsPluginRegistered(cfg.PluginID) {
+			continue
+		}
 		serverInfo := MCPServerInfo{
 			Name:        cfg.Name,
 			URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
@@ -449,39 +455,18 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// Snapshot the live registry once. A second ListPluginServers call would
-	// open a TOCTOU window where a concurrent UnregisterPluginServer could
-	// drop the entry from the snapshot we persist while the handler still
-	// re-registers it below.
-	snapshot := a.mcpClientManager.ListPluginServers()
-	var found *mcp.PluginServerConfig
-	for i := range snapshot {
-		if snapshot[i].PluginID == pluginID {
-			cfg := snapshot[i]
-			found = &cfg
-			break
-		}
-	}
-	if found == nil {
+	live, foundLive := a.mcpClientManager.GetPluginServer(pluginID)
+	if !foundLive {
 		c.AbortWithError(http.StatusNotFound, fmt.Errorf("plugin MCP server %q is not registered", pluginID))
 		return
 	}
 
-	updated := *found
+	updated := live
 	if req.Enabled != nil {
 		updated.Enabled = *req.Enabled
 	}
 	if req.ToolConfigs != nil {
 		updated.ToolConfigs = *req.ToolConfigs
-	}
-
-	// Apply the update in the snapshot we already captured so persist and
-	// register-after-persist agree on the same registry view.
-	for i := range snapshot {
-		if snapshot[i].PluginID == updated.PluginID {
-			snapshot[i] = updated
-			break
-		}
 	}
 
 	existing, getErr := a.configStore.GetConfig()
@@ -495,7 +480,24 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	}
 	// Clone to avoid mutating the store's cached pointer.
 	cfg := existing.Clone()
-	cfg.MCP.PluginServers = snapshot
+
+	// Merge by PluginID against the persisted list rather than overwriting
+	// with the in-memory snapshot, which would silently drop entries for
+	// plugins that are persisted but currently inactive in memory.
+	merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
+	mergedIdx := -1
+	for i := range merged {
+		if merged[i].PluginID == updated.PluginID {
+			mergedIdx = i
+			break
+		}
+	}
+	if mergedIdx >= 0 {
+		merged[mergedIdx] = updated
+	} else {
+		merged = append(merged, updated)
+	}
+	cfg.MCP.PluginServers = merged
 
 	if err := a.configStore.SaveConfig(*cfg); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save plugin-server config: %w", err))
@@ -512,7 +514,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 
 	// Rebuild when either old or new state was external so removed tools
 	// disappear from the aggregate server.
-	if updated.ExposeExternal || found.ExposeExternal {
+	if updated.ExposeExternal || live.ExposeExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
 			rb.RebuildExternalServer()
 		}

@@ -23,11 +23,12 @@ export interface LLMBot {
     lastIconUpdate: number;
     dmChannelID: string;
     channelAccessLevel: ChannelAccessLevel;
-    channelIDs: string[];
+
+    // Server sends nil Go slices as JSON null (no teamIDs field on /ai_bots).
+    channelIDs: string[] | null;
     userAccessLevel: UserAccessLevel;
-    userIDs: string[];
-    teamIDs: string[];
-    enabledMCPTools: EnabledMCPTool[];
+    userIDs: string[] | null;
+    enabledMCPTools: EnabledMCPTool[] | null;
     autoEnableNewMCPTools: boolean;
 }
 
@@ -94,9 +95,10 @@ export const useBotlistForChannel = (channelId: string) => {
         }
 
         const filtered = bots.filter((bot: LLMBot) => {
+            const channelIDs = bot.channelIDs ?? [];
             return bot.channelAccessLevel === ChannelAccessLevel.All ||
-				(bot.channelAccessLevel === ChannelAccessLevel.Allow && bot.channelIDs.includes(channelId)) ||
-				(bot.channelAccessLevel === ChannelAccessLevel.Block && !bot.channelIDs.includes(channelId));
+				(bot.channelAccessLevel === ChannelAccessLevel.Allow && channelIDs.includes(channelId)) ||
+				(bot.channelAccessLevel === ChannelAccessLevel.Block && !channelIDs.includes(channelId));
         });
 
         setFilteredBots(filtered);

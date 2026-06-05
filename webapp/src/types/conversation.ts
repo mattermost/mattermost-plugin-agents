@@ -84,14 +84,12 @@ export interface ContentBlock {
 
 export interface Turn {
     id: string;
-    conversation_id?: string;
     post_id: string | null;
     role: 'user' | 'assistant' | 'tool_result';
     content: ContentBlock[];
     tokens_in: number;
     tokens_out: number;
     sequence: number;
-    created_at?: number;
 
     // Set only on post-anchor assistant turns. Server-computed from the
     // conversation state: 'call' → pending Accept/Reject; 'result' → pending
@@ -108,4 +106,29 @@ export interface ConversationResponse {
     title: string;
     operation: string;
     turns: Turn[];
+}
+
+// Composition mirrors the Go types in llm/composition.go. Per-source token
+// breakdown for the active conversation, used by the context-usage indicator.
+export type CompositionSource =
+    | 'system'
+    | 'history'
+    | 'tool_defs'
+    | 'tool_results'
+    | 'image';
+
+export interface CompositionComponent {
+    source: CompositionSource;
+    proportion: number;
+    tokens: number;
+}
+
+export type CompositionTotalSource = 'counted' | 'provider' | 'estimated';
+
+export interface Composition {
+    components: CompositionComponent[] | null; // null: Go marshals a nil slice to JSON null
+    total: number;
+    total_source: CompositionTotalSource;
+    input_token_limit?: number;
+    model?: string;
 }

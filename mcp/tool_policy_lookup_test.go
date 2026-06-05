@@ -156,6 +156,45 @@ func TestLookupToolPolicy(t *testing.T) {
 		require.Equal(t, seedTool.Enabled, enabled)
 	})
 
+	t.Run("embedded backfills seed policy for a tool missing from stored configs", func(t *testing.T) {
+		// Non-empty stored configs without read_file (an install that saved
+		// configs before read_file existed) must still get the vetted seed.
+		cfg := Config{
+			EmbeddedServer: EmbeddedServerConfig{
+				Enabled: true,
+				ToolConfigs: []ToolConfig{{
+					Name:    "search_posts",
+					Policy:  ToolPolicyAutoRunInDM,
+					Enabled: true,
+				}},
+			},
+		}
+
+		policy, enabled := LookupToolPolicy(cfg, EmbeddedClientKey, "read_file")
+
+		require.Equal(t, ToolPolicyAutoRunInDM, policy)
+		require.True(t, enabled)
+	})
+
+	t.Run("embedded explicit config overrides the vetted seed", func(t *testing.T) {
+		// An explicitly disabled tool must not be silently re-enabled by the seed.
+		cfg := Config{
+			EmbeddedServer: EmbeddedServerConfig{
+				Enabled: true,
+				ToolConfigs: []ToolConfig{{
+					Name:    "read_file",
+					Policy:  ToolPolicyAsk,
+					Enabled: false,
+				}},
+			},
+		}
+
+		policy, enabled := LookupToolPolicy(cfg, EmbeddedClientKey, "read_file")
+
+		require.Equal(t, ToolPolicyAsk, policy)
+		require.False(t, enabled)
+	})
+
 	t.Run("unknown origin returns ask false", func(t *testing.T) {
 		policy, enabled := LookupToolPolicy(Config{}, "bogus://nowhere", "x")
 

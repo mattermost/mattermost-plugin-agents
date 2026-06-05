@@ -15,8 +15,12 @@ var (
 	LLMOperation = attribute.Key("agents.llm.operation")
 	LLMStreaming = attribute.Key("agents.llm.streaming")
 
-	LLMInputTokens  = attribute.Key("agents.llm.input_tokens")
-	LLMOutputTokens = attribute.Key("agents.llm.output_tokens")
+	LLMInputTokens       = attribute.Key("agents.llm.input_tokens")
+	LLMOutputTokens      = attribute.Key("agents.llm.output_tokens")
+	LLMCachedReadTokens  = attribute.Key("agents.llm.cached_read_tokens")
+	LLMCachedWriteTokens = attribute.Key("agents.llm.cached_write_tokens")
+	LLMReasoningTokens   = attribute.Key("agents.llm.reasoning_tokens")
+	LLMCost              = attribute.Key("agents.llm.cost")
 
 	// Routing — which bifrost code path the request took.
 	LLMPath            = attribute.Key("agents.llm.path")              // "chat" | "responses"
@@ -34,6 +38,14 @@ var (
 	LLMBifrostErrorCode     = attribute.Key("agents.llm.bifrost.error_code")
 	LLMBifrostErrorProvider = attribute.Key("agents.llm.bifrost.error_provider")
 	LLMBifrostIsBifrostErr  = attribute.Key("agents.llm.bifrost.is_bifrost_error")
+
+	// Per-source breakdown of agents.llm.input_tokens, derived from the
+	// request and emitted on the LLM-call span. One attribute per source.
+	LLMTokensSystem      = attribute.Key("agents.llm.tokens.system")
+	LLMTokensHistory     = attribute.Key("agents.llm.tokens.history")
+	LLMTokensToolDefs    = attribute.Key("agents.llm.tokens.tool_defs")
+	LLMTokensToolResults = attribute.Key("agents.llm.tokens.tool_results")
+	LLMTokensImages      = attribute.Key("agents.llm.tokens.images")
 )
 
 // Attribute keys for agent context

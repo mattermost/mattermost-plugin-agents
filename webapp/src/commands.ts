@@ -30,7 +30,7 @@ export async function handleAskChannelCommand(
         );
 
         // Get store and dispatch actions to select post and open RHS
-        doSelectPost(result.postId, result.channelId, store.dispatch);
+        doSelectPost(result.postid, result.channelid, store.dispatch);
         store.dispatch(rhs.showRHSPlugin);
 
         // Return empty object to prevent default error message
@@ -80,7 +80,7 @@ export async function handleSummarizeChannelCommand(
         );
 
         // Get store and dispatch actions to select post and open RHS
-        doSelectPost(result.postId, result.channelId, store.dispatch);
+        doSelectPost(result.postid, result.channelid, store.dispatch);
         store.dispatch(rhs.showRHSPlugin);
 
         // Return empty object to prevent default error message

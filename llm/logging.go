@@ -36,10 +36,14 @@ func (w *LanguageModelTestLogWrapper) ChatCompletionNoStream(ctx context.Context
 	return w.wrapped.ChatCompletionNoStream(ctx, request, opts...)
 }
 
-func (w *LanguageModelTestLogWrapper) CountTokens(text string) int {
-	return w.wrapped.CountTokens(text)
+func (w *LanguageModelTestLogWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	return w.wrapped.CountTokens(ctx, request, opts...)
 }
 
 func (w *LanguageModelTestLogWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
+}
+
+func (w *LanguageModelTestLogWrapper) OutputTokenLimit() int {
+	return w.wrapped.OutputTokenLimit()
 }

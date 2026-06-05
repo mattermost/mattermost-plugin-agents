@@ -93,7 +93,7 @@ func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 }
 
 func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T) {
-	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}}
+	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
 	t.Cleanup(m.Close)
 
 	cfgA := PluginServerConfig{PluginID: "a", Name: "A", Path: "/mcp", Enabled: true}
@@ -130,7 +130,7 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 }
 
 func TestClientManager_GetPluginServer(t *testing.T) {
-	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}}
+	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
 	t.Cleanup(m.Close)
 
 	cfg, ok := m.GetPluginServer("missing")
@@ -333,6 +333,48 @@ func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	require.Equal(t, live, stillLive)
 }
 
+func TestClientManager_IsPluginRegistered(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	cfg := Config{
+		IdleTimeoutMinutes: 30,
+		PluginServers: []PluginServerConfig{{
+			PluginID: "com.example.orphan",
+			Name:     "Orphan",
+			Path:     "/mcp",
+			Enabled:  true,
+		}},
+	}
+	m := NewClientManager(cfg, client.Log, client, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	require.False(t, m.IsPluginRegistered("com.example.orphan"),
+		"entry hydrated only from persisted config must not be reported as registered")
+	require.False(t, m.IsPluginRegistered("com.example.missing"))
+
+	m.RegisterPluginServer(PluginServerConfig{
+		PluginID: "com.example.live",
+		Name:     "Live",
+		Path:     "/live",
+		Enabled:  true,
+	})
+	require.True(t, m.IsPluginRegistered("com.example.live"))
+
+	m.RegisterPluginServer(PluginServerConfig{
+		PluginID: "com.example.orphan",
+		Name:     "Orphan",
+		Path:     "/mcp",
+		Enabled:  true,
+	})
+	require.True(t, m.IsPluginRegistered("com.example.orphan"),
+		"an explicit Register must mark a previously-orphan entry as registered")
+
+	m.UnregisterPluginServer("com.example.live")
+	require.False(t, m.IsPluginRegistered("com.example.live"))
+}
+
 func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -515,7 +557,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 // Run with -race. Concurrent Register/Unregister/List/snapshot must not
 // deadlock or race.
 func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
-	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}}
+	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
 	t.Cleanup(m.Close)
 
 	const writers = 8

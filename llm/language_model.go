@@ -30,8 +30,13 @@ type LanguageModel interface {
 	ChatCompletion(ctx context.Context, conversation CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error)
 	ChatCompletionNoStream(ctx context.Context, conversation CompletionRequest, opts ...LanguageModelOption) (string, error)
 
-	CountTokens(text string) int
+	// CountTokens returns the exact input-token count. Implementations that
+	// can't reach a provider counting endpoint return ErrUnsupportedTokenCount
+	// so callers can fall back to EstimateTokens.
+	CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error)
+
 	InputTokenLimit() int
+	OutputTokenLimit() int
 }
 
 type LanguageModelConfig struct {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -61,8 +62,11 @@ func (m *testLLM) ChatCompletionNoStream(ctx context.Context, req llm.Completion
 	return result.ReadAll()
 }
 
-func (m *testLLM) CountTokens(_ string) int { return 1 }
-func (m *testLLM) InputTokenLimit() int     { return 4096 }
+func (m *testLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	return 0, llm.ErrUnsupportedTokenCount
+}
+func (m *testLLM) InputTokenLimit() int  { return 4096 }
+func (m *testLLM) OutputTokenLimit() int { return 4096 }
 
 // testToolDef defines a test tool for newTestToolStore.
 type testToolDef struct {
@@ -110,8 +114,11 @@ func (c *optCapturingLLM) ChatCompletionNoStream(ctx context.Context, req llm.Co
 	return c.inner.ChatCompletionNoStream(ctx, req, opts...)
 }
 
-func (c *optCapturingLLM) CountTokens(text string) int { return c.inner.CountTokens(text) }
-func (c *optCapturingLLM) InputTokenLimit() int        { return c.inner.InputTokenLimit() }
+func (c *optCapturingLLM) CountTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
+	return c.inner.CountTokens(ctx, request, opts...)
+}
+func (c *optCapturingLLM) InputTokenLimit() int  { return c.inner.InputTokenLimit() }
+func (c *optCapturingLLM) OutputTokenLimit() int { return c.inner.OutputTokenLimit() }
 
 func TestToolRunner_NoToolCalls(t *testing.T) {
 	// LLM returns text only, no tool calls.
@@ -479,9 +486,8 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 }
 
 func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
-	// LLM always returns tool calls, never text-only.
-	responses := make([]testResponse, MaxToolRounds+1)
-	for i := range responses {
+	responses := make([]testResponse, MaxToolRounds)
+	for i := 0; i < MaxToolRounds-1; i++ {
 		responses[i] = testResponse{
 			events: []llm.TextStreamEvent{
 				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
@@ -490,6 +496,12 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 				{Type: llm.EventTypeEnd},
 			},
 		}
+	}
+	responses[MaxToolRounds-1] = testResponse{
+		events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeText, Value: "synthesized answer"},
+			{Type: llm.EventTypeEnd},
+		},
 	}
 
 	inner := &testLLM{responses: responses}
@@ -503,14 +515,242 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
 	require.NoError(t, err)
 
-	// Should have exactly MaxToolRounds tool turns.
 	// (read stream first to ensure goroutine completes)
-	_, readErr := result.Stream.ReadAll()
+	text, readErr := result.Stream.ReadAll()
 	assert.NoError(t, readErr)
-	assert.Len(t, result.ToolTurns, MaxToolRounds)
+	assert.Equal(t, "synthesized answer", text)
+	assert.Equal(t, "synthesized answer", result.FinalText)
 
-	// LLM called MaxToolRounds times (not MaxToolRounds+1).
+	// Tools ran on MaxToolRounds-1 rounds; the last round was the synthesis.
+	assert.Len(t, result.ToolTurns, MaxToolRounds-1)
 	assert.Equal(t, MaxToolRounds, inner.callCount)
+}
+
+func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.T) {
+	// Verify the final round disables tools and seeds the iteration-limit message.
+	responses := make([]testResponse, MaxToolRounds)
+	for i := 0; i < MaxToolRounds-1; i++ {
+		responses[i] = testResponse{
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			},
+		}
+	}
+	responses[MaxToolRounds-1] = testResponse{
+		events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeText, Value: "wrapping up"},
+			{Type: llm.EventTypeEnd},
+		},
+	}
+
+	var capturedOpts [][]llm.LanguageModelOption
+	inner := &optCapturingLLM{
+		inner:        &testLLM{responses: responses},
+		capturedOpts: &capturedOpts,
+	}
+
+	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+	_, _ = result.Stream.ReadAll()
+
+	require.Len(t, capturedOpts, MaxToolRounds)
+
+	// Earlier calls must not have tools disabled.
+	for round := 0; round < MaxToolRounds-1; round++ {
+		var cfg llm.LanguageModelConfig
+		for _, opt := range capturedOpts[round] {
+			opt(&cfg)
+		}
+		assert.Falsef(t, cfg.ToolsDisabled, "round %d should not have tools disabled", round)
+	}
+
+	// The final synthesis call must have tools disabled.
+	var finalCfg llm.LanguageModelConfig
+	for _, opt := range capturedOpts[MaxToolRounds-1] {
+		opt(&finalCfg)
+	}
+	assert.True(t, finalCfg.ToolsDisabled, "final synthesis call must disable tools")
+
+	// The final request's posts must contain the iteration-limit user message.
+	require.Len(t, inner.inner.capturedRequests, MaxToolRounds)
+	finalReq := inner.inner.capturedRequests[MaxToolRounds-1]
+	var foundUserMessage bool
+	for _, post := range finalReq.Posts {
+		if post.Role == llm.PostRoleUser && strings.Contains(post.Message, llm.ToolIterationLimitUserMessage) {
+			foundUserMessage = true
+			break
+		}
+	}
+	assert.True(t, foundUserMessage, "final request must include the iteration-limit user message")
+}
+
+// When the provider ignores tool_choice="none" and returns tool calls on the
+// synthesis round, the runner drops them and emits End with no fallback text.
+func TestToolRunner_MaxRoundsExhausted_ProviderEmitsToolCallDuringSynthesis(t *testing.T) {
+	responses := make([]testResponse, MaxToolRounds)
+	for i := 0; i < MaxToolRounds-1; i++ {
+		responses[i] = testResponse{
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			},
+		}
+	}
+	// Final round emits a tool call despite WithToolsDisabled.
+	responses[MaxToolRounds-1] = testResponse{
+		events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+				{ID: "tc-final", Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+			}},
+			{Type: llm.EventTypeEnd},
+		},
+	}
+
+	inner := &testLLM{responses: responses}
+	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	text, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Empty(t, text, "no synthetic fallback when synthesis round emits only tool calls")
+	assert.Empty(t, result.FinalText)
+
+	// MaxToolRounds-1 tool turns; the final round's tool call was ignored.
+	assert.Len(t, result.ToolTurns, MaxToolRounds-1)
+	assert.Equal(t, MaxToolRounds, inner.callCount, "still exactly MaxToolRounds LLM calls")
+}
+
+func TestToolRunner_FinalText_OmitsToolRoundPreamble(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Let me search. "},
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "final answer"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	_, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Equal(t, "final answer", result.FinalText)
+}
+
+func TestToolRunner_FinalText_DropsFailedSynthesisPreamble(t *testing.T) {
+	responses := make([]testResponse, MaxToolRounds)
+	for i := 0; i < MaxToolRounds-1; i++ {
+		responses[i] = testResponse{
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: fmt.Sprintf("preamble %d ", i)},
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			},
+		}
+	}
+	responses[MaxToolRounds-1] = testResponse{
+		events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeText, Value: "Let me try broader searches. "},
+			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+				{ID: "tc-final", Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+			}},
+			{Type: llm.EventTypeEnd},
+		},
+	}
+
+	inner := &testLLM{responses: responses}
+	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	_, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Empty(t, result.FinalText, "failed synthesis preamble must not count as final text")
+}
+
+func TestFinalAssistantText(t *testing.T) {
+	tests := []struct {
+		name            string
+		text            string
+		synthesisCalled bool
+		droppedCalls    int
+		want            string
+	}{
+		{
+			name:            "returns text for normal final response",
+			text:            "answer",
+			synthesisCalled: false,
+			droppedCalls:    0,
+			want:            "answer",
+		},
+		{
+			name:            "discards preamble when synthesis tool calls were dropped",
+			text:            "Let me search.",
+			synthesisCalled: true,
+			droppedCalls:    1,
+			want:            "",
+		},
+		{
+			name:            "keeps text when synthesis succeeded without dropped calls",
+			text:            "summary",
+			synthesisCalled: true,
+			droppedCalls:    0,
+			want:            "summary",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := finalAssistantText(tc.text, tc.synthesisCalled, tc.droppedCalls)
+			if tc.want == "" {
+				assert.Empty(t, got)
+				return
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestToolRunner_ReasoningPreservedInToolTurn(t *testing.T) {

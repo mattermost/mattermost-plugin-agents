@@ -64,8 +64,12 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 		return []llm.ModelInfo{}, nil
 	}
 
-	models := make([]llm.ModelInfo, 0, len(resp.Data))
-	for _, m := range resp.Data {
+	return convertBifrostModels(resp.Data), nil
+}
+
+func convertBifrostModels(in []schemas.Model) []llm.ModelInfo {
+	out := make([]llm.ModelInfo, 0, len(in))
+	for _, m := range in {
 		modelID := m.ID
 		if idx := strings.Index(modelID, "/"); idx >= 0 {
 			modelID = modelID[idx+1:]
@@ -74,13 +78,21 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 		if m.Name != nil && *m.Name != "" {
 			displayName = *m.Name
 		}
-		models = append(models, llm.ModelInfo{
-			ID:          modelID,
-			DisplayName: displayName,
+		// Cohere, Mistral, and Groq (via the OpenAI client) publish only
+		// ContextLength; fall back to it for the input cap.
+		inputLimit := m.MaxInputTokens
+		if inputLimit == nil {
+			inputLimit = m.ContextLength
+		}
+		out = append(out, llm.ModelInfo{
+			ID:               modelID,
+			DisplayName:      displayName,
+			InputTokenLimit:  inputLimit,
+			OutputTokenLimit: m.MaxOutputTokens,
+			ContextLength:    m.ContextLength,
 		})
 	}
-
-	return models, nil
+	return out
 }
 
 // FetchModelsForServiceType fetches models for a given service type string.

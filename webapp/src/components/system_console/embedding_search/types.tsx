@@ -3,7 +3,7 @@
 
 export interface UpstreamConfig {
     type: string;
-    parameters: Record<string, unknown>;
+    parameters: Record<string, unknown> | null; // server sends nil json.RawMessage as JSON null
 }
 
 export interface ChunkingOptions {
@@ -16,7 +16,7 @@ export interface EmbeddingSearchConfig {
     type: string;
     vectorStore: UpstreamConfig;
     embeddingProvider: UpstreamConfig;
-    parameters: Record<string, unknown>;
+    parameters: Record<string, unknown> | null; // server sends nil json.RawMessage as JSON null
     dimensions: number;
     chunkingOptions?: ChunkingOptions;
 }

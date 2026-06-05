@@ -22,12 +22,28 @@ function notifySubscribers() {
     subscribers.forEach((cb) => cb());
 }
 
+// Listener fan-out so satellite caches (use_conversation_context) stay in
+// sync without every invalidator having to know about each one.
+type InvalidationListener = (conversationId: string) => void;
+const invalidationListeners: InvalidationListener[] = [];
+
+export function onConversationInvalidated(listener: InvalidationListener): () => void {
+    invalidationListeners.push(listener);
+    return () => {
+        const idx = invalidationListeners.indexOf(listener);
+        if (idx >= 0) {
+            invalidationListeners.splice(idx, 1);
+        }
+    };
+}
+
 /** Force re-fetch of a specific conversation (called from WebSocket handler). */
 export function invalidateConversation(conversationId: string) {
     conversationCache.delete(conversationId);
     errorCache.delete(conversationId);
     inflightRequests.delete(conversationId);
     notifySubscribers();
+    invalidationListeners.forEach((l) => l(conversationId));
 }
 
 /** Clear all cached conversations. Exported for test cleanup only. */

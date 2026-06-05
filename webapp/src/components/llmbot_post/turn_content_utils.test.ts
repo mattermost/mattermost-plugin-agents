@@ -18,14 +18,12 @@ import {
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
     return {
         id: 'turn_1',
-        conversation_id: 'conv_1',
         post_id: 'post_1',
         role: 'assistant',
         content: [],
         tokens_in: 0,
         tokens_out: 0,
         sequence: 1,
-        created_at: 1000,
         ...overrides,
     };
 }

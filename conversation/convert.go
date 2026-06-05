@@ -9,11 +9,18 @@ import (
 	"io"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 )
 
 const DefaultMaxFileSize = int64(5 * 1024 * 1024)
+
+// InlineFileMaxBytes is the upper bound on readable text that gets inlined
+// directly into a turn. Files at or below this size are cheap enough to inline
+// (and save the LLM a tool round trip); larger files are surfaced as metadata
+// only and fetched on demand via the read_file tool. ~8 KiB ≈ 2000 tokens.
+const InlineFileMaxBytes = int64(8 * 1024)
 
 // UnsharedToolResultRedaction replaces tool_result content the requester has
 // not shared, preserving the tool_use/tool_result pairing required by LLM
@@ -49,6 +56,7 @@ func BlocksToPost(
 
 	var textParts []string
 	var fileContents []string
+	var descriptors []string
 
 	for _, block := range blocks {
 		switch block.Type {
@@ -143,29 +151,46 @@ func BlocksToPost(
 				continue
 			}
 
-			var content string
-			if trimmed := strings.TrimSpace(fileInfo.Content); trimmed != "" {
-				if int64(len(trimmed)) >= effectiveMax {
-					trimmed = trimmed[:effectiveMax] + "\n... (content truncated due to size limit)"
-				}
-				content = trimmed
-			} else if strings.HasPrefix(fileInfo.MimeType, "text/") {
+			// Decide inline vs descriptor from metadata alone (no download):
+			// readable text within InlineFileMaxBytes is inlined; larger files
+			// and binaries with no extractable text become a read-on-demand
+			// descriptor.
+			extracted := strings.TrimSpace(fileInfo.Content)
+			isText := strings.HasPrefix(fileInfo.MimeType, "text/")
+			inlineSize := int64(-1) // -1 means no readable text → descriptor only
+			switch {
+			case extracted != "":
+				inlineSize = int64(len(extracted))
+			case isText:
+				inlineSize = fileInfo.Size
+			}
+
+			if inlineSize < 0 || inlineSize > InlineFileMaxBytes {
+				var b strings.Builder
+				format.WriteFileDescriptor(&b, format.FileDescriptorEntry{
+					Number:   len(descriptors) + 1,
+					FileInfo: fileInfo,
+				})
+				descriptors = append(descriptors, strings.TrimRight(b.String(), "\n"))
+				continue
+			}
+
+			content := extracted
+			if content == "" {
 				reader, err := mmClient.GetFile(block.FileID)
 				if err != nil {
 					mmClient.LogError("failed to get file for file attachment", "error", err)
 					continue
 				}
 				body, err := io.ReadAll(io.LimitReader(reader, effectiveMax))
+				if closeErr := reader.Close(); closeErr != nil {
+					mmClient.LogError("failed to close file attachment reader", "error", closeErr)
+				}
 				if err != nil {
 					mmClient.LogError("failed to read file content", "error", err)
 					continue
 				}
 				content = string(body)
-				if int64(len(body)) >= effectiveMax {
-					content += "\n... (content truncated due to size limit)"
-				}
-			} else {
-				continue
 			}
 
 			fileContents = append(fileContents, "File Name: "+fileInfo.Name+"\nContent: "+content)
@@ -180,6 +205,9 @@ func BlocksToPost(
 	}
 	if len(fileContents) > 0 {
 		post.Message += "\nAttached File Contents:\n" + strings.Join(fileContents, "\n\n")
+	}
+	if len(descriptors) > 0 {
+		post.Message += "\nAttached files (call the read_file tool with the File ID to read their contents):\n" + strings.Join(descriptors, "\n\n")
 	}
 
 	return post
