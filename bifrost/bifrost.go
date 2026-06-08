@@ -132,7 +132,12 @@ type FallbackEntry struct {
 	// IsKeyLess marks a fallback that authenticates without an API key (e.g. a
 	// local Ollama server). Only consulted when the fallback is registered as a
 	// custom provider.
-	IsKeyLess               bool
+	IsKeyLess bool
+	// ChatOnly marks an OpenAI-base fallback whose endpoint does not support the
+	// Responses API (e.g. a local Ollama/vLLM server). Such a fallback is
+	// registered as a custom provider with chat-only AllowedRequests so Bifrost
+	// downgrades a Responses-API request to chat completions for it.
+	ChatOnly                bool
 	StreamingTimeoutSeconds int
 }
 
@@ -149,7 +154,12 @@ type providerAccount struct {
 	name schemas.ModelProvider
 	// keyless marks a custom provider that authenticates without an API key
 	// (e.g. a local Ollama server). Only consulted when isCustom() is true.
-	keyless                 bool
+	keyless bool
+	// chatOnly marks a custom provider that does not support the Responses API
+	// (e.g. a local Ollama/vLLM server). It makes Bifrost transparently downgrade
+	// a Responses-API request to chat completions for this provider rather than
+	// POSTing /v1/responses. Only consulted when isCustom() is true.
+	chatOnly                bool
 	apiKey                  string
 	apiURL                  string
 	orgID                   string
@@ -273,10 +283,21 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	// it a dedicated config slot (its own base URL/credentials above), so the
 	// fallback reaches its own endpoint instead of colliding on the base slot.
 	if a.isCustom() {
-		config.CustomProviderConfig = &schemas.CustomProviderConfig{
+		cpc := &schemas.CustomProviderConfig{
 			BaseProviderType: a.provider,
 			IsKeyLess:        a.keyless,
 		}
+		if a.chatOnly {
+			// Declaring chat-only AllowedRequests makes Bifrost transparently
+			// downgrade a Responses-API request to /v1/chat/completions for this
+			// provider (see OpenAIProvider.shouldFallbackResponsesToChat), instead
+			// of POSTing /v1/responses to an endpoint that does not implement it.
+			cpc.AllowedRequests = &schemas.AllowedRequests{
+				ChatCompletion:       true,
+				ChatCompletionStream: true,
+			}
+		}
+		config.CustomProviderConfig = cpc
 	}
 
 	return config, nil
@@ -414,11 +435,14 @@ func New(cfg Config) (*LLM, error) {
 			streamingTimeoutSeconds: fb.StreamingTimeoutSeconds,
 		}
 
+		// A fallback needs a distinct custom-provider slot when either:
+		//   - it collides on an already-registered base provider name (so its own
+		//     base URL/credentials are used instead of inheriting the primary's), or
+		//   - it is chat-only (an OpenAI-base endpoint without Responses API
+		//     support), so we can attach the chat-only AllowedRequests gate that
+		//     makes Bifrost downgrade a Responses request to chat completions.
 		name := fb.Provider
-		if usedNames[name] {
-			// The base provider slot is taken. Register this service under a
-			// distinct custom-provider name so its own base URL/credentials are
-			// used when Bifrost fails over to it.
+		if usedNames[name] || fb.ChatOnly {
 			if !isCustomCapableProvider(fb.Provider) {
 				// Bifrost cannot host a second instance of this provider type
 				// (e.g. Azure/Mistral/Vertex are not valid custom-provider base
@@ -428,6 +452,7 @@ func New(cfg Config) (*LLM, error) {
 			}
 			name = customProviderName(fb.Provider, fb.ID)
 			entry.name = name
+			entry.chatOnly = fb.ChatOnly
 		}
 		if usedNames[name] {
 			// Defensive: this exact service is already registered. Upstream cycle

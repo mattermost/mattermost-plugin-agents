@@ -177,7 +177,13 @@ func serviceConfigToFallbackEntry(svc llm.ServiceConfig) (FallbackEntry, error) 
 		// A fallback registered as a custom provider is keyless when it has no
 		// API key (e.g. a local Ollama server). Credential-based providers like
 		// Bedrock authenticate without an API key, so they are never keyless.
-		IsKeyLess:               svc.APIKey == "" && provider != schemas.Bedrock,
+		IsKeyLess: svc.APIKey == "" && provider != schemas.Bedrock,
+		// An OpenAI-base fallback that does not itself use the Responses API
+		// (e.g. a local Ollama/vLLM server) is chat-only: registering it as a
+		// custom provider with chat-only AllowedRequests lets Bifrost downgrade a
+		// Responses-API request to chat completions instead of failing on
+		// /v1/responses. Other base providers handle the Responses API natively.
+		ChatOnly:                provider == schemas.OpenAI && !llm.ServiceUsesResponsesAPI(svc),
 		StreamingTimeoutSeconds: svc.StreamingTimeoutSeconds,
 	}, nil
 }

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1606,6 +1607,69 @@ func TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint(t *tes
 	assert.Equal(t, "from-local", result, "response must come from the local fallback model")
 }
 
+// TestNewFromServiceConfig_ResponsesPrimaryDowngradesToChatForLocalFallback
+// covers the full DDIL scenario: a direct-OpenAI primary (which always uses the
+// Responses API) failing over to a local OpenAI-compatible model that only
+// speaks /v1/chat/completions. The request type is fixed by the primary, so the
+// fallback would otherwise receive /v1/responses and fail. Registering the local
+// model as a chat-only custom provider makes Bifrost transparently downgrade the
+// Responses request to chat completions for it.
+func TestNewFromServiceConfig_ResponsesPrimaryDowngradesToChatForLocalFallback(t *testing.T) {
+	var localChatHit, localResponsesHit atomic.Bool
+
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Primary is unavailable (DDIL): fail every request.
+		http.Error(w, `{"error":{"message":"service unavailable"}}`, http.StatusInternalServerError)
+	}))
+	defer cloudServer.Close()
+
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/chat/completions"):
+			localChatHit.Store(true)
+			chatCompletionSSE(w, "from-local")
+		case strings.Contains(r.URL.Path, "/responses"):
+			// A real local server (Ollama/vLLM) does not implement this endpoint.
+			localResponsesHit.Store(true)
+			http.Error(w, "not found", http.StatusNotFound)
+		default:
+			http.Error(w, "unexpected path", http.StatusNotFound)
+		}
+	}))
+	defer localServer.Close()
+
+	// Direct OpenAI primary always uses the Responses API.
+	primarySvc := llm.ServiceConfig{
+		ID:                "cloud-openai",
+		Type:              llm.ServiceTypeOpenAI,
+		APIKey:            "cloud-key",
+		APIURL:            cloudServer.URL,
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "local-ollama",
+	}
+	// Local OpenAI-compatible model that only implements /v1/chat/completions.
+	localSvc := llm.ServiceConfig{
+		ID:           "local-ollama",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIURL:       localServer.URL,
+		DefaultModel: "llama3",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "cloud-openai"}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{localSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+
+	require.NoError(t, err, "Responses-API primary should downgrade and succeed against the chat-only local fallback")
+	assert.Equal(t, "from-local", result)
+	assert.True(t, localChatHit.Load(), "local model should have been called on /v1/chat/completions (downgraded)")
+	assert.False(t, localResponsesHit.Load(), "local model must not be called on /v1/responses")
+}
+
 func TestServiceConfigToFallbackEntry(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -1793,6 +1857,68 @@ func TestNewFromServiceConfig_UnsupportedSameProviderCollisionSkipped(t *testing
 	defer llmInstance.Shutdown()
 
 	assert.Empty(t, llmInstance.fallbacks, "a same-type Mistral fallback cannot be disambiguated and must be skipped")
+}
+
+// TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision
+// verifies the full-coverage path: a local OpenAI-compatible fallback that does
+// not use the Responses API is registered under a custom provider name even when
+// it does NOT collide with the primary (here an Anthropic primary). This is what
+// lets Bifrost attach the chat-only gate so a Responses primary can downgrade.
+func TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision(t *testing.T) {
+	primary := llm.ServiceConfig{
+		ID:           "anthropic-1",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	localSvc := llm.ServiceConfig{
+		ID:           "local-ollama",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIURL:       "http://localhost:11434/v1",
+		DefaultModel: "llama3",
+	}
+
+	llmInstance, err := NewFromServiceConfig(primary, llm.BotConfig{ServiceID: "anthropic-1"}, []llm.ServiceConfig{localSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	require.Len(t, llmInstance.fallbacks, 1)
+	// Even though the OpenAI base slot is free (primary is Anthropic), the
+	// chat-only local model is registered under a custom name so the chat-only
+	// AllowedRequests gate can be attached.
+	assert.Equal(t, customProviderName(schemas.OpenAI, "local-ollama"), llmInstance.fallbacks[0].Provider)
+}
+
+// TestProviderAccount_ChatOnlyCustomConfig verifies that a chat-only custom
+// provider declares chat-only AllowedRequests (the gate Bifrost uses to downgrade
+// Responses → chat), while a non-chat-only custom provider leaves it unset.
+func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
+	chatOnly := &providerAccount{
+		provider: schemas.OpenAI,
+		name:     customProviderName(schemas.OpenAI, "local"),
+		chatOnly: true,
+		apiURL:   "http://localhost:11434",
+	}
+	cfg, err := chatOnly.GetConfigForProvider(chatOnly.registeredName())
+	require.NoError(t, err)
+	require.NotNil(t, cfg.CustomProviderConfig)
+	require.NotNil(t, cfg.CustomProviderConfig.AllowedRequests)
+	assert.True(t, cfg.CustomProviderConfig.AllowedRequests.ChatCompletion)
+	assert.True(t, cfg.CustomProviderConfig.AllowedRequests.ChatCompletionStream)
+	assert.False(t, cfg.CustomProviderConfig.AllowedRequests.Responses)
+	assert.False(t, cfg.CustomProviderConfig.AllowedRequests.ResponsesStream)
+
+	// A custom provider that does support the Responses API leaves AllowedRequests
+	// unset so all operations remain available.
+	responsesCapable := &providerAccount{
+		provider: schemas.OpenAI,
+		name:     customProviderName(schemas.OpenAI, "other"),
+		apiURL:   "https://api.example.com",
+	}
+	cfg, err = responsesCapable.GetConfigForProvider(responsesCapable.registeredName())
+	require.NoError(t, err)
+	require.NotNil(t, cfg.CustomProviderConfig)
+	assert.Nil(t, cfg.CustomProviderConfig.AllowedRequests)
 }
 
 func TestConvertToBifrostResponsesRequestStructuredOutputStringEnum(t *testing.T) {
