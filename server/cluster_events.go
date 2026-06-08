@@ -74,7 +74,7 @@ func (p *Plugin) PublishMCPOAuthUpdate(userID string) error {
 
 // PublishStreamStop broadcasts a stop-streaming request to all other nodes so
 // that whichever node holds the per-post cancel function in memory will cancel
-// the in-flight LLM stream. The originating node has already cancelled
+// the in-flight LLM stream. The originating node has already canceled
 // locally; this only reaches peers. Without sticky sessions the stop request
 // can land on any node, so without this broadcast the click is silently
 // dropped unless the request happens to hit the streaming node.
