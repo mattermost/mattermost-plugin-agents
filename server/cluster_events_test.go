@@ -242,7 +242,10 @@ func TestPublishStreamStop(t *testing.T) {
 			}
 
 			if test.expectReturnErr {
-				mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+				mockAPI.On("LogError",
+					"Failed to publish cluster event",
+					mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+				).Once()
 			}
 
 			p := &Plugin{
