@@ -48,7 +48,7 @@ jobs:
             group: e2e-shard-4
     name: e2e-${{ matrix.shard.name }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11.8' }}
       EXCLUDE_REAL_API_TESTS: 'true'
     defaults:
       run:
@@ -104,7 +104,7 @@ jobs:
             group: llmbot-real-edge-cases
     name: e2e-llmbot-real-apis-${{ matrix.shard.name }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11.8' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -151,7 +151,7 @@ jobs:
     timeout-minutes: 180
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11.8' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -198,7 +198,7 @@ jobs:
     timeout-minutes: 180
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11.8' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -245,7 +245,7 @@ jobs:
     timeout-minutes: 180
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11.8' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -301,7 +301,7 @@ jobs:
             display_name: OpenAI
     name: e2e-tool-calling-${{ matrix.provider.name }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11.8' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -473,8 +473,26 @@ jobs:
           go-version-file: 'go.mod'
       - uses: mattermost/actions/plugin-ci/lint@main
 
+  verify-no-drift:
+    name: Verify webapp i18n + package-lock are in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - name: Install webapp dependencies
+        run: cd webapp && npm ci
+      - name: Check webapp i18n catalog drift
+        run: make check-i18n
+      - name: Check package-lock.json drift
+        run: make check-locks
+
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -483,6 +501,33 @@ jobs:
         with:
           golangci-lint-version: "v1.54.2"
       - uses: mattermost/actions/plugin-ci/build@main
+      - uses: mattermost/actions/plugin-ci/build-fips@c7a06bc642f72fc227deb2cae3af03cff72c0f0d
+        with:
+          chainguard-identity: ${{ secrets.CHAINGUARD_IDENTITY }}
+      - name: build/upload-all
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: all-plugin-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/release-notes.md
+            dist-fips/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  # The nested loadtest/controller module is invisible to the root-module lint/build
+  # jobs above, so run its lint, tests, and go.mod drift check in a dedicated job.
+  loadtest-controller:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - run: make install-go-tools
+      - run: make loadtest-controller-build loadtest-controller-lint loadtest-controller-test loadtest-controller-mod-check
 
   upload-s3-pr:
     needs: [lint]

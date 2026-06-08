@@ -37,19 +37,28 @@ func (p *countingMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Erro
 	}, nil
 }
 
-type contextTestConfigProvider struct{}
-
-func (p *contextTestConfigProvider) GetEnableLLMTrace() bool {
-	return false
+type staticMCPToolProvider struct {
+	tools  []llm.Tool
+	errors *mcp.Errors
 }
+
+func (p *staticMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
+	return p.tools, p.errors
+}
+
+type contextTestConfigProvider struct{}
 
 func (p *contextTestConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
 
 func newTestBot() *bots.Bot {
+	return newTestBotWithConfig(llm.BotConfig{ID: "bot-id", Name: "matty", DisplayName: "Matty"})
+}
+
+func newTestBotWithConfig(cfg llm.BotConfig) *bots.Bot {
 	return bots.NewBot(
-		llm.BotConfig{ID: "bot-id", Name: "matty", DisplayName: "Matty"},
+		cfg,
 		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
 		&model.Bot{UserId: "bot-id", Username: "matty", DisplayName: "Matty"},
 		nil,
@@ -110,6 +119,56 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 
 	require.Equal(t, 0, mcpProvider.calls)
 	require.Empty(t, context.Tools.GetTools())
+}
+
+func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) {
+	mockAPI := &plugintest.API{}
+	siteName := "Mattermost"
+	siteURL := "https://example.com"
+	mockAPI.On("GetConfig").Return(&model.Config{
+		TeamSettings:    model.TeamSettings{SiteName: &siteName},
+		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+	}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+
+	client := pluginapi.NewClient(mockAPI, nil)
+	mcpProvider := &staticMCPToolProvider{
+		errors: &mcp.Errors{
+			ToolAuthErrors: []llm.ToolAuthError{
+				{
+					ServerName:   "Atlassian",
+					ServerOrigin: "https://mcp.atlassian.com",
+					AuthURL:      "https://auth.example.com",
+				},
+			},
+		},
+	}
+	builder := NewLLMContextBuilder(client, &emptyToolProvider{}, mcpProvider, &contextTestConfigProvider{})
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: false,
+		EnabledMCPTools: []llm.EnabledMCPTool{
+			{ServerOrigin: "https://mcp.atlassian.com/", ToolName: llm.MCPServerToolWildcard},
+		},
+	})
+
+	user := &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
+	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
+
+	context := builder.BuildLLMContextUserRequest(
+		bot,
+		user,
+		channel,
+		builder.WithLLMContextDefaultTools(bot),
+	)
+
+	require.Empty(t, context.Tools.GetTools())
+	authErrors := context.Tools.GetAuthErrors()
+	require.Len(t, authErrors, 1)
+	assert.Equal(t, "https://mcp.atlassian.com", authErrors[0].ServerOrigin)
+	assert.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
 }
 
 func TestSanitizeUserProfileField(t *testing.T) {
@@ -246,4 +305,28 @@ func TestWithLLMContextRequestingUser_NilUser(t *testing.T) {
 	opt(ctx)
 
 	assert.Nil(t, ctx.RequestingUser)
+}
+
+func TestNormalizeMCPServerOrigin(t *testing.T) {
+	assert.Equal(t, "https://example.com", normalizeMCPServerOrigin("https://example.com/"))
+	assert.Equal(t, "https://example.com", normalizeMCPServerOrigin("  https://example.com/  "))
+}
+
+func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {
+	allowlist := []llm.EnabledMCPTool{
+		{ServerOrigin: "https://allowed.example/", ToolName: "t1"},
+	}
+	errs := []llm.ToolAuthError{
+		{ServerOrigin: "https://allowed.example", ServerName: "a"},
+		{ServerOrigin: "https://other.example", ServerName: "b"},
+	}
+	filtered := filterToolAuthErrorsForAllowlist(errs, allowlist)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "https://allowed.example", filtered[0].ServerOrigin)
+
+	emptyAllowlist := []llm.EnabledMCPTool{}
+	filtered = filterToolAuthErrorsForAllowlist(errs, emptyAllowlist)
+	assert.Empty(t, filtered)
+
+	assert.Empty(t, filterToolAuthErrorsForAllowlist(nil, allowlist))
 }

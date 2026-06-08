@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/chunking"
@@ -20,6 +21,9 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestEnrichResults(t *testing.T) {
@@ -277,7 +281,7 @@ func TestEnrichResults(t *testing.T) {
 				tc.setupMock(mockClient)
 			}
 
-			s := New(nil, mockClient, nil, nil, nil)
+			s := New(nil, mockClient, nil, nil, nil, nil)
 			results := s.enrichResults(tc.searchResults)
 
 			require.Len(t, results, tc.expectedLen)
@@ -397,7 +401,7 @@ func TestExecuteSearch(t *testing.T) {
 				tc.setupMocks(mockEmbedding, mockClient)
 			}
 
-			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil)
+			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
 			results, err := s.executeSearch(context.Background(), tc.query, tc.opts)
 
 			if tc.expectError != "" {
@@ -470,7 +474,7 @@ func TestBuildPrompt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(nil, nil, promptsObj, nil, nil)
+			s := New(nil, nil, promptsObj, nil, nil, nil)
 			req, err := s.buildPrompt("", nil, tc.query, "", "", tc.results, "")
 
 			if tc.expectError {
@@ -538,7 +542,7 @@ func TestSearchQuery(t *testing.T) {
 				mc.On("GetConfig").Return(&model.Config{
 					ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 				})
-				ml.On("ChatCompletionNoStream", mock.Anything).
+				ml.On("ChatCompletionNoStream", mock.Anything, mock.Anything).
 					Return("", errors.New("LLM service unavailable"))
 			},
 			query:       "test query",
@@ -572,7 +576,7 @@ func TestSearchQuery(t *testing.T) {
 				mc.On("GetConfig").Return(&model.Config{
 					ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 				})
-				ml.On("ChatCompletionNoStream", mock.Anything).
+				ml.On("ChatCompletionNoStream", mock.Anything, mock.Anything).
 					Return("Based on the search results, here is the answer.", nil)
 			},
 			query:       "test query",
@@ -610,6 +614,7 @@ func TestSearchQuery(t *testing.T) {
 				promptsObj,
 				nil,
 				nil,
+				nil,
 			)
 
 			// Create a bot with the mock LLM
@@ -633,7 +638,7 @@ func TestSearchQuery(t *testing.T) {
 func TestRunSearch(t *testing.T) {
 	t.Run("search not enabled returns error", func(t *testing.T) {
 		mockClient := mmapimocks.NewMockClient(t)
-		s := New(func() embeddings.EmbeddingSearch { return nil }, mockClient, nil, nil, nil)
+		s := New(func() embeddings.EmbeddingSearch { return nil }, mockClient, nil, nil, nil, nil)
 		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
 
 		_, err := s.RunSearch(context.Background(), "user1", bot, "test query", "", "", 5)
@@ -645,7 +650,7 @@ func TestRunSearch(t *testing.T) {
 	t.Run("empty query returns error", func(t *testing.T) {
 		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 		mockClient := mmapimocks.NewMockClient(t)
-		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil)
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
 		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
 
 		_, err := s.RunSearch(context.Background(), "user1", bot, "", "", "", 5)
@@ -660,7 +665,7 @@ func TestRunSearch(t *testing.T) {
 		mockClient.On("DM", "user1", "bot1", mock.Anything).
 			Return(errors.New("failed to create DM"))
 
-		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil)
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
 		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
 
 		_, err := s.RunSearch(context.Background(), "user1", bot, "test query", "", "", 5)
@@ -672,6 +677,7 @@ func TestRunSearch(t *testing.T) {
 	t.Run("successful RunSearch returns post info", func(t *testing.T) {
 		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 		mockClient := mmapimocks.NewMockClient(t)
+		searchDone := make(chan struct{})
 
 		// First DM is for question post (synchronous)
 		mockClient.On("DM", "user1", "bot1", mock.Anything).
@@ -692,10 +698,15 @@ func TestRunSearch(t *testing.T) {
 		mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).
 			Return([]embeddings.SearchResult{}, nil).Maybe()
 
-		// If zero results, UpdatePost is called
-		mockClient.On("UpdatePost", mock.Anything).Return(nil).Maybe()
+		// If zero results, UpdatePost is called. Wait for it so the async
+		// search goroutine cannot leak into following tests.
+		mockClient.On("UpdatePost", mock.Anything).
+			Run(func(_ mock.Arguments) {
+				close(searchDone)
+			}).
+			Return(nil).Once()
 
-		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil)
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
 		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
 
 		result, err := s.RunSearch(context.Background(), "user1", bot, "test query", "", "", 5)
@@ -703,7 +714,86 @@ func TestRunSearch(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "question_post_id", result["postid"])
 		require.Equal(t, "dm_channel_id", result["channelid"])
+		require.Eventually(t, func() bool {
+			select {
+			case <-searchDone:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, 5*time.Millisecond)
 	})
+}
+
+// TestRunSearch_SpanCoversAsyncWork guards against the bug where RunSearch's
+// span was ended via `defer span.End()` synchronously when RunSearch returned,
+// even though the actual search work runs in a goroutine in processSearch.
+// That made the span report a near-zero duration and orphaned any child
+// spans created inside processSearch.
+func TestRunSearch_SpanCoversAsyncWork(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prev)
+	})
+
+	mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+	mockClient := mmapimocks.NewMockClient(t)
+
+	mockClient.On("DM", "user1", "bot1", mock.Anything).
+		Run(func(args mock.Arguments) {
+			post := args.Get(2).(*model.Post)
+			post.Id = "question_post_id"
+			post.ChannelId = "dm_channel_id"
+		}).
+		Return(nil).Once()
+	// Response post created by processSearch when results are empty.
+	mockClient.On("DM", "bot1", "user1", mock.Anything).Return(nil).Maybe()
+
+	// Block processSearch on this gate so we can observe the span lifecycle
+	// before the goroutine is allowed to finish.
+	processSearchEntered := make(chan struct{})
+	processSearchProceed := make(chan struct{})
+	mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ mock.Arguments) {
+			close(processSearchEntered)
+			<-processSearchProceed
+		}).
+		Return([]embeddings.SearchResult{}, nil)
+
+	// Empty results path will UpdatePost — allow it.
+	mockClient.On("UpdatePost", mock.Anything).Return(nil).Maybe()
+	mockClient.On("LogError", mock.Anything, mock.Anything).Maybe()
+
+	s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
+	bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
+
+	_, err := s.RunSearch(context.Background(), "user1", bot, "test query", "", "", 5)
+	require.NoError(t, err)
+
+	// processSearch is mid-flight; the "run search" span must still be open.
+	select {
+	case <-processSearchEntered:
+	case <-time.After(time.Second):
+		t.Fatal("processSearch did not reach the search call")
+	}
+	require.Empty(t, exporter.GetSpans(),
+		"run search span must stay open until processSearch finishes; "+
+			"saw it exported while the async goroutine was still running")
+
+	// Let processSearch complete; the span should now be exported.
+	close(processSearchProceed)
+	require.Eventually(t, func() bool {
+		for _, s := range exporter.GetSpans() {
+			if s.Name == "run search" {
+				return true
+			}
+		}
+		return false
+	}, time.Second, 5*time.Millisecond, "run search span should be exported once processSearch finishes")
 }
 
 func TestEnrichResultsSameChannelMultipleTimes(t *testing.T) {
@@ -743,7 +833,7 @@ func TestEnrichResultsSameChannelMultipleTimes(t *testing.T) {
 		},
 	}
 
-	s := New(nil, mockClient, nil, nil, nil)
+	s := New(nil, mockClient, nil, nil, nil, nil)
 	results := s.enrichResults(searchResults)
 
 	require.Len(t, results, 2)
@@ -795,7 +885,7 @@ func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
 		},
 	}
 
-	s := New(nil, mockClient, nil, nil, nil)
+	s := New(nil, mockClient, nil, nil, nil, nil)
 	results := s.enrichResults(searchResults)
 
 	require.Len(t, results, 2)
@@ -805,7 +895,7 @@ func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
 
 func TestBuildPromptWithNilPrompts(t *testing.T) {
 	// Test that buildPrompt fails gracefully when prompts are nil
-	s := New(nil, nil, nil, nil, nil)
+	s := New(nil, nil, nil, nil, nil, nil)
 	_, err := s.buildPrompt("", nil, "test query", "", "", []RAGResult{}, "")
 
 	require.Error(t, err)
@@ -831,7 +921,7 @@ func TestBuildPromptWithLargeResults(t *testing.T) {
 		})
 	}
 
-	s := New(nil, nil, promptsObj, nil, nil)
+	s := New(nil, nil, promptsObj, nil, nil, nil)
 	req, err := s.buildPrompt("", nil, "test query with many results", "", "", largeResults, "")
 
 	// Should succeed - prompt size is handled by the template
@@ -846,7 +936,7 @@ func TestBuildPromptWithLargeResults(t *testing.T) {
 
 func TestExecuteSearchNotConfigured(t *testing.T) {
 	// Test executeSearch when getSearch() returns nil
-	s := New(func() embeddings.EmbeddingSearch { return nil }, nil, nil, nil, nil)
+	s := New(func() embeddings.EmbeddingSearch { return nil }, nil, nil, nil, nil, nil)
 
 	results, err := s.executeSearch(context.Background(), "test query", Options{})
 
@@ -867,6 +957,7 @@ func TestSearchQueryWithEmptyQuery(t *testing.T) {
 		func() embeddings.EmbeddingSearch { return mockEmbedding },
 		mockClient,
 		promptsObj,
+		nil,
 		nil,
 		nil,
 	)

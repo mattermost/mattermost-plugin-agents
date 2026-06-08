@@ -24,21 +24,22 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (c *Client) httpClientForMCP(headers map[string]string) *http.Client {
-	// Wrap with discovery-aware transport for 401 handling
-	authenticationTransport := &authenticationTransport{
-		userID:      c.userID,
-		serverName:  c.config.Name,
-		manager:     c.oauthManager,
-		serverURL:   c.config.BaseURL,
-		staticCreds: staticOAuthCreds(c.config),
-		base:        c.httpClient.Transport,
+	httpClient := *c.httpClient
+
+	// Plugin-server clients have a nil oauthManager and must skip the auth
+	// wrapper, which would otherwise dereference it on every RoundTrip.
+	if c.oauthManager != nil {
+		authenticationTransport := &authenticationTransport{
+			userID:      c.userID,
+			serverName:  c.config.Name,
+			manager:     c.oauthManager,
+			serverURL:   c.config.BaseURL,
+			staticCreds: staticOAuthCreds(c.config),
+			base:        c.httpClient.Transport,
+		}
+		httpClient.Transport = authenticationTransport
 	}
 
-	// Create HTTP client with discovery-aware transport
-	httpClient := *c.httpClient
-	httpClient.Transport = authenticationTransport
-
-	// Add custom headers to the HTTP client if provided
 	if len(headers) > 0 {
 		httpClient.Transport = &headerTransport{
 			base:    httpClient.Transport,

@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	stdcontext "context"
 	"net/http"
 	"testing"
 
@@ -34,7 +35,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mmClient := mocks.NewMockClient(t)
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	botsService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
 
 	conversations := &Conversations{
 		mmClient: mmClient,
@@ -52,9 +53,11 @@ func TestHandleMessages(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
+	ctx := stdcontext.Background()
+
 	t.Run("don't respond to remote posts", func(t *testing.T) {
 		remoteid := "remoteid"
-		err := e.conversations.handleMessages(&model.Post{
+		err := e.conversations.handleMessages(ctx, &model.Post{
 			UserId:    "userid",
 			ChannelId: "channelid",
 			RemoteId:  &remoteid,
@@ -68,7 +71,7 @@ func TestHandleMessages(t *testing.T) {
 			ChannelId: "channelid",
 		}
 		post.AddProp("from_plugin", true)
-		err := e.conversations.handleMessages(post)
+		err := e.conversations.handleMessages(ctx, post)
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
 
@@ -78,7 +81,7 @@ func TestHandleMessages(t *testing.T) {
 			ChannelId: "channelid",
 		}
 		post.AddProp("from_webhook", true)
-		err := e.conversations.handleMessages(post)
+		err := e.conversations.handleMessages(ctx, post)
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
 }

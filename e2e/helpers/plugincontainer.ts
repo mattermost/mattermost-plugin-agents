@@ -18,7 +18,6 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 	  "config": {
 		  "allowPrivateChannels": true,
 		  "disableFunctionCalls": false,
-		  "enableLLMTrace": true,
 		  "enableUserRestrictions": false,
 		  "allowUnsafeLinks": true,
 		  "defaultBotName": "mock",
@@ -39,6 +38,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 				  "apiKey": "mock",
 				  "apiURL": "http://openai:8080",
 				  "defaultModel": "gpt-mock",
+				  "useResponsesAPI": false,
 			  },
 			  {
 				  "id": "second-service",
@@ -47,6 +47,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 				  "apiKey": "ohno",
 				  "apiURL": "http://openai:8080/second",
 				  "defaultModel": "gpt-mock",
+				  "useResponsesAPI": false,
 			  },
 		  ],
 		  "bots": [
@@ -56,6 +57,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 				  "displayName": "Mock Bot",
 				  "customInstructions": "",
 				  "serviceID": "mock-service",
+				  "enabledNativeTools": [],
 			  },
 			  {
 				  "id": "oawiejfoj",
@@ -63,6 +65,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 				  "displayName": "Second Bot",
 				  "customInstructions": "",
 				  "serviceID": "second-service",
+				  "enabledNativeTools": [],
 			  },
 		  ],
 		  "embeddingSearchConfig": {
@@ -82,7 +85,6 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 			  "chunkingOptions": {
 				  "chunkSize": 500,
 				  "chunkOverlap": 100,
-				  "minChunkSize": 0.75,
 				  "chunkingStrategy": "sentences"
 			  }
 		  }
@@ -128,6 +130,8 @@ const RunContainer = async (): Promise<MattermostContainer> => {
       organization: "test",
       install_plugins: [],
   });
+
+  await mattermost.grantSelfServiceAgentPermissions();
 
   return mattermost;
 }

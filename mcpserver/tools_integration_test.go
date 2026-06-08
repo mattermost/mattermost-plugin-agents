@@ -155,7 +155,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 			}
 
 			_, err := executeToolWithMCP(t, suite, "get_channel_info", args)
-			require.Error(t, err, "get_channel_info with invalid ID should fail")
+			require.Error(t, err, "get_channel_info with invalid channel_id should fail")
 		})
 
 		t.Run("CrossTeamLookup", func(t *testing.T) {
@@ -203,7 +203,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 			}
 
 			_, err := executeToolWithMCP(t, suite, "get_team_info", args)
-			require.Error(t, err, "get_team_info with invalid ID should fail")
+			require.Error(t, err, "get_team_info with invalid team_id should fail")
 		})
 	})
 

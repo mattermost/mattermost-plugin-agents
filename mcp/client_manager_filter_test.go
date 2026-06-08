@@ -14,6 +14,7 @@ func TestFilterToolsByConfig(t *testing.T) {
 	tests := []struct {
 		name          string
 		config        Config
+		pluginServers []PluginServerConfig
 		rawTools      []llm.Tool
 		wantToolNames []string
 	}{
@@ -144,26 +145,105 @@ func TestFilterToolsByConfig(t *testing.T) {
 			wantToolNames: []string{"a_tool", "z_tool", "b_tool"},
 		},
 		{
-			name: "embedded server uses vetted tool seed and unconfigured tools default enabled",
-			config: Config{
-				EmbeddedServer: EmbeddedServerConfig{Enabled: true},
-			},
+			name:   "embedded server uses vetted tool seed and unconfigured tools default enabled",
+			config: Config{},
 			rawTools: []llm.Tool{
 				{Name: "search_users", Description: "Search users", ServerOrigin: EmbeddedClientKey},
 				{Name: "create_post", Description: "Create post", ServerOrigin: EmbeddedClientKey},
 			},
 			wantToolNames: []string{"create_post", "search_users"},
 		},
+		{
+			name:   "plugin server enabled, tools flow through default-allow",
+			config: Config{},
+			pluginServers: []PluginServerConfig{
+				{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true},
+			},
+			rawTools: []llm.Tool{
+				{Name: "tool_a", ServerOrigin: "plugin://com.example.mcp"},
+				{Name: "tool_b", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			wantToolNames: []string{"tool_a", "tool_b"},
+		},
+		{
+			name:   "plugin server with per-tool policy filters disabled tool",
+			config: Config{},
+			pluginServers: []PluginServerConfig{
+				{
+					PluginID: "com.example.mcp",
+					Name:     "Example",
+					Path:     "/mcp",
+					Enabled:  true,
+					ToolConfigs: []ToolConfig{
+						{Name: "tool_a", Policy: ToolPolicyAsk, Enabled: false},
+					},
+				},
+			},
+			rawTools: []llm.Tool{
+				{Name: "tool_a", ServerOrigin: "plugin://com.example.mcp"},
+				{Name: "tool_b", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			wantToolNames: []string{"tool_b"},
+		},
+		{
+			name:   "plugin server with per-tool policy returns explicitly enabled tool",
+			config: Config{},
+			pluginServers: []PluginServerConfig{
+				{
+					PluginID: "com.example.mcp",
+					Name:     "Example",
+					Path:     "/mcp",
+					Enabled:  true,
+					ToolConfigs: []ToolConfig{
+						{Name: "tool_a", Policy: ToolPolicyAsk, Enabled: true},
+					},
+				},
+			},
+			rawTools: []llm.Tool{
+				{Name: "tool_a", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			wantToolNames: []string{"tool_a"},
+		},
+		{
+			name:   "plugin server disabled, tools filtered out",
+			config: Config{},
+			pluginServers: []PluginServerConfig{
+				{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: false},
+			},
+			rawTools: []llm.Tool{
+				{Name: "tool_a", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			wantToolNames: nil,
+		},
+		{
+			name: "embedded + remote + plugin mix",
+			config: Config{
+				Servers: []ServerConfig{{
+					Name:        "Atlassian",
+					Enabled:     true,
+					BaseURL:     "https://mcp.atlassian.com",
+					ToolConfigs: []ToolConfig{{Name: "getJiraIssue", Policy: ToolPolicyAsk, Enabled: true}},
+				}},
+			},
+			pluginServers: []PluginServerConfig{
+				{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true},
+			},
+			rawTools: []llm.Tool{
+				{Name: "getJiraIssue", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "search_users", ServerOrigin: EmbeddedClientKey},
+				{Name: "plugin_tool", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			// serverOrder: remote, embedded, plugin.
+			wantToolNames: []string{"getJiraIssue", "search_users", "plugin_tool"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var embeddedClient *EmbeddedServerClient
-			if tt.config.EmbeddedServer.Enabled {
-				embeddedClient = &EmbeddedServerClient{}
-			}
+			// Tests without embedded tools are unaffected by the non-nil client.
+			embeddedClient := &EmbeddedServerClient{}
 
-			filtered := filterToolsByConfig(tt.rawTools, tt.config, embeddedClient)
+			filtered := filterToolsByConfig(tt.rawTools, tt.config, embeddedClient, tt.pluginServers)
 
 			var names []string
 			for _, tool := range filtered {

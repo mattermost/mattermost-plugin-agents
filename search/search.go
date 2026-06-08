@@ -10,17 +10,14 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
-)
-
-const (
-	SearchResultsProp = "search_results"
-	SearchQueryProp   = "search_query"
 )
 
 // Request represents a search query request
@@ -61,12 +58,16 @@ type Options struct {
 	UserID    string
 }
 
+// SearchResultsProp is the post prop key used to attach search results JSON to the response post.
+const SearchResultsProp = "search_results"
+
 type Search struct {
-	getSearch        func() embeddings.EmbeddingSearch
-	mmclient         mmapi.Client
-	prompts          *llm.Prompts
-	streamingService streaming.Service
-	licenseChecker   *enterprise.LicenseChecker
+	getSearch           func() embeddings.EmbeddingSearch
+	mmclient            mmapi.Client
+	prompts             *llm.Prompts
+	streamingService    streaming.Service
+	licenseChecker      *enterprise.LicenseChecker
+	conversationService *conversation.Service
 }
 
 func New(
@@ -75,14 +76,22 @@ func New(
 	prompts *llm.Prompts,
 	streamingService streaming.Service,
 	licenseChecker *enterprise.LicenseChecker,
+	conversationService *conversation.Service,
 ) *Search {
 	return &Search{
-		getSearch:        getSearch,
-		mmclient:         mmclient,
-		prompts:          prompts,
-		streamingService: streamingService,
-		licenseChecker:   licenseChecker,
+		getSearch:           getSearch,
+		mmclient:            mmclient,
+		prompts:             prompts,
+		streamingService:    streamingService,
+		licenseChecker:      licenseChecker,
+		conversationService: conversationService,
 	}
+}
+
+// SetConversationService sets the conversation service after construction to
+// break circular initialisation order in the plugin wiring.
+func (s *Search) SetConversationService(svc *conversation.Service) {
+	s.conversationService = svc
 }
 
 // Enabled returns true if the search service is enabled and functional
@@ -271,13 +280,15 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 		UserId:  userID,
 		Message: query,
 	}
-	questionPost.AddProp(SearchQueryProp, "true")
 	if err := s.mmclient.DM(userID, bot.GetMMBot().UserId, questionPost); err != nil {
 		return nil, fmt.Errorf("failed to create question post: %w", err)
 	}
 
-	// Start processing the search asynchronously
-	go s.processSearch(bot, userID, query, teamID, channelID, maxResults, questionPost)
+	// Start processing the search asynchronously. processSearch owns the
+	// "run search" span lifecycle since the work happens after RunSearch
+	// returns; ending the span here would orphan any child spans created
+	// inside the goroutine.
+	go s.processSearch(telemetry.DetachContext(ctx), bot, userID, query, teamID, channelID, maxResults, questionPost)
 
 	return map[string]string{
 		"postid":    questionPost.Id,
@@ -285,8 +296,10 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 	}, nil
 }
 
-// processSearch handles the async portion of RunSearch
-func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID string, maxResults int, questionPost *model.Post) {
+// processSearch handles the async portion of RunSearch.
+func (s *Search) processSearch(ctx context.Context, bot *bots.Bot, userID, query, teamID, channelID string, maxResults int, questionPost *model.Post) {
+	ctx, span := telemetry.Tracer().Start(ctx, "run search")
+	defer span.End()
 	// Create response post as a reply
 	responsePost := &model.Post{
 		RootId: questionPost.Id,
@@ -310,7 +323,7 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 	}()
 
 	// Execute search
-	results, err := s.executeSearch(context.Background(), query, Options{
+	results, err := s.executeSearch(ctx, query, Options{
 		Limit:     maxResults,
 		TeamID:    teamID,
 		ChannelID: channelID,
@@ -330,6 +343,17 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 		return
 	}
 
+	// Marshal results early; conversation_id is added alongside search_results
+	// in a single UpdatePost below so the requester's Stop button works as
+	// soon as streaming begins (Redux needs conversation_id to derive ownership).
+	resultsJSON, err := json.Marshal(results)
+	if err != nil {
+		s.mmclient.LogError("Error marshaling search results", "error", err)
+		processingError = err
+		return
+	}
+
+	// Build system prompt from template (contains RAG results)
 	prompt, err := s.buildPrompt(userID, bot, query, teamID, channelID, results, llm.SubTypeStreaming)
 	if err != nil {
 		s.mmclient.LogError("Error building prompt", "error", err)
@@ -337,40 +361,81 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 		return
 	}
 
-	resultStream, err := bot.LLM().ChatCompletion(prompt)
+	// Create conversation entity if service is available
+	var completionReq llm.CompletionRequest
+	if s.conversationService != nil {
+		systemPrompt := prompt.Posts[0].Message
+		botID := bot.GetMMBot().UserId
+		questionPostID := questionPost.Id
+
+		createResult, convErr := s.conversationService.CreateConversation(conversation.CreateConversationParams{
+			UserID:       userID,
+			BotID:        botID,
+			ChannelID:    &questionPost.ChannelId,
+			RootPostID:   &questionPostID,
+			Operation:    llm.OperationSearch,
+			SystemPrompt: systemPrompt,
+			UserMessage:  query,
+			UserPostID:   &questionPostID,
+		})
+		if convErr != nil {
+			s.mmclient.LogError("Error creating search conversation", "error", convErr)
+			processingError = convErr
+			return
+		}
+
+		// Set ConversationIDProp on response post so streaming turn persistence picks it up
+		responsePost.AddProp(streaming.ConversationIDProp, createResult.ConversationID)
+
+		promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, results)
+		conv, convErr := s.conversationService.GetConversation(createResult.ConversationID)
+		if convErr != nil {
+			s.mmclient.LogError("Error getting search conversation", "error", convErr)
+			processingError = convErr
+			return
+		}
+
+		req, convErr := s.conversationService.BuildCompletionRequest(conv, promptCtx)
+		if convErr != nil {
+			s.mmclient.LogError("Error building completion request", "error", convErr)
+			processingError = convErr
+			return
+		}
+		req.OperationSubType = llm.SubTypeStreaming
+		completionReq = *req
+	} else {
+		completionReq = prompt
+	}
+
+	// Attach search results and persist in one round trip, so by the time
+	// streaming starts the DB post has both props.
+	responsePost.AddProp(SearchResultsProp, string(resultsJSON))
+	if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
+		s.mmclient.LogError("Error updating post with search results", "error", updateErr)
+	}
+
+	resultStream, err := bot.LLM().ChatCompletion(ctx, completionReq, llm.WithToolsDisabled())
 	if err != nil {
 		s.mmclient.LogError("Error generating answer", "error", err)
 		processingError = err
 		return
 	}
 
-	resultsJSON, err := json.Marshal(results)
-	if err != nil {
-		s.mmclient.LogError("Error marshaling results", "error", err)
-		processingError = err
-		return
-	}
-
-	// Update post to add sources
-	responsePost.AddProp(SearchResultsProp, string(resultsJSON))
-	if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
-		s.mmclient.LogError("Error updating post for search results", "error", updateErr)
-		processingError = updateErr
-		return
-	}
-
-	streamContext, err := s.streamingService.GetStreamingContext(context.Background(), responsePost.Id)
+	streamContext, err := s.streamingService.GetStreamingContext(ctx, responsePost.Id)
 	if err != nil {
 		s.mmclient.LogError("Error getting post streaming context", "error", err)
 		processingError = err
 		return
 	}
 	defer s.streamingService.FinishStreaming(responsePost.Id)
-	s.streamingService.StreamToPost(streamContext, resultStream, responsePost, "")
+	s.streamingService.StreamToPost(streamContext, resultStream, responsePost, "", userID)
 }
 
 // SearchQuery performs a search and returns results immediately
 func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (Response, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "search query")
+	defer span.End()
+
 	results, err := s.executeSearch(ctx, query, Options{
 		Limit:     maxResults,
 		TeamID:    teamID,
@@ -388,12 +453,64 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 		}, nil
 	}
 
+	// Build system prompt from template (contains RAG results)
 	prompt, err := s.buildPrompt(userID, bot, query, teamID, channelID, results, llm.SubTypeNoStream)
 	if err != nil {
 		return Response{}, err
 	}
 
-	answer, err := bot.LLM().ChatCompletionNoStream(prompt)
+	// If conversation service is available, create a conversation entity
+	if s.conversationService != nil {
+		systemPrompt := prompt.Posts[0].Message
+		botID := bot.GetMMBot().UserId
+
+		createResult, convErr := s.conversationService.CreateConversation(conversation.CreateConversationParams{
+			UserID:       userID,
+			BotID:        botID,
+			Operation:    llm.OperationSearch,
+			SystemPrompt: systemPrompt,
+			UserMessage:  query,
+		})
+		if convErr != nil {
+			return Response{}, fmt.Errorf("failed to create search conversation: %w", convErr)
+		}
+
+		promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, results)
+		conv, convErr := s.conversationService.GetConversation(createResult.ConversationID)
+		if convErr != nil {
+			return Response{}, fmt.Errorf("failed to get search conversation: %w", convErr)
+		}
+
+		req, convErr := s.conversationService.BuildCompletionRequest(conv, promptCtx)
+		if convErr != nil {
+			return Response{}, fmt.Errorf("failed to build completion request: %w", convErr)
+		}
+		req.OperationSubType = llm.SubTypeNoStream
+
+		answer, llmErr := bot.LLM().ChatCompletionNoStream(ctx, *req, llm.WithToolsDisabled())
+		if llmErr != nil {
+			return Response{}, fmt.Errorf("failed to generate answer: %w", llmErr)
+		}
+
+		// Persist assistant turn
+		turnID, turnErr := s.conversationService.CreatePlaceholderAssistantTurn(createResult.ConversationID, nil)
+		if turnErr != nil {
+			return Response{}, fmt.Errorf("failed to create assistant turn: %w", turnErr)
+		}
+
+		blocks := []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: answer}}
+		if finalizeErr := s.conversationService.FinalizeAssistantTurn(turnID, blocks, 0, 0); finalizeErr != nil {
+			return Response{}, fmt.Errorf("failed to finalize assistant turn: %w", finalizeErr)
+		}
+
+		return Response{
+			Answer:  answer,
+			Results: results,
+		}, nil
+	}
+
+	// Fallback: direct LLM call without conversation tracking
+	answer, err := bot.LLM().ChatCompletionNoStream(ctx, prompt)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to generate answer: %w", err)
 	}

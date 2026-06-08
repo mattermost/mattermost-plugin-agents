@@ -7,7 +7,8 @@ const (
 	// TokenUsageLogEvent is the canonical event name for structured token usage logs.
 	// #nosec G101 -- this is a non-secret log event identifier.
 	TokenUsageLogEvent = "llm_token_usage"
-	// TokenUsageLogSchemaVersion is the version of the token usage log field contract.
+	// TokenUsageLogSchemaVersion is the version of the token usage log field
+	// contract. Bump only on breaking changes; new optional fields don't count.
 	TokenUsageLogSchemaVersion = 1
 	// TokenUsageUnknown is the normalized value for missing dimensions.
 	TokenUsageUnknown = "unknown"

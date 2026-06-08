@@ -11,14 +11,16 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/format"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 const (
-	JobStatusRunning   = "running"
-	JobStatusCompleted = "completed"
-	JobStatusFailed    = "failed"
-	JobStatusCanceled  = "canceled"
+	JobStatusRunning         = "running"
+	JobStatusCancelRequested = "cancel_requested"
+	JobStatusCompleted       = "completed"
+	JobStatusFailed          = "failed"
+	JobStatusCanceled        = "canceled"
 
 	defaultBatchSize = 100
 
@@ -45,6 +47,10 @@ type PostRecord struct {
 
 // JobStatus represents the status of a reindex job
 type JobStatus struct {
+	// JobID uniquely identifies a single run. Cancel checks and CAS
+	// transitions are scoped to this ID so a stale read for a previous run
+	// cannot affect the current one.
+	JobID         string    `json:"job_id,omitempty"`
 	Status        string    `json:"status"`
 	Error         string    `json:"error,omitempty"`
 	StartedAt     time.Time `json:"started_at"`
@@ -194,10 +200,20 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 	lastHeartbeatSave := time.Now()
 
 	for {
-		// Check if the job was canceled
+		// JobID-scoped cancel check: a stale read for a different run is
+		// silently ignored.
 		var currentStatus JobStatus
 		if err := s.pluginAPI.KVGet(ReindexJobKey, &currentStatus); err == nil {
-			if currentStatus.Status == JobStatusCanceled {
+			if currentStatus.JobID == jobStatus.JobID && currentStatus.Status == JobStatusCancelRequested {
+				canceledStatus := currentStatus
+				canceledStatus.Status = JobStatusCanceled
+				canceledStatus.CompletedAt = time.Now()
+				if ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, currentStatus, canceledStatus); casErr != nil {
+					s.pluginAPI.LogError("Failed to record reindex cancellation", "error", casErr)
+				} else if ok {
+					jobStatus.Status = JobStatusCanceled
+					jobStatus.CompletedAt = canceledStatus.CompletedAt
+				}
 				s.pluginAPI.LogWarn("Reindex job was canceled")
 				return
 			}
@@ -394,10 +410,56 @@ func (s *Indexer) getLastIndexedTimestamp() int64 {
 	return timestamp
 }
 
-// saveJobStatus saves the job status to KV store
+// saveJobStatus persists the worker's view of the job, gated on JobID match
+// so a worker whose row has been claimed by a newer run does not clobber it.
+// A status with no JobID falls back to an unconditional set.
+//
+// The cancel-survival guard closes a race in which the admin's
+// CancelJob CAS lands before this worker's KVGet: without it, the
+// worker would read cancel_requested and then CAS back to running,
+// silently erasing the cancel. Propagating cancel_requested onto the
+// worker's local status makes the next loop iteration observe the
+// cancel and exit.
 func (s *Indexer) saveJobStatus(status *JobStatus) {
-	if err := s.pluginAPI.KVSet(ReindexJobKey, status); err != nil {
-		s.pluginAPI.LogError("Failed to save job status", "error", err)
+	if status.JobID == "" {
+		if err := s.pluginAPI.KVSet(ReindexJobKey, status); err != nil {
+			s.pluginAPI.LogError("Failed to save job status", "error", err)
+		}
+		return
+	}
+
+	var current JobStatus
+	err := s.pluginAPI.KVGet(ReindexJobKey, &current)
+	if err != nil && !mmapi.IsKVNotFound(err) {
+		s.pluginAPI.LogError("Failed to read job status before save", "error", err)
+		return
+	}
+
+	if err == nil && current.JobID != "" && current.JobID != status.JobID {
+		s.pluginAPI.LogWarn("Reindex worker superseded by a newer run, dropping status write",
+			"worker_job_id", status.JobID,
+			"current_job_id", current.JobID)
+		return
+	}
+
+	if err == nil && current.JobID == status.JobID &&
+		current.Status == JobStatusCancelRequested && status.Status == JobStatusRunning {
+		status.Status = JobStatusCancelRequested
+		return
+	}
+
+	var oldValue interface{}
+	if err == nil {
+		oldValue = current
+	}
+	ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, *status)
+	if casErr != nil {
+		s.pluginAPI.LogError("Failed to save job status", "error", casErr)
+		return
+	}
+	if !ok {
+		s.pluginAPI.LogWarn("Reindex job status write lost a CAS race; will retry on next iteration",
+			"worker_job_id", status.JobID)
 	}
 }
 
@@ -427,7 +489,7 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	lastID := ""
 
 	for {
-		// Query posts created after the cutoff
+		// Skip posts the live hook has already indexed so catch-up doesn't redo them.
 		query := `SELECT
 			Posts.Id as id,
 			Posts.Message as message,
@@ -445,6 +507,9 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 			AND Posts.Type = ''
 			AND (Posts.CreateAt, Posts.Id) > ($1, $2)
 			AND Posts.CreateAt <= $3
+			AND NOT EXISTS (
+				SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id
+			)
 		ORDER BY Posts.CreateAt ASC, Posts.Id ASC
 		LIMIT $4`
 

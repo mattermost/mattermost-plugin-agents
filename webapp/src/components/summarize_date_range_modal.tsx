@@ -1,26 +1,14 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useEffect} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {CloseIcon} from '@mattermost/compass-icons/components';
 
+import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
 import {DatePicker} from '@/mm_webapp';
-
-const ModalOverlay = styled.div`
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.64);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-`;
 
 const ModalContainer = styled.div`
     background-color: var(--center-channel-bg);
@@ -67,18 +55,22 @@ const ModalSubtitle = styled.div`
 `;
 
 const CloseButton = styled.button`
+    width: 40px;
+    height: 40px;
+    padding: 0;
     background: none;
     border: none;
     cursor: pointer;
-    padding: 10px;
     border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
+    color: rgba(var(--center-channel-color-rgb), 0.56);
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);
+        color: rgba(var(--center-channel-color-rgb), 0.72);
     }
 `;
 
@@ -192,6 +184,8 @@ interface Props {
     channelName?: string;
 }
 
+const SUMMARIZE_CHANNEL_TITLE_ID = 'summarize-channel-title';
+
 // Helper to format Date to YYYY-MM-DD string
 const formatDateToString = (date: Date | null): string => {
     if (!date) {
@@ -222,9 +216,14 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
     const [isStartDateOpen, setIsStartDateOpen] = React.useState(false);
     const [isEndDateOpen, setIsEndDateOpen] = React.useState(false);
 
-    if (!show) {
-        return null;
-    }
+    useEffect(() => {
+        if (show) {
+            setStartDate(null);
+            setEndDate(null);
+            setIsStartDateOpen(false);
+            setIsEndDateOpen(false);
+        }
+    }, [show]);
 
     const handleSummarize = () => {
         onSummarize(formatDateToString(startDate), formatDateToString(endDate));
@@ -323,11 +322,21 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
     };
 
     return (
-        <ModalOverlay onClick={onClose}>
-            <ModalContainer onClick={handleModalClick}>
+        <AnimatedModalShell
+            show={show}
+            onBackdropClick={onClose}
+            zIndex={2000}
+        >
+            <ModalContainer
+                className={MODAL_SHEET_CLASS}
+                onClick={handleModalClick}
+                role='dialog'
+                aria-modal='true'
+                aria-labelledby={SUMMARIZE_CHANNEL_TITLE_ID}
+            >
                 <ModalHeader>
                     <HeaderContent>
-                        <ModalTitle>
+                        <ModalTitle id={SUMMARIZE_CHANNEL_TITLE_ID}>
                             <FormattedMessage defaultMessage='Summarize channel'/>
                         </ModalTitle>
                         {channelName && (
@@ -336,8 +345,11 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                             </ModalSubtitle>
                         )}
                     </HeaderContent>
-                    <CloseButton onClick={onClose}>
-                        <CloseIcon size={20}/>
+                    <CloseButton
+                        onClick={onClose}
+                        aria-label={intl.formatMessage({defaultMessage: 'Close'})}
+                    >
+                        <CloseIcon size={24}/>
                     </CloseButton>
                 </ModalHeader>
                 <ModalBody>
@@ -362,7 +374,7 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                     </SummarizeButton>
                 </ModalFooter>
             </ModalContainer>
-        </ModalOverlay>
+        </AnimatedModalShell>
     );
 };
 

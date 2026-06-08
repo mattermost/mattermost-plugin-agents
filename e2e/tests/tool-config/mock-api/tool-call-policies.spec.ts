@@ -1,3 +1,5 @@
+import * as http from 'http';
+
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
@@ -25,9 +27,58 @@ let openAIMock: OpenAIMockContainer;
 
 type EmbeddedToolConfig = {
     name: string;
-    policy: 'ask' | 'auto_run' | 'auto_run_everywhere';
+    policy: 'ask' | 'auto_run_in_dm' | 'auto_run_everywhere';
     enabled: boolean;
 };
+
+type ImageTrapServer = {
+    close: () => Promise<void>;
+    getRequestCount: () => number;
+    url: string;
+};
+
+async function startImageTrapServer(assetName: string): Promise<ImageTrapServer> {
+    let requestCount = 0;
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="#d24b4b"/><text x="20" y="48" font-size="24" fill="white">image loaded</text></svg>';
+
+    const server = http.createServer((req, res) => {
+        if (req.url === `/${assetName}`) {
+            requestCount++;
+            res.writeHead(200, {
+                'Cache-Control': 'no-store',
+                'Content-Type': 'image/svg+xml',
+            });
+            res.end(svg);
+            return;
+        }
+
+        res.writeHead(404);
+        res.end('not found');
+    });
+
+    await new Promise<void>((resolve) => {
+        server.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+        throw new Error('failed to start image trap server');
+    }
+
+    return {
+        close: () => new Promise<void>((resolve, reject) => {
+            server.close((error) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve();
+            });
+        }),
+        getRequestCount: () => requestCount,
+        url: `http://127.0.0.1:${address.port}/${assetName}`,
+    };
+}
 
 async function setEmbeddedToolPolicies(toolConfigs: EmbeddedToolConfig[]) {
     const helper = await createBotConfigHelper(mattermost);
@@ -104,9 +155,9 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         mattermost = await RunToolConfigContainerWithPolicies();
         openAIMock = await RunOpenAIMocks(mattermost.network);
         await setEmbeddedToolPolicies([
-            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'read_post', policy: 'auto_run_in_dm', enabled: true},
             {name: 'get_channel_info', policy: 'ask', enabled: true},
-            {name: 'read_channel', policy: 'auto_run', enabled: true},
+            {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
         ]);
     });
 
@@ -233,6 +284,124 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // Note: the exact behavior depends on whether the tool call mock
         // format is correctly handled by the plugin
         expect(isAcceptVisible).toBe(false);
+    });
+
+    test('read_post tool results do not render markdown images from unsafe posts', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const townSquareChannelID = await getTownSquareChannelID();
+        const adminClient = await mattermost.getAdminClient();
+        const imageTrap = await startImageTrapServer(`tool-result-image-${Date.now()}.svg`);
+        const seedMessage = `Tool result markdown image seed ${Date.now()}`;
+        try {
+            const mmPage = new MattermostPage(page);
+            await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+            await mmPage.createAndNavigateToDMWithBot(
+                mattermost,
+                adminUsername,
+                adminPassword,
+                'toolbot',
+            );
+
+            const seededPost = await adminClient.createPost({
+                channel_id: townSquareChannelID,
+                message: `${seedMessage}\n\`\`\`\n![blocked-image](${imageTrap.url})`,
+            });
+
+            // Seed after the browser has left Town Square so the assertion only measures
+            // requests caused by the tool result card flow, not by the source post itself.
+            await page.waitForTimeout(500);
+            const baselineRequestCount = imageTrap.getRequestCount();
+
+            await openAIMock.addMocks([
+                {
+                    request: {
+                        method: 'POST',
+                        path: '/v1/chat/completions',
+                        body: {
+                            matcher: 'ShouldContainSubstring',
+                            value:
+                                'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                        },
+                    },
+                    context: {
+                        times: 1,
+                    },
+                    response: {
+                        status: 200,
+                        headers: {
+                            'Content-Type': 'text/event-stream',
+                        },
+                        body: buildTextResponse('Unsafe post read'),
+                    },
+                },
+                {
+                    request: {
+                        method: 'POST',
+                        path: '/v1/chat/completions',
+                        body: {
+                            matcher: 'ShouldContainSubstring',
+                            value: 'You are called Tool Test Bot with the username toolbot',
+                        },
+                    },
+                    context: {
+                        times: 1,
+                    },
+                    response: {
+                        status: 200,
+                        headers: {
+                            'Content-Type': 'text/event-stream',
+                        },
+                        body: buildToolCallResponse(
+                            'call_unsafe_read_post',
+                            'read_post',
+                            JSON.stringify({post_id: seededPost.id}),
+                        ),
+                    },
+                },
+                {
+                    request: {
+                        method: 'POST',
+                        path: '/v1/chat/completions',
+                        body: {
+                            matcher: 'ShouldContainSubstring',
+                            value: 'call_unsafe_read_post',
+                        },
+                    },
+                    context: {
+                        times: 1,
+                    },
+                    response: {
+                        status: 200,
+                        headers: {
+                            'Content-Type': 'text/event-stream',
+                        },
+                        body: buildTextResponse('Finished reading the unsafe post.'),
+                    },
+                },
+            ]);
+
+            const promptMessage = `Please read the Mattermost post with ID ${seededPost.id}.`;
+            await mmPage.sendChannelMessage(promptMessage);
+
+            const sentPost = await waitForSentPost(page, promptMessage);
+            await openThreadForPost(sentPost);
+
+            const rhs = page.locator('#rhsContainer');
+            const latestBotPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+            await expect(latestBotPost.getByText('Read Post', {exact: true})).toBeVisible({timeout: 30000});
+            await expect(rhs.getByText('Finished reading the unsafe post.')).toBeVisible({timeout: 45000});
+
+            await latestBotPost.getByText('Read Post', {exact: true}).click();
+            await expect(latestBotPost.getByText(seedMessage, {exact: false})).toBeVisible({timeout: 30000});
+            await expect(latestBotPost.getByText('blocked-image')).toBeVisible({timeout: 30000});
+            await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
+
+            await page.waitForTimeout(1000);
+            expect(imageTrap.getRequestCount() - baselineRequestCount).toBe(0);
+        } finally {
+            await imageTrap.close();
+        }
     });
 
     test('manual DM approval can be followed by a completed auto_run tool', async ({ page }) => {
@@ -383,7 +552,97 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
     });
 
-    test('channel auto_run still requires Share, while auto_run_everywhere skips it', async ({ page }) => {
+    test('approval continuation streams into the same post and does not show the empty-result fallback', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const townSquareChannelID = await getTownSquareChannelID();
+        const userMessage = 'Post split regression ' + Date.now();
+        const toolCallID = 'call_split_' + Date.now();
+        const continuationMarker = 'POST_SPLIT_CONTINUATION_' + Date.now();
+
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {matcher: 'ShouldContainSubstring', value: 'Write a short title'},
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse('Post split'),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {matcher: 'ShouldContainSubstring', value: 'get_channel_info'},
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildToolCallResponse(
+                        toolCallID,
+                        'get_channel_info',
+                        `{"channel_id":"${townSquareChannelID}"}`,
+                    ),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {matcher: 'ShouldContainSubstring', value: toolCallID},
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse(continuationMarker),
+                },
+            },
+        ]);
+
+        const mmPage = new MattermostPage(page);
+
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await mmPage.createAndNavigateToDMWithBot(
+            mattermost,
+            adminUsername,
+            adminPassword,
+            'toolbot',
+        );
+
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', userMessage);
+
+        const rhs = page.locator('#rhsContainer');
+        await rhs.waitFor({state: 'visible', timeout: 10000});
+
+        const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
+        const postA = botPosts.nth(0);
+
+        await expect(postA.getByText('Get Channel Info', {exact: true})).toBeVisible({timeout: 30000});
+
+        // A pending-tool response has no text; it must not be overwritten with
+        // the empty-result fallback that would mask the tool approval UI.
+        await expect(postA.getByText(/did not return a result/i)).not.toBeVisible();
+
+        const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
+        await expect(acceptButton).toBeVisible({timeout: 30000});
+        await acceptButton.click();
+
+        // Continuation now streams into the SAME post as the tool round.
+        // Both the original tool card and the follow-up text are visible in
+        // postA; no second bot post is created.
+        await expect(postA.getByText(continuationMarker)).toBeVisible({timeout: 30000});
+        await expect(postA.getByText('Get Channel Info', {exact: true})).toBeVisible();
+        await expect(botPosts).toHaveCount(1);
+    });
+
+    test('channel auto_run requires Accept (DM-only policy), while auto_run_everywhere skips approval entirely', async ({ page }) => {
         test.setTimeout(120000);
 
         const townSquareChannelID = await getTownSquareChannelID();
@@ -394,9 +653,9 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await waitForChannelReady(page, 'Off-Topic');
 
         await setEmbeddedToolPolicies([
-            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'read_post', policy: 'auto_run_in_dm', enabled: true},
             {name: 'get_channel_info', policy: 'ask', enabled: true},
-            {name: 'read_channel', policy: 'auto_run', enabled: true},
+            {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
         ]);
 
         await openAIMock.addMocks([
@@ -450,12 +709,15 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await mentionBotAndOpenThread(page, mmPage, 'toolbot', 'tool policy channel dm-only');
 
         const rhs = page.locator('#rhsContainer');
-        await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible({timeout: 30000});
-        await expect(rhs.getByRole('button', {name: /^share$/i})).toBeVisible({timeout: 30000});
-        await expect(rhs.getByRole('button', {name: /keep private/i})).toBeVisible();
+        // In a channel, the legacy auto_run policy is DM-only: the call stage
+        // must still be approved. Share/Keep private are the post-approval
+        // stage and must not appear yet.
+        await expect(rhs.getByRole('button', {name: /^accept$/i})).toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /^share$/i})).not.toBeVisible();
+        await expect(rhs.getByRole('button', {name: /keep private/i})).not.toBeVisible();
 
         await setEmbeddedToolPolicies([
-            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'read_post', policy: 'auto_run_in_dm', enabled: true},
             {name: 'get_channel_info', policy: 'ask', enabled: true},
             {name: 'read_channel', policy: 'auto_run_everywhere', enabled: true},
         ]);
@@ -536,5 +798,105 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /^share$/i})).not.toBeVisible();
         await expect(rhs.getByRole('button', {name: /keep private/i})).not.toBeVisible();
         await expect(rhs.getByText('Auto-approved')).toBeVisible();
+    });
+
+    test('channel ask: LLM follow-up stream is gated on Share approval', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const townSquareChannelID = await getTownSquareChannelID();
+        const mmPage = new MattermostPage(page);
+
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await page.goto(`${mattermost.url()}/test/channels/off-topic`);
+        await waitForChannelReady(page, 'Off-Topic');
+
+        await setEmbeddedToolPolicies([
+            {name: 'get_channel_info', policy: 'ask', enabled: true},
+        ]);
+
+        const userMessageMarker = 'follow-up-gating marker ' + Date.now();
+        const toolCallID = 'call_followup_gating';
+        const followUpMarker = 'FOLLOWUP_AFTER_SHARE_' + Date.now();
+
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value:
+                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                    },
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse('follow-up gating'),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    // Main turn includes the MCP tools list; title generation runs
+                    // WithToolsDisabled so its request body has no `get_channel_info`.
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'get_channel_info',
+                    },
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildToolCallResponse(
+                        toolCallID,
+                        'get_channel_info',
+                        `{"channel_id":"${townSquareChannelID}"}`,
+                    ),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: toolCallID,
+                    },
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse(followUpMarker),
+                },
+            },
+        ]);
+
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', userMessageMarker);
+
+        const rhs = page.locator('#rhsContainer');
+
+        const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
+        await expect(acceptButton).toBeVisible({timeout: 30000});
+        await expect(rhs.getByText(followUpMarker)).not.toBeVisible();
+
+        await acceptButton.click();
+
+        // Accept runs the tool but must NOT trigger the channel-visible follow-up.
+        const shareButton = rhs.getByRole('button', {name: /^share$/i});
+        await expect(shareButton).toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /keep private/i})).toBeVisible();
+        await page.waitForTimeout(3000);
+        await expect(rhs.getByText(followUpMarker)).not.toBeVisible();
+
+        await shareButton.click();
+
+        // Share releases the follow-up stream and consumes the last mock.
+        await expect(rhs.getByText(followUpMarker)).toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /^share$/i})).not.toBeVisible();
     });
 });

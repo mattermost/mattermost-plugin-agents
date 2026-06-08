@@ -68,25 +68,10 @@ export class SystemConsoleHelper {
      * This ensures the bots list or "no bots" message is visible
      */
     async waitForBotsPanel(): Promise<void> {
-        // Wait for either the bots list or the "no bots" message to appear
-        // This indicates the panel has finished loading its content
+        // AI Bots panel shows a "moved" notice instead of the legacy bot editor
         const botsPanel = this.getBotsPanel();
         await botsPanel.waitFor({ state: 'visible', timeout: 15000 });
-
-        // Wait for either bot containers OR the add bot button to appear
-        // This ensures the panel content has rendered
-        const botContainers = this.page.locator('[class*="BotContainer"]');
-        const addBotButton = this.getAddBotButton();
-
-        // Wait for one of these to be visible (either existing bots or add button)
-        await expect.poll(async () => {
-            const hasBot = await botContainers.first().isVisible().catch(() => false);
-            if (hasBot) {
-                return true;
-            }
-
-            return addBotButton.isVisible().catch(() => false);
-        }, { timeout: 15000 }).toBe(true);
+        await this.page.getByText(/AI bot configuration has moved/i).waitFor({ state: 'visible', timeout: 15000 });
     }
 
     /**

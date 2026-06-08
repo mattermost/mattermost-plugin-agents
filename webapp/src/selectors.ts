@@ -6,9 +6,10 @@ import {GlobalState} from '@mattermost/types/store';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
 
+// Both start null (unloaded); the selectors below default them with ?? [].
 interface PluginState {
-    customPrompts: CustomPrompt[];
-    pinnedPromptIds: string[];
+    customPrompts: CustomPrompt[] | null;
+    pinnedPromptIds: string[] | null;
     showCustomPromptsModal: boolean;
     selectedBotId: string | null;
 }

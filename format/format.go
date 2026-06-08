@@ -13,6 +13,33 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// AgentInfo holds display fields for formatting an AI agent list (e.g. MCP tool output).
+type AgentInfo struct {
+	ID          string
+	DisplayName string
+	Username    string
+}
+
+// AgentList formats discovered agents as a numbered list for LLM-facing text.
+// When currentBotUserID matches an agent's ID, a marker line is added for that row.
+func AgentList(agents []AgentInfo, currentBotUserID string) string {
+	if len(agents) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Found %d agent(s):\n\n", len(agents)))
+	for i, a := range agents {
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, a.DisplayName))
+		b.WriteString(fmt.Sprintf("   ID: %s\n", a.ID))
+		b.WriteString(fmt.Sprintf("   Username: @%s\n", a.Username))
+		if currentBotUserID != "" && a.ID == currentBotUserID {
+			b.WriteString("   ** This is YOU (the current agent) **\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func ThreadData(data *mmapi.ThreadData) string {
 	result := ""
 	for _, post := range data.Posts {
@@ -69,6 +96,12 @@ func PostBody(post *model.Post) string {
 		return result.String()
 	}
 	return post.Message
+}
+
+// AuthoredPost formats a post body with the username of its author for LLM
+// consumption.
+func AuthoredPost(post *model.Post, username string) string {
+	return "@" + username + ": " + PostBody(post)
 }
 
 // PostEntry holds pre-resolved data for formatting a single post.
@@ -219,6 +252,7 @@ type ChannelEntry struct {
 	TeamName    string         // resolved team display name
 	TeamID      string         // team ID (shown when TeamName is empty but TeamID is set)
 	MemberCount int64          // -1 means don't show
+	Role        string         // requesting user's role: "admin" | "member" | "guest" | "not_member" | "" (omit)
 }
 
 // WriteChannel writes a formatted channel entry to the builder.
@@ -254,6 +288,10 @@ func WriteChannel(w *strings.Builder, entry ChannelEntry) {
 		fmt.Fprintf(w, "Member Count: %d\n", entry.MemberCount)
 	}
 
+	if entry.Role != "" {
+		fmt.Fprintf(w, "Your role: %s\n", entry.Role)
+	}
+
 	w.WriteString("\n")
 }
 
@@ -283,4 +321,32 @@ func WriteTeam(w *strings.Builder, entry TeamEntry) {
 	if entry.MemberCount >= 0 {
 		fmt.Fprintf(w, "Member Count: %d\n", entry.MemberCount)
 	}
+}
+
+// FileDescriptorEntry holds metadata for a file attachment surfaced to the LLM
+// without inlining its contents. The File ID is included so the model can pass
+// it to the read_file tool to fetch the contents on demand.
+type FileDescriptorEntry struct {
+	// Number is the 1-based position of the file in the attachment list; it
+	// renders as an "Attached File N" header. A zero value omits the header.
+	Number   int
+	FileInfo *model.FileInfo // the source file
+}
+
+// WriteFileDescriptor writes a compact file metadata descriptor to the builder.
+func WriteFileDescriptor(w *strings.Builder, entry FileDescriptorEntry) {
+	if entry.Number > 0 {
+		fmt.Fprintf(w, "**Attached File %d**:\n", entry.Number)
+	}
+
+	fmt.Fprintf(w, "Name: %s\n", entry.FileInfo.Name)
+	fmt.Fprintf(w, "File ID: %s\n", entry.FileInfo.Id)
+
+	if entry.FileInfo.MimeType != "" {
+		fmt.Fprintf(w, "Type: %s\n", entry.FileInfo.MimeType)
+	}
+
+	fmt.Fprintf(w, "Size: %d bytes\n", entry.FileInfo.Size)
+
+	w.WriteString("\n")
 }

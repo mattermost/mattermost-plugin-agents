@@ -5,7 +5,6 @@ package mcpserver_test
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/evals"
+	"github.com/mattermost/mattermost-plugin-agents/files"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/testhelpers"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
@@ -469,24 +469,8 @@ func seedTeamBroadcastScenario(t *testing.T, serverURL, adminToken string) *eval
 	}
 }
 
-// testTraceLog implements llm.TraceLog and routes tool resolution traces to t.Log.
-// This enables ToolStore.TraceResolved to log tool name, args, result, and error.
-type testTraceLog struct {
-	t *testing.T
-}
-
-func (l *testTraceLog) Info(message string, keyValuePairs ...any) {
-	l.t.Helper()
-	var sb strings.Builder
-	sb.WriteString(message)
-	for i := 0; i+1 < len(keyValuePairs); i += 2 {
-		sb.WriteString(fmt.Sprintf(" %v=%v", keyValuePairs[i], keyValuePairs[i+1]))
-	}
-	l.t.Log(sb.String())
-}
-
 // evalStreamLogger wraps a LanguageModel to log intermediate LLM text and tool call
-// requests between tool loop iterations. It sits inside AutoRunToolsWrapper so it
+// requests between tool loop iterations. It wraps the LLM for eval logging so it
 // captures each re-invocation of the LLM.
 type evalStreamLogger struct {
 	inner       llm.LanguageModel
@@ -505,8 +489,8 @@ func (w *evalStreamLogger) CalledTools() []string {
 	return out
 }
 
-func (w *evalStreamLogger) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
-	result, err := w.inner.ChatCompletion(request, opts...)
+func (w *evalStreamLogger) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	result, err := w.inner.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -547,28 +531,32 @@ func (w *evalStreamLogger) ChatCompletion(request llm.CompletionRequest, opts ..
 	return &llm.TextStreamResult{Stream: output}, nil
 }
 
-func (w *evalStreamLogger) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
-	return w.inner.ChatCompletionNoStream(request, opts...)
+func (w *evalStreamLogger) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	return w.inner.ChatCompletionNoStream(ctx, request, opts...)
 }
 
-func (w *evalStreamLogger) CountTokens(text string) int {
-	return w.inner.CountTokens(text)
+func (w *evalStreamLogger) CountTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
+	return w.inner.CountTokens(ctx, request, opts...)
 }
 
 func (w *evalStreamLogger) InputTokenLimit() int {
 	return w.inner.InputTokenLimit()
 }
 
+func (w *evalStreamLogger) OutputTokenLimit() int {
+	return w.inner.OutputTokenLimit()
+}
+
 // agenticEvalSetup holds the components needed for agentic flow evals.
 type agenticEvalSetup struct {
-	wrappedLLM   llm.LanguageModel
+	llm          llm.LanguageModel
 	llmContext   *llm.Context
 	allToolNames []string
 	logger       *evalStreamLogger
 }
 
 // setupAgenticEval builds the common infrastructure for agentic flow evals:
-// MCP tools as llm.Tool, ToolStore, AutoRunToolsWrapper, and populated llm.Context.
+// MCP tools as llm.Tool, ToolStore, ToolRunner, and populated llm.Context.
 func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requestingUser *model.User, team *model.Team) *agenticEvalSetup {
 	t.Helper()
 
@@ -580,7 +568,7 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requesting
 		allToolNames[i] = tool.Name
 	}
 
-	toolStore := llm.NewToolStore(&testTraceLog{t: t}, true)
+	toolStore := llm.NewToolStore()
 	toolStore.AddTools(mcpTools)
 
 	llmContext := llm.NewContext()
@@ -595,10 +583,9 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requesting
 	llmContext.BotModel = "eval-model"
 
 	loggedLLM := &evalStreamLogger{inner: e.LLM, t: t}
-	wrappedLLM := llm.NewAutoRunToolsWrapper(loggedLLM)
 
 	return &agenticEvalSetup{
-		wrappedLLM:   wrappedLLM,
+		llm:          loggedLLM,
 		llmContext:   llmContext,
 		allToolNames: allToolNames,
 		logger:       loggedLLM,
@@ -649,4 +636,68 @@ func mcpToolsToLLMTools(t *testing.T, mcpServer *gomcp.Server) []llm.Tool {
 		})
 	}
 	return tools
+}
+
+// client4FileContentService implements tools.FileContentService using a Client4
+// admin connection. The eval container has no plugin installed, so the production
+// HTTPFileContentService callback would 404; this reads files directly over REST
+// instead, exercising the real files.Slice ranging logic. Per-user permission
+// enforcement is covered by unit tests, so this trusts the admin token.
+type client4FileContentService struct {
+	serverURL string
+	token     string
+}
+
+func (s *client4FileContentService) GetContent(ctx context.Context, _ string, fileID string, offset, limit int) (files.Content, error) {
+	client := model.NewAPIv4Client(s.serverURL)
+	client.SetToken(s.token)
+
+	info, _, err := client.GetFileInfo(ctx, fileID)
+	if err != nil {
+		return files.Content{}, err
+	}
+
+	// Client4 cannot read server-extracted document text (FileInfo.Content is
+	// json:"-"), so only plain-text files are readable here — which is all the
+	// eval seeds for the readable cases. Non-text files report no extractable
+	// text, exactly as production does.
+	if !strings.HasPrefix(info.MimeType, "text/") {
+		return files.Content{Name: info.Name, MimeType: info.MimeType, HasText: false}, nil
+	}
+
+	data, _, err := client.GetFile(ctx, fileID)
+	if err != nil {
+		return files.Content{}, err
+	}
+
+	return files.Slice(info.Name, info.MimeType, string(data), offset, limit), nil
+}
+
+// seedFileScenario creates a team and channel (the admin is a member as the
+// creator), uploads a file with the given content, and attaches it to a post.
+// Returns the team, channel, and the attached file's info.
+func seedFileScenario(t *testing.T, serverURL, adminToken, filename string, content []byte) (*model.Team, *model.Channel, *model.FileInfo) {
+	t.Helper()
+
+	ctx := context.Background()
+	adminClient := model.NewAPIv4Client(serverURL)
+	adminClient.SetToken(adminToken)
+
+	suffix := model.NewId()[:8]
+	team := testhelpers.CreateTestTeam(t, adminClient, "file-eval-"+suffix, "File Eval Team")
+	channel := testhelpers.CreateTestChannel(t, adminClient, team.Id, "file-eval-"+suffix, "File Eval")
+
+	upload, _, err := adminClient.UploadFile(ctx, content, channel.Id, filename)
+	require.NoError(t, err, "Failed to upload file")
+	require.NotEmpty(t, upload.FileInfos, "Upload should return file info")
+	fileInfo := upload.FileInfos[0]
+
+	_, _, err = adminClient.CreatePost(ctx, &model.Post{
+		ChannelId: channel.Id,
+		Message:   "Here's the file.",
+		FileIds:   []string{fileInfo.Id},
+	})
+	require.NoError(t, err, "Failed to create post with file attachment")
+
+	return team, channel, fileInfo
 }

@@ -16,16 +16,17 @@ type MCPToolConfigRowProps = {
     toolConfig: MCPToolConfig;
     onToolConfigChange: (config: MCPToolConfig) => void;
     serverDisabled?: boolean;
+    displayName?: string;
 };
 
-const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}: MCPToolConfigRowProps) => {
+const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, displayName}: MCPToolConfigRowProps) => {
     const intl = useIntl();
     const [schemaExpanded, setSchemaExpanded] = useState(false);
 
     const handlePolicyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         onToolConfigChange({
             ...toolConfig,
-            policy: e.target.value as 'auto_run' | 'auto_run_everywhere' | 'ask',
+            policy: e.target.value as 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask',
         });
     };
 
@@ -40,7 +41,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
         <ToolRowContainer $disabled={serverDisabled}>
             <ToolRowMain>
                 <ToolRowLeft>
-                    <ToolName>{tool.name}</ToolName>
+                    <ToolName>{displayName ?? tool.name}</ToolName>
                     {tool.description && (
                         <ToolDescription>{tool.description}</ToolDescription>
                     )}
@@ -52,7 +53,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
                             onChange={handlePolicyChange}
                             disabled={serverDisabled}
                         >
-                            <option value='auto_run'>
+                            <option value='auto_run_in_dm'>
                                 {intl.formatMessage({defaultMessage: 'Auto Run (DM)'})}
                             </option>
                             <option value='auto_run_everywhere'>
@@ -63,12 +64,14 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
                             </option>
                         </PolicySelect>
                     </PolicySelectWrapper>
-                    <ToggleSwitch
-                        checked={toolConfig.enabled}
-                        onChange={handleEnabledChange}
-                        disabled={serverDisabled}
-                        size='small'
-                    />
+                    <ToggleWrapper>
+                        <ToggleSwitch
+                            checked={toolConfig.enabled}
+                            onChange={handleEnabledChange}
+                            disabled={serverDisabled}
+                            size='small'
+                        />
+                    </ToggleWrapper>
                     <ExpandChevron onClick={() => setSchemaExpanded(!schemaExpanded)}>
                         <StyledChevron $expanded={schemaExpanded}>
                             <ChevronDownIcon size={16}/>
@@ -164,6 +167,11 @@ const PolicySelect = styled.select`
         opacity: 0.5;
         cursor: not-allowed;
     }
+`;
+
+const ToggleWrapper = styled.div`
+    display: flex;
+    align-items: center;
 `;
 
 const ExpandChevron = styled.div`

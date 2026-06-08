@@ -19,6 +19,8 @@ Access AI features in one of the following ways:
 - Use the **Ask AI** option in channels with unread messages (see [license requirements](admin_guide.md#license-requirements))
 - Use **Ask Agents about this channel** in a channel header to summarize recent activity, focus on a date range, or ask a question about the current channel. See [Channel Summaries](features/channel_summaries.md).
 
+![AI Actions menu in the message composer, including the Custom prompts entry.](img/ai-actions-menu-composer.png)
+
 ### Mobile
 
 Start or open a direct message with the Agent bot. If your system admin has configured multiple bots, switch between them by starting or opening each bot by name.
@@ -33,13 +35,15 @@ You can have conversations with Agents in several ways:
 
 **Direct messages**: Start a direct message with an Agent bot to have a private conversation. Chat privately with an Agent in direct message threads like you would any other Mattermost user.
 
-**Channel mentions**: [@mention](https://docs.mattermost.com/collaborate/mention-people.html) Agent bots by their username, such as `@copilot`, in any thread to bring Agents capabilities to your conversation. The bot responds in a thread to keep channels organized, and other team members can view and contribute to the conversation. An Agent can help extract information quickly or transform discussions into charts, resources, documentation, and more, and can find action items and open questions in new messages.
+**Channel mentions**: [@mention](https://docs.mattermost.com/collaborate/mention-people.html) Agent bots by their username, such as `@copilot`, in any thread to bring Agents capabilities to your conversation. The bot responds in a thread to keep channels organized, and other team members can view and contribute to the conversation. An Agent can help extract information quickly or transform discussions into charts, resources, documentation, and more, and can find action items and open questions in new messages. When you @mention an Agent in a thread, it uses earlier thread context up to that mention, including earlier posts in the thread. Later replies posted after that mention, and temporary placeholder bot posts, aren't included in that request.
+
+When you attach files in the Agents pane, direct messages, or channel @mentions, Agents can use them as conversation context. Images are included only when vision is enabled for the bot. Other files contribute text only when Mattermost can read text from them, such as plain-text files or files with extracted text. Very large attachment text may be shortened, and if one attachment can't be read, that attachment is skipped while the conversation continues.
 
 > **Note:** Whether AI-generated links are clickable depends on your system admin configuration. Treat links in AI responses with caution and verify destinations before opening them.
 
-### Select a bot
+### Select an agent
 
-If multiple Agent bots are configured for your Mattermost workspace, select your preferred bot in the Agents pane or @mention specific bots by name in channels.
+If multiple agents are configured for your Mattermost workspace, select your preferred agent in the Agents pane or @mention a specific agent by name in channels.
 
 ### Use custom prompt templates
 
@@ -50,11 +54,11 @@ To manage custom prompts:
 1. Open the message composer in any channel or direct message.
 2. Select **AI Actions**.
 3. Open **Custom prompts**, then select **Manage prompts**.
-4. Select **Create new** to add a prompt with an **Action Title**, optional description, and template.
+4. Select **Create new** to open the prompt editor and add a prompt with an **Action Title**, optional description, and template.
 5. Choose **Public** to share the prompt with other users, or **Private** to keep it visible only to you.
-6. Pin prompts you use often so they appear as shortcuts in the Agents pane.
+6. Pin or unpin prompts directly from the prompt list. Pinned prompts appear as shortcuts in the Agents pane.
 
-The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Shared prompts from other users are read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
+The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Selecting a prompt from either list opens a dedicated prompt view inside the modal, with a back arrow to return to the list and the prompt name as the title. Shared prompts from other users open read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
 
 When you select a saved prompt from **Custom prompts**, Mattermost renders the template with the current context and inserts the result into your draft. If you use this menu outside a bot direct message, Mattermost adds the currently selected bot mention before the rendered text. Pinned prompts in the Agents pane render the current saved template and send it immediately as a message.
 
@@ -76,17 +80,29 @@ If a value isn't available in the current context, the rendered prompt leaves it
 
 ### Use tools
 
-When Agents use external tools or integrations, Mattermost may prompt you to review tool usage based on the tool approval policy configured by your system admin. When review is required, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Approve/Reject** options.
+When Agents use external tools or integrations, Mattermost may prompt you to review tool usage based on the tool approval policy configured by your system admin. When review is required, only the person who requested the Agent interaction can accept or reject pending tools. For those pending tools, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Accept** and **Reject** options. If multiple tools are waiting for a decision, Mattermost may also show **Accept all** and **Reject all** controls.
 
-By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, a tool call may require approval before execution or run automatically. Tool results are shown after execution.
+By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, each tool call may require approval before execution or run automatically. A single Agent response can include both auto-approved tools and tools still waiting for approval. In that case, the auto-approved badge applies only to the individual tool that ran automatically, while pending tools continue to show **Accept** and **Reject** options. Tool results are shown after execution, and if a result needs a visibility decision, you'll see **Share** and **Keep private** options.
+
+Only the person who started the conversation can approve or reject tool calls. In direct messages with an agent, approved tool results are shared automatically because only you can view that conversation.
+
+In channels, tool approval can be a two-step process. After you approve a tool call and it runs, Mattermost can prompt you again to decide whether the tool arguments and results should be shared with the channel or kept private. If you choose **Keep Private**, other channel members don't see that tool data, and the channel-visible follow-up response is generated without the private content.
 
 If a tool execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
 
-Available tools in direct messages, and in channels when enabled by your system admin, include:
+On web and desktop, start a new chat in the Agents right-hand pane and open the **Tools** menu in the header. The menu lists configured tool providers. For MCP servers that use OAuth, you'll see **Connect** when you're not authenticated and **Disconnect** when an OAuth session applies. You can turn individual providers on or off from this menu, and your choices are saved as your personal preferences. Mattermost doesn't send OAuth connection prompts as ephemeral posts in the conversation; use the **Tools** menu to check connection state and complete **Connect** or **Disconnect** flows.
 
-- Server search (semantic search across your Mattermost instance)
-- User lookup (find information about Mattermost users)
-- MCP tools (external tools provided by configured MCP servers if enabled). Tool availability depends on your user permissions and system configuration.
+> **Note:** The Mattermost mobile apps don't currently support starting MCP OAuth connections from the Agents experience. Use web or desktop to connect OAuth-backed MCP providers.
+
+Depending on your workspace configuration, available tools in direct messages, and in channels when enabled by your system admin, can include:
+
+- Mattermost MCP tools, including tools to search posts, find users, discover available agents, and, when the Channel Automation plugin is installed and your permissions allow it, manage channel automations. These tools are available through embedded MCP by default when your workspace and agent tool settings allow them
+- MCP tools provided by compatible installed Mattermost plugins that register tools with Agents, after an admin enables those plugin tools
+- MCP tools provided by separately configured remote MCP servers, after an admin enables them
+
+Tool availability depends on your user permissions, provider connection status, workspace configuration, and context.
+
+Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 
 ## Analyze threads and channels
 
@@ -130,7 +146,9 @@ Contact your system admin if this feature isn't available for your Mattermost in
 
 ## Analyze images
 
-For AI models with vision capabilities, attach an image file to your message when chatting with an Agent to ask questions about the image or request analysis. The Agent responds based on the visual content.
+For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content.
+
+In channel threads, a later @mention can also include image attachments from earlier posts in the same thread when those posts are part of the thread context.
 
 Your system admin must enable vision capabilities for your bot, and the underlying AI model must support vision features.
 

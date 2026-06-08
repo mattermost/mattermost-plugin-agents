@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -9,21 +9,31 @@ import styled from 'styled-components';
 import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
 
-import {doPostbackSummary, doRegenerate, doStopGenerating, getToolCallPrivate, getToolResultPrivate} from '@/client';
+import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
 import {useSelectNotAIPost} from '@/hooks';
+import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
 
-import {SearchSources} from '../search_sources';
 import PostText from '../post_text';
+import {SearchSources} from '../search_sources';
 import ToolApprovalSet from '../tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 
+import {
+    Round,
+    buildRoundsFromTurns,
+    deriveApprovalStageForPost,
+} from './turn_content_utils';
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
 
-// Types
+const SearchResultsPropKey = 'search_results';
+
+// Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
+const LIVE_ROUND_ID = 'live';
+
 export interface PostUpdateWebsocketMessage {
     post_id: string
     next?: string
@@ -39,355 +49,296 @@ interface LLMBotPostProps {
     websocketUnregister?: (postID: string, listenerID: string) => void;
 }
 
-const SearchResultsPropKey = 'search_results';
+// ToolRunner emits one tool_call event per round with pending statuses, then one
+// with terminal statuses after execution. The terminal one is the round boundary.
+function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
+    if (toolCalls.length === 0) {
+        return false;
+    }
+    return toolCalls.every((tc) =>
+        tc.status === ToolCallStatus.Success ||
+        tc.status === ToolCallStatus.Error ||
+        tc.status === ToolCallStatus.AutoApproved ||
+        tc.status === ToolCallStatus.Rejected,
+    );
+}
 
 export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
-    const [message, setMessage] = useState(props.post.message);
 
-    // Generating is true while we are receiving new content from the websocket
-    const [generating, setGenerating] = useState(false);
+    const conversationId: string | undefined = props.post.props?.conversation_id;
+    const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
-    // State for tool calls - initialize from persisted tool calls if available
-    const [toolCalls, setToolCalls] = useState<ToolCall[]>(() => {
-        const toolCallsJson = props.post.props?.pending_tool_call;
-        if (toolCallsJson) {
-            try {
-                return JSON.parse(toolCallsJson);
-            } catch (error) {
-                return [];
-            }
-        }
-        return [];
-    });
-    const [privateToolCalls, setPrivateToolCalls] = useState<ToolCall[] | null>(null);
-    const [privateToolResults, setPrivateToolResults] = useState<ToolCall[] | null>(null);
-
-    // State for annotations/citations - initialize from persisted annotations if available
-    const [annotations, setAnnotations] = useState<Annotation[]>(() => {
-        const persistedAnnotations = props.post.props?.annotations || '';
-        if (persistedAnnotations) {
-            try {
-                return JSON.parse(persistedAnnotations);
-            } catch (error) {
-                return [];
-            }
-        }
-        return [];
-    });
-
-    // Precontent is true when we're waiting for the first content to arrive
-    // Initialize to true if post is empty AND has no reasoning AND no tool calls AND no annotations (fresh post)
-    const persistedReasoning = props.post.props?.reasoning_summary || '';
-    const [precontent, setPrecontent] = useState(
-        props.post.message === '' &&
-        persistedReasoning === '' &&
-        toolCalls.length === 0 &&
-        annotations.length === 0,
+    // Meeting summarization posts have no conversation entity yet; fall back to
+    // the legacy llm_requester_user_id prop.
+    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
+    const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
+    const requesterIsCurrentUser = Boolean(
+        (conversation && conversation.user_id === currentUserId) ||
+        (!conversationId && legacyRequester && legacyRequester === currentUserId),
     );
 
-    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation
-    // Needs a ref because of the useEffect closure.
-    const [stopped, setStopped] = useState(false);
-    const stoppedRef = useRef(stopped);
-    stoppedRef.current = stopped;
-
-    const [error, setError] = useState('');
-
-    // State for reasoning summary display
-    // Use the same persistedReasoning from above
-    const [reasoningSummary, setReasoningSummary] = useState(persistedReasoning);
-    const [showReasoning, setShowReasoning] = useState(persistedReasoning !== '');
-    const [isReasoningCollapsed, setIsReasoningCollapsed] = useState(true);
-    const [isReasoningLoading, setIsReasoningLoading] = useState(false);
-
-    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const channel = useSelector<GlobalState, {type?: string} | undefined>(
         (state) => state.entities.channels.channels[props.post.channel_id],
     );
     const isDM = channel?.type === 'D';
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
-    const requesterIsCurrentUser = (props.post.props?.llm_requester_user_id === currentUserId);
-    const isToolCallRedacted = String(props.post.props?.pending_tool_call_redacted).toLowerCase() === 'true';
-    const hasPendingToolResult = Boolean(props.post.props?.pending_tool_result);
-    const isAutoApproved = String(props.post.props?.auto_approved_tool_call).toLowerCase() === 'true';
-    const toolApprovalStage: ToolApprovalStage = hasPendingToolResult ? 'result' : 'call';
 
-    // Initialize reasoning from persisted data when navigating to different posts
-    const previousPostIdRef = useRef(props.post.id);
-    useEffect(() => {
-        if (previousPostIdRef.current !== props.post.id) {
-            const persistedReasoning = props.post.props?.reasoning_summary || '';
-            if (persistedReasoning) {
-                setReasoningSummary(persistedReasoning);
-                setShowReasoning(true);
-                setIsReasoningCollapsed(true);
-                setIsReasoningLoading(false);
-            } else {
-                // Reset reasoning state for posts without reasoning
-                setReasoningSummary('');
-                setShowReasoning(false);
-                setIsReasoningCollapsed(true);
-                setIsReasoningLoading(false);
-            }
+    const [message, setMessage] = useState(props.post.message);
+    const [generating, setGenerating] = useState(false);
+    const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+    const [annotations, setAnnotations] = useState<Annotation[]>([]);
+    const [precontent, setPrecontent] = useState(props.post.message === '');
+    const [error, setError] = useState('');
 
-            // Initialize annotations from persisted data
-            const persistedAnnotations = props.post.props?.annotations || '';
-            let parsedAnnotations: Annotation[] = [];
-            if (persistedAnnotations) {
-                try {
-                    parsedAnnotations = JSON.parse(persistedAnnotations);
-                    setAnnotations(parsedAnnotations);
-                } catch (error) {
-                    setAnnotations([]);
-                }
-            } else {
-                setAnnotations([]);
-            }
+    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation.
+    // Needs a ref because of the useEffect closure.
+    const [stopped, setStopped] = useState(false);
+    const stoppedRef = useRef(stopped);
+    stoppedRef.current = stopped;
 
-            // Initialize tool calls from persisted data
-            const toolCallsJson = props.post.props?.pending_tool_call;
-            let parsedToolCalls: ToolCall[] = [];
-            if (toolCallsJson) {
-                try {
-                    parsedToolCalls = JSON.parse(toolCallsJson);
-                    setToolCalls(parsedToolCalls);
-                } catch (error) {
-                    setToolCalls([]);
-                }
-            } else {
-                setToolCalls([]);
-            }
-            setPrivateToolCalls(null);
-            setPrivateToolResults(null);
+    const [reasoningSummary, setReasoningSummary] = useState('');
+    const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
-            // Set precontent if this is a fresh empty post (no content, no reasoning, no tool calls, no annotations)
-            // Otherwise reset to false (historical posts or posts with any content)
-            setPrecontent(
-                props.post.message === '' &&
-                persistedReasoning === '' &&
-                parsedToolCalls.length === 0 &&
-                parsedAnnotations.length === 0,
-            );
+    const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
 
-            previousPostIdRef.current = props.post.id;
-        }
-    }, [props.post.id, props.post.props?.reasoning_summary, props.post.props?.annotations, props.post.props?.pending_tool_call, props.post.message]);
+    // Rounds completed during this stream, before turns land via refetch.
+    const [liveRounds, setLiveRounds] = useState<Round[]>([]);
 
-    // Update tool calls from props when available
-    useEffect(() => {
-        const toolCallsJson = props.post.props?.pending_tool_call;
-        if (toolCallsJson) {
-            try {
-                const parsedToolCalls = JSON.parse(toolCallsJson);
-                setToolCalls(parsedToolCalls);
-            } catch (error) {
-                // Log error for debugging
-                setError('Error parsing tool calls');
-            }
-        }
-    }, [props.post.props?.pending_tool_call]);
+    const [pendingRefetch, setPendingRefetch] = useState(false);
 
-    useEffect(() => {
-        let cancelled = false;
+    // Suppresses persistedRounds while regenerating so the prior generation
+    // doesn't render alongside the new stream.
+    const [regenerating, setRegenerating] = useState(false);
 
-        if (requesterIsCurrentUser && isToolCallRedacted && toolCalls.length > 0) {
-            getToolCallPrivate(props.post.id).then((data) => {
-                if (cancelled) {
-                    return;
-                }
+    // Lets the WebSocket handler snapshot the live round without re-subscribing.
+    const liveRef = useRef({message, toolCalls, reasoningSummary, annotations});
+    liveRef.current = {message, toolCalls, reasoningSummary, annotations};
 
-                // Only update state if data is a non-empty array; preserve
-                // previously fetched data when the server returns null after
-                // the tool call flow completes.
-                if (Array.isArray(data) && data.length > 0) {
-                    setPrivateToolCalls(data);
-                }
-            }).catch(() => {
-                // Don't reset — preserve previously fetched data
-            });
-        } else {
-            setPrivateToolCalls(null);
-        }
-
-        return () => {
-            cancelled = true;
-        };
-    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, toolApprovalStage, toolCalls.length, props.post.props?.pending_tool_call]);
-
-    // Check if any tool calls have completed (Success or Error status) - used to
-    // determine when to fetch private results even after the approval flow completes.
-    const hasCompletedToolCalls = useMemo(() => {
-        return toolCalls.some((tc) =>
-            tc.status === ToolCallStatus.Success ||
-            tc.status === ToolCallStatus.Error ||
-            tc.status === ToolCallStatus.AutoApproved,
-        );
-    }, [toolCalls]);
-
-    useEffect(() => {
-        let cancelled = false;
-
-        if (requesterIsCurrentUser && isToolCallRedacted && hasCompletedToolCalls) {
-            getToolResultPrivate(props.post.id).then((data) => {
-                if (cancelled) {
-                    return;
-                }
-
-                // Only update state if data is a non-empty array; preserve
-                // previously fetched data when the server returns null after
-                // the tool call flow completes.
-                if (Array.isArray(data) && data.length > 0) {
-                    setPrivateToolResults(data);
-                }
-            }).catch(() => {
-                // Don't reset — preserve previously fetched data
-            });
-        } else {
-            setPrivateToolResults(null);
-        }
-
-        return () => {
-            cancelled = true;
-        };
-    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, hasCompletedToolCalls, props.post.props?.pending_tool_result]);
-
+    // Sync message from post.message changes (e.g. after post update)
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
             setMessage(props.post.message);
         }
     }, [props.post.message]);
 
+    const persistedRounds: Round[] = useMemo(() => {
+        if (!conversation) {
+            return [];
+        }
+        return buildRoundsFromTurns(conversation, props.post.id);
+    }, [conversation, props.post.id]);
+
+    // Keep prior rounds visible during the refetch window after invalidate.
+    const lastPersistedRef = useRef<Round[]>([]);
     useEffect(() => {
-        if (props.websocketRegister && props.websocketUnregister) {
-            const listenerID = Math.random().toString(36).substring(7);
+        if (conversation) {
+            lastPersistedRef.current = persistedRounds;
+        }
+    }, [conversation, persistedRounds]);
+    const stablePersisted = conversation ? persistedRounds : lastPersistedRef.current;
 
-            props.websocketRegister(props.post.id, listenerID, (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => {
-                const data = msg.data;
-
-                // Ensure we're only processing events for this post
-                if (data.post_id !== props.post.id) {
-                    return;
-                }
-
-                // Handle reasoning summary events
-                if (data.control === 'reasoning_summary' && data.reasoning) {
-                    // Replace entire reasoning with accumulated text from backend
-                    setReasoningSummary(data.reasoning);
-                    setShowReasoning(true);
-                    setIsReasoningLoading(true);
-
-                    // Explicitly set generating to false to prevent blinking cursor during reasoning
-                    setGenerating(false);
-                    setPrecontent(false); // Clear "Starting..." when reasoning begins
-                    return;
-                }
-
-                if (data.control === 'reasoning_summary_done' && data.reasoning) {
-                    // Final reasoning text
-                    setReasoningSummary(data.reasoning);
-                    setIsReasoningLoading(false);
-
-                    // Don't change collapsed state - preserve user's choice
-                    return;
-                }
-
-                // Handle tool call events from the websocket event
-                if (data.control === 'tool_call' && data.tool_call) {
-                    try {
-                        const parsedToolCalls = JSON.parse(data.tool_call);
-                        setToolCalls(parsedToolCalls);
-                        setPrivateToolCalls(null);
-                        setPrivateToolResults(null);
-                        setPrecontent(false); // Clear "Starting..." when tool calls arrive
-                    } catch (error) {
-                        // Handle error silently
-                        setError('Error parsing tool call data');
-                    }
-                    return;
-                }
-
-                // Handle annotation events from the websocket
-                if (data.control === 'annotations' && data.annotations) {
-                    try {
-                        const parsedAnnotations = JSON.parse(data.annotations);
-                        setAnnotations(parsedAnnotations);
-                        setPrecontent(false); // Clear "Starting..." when annotations arrive
-                    } catch (error) {
-                        // Handle error silently
-                        setError('Error parsing annotation data');
-                    }
-                    return;
-                }
-
-                // Handle regular post updates
-                if (data.next && !stoppedRef.current) {
-                    setGenerating(true);
-                    setPrecontent(false);
-                    setMessage(data.next);
-                } else if (data.control === 'end') {
-                    setGenerating(false);
-                    setPrecontent(false);
-                    setStopped(false);
-                    setIsReasoningLoading(false);
-                } else if (data.control === 'cancel') {
-                    setGenerating(false);
-                    setPrecontent(false);
-                    setStopped(false);
-                    setIsReasoningLoading(false);
-                } else if (data.control === 'start') {
-                    setGenerating(true);
-                    setPrecontent(true);
-                    setStopped(false);
-
-                    // Clear reasoning when starting new generation
-                    setReasoningSummary('');
-                    setShowReasoning(false);
-                    setIsReasoningCollapsed(true);
-                    setIsReasoningLoading(false);
-
-                    // Clear tool calls and annotations when starting new generation
-                    setToolCalls([]);
-                    setAnnotations([]);
-                    setPrivateToolCalls(null);
-                    setPrivateToolResults(null);
-
-                    if (!message) {
-                        setMessage('');
-                    }
-                }
-            });
-
-            return () => {
-                if (props.websocketUnregister) {
-                    props.websocketUnregister(props.post.id, listenerID);
-                }
-            };
+    // Once the refetch lands, clear local state for completed rounds so we
+    // don't double-render. useLayoutEffect prevents a duplicated frame.
+    useLayoutEffect(() => {
+        if (!pendingRefetch || !conversation) {
+            return;
         }
 
-        return () => {/* no cleanup */};
-    }, [props.post.id]);
+        setLiveRounds((prev: Round[]) => (prev.length === 0 ? prev : []));
+        setToolCalls((prev: ToolCall[]) => (prev.length === 0 ? prev : []));
+        setAnnotations((prev: Annotation[]) => (prev.length === 0 ? prev : []));
+        setMessage((prev: string) => (prev === '' ? prev : ''));
+        setReasoningSummary((prev: string) => (prev === '' ? prev : ''));
+        setIsReasoningLoading(false);
+        setRegenerating(false);
+        setPendingRefetch(false);
+    }, [conversation, pendingRefetch]);
+
+    useEffect(() => {
+        if (!props.websocketRegister || !props.websocketUnregister) {
+            return undefined; // eslint-disable-line no-undefined
+        }
+
+        const listenerID = Math.random().toString(36).substring(7);
+
+        props.websocketRegister(props.post.id, listenerID, (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => {
+            const data = msg.data;
+
+            if (data.post_id !== props.post.id) {
+                return;
+            }
+
+            if (data.control === 'reasoning_summary' && data.reasoning) {
+                // Don't clear generating: the `generating && currentRound`
+                // gate in renderedRounds would hide the thinking block.
+                setReasoningSummary(data.reasoning);
+                setIsReasoningLoading(true);
+                setPrecontent(false);
+                return;
+            }
+
+            if (data.control === 'reasoning_summary_done' && data.reasoning) {
+                setReasoningSummary(data.reasoning);
+                setIsReasoningLoading(false);
+                return;
+            }
+
+            if (data.control === 'tool_call' && data.tool_call) {
+                try {
+                    const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
+                    if (isResolvedToolCallEvent(parsedToolCalls)) {
+                        // Snapshot the round into liveRounds and reset for the next.
+                        const live = liveRef.current;
+                        setLiveRounds((prev) => [
+                            ...prev,
+                            {
+                                id: `live-${prev.length}-${Date.now()}`,
+                                text: live.message,
+                                toolCalls: parsedToolCalls,
+                                reasoning: {summary: live.reasoningSummary, signature: ''},
+                                annotations: live.annotations,
+                            },
+                        ]);
+                        setMessage('');
+                        setToolCalls([]);
+                        setReasoningSummary('');
+                        setIsReasoningLoading(false);
+                        setAnnotations([]);
+                    } else {
+                        setToolCalls(parsedToolCalls);
+                    }
+                    setPrecontent(false);
+                } catch {
+                    setError('Error parsing tool call data');
+                }
+                return;
+            }
+
+            if (data.control === 'annotations' && data.annotations) {
+                try {
+                    const parsedAnnotations = JSON.parse(data.annotations);
+                    setAnnotations(parsedAnnotations);
+                    setPrecontent(false);
+                } catch {
+                    setError('Error parsing annotation data');
+                }
+                return;
+            }
+
+            if (typeof data.next === 'string' && !stoppedRef.current) {
+                setGenerating(true);
+                setPrecontent(false);
+                setMessage(data.next);
+                return;
+            }
+
+            if (data.control === 'end') {
+                setGenerating(false);
+                setPrecontent(false);
+                setStopped(false);
+                setIsReasoningLoading(false);
+                setPendingRefetch(true);
+                if (conversationId) {
+                    invalidateConversation(conversationId);
+                }
+                return;
+            }
+
+            if (data.control === 'cancel') {
+                setGenerating(false);
+                setPrecontent(false);
+                setStopped(false);
+                setIsReasoningLoading(false);
+                setRegenerating(false);
+                return;
+            }
+
+            if (data.control === 'start') {
+                setGenerating(true);
+                setPrecontent(true);
+                setStopped(false);
+                setReasoningSummary('');
+                setIsReasoningLoading(false);
+                setToolCalls([]);
+                setAnnotations([]);
+                setLiveRounds([]);
+                if (!message) {
+                    setMessage('');
+                }
+                return;
+            }
+
+            if (data.control === 'continue') {
+                // Tool-approval resume: prior round comes from refetched
+                // persistedRounds, so reset all local state.
+                setGenerating(true);
+                setPrecontent(true);
+                setStopped(false);
+                setMessage('');
+                setReasoningSummary('');
+                setIsReasoningLoading(false);
+                setAnnotations([]);
+                setToolCalls([]);
+                setLiveRounds([]);
+                if (conversationId) {
+                    invalidateConversation(conversationId);
+                }
+            }
+        });
+
+        return () => {
+            if (props.websocketUnregister) {
+                props.websocketUnregister(props.post.id, listenerID);
+            }
+        };
+    }, [props.post.id, conversationId]);
+
+    const currentRound: Round | null = useMemo(() => {
+        const hasContent = message !== '' ||
+            toolCalls.length > 0 ||
+            reasoningSummary !== '' ||
+            annotations.length > 0;
+        if (!hasContent) {
+            return null;
+        }
+        return {
+            id: LIVE_ROUND_ID,
+            text: message,
+            toolCalls,
+            reasoning: {summary: reasoningSummary, signature: ''},
+            annotations,
+        };
+    }, [message, toolCalls, reasoningSummary, annotations]);
+
+    const renderedRounds = useMemo(() => {
+        if (regenerating) {
+            // Suppress stablePersisted (still the pre-regen turn) but keep
+            // liveRounds so multi-round regens don't visually empty between rounds.
+            const out: Round[] = [...liveRounds];
+            if (currentRound) {
+                out.push(currentRound);
+            }
+            return out;
+        }
+        const out: Round[] = [...stablePersisted, ...liveRounds];
+        if (generating && currentRound) {
+            out.push(currentRound);
+        }
+        return out;
+    }, [regenerating, stablePersisted, liveRounds, generating, currentRound]);
 
     const regnerate = () => {
         setMessage('');
         setGenerating(false);
         setPrecontent(true);
         setStopped(false);
-
-        // Clear reasoning summary when regenerating
         setReasoningSummary('');
-        setShowReasoning(false);
-        setIsReasoningCollapsed(true);
         setIsReasoningLoading(false);
-
-        // Clear annotations/citations when regenerating
         setAnnotations([]);
-
-        // Clear tool calls when regenerating
         setToolCalls([]);
-        setPrivateToolCalls(null);
-        setPrivateToolResults(null);
-
+        setLiveRounds([]);
+        setRegenerating(true);
         doRegenerate(props.post.id);
     };
 
@@ -402,51 +353,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         const result = await doPostbackSummary(props.post.id);
         selectPost(result.rootid, result.channelid);
     };
-
-    const mergedToolCalls = useMemo(() => {
-        if (!privateToolCalls || privateToolCalls.length === 0) {
-            return toolCalls;
-        }
-
-        const publicById = new Map(toolCalls.map((call) => [call.id, call]));
-        return privateToolCalls.map((call) => {
-            const publicCall = publicById.get(call.id);
-            if (!publicCall) {
-                return call;
-            }
-            return {
-                ...publicCall,
-                arguments: call.arguments,
-            };
-        });
-    }, [privateToolCalls, toolCalls]);
-
-    const resolvedToolCalls = useMemo(() => {
-        if (privateToolResults && privateToolResults.length > 0) {
-            return privateToolResults;
-        }
-        return mergedToolCalls;
-    }, [mergedToolCalls, privateToolResults]);
-
-    const showToolArguments = useMemo(() => {
-        if (!isToolCallRedacted) {
-            return true;
-        }
-        if (!requesterIsCurrentUser) {
-            return false;
-        }
-        return Boolean(privateToolCalls?.length || privateToolResults?.length);
-    }, [isToolCallRedacted, requesterIsCurrentUser, privateToolCalls, privateToolResults]);
-
-    const showToolResults = useMemo(() => {
-        if (!isToolCallRedacted) {
-            return true;
-        }
-        if (!requesterIsCurrentUser) {
-            return false;
-        }
-        return Boolean(privateToolResults?.length);
-    }, [isToolCallRedacted, requesterIsCurrentUser, privateToolResults]);
 
     const isThreadSummaryPost = (props.post.props?.referenced_thread && props.post.props?.referenced_thread !== '');
     const isNoShowRegen = (props.post.props?.no_regen && props.post.props?.no_regen !== '');
@@ -465,34 +371,47 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         }
     }
 
-    // Consider both generating and reasoning loading states for determining if generation is in progress
     const isGenerationInProgress = generating || isReasoningLoading;
 
     const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const showPostbackButton = !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
-    const hasContent = message !== '' || reasoningSummary !== '';
+    const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
+
+    // Only the post anchor (latest persisted round) gets a real approval stage;
+    // live/locally-tracked rounds always render as 'done'.
+    const anchorStage: ToolApprovalStage = conversation ? deriveApprovalStageForPost(conversation, props.post.id) : 'done';
+    const lastPersistedIdx = stablePersisted.length - 1;
+    const lastRenderedIdx = renderedRounds.length - 1;
+    const stageForRound = (idx: number): ToolApprovalStage => {
+        if (idx === lastPersistedIdx && idx === lastRenderedIdx) {
+            return anchorStage;
+        }
+        return 'done';
+    };
+
+    const isReasoningCollapsed = (roundId: string): boolean => !expandedReasoning[roundId];
+    const toggleReasoning = (roundId: string, collapsed: boolean) => {
+        setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
+    };
 
     return (
         <PostBody
             data-testid='llm-bot-post'
         >
             {error && <div className='error'>{error}</div>}
+            {conversationError && !generating && (
+                <div className='error'>
+                    <FormattedMessage defaultMessage='Failed to load conversation data'/>
+                </div>
+            )}
             {isThreadSummaryPost && permalinkView &&
             <>
                 {permalinkView}
             </>
             }
-            {showReasoning && (
-                <ReasoningDisplay
-                    reasoningSummary={reasoningSummary}
-                    isReasoningCollapsed={isReasoningCollapsed}
-                    isReasoningLoading={isReasoningLoading}
-                    onToggleCollapse={setIsReasoningCollapsed}
-                />
-            )}
-            {precontent && (
+            {(precontent || (conversationLoading && !generating && renderedRounds.length === 0)) && (
                 <MinimalReasoningContainer>
                     <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
                     <span>
@@ -500,25 +419,27 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     </span>
                 </MinimalReasoningContainer>
             )}
-            {resolvedToolCalls && resolvedToolCalls.length > 0 && (
-                <ToolApprovalSet
-                    postID={props.post.id}
-                    toolCalls={resolvedToolCalls}
-                    approvalStage={toolApprovalStage}
-                    canApprove={requesterIsCurrentUser}
-                    canExpand={requesterIsCurrentUser}
-                    showArguments={showToolArguments}
-                    showResults={showToolResults}
-                    isAutoApproved={isAutoApproved}
-                />
-            )}
-            <PostText
-                message={message}
-                channelID={props.post.channel_id}
-                postID={props.post.id}
-                showCursor={generating && !precontent}
-                annotations={annotations.length > 0 ? annotations : undefined} // eslint-disable-line no-undefined
-            />
+            {renderedRounds.map((round, idx) => {
+                const isLiveRound = round.id === LIVE_ROUND_ID;
+                const showCursor = generating && isLiveRound && !precontent;
+                const reasoningLoading = isLiveRound && isReasoningLoading;
+                return (
+                    <RoundView
+                        key={round.id}
+                        round={round}
+                        postID={props.post.id}
+                        conversationID={conversationId}
+                        channelID={props.post.channel_id}
+                        approvalStage={stageForRound(idx)}
+                        canApprove={requesterIsCurrentUser}
+                        canExpand={requesterIsCurrentUser}
+                        showCursor={showCursor}
+                        reasoningLoading={reasoningLoading}
+                        reasoningCollapsed={isReasoningCollapsed(round.id)}
+                        onToggleReasoning={(collapsed) => toggleReasoning(round.id, collapsed)}
+                    />
+                );
+            })}
             {props.post.props?.[SearchResultsPropKey] && (
                 <SearchSources
                     sources={JSON.parse(props.post.props[SearchResultsPropKey])}
@@ -543,26 +464,83 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     );
 };
 
-// Styled components
+interface RoundViewProps {
+    round: Round;
+    postID: string;
+    conversationID?: string;
+    channelID: string;
+    approvalStage: ToolApprovalStage;
+    canApprove: boolean;
+    canExpand: boolean;
+    showCursor: boolean;
+    reasoningLoading: boolean;
+    reasoningCollapsed: boolean;
+    onToggleReasoning: (collapsed: boolean) => void;
+}
+
+function RoundView(props: RoundViewProps) {
+    const {round} = props;
+    const showArguments = round.toolCalls.some((tc) => tc.arguments != null);
+    const showResults = round.toolCalls.some((tc) => tc.result != null);
+    return (
+        <RoundContainer>
+            {round.reasoning.summary !== '' && (
+                <ReasoningDisplay
+                    reasoningSummary={round.reasoning.summary}
+                    isReasoningCollapsed={props.reasoningCollapsed}
+                    isReasoningLoading={props.reasoningLoading}
+                    onToggleCollapse={props.onToggleReasoning}
+                />
+            )}
+            {round.text !== '' && (
+                <PostText
+                    message={round.text}
+                    channelID={props.channelID}
+                    postID={props.postID}
+                    showCursor={props.showCursor}
+                    annotations={round.annotations.length > 0 ? round.annotations : undefined} // eslint-disable-line no-undefined
+                />
+            )}
+            {round.toolCalls.length > 0 && (
+                <ToolApprovalSet
+                    postID={props.postID}
+                    conversationID={props.conversationID}
+                    toolCalls={round.toolCalls}
+                    approvalStage={props.approvalStage}
+                    canApprove={props.canApprove}
+                    canExpand={props.canExpand}
+                    showArguments={showArguments}
+                    showResults={showResults}
+                />
+            )}
+        </RoundContainer>
+    );
+}
+
 const PostBody = styled.div`
 `;
 
+const RoundContainer = styled.div`
+    & + & {
+        margin-top: 8px;
+    }
+`;
+
 const SpinnerWrapper = styled.div`
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
 `;
 
 const PostSummaryHelpMessage = styled.div`
-	font-size: 14px;
-	font-style: italic;
-	font-weight: 400;
-	line-height: 20px;
-	border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-	padding-top: 8px;
-	padding-bottom: 8px;
-	margin-top: 16px;
+    font-size: 14px;
+    font-style: italic;
+    font-weight: 400;
+    line-height: 20px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    padding-top: 8px;
+    padding-bottom: 8px;
+    margin-top: 16px;
 `;
-

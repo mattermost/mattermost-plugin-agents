@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
@@ -30,6 +31,16 @@ func setupTestOAuthManagerFull(t *testing.T, lookup ServerConfigLookup, httpClie
 	mockClient := mocks.NewMockClient(t)
 	manager := NewOAuthManager(mockClient, "http://test.com/callback", httpClient, lookup)
 	return manager, mockClient
+}
+
+func TestStartURL(t *testing.T) {
+	manager, _ := setupTestOAuthManagerFull(t, nil, nil)
+	manager.callbackURL = "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback"
+
+	require.Equal(t,
+		"https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start",
+		manager.StartURL("OAuth Server"),
+	)
 }
 
 func TestBuildClientCredentialsKey(t *testing.T) {
@@ -139,7 +150,7 @@ func TestLoadOrCreateClientCredentials_ExistingCredentials(t *testing.T) {
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil)
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -158,7 +169,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentials(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds)
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -177,7 +188,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentialsSkipKVStore(t *testing.T
 	}
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds)
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -203,7 +214,7 @@ func TestLoadOrCreateClientCredentials_NilStaticCredsFallsBackToKVStore(t *testi
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil)
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -229,7 +240,7 @@ func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *tes
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, &StaticOAuthCredentials{})
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, &StaticOAuthCredentials{}, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -277,6 +288,60 @@ func TestCreateOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 	require.Equal(t, "test-client", config.ClientID)
 }
 
+func TestCreateOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
+	var serverURL string
+	registrationCalled := false
+	hostMetadataCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource/mcp":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProtectedResourceMetadata{
+				Resource:             serverURL + "/mcp",
+				AuthorizationServers: []string{serverURL + "/resources/res_123"},
+			})
+		case "/.well-known/oauth-authorization-server/resources/res_123":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthorizationServerMetadata{
+				Issuer:                serverURL,
+				AuthorizationEndpoint: serverURL + "/authorize",
+				TokenEndpoint:         serverURL + "/token",
+				RegistrationEndpoint:  serverURL + "/resources/res_123/register",
+			})
+		case "/resources/res_123/register":
+			registrationCalled = true
+			require.Equal(t, http.MethodPost, r.Method)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(RegistrationResponse{
+				ClientID:     "registered-client",
+				ClientSecret: "registered-secret",
+			})
+		case "/.well-known/oauth-authorization-server":
+			hostMetadataCalled = true
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
+	mockClient.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
+	mockClient.On("LogDebug", mock.Anything, mock.Anything).Return().Once()
+
+	config, err := manager.createOAuthConfig(context.Background(), serverURL+"/mcp", serverURL+"/.well-known/oauth-protected-resource/mcp", nil)
+
+	require.NoError(t, err)
+	require.True(t, registrationCalled)
+	require.False(t, hostMetadataCalled)
+	require.Equal(t, "registered-client", config.ClientID)
+	require.Equal(t, serverURL+"/authorize", config.Endpoint.AuthURL)
+	require.Equal(t, serverURL+"/token", config.Endpoint.TokenURL)
+}
+
 func TestStaticCredsHelpers(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -310,6 +375,108 @@ func TestStaticCredsHelpers(t *testing.T) {
 	}
 }
 
+func TestOAuthNeededStateLifecycle(t *testing.T) {
+	manager, mockClient := setupTestOAuthManager(t)
+
+	const userID = "user123"
+	const serverID = "GitHub"
+	const authURL = "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start?resource_metadata=https%3A%2F%2Fapi.githubcopilot.com%2F.well-known%2Foauth-protected-resource%2Fmcp"
+
+	mockClient.On("KVSetWithExpiry", buildAuthNeededKey(userID, serverID), mock.AnythingOfType("*mcp.OAuthNeededState"), oauthNeededStateTTL).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*OAuthNeededState)
+			require.Equal(t, authURL, state.AuthURL)
+			require.False(t, state.SeenAt.IsZero())
+		}).
+		Return(nil).
+		Once()
+
+	require.NoError(t, manager.StoreAuthNeededState(userID, serverID, authURL))
+
+	mockClient.On("KVGet", buildAuthNeededKey(userID, serverID), mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*OAuthNeededState)
+			*state = OAuthNeededState{
+				AuthURL: authURL,
+				SeenAt:  time.Now(),
+			}
+		}).
+		Return(nil).
+		Once()
+
+	state, err := manager.LoadAuthNeededState(userID, serverID)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, authURL, state.AuthURL)
+
+	mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
+		Return(nil).
+		Once()
+
+	require.NoError(t, manager.DeleteAuthNeededState(userID, serverID))
+}
+
+func TestDeleteUserTokenCleanup(t *testing.T) {
+	const userID = "user123"
+	const serverID = "GitHub"
+
+	tokenErr := model.NewAppError("test", "token_delete_failed", nil, "token delete failed", http.StatusInternalServerError)
+	authNeededErr := model.NewAppError("test", "auth_needed_delete_failed", nil, "auth-needed delete failed", http.StatusInternalServerError)
+
+	testCases := []struct {
+		name                string
+		tokenDeleteErr      error
+		authNeededDeleteErr error
+		expectedErr         error
+	}{
+		{
+			name:           "returns token delete error after auth-needed cleanup",
+			tokenDeleteErr: tokenErr,
+			expectedErr:    tokenErr,
+		},
+		{
+			name:                "returns auth-needed cleanup error",
+			authNeededDeleteErr: authNeededErr,
+			expectedErr:         authNeededErr,
+		},
+		{
+			name:                "joins both cleanup errors",
+			tokenDeleteErr:      tokenErr,
+			authNeededDeleteErr: authNeededErr,
+			expectedErr:         tokenErr,
+		},
+		{
+			name:        "succeeds when both deletes succeed",
+			expectedErr: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, mockClient := setupTestOAuthManager(t)
+
+			mockClient.On("KVDelete", buildTokenKey(userID, serverID)).
+				Return(tc.tokenDeleteErr).
+				Once()
+			mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
+				Return(tc.authNeededDeleteErr).
+				Once()
+
+			err := manager.DeleteUserToken(userID, serverID)
+
+			if tc.expectedErr == nil {
+				require.NoError(t, err)
+				return
+			}
+
+			require.ErrorIs(t, err, tc.expectedErr)
+			if tc.authNeededDeleteErr != nil {
+				require.ErrorIs(t, err, tc.authNeededDeleteErr)
+			}
+		})
+	}
+}
+
 func TestProcessCallback_InvalidSession(t *testing.T) {
 	manager, mockClient := setupTestOAuthManager(t)
 
@@ -317,15 +484,18 @@ func TestProcessCallback_InvalidSession(t *testing.T) {
 	state := "test-state"
 	code := "auth-code"
 
-	// Mock session not found - KVGet should return an error
-	appErr := model.NewAppError("test", "not_found", nil, "session not found", 404)
-	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Return(appErr)
+	// Missing session must surface as an error rather than nil-panic on
+	// session.State below. Asserting ErrorIs against the sentinel pins
+	// that the wrap chain survives ProcessCallback's fmt.Errorf and is
+	// not hostage to the user-facing wording.
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Return(mmapi.ErrKVNotFound)
 
 	ctx := context.Background()
 	session, err := manager.ProcessCallback(ctx, userID, state, code)
 
 	require.Error(t, err)
 	require.Nil(t, session)
+	require.ErrorIs(t, err, mmapi.ErrKVNotFound)
 	require.Contains(t, err.Error(), "invalid or expired session")
 }
 
@@ -399,6 +569,87 @@ func TestProcessCallback_UserIDValidation(t *testing.T) {
 	require.Contains(t, err.Error(), correctUserID)
 	require.Contains(t, err.Error(), wrongUserID)
 	mockClient.AssertCalled(t, "KVDelete", mock.AnythingOfType("string"))
+}
+
+func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
+	userID := "user123"
+	serverID := "server456"
+	state := "test-state"
+	code := "auth-code"
+
+	var authServer *httptest.Server
+	authServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			http.NotFound(w, r)
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(AuthorizationServerMetadata{
+				Issuer:                authServer.URL,
+				AuthorizationEndpoint: authServer.URL + "/authorize",
+				TokenEndpoint:         authServer.URL + "/token",
+			}))
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-token",
+				"token_type":   "Bearer",
+				"expires_in":   3600,
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer authServer.Close()
+
+	lookup := func(id string) (ServerConfig, bool) {
+		if id == serverID {
+			return ServerConfig{
+				Name:         serverID,
+				BaseURL:      authServer.URL,
+				ClientID:     "client-id",
+				ClientSecret: "client-secret",
+			}, true
+		}
+		return ServerConfig{}, false
+	}
+	manager, mockClient := setupTestOAuthManagerFull(t, lookup, authServer.Client())
+
+	session := &OAuthSession{
+		UserID:         userID,
+		ServerID:       serverID,
+		ServerURL:      authServer.URL,
+		CodeVerifier:   "test-verifier",
+		State:          state,
+		StaticClientID: "client-id",
+		CreatedAt:      time.Now(),
+	}
+	clearErr := model.NewAppError("test", "auth_needed_delete_failed", nil, "auth-needed delete failed", http.StatusInternalServerError)
+
+	mockClient.On("KVGet", buildSessionKey(userID, state), mock.AnythingOfType("*mcp.OAuthSession")).
+		Run(func(args mock.Arguments) {
+			sess := args.Get(1).(*OAuthSession)
+			*sess = *session
+		}).
+		Return(nil).
+		Once()
+	mockClient.On("KVSet", buildTokenKey(userID, serverID), mock.Anything).
+		Return(nil).
+		Once()
+	mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
+		Return(clearErr).
+		Once()
+	mockClient.On("KVDelete", buildSessionKey(userID, state)).
+		Return(nil).
+		Once()
+	mockClient.On("LogWarn", "Failed to clear OAuth-needed state after successful callback", mock.Anything).
+		Return().
+		Once()
+
+	gotSession, err := manager.ProcessCallback(context.Background(), userID, state, code)
+
+	require.NoError(t, err)
+	require.Equal(t, session, gotSession)
 }
 
 func TestProcessCallback_RederivesStaticCredsFromConfig(t *testing.T) {

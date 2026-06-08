@@ -118,9 +118,9 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			wantCount: 8,
 		},
 		{
-			name:      "Mattermost seeds 9 read tools",
+			name:      "Mattermost seeds 10 read tools",
 			baseURL:   EmbeddedClientKey,
-			wantCount: 9,
+			wantCount: 10,
 		},
 		{
 			name:    "unknown host returns nil",
@@ -161,10 +161,11 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			require.Len(t, got, tt.wantCount)
 			for _, cfg := range got {
 				require.True(t, cfg.Enabled)
-				if strings.Contains(tt.baseURL, "api.githubcopilot.com") {
-					require.True(t, cfg.Policy == ToolPolicyAutoRun || cfg.Policy == ToolPolicyAsk)
-				} else {
-					require.Equal(t, ToolPolicyAutoRun, cfg.Policy)
+				switch {
+				case strings.Contains(tt.baseURL, "api.githubcopilot.com"):
+					require.True(t, cfg.Policy == ToolPolicyAutoRunInDM || cfg.Policy == ToolPolicyAsk)
+				default:
+					require.Equal(t, ToolPolicyAutoRunInDM, cfg.Policy)
 				}
 				require.NotEmpty(t, cfg.Name)
 			}
@@ -175,34 +176,84 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 	t.Run("Atlassian", func(t *testing.T) {
 		configs := SeedVettedToolConfigs("https://mcp.atlassian.com/v1/mcp")
-		requireToolConfig(t, configs, "getJiraIssue", ToolPolicyAutoRun, true)
-		requireToolConfig(t, configs, "search", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "getJiraIssue", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "search", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "createJiraIssue")
 	})
 
 	t.Run("GitHub", func(t *testing.T) {
 		configs := SeedVettedToolConfigs("https://api.githubcopilot.com/mcp/")
-		requireToolConfig(t, configs, "get_me", ToolPolicyAutoRun, true)
-		requireToolConfig(t, configs, "pull_request_read", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "get_me", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "pull_request_read", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "get_code_scanning_alert", ToolPolicyAsk, true)
 		requireToolConfig(t, configs, "list_repository_security_advisories", ToolPolicyAsk, true)
-		requireToolConfig(t, configs, "get_global_security_advisory", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "get_global_security_advisory", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "create_repository")
 	})
 
 	t.Run("Figma", func(t *testing.T) {
 		configs := SeedVettedToolConfigs("https://mcp.figma.com/mcp")
-		requireToolConfig(t, configs, "get_design_context", ToolPolicyAutoRun, true)
-		requireToolConfig(t, configs, "whoami", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "get_design_context", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "whoami", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "generate_diagram")
 	})
 
 	t.Run("Mattermost", func(t *testing.T) {
 		configs := SeedVettedToolConfigs(EmbeddedClientKey)
-		requireToolConfig(t, configs, "search_posts", ToolPolicyAutoRun, true)
-		requireToolConfig(t, configs, "search_users", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "search_posts", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "search_users", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "read_file", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "create_post")
 	})
+}
+
+func TestMergeSeedConfigs(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored []ToolConfig
+		seed   []ToolConfig
+		want   []ToolConfig
+	}{
+		{
+			name:   "empty stored returns the seed",
+			stored: nil,
+			seed:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+			want:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+		},
+		{
+			name:   "tool missing from stored is appended from the seed",
+			stored: []ToolConfig{{Name: "search_posts", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+			seed:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+			want: []ToolConfig{
+				{Name: "search_posts", Policy: ToolPolicyAutoRunInDM, Enabled: true},
+				{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true},
+			},
+		},
+		{
+			// Conflicting non-default values on both sides prove the stored
+			// entry wins (rather than coinciding with the unconfigured default)
+			// and that no duplicate read_file reaches last-match-wins resolution.
+			name:   "stored entry wins over a conflicting seed entry",
+			stored: []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunEverywhere, Enabled: false}},
+			seed:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunInDM, Enabled: true}},
+			want:   []ToolConfig{{Name: "read_file", Policy: ToolPolicyAutoRunEverywhere, Enabled: false}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Callers pass the live config slice as stored, so the merge must
+			// not mutate its inputs.
+			storedBefore := append([]ToolConfig(nil), tt.stored...)
+			seedBefore := append([]ToolConfig(nil), tt.seed...)
+
+			got := mergeSeedConfigs(tt.stored, tt.seed)
+
+			require.Equal(t, tt.want, got)
+			require.Equal(t, storedBefore, tt.stored)
+			require.Equal(t, seedBefore, tt.seed)
+		})
+	}
 }
 
 func requireToolConfig(t *testing.T, configs []ToolConfig, name, policy string, enabled bool) {

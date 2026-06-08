@@ -241,6 +241,50 @@ Valid field: "Valid value"
 	}
 }
 
+func TestAuthoredPost(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		post     *model.Post
+		expected string
+	}{
+		{
+			name:     "post body with author username",
+			username: "alice",
+			post:     &model.Post{Message: "I noticed this"},
+			expected: "@alice: I noticed this",
+		},
+		{
+			name:     "post body with missing username",
+			username: "",
+			post:     &model.Post{Message: "orphaned context"},
+			expected: "@: orphaned context",
+		},
+		{
+			name:     "uses post body including attachments",
+			username: "bob",
+			post: &model.Post{
+				Message: "See attached",
+				Props: map[string]any{
+					"attachments": []any{
+						map[string]any{
+							"title": "Report",
+							"text":  "Q4 numbers",
+						},
+					},
+				},
+			},
+			expected: "@bob: See attached\nReport\nQ4 numbers\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, AuthoredPost(tt.post, tt.username))
+		})
+	}
+}
+
 func TestFormatPost(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -561,6 +605,102 @@ func TestWriteTeam(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf strings.Builder
 			WriteTeam(&buf, tt.entry)
+			assert.Equal(t, tt.expected, buf.String())
+		})
+	}
+}
+
+func TestAgentList(t *testing.T) {
+	testCases := []struct {
+		name             string
+		agents           []AgentInfo
+		currentBotUserID string
+		expected         string
+	}{
+		{
+			name:     "empty",
+			agents:   nil,
+			expected: "",
+		},
+		{
+			name: "two agents no current",
+			agents: []AgentInfo{
+				{ID: "bot1id12345678901234567", DisplayName: "Otto", Username: "otto"},
+				{ID: "bot2id12345678901234567", DisplayName: "Claude", Username: "claude"},
+			},
+			expected: `Found 2 agent(s):
+
+1. Otto
+   ID: bot1id12345678901234567
+   Username: @otto
+
+2. Claude
+   ID: bot2id12345678901234567
+   Username: @claude
+
+`,
+		},
+		{
+			name: "marks current agent",
+			agents: []AgentInfo{
+				{ID: "bot1id12345678901234567", DisplayName: "Otto", Username: "otto"},
+			},
+			currentBotUserID: "bot1id12345678901234567",
+			expected: `Found 1 agent(s):
+
+1. Otto
+   ID: bot1id12345678901234567
+   Username: @otto
+   ** This is YOU (the current agent) **
+
+`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := AgentList(tc.agents, tc.currentBotUserID)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestWriteFileDescriptor(t *testing.T) {
+	tests := []struct {
+		name     string
+		entry    FileDescriptorEntry
+		expected string
+	}{
+		{
+			name: "numbered header with full metadata",
+			entry: FileDescriptorEntry{
+				Number: 1,
+				FileInfo: &model.FileInfo{
+					Id:       "fileid1234567890123456789a",
+					Name:     "report.pdf",
+					MimeType: "application/pdf",
+					Size:     2412345,
+				},
+			},
+			expected: "**Attached File 1**:\nName: report.pdf\nFile ID: fileid1234567890123456789a\nType: application/pdf\nSize: 2412345 bytes\n\n",
+		},
+		{
+			name: "zero number omits header, no mime type",
+			entry: FileDescriptorEntry{
+				FileInfo: &model.FileInfo{
+					Id:   "fileid1234567890123456789b",
+					Name: "data.bin",
+					Size: 10,
+				},
+			},
+			expected: "Name: data.bin\nFile ID: fileid1234567890123456789b\nSize: 10 bytes\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			WriteFileDescriptor(&buf, tt.entry)
 			assert.Equal(t, tt.expected, buf.String())
 		})
 	}

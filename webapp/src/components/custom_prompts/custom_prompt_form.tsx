@@ -10,11 +10,49 @@ import Dropdown from '../dropdown';
 
 import ContextVariablesDropdown from './context_variables_dropdown';
 
+const FormLayout = styled.div<{$stickyFooter?: boolean}>`
+    display: flex;
+    flex-direction: column;
+    background-color: var(--center-channel-bg);
+
+    ${({$stickyFooter}) =>
+        $stickyFooter &&
+        `
+        flex: 1;
+        min-height: 0;
+    `}
+`;
+
+const FormBody = styled.div<{$stickyFooter?: boolean}>`
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 20px 32px 0;
+
+    ${({$stickyFooter}) =>
+        $stickyFooter && `
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+    `}
+`;
+
+const FormFooter = styled.div`
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    padding: 16px 32px 24px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+`;
+
+/** Read-only and legacy single-block layout */
 const FormContainer = styled.div`
     display: flex;
     flex-direction: column;
     gap: 24px;
-    padding: 20px;
+    padding: 20px 32px;
     background-color: var(--center-channel-bg);
 `;
 
@@ -139,13 +177,6 @@ const ContextVariablesButton = styled.button`
     }
 `;
 
-const ButtonRow = styled.div`
-    display: flex;
-    justify-content: flex-start;
-    gap: 8px;
-    margin-top: 8px;
-`;
-
 const SaveButton = styled.button`
     background: var(--button-bg);
     color: var(--button-color);
@@ -181,6 +212,11 @@ const DiscardButton = styled.button`
     &:hover {
         background: rgba(var(--button-bg-rgb), 0.08);
     }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
 `;
 
 const DeleteButton = styled.button`
@@ -193,7 +229,7 @@ const DeleteButton = styled.button`
     font-size: 14px;
     cursor: pointer;
     font-family: 'Open Sans', sans-serif;
-    margin-left: auto;
+    margin-right: auto;
 
     &:hover {
         background: rgba(var(--error-text-color-rgb), 0.08);
@@ -230,9 +266,12 @@ interface CustomPromptFormProps {
     onDiscard: () => void;
     onDelete?: () => void;
     readOnly?: boolean;
+
+    /** When true, actions sit in a footer bar and the body scrolls (new prompt modal). */
+    stickyFooter?: boolean;
 }
 
-const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly}: CustomPromptFormProps) => {
+const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, stickyFooter}: CustomPromptFormProps) => {
     const intl = useIntl();
     const [name, setName] = useState(prompt?.name ?? '');
     const [description, setDescription] = useState(prompt?.description ?? '');
@@ -326,130 +365,143 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly}: Custo
         );
     }
 
-    return (
-        <FormContainer>
-            <FieldGroup>
-                <VisibilityLabel>
-                    <FormattedMessage defaultMessage='Visibility'/>
-                </VisibilityLabel>
-                <RadioGroup>
-                    <RadioLabel>
-                        <RadioInput
-                            type='radio'
-                            name={`visibility-${prompt?.id ?? 'new'}`}
-                            checked={isShared}
-                            onChange={() => setIsShared(true)}
-                        />
-                        <FormattedMessage defaultMessage='Public'/>
-                    </RadioLabel>
-                    <RadioLabel>
-                        <RadioInput
-                            type='radio'
-                            name={`visibility-${prompt?.id ?? 'new'}`}
-                            checked={!isShared}
-                            onChange={() => setIsShared(false)}
-                        />
-                        <FormattedMessage defaultMessage='Private'/>
-                        <PrivateNote>
-                            <FormattedMessage defaultMessage='(only you)'/>
-                        </PrivateNote>
-                    </RadioLabel>
-                </RadioGroup>
-            </FieldGroup>
-            <FieldGroup>
-                <FieldLabel htmlFor={`prompt-name-${prompt?.id ?? 'new'}`}>
-                    <FormattedMessage defaultMessage='Action Title'/>
-                </FieldLabel>
-                <TextInput
-                    id={`prompt-name-${prompt?.id ?? 'new'}`}
-                    value={name}
-                    maxLength={64}
-                    onChange={(e) => {
-                        setName(e.target.value);
-                        if (errors.name) {
-                            setErrors((prev) => ({...prev, name: false}));
-                        }
-                    }}
-                    placeholder={intl.formatMessage({defaultMessage: 'Enter a title for your prompt'})}
-                />
-                {errors.name && (
-                    <ValidationError>
-                        <FormattedMessage defaultMessage='Action title is required'/>
-                    </ValidationError>
-                )}
-            </FieldGroup>
-            <FieldGroup>
-                <FieldLabel htmlFor={`prompt-description-${prompt?.id ?? 'new'}`}>
-                    <FormattedMessage defaultMessage='Brief Description'/>
-                </FieldLabel>
-                <TextArea
-                    id={`prompt-description-${prompt?.id ?? 'new'}`}
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder={intl.formatMessage({defaultMessage: 'Enter a brief description'})}
-                />
-            </FieldGroup>
-            <FieldGroup>
-                <SystemPromptHeader>
-                    <SystemPromptLabel htmlFor={`prompt-template-${prompt?.id ?? 'new'}`}>
-                        <FormattedMessage defaultMessage='System Prompt'/>
-                    </SystemPromptLabel>
-                    <Dropdown
-                        target={
-                            <ContextVariablesButton
-                                onClick={() => setShowContextVars(!showContextVars)}
-                                aria-label={intl.formatMessage({defaultMessage: 'Insert context variable'})}
-                            >
-                                <FormattedMessage defaultMessage='Context Variables'/>
-                            </ContextVariablesButton>
-                        }
-                        isOpen={showContextVars}
-                        onOpenChange={setShowContextVars}
-                        placement='bottom-end'
-                    >
-                        <ContextVariablesDropdown
-                            onSelect={handleInsertVariable}
-                        />
-                    </Dropdown>
-                </SystemPromptHeader>
-                <SystemPromptTextArea
-                    id={`prompt-template-${prompt?.id ?? 'new'}`}
-                    ref={templateRef}
-                    value={template}
-                    onChange={(e) => {
-                        setTemplate(e.target.value);
-                        if (errors.template) {
-                            setErrors((prev) => ({...prev, template: false}));
-                        }
-                    }}
-                    placeholder={intl.formatMessage({defaultMessage: 'Enter the system prompt template'})}
-                />
-                {errors.template && (
-                    <ValidationError>
-                        <FormattedMessage defaultMessage='System prompt is required'/>
-                    </ValidationError>
-                )}
-            </FieldGroup>
-            <ButtonRow>
-                <SaveButton
-                    onClick={handleSave}
+    const actions = (
+        <>
+            {onDelete && (
+                <DeleteButton
+                    type='button'
+                    onClick={onDelete}
                     disabled={isSaving}
                 >
-                    <FormattedMessage defaultMessage='Save'/>
-                </SaveButton>
-                <DiscardButton onClick={onDiscard}>
-                    <FormattedMessage defaultMessage='Discard'/>
-                </DiscardButton>
-                {onDelete && (
-                    <DeleteButton
-                        onClick={onDelete}
-                        disabled={isSaving}
-                    >
-                        <FormattedMessage defaultMessage='Delete'/>
-                    </DeleteButton>
-                )}
-            </ButtonRow>
-        </FormContainer>
+                    <FormattedMessage defaultMessage='Delete'/>
+                </DeleteButton>
+            )}
+            <DiscardButton
+                type='button'
+                onClick={onDiscard}
+                disabled={isSaving}
+            >
+                <FormattedMessage defaultMessage='Discard'/>
+            </DiscardButton>
+            <SaveButton
+                type='button'
+                onClick={handleSave}
+                disabled={isSaving}
+            >
+                <FormattedMessage defaultMessage='Save'/>
+            </SaveButton>
+        </>
+    );
+
+    return (
+        <FormLayout $stickyFooter={stickyFooter}>
+            <FormBody $stickyFooter={stickyFooter}>
+                <FieldGroup>
+                    <VisibilityLabel>
+                        <FormattedMessage defaultMessage='Visibility'/>
+                    </VisibilityLabel>
+                    <RadioGroup>
+                        <RadioLabel>
+                            <RadioInput
+                                type='radio'
+                                name={`visibility-${prompt?.id ?? 'new'}`}
+                                checked={isShared}
+                                onChange={() => setIsShared(true)}
+                            />
+                            <FormattedMessage defaultMessage='Public'/>
+                        </RadioLabel>
+                        <RadioLabel>
+                            <RadioInput
+                                type='radio'
+                                name={`visibility-${prompt?.id ?? 'new'}`}
+                                checked={!isShared}
+                                onChange={() => setIsShared(false)}
+                            />
+                            <FormattedMessage defaultMessage='Private'/>
+                            <PrivateNote>
+                                <FormattedMessage defaultMessage='(only you)'/>
+                            </PrivateNote>
+                        </RadioLabel>
+                    </RadioGroup>
+                </FieldGroup>
+                <FieldGroup>
+                    <FieldLabel htmlFor={`prompt-name-${prompt?.id ?? 'new'}`}>
+                        <FormattedMessage defaultMessage='Action Title'/>
+                    </FieldLabel>
+                    <TextInput
+                        id={`prompt-name-${prompt?.id ?? 'new'}`}
+                        value={name}
+                        maxLength={64}
+                        onChange={(e) => {
+                            setName(e.target.value);
+                            if (errors.name) {
+                                setErrors((prev) => ({...prev, name: false}));
+                            }
+                        }}
+                        placeholder={intl.formatMessage({defaultMessage: 'Enter a title for your prompt'})}
+                    />
+                    {errors.name && (
+                        <ValidationError>
+                            <FormattedMessage defaultMessage='Action title is required'/>
+                        </ValidationError>
+                    )}
+                </FieldGroup>
+                <FieldGroup>
+                    <FieldLabel htmlFor={`prompt-description-${prompt?.id ?? 'new'}`}>
+                        <FormattedMessage defaultMessage='Brief Description'/>
+                    </FieldLabel>
+                    <TextArea
+                        id={`prompt-description-${prompt?.id ?? 'new'}`}
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        placeholder={intl.formatMessage({defaultMessage: 'Enter a brief description'})}
+                    />
+                </FieldGroup>
+                <FieldGroup>
+                    <SystemPromptHeader>
+                        <SystemPromptLabel htmlFor={`prompt-template-${prompt?.id ?? 'new'}`}>
+                            <FormattedMessage defaultMessage='System Prompt'/>
+                        </SystemPromptLabel>
+                        <Dropdown
+                            target={
+                                <ContextVariablesButton
+                                    type='button'
+                                    onClick={() => setShowContextVars(!showContextVars)}
+                                    aria-label={intl.formatMessage({defaultMessage: 'Insert context variable'})}
+                                >
+                                    <FormattedMessage defaultMessage='Context Variables'/>
+                                </ContextVariablesButton>
+                            }
+                            isOpen={showContextVars}
+                            onOpenChange={setShowContextVars}
+                            placement='bottom-end'
+                        >
+                            <ContextVariablesDropdown
+                                onSelect={handleInsertVariable}
+                            />
+                        </Dropdown>
+                    </SystemPromptHeader>
+                    <SystemPromptTextArea
+                        id={`prompt-template-${prompt?.id ?? 'new'}`}
+                        ref={templateRef}
+                        value={template}
+                        onChange={(e) => {
+                            setTemplate(e.target.value);
+                            if (errors.template) {
+                                setErrors((prev) => ({...prev, template: false}));
+                            }
+                        }}
+                        placeholder={intl.formatMessage({defaultMessage: 'Enter the system prompt template'})}
+                    />
+                    {errors.template && (
+                        <ValidationError>
+                            <FormattedMessage defaultMessage='System prompt is required'/>
+                        </ValidationError>
+                    )}
+                </FieldGroup>
+            </FormBody>
+            <FormFooter>{actions}</FormFooter>
+        </FormLayout>
     );
 };
 

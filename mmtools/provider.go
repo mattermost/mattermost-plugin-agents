@@ -4,8 +4,6 @@
 package mmtools
 
 import (
-	"strings"
-
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
@@ -55,11 +53,5 @@ func hasNativeWebSearch(bot *bots.Bot) bool {
 		return false
 	}
 
-	for _, tool := range bot.GetConfig().EnabledNativeTools {
-		if strings.EqualFold(tool, "web_search") {
-			return true
-		}
-	}
-
-	return false
+	return bot.HasNativeWebSearchEnabled()
 }

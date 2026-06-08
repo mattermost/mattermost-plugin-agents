@@ -3,13 +3,12 @@
 
 export interface UpstreamConfig {
     type: string;
-    parameters: Record<string, unknown>;
+    parameters: Record<string, unknown> | null; // server sends nil json.RawMessage as JSON null
 }
 
 export interface ChunkingOptions {
     chunkSize: number;
     chunkOverlap: number;
-    minChunkSize: number;
     chunkingStrategy: string;
 }
 
@@ -17,14 +16,14 @@ export interface EmbeddingSearchConfig {
     type: string;
     vectorStore: UpstreamConfig;
     embeddingProvider: UpstreamConfig;
-    parameters: Record<string, unknown>;
+    parameters: Record<string, unknown> | null; // server sends nil json.RawMessage as JSON null
     dimensions: number;
     chunkingOptions?: ChunkingOptions;
 }
 
 // Match the server's JobStatus struct field names
 export interface JobStatusType {
-    status: string; // 'running' | 'completed' | 'failed' | 'canceled' | 'no_job'
+    status: string; // 'running' | 'cancel_requested' | 'completed' | 'failed' | 'canceled' | 'no_job'
     error?: string;
     started_at: string; // ISO string from server's time.Time
     completed_at?: string;

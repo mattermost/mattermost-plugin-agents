@@ -4,6 +4,7 @@
 package bifrost
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -91,19 +93,72 @@ func TestBuildChatReasoning(t *testing.T) {
 			checkMaxTokens:   Ptr(2048),
 		},
 		{
-			name:             "non-Anthropic uses Effort",
+			name:             "OpenAI on chat path returns nil (Responses API handles reasoning)",
 			provider:         schemas.OpenAI,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
+			name:             "Mistral returns nil",
+			provider:         schemas.Mistral,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
+			name:             "Cohere returns nil",
+			provider:         schemas.Cohere,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
+			name:             "Bedrock returns nil",
+			provider:         schemas.Bedrock,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
+			name:             "Azure returns nil",
+			provider:         schemas.Azure,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
+			name:             "Gemini with effort only falls back to effort",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkEffort:      Ptr("high"),
+		},
+		{
+			name:             "Gemini with thinking budget prefers MaxTokens",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			thinkingBudget:   4096,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(4096),
+		},
+		{
+			name:             "Gemini default effort when nothing set",
+			provider:         schemas.Gemini,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
 			checkEffort:      Ptr("medium"),
 		},
 		{
-			name:             "non-Anthropic with custom effort",
-			provider:         schemas.OpenAI,
+			name:             "Vertex with thinking budget prefers MaxTokens",
+			provider:         schemas.Vertex,
 			reasoningEnabled: true,
-			reasoningEffort:  "high",
+			thinkingBudget:   2000,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("high"),
+			checkMaxTokens:   Ptr(2000),
 		},
 		{
 			name:             "ReasoningDisabled returns nil",
@@ -155,9 +210,319 @@ func TestBuildChatReasoning(t *testing.T) {
 	}
 }
 
+func TestConvertMessagesReasoningDetails(t *testing.T) {
+	tests := []struct {
+		name              string
+		provider          schemas.ModelProvider
+		posts             []llm.Post
+		expectedLen       int
+		expectedReasoning string
+		expectedSignature string
+	}{
+		{
+			name:     "skips unsigned reasoning for Anthropic",
+			provider: schemas.Anthropic,
+			posts: []llm.Post{{
+				Role:               llm.PostRoleBot,
+				Message:            "partial response",
+				Reasoning:          "partial thinking captured before stream error",
+				ReasoningSignature: "",
+			}},
+			expectedLen: 1,
+		},
+		{
+			name:     "preserves unsigned reasoning for non-Anthropic",
+			provider: schemas.OpenAI,
+			posts: []llm.Post{{
+				Role:               llm.PostRoleBot,
+				Message:            "partial response",
+				Reasoning:          "partial thinking",
+				ReasoningSignature: "",
+			}},
+			expectedLen:       1,
+			expectedReasoning: "partial thinking",
+		},
+		{
+			name:     "includes signed reasoning",
+			provider: schemas.Anthropic,
+			posts: []llm.Post{{
+				Role:               llm.PostRoleBot,
+				Message:            "response",
+				Reasoning:          "thinking",
+				ReasoningSignature: "sig123",
+			}},
+			expectedLen:       1,
+			expectedReasoning: "thinking",
+			expectedSignature: "sig123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: tt.provider}
+
+			messages := b.convertMessages(tt.posts)
+
+			require.Len(t, messages, tt.expectedLen)
+			if tt.expectedReasoning == "" {
+				assert.Nil(t, messages[0].ChatAssistantMessage)
+				return
+			}
+			require.Len(t, messages[0].ReasoningDetails, 1)
+			assert.Equal(t, tt.expectedReasoning, *messages[0].ReasoningDetails[0].Text)
+			assert.Equal(t, tt.expectedSignature, *messages[0].ReasoningDetails[0].Signature)
+		})
+	}
+}
+
+func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
+	b := &LLM{}
+	imageData := []byte("PNGDATA")
+	post := llm.Post{
+		Role:    llm.PostRoleUser,
+		Message: "look at this",
+		Files: []llm.File{{
+			MimeType: "image/png",
+			Size:     int64(len(imageData)),
+			Data:     imageData,
+			Reader:   bytes.NewReader(imageData),
+		}},
+	}
+
+	first := b.createMultimodalContent(post)
+	second := b.createMultimodalContent(post)
+
+	require.Len(t, first, 2)
+	require.Len(t, second, 2)
+	require.NotNil(t, first[1].ImageURLStruct)
+	require.NotNil(t, second[1].ImageURLStruct)
+	assert.Equal(t, first[1].ImageURLStruct.URL, second[1].ImageURLStruct.URL)
+	assert.Contains(t, second[1].ImageURLStruct.URL, "UE5HREFUQQ==")
+}
+
+// TestConvertToBifrostRequestOpus47Reasoning verifies that when our
+// convertToBifrostRequest is fed through bifrost's Anthropic provider for
+// Claude Opus 4.7, the resulting upstream request uses thinking.type:"adaptive".
+// Opus 4.7 dropped support for thinking.type:"enabled"; sending the legacy
+// shape produces an API error: `"thinking.type.enabled" is not supported for
+// this model. Use "thinking.type.adaptive" and "output_config.effort"`.
+func TestConvertToBifrostRequestOpus47Reasoning(t *testing.T) {
+	b := &LLM{
+		provider:         schemas.Anthropic,
+		reasoningEnabled: true,
+	}
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{
+			{Role: llm.PostRoleUser, Message: "think"},
+		},
+	}
+	cfg := llm.LanguageModelConfig{
+		Model:              "claude-opus-4-7-20260401",
+		MaxGeneratedTokens: 8192,
+	}
+
+	bifrostReq := b.convertToBifrostRequest(request, cfg)
+
+	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+	defer cancel()
+	result, err := anthropic.ToAnthropicChatRequest(ctx, bifrostReq)
+	require.NoError(t, err)
+	require.NotNil(t, result.Thinking)
+
+	assert.Equal(t, "adaptive", result.Thinking.Type,
+		"Opus 4.7 must use thinking.type:adaptive; thinking.type:enabled is rejected by the API")
+	assert.Nil(t, result.Thinking.BudgetTokens,
+		"Opus 4.7 does not accept budget_tokens alongside adaptive thinking")
+}
+
+func TestBuildResponsesReasoning(t *testing.T) {
+	tests := []struct {
+		name             string
+		provider         schemas.ModelProvider
+		reasoningEnabled bool
+		thinkingBudget   int
+		reasoningEffort  string
+		cfg              llm.LanguageModelConfig
+		expectNil        bool
+		checkMaxTokens   *int
+		checkEffort      *string
+		checkSummary     *string
+	}{
+		{
+			name:             "Gemini with effort only sets effort and summary",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkEffort:      Ptr("high"),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "Gemini with thinking budget prefers max_tokens and summary",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			thinkingBudget:   4096,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(4096),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "Gemini default effort when nothing set",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkEffort:      Ptr("medium"),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "Vertex with thinking budget",
+			provider:         schemas.Vertex,
+			reasoningEnabled: true,
+			thinkingBudget:   2000,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(2000),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "Anthropic uses MaxTokens, no summary",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(2048),
+		},
+		{
+			name:             "OpenAI uses Effort with summary",
+			provider:         schemas.OpenAI,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkEffort:      Ptr("high"),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "Azure uses Effort with summary",
+			provider:         schemas.Azure,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkEffort:      Ptr("medium"),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "Mistral returns nil (no reasoning_effort support)",
+			provider:         schemas.Mistral,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
+			name:             "Cohere returns nil",
+			provider:         schemas.Cohere,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
+			name:             "Bedrock returns nil",
+			provider:         schemas.Bedrock,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
+			name:             "ReasoningDisabled returns nil",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, ReasoningDisabled: true},
+			expectNil:        true,
+		},
+		{
+			name:             "reasoning not enabled returns nil",
+			provider:         schemas.Gemini,
+			reasoningEnabled: false,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:         tt.provider,
+				reasoningEnabled: tt.reasoningEnabled,
+				thinkingBudget:   tt.thinkingBudget,
+				reasoningEffort:  tt.reasoningEffort,
+			}
+			result := b.buildResponsesReasoning(tt.cfg)
+			if tt.expectNil {
+				assert.Nil(t, result)
+				return
+			}
+			require.NotNil(t, result)
+			if tt.checkMaxTokens != nil {
+				require.NotNil(t, result.MaxTokens)
+				assert.Equal(t, *tt.checkMaxTokens, *result.MaxTokens)
+			} else {
+				assert.Nil(t, result.MaxTokens)
+			}
+			if tt.checkEffort != nil {
+				require.NotNil(t, result.Effort)
+				assert.Equal(t, *tt.checkEffort, *result.Effort)
+			} else {
+				assert.Nil(t, result.Effort)
+			}
+			if tt.checkSummary != nil {
+				require.NotNil(t, result.Summary)
+				assert.Equal(t, *tt.checkSummary, *result.Summary)
+			}
+		})
+	}
+}
+
+func TestGetKeysForProviderVertex(t *testing.T) {
+	saJSON := `{"type":"service_account","project_id":"x"}`
+	acc := &providerAccount{
+		provider:              schemas.Vertex,
+		region:                "us-west1",
+		vertexProjectID:       "my-gcp-project",
+		vertexProjectNumber:   "123456789012",
+		vertexAuthCredentials: saJSON,
+	}
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Vertex)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.NotNil(t, keys[0].VertexKeyConfig)
+	vc := keys[0].VertexKeyConfig
+	assert.Equal(t, "my-gcp-project", vc.ProjectID.Val)
+	assert.Equal(t, "123456789012", vc.ProjectNumber.Val)
+	assert.Equal(t, "us-west1", vc.Region.Val)
+	assert.Equal(t, saJSON, vc.AuthCredentials.Val)
+
+	adc := &providerAccount{
+		provider:              schemas.Vertex,
+		region:                "europe-west1",
+		vertexProjectID:       "adc-project",
+		vertexProjectNumber:   "",
+		vertexAuthCredentials: "",
+	}
+	keysADC, err := adc.GetKeysForProvider(context.Background(), schemas.Vertex)
+	require.NoError(t, err)
+	require.Len(t, keysADC, 1)
+	require.NotNil(t, keysADC[0].VertexKeyConfig)
+	assert.Equal(t, "adc-project", keysADC[0].VertexKeyConfig.ProjectID.Val)
+	assert.Equal(t, "", keysADC[0].VertexKeyConfig.AuthCredentials.Val)
+
+	other := &providerAccount{provider: schemas.OpenAI}
+	_, err = other.GetKeysForProvider(context.Background(), schemas.Vertex)
+	require.Error(t, err)
+}
+
 func TestShouldUseResponsesAPI(t *testing.T) {
 	tests := []struct {
 		name               string
+		provider           schemas.ModelProvider
 		enabledNativeTools []string
 		useResponsesAPI    bool
 		cfg                llm.LanguageModelConfig
@@ -165,23 +530,56 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 	}{
 		{
 			name:               "native tools configured returns true",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
 			expected:           true,
 		},
 		{
 			name:               "NativeWebSearchAllowed with web_search enabled returns true",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
 			expected:           true,
 		},
 		{
 			name:               "NativeWebSearchAllowed without web_search in tools returns true",
+			provider:           schemas.OpenAI,
+			enabledNativeTools: nil,
+			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
+			expected:           true,
+		},
+		{
+			name:               "explicit responses API flag wins for direct OpenAI",
+			provider:           schemas.OpenAI,
+			useResponsesAPI:    true,
+			enabledNativeTools: nil,
+			cfg:                llm.LanguageModelConfig{},
+			expected:           true,
+		},
+		{
+			name:               "unsupported provider ignores native tools",
+			provider:           schemas.Bedrock,
+			enabledNativeTools: []string{"web_search"},
+			cfg:                llm.LanguageModelConfig{},
+			expected:           false,
+		},
+		{
+			name:               "Gemini with native tools auto-enables Responses API",
+			provider:           schemas.Gemini,
+			enabledNativeTools: []string{"web_search"},
+			cfg:                llm.LanguageModelConfig{},
+			expected:           true,
+		},
+		{
+			name:               "Vertex with native web search allowed auto-enables Responses API",
+			provider:           schemas.Vertex,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
 			expected:           true,
 		},
 		{
 			name:               "nothing configured returns false",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{},
 			expected:           false,
@@ -191,6 +589,7 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{
+				provider:           tt.provider,
 				enabledNativeTools: tt.enabledNativeTools,
 				useResponsesAPI:    tt.useResponsesAPI,
 			}
@@ -296,6 +695,35 @@ func TestConvertMessagesReasoning(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConvertMessagesEmptyToolResult verifies that a tool with an empty
+// Result is substituted with a placeholder so the Anthropic API does not
+// reject the message with "text content blocks must be non-empty".
+func TestConvertMessagesEmptyToolResult(t *testing.T) {
+	b := &LLM{provider: schemas.OpenAI}
+	posts := []llm.Post{{
+		Role:    llm.PostRoleBot,
+		Message: "",
+		ToolUse: []llm.ToolCall{{
+			ID:        "call1",
+			Name:      "search",
+			Arguments: []byte(`{}`),
+			Result:    "",
+		}},
+	}}
+	messages := b.convertMessages(posts)
+	var toolMsg *schemas.ChatMessage
+	for i := range messages {
+		if messages[i].Role == schemas.ChatMessageRoleTool {
+			toolMsg = &messages[i]
+			break
+		}
+	}
+	require.NotNil(t, toolMsg, "expected a tool-role message for the tool result")
+	require.NotNil(t, toolMsg.Content)
+	require.NotNil(t, toolMsg.Content.ContentStr)
+	assert.NotEmpty(t, *toolMsg.Content.ContentStr, "empty tool result must be replaced so providers do not reject the message")
 }
 
 func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
@@ -577,6 +1005,107 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 	}
 }
 
+func TestAppendFirstWebSearchFallbackSource(t *testing.T) {
+	sourceTitle := "Example Source"
+	item := &schemas.ResponsesMessage{
+		Type: schemas.Ptr(schemas.ResponsesMessageTypeWebSearchCall),
+		ResponsesToolMessage: &schemas.ResponsesToolMessage{
+			Action: &schemas.ResponsesToolMessageActionStruct{
+				ResponsesWebSearchToolCallAction: &schemas.ResponsesWebSearchToolCallAction{
+					Sources: []schemas.ResponsesWebSearchToolCallActionSearchSource{
+						{Type: "url", URL: "https://example.com/one", Title: &sourceTitle},
+						{Type: "url", URL: "https://example.com/two"},
+					},
+				},
+			},
+		},
+	}
+
+	sources := appendFirstWebSearchFallbackSource(nil, item)
+	require.Len(t, sources, 2)
+	assert.Equal(t, webSearchFallbackSource{
+		URL:   "https://example.com/one",
+		Title: "Example Source",
+	}, sources[0])
+	assert.Equal(t, webSearchFallbackSource{
+		URL:   "https://example.com/two",
+		Title: "",
+	}, sources[1])
+
+	sources = appendFirstWebSearchFallbackSource(sources, item)
+	require.Len(t, sources, 2)
+	assert.Equal(t, []webSearchFallbackSource{
+		{
+			URL:   "https://example.com/one",
+			Title: "Example Source",
+		},
+		{
+			URL:   "https://example.com/two",
+			Title: "",
+		},
+	}, sources)
+}
+
+func TestBuildFallbackAnnotations(t *testing.T) {
+	annotations := buildFallbackAnnotations([]webSearchFallbackSource{
+		{URL: "https://example.com/one", Title: "One"},
+		{URL: "https://example.com/two", Title: "Two"},
+	}, 42)
+
+	require.Len(t, annotations, 2)
+	assert.Equal(t, llm.Annotation{
+		Type:       llm.AnnotationTypeURLCitation,
+		StartIndex: 42,
+		EndIndex:   42,
+		URL:        "https://example.com/one",
+		Title:      "One",
+		Index:      1,
+	}, annotations[0])
+	assert.Equal(t, llm.Annotation{
+		Type:       llm.AnnotationTypeURLCitation,
+		StartIndex: 42,
+		EndIndex:   42,
+		URL:        "https://example.com/two",
+		Title:      "Two",
+		Index:      2,
+	}, annotations[1])
+}
+
+func TestApplyPendingAnnotationPositions(t *testing.T) {
+	annotations := []llm.Annotation{
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 0, EndIndex: 0, URL: "https://example.com/one", Index: 1},
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 5, EndIndex: 10, URL: "https://example.com/two", Index: 2},
+	}
+
+	applyPendingAnnotationPositions(annotations, []pendingAnnotationPosition{
+		{index: 0, missingStart: true, missingEnd: true},
+		{index: 1, missingEnd: true},
+	}, 20, 42)
+
+	assert.Equal(t, 20, annotations[0].StartIndex)
+	assert.Equal(t, 42, annotations[0].EndIndex)
+	assert.Equal(t, 5, annotations[1].StartIndex)
+	assert.Equal(t, 42, annotations[1].EndIndex)
+}
+
+func TestPendingAnnotationPositionsWithoutContentIndex(t *testing.T) {
+	pending := map[int][]pendingAnnotationPosition{}
+	annotations := []llm.Annotation{
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 0, EndIndex: 0, URL: "https://example.com", Index: 1},
+	}
+
+	pending[missingContentIndex] = append(pending[missingContentIndex], pendingAnnotationPosition{
+		index:        0,
+		missingStart: true,
+		missingEnd:   true,
+	})
+	flushPendingAnnotationPositions(annotations, pending, missingContentIndex, 0, 42)
+
+	assert.Empty(t, pending)
+	assert.Equal(t, 0, annotations[0].StartIndex)
+	assert.Equal(t, 42, annotations[0].EndIndex)
+}
+
 type testStructuredOutput struct {
 	Name  string `json:"name"`
 	Score int    `json:"score"`
@@ -618,7 +1147,6 @@ func TestConvertToBifrostRequestStructuredOutput(t *testing.T) {
 
 			if tt.expectFormat {
 				require.NotNil(t, req.Params.ResponseFormat)
-				// Verify the structure
 				data, err := json.Marshal(*req.Params.ResponseFormat)
 				require.NoError(t, err)
 				var format map[string]interface{}
@@ -1199,6 +1727,7 @@ func TestChatCompletionNoStreamReturnsErrorForUnsupportedResponsesSchema(t *test
 	}
 
 	_, err := b.ChatCompletionNoStream(
+		context.Background(),
 		llm.CompletionRequest{},
 		func(cfg *llm.LanguageModelConfig) {
 			cfg.Model = "gpt-4"
@@ -1279,11 +1808,432 @@ func TestEnvProxyRouting(t *testing.T) {
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
 
-	result, err := llmClient.ChatCompletionNoStream(llm.CompletionRequest{
+	result, err := llmClient.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
 		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "hello", result)
 	assert.True(t, proxyHit.Load(), "request should have been tunneled through the proxy")
 	assert.True(t, backendHit.Load(), "request should have reached the backend")
+}
+
+func TestConvertChatUsage(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage *schemas.BifrostLLMUsage
+		want  llm.TokenUsage
+	}{
+		{
+			name:  "nil usage yields zero value",
+			usage: nil,
+			want:  llm.TokenUsage{},
+		},
+		{
+			name: "nil detail and cost pointers stay zero",
+			usage: &schemas.BifrostLLMUsage{
+				PromptTokens:     100,
+				CompletionTokens: 50,
+			},
+			want: llm.TokenUsage{InputTokens: 100, OutputTokens: 50},
+		},
+		{
+			name: "fully populated payload carries every field",
+			usage: &schemas.BifrostLLMUsage{
+				PromptTokens:     1200,
+				CompletionTokens: 350,
+				PromptTokensDetails: &schemas.ChatPromptTokensDetails{
+					CachedReadTokens:  800,
+					CachedWriteTokens: 100,
+				},
+				CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
+					ReasoningTokens: 64,
+				},
+				Cost: &schemas.BifrostCost{TotalCost: 0.0123},
+			},
+			want: llm.TokenUsage{
+				InputTokens:       1200,
+				OutputTokens:      350,
+				CachedReadTokens:  800,
+				CachedWriteTokens: 100,
+				ReasoningTokens:   64,
+				Cost:              0.0123,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertChatUsage(tt.usage)
+			assert.Equal(t, tt.want.InputTokens, got.InputTokens)
+			assert.Equal(t, tt.want.OutputTokens, got.OutputTokens)
+			assert.Equal(t, tt.want.CachedReadTokens, got.CachedReadTokens)
+			assert.Equal(t, tt.want.CachedWriteTokens, got.CachedWriteTokens)
+			assert.Equal(t, tt.want.ReasoningTokens, got.ReasoningTokens)
+			assert.InDelta(t, tt.want.Cost, got.Cost, 1e-9)
+		})
+	}
+}
+
+func TestCountTokensReturnsCount(t *testing.T) {
+	var backendHit atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHit.Store(true)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 42}`))
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 42, count)
+	assert.True(t, backendHit.Load())
+}
+
+// TestCountTokensOmitsMaxOutputTokens pins the second body-shape fix for
+// the count_tokens endpoint. OpenAI's Responses-API count endpoint rejects
+// max_output_tokens with "Unknown parameter: 'max_output_tokens'." even
+// though the streaming endpoint requires it. We strip the whole Params
+// payload for the count call since none of those fields are needed for
+// token math.
+func TestCountTokensOmitsMaxOutputTokens(t *testing.T) {
+	var recordedBody []byte
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 99}`))
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-5.4",
+		OutputTokenLimit: 8192, // produces MaxGeneratedTokens > 0 → MaxOutputTokens in the request
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 99, count)
+	require.NotEmpty(t, recordedBody)
+	assert.NotContains(t, string(recordedBody), "max_output_tokens",
+		"the count_tokens endpoint rejects max_output_tokens; "+
+			"sending it falls us back to 'estimated' for any OpenAI bot")
+}
+
+// TestCountTokensOmitsNativeServerTools pins down the fix for the
+// production failure surfaced via the /conversations/:id/context endpoint:
+// Anthropic's count_tokens endpoint rejects any request that carries native
+// server tools (web_search, file_search, code_interpreter), so those must be
+// stripped before the count call. Function tool definitions are kept (see
+// TestCountTokensKeepsFunctionTools) because they contribute to the count.
+func TestCountTokensOmitsNativeServerTools(t *testing.T) {
+	var recordedBody []byte
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 42}`))
+	}))
+	defer backend.Close()
+
+	// Bot configured with native web_search — same shape that triggered
+	// the production "Server tools are not supported in the count_tokens
+	// endpoint" error.
+	llmClient, err := New(Config{
+		Provider:           schemas.Anthropic,
+		APIKey:             "test-key",
+		APIURL:             backend.URL,
+		DefaultModel:       "claude-sonnet-4-6",
+		StreamingTimeout:   10 * time.Second,
+		EnabledNativeTools: []string{"web_search"},
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 42, count)
+
+	require.NotEmpty(t, recordedBody, "backend must have received the count_tokens request")
+	assert.NotContains(t, string(recordedBody), "web_search",
+		"native server tools must be stripped before the count_tokens call — "+
+			"Anthropic 400s the request otherwise and we fall back to estimated")
+	assert.NotContains(t, string(recordedBody), "code_execution")
+	assert.NotContains(t, string(recordedBody), "file_search")
+}
+
+// TestCountTokensKeepsFunctionTools pins the other half of the count_tokens
+// body shape: function (custom) tool definitions are part of the prompt and
+// consume input tokens, so they must reach the count endpoint. Dropping them
+// undercounts every tools-enabled bot and surfaces a misleadingly low number.
+func TestCountTokensKeepsFunctionTools(t *testing.T) {
+	var recordedBody []byte
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 55}`))
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	tools := llm.NewToolStore()
+	tools.AddTools([]llm.Tool{
+		{Name: "get_weather", Description: "Returns weather for a city", Schema: map[string]interface{}{"type": "object"}},
+	})
+
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+		Context: &llm.Context{Tools: tools},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 55, count)
+
+	require.NotEmpty(t, recordedBody)
+	assert.Contains(t, string(recordedBody), "get_weather",
+		"function tool definitions contribute to the input-token count and must reach count_tokens")
+}
+
+func TestCountTokensUnsupportedProvider(t *testing.T) {
+	var backendHit atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHit.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// Mistral doesn't implement count-tokens in Bifrost; it returns the
+	// "unsupported_operation" error synchronously. CountTokens must classify
+	// that as ErrUnsupportedTokenCount without contacting the backend.
+	llmClient, err := New(Config{
+		Provider:         schemas.Mistral,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "mistral-large-latest",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	_, err = llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	})
+	require.ErrorIs(t, err, llm.ErrUnsupportedTokenCount)
+	assert.False(t, backendHit.Load(), "unsupported provider must not hit the backend")
+}
+
+func TestCountTokensScrubsAPIKeyFromError(t *testing.T) {
+	const secret = "sk-real-secret-key-do-not-leak" // #nosec G101 -- fixture, not a real credential
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Anthropic-shaped error payload that echoes the configured key.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprintf(w, `{"type":"error","error":{"type":"authentication_error","message":"invalid key %s"}}`, secret)
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.Anthropic,
+		APIKey:           secret,
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	_, err = llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), secret, "API key must be redacted from provider error messages")
+}
+
+// newSearchToolStore builds a one-tool store for tool_choice tests.
+func newSearchToolStore() *llm.ToolStore {
+	store := llm.NewToolStore()
+	store.AddTools([]llm.Tool{{
+		Name:        "search_posts",
+		Description: "search",
+		Resolver:    func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "", nil },
+	}})
+	return store
+}
+
+func TestConvertToBifrostRequestToolChoiceNone(t *testing.T) {
+	noneStr := string(schemas.ChatToolChoiceTypeNone)
+
+	tests := []struct {
+		name           string
+		toolsDisabled  bool
+		toolUseHistory bool
+		expectTools    bool
+		expectChoice   *string
+	}{
+		{
+			name:           "tools enabled — tools included, no tool_choice override",
+			toolsDisabled:  false,
+			toolUseHistory: false,
+			expectTools:    true,
+			expectChoice:   nil,
+		},
+		{
+			name:           "tools disabled, no history — tools omitted, no tool_choice",
+			toolsDisabled:  true,
+			toolUseHistory: false,
+			expectTools:    false,
+			expectChoice:   nil,
+		},
+		{
+			name:           "tools disabled with history tool_use — tools kept, tool_choice none",
+			toolsDisabled:  true,
+			toolUseHistory: true,
+			expectTools:    true,
+			expectChoice:   &noneStr,
+		},
+		{
+			name:           "tools enabled with history tool_use — tools included, no override",
+			toolsDisabled:  false,
+			toolUseHistory: true,
+			expectTools:    true,
+			expectChoice:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: schemas.Anthropic, defaultModel: "claude"}
+
+			posts := []llm.Post{{Role: llm.PostRoleUser, Message: "find video info"}}
+			if tt.toolUseHistory {
+				posts = append(posts, llm.Post{
+					Role:    llm.PostRoleBot,
+					Message: "Let me search",
+					ToolUse: []llm.ToolCall{{ID: "tc1", Name: "search_posts", Status: llm.ToolCallStatusAutoApproved}},
+				})
+			}
+			req := llm.CompletionRequest{
+				Posts:   posts,
+				Context: &llm.Context{Tools: newSearchToolStore()},
+			}
+			cfg := llm.LanguageModelConfig{Model: "claude", ToolsDisabled: tt.toolsDisabled}
+
+			got := b.convertToBifrostRequest(req, cfg)
+
+			if tt.expectTools {
+				require.NotEmpty(t, got.Params.Tools, "expected tools in request")
+			} else {
+				assert.Empty(t, got.Params.Tools, "expected no tools in request")
+			}
+
+			if tt.expectChoice == nil {
+				assert.Nil(t, got.Params.ToolChoice, "expected no tool_choice override")
+			} else {
+				require.NotNil(t, got.Params.ToolChoice)
+				require.NotNil(t, got.Params.ToolChoice.ChatToolChoiceStr)
+				assert.Equal(t, *tt.expectChoice, *got.Params.ToolChoice.ChatToolChoiceStr)
+			}
+		})
+	}
+}
+
+func TestConvertToBifrostResponsesRequestToolChoiceNone(t *testing.T) {
+	noneStr := string(schemas.ResponsesToolChoiceTypeNone)
+
+	tests := []struct {
+		name            string
+		toolsDisabled   bool
+		toolUseHistory  bool
+		expectFuncTools bool
+		expectChoice    *string
+	}{
+		{
+			name:            "tools enabled — function tools included, no tool_choice override",
+			toolsDisabled:   false,
+			toolUseHistory:  false,
+			expectFuncTools: true,
+			expectChoice:    nil,
+		},
+		{
+			name:            "tools disabled, no history — function tools omitted, no tool_choice",
+			toolsDisabled:   true,
+			toolUseHistory:  false,
+			expectFuncTools: false,
+			expectChoice:    nil,
+		},
+		{
+			name:            "tools disabled with history tool_use — function tools kept, tool_choice none",
+			toolsDisabled:   true,
+			toolUseHistory:  true,
+			expectFuncTools: true,
+			expectChoice:    &noneStr,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: schemas.OpenAI, defaultModel: "gpt-4", useResponsesAPI: true}
+
+			posts := []llm.Post{{Role: llm.PostRoleUser, Message: "find video info"}}
+			if tt.toolUseHistory {
+				posts = append(posts, llm.Post{
+					Role:    llm.PostRoleBot,
+					Message: "Let me search",
+					ToolUse: []llm.ToolCall{{ID: "tc1", Name: "search_posts", Status: llm.ToolCallStatusAutoApproved}},
+				})
+			}
+			req := llm.CompletionRequest{
+				Posts:   posts,
+				Context: &llm.Context{Tools: newSearchToolStore()},
+			}
+			cfg := llm.LanguageModelConfig{Model: "gpt-4", ToolsDisabled: tt.toolsDisabled}
+
+			got, err := b.convertToBifrostResponsesRequest(req, cfg)
+			require.NoError(t, err)
+
+			hasFunction := false
+			for _, tool := range got.Params.Tools {
+				if tool.Type == schemas.ResponsesToolTypeFunction {
+					hasFunction = true
+					break
+				}
+			}
+			assert.Equal(t, tt.expectFuncTools, hasFunction, "function tool presence mismatch")
+
+			if tt.expectChoice == nil {
+				assert.Nil(t, got.Params.ToolChoice, "expected no tool_choice override")
+			} else {
+				require.NotNil(t, got.Params.ToolChoice)
+				require.NotNil(t, got.Params.ToolChoice.ResponsesToolChoiceStr)
+				assert.Equal(t, *tt.expectChoice, *got.Params.ToolChoice.ResponsesToolChoiceStr)
+			}
+		})
+	}
 }

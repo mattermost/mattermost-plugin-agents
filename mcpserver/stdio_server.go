@@ -21,9 +21,9 @@ type MattermostStdioMCPServer struct {
 }
 
 // NewStdioServer creates a new STDIO transport MCP server.
-// searchService is optional — if nil, a default HTTP-based service is created that
-// calls back to the plugin's /api/v1/search/raw endpoint.
-func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService) (*MattermostStdioMCPServer, error) {
+// searchService and fileContentService are optional — if nil, default HTTP-based
+// services are created that call back to the plugin's /api/v1 endpoints.
+func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) (*MattermostStdioMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("server URL cannot be empty")
 	}
@@ -63,14 +63,17 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService t
 		return nil, fmt.Errorf("startup token validation failed: %w", err)
 	}
 
-	// Use provided search service or create default HTTP callback service
+	// Use provided services or create default HTTP callback services
+	pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
 	if searchService == nil {
-		pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
 		searchService = tools.NewHTTPSemanticSearchService(pluginURL)
+	}
+	if fileContentService == nil {
+		fileContentService = tools.NewHTTPFileContentService(pluginURL)
 	}
 
 	// Register tools with local access mode
-	mattermostServer.registerTools(tools.AccessModeLocal, searchService)
+	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService)
 
 	return mattermostServer, nil
 }

@@ -10,7 +10,15 @@ const openAICitationRegex = /\([^\s:]+\s*:\s*https?:\/\/[\S^)]*\)/g;
 
 // Insert special markers in the text that will survive markdown processing
 export function insertAnnotationMarkers(message: string, annotations: Annotation[]): string {
-    const sortedAnnotations = [...annotations].sort((a, b) => b.start_index - a.start_index);
+    const sortedAnnotations = [...annotations].sort((a, b) => {
+        if (b.end_index !== a.end_index) {
+            return b.end_index - a.end_index;
+        }
+        if (b.index !== a.index) {
+            return b.index - a.index;
+        }
+        return b.start_index - a.start_index;
+    });
     let result = message;
 
     // Insert markers from end to start to preserve indices

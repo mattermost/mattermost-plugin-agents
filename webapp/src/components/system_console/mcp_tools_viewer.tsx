@@ -1,33 +1,38 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {RefreshIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton, SecondaryButton} from '../assets/buttons';
-import {getMCPTools, clearMCPToolsCache, getVettedToolSeed} from '../../client';
+import {getMCPTools, clearMCPToolsCache, getVettedToolSeed, updatePluginServer} from '../../client';
+import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
+import {pluginIDFromServerOrigin} from '../../utils/tool_names';
 
 import {MCPConfig, MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import MCPServerToolRow from './mcp_server_tool_row';
 import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
 
-// Type definitions matching the backend API response
 export type MCPToolInfo = {
     name: string;
     description: string;
-    inputSchema: {[key: string]: any} | null;
+    inputSchema: Record<string, unknown> | null;
 };
 
 export type MCPServerInfo = {
-    id: string;
     name: string;
     url: string;
     tools: MCPToolInfo[];
     needsOAuth: boolean;
     oauthURL?: string;
     error: string | null;
+
+    // Plugin-server fields; remote and embedded rows read state from mcpConfig.
+    serverType?: string;
+    enabled?: boolean;
+    toolConfigs?: MCPToolConfig[];
 };
 
 export type MCPToolsResponse = {
@@ -42,6 +47,7 @@ type MCPToolsViewerProps = {
 
 // Main component for MCP Tools viewer
 const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsViewerProps) => {
+    const intl = useIntl();
     const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(initialToolsData || null);
     const [loading, setLoading] = useState(false);
     const [clearing, setClearing] = useState(false);
@@ -49,20 +55,30 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
     const [clearSuccess, setClearSuccess] = useState<string | null>(null);
     const seededRef = useRef(false);
 
-    // Fetch tools data from the API
-    const fetchTools = async () => {
-        setLoading(true);
-        setError(null);
-
+    const fetchTools = useCallback(async (opts: {showLoading?: boolean; propagateError?: boolean} = {}) => {
         try {
+            if (opts.showLoading) {
+                setLoading(true);
+            }
             const response = await getMCPTools();
             setToolsData(response);
+            setError(null);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to fetch MCP tools');
+            if (opts.propagateError) {
+                throw err;
+            }
+            if (opts.showLoading) {
+                setError(err instanceof Error ? err.message : 'Failed to fetch MCP tools');
+            } else {
+                // eslint-disable-next-line no-console
+                console.error('Background refresh of MCP tools failed:', err);
+            }
         } finally {
-            setLoading(false);
+            if (opts.showLoading) {
+                setLoading(false);
+            }
         }
-    };
+    }, []);
 
     // Clear the MCP tools cache
     const handleClearCache = async () => {
@@ -75,7 +91,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             setClearSuccess(response.message);
 
             // Automatically refresh tools after clearing cache
-            await fetchTools();
+            await fetchTools({showLoading: true});
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to clear cache');
         } finally {
@@ -83,12 +99,17 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         }
     };
 
-    // Fetch tools on component mount (skip if pre-loaded data is available)
     useEffect(() => {
         if (!initialToolsData) {
-            fetchTools();
+            fetchTools({showLoading: true});
         }
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [initialToolsData, fetchTools]);
+
+    useMCPConnectionEvents(
+        useCallback(() => {
+            fetchTools();
+        }, [fetchTools]),
+    );
 
     // Retroactively seed vetted tool configs for existing servers.
     // This runs once after tools are first fetched, to fix servers configured before
@@ -105,7 +126,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             let changed = false;
 
             const updatedServers = await Promise.all(
-                updatedConfig.servers.map(async (sc) => {
+                (updatedConfig.servers ?? []).map(async (sc) => {
                     let seeded: MCPToolConfig[] = [];
                     try {
                         seeded = await getVettedToolSeed(sc.baseURL);
@@ -130,7 +151,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             }
 
             const embeddedCfg = updatedConfig.embeddedServer;
-            if (embeddedCfg.enabled) {
+            {
                 let seeded: MCPToolConfig[] = [];
                 try {
                     seeded = await getVettedToolSeed(EMBEDDED_MATTERMOST_BASE_URL);
@@ -166,8 +187,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
 
     // Find the matching ServerConfig for a discovered server
     const findServerConfig = (server: MCPServerInfo): MCPServerConfig | null => {
-        // Handle the embedded server: construct a ServerConfig-like object from embeddedServer config
-        if (server.url === embeddedClientKey || server.id === embeddedClientKey) {
+        if (server.url === embeddedClientKey) {
             return {
                 name: server.name,
                 enabled: mcpConfig.embeddedServer.enabled,
@@ -177,12 +197,21 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             };
         }
 
-        return mcpConfig.servers.find((sc) =>
+        if (server.serverType === 'plugin') {
+            return {
+                name: server.name,
+                enabled: server.enabled ?? false,
+                baseURL: server.url,
+                headers: {},
+                tool_configs: server.toolConfigs ?? [],
+            };
+        }
+
+        return (mcpConfig.servers ?? []).find((sc) =>
             sc.name === server.name || sc.baseURL === server.url,
         ) || null;
     };
 
-    // Update a specific server's config
     const handleServerConfigChange = (
         serverInfo: MCPServerInfo,
         updatedServerConfig: MCPServerConfig,
@@ -193,14 +222,46 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                 ...mcpConfig,
                 embeddedServer: {
                     ...mcpConfig.embeddedServer,
-                    enabled: updatedServerConfig.enabled,
                     tool_configs: updatedServerConfig.tool_configs,
                 },
             });
             return;
         }
 
-        const updatedServers = mcpConfig.servers.map((sc) => {
+        if (serverInfo.serverType === 'plugin') {
+            const pluginID = pluginIDFromServerOrigin(serverInfo.url);
+            if (!pluginID) {
+                return;
+            }
+
+            const prev = findServerConfig(serverInfo);
+            const update: {enabled?: boolean; tool_configs?: MCPToolConfig[]} = {};
+            if (!prev || prev.enabled !== updatedServerConfig.enabled) {
+                update.enabled = updatedServerConfig.enabled;
+            }
+            const prevConfigs = prev?.tool_configs ?? [];
+            const nextConfigs = updatedServerConfig.tool_configs ?? [];
+            if (JSON.stringify(prevConfigs) !== JSON.stringify(nextConfigs)) {
+                update.tool_configs = nextConfigs;
+            }
+
+            if (Object.keys(update).length === 0) {
+                return;
+            }
+
+            updatePluginServer(pluginID, update).
+                then(() => fetchTools({propagateError: true})).
+                catch((err) => {
+                    setError(
+                        err instanceof Error ?
+                            err.message :
+                            intl.formatMessage({id: 'mcp_tools.update_plugin_server_failed', defaultMessage: 'Failed to update plugin server'}),
+                    );
+                });
+            return;
+        }
+
+        const updatedServers = (mcpConfig.servers ?? []).map((sc) => {
             if (sc.name === updatedServerConfig.name || sc.baseURL === updatedServerConfig.baseURL) {
                 return updatedServerConfig;
             }
@@ -244,7 +305,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                         <FormattedMessage defaultMessage='Clear Cache'/>
                     </SecondaryButton>
                     <RefreshButton
-                        onClick={fetchTools}
+                        onClick={() => fetchTools({showLoading: true})}
                         disabled={loading || clearing}
                     >
                         <RefreshIcon
@@ -288,7 +349,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                     <ServersList>
                         {toolsData.servers.map((server) => (
                             <MCPServerToolRow
-                                key={server.id}
+                                key={server.url}
                                 server={server}
                                 serverConfig={findServerConfig(server)}
                                 onServerConfigChange={(updatedConfig) =>

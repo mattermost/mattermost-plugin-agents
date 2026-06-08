@@ -12,6 +12,9 @@ import {getAIBots} from '@/client';
 import manifest from './manifest';
 import {BotsHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
+import {EnabledTool} from './types/agents';
+
+export type EnabledMCPTool = EnabledTool;
 
 export interface LLMBot {
     id: string;
@@ -20,10 +23,13 @@ export interface LLMBot {
     lastIconUpdate: number;
     dmChannelID: string;
     channelAccessLevel: ChannelAccessLevel;
-    channelIDs: string[];
+
+    // Server sends nil Go slices as JSON null (no teamIDs field on /ai_bots).
+    channelIDs: string[] | null;
     userAccessLevel: UserAccessLevel;
-    userIDs: string[];
-    teamIDs: string[];
+    userIDs: string[] | null;
+    enabledMCPTools: EnabledMCPTool[] | null;
+    autoEnableNewMCPTools: boolean;
 }
 
 const defaultBotLocalStorageKey = 'defaultBot';
@@ -89,9 +95,10 @@ export const useBotlistForChannel = (channelId: string) => {
         }
 
         const filtered = bots.filter((bot: LLMBot) => {
+            const channelIDs = bot.channelIDs ?? [];
             return bot.channelAccessLevel === ChannelAccessLevel.All ||
-				(bot.channelAccessLevel === ChannelAccessLevel.Allow && bot.channelIDs.includes(channelId)) ||
-				(bot.channelAccessLevel === ChannelAccessLevel.Block && !bot.channelIDs.includes(channelId));
+				(bot.channelAccessLevel === ChannelAccessLevel.Allow && channelIDs.includes(channelId)) ||
+				(bot.channelAccessLevel === ChannelAccessLevel.Block && !channelIDs.includes(channelId));
         });
 
         setFilteredBots(filtered);

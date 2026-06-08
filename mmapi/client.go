@@ -4,6 +4,9 @@
 package mmapi
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -11,6 +14,10 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
+
+// ErrKVNotFound disambiguates a missing key from a present-but-zero value:
+// upstream pluginapi.KV.Get returns (nil err, empty bytes) for missing keys.
+var ErrKVNotFound = errors.New("kv key not found")
 
 type Client interface {
 	GetUser(userID string) (*model.User, error)
@@ -32,6 +39,7 @@ type Client interface {
 	KVGet(key string, value interface{}) error
 	KVSet(key string, value interface{}) error
 	KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error
+	KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error)
 	KVDelete(key string) error
 	GetUserByUsername(username string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)
@@ -88,18 +96,28 @@ func (m *client) LogWarn(msg string, keyValuePairs ...interface{}) {
 	m.pluginAPI.Log.Warn(msg, keyValuePairs...)
 }
 
+// KVGet reads raw bytes from pluginapi so it can translate the upstream
+// "(nil err, empty bytes)" reply for a missing key into ErrKVNotFound.
 func (m *client) KVGet(key string, value interface{}) error {
-	return m.pluginAPI.KV.Get(key, value)
+	var raw []byte
+	if err := m.pluginAPI.KV.Get(key, &raw); err != nil {
+		return err
+	}
+	if len(raw) == 0 {
+		return ErrKVNotFound
+	}
+	if bytesOut, ok := value.(*[]byte); ok {
+		*bytesOut = raw
+		return nil
+	}
+	if err := json.Unmarshal(raw, value); err != nil {
+		return fmt.Errorf("failed to unmarshal value for key %s: %w", key, err)
+	}
+	return nil
 }
 
-// IsKVNotFound returns true if the error represents a KV key not found condition.
-// The pluginapi returns ErrNotFound (with message "not found") for 404 status codes,
-// and test mocks use the same error message convention.
 func IsKVNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	return err.Error() == "not found"
+	return errors.Is(err, ErrKVNotFound)
 }
 
 func (m *client) KVSet(key string, value interface{}) error {
@@ -110,6 +128,13 @@ func (m *client) KVSet(key string, value interface{}) error {
 func (m *client) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
 	_, err := m.pluginAPI.KV.Set(key, value, pluginapi.SetExpiry(ttl))
 	return err
+}
+
+// KVCompareAndSet performs an atomic compare-and-set. If oldValue is nil, the
+// write only succeeds when the key does not currently exist. Returns true when
+// the write was applied, false when the current value differed from oldValue.
+func (m *client) KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error) {
+	return m.pluginAPI.KV.Set(key, newValue, pluginapi.SetAtomic(oldValue))
 }
 
 func (m *client) KVDelete(key string) error {

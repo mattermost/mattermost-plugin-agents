@@ -38,8 +38,8 @@ func IsVettedHost(baseURL string) bool {
 // SeedVettedToolConfigs returns one-time seed tool configs for vetted MCP hosts.
 //
 // Only Mattermost-curated READ-only tools are seeded. Most are enabled with
-// policy auto-run; GitHub security-scanning reads default to policy ask (admins
-// may switch to auto-run). Non-READ tools are intentionally not persisted here;
+// policy auto_run_in_dm; GitHub security-scanning reads default to policy ask
+// (admins may switch). Non-READ tools are intentionally not persisted here;
 // tools without config fall back to the runtime default of policy="ask",
 // enabled=true until an admin explicitly configures them.
 func SeedVettedToolConfigs(baseURL string) []ToolConfig {
@@ -100,12 +100,33 @@ func cloneToolConfigs(src []ToolConfig) []ToolConfig {
 	return dst
 }
 
-func autoRunToolConfigs(toolNames []string) []ToolConfig {
+// mergeSeedConfigs appends seed entries for tool names missing from stored, so
+// stored entries win. Inputs are not mutated.
+func mergeSeedConfigs(stored, seed []ToolConfig) []ToolConfig {
+	if len(stored) == 0 {
+		return seed
+	}
+
+	present := make(map[string]bool, len(stored))
+	merged := make([]ToolConfig, 0, len(stored)+len(seed))
+	for _, tc := range stored {
+		present[tc.Name] = true
+		merged = append(merged, tc)
+	}
+	for _, tc := range seed {
+		if !present[tc.Name] {
+			merged = append(merged, tc)
+		}
+	}
+	return merged
+}
+
+func autoRunInDMToolConfigs(toolNames []string) []ToolConfig {
 	configs := make([]ToolConfig, 0, len(toolNames))
 	for _, toolName := range toolNames {
 		configs = append(configs, ToolConfig{
 			Name:    toolName,
-			Policy:  ToolPolicyAutoRun,
+			Policy:  ToolPolicyAutoRunInDM,
 			Enabled: true,
 		})
 	}
@@ -200,7 +221,7 @@ func buildGithubVettedToolConfigs() []ToolConfig {
 		if _, securityAsk := githubSecurityAskTools[name]; securityAsk {
 			out = append(out, askToolConfigs([]string{name})...)
 		} else {
-			out = append(out, autoRunToolConfigs([]string{name})...)
+			out = append(out, autoRunInDMToolConfigs([]string{name})...)
 		}
 	}
 	return out
@@ -208,7 +229,7 @@ func buildGithubVettedToolConfigs() []ToolConfig {
 
 var githubVettedToolConfigs = buildGithubVettedToolConfigs()
 
-var atlassianVettedToolConfigs = autoRunToolConfigs([]string{
+var atlassianVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"search",
 	"fetch",
 	"atlassianUserInfo",
@@ -231,7 +252,7 @@ var atlassianVettedToolConfigs = autoRunToolConfigs([]string{
 	"searchJiraIssuesUsingJql",
 })
 
-var figmaVettedToolConfigs = autoRunToolConfigs([]string{
+var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"get_design_context",
 	"get_metadata",
 	"get_screenshot",
@@ -242,7 +263,11 @@ var figmaVettedToolConfigs = autoRunToolConfigs([]string{
 	"whoami",
 })
 
-var mattermostVettedToolConfigs = autoRunToolConfigs([]string{
+// Read-only Mattermost tools auto-run in DMs but ask in channels, where results
+// are visible to everyone. read_file belongs here (not auto-run-everywhere): it
+// only checks the caller's own access, so auto-running it in a channel could
+// surface a file the channel can't see.
+var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"read_post",
 	"read_channel",
 	"get_channel_info",
@@ -252,4 +277,5 @@ var mattermostVettedToolConfigs = autoRunToolConfigs([]string{
 	"search_posts",
 	"search_users",
 	"get_user_channels",
+	"read_file",
 })

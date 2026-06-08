@@ -5,6 +5,7 @@ package mmtools
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -641,11 +642,14 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 
 type mockLanguageModel struct{}
 
-func (m *mockLanguageModel) ChatCompletion(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (m *mockLanguageModel) ChatCompletion(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	return nil, nil
 }
-func (m *mockLanguageModel) ChatCompletionNoStream(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (m *mockLanguageModel) ChatCompletionNoStream(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
 	return "Summarized content", nil
 }
-func (m *mockLanguageModel) CountTokens(text string) int { return 0 }
-func (m *mockLanguageModel) InputTokenLimit() int        { return 1000 }
+func (m *mockLanguageModel) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	return 0, llm.ErrUnsupportedTokenCount
+}
+func (m *mockLanguageModel) InputTokenLimit() int  { return 1000 }
+func (m *mockLanguageModel) OutputTokenLimit() int { return 1000 }

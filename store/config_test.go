@@ -32,7 +32,6 @@ func fullTestConfig() config.Config {
 				APIURL:                  "https://api.openai.com/v1",
 				InputTokenLimit:         32768,
 				StreamingTimeoutSeconds: 30,
-				SendUserID:              true,
 				OutputTokenLimit:        4096,
 				UseResponsesAPI:         false,
 			},
@@ -44,7 +43,6 @@ func fullTestConfig() config.Config {
 				DefaultModel:     "claude-3-5-sonnet-20241022",
 				InputTokenLimit:  100000,
 				OutputTokenLimit: 8192,
-				SendUserID:       false,
 				UseResponsesAPI:  false,
 			},
 		},
@@ -67,7 +65,6 @@ func fullTestConfig() config.Config {
 		},
 		DefaultBotName:          "ai",
 		TranscriptGenerator:     "openai",
-		EnableLLMTrace:          true,
 		EnableTokenUsageLogging: true,
 		EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 			Type: "openai",
@@ -147,7 +144,6 @@ func TestConfigStore(t *testing.T) {
 				// Top-level fields
 				assert.Equal(t, expected.DefaultBotName, cfg.DefaultBotName)
 				assert.Equal(t, expected.TranscriptGenerator, cfg.TranscriptGenerator)
-				assert.Equal(t, expected.EnableLLMTrace, cfg.EnableLLMTrace)
 				assert.Equal(t, expected.EnableTokenUsageLogging, cfg.EnableTokenUsageLogging)
 
 				// MCP

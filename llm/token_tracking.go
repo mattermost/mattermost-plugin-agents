@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -73,15 +74,15 @@ func CreateTokenLogger() (*mlog.Logger, error) {
 }
 
 // ChatCompletion intercepts the streaming response to extract and log token usage
-func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	if !w.shouldTrackTokenUsage() {
-		return w.wrapped.ChatCompletion(request, opts...)
+		return w.wrapped.ChatCompletion(ctx, request, opts...)
 	}
 	if request.OperationSubType == "" {
 		request.OperationSubType = SubTypeStreaming
 	}
 
-	result, err := w.wrapped.ChatCompletion(request, opts...)
+	result, err := w.wrapped.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +107,10 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opt
 				hasUsage = true
 				aggregateUsage.InputTokens += usage.InputTokens
 				aggregateUsage.OutputTokens += usage.OutputTokens
+				aggregateUsage.CachedReadTokens += usage.CachedReadTokens
+				aggregateUsage.CachedWriteTokens += usage.CachedWriteTokens
+				aggregateUsage.ReasoningTokens += usage.ReasoningTokens
+				aggregateUsage.Cost += usage.Cost
 				continue
 			default:
 				interceptedStream <- event
@@ -177,6 +182,10 @@ func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage Toke
 		"input_tokens", usage.InputTokens,
 		"output_tokens", usage.OutputTokens,
 		"total_tokens", totalTokens,
+		"cached_read_tokens", usage.CachedReadTokens,
+		"cached_write_tokens", usage.CachedWriteTokens,
+		"reasoning_tokens", usage.ReasoningTokens,
+		"cost", usage.Cost,
 	}
 }
 
@@ -306,12 +315,12 @@ func int64ToInt(value int64) int {
 
 // ChatCompletionNoStream uses the streaming method internally, so token usage
 // logging happens automatically when ReadAll() processes the intercepted stream
-func (w *TokenUsageLoggingWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+func (w *TokenUsageLoggingWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
 	if request.OperationSubType == "" {
 		request.OperationSubType = SubTypeNoStream
 	}
 
-	result, err := w.ChatCompletion(request, opts...)
+	result, err := w.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return "", err
 	}
@@ -323,11 +332,16 @@ func (w *TokenUsageLoggingWrapper) shouldTrackTokenUsage() bool {
 }
 
 // CountTokens delegates to the wrapped model
-func (w *TokenUsageLoggingWrapper) CountTokens(text string) int {
-	return w.wrapped.CountTokens(text)
+func (w *TokenUsageLoggingWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	return w.wrapped.CountTokens(ctx, request, opts...)
 }
 
 // InputTokenLimit delegates to the wrapped model
 func (w *TokenUsageLoggingWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
+}
+
+// OutputTokenLimit delegates to the wrapped model
+func (w *TokenUsageLoggingWrapper) OutputTokenLimit() int {
+	return w.wrapped.OutputTokenLimit()
 }

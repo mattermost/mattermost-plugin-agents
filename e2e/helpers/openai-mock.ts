@@ -258,6 +258,40 @@ export function buildToolCallResponse(toolCallId: string, toolName: string, args
 /**
  * Create a streaming SSE text response (for after tool execution).
  */
+/**
+ * Single Smocker rule for POST /chat/completions. Rules are evaluated in order — register
+ * more specific body matchers before catch-all rules.
+ */
+export function buildChatCompletionMockRule(
+    sseBody: string,
+    opts?: { bodyContains?: string; botPrefix?: string; times?: number },
+): any {
+    const prefix = opts?.botPrefix ? `/${opts.botPrefix}` : '';
+    const req: Record<string, unknown> = {
+        method: 'POST',
+        path: `${prefix}/v1/chat/completions`,
+    };
+    if (opts?.bodyContains) {
+        req.body = {
+            matcher: 'ShouldContainSubstring',
+            value: opts.bodyContains,
+        };
+    }
+    return normalizeChatCompletionMockPath({
+        request: req,
+        context: {
+            times: opts?.times ?? 100,
+        },
+        response: {
+            status: 200,
+            headers: {
+                'Content-Type': 'text/event-stream',
+            },
+            body: sseBody,
+        },
+    });
+}
+
 export function buildTextResponse(text: string): string {
 	const words = text.split(' ');
 	const chunks = [

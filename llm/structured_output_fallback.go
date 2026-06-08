@@ -3,6 +3,8 @@
 
 package llm
 
+import "context"
+
 // StructuredOutputFallbackWrapper wraps a LanguageModel and applies fallback
 // structured output handling when a JSON schema is requested but the upstream
 // LLM does not support native structured outputs. Currently the fallback
@@ -19,12 +21,12 @@ func NewStructuredOutputFallbackWrapper(llm LanguageModel, structuredOutputEnabl
 	}
 }
 
-func (w *StructuredOutputFallbackWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
-	return w.wrapped.ChatCompletion(request, opts...)
+func (w *StructuredOutputFallbackWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+	return w.wrapped.ChatCompletion(ctx, request, opts...)
 }
 
-func (w *StructuredOutputFallbackWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
-	response, err := w.wrapped.ChatCompletionNoStream(request, opts...)
+func (w *StructuredOutputFallbackWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+	response, err := w.wrapped.ChatCompletionNoStream(ctx, request, opts...)
 	if err != nil {
 		return response, err
 	}
@@ -36,12 +38,16 @@ func (w *StructuredOutputFallbackWrapper) ChatCompletionNoStream(request Complet
 	return response, nil
 }
 
-func (w *StructuredOutputFallbackWrapper) CountTokens(text string) int {
-	return w.wrapped.CountTokens(text)
+func (w *StructuredOutputFallbackWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	return w.wrapped.CountTokens(ctx, request, opts...)
 }
 
 func (w *StructuredOutputFallbackWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
+}
+
+func (w *StructuredOutputFallbackWrapper) OutputTokenLimit() int {
+	return w.wrapped.OutputTokenLimit()
 }
 
 func hasJSONOutputSchema(opts []LanguageModelOption) bool {

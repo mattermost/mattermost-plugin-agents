@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -15,24 +16,28 @@ type benchFakeLLM struct {
 	generator StreamGenerator
 }
 
-func (f *benchFakeLLM) ChatCompletion(_ CompletionRequest, _ ...LanguageModelOption) (*TextStreamResult, error) {
+func (f *benchFakeLLM) ChatCompletion(_ context.Context, _ CompletionRequest, _ ...LanguageModelOption) (*TextStreamResult, error) {
 	return f.generator.Generate(), nil
 }
 
-func (f *benchFakeLLM) ChatCompletionNoStream(_ CompletionRequest, _ ...LanguageModelOption) (string, error) {
-	result, err := f.ChatCompletion(CompletionRequest{})
+func (f *benchFakeLLM) ChatCompletionNoStream(ctx context.Context, _ CompletionRequest, _ ...LanguageModelOption) (string, error) {
+	result, err := f.ChatCompletion(ctx, CompletionRequest{})
 	if err != nil {
 		return "", err
 	}
 	return result.ReadAll()
 }
 
-func (f *benchFakeLLM) CountTokens(_ string) int {
-	return 0
+func (f *benchFakeLLM) CountTokens(_ context.Context, _ CompletionRequest, _ ...LanguageModelOption) (int, error) {
+	return 0, ErrUnsupportedTokenCount
 }
 
 func (f *benchFakeLLM) InputTokenLimit() int {
 	return 100000
+}
+
+func (f *benchFakeLLM) OutputTokenLimit() int {
+	return 8192
 }
 
 // BenchmarkTokenTracking benchmarks the TokenUsageLoggingWrapper performance.
@@ -64,7 +69,7 @@ func BenchmarkTokenTracking(b *testing.B) {
 				sinks.SetFileLogger(logger)
 				wrapper := NewTokenUsageLoggingWrapper(fakeLLM, "bench-bot", sinks, nil)
 
-				result, err := wrapper.ChatCompletion(CompletionRequest{
+				result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
 					Context: &Context{
 						RequestingUser: &model.User{Id: "user-bench"},
 						Team:           &model.Team{Id: "team-bench"},

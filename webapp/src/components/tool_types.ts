@@ -22,9 +22,13 @@ export interface ToolCall {
     id: string;
     name: string;
     description: string;
+    server_origin?: string; // omitempty on the server; present only for MCP tools
     arguments?: JSONValue;
     result?: string;
     status: ToolCallStatus;
 }
 
-export type ToolApprovalStage = 'call' | 'result';
+// ToolApprovalStage mirrors the server-computed approval state for a post.
+// 'done' means no user decision remains (auto-run, keep private, all
+// rejected, or no tool_use blocks at all) — render no buttons.
+export type ToolApprovalStage = 'call' | 'result' | 'done';

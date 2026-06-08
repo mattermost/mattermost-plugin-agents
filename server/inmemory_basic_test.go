@@ -22,10 +22,10 @@ func TestInMemoryServerCreation(t *testing.T) {
 	mcpLogger, err := logger.CreateLoggerWithOptions(false, "")
 	require.NoError(t, err)
 
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil)
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil, nil)
 	require.NoError(t, err)
 
 	// Test creating a client transport (without validation by passing nil resolver)
-	_, err = server.CreateConnectionForUser("test_user_123", "", nil)
+	_, err = server.CreateConnectionForUser("test_user_123", "", nil, nil)
 	require.NoError(t, err)
 }

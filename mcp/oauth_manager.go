@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
@@ -17,19 +18,31 @@ import (
 )
 
 const (
-	clientID = "mattermost-mcp-client"
+	clientID                = "mattermost-mcp-client"
+	oauthCallbackPathSuffix = "/oauth/callback"
 )
 
 type OAuthNeededError struct {
-	authURL string
+	authURL     string
+	metadataURL string
 }
 
 func (e *OAuthNeededError) Error() string {
+	if e.authURL == "" {
+		return "OAuth flow needed"
+	}
 	return fmt.Sprintf("OAuth flow needed, please visit: %s", e.authURL)
 }
 func (e *OAuthNeededError) AuthURL() string {
 	return e.authURL
 }
+
+// MetadataURL returns the RFC 9728 resource_metadata URL from the upstream
+// 401 challenge when known (may be empty).
+func (e *OAuthNeededError) MetadataURL() string {
+	return e.metadataURL
+}
+
 func (e *OAuthNeededError) Unwrap() error {
 	return nil
 }
@@ -63,6 +76,16 @@ func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *htt
 	}
 }
 
+func (m *OAuthManager) StartURL(serverID string) string {
+	baseURL := strings.TrimSuffix(m.callbackURL, oauthCallbackPathSuffix)
+	baseURL = strings.TrimRight(baseURL, "/")
+	if baseURL == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("%s/mcp/oauth/%s/start", baseURL, url.PathEscape(serverID))
+}
+
 // StaticOAuthCredentials holds pre-configured OAuth client credentials from server config.
 // When set, these bypass Dynamic Client Registration (RFC 7591) for providers that
 // require a pre-registered OAuth application.
@@ -73,7 +96,7 @@ type StaticOAuthCredentials struct {
 
 // loadOrCreateClientCredentials gets existing client credentials or creates new ones using dynamic client registration.
 // If staticCreds is non-nil and has a ClientID, those credentials are used directly (skipping DCR).
-func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, serverURL string, staticCreds *StaticOAuthCredentials) (*ClientCredentials, error) {
+func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, serverURL string, staticCreds *StaticOAuthCredentials, registrationEndpoint string) (*ClientCredentials, error) {
 	if staticCreds != nil && staticCreds.ClientID != "" {
 		return &ClientCredentials{
 			ClientID:     staticCreds.ClientID,
@@ -92,8 +115,17 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 		return creds, nil
 	}
 
-	// Perform complete client registration flow
-	response, err := DiscoverAndRegisterClient(ctx, m.httpClient, serverURL, m.callbackURL, clientID, "")
+	var response *RegistrationResponse
+	if registrationEndpoint != "" {
+		request := DefaultRegistrationRequest(m.callbackURL, clientID)
+		response, err = RegisterClient(ctx, m.httpClient, registrationEndpoint, request, "")
+		if err != nil {
+			return nil, fmt.Errorf("failed to register OAuth client with server %s (registration endpoint: %s): %w", serverURL, registrationEndpoint, err)
+		}
+	} else {
+		// Perform complete client registration flow
+		response, err = DiscoverAndRegisterClient(ctx, m.httpClient, serverURL, m.callbackURL, clientID, "")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +158,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	authURL := baseURL + "/authorize" // Fallback
 	tokenURL := baseURL + "/token"    // Fallback
 	authServerURL := baseURL          // Fallback - per MCP spec, auth server is at base URL (path stripped)
+	registrationEndpoint := ""
 	var scopes []string
 
 	// Attempt discovery (best effort, fall back to hardcoded endpoints if it fails).
@@ -141,6 +174,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 				tokenURL = authMetadata.TokenEndpoint
 				// Per OAuth best practices, credentials are registered with the authorization server
 				authServerURL = authServerIssuer
+				registrationEndpoint = authMetadata.RegistrationEndpoint
 			}
 		}
 	} else {
@@ -151,6 +185,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 		if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, m.httpClient, baseURL); authErr == nil {
 			authURL = authMetadata.AuthorizationEndpoint
 			tokenURL = authMetadata.TokenEndpoint
+			registrationEndpoint = authMetadata.RegistrationEndpoint
 			// authServerURL already set to baseURL above
 		}
 	}
@@ -159,7 +194,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	// Per OAuth 2.0 best practices, client credentials are registered with and belong to
 	// the authorization server, not the protected resource.
 	// If static credentials are provided, they are used directly (skipping DCR).
-	clientCreds, err := m.loadOrCreateClientCredentials(ctx, authServerURL, staticCreds)
+	clientCreds, err := m.loadOrCreateClientCredentials(ctx, authServerURL, staticCreds, registrationEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client credentials: %w", err)
 	}
@@ -174,6 +209,16 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 			TokenURL: tokenURL,
 		},
 	}, nil
+}
+
+func (m *OAuthManager) InitiateOAuthFlowForServer(ctx context.Context, userID string, serverConfig ServerConfig) (string, error) {
+	return m.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, "")
+}
+
+// InitiateOAuthFlowForServerWithMetadata starts OAuth like InitiateOAuthFlowForServer but passes
+// resource_metadata from the upstream 401 when present (RFC 9728).
+func (m *OAuthManager) InitiateOAuthFlowForServerWithMetadata(ctx context.Context, userID string, serverConfig ServerConfig, metadataURL string) (string, error) {
+	return m.InitiateOAuthFlow(ctx, userID, serverConfig.Name, serverConfig.BaseURL, metadataURL, staticOAuthCreds(serverConfig))
 }
 
 func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (string, error) {
@@ -275,6 +320,12 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 	// Store the token
 	if err := m.storeToken(loggedInUserID, session.ServerID, token); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
+	}
+	if err := m.DeleteAuthNeededState(loggedInUserID, session.ServerID); err != nil {
+		m.pluginAPI.LogWarn("Failed to clear OAuth-needed state after successful callback",
+			"userID", loggedInUserID,
+			"serverID", session.ServerID,
+			"error", err)
 	}
 
 	return session, nil

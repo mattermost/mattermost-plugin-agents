@@ -6,8 +6,9 @@ import styled from 'styled-components';
 import {ChevronDownIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {TertiaryButton} from '../assets/buttons';
+import {PrimaryButton} from '../assets/buttons';
 import {ToggleSwitch} from '../toggle_switch';
+import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
 
 import {MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import {MCPServerInfo} from './mcp_tools_viewer';
@@ -76,6 +77,11 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                     <ServerInfo>
                         <ServerName>{server.name}</ServerName>
                         <ServerMeta>
+                            {server.serverType === 'plugin' && (
+                                <PluginBadge>
+                                    <FormattedMessage defaultMessage='Plugin'/>
+                                </PluginBadge>
+                            )}
                             {server.error && (
                                 <ErrorIndicator>
                                     <ExclamationThickIcon size={16}/>
@@ -138,7 +144,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                                     <FormattedMessage defaultMessage='OAuth Required'/>
                                 </OAuthTitle>
                                 <OAuthDescription>
-                                    <FormattedMessage defaultMessage='This server requires OAuth authentication to access its tools.'/>
+                                    <FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>
                                 </OAuthDescription>
                             </div>
                             <OAuthButton
@@ -154,17 +160,24 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                         </EmptyTools>
                     )}
                     {!server.error && !server.needsOAuth && server.tools.length > 0 && (
-                        server.tools.map((tool) => (
-                            <MCPToolConfigRow
-                                key={tool.name}
-                                tool={tool}
-                                toolConfig={getToolConfig(tool.name)}
-                                onToolConfigChange={(updatedConfig) =>
-                                    handleToolConfigChange(tool.name, updatedConfig)
-                                }
-                                serverDisabled={!serverEnabled}
-                            />
-                        ))
+                        server.tools.map((tool) => {
+                            const isPlugin = server.serverType === 'plugin';
+                            const pluginID = isPlugin ? pluginIDFromServerOrigin(server.url) : '';
+                            const displayName = isPlugin ? stripPluginPrefix(tool.name, pluginID) : tool.name;
+
+                            return (
+                                <MCPToolConfigRow
+                                    key={tool.name}
+                                    tool={tool}
+                                    toolConfig={getToolConfig(tool.name)}
+                                    onToolConfigChange={(updatedConfig) =>
+                                        handleToolConfigChange(tool.name, updatedConfig)
+                                    }
+                                    serverDisabled={!serverEnabled}
+                                    displayName={displayName}
+                                />
+                            );
+                        })
                     )}
                 </ToolsContainer>
             )}
@@ -299,6 +312,18 @@ const OAuthIndicator = styled.div`
     color: var(--button-bg);
 `;
 
+const PluginBadge = styled.span`
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    margin-right: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--center-channel-bg);
+    background-color: rgba(var(--center-channel-color-rgb), 0.56);
+    border-radius: 10px;
+`;
+
 const ErrorMessage = styled.div`
     display: flex;
     align-items: flex-start;
@@ -344,15 +369,8 @@ const OAuthDescription = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
-const OAuthButton = styled(TertiaryButton)`
-    white-space: nowrap;
-    background-color: var(--button-bg);
-    color: var(--button-color);
-    border: 1px solid var(--button-bg);
-
-    &:hover {
-        background-color: rgba(var(--button-bg-rgb), 0.88);
-    }
+const OAuthButton = styled(PrimaryButton)`
+    flex-shrink: 0;
 `;
 
 const EmptyTools = styled.div`

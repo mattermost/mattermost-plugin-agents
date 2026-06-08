@@ -24,7 +24,6 @@ type Config struct {
 	Bots                            []llm.BotConfig                  `json:"bots"`
 	DefaultBotName                  string                           `json:"defaultBotName"`
 	TranscriptGenerator             string                           `json:"transcriptBackend"`
-	EnableLLMTrace                  bool                             `json:"enableLLMTrace"`
 	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
 	EnableCallSummary               bool                             `json:"enableCallSummary"`
 	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
@@ -36,6 +35,8 @@ type Config struct {
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
+	TelemetryOutput                 string                           `json:"telemetryOutput"`
+	OpenTelemetryEndpoint           string                           `json:"openTelemetryEndpoint"`
 }
 
 type WebSearchConfig struct {
@@ -93,10 +94,6 @@ func (c *Container) Config() *Config {
 	return c.cfg.Load()
 }
 
-func (c *Container) GetEnableLLMTrace() bool {
-	return c.cfg.Load().EnableLLMTrace
-}
-
 func (c *Container) GetTranscriptGenerator() string {
 	return c.cfg.Load().TranscriptGenerator
 }
@@ -107,10 +104,6 @@ func (c *Container) GetBots() []llm.BotConfig {
 
 func (c *Container) GetDefaultBotName() string {
 	return c.cfg.Load().DefaultBotName
-}
-
-func (c *Container) EnableLLMLogging() bool {
-	return c.cfg.Load().EnableLLMTrace
 }
 
 func (c *Container) EnableTokenUsageLogging() bool {
@@ -226,6 +219,23 @@ func (c *Container) Update(newConfig *Config) {
 	for _, listener := range c.listeners {
 		listener()
 	}
+}
+
+// StorePersistedConfigWithoutNotify updates in-memory configuration from a value read back from
+// persistent storage without notifying update listeners. Use when the current call stack may
+// already be servicing a listener (for example after SaveConfig during legacy migration) to
+// avoid re-entrant listener invocation and deadlocks.
+func (c *Container) StorePersistedConfigWithoutNotify(newConfig *Config) error {
+	if newConfig == nil {
+		c.cfg.Store(nil)
+		return nil
+	}
+	clone, err := DeepCopyJSON(*newConfig)
+	if err != nil {
+		return fmt.Errorf("failed to deep copy configuration: %w", err)
+	}
+	c.cfg.Store(&clone)
+	return nil
 }
 
 // DeepCopyJSON creates a deep copy of JSON-serializable structs

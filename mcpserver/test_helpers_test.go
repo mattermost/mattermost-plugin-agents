@@ -143,15 +143,22 @@ func (suite *TestSuite) TearDown() {
 
 // CreateMCPServer creates and configures an MCP server for testing
 func (suite *TestSuite) CreateMCPServer(devMode bool) {
-	suite.createMCPServerWithConfig(devMode, nil)
+	suite.createMCPServerWithConfig(devMode, nil, nil)
 }
 
 // CreateMCPServerWithSearch creates an MCP server with a custom semantic search service
 func (suite *TestSuite) CreateMCPServerWithSearch(devMode bool, searchService tools.SemanticSearchService) {
-	suite.createMCPServerWithConfig(devMode, searchService)
+	suite.createMCPServerWithConfig(devMode, searchService, nil)
 }
 
-func (suite *TestSuite) createMCPServerWithConfig(devMode bool, searchService tools.SemanticSearchService) {
+// CreateMCPServerWithFileService creates an MCP server with a custom file content service.
+// The eval container has no plugin installed, so the production HTTP callback would 404 —
+// tests inject a Client4-backed service instead.
+func (suite *TestSuite) CreateMCPServerWithFileService(devMode bool, fileContentService tools.FileContentService) {
+	suite.createMCPServerWithConfig(devMode, nil, fileContentService)
+}
+
+func (suite *TestSuite) createMCPServerWithConfig(devMode bool, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) {
 	require.NotNil(suite.t, suite.logger, "Logger must be initialized")
 	require.NotEmpty(suite.t, suite.serverURL, "Server URL must be set")
 	require.NotEmpty(suite.t, suite.adminToken, "Admin token must be set")
@@ -163,7 +170,7 @@ func (suite *TestSuite) createMCPServerWithConfig(devMode bool, searchService to
 		},
 		PersonalAccessToken: suite.adminToken,
 	}
-	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, searchService)
+	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, searchService, fileContentService)
 	require.NoError(suite.t, err, "Failed to create MCP server")
 
 	suite.mcpServer = mcpServer
