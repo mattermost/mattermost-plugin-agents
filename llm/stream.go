@@ -27,10 +27,15 @@ const (
 	EventTypeUsage
 )
 
-// TokenUsage represents token usage statistics for an LLM request
+// TokenUsage represents token usage statistics for an LLM request. Cached,
+// reasoning, and cost fields stay zero when the provider doesn't report them.
 type TokenUsage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
+	InputTokens       int64   `json:"input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CachedReadTokens  int64   `json:"cached_read_tokens,omitempty"`
+	CachedWriteTokens int64   `json:"cached_write_tokens,omitempty"`
+	ReasoningTokens   int64   `json:"reasoning_tokens,omitempty"`
+	Cost              float64 `json:"cost,omitempty"`
 }
 
 // ReasoningData represents the complete reasoning/thinking data including signature
@@ -86,10 +91,15 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 			if err, ok := event.Value.(error); ok {
 				return "", err
 			}
+			if msg, ok := event.Value.(string); ok {
+				return "", fmt.Errorf("%s", msg)
+			}
+			return "", fmt.Errorf("unknown stream error")
 		case EventTypeEnd:
 			return result, nil
 		case EventTypeToolCalls:
-			return result, fmt.Errorf("Tool calls are not supported for read all")
+			// Tool calls may appear as progress events from auto-run tools; skip them.
+			continue
 		case EventTypeAnnotations, EventTypeReasoning, EventTypeReasoningEnd, EventTypeUsage:
 			// These event types are ignored in ReadAll, continue reading text
 			continue

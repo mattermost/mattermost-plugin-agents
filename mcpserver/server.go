@@ -4,10 +4,10 @@
 package mcpserver
 
 import (
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/types"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -20,9 +20,11 @@ type MattermostMCPServer struct {
 	config       types.ServerConfig
 }
 
-// registerTools registers all tools using the tool provider
-func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode) {
-	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode)
+// registerTools registers all tools using the tool provider.
+// searchService and fileContentService are optional and can be nil when the
+// corresponding capability is unavailable.
+func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) {
+	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService)
 	toolProvider.ProvideTools(s.mcpServer)
 }
 

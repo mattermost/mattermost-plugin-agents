@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"runtime/debug"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -24,7 +24,9 @@ type MattermostInMemoryMCPServer struct {
 
 // NewInMemoryServer creates a new in-memory transport MCP server
 // This server is designed to run embedded within the plugin process
-func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger) (*MattermostInMemoryMCPServer, error) {
+// searchService and fileContentService are optional and can be nil when the
+// corresponding capability is unavailable
+func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) (*MattermostInMemoryMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("mattermost server URL cannot be empty for in-memory transport")
 	}
@@ -62,19 +64,19 @@ func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger) (*Matterm
 	)
 
 	// Register tools with remote access mode (embedded clients are treated as remote)
-	mattermostServer.registerTools(tools.AccessModeRemote)
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService)
 
 	logger.Info("Created in-memory MCP server")
 
 	return mattermostServer, nil
 }
 
-// CreateConnectionForUser creates a new in-memory transport connection for a specific user
-// Returns the client-side transport that should be used by the MCP client
+// CreateConnectionForUser creates a new in-memory transport connection for a specific user.
+// Returns the client-side transport that should be used by the MCP client.
 // Accepts either:
 // - sessionID + tokenResolver: Creates authenticated connection
 // - empty sessionID + nil tokenResolver: Creates unauthenticated connection (for tool discovery)
-func (s *MattermostInMemoryMCPServer) CreateConnectionForUser(userID, sessionID string, tokenResolver auth.TokenResolver) (*mcp.InMemoryTransport, error) {
+func (s *MattermostInMemoryMCPServer) CreateConnectionForUser(userID, sessionID string, tokenResolver auth.TokenResolver, beforeHookResolver auth.BeforeHookResolver) (*mcp.InMemoryTransport, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("userID cannot be empty")
 	}
@@ -90,6 +92,9 @@ func (s *MattermostInMemoryMCPServer) CreateConnectionForUser(userID, sessionID 
 		if err != nil {
 			return nil, err
 		}
+	}
+	if beforeHookResolver != nil {
+		ctx = context.WithValue(ctx, auth.BeforeHookResolverContextKey, beforeHookResolver)
 	}
 
 	// Create new in-memory transport pair

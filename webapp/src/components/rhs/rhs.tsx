@@ -10,22 +10,28 @@ import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
 
-import {getAIThreads, updateRead} from '@/client';
+import {getAIThreads, getUserMCPTools, getUserToolPreferences, updateRead} from '@/client';
 
 import {useBotlist} from '@/bots';
 
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
+import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
+
+import type {UserMCPServerInfo} from './tool_provider_popover';
 import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
 import RHSNewTab from './rhs_new_tab';
+import RhsFileDropZone from './rhs_file_drop_zone';
 
 const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
     height: 100%;
 `;
 
 const ThreadsList = styled.div`
-    overflow-y: scroll;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
 `;
 
 const RhsContainer = styled.div`
@@ -36,10 +42,11 @@ const RhsContainer = styled.div`
 
 export interface AIThread {
     id: string;
-    message: string;
-    channel_id: string;
+    channel_id: string | null;
+    bot_id: string;
+    root_post_id: string | null;
     title: string;
-    reply_count: number;
+    turn_count: number;
     update_at: number;
 }
 
@@ -54,6 +61,30 @@ export default function RHS() {
     const currentTeamId = useSelector<GlobalState, string>((state) => state.entities.teams.currentTeamId);
 
     const [threads, setThreads] = useState<AIThread[] | null>(null);
+    const [disabledServers, setDisabledServers] = useState<string[]>([]);
+    const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
+
+    useEffect(() => {
+        const fetchPreferences = async () => {
+            try {
+                const prefs = await getUserToolPreferences();
+                setDisabledServers(prefs.disabled_servers || []);
+            } catch {
+                // Preferences unavailable, default to all enabled
+            }
+        };
+        fetchPreferences();
+
+        const fetchServers = async () => {
+            try {
+                const response = await getUserMCPTools();
+                setPreloadedServers(response.servers);
+            } catch {
+                // Silently fail - servers will load when popover opens
+            }
+        };
+        fetchServers();
+    }, []);
 
     useEffect(() => {
         const fetchThreads = async () => {
@@ -78,6 +109,7 @@ export default function RHS() {
     }, [dispatch]);
 
     const {bots, activeBot, setActiveBot} = useBotlist();
+    const activeConversationId = useConversationIdForThread(selectedPostId);
 
     // No bots available - hide the RHS entirely
     if (bots && bots.length === 0) {
@@ -85,10 +117,12 @@ export default function RHS() {
     }
 
     let content = null;
+    let wrapInDropZone = false;
     if (selectedPostId) {
         if (currentTab !== 'thread') {
             setCurrentTab('thread');
         }
+        wrapInDropZone = true;
         content = (
             <ThreadViewer
                 data-testid='rhs-thread-viewer'
@@ -100,21 +134,21 @@ export default function RHS() {
         );
     } else if (currentTab === 'threads') {
         if (threads && bots) {
+            const navigableThreads = threads.filter((p) => p.root_post_id);
             content = (
                 <ThreadsList
                     data-testid='rhs-threads-list'
                 >
-                    {threads.map((p) => (
+                    {navigableThreads.map((p) => (
                         <ThreadItem
                             key={p.id}
                             postTitle={p.title}
-                            postMessage={p.message}
-                            repliesCount={p.reply_count}
+                            turnCount={p.turn_count}
                             lastActivityDate={p.update_at}
-                            label={bots.find((bot) => bot.dmChannelID === p.channel_id)?.displayName ?? ''}
+                            label={bots.find((bot) => bot.id === p.bot_id)?.displayName ?? ''}
                             onClick={() => {
                                 setCurrentTab('thread');
-                                selectPost(p.id);
+                                selectPost(p.root_post_id!);
                             }}
                         />))}
                 </ThreadsList>
@@ -123,6 +157,7 @@ export default function RHS() {
             content = null;
         }
     } else if (currentTab === 'new') {
+        wrapInDropZone = true;
         content = (
             <RHSNewTab
                 data-testid='rhs-new-tab'
@@ -143,8 +178,14 @@ export default function RHS() {
                 bots={bots}
                 activeBot={activeBot}
                 setActiveBot={setActiveBot}
+                disabledServers={disabledServers}
+                onDisabledServersChange={setDisabledServers}
+                preloadedServers={preloadedServers}
+                activeConversationId={activeConversationId}
             />
-            {content}
+            {wrapInDropZone ? (
+                <RhsFileDropZone>{content}</RhsFileDropZone>
+            ) : content}
         </RhsContainer>
     );
 }

@@ -1,159 +1,84 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {RefreshIcon, ChevronDownIcon, ChevronRightIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
-import {FormattedMessage} from 'react-intl';
+import {RefreshIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton, SecondaryButton} from '../assets/buttons';
-import {getMCPTools, clearMCPToolsCache} from '../../client';
+import {getMCPTools, clearMCPToolsCache, getVettedToolSeed, updatePluginServer} from '../../client';
+import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
+import {pluginIDFromServerOrigin} from '../../utils/tool_names';
 
-// Type definitions matching the backend API response
+import {MCPConfig, MCPServerConfig, MCPToolConfig} from './mcp_servers';
+import MCPServerToolRow from './mcp_server_tool_row';
+import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
+
 export type MCPToolInfo = {
     name: string;
     description: string;
-    inputSchema: {[key: string]: any} | null;
+    inputSchema: Record<string, unknown> | null;
 };
 
 export type MCPServerInfo = {
-    id: string;
     name: string;
     url: string;
     tools: MCPToolInfo[];
     needsOAuth: boolean;
     oauthURL?: string;
     error: string | null;
+
+    // Plugin-server fields; remote and embedded rows read state from mcpConfig.
+    serverType?: string;
+    enabled?: boolean;
+    toolConfigs?: MCPToolConfig[];
 };
 
 export type MCPToolsResponse = {
     servers: MCPServerInfo[];
 };
 
-// Component for displaying a single tool
-const ToolItem = ({tool}: {tool: MCPToolInfo}) => (
-    <ToolContainer>
-        <ToolName>{tool.name}</ToolName>
-        <ToolDescription>{tool.description}</ToolDescription>
-    </ToolContainer>
-);
-
-// Component for displaying a single server and its tools
-const ServerItem = ({server}: {server: MCPServerInfo}) => {
-    const [isExpanded, setIsExpanded] = useState(true);
-
-    const toggleExpanded = () => {
-        setIsExpanded(!isExpanded);
-    };
-
-    return (
-        <ServerContainer>
-            <ServerHeader onClick={toggleExpanded}>
-                <ServerHeaderLeft>
-                    <ExpandIcon>
-                        {isExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
-                    </ExpandIcon>
-                    <ServerInfo>
-                        <ServerName>{server.name}</ServerName>
-                        <ServerUrl>{server.url}</ServerUrl>
-                    </ServerInfo>
-                </ServerHeaderLeft>
-                <ServerStats>
-                    {server.error && (
-                        <ErrorIndicator>
-                            <ExclamationThickIcon size={16}/>
-                            <FormattedMessage defaultMessage='Error'/>
-                        </ErrorIndicator>
-                    )}
-                    {!server.error && server.needsOAuth && (
-                        <OAuthIndicator>
-                            <FormattedMessage defaultMessage='Needs OAuth'/>
-                        </OAuthIndicator>
-                    )}
-                    {!server.error && !server.needsOAuth && (
-                        <ToolCount>
-                            <FormattedMessage
-                                defaultMessage='Total: {count} tools'
-                                values={{count: server.tools.length}}
-                            />
-                        </ToolCount>
-                    )}
-                </ServerStats>
-            </ServerHeader>
-
-            {isExpanded && (
-                <ServerContent>
-                    {server.error && (
-                        <ErrorMessage>
-                            <ExclamationThickIcon size={20}/>
-                            <div>
-                                <ErrorTitle>
-                                    <FormattedMessage defaultMessage='Connection Error'/>
-                                </ErrorTitle>
-                                <ErrorDescription>{server.error}</ErrorDescription>
-                            </div>
-                        </ErrorMessage>
-                    )}
-                    {!server.error && server.needsOAuth && server.oauthURL && (
-                        <OAuthMessage>
-                            <div>
-                                <OAuthTitle>
-                                    <FormattedMessage defaultMessage='OAuth Required'/>
-                                </OAuthTitle>
-                                <OAuthDescription>
-                                    <FormattedMessage defaultMessage='This server requires OAuth authentication to access its tools.'/>
-                                </OAuthDescription>
-                            </div>
-                            <OAuthButton
-                                onClick={() => window.open(server.oauthURL, '_blank')}
-                            >
-                                <FormattedMessage defaultMessage='Connect Account'/>
-                            </OAuthButton>
-                        </OAuthMessage>
-                    )}
-                    {!server.error && !server.needsOAuth && server.tools.length === 0 && (
-                        <EmptyTools>
-                            <FormattedMessage defaultMessage='No tools available from this server'/>
-                        </EmptyTools>
-                    )}
-                    {!server.error && !server.needsOAuth && server.tools.length > 0 && (
-                        <ToolsList>
-                            {server.tools.map((tool) => (
-                                <ToolItem
-                                    key={tool.name}
-                                    tool={tool}
-                                />
-                            ))}
-                        </ToolsList>
-                    )}
-                </ServerContent>
-            )}
-        </ServerContainer>
-    );
+type MCPToolsViewerProps = {
+    mcpConfig: MCPConfig;
+    onConfigChange: (config: MCPConfig) => void;
+    initialToolsData?: MCPToolsResponse | null;
 };
 
 // Main component for MCP Tools viewer
-const MCPToolsViewer = () => {
-    const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(null);
+const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsViewerProps) => {
+    const intl = useIntl();
+    const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(initialToolsData || null);
     const [loading, setLoading] = useState(false);
     const [clearing, setClearing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [clearSuccess, setClearSuccess] = useState<string | null>(null);
+    const seededRef = useRef(false);
 
-    // Fetch tools data from the API
-    const fetchTools = async () => {
-        setLoading(true);
-        setError(null);
-
+    const fetchTools = useCallback(async (opts: {showLoading?: boolean; propagateError?: boolean} = {}) => {
         try {
+            if (opts.showLoading) {
+                setLoading(true);
+            }
             const response = await getMCPTools();
             setToolsData(response);
+            setError(null);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to fetch MCP tools');
+            if (opts.propagateError) {
+                throw err;
+            }
+            if (opts.showLoading) {
+                setError(err instanceof Error ? err.message : 'Failed to fetch MCP tools');
+            } else {
+                // eslint-disable-next-line no-console
+                console.error('Background refresh of MCP tools failed:', err);
+            }
         } finally {
-            setLoading(false);
+            if (opts.showLoading) {
+                setLoading(false);
+            }
         }
-    };
+    }, []);
 
     // Clear the MCP tools cache
     const handleClearCache = async () => {
@@ -166,7 +91,7 @@ const MCPToolsViewer = () => {
             setClearSuccess(response.message);
 
             // Automatically refresh tools after clearing cache
-            await fetchTools();
+            await fetchTools({showLoading: true});
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to clear cache');
         } finally {
@@ -174,21 +99,183 @@ const MCPToolsViewer = () => {
         }
     };
 
-    // Fetch tools on component mount
     useEffect(() => {
-        fetchTools();
-    }, []);
+        if (!initialToolsData) {
+            fetchTools({showLoading: true});
+        }
+    }, [initialToolsData, fetchTools]);
+
+    useMCPConnectionEvents(
+        useCallback(() => {
+            fetchTools();
+        }, [fetchTools]),
+    );
+
+    // Retroactively seed vetted tool configs for existing servers.
+    // This runs once after tools are first fetched, to fix servers configured before
+    // the vetted-tools feature was added. It merges missing vetted configs into any
+    // existing tool_configs rather than skipping servers that already have partial configs.
+    useEffect(() => {
+        if (!toolsData || seededRef.current) {
+            return;
+        }
+        seededRef.current = true;
+
+        (async () => {
+            let updatedConfig = mcpConfig;
+            let changed = false;
+
+            const updatedServers = await Promise.all(
+                (updatedConfig.servers ?? []).map(async (sc) => {
+                    let seeded: MCPToolConfig[] = [];
+                    try {
+                        seeded = await getVettedToolSeed(sc.baseURL);
+                    } catch {
+                        return sc;
+                    }
+                    if (seeded.length === 0) {
+                        return sc;
+                    }
+                    const existing = sc.tool_configs || [];
+                    const existingNames = new Set(existing.map((tc) => tc.name));
+                    const missing = seeded.filter((tc) => !existingNames.has(tc.name));
+                    if (missing.length === 0) {
+                        return sc;
+                    }
+                    changed = true;
+                    return {...sc, tool_configs: [...existing, ...missing]};
+                }),
+            );
+            if (changed) {
+                updatedConfig = {...updatedConfig, servers: updatedServers};
+            }
+
+            const embeddedCfg = updatedConfig.embeddedServer;
+            {
+                let seeded: MCPToolConfig[] = [];
+                try {
+                    seeded = await getVettedToolSeed(EMBEDDED_MATTERMOST_BASE_URL);
+                } catch {
+                    seeded = [];
+                }
+                if (seeded.length > 0) {
+                    const existing = embeddedCfg.tool_configs || [];
+                    const existingNames = new Set(existing.map((tc) => tc.name));
+                    const missing = seeded.filter((tc) => !existingNames.has(tc.name));
+                    if (missing.length > 0) {
+                        changed = true;
+                        updatedConfig = {
+                            ...updatedConfig,
+                            embeddedServer: {...embeddedCfg, tool_configs: [...existing, ...missing]},
+                        };
+                    }
+                }
+            }
+
+            if (changed) {
+                onConfigChange(updatedConfig);
+            }
+        })().catch(() => null);
+    }, [toolsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Calculate total tools across all servers
     const totalTools = toolsData?.servers.reduce((sum, server) => sum + server.tools.length, 0) || 0;
     const serversWithErrors = toolsData?.servers.filter((server) => server.error).length || 0;
+
+    // The embedded server uses this key as its origin/URL
+    const embeddedClientKey = EMBEDDED_MATTERMOST_BASE_URL;
+
+    // Find the matching ServerConfig for a discovered server
+    const findServerConfig = (server: MCPServerInfo): MCPServerConfig | null => {
+        if (server.url === embeddedClientKey) {
+            return {
+                name: server.name,
+                enabled: mcpConfig.embeddedServer.enabled,
+                baseURL: embeddedClientKey,
+                headers: {},
+                tool_configs: mcpConfig.embeddedServer.tool_configs,
+            };
+        }
+
+        if (server.serverType === 'plugin') {
+            return {
+                name: server.name,
+                enabled: server.enabled ?? false,
+                baseURL: server.url,
+                headers: {},
+                tool_configs: server.toolConfigs ?? [],
+            };
+        }
+
+        return (mcpConfig.servers ?? []).find((sc) =>
+            sc.name === server.name || sc.baseURL === server.url,
+        ) || null;
+    };
+
+    const handleServerConfigChange = (
+        serverInfo: MCPServerInfo,
+        updatedServerConfig: MCPServerConfig,
+    ) => {
+        // Handle the embedded server: write changes back to embeddedServer config
+        if (updatedServerConfig.baseURL === embeddedClientKey) {
+            onConfigChange({
+                ...mcpConfig,
+                embeddedServer: {
+                    ...mcpConfig.embeddedServer,
+                    tool_configs: updatedServerConfig.tool_configs,
+                },
+            });
+            return;
+        }
+
+        if (serverInfo.serverType === 'plugin') {
+            const pluginID = pluginIDFromServerOrigin(serverInfo.url);
+            if (!pluginID) {
+                return;
+            }
+
+            const prev = findServerConfig(serverInfo);
+            const update: {enabled?: boolean; tool_configs?: MCPToolConfig[]} = {};
+            if (!prev || prev.enabled !== updatedServerConfig.enabled) {
+                update.enabled = updatedServerConfig.enabled;
+            }
+            const prevConfigs = prev?.tool_configs ?? [];
+            const nextConfigs = updatedServerConfig.tool_configs ?? [];
+            if (JSON.stringify(prevConfigs) !== JSON.stringify(nextConfigs)) {
+                update.tool_configs = nextConfigs;
+            }
+
+            if (Object.keys(update).length === 0) {
+                return;
+            }
+
+            updatePluginServer(pluginID, update).
+                then(() => fetchTools({propagateError: true})).
+                catch((err) => {
+                    setError(
+                        err instanceof Error ?
+                            err.message :
+                            intl.formatMessage({id: 'mcp_tools.update_plugin_server_failed', defaultMessage: 'Failed to update plugin server'}),
+                    );
+                });
+            return;
+        }
+
+        const updatedServers = (mcpConfig.servers ?? []).map((sc) => {
+            if (sc.name === updatedServerConfig.name || sc.baseURL === updatedServerConfig.baseURL) {
+                return updatedServerConfig;
+            }
+            return sc;
+        });
+        onConfigChange({...mcpConfig, servers: updatedServers});
+    };
 
     return (
         <Container>
             <Header>
                 <HeaderInfo>
                     <Title>
-                        <FormattedMessage defaultMessage='Available MCP Tools'/>
+                        <FormattedMessage defaultMessage='MCP Tools Configuration'/>
                     </Title>
                     {toolsData && (
                         <Summary>
@@ -218,7 +305,7 @@ const MCPToolsViewer = () => {
                         <FormattedMessage defaultMessage='Clear Cache'/>
                     </SecondaryButton>
                     <RefreshButton
-                        onClick={fetchTools}
+                        onClick={() => fetchTools({showLoading: true})}
                         disabled={loading || clearing}
                     >
                         <RefreshIcon
@@ -261,9 +348,13 @@ const MCPToolsViewer = () => {
                 {toolsData && toolsData.servers.length > 0 && (
                     <ServersList>
                         {toolsData.servers.map((server) => (
-                            <ServerItem
-                                key={server.id}
+                            <MCPServerToolRow
+                                key={server.url}
                                 server={server}
+                                serverConfig={findServerConfig(server)}
+                                onServerConfigChange={(updatedConfig) =>
+                                    handleServerConfigChange(server, updatedConfig)
+                                }
                             />
                         ))}
                     </ServersList>
@@ -384,190 +475,6 @@ const ServersList = styled.div`
     display: flex;
     flex-direction: column;
     gap: 12px;
-`;
-
-const ServerContainer = styled.div`
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    background-color: var(--center-channel-bg);
-    overflow: hidden;
-`;
-
-const ServerHeader = styled.div`
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px;
-    cursor: pointer;
-    background-color: rgba(var(--center-channel-color-rgb), 0.02);
-    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-
-    &:hover {
-        background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    }
-`;
-
-const ServerHeaderLeft = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex: 1;
-`;
-
-const ExpandIcon = styled.div`
-    display: flex;
-    align-items: center;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const ServerInfo = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-`;
-
-const ServerName = styled.div`
-    font-weight: 600;
-    font-size: 16px;
-    color: var(--center-channel-color);
-`;
-
-const ServerUrl = styled.div`
-    font-size: 12px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    font-family: monospace;
-`;
-
-const ServerStats = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-`;
-
-const ToolCount = styled.div`
-    font-size: 12px;
-    font-weight: 600;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    padding: 4px 8px;
-    background-color: rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-`;
-
-const ErrorIndicator = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--error-text);
-    padding: 4px 8px;
-    background-color: rgba(var(--error-text-color-rgb), 0.08);
-    border-radius: 4px;
-`;
-
-const OAuthIndicator = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--button-bg);
-    padding: 4px 8px;
-    background-color: rgba(var(--button-bg-rgb), 0.08);
-    border-radius: 4px;
-`;
-
-const ServerContent = styled.div`
-    padding: 16px;
-`;
-
-const ErrorMessage = styled.div`
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 16px;
-    color: var(--error-text);
-    background-color: rgba(var(--error-text-color-rgb), 0.04);
-    border-radius: 4px;
-`;
-
-const ErrorTitle = styled.div`
-    font-weight: 600;
-    margin-bottom: 4px;
-`;
-
-const ErrorDescription = styled.div`
-    font-size: 12px;
-    opacity: 0.8;
-`;
-
-const OAuthMessage = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 16px;
-    color: var(--center-channel-color);
-    background-color: rgba(var(--button-bg-rgb), 0.04);
-    border: 1px solid rgba(var(--button-bg-rgb), 0.16);
-    border-radius: 4px;
-`;
-
-const OAuthTitle = styled.div`
-    font-weight: 600;
-    margin-bottom: 4px;
-    color: var(--button-bg);
-`;
-
-const OAuthDescription = styled.div`
-    font-size: 12px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-`;
-
-const OAuthButton = styled(TertiaryButton)`
-    white-space: nowrap;
-    background-color: var(--button-bg);
-    color: var(--button-color);
-    border: 1px solid var(--button-bg);
-
-    &:hover {
-        background-color: rgba(var(--button-bg-rgb), 0.88);
-    }
-`;
-
-const EmptyTools = styled.div`
-    text-align: center;
-    padding: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    border-radius: 4px;
-`;
-
-const ToolsList = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-`;
-
-const ToolContainer = styled.div`
-    padding: 12px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    background-color: rgba(var(--center-channel-color-rgb), 0.02);
-`;
-
-const ToolName = styled.div`
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--center-channel-color);
-    margin-bottom: 4px;
-    font-family: monospace;
-`;
-
-const ToolDescription = styled.div`
-    font-size: 12px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-    line-height: 1.4;
 `;
 
 export default MCPToolsViewer;

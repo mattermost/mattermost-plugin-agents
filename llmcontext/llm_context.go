@@ -4,11 +4,14 @@
 package llmcontext
 
 import (
+	"slices"
+	"strings"
 	"time"
+	"unicode"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -25,7 +28,6 @@ type MCPToolProvider interface {
 
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
-	GetEnableLLMTrace() bool
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
 }
 
@@ -100,8 +102,16 @@ func (b *Builder) WithLLMContextChannel(channel *model.Channel) llm.ContextOptio
 
 func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOption {
 	return func(c *llm.Context) {
-		c.RequestingUser = user
 		if user != nil {
+			// Create a shallow copy to avoid mutating the original user object,
+			// then sanitize profile fields that are rendered into the system prompt.
+			sanitizedUser := *user
+			sanitizedUser.FirstName = sanitizeUserProfileField(user.FirstName)
+			sanitizedUser.LastName = sanitizeUserProfileField(user.LastName)
+			sanitizedUser.Position = sanitizeUserProfileField(user.Position)
+			sanitizedUser.Nickname = sanitizeUserProfileField(user.Nickname)
+			c.RequestingUser = &sanitizedUser
+
 			tz := user.GetPreferredTimezone()
 			loc, err := time.LoadLocation(tz)
 			if err == nil && loc != nil {
@@ -109,6 +119,49 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 			}
 		}
 	}
+}
+
+// normalizeMCPServerOrigin trims whitespace and trailing slashes so allowlist
+// ServerOrigin values match ToolAuthError.ServerOrigin across formatting variants.
+func normalizeMCPServerOrigin(s string) string {
+	return strings.TrimRight(strings.TrimSpace(s), "/")
+}
+
+// toolAuthErrorMatchesAllowlist reports whether authErr refers to a server that still
+// appears in the per-agent MCP allowlist (by ServerOrigin).
+func toolAuthErrorMatchesAllowlist(authErr llm.ToolAuthError, allowlist []llm.EnabledMCPTool) bool {
+	errOrigin := normalizeMCPServerOrigin(authErr.ServerOrigin)
+	for i := range allowlist {
+		if normalizeMCPServerOrigin(allowlist[i].ServerOrigin) == errOrigin {
+			return true
+		}
+	}
+	return false
+}
+
+func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []llm.EnabledMCPTool) []llm.ToolAuthError {
+	return slices.DeleteFunc(slices.Clone(errors), func(e llm.ToolAuthError) bool {
+		return !toolAuthErrorMatchesAllowlist(e, allowlist)
+	})
+}
+
+// sanitizeUserProfileField strips characters that could be used for prompt injection
+// in user profile fields rendered into the system prompt. It collapses newlines, carriage
+// returns, and tabs to spaces, removes other control characters, and trims the result.
+func sanitizeUserProfileField(s string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			result.WriteRune(' ')
+		case unicode.IsControl(r):
+			continue
+		default:
+			result.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(result.String())
 }
 
 // WithLLMContextSessionID removed: embedded MCP manages its own session lifecycle
@@ -134,7 +187,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	}
 
 	// Create a tool store that requires user approval for tool calls
-	store := llm.NewToolStore(&b.pluginAPI.Log, b.configProvider.GetEnableLLMTrace())
+	store := llm.NewToolStore()
 
 	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)
 	store.AddTools(b.toolProvider.GetTools(bot))
@@ -153,9 +206,21 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 			store.AddTools(mcpTools)
 		}
 
-		// Handle MCP errors if any occurred
+		// Per-agent MCP tool filtering: unless the agent is configured to pick up
+		// every MCP tool automatically, retain only tools listed in its allowlist.
+		// This runs AFTER admin policy (filterToolsByConfig inside GetToolsForUser)
+		// and BEFORE per-user filtering (RemoveToolsByServerOrigin in conversations.go).
+		botCfg := bot.GetConfig()
+		if !botCfg.AutoEnableNewMCPTools {
+			store.RetainOnlyMCPTools(botCfg.EnabledMCPTools)
+		}
+
 		if mcpErrors != nil {
-			for _, authError := range mcpErrors.ToolAuthErrors {
+			authErrors := mcpErrors.ToolAuthErrors
+			if !botCfg.AutoEnableNewMCPTools {
+				authErrors = filterToolAuthErrorsForAllowlist(mcpErrors.ToolAuthErrors, botCfg.EnabledMCPTools)
+			}
+			for _, authError := range authErrors {
 				store.AddAuthError(authError)
 			}
 		}
@@ -201,13 +266,10 @@ func (b *Builder) WithLLMContextParameters(params map[string]interface{}) llm.Co
 
 func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 	return func(c *llm.Context) {
-		c.BotName = bot.GetConfig().DisplayName
-		c.BotUsername = bot.GetConfig().Name
-		c.CustomInstructions = bot.GetConfig().CustomInstructions
-		// Set the bot user ID for AI-generated content tracking
+		var botUserID string
 		if mmbot := bot.GetMMBot(); mmbot != nil {
-			c.BotUserID = mmbot.UserId
+			botUserID = mmbot.UserId
 		}
-		c.BotModel = bot.GetService().DefaultModel
+		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
 }

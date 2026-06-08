@@ -8,9 +8,6 @@ export class AIPlugin {
   readonly regenerateButton: Locator;
   readonly chatHistoryButton: Locator;
   readonly threadsListContainer: Locator;
-  readonly promptTemplates: {
-    [key: string]: Locator;
-  };
 
   constructor(page: Page) {
     this.page = page;
@@ -20,11 +17,35 @@ export class AIPlugin {
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
-    this.promptTemplates = {
-      'brainstorm': page.getByRole('button', { name: 'Brainstorm ideas' }),
-      'todo': page.getByRole('button', { name: 'To-do list' }),
-      'proscons': page.getByRole('button', { name: 'Pros and Cons' }),
-    };
+  }
+
+  /** Root of the Copilot / AI RHS panel (plugin UI). */
+  getRhsContainer(): Locator {
+    return this.page.getByTestId('mattermost-ai-rhs');
+  }
+
+  /** Triggers the per-session MCP tool provider popover (only on the New chat tab). */
+  getRhsToolsMenuButton(): Locator {
+    return this.getRhsContainer().getByRole('button', { name: /^Tools$/i });
+  }
+
+  /**
+   * Ensures the RHS is on the New chat tab so the Tools control is available.
+   * When another tab is active, the New chat button is visible and is clicked.
+   */
+  async ensureRhsNewChatTab(): Promise<void> {
+    const newChat = this.page.getByTestId('new-chat');
+    if (await newChat.isVisible().catch(() => false)) {
+      await newChat.click();
+    }
+  }
+
+  async openRhsToolProvidersMenu(): Promise<Locator> {
+    await this.ensureRhsNewChatTab();
+    await this.getRhsToolsMenuButton().click();
+    const menu = this.getRhsContainer().getByTestId('dropdownmenu');
+    await expect(menu).toBeVisible({ timeout: 10000 });
+    return menu;
   }
 
   async openRHS() {
@@ -78,10 +99,6 @@ export class AIPlugin {
     await this.rhsSendButton.click();
   }
 
-  async usePromptTemplate(templateName: keyof typeof this.promptTemplates) {
-    await this.promptTemplates[templateName].click();
-  }
-
   async regenerateResponse() {
     await this.regenerateButton.click();
   }
@@ -89,6 +106,20 @@ export class AIPlugin {
   async switchBot(botName: string) {
     await this.page.getByTestId(`bot-selector-rhs`).click();
     await this.page.getByRole('button', { name: botName }).click();
+  }
+
+  /**
+   * Select a bot in the RHS selector, retrying until the bot appears (Agents list can lag behind API creates).
+   */
+  async switchBotWhenListed(botDisplayName: string): Promise<void> {
+    const selector = this.page.getByTestId('bot-selector-rhs');
+    const option = this.page.getByRole('button', { name: botDisplayName });
+    await expect(async () => {
+      await this.page.keyboard.press('Escape');
+      await selector.click();
+      await expect(option).toBeVisible({ timeout: 3000 });
+      await option.click();
+    }).toPass({ timeout: 45000, intervals: [500, 1000, 2000] });
   }
 
   async waitForBotResponse(expectedText: string) {
@@ -109,13 +140,9 @@ export class AIPlugin {
     await expect(this.rhsSendButton).toBeVisible({ timeout: 30000 });
   }
 
-  async expectTextInTextarea(text: string) {
-    await expect(this.rhsPostTextarea).toHaveText(text);
-  }
-
   async openChatHistory() {
     await this.chatHistoryButton.click();
-    await expect(this.threadsListContainer).toBeVisible();
+    await expect(this.threadsListContainer).toBeVisible({ timeout: 15000 });
   }
 
   async expectChatHistoryVisible() {
@@ -171,26 +198,67 @@ export class AIPlugin {
     }
   }
 
+  /**
+   * Trigger an embedding search via the search bar
+   * @param query - The search query to execute
+   */
+  async triggerEmbeddingSearch(query: string) {
+    // Open the search bar
+    await this.page.getByRole('button', { name: 'Search' }).click();
+    // Wait for search options to appear
+    await this.page.waitForTimeout(500);
+    // Select the Agents search type
+    const agentsRadio = this.page.getByRole('radio', { name: /Agents/i });
+    await agentsRadio.click();
+    // Enter search query and execute
+    await this.page.getByRole('searchbox', { name: 'Search' }).fill(query);
+    await this.page.getByRole('searchbox', { name: 'Search' }).press('Enter');
+  }
+
+  /**
+   * Verify the Agents search option is visible in the search bar
+   */
+  async expectAgentsSearchVisible() {
+    // Open the search bar
+    await this.page.getByRole('button', { name: 'Search' }).click();
+    await this.page.waitForTimeout(500);
+    // Verify Agents radio option is visible
+    const agentsRadio = this.page.getByRole('radio', { name: /Agents/i });
+    await expect(agentsRadio).toBeVisible({ timeout: 10000 });
+  }
+
   async openChannelAnalysisPopover() {
-    // Find the "Ask Agents about this channel" button in the channel header
-    // This button has an AI icon and opens a popover with channel analysis options
-    const channelHeaderButtons = this.page.locator('.channel-header__top, [class*="channel-header"]');
-    const agentsButton = channelHeaderButtons.locator('button').filter({ hasText: /Ask Agents/ }).or(
-      channelHeaderButtons.locator('button[aria-label*="Agents"]')
-    ).or(
-      channelHeaderButtons.locator('button:has(svg)').last()
-    );
-
-    await agentsButton.click({ timeout: 10000 });
-
-    // Wait for the popover to appear
     const popover = this.page.locator('.channel-summarize-popover');
-    await expect(popover).toBeVisible({ timeout: 10000 });
+    if (await popover.isVisible().catch(() => false)) {
+      return;
+    }
 
-    // CRITICAL: Wait for bots to be loaded before interacting
-    // The bot name appears in the "GENERATE WITH:" section
-    // If activeBot is null, handleSummarize will silently return without doing anything
-    await expect(popover.getByText('Mock Bot')).toBeVisible({ timeout: 15000 });
+    const buttonCandidates = [
+      this.page.getByTestId('ask-channel-button'),
+      this.page.getByRole('button', { name: /Ask Agents about this channel/i }),
+      this.page.locator('button[title="Ask Agents about this channel"]'),
+    ];
+
+    let clicked = false;
+    for (const candidate of buttonCandidates) {
+      const isVisible = await candidate.first().isVisible().catch(() => false);
+      if (!isVisible) {
+        continue;
+      }
+
+      await candidate.first().click({ timeout: 10000 });
+      clicked = true;
+      break;
+    }
+
+    if (!clicked) {
+      throw new Error('Channel analysis button was not visible');
+    }
+
+    await expect(popover).toBeVisible({ timeout: 10000 });
+    await expect(popover.getByPlaceholder(/Ask Agents about this channel/i)).toBeVisible({ timeout: 10000 });
+    await expect(popover.getByText('Summarize unreads')).toBeVisible({ timeout: 10000 });
+    await expect(popover.getByText(/GENERATE WITH/i)).toBeVisible({ timeout: 10000 });
   }
 
   async sendChannelAnalysisMessage(message: string) {

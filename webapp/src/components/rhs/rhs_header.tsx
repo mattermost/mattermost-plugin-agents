@@ -13,6 +13,8 @@ import {BotDropdown} from '../bot_selector';
 import {LLMBot} from '@/bots';
 
 import {Button} from './common';
+import ContextUsageIndicator from './context_usage_indicator';
+import ToolProviderPopover, {UserMCPServerInfo} from './tool_provider_popover';
 
 type Props = {
     currentTab: string
@@ -21,6 +23,10 @@ type Props = {
     setCurrentTab: (tab: string) => void
     selectPost: (postId: string) => void
     setActiveBot: (bot: LLMBot) => void
+    disabledServers: string[]
+    onDisabledServersChange: (servers: string[]) => void
+    preloadedServers?: UserMCPServerInfo[]
+    activeConversationId?: string
 }
 
 const RHSHeader = (props: Props) => {
@@ -47,46 +53,67 @@ const RHSHeader = (props: Props) => {
         );
     }
     const currentBotName = props.activeBot?.displayName ?? '';
+
+    // All right-side controls share one flex group so the ring
+    // appearing/disappearing doesn't shift the others.
     return (
         <Header>
             {historyButton}
-            {props.currentTab !== 'new' && (
-                <NewChatButton
-                    data-testid='new-chat'
-                    className='new-button'
-                    onClick={() => {
-                        props.setCurrentTab('new');
-                        props.selectPost('');
-                    }}
-                >
-                    <i className='icon icon-pencil-outline'/>
-                    <FormattedMessage defaultMessage='New chat'/>
-                </NewChatButton>
-            )}
-            {(props.currentTab === 'new' && props.bots) && (
-                <BotDropdown
-                    bots={props.bots}
-                    activeBot={props.activeBot}
-                    setActiveBot={props.setActiveBot}
-                    container={SelectorDropdown}
-                    testId='bot-selector-rhs'
-                >
+            <RightControls>
+                {props.activeConversationId && (
+                    <ContextUsageIndicator conversationId={props.activeConversationId}/>
+                )}
+                {props.currentTab === 'new' ? (
                     <>
-                        {currentBotName}
-                        <ChevronDownIcon/>
+                        <ToolProviderPopover
+                            disabledServers={props.disabledServers}
+                            onDisabledServersChange={props.onDisabledServersChange}
+                            preloadedServers={props.preloadedServers}
+                            enabledMCPTools={props.activeBot?.enabledMCPTools}
+                            autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
+                        />
+                        {props.bots && (
+                            <BotDropdown
+                                bots={props.bots}
+                                activeBot={props.activeBot}
+                                setActiveBot={props.setActiveBot}
+                                container={SelectorDropdown}
+                                testId='bot-selector-rhs'
+                            >
+                                <>
+                                    <SelectorDropdownName>{currentBotName}</SelectorDropdownName>
+                                    <ChevronDownIcon/>
+                                </>
+                            </BotDropdown>
+                        )}
                     </>
-                </BotDropdown>
-            )}
+                ) : (
+                    <NewChatButton
+                        data-testid='new-chat'
+                        className='new-button'
+                        onClick={() => {
+                            props.setCurrentTab('new');
+                            props.selectPost('');
+                        }}
+                    >
+                        <i className='icon icon-pencil-outline'/>
+                        <FormattedMessage defaultMessage='New chat'/>
+                    </NewChatButton>
+                )}
+            </RightControls>
         </Header>
     );
 };
 
 const HistoryButton = styled(Button)`
-	padding: 8px 12px;
+    height: 28px;
+    padding: 8px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
 const ButtonDisabled = styled(Button)`
+    height: 28px;
+    padding: 8px;
 	&:hover {
 		background: transparent;
 		color: rgb(var(--center-channel-color));
@@ -95,6 +122,7 @@ const ButtonDisabled = styled(Button)`
 `;
 
 const NewChatButton = styled(Button)`
+    padding: 6px 12px;
 	color: rgb(var(--link-color-rgb));
 	&:hover {
 		color: rgb(var(--link-color-rgb));
@@ -108,11 +136,20 @@ const NewChatButton = styled(Button)`
 
 const Header = styled.div`
     display: flex;
-	padding: 8px 12px;
+    height: 38px;
+    padding: 0 16px 0 12px;
 	justify-content: space-between;
 	align-items: center;
+    box-sizing: border-box;
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
     flex-wrap: wrap;
+`;
+
+const RightControls = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
 `;
 
 const SelectorDropdown = styled(DotMenuButton)<{isActive: boolean}>`
@@ -122,8 +159,7 @@ const SelectorDropdown = styled(DotMenuButton)<{isActive: boolean}>`
 	border-radius: 4px;
 	height: 20px;
 	width: auto;
-	max-width: 145px;
-	overflow: ellipsis;
+	max-width: 128px;
 
 	font-size: 11px;
 	font-weight: 600;
@@ -136,6 +172,17 @@ const SelectorDropdown = styled(DotMenuButton)<{isActive: boolean}>`
         color: ${(props) => (props.isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
         background-color: ${(props) => (props.isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.16)')};
     }
+
+    svg {
+        flex-shrink: 0;
+    }
+`;
+
+const SelectorDropdownName = styled.span`
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 `;
 
 export default React.memo(RHSHeader);

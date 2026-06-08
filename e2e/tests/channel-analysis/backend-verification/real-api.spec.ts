@@ -2,7 +2,7 @@
 // seed: tests/seed.spec.ts
 
 import { test, expect, Page } from '@playwright/test';
-import RunRealAPIContainer from 'helpers/real-api-container';
+import RunRealAPIContainer, { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -13,6 +13,7 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
+import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Channel Analysis Real API Verification
@@ -22,13 +23,12 @@ import {
  * are functioning as expected without testing exhaustive UI edge cases.
  *
  * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic (claude-3-7-sonnet)
- * - OPENAI_API_KEY: To run tests with OpenAI (gpt-5)
+ * - ANTHROPIC_API_KEY: To run tests with Anthropic
+ * - OPENAI_API_KEY: To run tests with OpenAI
  */
 
 const username = 'regularuser';
 const password = 'regularuser';
-
 const config = getAPIConfig();
 const skipMessage = getSkipMessage();
 
@@ -59,19 +59,7 @@ class RealAPIHelper {
      * Open the channel agents popover by clicking the agents button in channel header
      */
     async openChannelAgentsPopover() {
-        // The agents button is in the channel header with a styled-components class
-        // It's the button with ButtonContainer class that has an SVG icon
-        const channelHeader = this.page.locator('.channel-header__top, [class*="channel-header"]');
-
-        // Look for the AI plugin button
-        const agentsButton = channelHeader.locator('button[class*="ButtonContainer"]').first();
-
-        // Wait for the button to be visible and click it
-        await agentsButton.waitFor({ state: 'visible', timeout: 10000 });
-        await agentsButton.click();
-
-        // Wait for the popover to appear
-        await this.page.waitForSelector('.channel-summarize-popover', { timeout: 10000 });
+        await new AIPlugin(this.page).openChannelAnalysisPopover();
     }
 
     /**
@@ -100,6 +88,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
+            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
             if (!config.shouldRunTests) return;
 
             const customProvider = {
@@ -118,6 +107,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
             if (mattermost) {
                 await mattermost.stop();
             }
+        });
+
+        test.afterEach(async ({}, testInfo) => {
+            await attachAPIErrorContext(testInfo);
         });
 
         test('Sanity check: Channel analysis produces valid summary', async ({ page }) => {

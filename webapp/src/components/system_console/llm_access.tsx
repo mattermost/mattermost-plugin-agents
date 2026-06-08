@@ -12,7 +12,6 @@ import {ChannelAccessLevel, UserAccessLevel} from './bot';
 import {HelpText, ItemLabel, StyledRadio} from './item';
 
 const AllowTypes = styled.div`
-	margin-top: 24px;
 	margin-bottom: 24px;
 	display: grid;
 	grid-template-columns: auto 1fr;
@@ -43,9 +42,6 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
         <>
             <ItemLabel>{props.label}</ItemLabel>
             <MainContainer>
-                <HelpText>
-                    <FormattedMessage defaultMessage='Users can chat with this bot and get private assistance about content across all channels the user has access to. Select the users you would like to allow below.'/>
-                </HelpText>
                 <AllowTypes>
                     <StyledRadio
                         type='radio'
@@ -106,9 +102,6 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
         <>
             <ItemLabel>{props.label}</ItemLabel>
             <MainContainer>
-                <HelpText>
-                    <FormattedMessage defaultMessage='This bot can be a "channel expert" that can consume the contents of a given channel and provide answers only from content available in the channel. Select the channels you would like it to allow below.'/>
-                </HelpText>
                 <AllowTypes>
                     <StyledRadio
                         type='radio'

@@ -4,14 +4,15 @@
 package react_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/evals"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/llm/mocks"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
-	"github.com/mattermost/mattermost-plugin-ai/react"
+	"github.com/mattermost/mattermost-plugin-agents/evals"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/react"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -62,13 +63,13 @@ func TestReactResolve(t *testing.T) {
 			prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 			assert.NoError(t, err)
 
-			mockLLM.EXPECT().ChatCompletionNoStream(mock.Anything, mock.Anything).Return(tc.llmResponse, tc.llmError)
+			mockLLM.EXPECT().ChatCompletionNoStream(mock.Anything, mock.Anything, mock.Anything).Return(tc.llmResponse, tc.llmError)
 
 			r := react.New(mockLLM, prompts)
-			ctx := llm.NewContext()
+			llmCtx := llm.NewContext()
 
 			// Execute
-			emoji, err := r.Resolve(tc.message, ctx)
+			emoji, err := r.Resolve(context.Background(), tc.message, llmCtx)
 
 			// Assert
 			if tc.expectedError {
@@ -112,7 +113,7 @@ func TestReactEval(t *testing.T) {
 			r := react.New(t.LLM, t.Prompts)
 			llmContext := llm.NewContext()
 
-			result, err := r.Resolve(tc.message, llmContext)
+			result, err := r.Resolve(context.Background(), tc.message, llmContext)
 
 			require.NoError(t, err)
 			assert.NotEmpty(t, result, "Expected a non-empty emoji reaction")

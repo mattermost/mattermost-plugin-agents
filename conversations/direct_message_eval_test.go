@@ -5,20 +5,21 @@ package conversations_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/evals"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/evals"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -85,7 +86,7 @@ func TestDirectMessageConversations(t *testing.T) {
 			client := pluginapi.NewClient(mockAPI, nil)
 			mmClient := mocks.NewMockClient(t)
 			licenseChecker := enterprise.NewLicenseChecker(client)
-			botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+			botService := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
 			prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 			require.NoError(t, err, "Failed to load prompts")
 
@@ -119,7 +120,7 @@ func TestDirectMessageConversations(t *testing.T) {
 				configProvider,
 			)
 
-			conv := conversations.New(
+			_ = conversations.New(
 				prompts,
 				mmClient,
 				nil,
@@ -152,11 +153,27 @@ func TestDirectMessageConversations(t *testing.T) {
 			}
 			llmInstance := llm.NewLanguageModelTestLogWrapper(t.T, t.LLM)
 
-			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
+			_ = bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
-			// Process the DM request
-			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), false)
-			require.NoError(t, err, "Failed to process DM request")
+			// Build completion request directly (ProcessUserRequest was removed in Step L)
+			llmContext := contextBuilder.BuildLLMContextUserRequest(
+				bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance),
+				threadData.RequestingUser(),
+				threadData.Channel,
+			)
+			systemPrompt, err := prompts.Format("direct_message_question_system", llmContext)
+			require.NoError(t, err, "Failed to format system prompt")
+
+			dmPosts := []llm.Post{
+				{Role: llm.PostRoleSystem, Message: systemPrompt},
+				{Role: llm.PostRoleUser, Message: threadData.LatestPost().Message},
+			}
+			textStream, err := llmInstance.ChatCompletion(context.Background(), llm.CompletionRequest{
+				Posts:     dmPosts,
+				Context:   llmContext,
+				Operation: llm.OperationConversation,
+			})
+			require.NoError(t, err, "Failed to get chat completion")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 
 			// Read the response

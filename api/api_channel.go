@@ -4,20 +4,19 @@
 package api
 
 import (
-	stdcontext "context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
-	"errors"
-
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/channels"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/channels"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -49,15 +48,17 @@ func (a *API) channelAuthorizationRequired(c *gin.Context) {
 	}
 }
 
-func (a *API) handleChannelAnalysis(c *gin.Context) {
-	userID := c.GetHeader("Mattermost-User-Id")
-	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-
+func (a *API) channelAnalysisLicenseRequired(c *gin.Context) {
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return
 	}
+}
+
+func (a *API) handleChannelAnalysis(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	var data struct {
 		AnalysisType string `json:"analysis_type" binding:"required"`
@@ -137,11 +138,8 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		return
 	}
 
-	// Create channels analyzer
-	// We need to initialize Channels service. Since it's not in API struct, we initialize it here.
-	// Ideally, it should be initialized in API constructor and passed as a dependency.
-	// For now, let's create it.
-	analyzer := channels.New(bot.LLM(), a.prompts, a.mmClient, a.dbClient)
+	// Create channels analyzer with conversation service
+	analyzer := channels.New(bot.LLM(), a.prompts, a.mmClient, a.dbClient, a.convService)
 
 	// Prepare analysis data for the prompt
 	analysisData := map[string]any{
@@ -152,26 +150,27 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		"Prompt":       data.Prompt,
 	}
 
-	analysisStream, err := analyzer.AnalyzeChannel(llmContext, channel.Id, analysisData)
+	result, err := analyzer.AnalyzeChannel(c.Request.Context(), llmContext, channel.Id, userID, bot.GetMMBot().UserId, analysisData)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze channel: %w", err))
 		return
 	}
 
-	// Create analysis post
-	siteURL := a.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
-	if siteURL == nil || *siteURL == "" {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("site URL not configured"))
-		return
-	}
-	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, *siteURL)
+	// Create analysis post with conversation ID for streaming turn persistence
+	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, result.ConversationID)
 
-	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, analysisStream, user.Id, analysisPost, ""); err != nil {
+	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), bot.GetMMBot().UserId, result.Stream, user.Id, analysisPost, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 
-	a.conversationsService.SaveTitleAsync(analysisPost.Id, TitleSummarizeChannel)
+	// Update conversation with root post ID and title
+	if a.convService != nil {
+		if updateErr := a.convService.UpdateConversationRootPostID(result.ConversationID, analysisPost.Id); updateErr != nil {
+			a.pluginAPI.Log.Error("Failed to update conversation root post ID", "error", updateErr)
+		}
+		_ = a.convService.UpdateConversationTitle(result.ConversationID, TitleSummarizeChannel)
+	}
 
 	c.JSON(http.StatusOK, map[string]string{
 		"postid":    analysisPost.Id,
@@ -183,12 +182,6 @@ func (a *API) handleInterval(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-
-	// Check license
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
 
 	// Parse request data
 	data := struct {
@@ -224,12 +217,12 @@ func (a *API) handleInterval(c *gin.Context) {
 		return
 	}
 
-	// Build LLM context
+	// Interval summaries disable tools, so skip MCP/tool initialization entirely.
 	context := a.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		user,
 		channel,
-		a.contextBuilder.WithLLMContextDefaultTools(bot),
+		a.contextBuilder.WithLLMContextNoTools(),
 	)
 
 	// Map preset prompt to prompt type and title
@@ -253,31 +246,41 @@ func (a *API) handleInterval(c *gin.Context) {
 		return
 	}
 
-	// Call channels interval processing
-	resultStream, err := channels.New(bot.LLM(), a.prompts, a.mmClient, a.dbClient).Interval(context, channel.Id, data.StartTime, data.EndTime, promptPreset)
+	// Call channels interval processing with conversation entity
+	result, err := channels.New(bot.LLM(), a.prompts, a.mmClient, a.dbClient, a.convService).Interval(
+		c.Request.Context(), context, channel.Id, userID, bot.GetMMBot().UserId, data.StartTime, data.EndTime, promptPreset,
+	)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 
-	// Create post for the response
+	// Create post for the response with conversation ID for streaming turn persistence
 	post := &model.Post{}
 	post.AddProp(streaming.NoRegen, "true")
+	post.AddProp(streaming.ConversationIDProp, result.ConversationID)
 
 	// Stream result to new DM
-	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, resultStream, user.Id, post, ""); err != nil {
+	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), bot.GetMMBot().UserId, result.Stream, user.Id, post, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 
-	// Save title asynchronously
-	a.conversationsService.SaveTitleAsync(post.Id, promptTitle)
+	// Persist the response post ID as the conversation's root so the RHS
+	// history list can navigate to it; without RootPostID the entry is
+	// filtered out of the threads list.
+	if a.convService != nil {
+		if updateErr := a.convService.UpdateConversationRootPostID(result.ConversationID, post.Id); updateErr != nil {
+			a.pluginAPI.Log.Error("Failed to update interval summary root post ID", "error", updateErr)
+		}
+		_ = a.convService.UpdateConversationTitle(result.ConversationID, promptTitle)
+	}
 
 	// Return result
-	result := map[string]string{
+	responseData := map[string]string{
 		"postid":    post.Id,
 		"channelid": post.ChannelId,
 	}
 
-	c.Render(http.StatusOK, render.JSON{Data: result})
+	c.Render(http.StatusOK, render.JSON{Data: responseData})
 }

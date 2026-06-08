@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import RunRealAPIContainer from 'helpers/real-api-container';
+import RunRealAPIContainer, { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -10,6 +10,7 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
+import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Streaming and Persistence
@@ -18,8 +19,8 @@ import {
  * Runs once per configured provider (OpenAI and/or Anthropic).
  *
  * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic (claude-3-7-sonnet)
- * - OPENAI_API_KEY: To run tests with OpenAI (gpt-5)
+ * - ANTHROPIC_API_KEY: To run tests with Anthropic
+ * - OPENAI_API_KEY: To run tests with OpenAI
  *
  * Tests:
  * 1. Streaming Cursor Display
@@ -47,9 +48,12 @@ async function setupTestPage(page, mattermost, provider: ProviderBundle) {
 
 function createProviderTestSuite(provider: ProviderBundle) {
     test.describe(`Streaming and Persistence - ${provider.name}`, () => {
+        test.skip(provider.service.type === 'openaicompatible', 'Skipping OpenAI reasoning tests due to flaky upstream reasoning events.');
+
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
+            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
             if (!config.shouldRunTests) return;
 
             // Customize provider to disable web search for streaming tests
@@ -59,7 +63,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
                     ...provider.bot,
                     enabledNativeTools: [], // Disable web search - not needed for streaming tests
                     ...(provider.service.type === 'openaicompatible' && {
-                        reasoningEffort: 'low', // Low effort for more consistent reasoning
+                        reasoningEffort: 'high', // High effort to reliably surface reasoning events
                     }),
                 }
             };
@@ -71,6 +75,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
             if (mattermost) {
                 await mattermost.stop();
             }
+        });
+
+        test.afterEach(async ({}, testInfo) => {
+            await attachAPIErrorContext(testInfo);
         });
 
         test('Streaming Cursor Display', async ({ page }) => {

@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,10 @@ import (
 	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 )
 
 // Tool represents a function that can be called by the language model during a conversation.
@@ -27,6 +32,17 @@ type Tool struct {
 	Description string
 	Schema      any
 	Resolver    ToolResolver
+
+	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
+	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
+	ServerOrigin string
+
+	// CallMetadata is forwarded to the tool implementation as MCP CallToolParams.Meta.
+	// It is invisible to the LLM, not part of the input schema, and not parsed from the
+	// model's arguments. Set it at scope-time via WithCallMetadata when callers need to
+	// plumb runtime/protocol info (e.g. before-hook keys) that the underlying server
+	// needs but the model shouldn't see or be able to manipulate.
+	CallMetadata map[string]any
 }
 
 type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string, error)
@@ -36,12 +52,27 @@ type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string,
 // - Removed from the schema (LLM cannot see or manipulate them)
 // - Automatically injected when the resolver is called
 func (t Tool) WithBoundParams(params map[string]interface{}) Tool {
-	return Tool{
-		Name:        t.Name,
-		Description: t.Description,
-		Schema:      removeSchemaProperties(t.Schema, params),
-		Resolver:    wrapResolverWithBoundParams(t.Resolver, params),
+	cloned := t
+	cloned.Schema = removeSchemaProperties(t.Schema, params)
+	cloned.Resolver = wrapResolverWithBoundParams(t.Resolver, params)
+	return cloned
+}
+
+// WithCallMetadata returns a copy of the tool with CallMetadata set. Use this to attach
+// per-call MCP metadata (like before-hook keys) at scope-time without leaking it into
+// the LLM-visible schema or making the resolver fish it out of llm.Context. Passing an
+// empty map clears the field.
+func (t Tool) WithCallMetadata(meta map[string]any) Tool {
+	cloned := t
+	if len(meta) == 0 {
+		cloned.CallMetadata = nil
+		return cloned
 	}
+	cloned.CallMetadata = make(map[string]any, len(meta))
+	for k, v := range meta {
+		cloned.CallMetadata[k] = v
+	}
+	return cloned
 }
 
 // removeSchemaProperties removes the specified properties from a JSON schema.
@@ -191,6 +222,11 @@ const (
 	ToolCallStatusError
 	// ToolCallStatusSuccess indicates the tool call was accepted and resolved successfully
 	ToolCallStatusSuccess
+	// ToolCallStatusAutoApproved indicates the tool call was auto-approved and executed
+	// by the MCP approved servers feature per admin configuration.
+	// This status is set by the stream wrapper and consumed by the streaming layer
+	// to skip the call-approval UI and proceed directly to result-sharing.
+	ToolCallStatusAutoApproved
 )
 
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
@@ -201,6 +237,10 @@ type ToolCall struct {
 	Arguments   json.RawMessage `json:"arguments"`
 	Result      string          `json:"result"`
 	Status      ToolCallStatus  `json:"status"`
+
+	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
+	// Empty for built-in tools. Used for auto-approval decisions.
+	ServerOrigin string `json:"server_origin,omitempty"`
 }
 
 // SanitizeNonPrintableChars replaces non-printable Unicode characters with their
@@ -258,87 +298,28 @@ func isSafeRune(r rune) bool {
 
 // SanitizeArguments sanitizes the Arguments field to prevent
 // bidirectional text and other Unicode spoofing attacks.
+// Also ensures Arguments is valid JSON (defaults to "{}" if empty/nil).
 func (tc *ToolCall) SanitizeArguments() {
-	if len(tc.Arguments) > 0 {
-		tc.Arguments = json.RawMessage(SanitizeNonPrintableChars(string(tc.Arguments)))
+	if len(tc.Arguments) == 0 {
+		tc.Arguments = json.RawMessage("{}")
+		return
 	}
+	tc.Arguments = json.RawMessage(SanitizeNonPrintableChars(string(tc.Arguments)))
 }
 
 type ToolArgumentGetter func(args any) error
 
 // ToolAuthError represents an authentication error that occurred during tool creation
 type ToolAuthError struct {
-	ServerName string `json:"server_name"`
-	AuthURL    string `json:"auth_url"`
-	Error      error  `json:"error"`
-}
-
-// AutoRunResult represents the result of executing an auto-run tool
-type AutoRunResult struct {
-	ToolCallID string
-	ToolName   string
-	Result     string
-	IsError    bool
-}
-
-// ShouldAutoRunTools checks if all pending tool calls are configured for auto-run.
-// Returns true only if AutoRunTools is configured and ALL tool calls are in the auto-run list.
-func ShouldAutoRunTools(pendingToolCalls []ToolCall, autoRunTools []string) bool {
-	if len(autoRunTools) == 0 || len(pendingToolCalls) == 0 {
-		return false
-	}
-
-	autoRunSet := make(map[string]bool, len(autoRunTools))
-	for _, name := range autoRunTools {
-		autoRunSet[name] = true
-	}
-
-	for _, tc := range pendingToolCalls {
-		if !autoRunSet[tc.Name] {
-			return false
-		}
-	}
-	return true
-}
-
-// ExecuteAutoRunTools executes the given tool calls using the provided resolver.
-// Returns the results for each tool call.
-func ExecuteAutoRunTools(
-	pendingToolCalls []ToolCall,
-	resolver func(name string, argsGetter ToolArgumentGetter, context *Context) (string, error),
-	context *Context,
-) []AutoRunResult {
-	results := make([]AutoRunResult, 0, len(pendingToolCalls))
-
-	for _, tc := range pendingToolCalls {
-		getter := func(args any) error { return json.Unmarshal(tc.Arguments, args) }
-
-		result, err := resolver(tc.Name, getter, context)
-		isError := err != nil
-		if err != nil {
-			result = fmt.Sprintf("Error executing tool: %v", err)
-		}
-
-		results = append(results, AutoRunResult{
-			ToolCallID: tc.ID,
-			ToolName:   tc.Name,
-			Result:     result,
-			IsError:    isError,
-		})
-	}
-
-	return results
+	ServerName   string `json:"server_name"`
+	ServerOrigin string `json:"server_origin"`
+	AuthURL      string `json:"auth_url"`
+	Error        error  `json:"error"`
 }
 
 type ToolStore struct {
 	tools      map[string]Tool
-	log        TraceLog
-	doTrace    bool
 	authErrors []ToolAuthError
-}
-
-type TraceLog interface {
-	Info(message string, keyValuePairs ...any)
 }
 
 // NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using generics
@@ -355,17 +336,13 @@ func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
 func NewNoTools() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
-		log:        nil,
-		doTrace:    false,
 		authErrors: []ToolAuthError{},
 	}
 }
 
-func NewToolStore(log TraceLog, doTrace bool) *ToolStore {
+func NewToolStore() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
-		log:        log,
-		doTrace:    doTrace,
 		authErrors: []ToolAuthError{},
 	}
 }
@@ -376,15 +353,25 @@ func (s *ToolStore) AddTools(tools []Tool) {
 	}
 }
 
-func (s *ToolStore) ResolveTool(name string, argsGetter ToolArgumentGetter, context *Context) (string, error) {
+func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
+	_, span := telemetry.Tracer().Start(ctx, "resolve tool",
+		trace.WithAttributes(telemetry.ToolName.String(name)),
+	)
+	defer span.End()
+
 	tool, ok := s.tools[name]
 	if !ok {
-		s.TraceUnknown(name, argsGetter)
-		return "", errors.New("unknown tool " + name)
+		err := errors.New("unknown tool " + name)
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+		return "", err
 	}
-	results, err := tool.Resolver(context, argsGetter)
-	s.TraceResolved(name, argsGetter, results, err)
-	return results, err
+	result, err := tool.Resolver(llmCtx, argsGetter)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+	}
+	return result, err
 }
 
 func (s *ToolStore) GetTools() []Tool {
@@ -403,6 +390,86 @@ func (s *ToolStore) GetTool(name string) *Tool {
 	return nil
 }
 
+// GetServerOrigin returns the ServerOrigin for a tool by name.
+// Returns empty string if the tool is not found or has no server origin (built-in tools).
+func (s *ToolStore) GetServerOrigin(toolName string) string {
+	if tool, ok := s.tools[toolName]; ok {
+		return tool.ServerOrigin
+	}
+	return ""
+}
+
+// KeepToolsIf removes tools for which keep returns false.
+func (s *ToolStore) KeepToolsIf(keep func(Tool) bool) {
+	if s == nil || keep == nil {
+		return
+	}
+	for name, tool := range s.tools {
+		if !keep(tool) {
+			delete(s.tools, name)
+		}
+	}
+}
+
+// RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches
+// any of the provided origins. This is used for user-disabled provider
+// filtering in Copilot DM contexts.
+func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
+	if s == nil || len(disabledOrigins) == 0 {
+		return
+	}
+	disabledSet := make(map[string]bool, len(disabledOrigins))
+	for _, origin := range disabledOrigins {
+		disabledSet[origin] = true
+	}
+	for name, tool := range s.tools {
+		if disabledSet[tool.ServerOrigin] {
+			delete(s.tools, name)
+		}
+	}
+}
+
+// MCPServerToolWildcard in EnabledMCPTool.ToolName means every tool from that ServerOrigin is allowed.
+const MCPServerToolWildcard = "*"
+
+// RetainOnlyMCPTools filters the tool store to only retain MCP tools whose
+// (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
+// with empty ServerOrigin) are never removed by this method.
+//
+// An empty or nil allowlist removes all MCP tools. Callers that want to keep
+// every MCP tool (e.g. agents with AutoEnableNewMCPTools=true) should skip
+// calling this method entirely.
+func (s *ToolStore) RetainOnlyMCPTools(allowlist []EnabledMCPTool) {
+	if s == nil {
+		return
+	}
+
+	// Build a set for O(1) lookup. Key: "serverOrigin\x00toolName"
+	allowed := make(map[string]bool, len(allowlist))
+	wildcardOrigins := make(map[string]bool, len(allowlist))
+	for _, t := range allowlist {
+		if t.ToolName == MCPServerToolWildcard {
+			wildcardOrigins[t.ServerOrigin] = true
+			continue
+		}
+		allowed[t.ServerOrigin+"\x00"+t.ToolName] = true
+	}
+
+	for name, tool := range s.tools {
+		// Never filter built-in tools (empty ServerOrigin)
+		if tool.ServerOrigin == "" {
+			continue
+		}
+		if wildcardOrigins[tool.ServerOrigin] {
+			continue
+		}
+		// Remove MCP tools not in the allowlist
+		if !allowed[tool.ServerOrigin+"\x00"+tool.Name] {
+			delete(s.tools, name)
+		}
+	}
+}
+
 // GetToolsInfo returns basic information (name and description) about all tools in the store.
 // This is useful for informing LLMs about tools that are available in other contexts
 // (e.g., DM-only tools when in a channel).
@@ -413,37 +480,12 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 	result := make([]ToolInfo, 0, len(s.tools))
 	for _, tool := range s.tools {
 		result = append(result, ToolInfo{
-			Name:        tool.Name,
-			Description: tool.Description,
+			Name:         tool.Name,
+			Description:  tool.Description,
+			ServerOrigin: tool.ServerOrigin,
 		})
 	}
 	return result
-}
-
-func (s *ToolStore) TraceUnknown(name string, argsGetter ToolArgumentGetter) {
-	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if err := argsGetter(&raw); err != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", err)
-		} else {
-			args = string(raw)
-		}
-		s.log.Info("unknown tool called", "name", name, "args", args)
-	}
-}
-
-func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, result string, err error) {
-	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if getArgsErr := argsGetter(&raw); getArgsErr != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", getArgsErr)
-		} else {
-			args = string(raw)
-		}
-		s.log.Info("tool resolved", "name", name, "args", args, "result", result, "error", err)
-	}
 }
 
 // AddAuthError adds an authentication error to the tool store

@@ -29,42 +29,56 @@ func TestDefaultRegistrationRequest(t *testing.T) {
 }
 
 func TestRegisterClient_Success(t *testing.T) {
-	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify request method and headers
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
-		assert.Equal(t, "application/json", r.Header.Get("Accept"))
+	tests := []struct {
+		name       string
+		statusCode int
+	}{
+		{
+			name:       "created",
+			statusCode: http.StatusCreated,
+		},
+		{
+			name:       "ok",
+			statusCode: http.StatusOK,
+		},
+	}
 
-		// Verify request body
-		var req RegistrationRequest
-		err := json.NewDecoder(r.Body).Decode(&req)
-		require.NoError(t, err)
-		assert.Equal(t, []string{"https://example.com/callback"}, req.RedirectURIs)
-		assert.Equal(t, "Test Client", req.ClientName)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "POST", r.Method)
+				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+				assert.Equal(t, "application/json", r.Header.Get("Accept"))
 
-		// Send success response
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
+				var req RegistrationRequest
+				err := json.NewDecoder(r.Body).Decode(&req)
+				require.NoError(t, err)
+				assert.Equal(t, []string{"https://example.com/callback"}, req.RedirectURIs)
+				assert.Equal(t, "Test Client", req.ClientName)
 
-		response := RegistrationResponse{
-			ClientID:     "client123",
-			ClientSecret: "secret456",
-			RedirectURIs: req.RedirectURIs,
-			ClientName:   req.ClientName,
-		}
-		_ = json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.statusCode)
 
-	request := DefaultRegistrationRequest("https://example.com/callback", "Test Client")
+				response := RegistrationResponse{
+					ClientID:     "client123",
+					ClientSecret: "secret456",
+					RedirectURIs: req.RedirectURIs,
+					ClientName:   req.ClientName,
+				}
+				_ = json.NewEncoder(w).Encode(response)
+			}))
+			defer server.Close()
 
-	response, err := RegisterClient(context.Background(), http.DefaultClient, server.URL, request, "")
-	require.NoError(t, err)
-	assert.Equal(t, "client123", response.ClientID)
-	assert.Equal(t, "secret456", response.ClientSecret)
-	assert.Equal(t, []string{"https://example.com/callback"}, response.RedirectURIs)
-	assert.Equal(t, "Test Client", response.ClientName)
+			request := DefaultRegistrationRequest("https://example.com/callback", "Test Client")
+
+			response, err := RegisterClient(context.Background(), http.DefaultClient, server.URL, request, "")
+			require.NoError(t, err)
+			assert.Equal(t, "client123", response.ClientID)
+			assert.Equal(t, "secret456", response.ClientSecret)
+			assert.Equal(t, []string{"https://example.com/callback"}, response.RedirectURIs)
+			assert.Equal(t, "Test Client", response.ClientName)
+		})
+	}
 }
 
 func TestRegisterClient_WithInitialAccessToken(t *testing.T) {
@@ -209,6 +223,31 @@ func TestGetRegistrationEndpoint_NotSupported(t *testing.T) {
 	_, err := GetRegistrationEndpoint(context.Background(), http.DefaultClient, server.URL)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support dynamic client registration")
+}
+
+func TestGetRegistrationEndpoint_ServerURLWithPath(t *testing.T) {
+	// Verifies that when the server URL has a path (e.g. /v1/mcp), the path is
+	// stripped before constructing the well-known URL. Per MCP spec, the
+	// authorization base URL is derived by discarding the path component.
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			metadata := map[string]string{
+				"registration_endpoint": serverURL + "/register",
+			}
+			_ = json.NewEncoder(w).Encode(metadata)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	endpoint, err := GetRegistrationEndpoint(context.Background(), http.DefaultClient, server.URL+"/v1/mcp")
+	require.NoError(t, err)
+	assert.Equal(t, server.URL+"/register", endpoint)
 }
 
 func TestDiscoverAndRegisterClient_Success(t *testing.T) {

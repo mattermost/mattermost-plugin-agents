@@ -5,14 +5,16 @@ package mmtools
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/config"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
@@ -192,6 +194,32 @@ func TestBuildWebSearchAnnotations(t *testing.T) {
 		require.Greater(t, annotations[0].StartIndex, 0)
 		require.Greater(t, annotations[1].StartIndex, annotations[0].EndIndex)
 	})
+
+	t.Run("uses javascript utf-16 indices for emoji", func(t *testing.T) {
+		message := "Status 🎉 update !!CITE1!! React docs !!CITE2!! end."
+		annotations, cleanedMessage := buildWebSearchAnnotationsAndCleanText(message, results)
+
+		require.Len(t, annotations, 2)
+		require.Equal(t, "Status 🎉 update  React docs  end.", cleanedMessage)
+		require.Equal(t, jsUTF16Length("Status 🎉 update "), annotations[0].StartIndex)
+		require.Equal(t, annotations[0].StartIndex, annotations[0].EndIndex)
+		require.Equal(t, jsUTF16Length("Status 🎉 update  React docs "), annotations[1].StartIndex)
+		require.Equal(t, annotations[1].StartIndex, annotations[1].EndIndex)
+	})
+
+	t.Run("uses javascript utf-16 indices for zwj emoji sequences", func(t *testing.T) {
+		message := "Intro 👨‍👩‍👧‍👦 team !!CITE1!! done."
+		annotations, cleanedMessage := buildWebSearchAnnotationsAndCleanText(message, results)
+
+		require.Len(t, annotations, 1)
+		require.Equal(t, "Intro 👨‍👩‍👧‍👦 team  done.", cleanedMessage)
+		require.Equal(t, jsUTF16Length("Intro 👨‍👩‍👧‍👦 team "), annotations[0].StartIndex)
+		require.Equal(t, annotations[0].StartIndex, annotations[0].EndIndex)
+	})
+}
+
+func jsUTF16Length(s string) int {
+	return len(utf16.Encode([]rune(s)))
 }
 
 // mockLogger implements WebSearchLog for testing
@@ -614,11 +642,14 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 
 type mockLanguageModel struct{}
 
-func (m *mockLanguageModel) ChatCompletion(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (m *mockLanguageModel) ChatCompletion(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	return nil, nil
 }
-func (m *mockLanguageModel) ChatCompletionNoStream(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (m *mockLanguageModel) ChatCompletionNoStream(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
 	return "Summarized content", nil
 }
-func (m *mockLanguageModel) CountTokens(text string) int { return 0 }
-func (m *mockLanguageModel) InputTokenLimit() int        { return 1000 }
+func (m *mockLanguageModel) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	return 0, llm.ErrUnsupportedTokenCount
+}
+func (m *mockLanguageModel) InputTokenLimit() int  { return 1000 }
+func (m *mockLanguageModel) OutputTokenLimit() int { return 1000 }

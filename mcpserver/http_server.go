@@ -13,13 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MattermostHTTPMCPServer wraps MattermostMCPServer for HTTP transport
+// MattermostHTTPMCPServer wraps MattermostMCPServer for HTTP transport.
 type MattermostHTTPMCPServer struct {
 	*MattermostMCPServer
 	config            HTTPConfig
@@ -28,7 +28,7 @@ type MattermostHTTPMCPServer struct {
 	httpServer        *http.Server
 }
 
-// NewHTTPServer creates a new HTTP transport MCP server
+// NewHTTPServer creates a new HTTP transport MCP server.
 func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("server URL cannot be empty")
@@ -78,8 +78,13 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 		nil, // ServerOptions - keeping nil for now
 	)
 
+	// Create HTTP search and file content services for callback to plugin API
+	pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
+	searchService := tools.NewHTTPSemanticSearchService(pluginURL)
+	fileContentService := tools.NewHTTPFileContentService(pluginURL)
+
 	// Register tools with remote access mode
-	mattermostServer.registerTools(tools.AccessModeRemote)
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService)
 
 	// Create HTTP server with OAuth endpoints and MCP routing
 	addr := fmt.Sprintf("%s:%d", config.HTTPBindAddr, config.HTTPPort)
@@ -92,7 +97,7 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	// Create streamable HTTP handler for modern MCP communication
 	mattermostServer.streamableHandler = mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return mattermostServer.mcpServer
-	}, nil)
+	}, &mcp.StreamableHTTPOptions{Stateless: config.Stateless})
 
 	// Create HTTP mux router and setup all routes
 	httpMux := http.NewServeMux()
@@ -103,12 +108,14 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	recoveryHandler := mattermostServer.recoveryMiddleware(mainHandler)
 	secureHandler := mattermostServer.securityMiddleware(recoveryHandler)
 
-	// Create HTTP server with security middleware
+	// Create HTTP server with security middleware.
+	// Timeouts are kept at 30 seconds to limit resource usage and mitigate slowloris-style attacks.
 	mattermostServer.httpServer = &http.Server{
 		Addr:         addr,
 		Handler:      secureHandler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  30 * time.Second,
 	}
 
 	return mattermostServer, nil
@@ -435,7 +442,7 @@ func (s *MattermostHTTPMCPServer) requireAuth(next http.HandlerFunc) http.Handle
 	}
 }
 
-// setupRoutes sets up all HTTP routes for the MCP server on the provided mux
+// setupRoutes sets up all HTTP routes for the MCP server on the provided mux.
 func (s *MattermostHTTPMCPServer) setupRoutes(httpMux *http.ServeMux) {
 	// OAuth 2.0 Protected Resource Metadata endpoint (RFC 9728) - no auth required
 	httpMux.HandleFunc("/.well-known/oauth-protected-resource", s.handleProtectedResourceMetadata)

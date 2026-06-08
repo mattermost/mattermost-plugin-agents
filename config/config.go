@@ -6,13 +6,17 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"sync/atomic"
-	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+)
+
+const (
+	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_PLUGIN" // #nosec G101 -- env var key name, not a credential
+	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"   // #nosec G101 -- env var key name, not a credential
 )
 
 type Config struct {
@@ -20,15 +24,19 @@ type Config struct {
 	Bots                            []llm.BotConfig                  `json:"bots"`
 	DefaultBotName                  string                           `json:"defaultBotName"`
 	TranscriptGenerator             string                           `json:"transcriptBackend"`
-	EnableLLMTrace                  bool                             `json:"enableLLMTrace"`
 	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
+	EnableCallSummary               bool                             `json:"enableCallSummary"`
+	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
+	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
-	MCP                             mcp.Config                       `json:"mcp"`
+	MCP                             MCPConfig                        `json:"mcp"`
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
+	TelemetryOutput                 string                           `json:"telemetryOutput"`
+	OpenTelemetryEndpoint           string                           `json:"openTelemetryEndpoint"`
 }
 
 type WebSearchConfig struct {
@@ -86,10 +94,6 @@ func (c *Container) Config() *Config {
 	return c.cfg.Load()
 }
 
-func (c *Container) GetEnableLLMTrace() bool {
-	return c.cfg.Load().EnableLLMTrace
-}
-
 func (c *Container) GetTranscriptGenerator() string {
 	return c.cfg.Load().TranscriptGenerator
 }
@@ -102,15 +106,51 @@ func (c *Container) GetDefaultBotName() string {
 	return c.cfg.Load().DefaultBotName
 }
 
-func (c *Container) EnableLLMLogging() bool {
-	return c.cfg.Load().EnableLLMTrace
-}
-
 func (c *Container) EnableTokenUsageLogging() bool {
 	return c.cfg.Load().EnableTokenUsageLogging
 }
 
-func (c *Container) MCP() mcp.Config {
+func (c *Container) EnableTokenUsageLogToPlugin() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil || !cfg.EnableTokenUsageLogging {
+		return false
+	}
+
+	if enabled, ok := parseBooleanEnv(tokenUsageLogToPluginEnvKey); ok {
+		return enabled
+	}
+
+	return false
+}
+
+func (c *Container) EnableTokenUsageLogToFile() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil || !cfg.EnableTokenUsageLogging {
+		return false
+	}
+
+	if enabled, ok := parseBooleanEnv(tokenUsageLogToFileEnvKey); ok {
+		return enabled
+	}
+
+	return true
+}
+
+func parseBooleanEnv(key string) (bool, bool) {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return false, false
+	}
+
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, false
+	}
+
+	return parsed, true
+}
+
+func (c *Container) MCP() MCPConfig {
 	return c.cfg.Load().MCP
 }
 
@@ -181,6 +221,23 @@ func (c *Container) Update(newConfig *Config) {
 	}
 }
 
+// StorePersistedConfigWithoutNotify updates in-memory configuration from a value read back from
+// persistent storage without notifying update listeners. Use when the current call stack may
+// already be servicing a listener (for example after SaveConfig during legacy migration) to
+// avoid re-entrant listener invocation and deadlocks.
+func (c *Container) StorePersistedConfigWithoutNotify(newConfig *Config) error {
+	if newConfig == nil {
+		c.cfg.Store(nil)
+		return nil
+	}
+	clone, err := DeepCopyJSON(*newConfig)
+	if err != nil {
+		return fmt.Errorf("failed to deep copy configuration: %w", err)
+	}
+	c.cfg.Store(&clone)
+	return nil
+}
+
 // DeepCopyJSON creates a deep copy of JSON-serializable structs
 func DeepCopyJSON[T any](src T) (T, error) {
 	var dst T
@@ -190,36 +247,4 @@ func DeepCopyJSON[T any](src T) (T, error) {
 	}
 	err = json.Unmarshal(data, &dst)
 	return dst, err
-}
-
-func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) openai.Config {
-	streamingTimeout := time.Second * 30
-	if serviceConfig.StreamingTimeoutSeconds > 0 {
-		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
-	}
-
-	return openai.Config{
-		APIKey:             serviceConfig.APIKey,
-		APIURL:             serviceConfig.APIURL,
-		OrgID:              serviceConfig.OrgID,
-		DefaultModel:       serviceConfig.DefaultModel,
-		InputTokenLimit:    serviceConfig.InputTokenLimit,
-		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
-		StreamingTimeout:   streamingTimeout,
-		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
-		EnabledNativeTools: botConfig.EnabledNativeTools,
-		ReasoningEnabled:   botConfig.ReasoningEnabled,
-		ReasoningEffort:    botConfig.ReasoningEffort,
-	}
-}
-
-// OpenAIConfigFromServiceConfigWithOptions creates an OpenAI config with additional options for OpenAI-compatible APIs
-func OpenAIConfigFromServiceConfigWithOptions(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, disableStreamOptions bool, useMaxTokens bool) openai.Config {
-	cfg := OpenAIConfigFromServiceConfig(serviceConfig, botConfig)
-	cfg.DisableStreamOptions = disableStreamOptions
-	cfg.UseMaxTokens = useMaxTokens
-	// OpenAI-compatible APIs typically don't support the 'user' parameter
-	cfg.SendUserID = false
-	return cfg
 }

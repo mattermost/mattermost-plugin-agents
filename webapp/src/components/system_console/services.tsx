@@ -22,12 +22,14 @@ const defaultNewService: LLMService = {
     defaultModel: '',
     tokenLimit: 0,
     streamingTimeoutSeconds: 0,
-    sendUserId: false,
     outputTokenLimit: 0,
-    useResponsesAPI: false,
+    useResponsesAPI: true,
     region: '',
     awsAccessKeyID: '',
     awsSecretAccessKey: '',
+    vertexProjectID: '',
+    vertexProjectNumber: '',
+    vertexAuthCredentials: '',
 };
 
 export const firstNewService = {
@@ -100,15 +102,14 @@ const Services = (props: Props) => {
                 <PlusAIServiceIcon/>
                 <FormattedMessage defaultMessage='Add an AI Service'/>
             </TertiaryButton>
-            {showErrorDialog && (
-                <ConfirmationDialog
-                    title={<FormattedMessage defaultMessage='Cannot Delete Service'/>}
-                    message={errorMessage}
-                    confirmButtonText={<FormattedMessage defaultMessage='OK'/>}
-                    onConfirm={() => setShowErrorDialog(false)}
-                    onCancel={() => setShowErrorDialog(false)}
-                />
-            )}
+            <ConfirmationDialog
+                show={showErrorDialog}
+                title={<FormattedMessage defaultMessage='Cannot Delete Service'/>}
+                message={errorMessage}
+                confirmButtonText={<FormattedMessage defaultMessage='OK'/>}
+                onConfirm={() => setShowErrorDialog(false)}
+                onCancel={() => setShowErrorDialog(false)}
+            />
         </>
     );
 };

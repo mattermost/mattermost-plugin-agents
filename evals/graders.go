@@ -4,10 +4,11 @@
 package evals
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,10 +41,11 @@ func (e *Eval) LLMRubric(rubric, output string) (*RubricResult, error) {
 				Message: fmt.Sprintf("<Output>%s</Output>\n<Rubric>%s</Rubric>", output, rubric),
 			},
 		},
-		Context: llm.NewContext(),
+		Context:   llm.NewContext(),
+		Operation: llm.OperationEvalGrading,
 	}
 
-	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput[RubricResult]())
+	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput[RubricResult]())
 	if gradeErr != nil {
 		return nil, fmt.Errorf("failed to grade with llm: %w", gradeErr)
 	}

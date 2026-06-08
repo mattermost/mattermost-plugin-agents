@@ -13,6 +13,7 @@ import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
+import {stripWirePrefix} from '@/utils/tool_names';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
@@ -30,7 +31,7 @@ const ToolCallCard = styled.div`
     box-shadow: none;
 `;
 
-const ToolCallHeader = styled.div<{isCollapsed: boolean; $canExpand: boolean}>`
+const ToolCallHeader = styled.div<{$canExpand: boolean}>`
     display: flex;
     align-items: center;
     gap: 8px;
@@ -117,6 +118,21 @@ const SmallRejectedIcon = styled(CloseCircleOutlineIcon)`
     color: var(--dnd-indicator);
     width: 12px;
     height: 12px;
+`;
+
+const AutoApprovedBadge = styled.span`
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 6px;
+    height: 18px;
+    border-radius: 9px;
+    background: rgba(var(--online-indicator-rgb), 0.12);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 14px;
+    color: var(--online-indicator);
+    white-space: nowrap;
 `;
 
 const ResponseSuccessIcon = styled(IconCheckCircle)`
@@ -296,9 +312,11 @@ const ResultContainer = styled.div`
 `;
 
 interface ToolCardProps {
+    postID: string;
     tool: ToolCall;
     isCollapsed: boolean;
     isProcessing: boolean;
+    localDecision?: boolean;
     onToggleCollapse: () => void;
     onApprove?: () => void;
     onReject?: () => void;
@@ -306,12 +324,22 @@ interface ToolCardProps {
     showArguments: boolean;
     showResults: boolean;
     approvalStage?: ToolApprovalStage;
+    isAutoApproved?: boolean;
+}
+
+export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']): boolean {
+    return argumentsValue != null &&
+        typeof argumentsValue === 'object' &&
+        !Array.isArray(argumentsValue) &&
+        Object.keys(argumentsValue).length === 0;
 }
 
 const ToolCard: React.FC<ToolCardProps> = ({
+    postID,
     tool,
     isCollapsed,
     isProcessing,
+    localDecision,
     onToggleCollapse,
     onApprove,
     onReject,
@@ -319,12 +347,13 @@ const ToolCard: React.FC<ToolCardProps> = ({
     showArguments,
     showResults,
     approvalStage = 'call',
+    isAutoApproved = false,
 }) => {
     const {formatMessage} = useIntl();
 
     const isPending = tool.status === ToolCallStatus.Pending;
     const isAccepted = tool.status === ToolCallStatus.Accepted;
-    const isSuccess = tool.status === ToolCallStatus.Success;
+    const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
     const showDecisionButtons = Boolean(onApprove && onReject);
@@ -332,9 +361,9 @@ const ToolCard: React.FC<ToolCardProps> = ({
     const isResultApprovalStage = approvalStage === 'result';
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
 
-    // Convert underscores to spaces and capitalize first letter of each word
-    // (e.g., "create_post" -> "Create Post")
-    const displayName = tool.name.
+    // Tool-call cards lack server context, so strip the pluginmcp prefix
+    // heuristically before title-casing the display name.
+    const displayName = stripWirePrefix(tool.name).
         replace(/_/g, ' ').
         split(' ').
         map((word) => word.charAt(0).toUpperCase() + word.slice(1)).
@@ -347,7 +376,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
     // @ts-ignore
     const {formatText, messageHtmlToComponent} = window.PostUtils;
 
-    const markdownOptions = {
+    const markdownOptions = useMemo(() => ({
         singleline: false,
         mentionHighlight: false,
         atMentions: false,
@@ -355,26 +384,137 @@ const ToolCard: React.FC<ToolCardProps> = ({
         unsafeLinks: !allowUnsafeLinks,
         minimumHashtagLength: 1000000000,
         siteURL,
-    };
+    }), [allowUnsafeLinks, siteURL, team]);
 
-    const messageHtmlToComponentOptions = {
+    const messageHtmlToComponentOptions = useMemo(() => ({
         hasPluginTooltips: false,
         latex: false,
         inlinelatex: false,
-    };
+        postId: postID,
+    }), [postID]);
 
     const renderedArguments = useMemo(() => {
-        if (!showArguments) {
+        if (!showArguments || tool.arguments == null) {
             return null;
         }
 
-        const argumentsValue = tool.arguments ?? {};
-        const argumentsMarkdown = `\`\`\`json\n${JSON.stringify(argumentsValue, null, 2)}\n\`\`\``;
+        let content = JSON.stringify(tool.arguments, null, 2);
+        if (isEmptyToolArgumentsObject(tool.arguments)) {
+            content = formatMessage({
+                id: 'ai.tool_call.no_parameters_required',
+                defaultMessage: 'No parameters required',
+            });
+        }
+        const argumentsMarkdown = `\`\`\`json\n${content}\n\`\`\``;
         return messageHtmlToComponent(
             formatText(argumentsMarkdown, markdownOptions),
             messageHtmlToComponentOptions,
         );
-    }, [showArguments, tool.arguments]);
+    }, [showArguments, tool.arguments, formatMessage, formatText, markdownOptions, messageHtmlToComponent, messageHtmlToComponentOptions]);
+
+    const hasLocalDecision = localDecision != null;
+
+    const renderDecisionButtons = () => {
+        if (hasLocalDecision) {
+            return (
+                <StatusContainer>
+                    {localDecision ? <SmallSuccessIcon size={16}/> : <SmallRejectedIcon size={16}/>}
+                    {localDecision ? (
+                        <FormattedMessage
+                            id='ai.tool_call.status.accepted'
+                            defaultMessage='Accepted'
+                        />
+                    ) : (
+                        <FormattedMessage
+                            id='ai.tool_call.status.rejected'
+                            defaultMessage='Rejected'
+                        />
+                    )}
+                </StatusContainer>
+            );
+        }
+
+        if (isProcessing) {
+            return (
+                <StatusContainer>
+                    <ProcessingSpinnerContainer>
+                        <ProcessingSpinner/>
+                    </ProcessingSpinnerContainer>
+                    <FormattedMessage
+                        id='ai.tool_call.processing'
+                        defaultMessage='Processing...'
+                    />
+                </StatusContainer>
+            );
+        }
+
+        return (
+            <ButtonContainer>
+                {isResultApprovalStage ? (
+                    <>
+                        <OverlayTrigger
+                            placement='top'
+                            overlay={
+                                <ShareVisibilityTooltip>
+                                    <GlobeIcon size={14}/>
+                                    <FormattedMessage
+                                        id='ai.tool_call.visible_to_channel'
+                                        defaultMessage='Visible to channel'
+                                    />
+                                </ShareVisibilityTooltip>
+                            }
+                        >
+                            <span>
+                                <ResultDecisionButton
+                                    variant='primary'
+                                    onClick={onApprove}
+                                    disabled={isProcessing}
+                                >
+                                    <GlobeIcon size={14}/>
+                                    <FormattedMessage
+                                        id='ai.tool_call.share'
+                                        defaultMessage='Share'
+                                    />
+                                </ResultDecisionButton>
+                            </span>
+                        </OverlayTrigger>
+                        <ResultDecisionButton
+                            variant='secondary'
+                            onClick={onReject}
+                            disabled={isProcessing}
+                        >
+                            <LockIcon size={14}/>
+                            <FormattedMessage
+                                id='ai.tool_call.keep_private'
+                                defaultMessage='Keep private'
+                            />
+                        </ResultDecisionButton>
+                    </>
+                ) : (
+                    <>
+                        <AcceptRejectButton
+                            onClick={onApprove}
+                            disabled={isProcessing}
+                        >
+                            <FormattedMessage
+                                id='ai.tool_call.approve'
+                                defaultMessage='Accept'
+                            />
+                        </AcceptRejectButton>
+                        <AcceptRejectButton
+                            onClick={onReject}
+                            disabled={isProcessing}
+                        >
+                            <FormattedMessage
+                                id='ai.tool_call.reject'
+                                defaultMessage='Reject'
+                            />
+                        </AcceptRejectButton>
+                    </>
+                )}
+            </ButtonContainer>
+        );
+    };
 
     const renderedResult = useMemo(() => {
         if (!showResults || !tool.result) {
@@ -395,12 +535,11 @@ const ToolCard: React.FC<ToolCardProps> = ({
             formatText(resultMarkdown, markdownOptions),
             messageHtmlToComponentOptions,
         );
-    }, [showResults, tool.result]);
+    }, [showResults, tool.result, formatText, markdownOptions, messageHtmlToComponent, messageHtmlToComponentOptions]);
 
     return (
         <ToolCallCard>
             <ToolCallHeader
-                isCollapsed={isCollapsed}
                 $canExpand={canExpand}
                 onClick={canExpand ? onToggleCollapse : undefined} // eslint-disable-line no-undefined
             >
@@ -416,6 +555,14 @@ const ToolCard: React.FC<ToolCardProps> = ({
                     {!showProcessingSpinner && isRejected && <SmallRejectedIcon size={16}/>}
                 </StatusIcon>
                 <ToolName>{displayName}</ToolName>
+                {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
+                    <AutoApprovedBadge>
+                        <FormattedMessage
+                            id='ai.tool_call.auto_approved'
+                            defaultMessage='Auto-approved'
+                        />
+                    </AutoApprovedBadge>
+                )}
             </ToolCallHeader>
 
             {!isCollapsed && (
@@ -491,84 +638,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
                 </>
             )}
 
-            {showDecisionButtons && (
-                isProcessing ? (
-                    <StatusContainer>
-                        <ProcessingSpinnerContainer>
-                            <ProcessingSpinner/>
-                        </ProcessingSpinnerContainer>
-                        <FormattedMessage
-                            id='ai.tool_call.processing'
-                            defaultMessage='Processing...'
-                        />
-                    </StatusContainer>
-                ) : (
-                    <ButtonContainer>
-                        {isResultApprovalStage ? (
-                            <>
-                                <OverlayTrigger
-                                    placement='top'
-                                    overlay={
-                                        <ShareVisibilityTooltip>
-                                            <GlobeIcon size={14}/>
-                                            <FormattedMessage
-                                                id='ai.tool_call.visible_to_channel'
-                                                defaultMessage='Visible to channel'
-                                            />
-                                        </ShareVisibilityTooltip>
-                                    }
-                                >
-                                    <span>
-                                        <ResultDecisionButton
-                                            variant='primary'
-                                            onClick={onApprove}
-                                            disabled={isProcessing}
-                                        >
-                                            <GlobeIcon size={14}/>
-                                            <FormattedMessage
-                                                id='ai.tool_call.share'
-                                                defaultMessage='Share'
-                                            />
-                                        </ResultDecisionButton>
-                                    </span>
-                                </OverlayTrigger>
-                                <ResultDecisionButton
-                                    variant='secondary'
-                                    onClick={onReject}
-                                    disabled={isProcessing}
-                                >
-                                    <LockIcon size={14}/>
-                                    <FormattedMessage
-                                        id='ai.tool_call.keep_private'
-                                        defaultMessage='Keep private'
-                                    />
-                                </ResultDecisionButton>
-                            </>
-                        ) : (
-                            <>
-                                <AcceptRejectButton
-                                    onClick={onApprove}
-                                    disabled={isProcessing}
-                                >
-                                    <FormattedMessage
-                                        id='ai.tool_call.approve'
-                                        defaultMessage='Accept'
-                                    />
-                                </AcceptRejectButton>
-                                <AcceptRejectButton
-                                    onClick={onReject}
-                                    disabled={isProcessing}
-                                >
-                                    <FormattedMessage
-                                        id='ai.tool_call.reject'
-                                        defaultMessage='Reject'
-                                    />
-                                </AcceptRejectButton>
-                            </>
-                        )}
-                    </ButtonContainer>
-                )
-            )}
+            {showDecisionButtons && renderDecisionButtons()}
         </ToolCallCard>
     );
 };

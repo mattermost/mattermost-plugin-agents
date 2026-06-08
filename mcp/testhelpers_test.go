@@ -1,3 +1,5 @@
+//go:build integration
+
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
@@ -11,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
 	"github.com/mattermost/mattermost/server/public/model"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -76,6 +78,28 @@ func GetSharedTestSuite(t *testing.T) *EmbeddedTestSuite {
 
 // setupSharedSuite initializes the shared Mattermost container
 func setupSharedSuite(t *testing.T) *EmbeddedTestSuite {
+	const maxInitAttempts = 3
+
+	var lastErr error
+	for attempt := 1; attempt <= maxInitAttempts; attempt++ {
+		suite, err := setupSharedSuiteAttempt(t)
+		if err == nil {
+			return suite
+		}
+
+		lastErr = err
+		t.Logf("Shared test suite init attempt %d/%d failed: %v", attempt, maxInitAttempts, err)
+
+		if attempt < maxInitAttempts {
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	t.Fatalf("Failed to start shared Mattermost container after %d attempts: %v", maxInitAttempts, lastErr)
+	return nil
+}
+
+func setupSharedSuiteAttempt(t *testing.T) (*EmbeddedTestSuite, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -91,21 +115,21 @@ func setupSharedSuite(t *testing.T) *EmbeddedTestSuite {
 		mmcontainer.WithConfig(cfg),
 	)
 	if err != nil {
-		t.Fatalf("Failed to start shared Mattermost container: %v", err)
+		return nil, fmt.Errorf("failed to start shared Mattermost container: %w", err)
 	}
 
 	// Get connection details
 	serverURL, err := container.URL(ctx)
 	if err != nil {
 		_ = container.Terminate(ctx)
-		t.Fatalf("Failed to get server URL: %v", err)
+		return nil, fmt.Errorf("failed to get server URL: %w", err)
 	}
 
 	// Get admin client
 	adminClient, err := container.GetAdminClient(ctx)
 	if err != nil {
 		_ = container.Terminate(ctx)
-		t.Fatalf("Failed to get admin client: %v", err)
+		return nil, fmt.Errorf("failed to get admin client: %w", err)
 	}
 
 	return &EmbeddedTestSuite{
@@ -113,7 +137,7 @@ func setupSharedSuite(t *testing.T) *EmbeddedTestSuite {
 		container:   container,
 		serverURL:   serverURL,
 		adminClient: adminClient,
-	}
+	}, nil
 }
 
 // EmbeddedTestSuite provides infrastructure for testing the embedded MCP server
@@ -179,7 +203,7 @@ func (s *EmbeddedTestSuite) SetupEmbeddedServer() {
 	}
 
 	// Create embedded server
-	server, err := mcpserver.NewInMemoryServer(config, s.logger)
+	server, err := mcpserver.NewInMemoryServer(config, s.logger, nil)
 	require.NoError(s.t, err, "Failed to create embedded MCP server")
 
 	s.embeddedServer = server
@@ -446,7 +470,6 @@ func (s *EmbeddedTestSuite) CreateClient(t *testing.T, user *model.User, session
 	// Create embedded server client
 	embeddedClient := NewEmbeddedServerClient(wrapper, pluginAPIClient.Log, pluginAPIClient)
 
-	// Create client
 	client, err := embeddedClient.CreateClient(ctx, user.Id, session.Id)
 	require.NoError(t, err, "Should create client successfully")
 	require.NotNil(t, client, "Client should not be nil")
@@ -476,8 +499,7 @@ func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, 
 		return session.Token, nil
 	}
 
-	// Call the underlying server's CreateConnectionForUser
-	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
+	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver, nil)
 }
 
 // CreateClientManager creates a ClientManager for testing
@@ -519,7 +541,7 @@ func (s *EmbeddedTestSuite) CreateClientManager(t *testing.T, session *model.Ses
 	}
 
 	// Create ClientManager with nil httpClient for tests (no remote requests in these tests)
-	manager := NewClientManager(config, pluginAPIClient.Log, pluginAPIClient, nil, wrapper, nil)
+	manager := NewClientManager(config, pluginAPIClient.Log, pluginAPIClient, nil, wrapper, nil, nil)
 	require.NotNil(t, manager, "ClientManager should not be nil")
 
 	return manager

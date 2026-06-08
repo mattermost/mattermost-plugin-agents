@@ -4,46 +4,10 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 	"testing"
-
-	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
-
-type LanguageModelLogWrapper struct {
-	log     pluginapi.LogService
-	wrapped LanguageModel
-}
-
-func NewLanguageModelLogWrapper(log pluginapi.LogService, wrapped LanguageModel) *LanguageModelLogWrapper {
-	return &LanguageModelLogWrapper{
-		log:     log,
-		wrapped: wrapped,
-	}
-}
-
-func (w *LanguageModelLogWrapper) logInput(request CompletionRequest, opts ...LanguageModelOption) {
-	prompt := fmt.Sprintf("\n%v", request)
-	w.log.Info("LLM Call", "prompt", prompt)
-}
-
-func (w *LanguageModelLogWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
-	w.logInput(request, opts...)
-	return w.wrapped.ChatCompletion(request, opts...)
-}
-
-func (w *LanguageModelLogWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
-	w.logInput(request, opts...)
-	return w.wrapped.ChatCompletionNoStream(request, opts...)
-}
-
-func (w *LanguageModelLogWrapper) CountTokens(text string) int {
-	return w.wrapped.CountTokens(text)
-}
-
-func (w *LanguageModelLogWrapper) InputTokenLimit() int {
-	return w.wrapped.InputTokenLimit()
-}
 
 type LanguageModelTestLogWrapper struct {
 	t       *testing.T
@@ -62,20 +26,24 @@ func (w *LanguageModelTestLogWrapper) logInput(request CompletionRequest, opts .
 	w.t.Log(prompt)
 }
 
-func (w *LanguageModelTestLogWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+func (w *LanguageModelTestLogWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	w.logInput(request, opts...)
-	return w.wrapped.ChatCompletion(request, opts...)
+	return w.wrapped.ChatCompletion(ctx, request, opts...)
 }
 
-func (w *LanguageModelTestLogWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+func (w *LanguageModelTestLogWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
 	w.logInput(request, opts...)
-	return w.wrapped.ChatCompletionNoStream(request, opts...)
+	return w.wrapped.ChatCompletionNoStream(ctx, request, opts...)
 }
 
-func (w *LanguageModelTestLogWrapper) CountTokens(text string) int {
-	return w.wrapped.CountTokens(text)
+func (w *LanguageModelTestLogWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	return w.wrapped.CountTokens(ctx, request, opts...)
 }
 
 func (w *LanguageModelTestLogWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
+}
+
+func (w *LanguageModelTestLogWrapper) OutputTokenLimit() int {
+	return w.wrapped.OutputTokenLimit()
 }

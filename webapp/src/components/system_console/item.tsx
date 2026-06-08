@@ -2,10 +2,25 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import styled from 'styled-components';
+import styled, {createGlobalStyle} from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 import CreatableSelect from 'react-select/creatable';
 import {StylesConfig, SingleValue} from 'react-select';
+
+import {getPortalTarget} from '../../utils/dom';
+
+// Portaled Combobox menus need to stack above the agent config modal overlay
+// (z-index 2000). Targets react-select's classNamePrefix='SystemConsoleCombobox'
+// so the z-index lives in styled-components rather than inline style props.
+// react-select v5 emits its default menuPortalCSS (z-index: 1) via an
+// @emotion/react generated className, so whether that or our global rule wins
+// depends on CSS declaration order at runtime. Use !important to make the
+// override deterministic regardless of which stylesheet is parsed last.
+const ComboboxPortalStyles = createGlobalStyle`
+    .SystemConsoleCombobox__menu-portal {
+        z-index: 10000 !important;
+    }
+`;
 
 export const ItemList = styled.div`
 	display: grid;
@@ -26,6 +41,8 @@ export type TextItemProps = {
     min?: string,
     max?: string,
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => void,
+    onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void,
+    onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void,
     disabled?: boolean,
 };
 
@@ -40,6 +57,8 @@ export const TextItem = (props: TextItemProps) => {
                     type={props.type ? props.type : 'text'}
                     placeholder={props.placeholder ? props.placeholder : props.label}
                     onChange={props.onChange}
+                    onBlur={props.onBlur}
+                    onFocus={props.onFocus}
                     maxLength={props.maxLength}
                     step={props.step}
                     min={props.min}
@@ -134,10 +153,11 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
             minHeight: '35px',
             height: '35px',
             borderRadius: '2px',
-            borderColor: state.isFocused ? '#66afe9' : 'rgba(var(--center-channel-color-rgb), 0.16)',
-            boxShadow: state.isFocused ? 'inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(102, 175, 233, 0.75)' : '0px 1px 1px rgba(0, 0, 0, 0.075) inset',
+            backgroundColor: 'var(--center-channel-bg)',
+            borderColor: state.isFocused ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.16)',
+            boxShadow: state.isFocused ? 'none' : '0px 1px 1px rgba(0, 0, 0, 0.075) inset',
             '&:hover': {
-                borderColor: state.isFocused ? '#66afe9' : 'rgba(var(--center-channel-color-rgb), 0.16)',
+                borderColor: state.isFocused ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.16)',
             },
         }),
         valueContainer: (base) => ({
@@ -145,10 +165,19 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
             height: '35px',
             padding: '0 12px',
         }),
+        singleValue: (base) => ({
+            ...base,
+            color: 'var(--center-channel-color)',
+        }),
+        placeholder: (base) => ({
+            ...base,
+            color: 'rgba(var(--center-channel-color-rgb), 0.48)',
+        }),
         input: (base) => ({
             ...base,
             margin: '0',
             padding: '0',
+            color: 'var(--center-channel-color)',
         }),
         indicatorSeparator: () => ({
             display: 'none',
@@ -173,14 +202,31 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
         menu: (base) => ({
             ...base,
             zIndex: 9999,
+            backgroundColor: 'var(--center-channel-bg)',
+            border: '1px solid rgba(var(--center-channel-color-rgb), 0.16)',
         }),
+        option: (base, state) => {
+            let backgroundColor = 'transparent';
+            if (state.isSelected) {
+                backgroundColor = 'rgba(var(--center-channel-color-rgb), 0.12)';
+            } else if (state.isFocused) {
+                backgroundColor = 'rgba(var(--center-channel-color-rgb), 0.08)';
+            }
+            return {
+                ...base,
+                backgroundColor,
+                color: 'var(--center-channel-color)',
+            };
+        },
     };
 
     return (
         <>
+            <ComboboxPortalStyles/>
             <ItemLabel>{props.label}</ItemLabel>
             <TextFieldContainer>
                 <CreatableSelect<SelectOption, false>
+                    classNamePrefix='SystemConsoleCombobox'
                     value={currentValue}
                     onChange={handleChange}
                     options={selectOptions}
@@ -188,6 +234,8 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                     styles={selectStyles}
                     isClearable={props.isClearable ?? true}
                     formatCreateLabel={(inputValue: string) => `Use custom model: ${inputValue}`}
+                    menuPortalTarget={getPortalTarget()}
+                    menuPosition='fixed'
                 />
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
@@ -203,7 +251,7 @@ export const ItemLabel = styled.label`
 	line-height: 20px;
 `;
 
-const TextFieldContainer = styled.div`
+export const TextFieldContainer = styled.div`
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -225,11 +273,16 @@ export const StyledInput = styled.input<{ as?: string }>`
 	border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
 	box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
 	height: 35px;
-	background: white;
+	background: var(--center-channel-bg);
+	color: var(--center-channel-color);
 
 	font-size: 14px;
 	font-weight: 400;
 	line-height: 20px;
+
+	&::placeholder {
+		color: rgba(var(--center-channel-color-rgb), 0.48);
+	}
 
 	${(props) => props.as === 'textarea' && `
 		resize: vertical;
@@ -237,9 +290,14 @@ export const StyledInput = styled.input<{ as?: string }>`
 	`}
 
 	&:focus {
-		border-color: $66afe9;
-		box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(102, 175, 233, 0.75);
-		outline: 0;
+		border-color: var(--button-bg);
+		outline: none;
+		box-shadow: none;
+	}
+
+	&:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 `;
 

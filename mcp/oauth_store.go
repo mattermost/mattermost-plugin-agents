@@ -7,9 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"golang.org/x/oauth2"
 )
 
@@ -31,6 +33,16 @@ func buildTokenKey(userID, serverID string) string {
 	return fmt.Sprintf("%s_%s_%s", prefix, userID, serverID)
 }
 
+func buildAuthNeededKey(userID, serverID string) string {
+	prefix := "mcp_oauth_needed_v1"
+	return fmt.Sprintf("%s_%s_%s", prefix, userID, serverID)
+}
+
+type OAuthNeededState struct {
+	AuthURL string    `json:"authURL"`
+	SeenAt  time.Time `json:"seenAt"`
+}
+
 // loadToken retrieves the OAuth token for a user and server from the KV store
 // If no token is found, it returns nil to indicate no token exists
 func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error) {
@@ -39,6 +51,9 @@ func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error)
 	var oauth2Token oauth2.Token
 	err := m.pluginAPI.KVGet(tokenKey, &oauth2Token)
 	if err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to retrieve token from KV store: %w", err)
 	}
 
@@ -48,6 +63,64 @@ func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error)
 	}
 
 	return &oauth2Token, nil
+}
+
+// HasStoredToken returns true when a non-expired OAuth token exists for the
+// given user and server. It does not refresh the token or contact upstream.
+func (m *OAuthManager) HasStoredToken(userID, serverID string) (bool, error) {
+	tok, err := m.loadToken(userID, serverID)
+	if err != nil {
+		return false, err
+	}
+	if tok == nil {
+		return false, nil
+	}
+	// Consider a token present even if it might be expired — the caller only
+	// needs to know whether the user has ever authenticated with this server.
+	return true, nil
+}
+
+const oauthNeededStateTTL = 24 * time.Hour
+
+func (m *OAuthManager) LoadAuthNeededState(userID, serverID string) (*OAuthNeededState, error) {
+	authNeededKey := buildAuthNeededKey(userID, serverID)
+
+	var state OAuthNeededState
+	err := m.pluginAPI.KVGet(authNeededKey, &state)
+	if err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to retrieve OAuth-needed state from KV store: %w", err)
+	}
+
+	if state.AuthURL == "" {
+		return nil, nil
+	}
+
+	return &state, nil
+}
+
+func (m *OAuthManager) StoreAuthNeededState(userID, serverID, authURL string) error {
+	authNeededKey := buildAuthNeededKey(userID, serverID)
+	state := &OAuthNeededState{
+		AuthURL: authURL,
+		SeenAt:  time.Now(),
+	}
+
+	if err := m.pluginAPI.KVSetWithExpiry(authNeededKey, state, oauthNeededStateTTL); err != nil {
+		return fmt.Errorf("failed to store OAuth-needed state: %w", err)
+	}
+
+	return nil
+}
+
+func (m *OAuthManager) DeleteAuthNeededState(userID, serverID string) error {
+	authNeededKey := buildAuthNeededKey(userID, serverID)
+	if err := m.pluginAPI.KVDelete(authNeededKey); err != nil {
+		return fmt.Errorf("failed to delete OAuth-needed state: %w", err)
+	}
+	return nil
 }
 
 func (m *OAuthManager) storeToken(userID, serverID string, token *oauth2.Token) error {
@@ -68,6 +141,14 @@ func (m *OAuthManager) deleteToken(userID, serverID string) error {
 	return nil
 }
 
+// DeleteUserToken removes the stored OAuth token for a user and server,
+// effectively disconnecting the user from that MCP server.
+func (m *OAuthManager) DeleteUserToken(userID, serverID string) error {
+	tokenErr := m.deleteToken(userID, serverID)
+	authNeededErr := m.DeleteAuthNeededState(userID, serverID)
+	return errors.Join(tokenErr, authNeededErr)
+}
+
 type ClientCredentials struct {
 	ClientID     string    `json:"clientID"`
 	ClientSecret string    `json:"clientSecret"`
@@ -81,6 +162,9 @@ func (m *OAuthManager) loadClientCredentials(serverURL string) (*ClientCredentia
 	var creds ClientCredentials
 	err := m.pluginAPI.KVGet(credKey, &creds)
 	if err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to retrieve client credentials from KV store: %w", err)
 	}
 
@@ -119,9 +203,12 @@ type OAuthSession struct {
 	ServerMetadataURL string    `json:"serverMetadataURL"`
 	CodeVerifier      string    `json:"codeVerifier"`
 	State             string    `json:"state"`
+	StaticClientID    string    `json:"staticClientID,omitempty"`
 	CreatedAt         time.Time `json:"createdAt"`
 }
 
+// Unlike the other loaders, a missing key surfaces as an error here:
+// ProcessCallback nil-derefs the returned session unguarded.
 func (m *OAuthManager) loadSession(userID, state string) (*OAuthSession, error) {
 	sessionKey := buildSessionKey(userID, state)
 
@@ -139,14 +226,12 @@ func (m *OAuthManager) loadSession(userID, state string) (*OAuthSession, error) 
 	return &session, nil
 }
 
+const oauthSessionTTL = 10 * time.Minute
+
 func (m *OAuthManager) storeSession(session *OAuthSession) error {
 	sessionKey := buildSessionKey(session.UserID, session.State)
-	sessionData, err := json.Marshal(session)
-	if err != nil {
-		return fmt.Errorf("failed to marshal OAuth session: %w", err)
-	}
 
-	if err := m.pluginAPI.KVSet(sessionKey, sessionData); err != nil {
+	if err := m.pluginAPI.KVSetWithExpiry(sessionKey, session, oauthSessionTTL); err != nil {
 		return fmt.Errorf("failed to store OAuth session: %w", err)
 	}
 

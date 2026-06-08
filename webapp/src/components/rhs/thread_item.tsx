@@ -30,19 +30,7 @@ const TitleText = styled.div`
     white-space: nowrap;
 `;
 
-const Preview = styled.div`
-    overflow: hidden;
-    color: var(--center-channel-color);
-    text-overflow: ellipsis;
-    whitespace: nowrap;
-    margin-bottom: 12px;
-	height: 40px;
-	display: -webkit-box;
-	-webkit-line-clamp: 2;
-	-webkit-box-orient: vertical;
-`;
-
-const RepliesCount = styled.div`
+const TurnCount = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
     font-weight: 600;
 `;
@@ -66,12 +54,12 @@ const Footer = styled.div`
 	display: flex;
 	flex-direction: row;
 	gap: 10px;
+	margin-top: 12px;
 `;
 
 type Props = {
     postTitle: string;
-    postMessage: string;
-    repliesCount: number;
+    turnCount: number;
     lastActivityDate: number;
     label: string;
     onClick: () => void;
@@ -80,7 +68,7 @@ type Props = {
 const DefaultTitle = 'Conversation with Agents';
 
 export default function ThreadItem(props: Props) {
-    const repliesText = props.repliesCount === 1 ? '1 reply' : `${props.repliesCount} replies`;
+    const turnText = props.turnCount === 1 ? '1 message' : `${props.turnCount} messages`;
     return (
         <ThreadItemContainer onClick={props.onClick}>
             <Title>
@@ -94,10 +82,9 @@ export default function ThreadItem(props: Props) {
                     />
                 </LastActivityDate>
             </Title>
-            <Preview>{props.postMessage}</Preview>
             <Footer>
                 <Label>{props.label}</Label>
-                <RepliesCount>{repliesText}</RepliesCount>
+                <TurnCount>{turnText}</TurnCount>
             </Footer>
         </ThreadItemContainer>
     );

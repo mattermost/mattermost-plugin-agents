@@ -4,7 +4,7 @@
 package meetings
 
 import (
-	"context"
+	stdcontext "context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,13 +13,13 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/chunking"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
-	"github.com/mattermost/mattermost-plugin-ai/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -195,9 +195,9 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			bot,
 			requestingUser,
 			channel,
-			s.contextBuilder.WithLLMContextDefaultTools(bot),
+			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(bot, text, requestContext)
+		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, text, requestContext)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -208,7 +208,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			Message:   "",
 		}
 		summaryPost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
-		if err := s.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
+		if err := s.streamingService.StreamToNewPost(stdcontext.Background(), bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
 			return fmt.Errorf("unable to stream result to post: %w", err)
 		}
 
@@ -256,9 +256,9 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			bot,
 			requestingUser,
 			channel,
-			s.contextBuilder.WithLLMContextDefaultTools(bot),
+			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(bot, transcription, llmContext)
+		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, transcription, llmContext)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -267,13 +267,13 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			return fmt.Errorf("unable to update transcript post: %w", err)
 		}
 
-		ctx, err := s.streamingService.GetStreamingContext(context.Background(), transcriptPost.Id)
+		ctx, err := s.streamingService.GetStreamingContext(stdcontext.Background(), transcriptPost.Id)
 		if err != nil {
 			return fmt.Errorf("unable to get post streaming context: %w", err)
 		}
 		defer s.streamingService.FinishStreaming(transcriptPost.Id)
 
-		s.streamingService.StreamToPost(ctx, summaryStream, transcriptPost, requestingUser.Locale)
+		s.streamingService.StreamToPost(ctx, summaryStream, transcriptPost, requestingUser.Locale, requestingUser.Id)
 
 		return nil
 	}() //nolint:errcheck
@@ -281,15 +281,20 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 	return nil
 }
 
-func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error) {
+func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error) {
 	llmFormattedTranscription := transcription.FormatForLLM()
-	tokens := bot.LLM().CountTokens(llmFormattedTranscription)
-	tokenLimitWithMargin := int(float64(bot.LLM().InputTokenLimit())*0.75) - ContextTokenMargin
-	if tokenLimitWithMargin < 0 {
-		tokenLimitWithMargin = ContextTokenMargin / 2
+	tokens := llm.EstimateTokens(llmFormattedTranscription)
+	inputLimit := bot.LLM().InputTokenLimit()
+	// Zero means "no client-side truncation" — skip chunking entirely.
+	tokenLimitWithMargin := 0
+	if inputLimit > 0 {
+		tokenLimitWithMargin = int(float64(inputLimit)*0.75) - ContextTokenMargin
+		if tokenLimitWithMargin < 0 {
+			tokenLimitWithMargin = ContextTokenMargin / 2
+		}
 	}
 	isChunked := false
-	if tokens > tokenLimitWithMargin {
+	if tokenLimitWithMargin > 0 && tokens > tokenLimitWithMargin {
 		s.pluginAPI.Log.Debug("Transcription too long, summarizing in chunks.", "tokens", tokens, "limit", tokenLimitWithMargin)
 		chunks := chunking.SplitPlaintextOnSentences(llmFormattedTranscription, tokenLimitWithMargin*4)
 		summarizedChunks := make([]string, 0, len(chunks))
@@ -310,10 +315,12 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 						Message: chunk,
 					},
 				},
-				Context: context,
+				Context:          context,
+				Operation:        llm.OperationMeetingChunkSummary,
+				OperationSubType: llm.SubTypeTranscriptionChunk,
 			}
 
-			summarizedChunk, err := bot.LLM().ChatCompletionNoStream(request)
+			summarizedChunk, err := bot.LLM().ChatCompletionNoStream(ctx, request)
 			if err != nil {
 				return nil, fmt.Errorf("unable to get summarized chunk: %w", err)
 			}
@@ -323,13 +330,18 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 
 		llmFormattedTranscription = strings.Join(summarizedChunks, "\n\n")
 		isChunked = true
-		s.pluginAPI.Log.Debug("Completed chunk summarization", "chunks", len(summarizedChunks), "tokens", bot.LLM().CountTokens(llmFormattedTranscription))
+		s.pluginAPI.Log.Debug("Completed chunk summarization", "chunks", len(summarizedChunks), "tokens", llm.EstimateTokens(llmFormattedTranscription))
 	}
 
 	context.Parameters = map[string]any{"IsChunked": fmt.Sprintf("%t", isChunked)}
 	systemPrompt, err := s.prompts.Format(prompts.PromptMeetingSummarySystem, context)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get meeting summary prompt: %w", err)
+	}
+
+	operationSubType := llm.SubTypeChunkedFalse
+	if isChunked {
+		operationSubType = llm.SubTypeChunkedTrue
 	}
 
 	completionRequest := llm.CompletionRequest{
@@ -343,10 +355,12 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 				Message: llmFormattedTranscription,
 			},
 		},
-		Context: context,
+		Context:          context,
+		Operation:        llm.OperationMeetingSummary,
+		OperationSubType: operationSubType,
 	}
 
-	summaryStream, err := bot.LLM().ChatCompletion(completionRequest, llm.WithToolsDisabled())
+	summaryStream, err := bot.LLM().ChatCompletion(ctx, completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, fmt.Errorf("unable to get meeting summary: %w", err)
 	}

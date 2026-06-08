@@ -6,10 +6,11 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -19,8 +20,10 @@ type MattermostStdioMCPServer struct {
 	config StdioConfig
 }
 
-// NewStdioServer creates a new STDIO transport MCP server
-func NewStdioServer(config StdioConfig, logger loggerlib.Logger) (*MattermostStdioMCPServer, error) {
+// NewStdioServer creates a new STDIO transport MCP server.
+// searchService and fileContentService are optional — if nil, default HTTP-based
+// services are created that call back to the plugin's /api/v1 endpoints.
+func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) (*MattermostStdioMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("server URL cannot be empty")
 	}
@@ -60,8 +63,17 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger) (*MattermostStd
 		return nil, fmt.Errorf("startup token validation failed: %w", err)
 	}
 
+	// Use provided services or create default HTTP callback services
+	pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
+	if searchService == nil {
+		searchService = tools.NewHTTPSemanticSearchService(pluginURL)
+	}
+	if fileContentService == nil {
+		fileContentService = tools.NewHTTPFileContentService(pluginURL)
+	}
+
 	// Register tools with local access mode
-	mattermostServer.registerTools(tools.AccessModeLocal)
+	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService)
 
 	return mattermostServer, nil
 }

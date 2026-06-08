@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import RunRealAPIContainer from 'helpers/real-api-container';
+import RunRealAPIContainer, { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -10,6 +10,7 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
+import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Citations and Annotations
@@ -18,8 +19,8 @@ import {
  * Runs once per configured provider (OpenAI and/or Anthropic).
  *
  * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic (claude-3-7-sonnet)
- * - OPENAI_API_KEY: To run tests with OpenAI (gpt-5)
+ * - ANTHROPIC_API_KEY: To run tests with Anthropic
+ * - OPENAI_API_KEY: To run tests with OpenAI
  *
  * Tests:
  * 1. Citation Display - Renders from Real API
@@ -28,7 +29,8 @@ import {
  * 4. Citation Multiple Citations
  * 5. Citation Persistence After Refresh
  * 6. Citations with Markdown Content
- * 7. Citation Favicon Display
+ * 7. Citation Inline Positioning
+ * 8. Citation Favicon Display
  */
 
 const username = 'regularuser';
@@ -57,6 +59,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
+            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
             if (!config.shouldRunTests) return;
 
             // Customize provider to disable reasoning for citation tests
@@ -75,6 +78,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
             if (mattermost) {
                 await mattermost.stop();
             }
+        });
+
+        test.afterEach(async ({}, testInfo) => {
+            await attachAPIErrorContext(testInfo);
         });
 
         test('Citation Display - Renders from Real API', async ({ page }) => {
@@ -207,8 +214,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             const isAnthropic = provider.service.type === 'anthropic';
             const prompt = isAnthropic
-                ? 'Search the web for TypeScript, JavaScript, and React and briefly compare them with citations (1 paragraph)'
+                ? 'Search the web for TypeScript, JavaScript, and React. Briefly compare them in one paragraph and include at least 2 citations from different sources in the final answer.'
                 : 'Use web search to find TypeScript, JavaScript, React info and briefly compare with citations (1 paragraph)';
+            const citationTimeout = isAnthropic ? 45000 : 60000;
+            const citationRetries = isAnthropic ? 3 : 1;
 
             await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
@@ -216,8 +225,8 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for multiple citations to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
-            await llmBotHelper.waitForCitationWithRetry(2, undefined, 60000);
+            await llmBotHelper.waitForCitationWithRetry(1, undefined, citationTimeout, citationRetries);
+            await llmBotHelper.waitForCitationWithRetry(2, undefined, citationTimeout, citationRetries);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();
@@ -329,6 +338,35 @@ function createProviderTestSuite(provider: ProviderBundle) {
             // Web search in DM context MUST produce citations
             expect(count).toBeGreaterThan(0);
             await expect(citations.first()).toBeVisible();
+        });
+
+        test('Citation Inline Positioning', async ({ page }) => {
+            test.skip(!config.shouldRunTests, skipMessage);
+            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
+
+            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
+            await mmPage.login(mattermost.url(), username, password);
+
+            // Navigate to DM with bot (required for web_search native tool)
+            await mmPage.createAndNavigateToDMWithBot(mattermost, username, password, botUsername);
+
+            await aiPlugin.openRHS();
+
+            const isAnthropic = provider.service.type === 'anthropic';
+            const prompt = isAnthropic
+                ? 'Search the web for TypeScript, JavaScript, and React. Briefly compare them in one paragraph and include at least 2 citations from different sources in the final answer.'
+                : 'Use web search to find TypeScript, JavaScript, React info and briefly compare with citations (1 paragraph)';
+
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
+
+            // Wait for streaming to complete (smart wait, up to 5 min)
+            await llmBotHelper.waitForStreamingComplete();
+
+            // Wait for multiple citations to appear
+            await llmBotHelper.waitForCitationWithRetry(2, undefined, 60000);
+
+            // Verify citations are inline (not all grouped at beginning)
+            await llmBotHelper.expectCitationsInline();
         });
 
         test('Citation Favicon Display', async ({ page }) => {

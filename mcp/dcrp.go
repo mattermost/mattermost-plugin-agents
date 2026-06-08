@@ -126,8 +126,8 @@ func RegisterClient(ctx context.Context, httpClient *http.Client, registrationEn
 		return nil, fmt.Errorf("failed to read response body from %s: %w", registrationEndpoint, err)
 	}
 
-	// Check for success status (RFC 7591 requires 201 Created)
-	if resp.StatusCode == http.StatusCreated {
+	// Some authorization servers return 200 OK with a valid registration response.
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		var registrationResp RegistrationResponse
 		if err := json.Unmarshal(responseBody, &registrationResp); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal registration response: %w", err)
@@ -198,9 +198,16 @@ func DiscoverAndRegisterClient(ctx context.Context, httpClient *http.Client, ser
 
 // GetRegistrationEndpoint discovers the registration endpoint from server metadata
 func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serverURL string) (string, error) {
+	// Strip path from server URL per MCP spec: the authorization base URL is derived
+	// by discarding the path component from the server URL.
+	parsedURL, err := url.Parse(serverURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse server URL %s: %w", serverURL, err)
+	}
+	baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+
 	// Construct the metadata URL according to RFC 8414 Section 3.1
-	// The well-known URI must be inserted between the host and path components
-	metadataURL, err := constructWellKnownURL(serverURL, "oauth-authorization-server")
+	metadataURL, err := constructWellKnownURL(baseURL, "oauth-authorization-server")
 	if err != nil {
 		return "", fmt.Errorf("failed to construct metadata URL from server URL %s: %w", serverURL, err)
 	}
