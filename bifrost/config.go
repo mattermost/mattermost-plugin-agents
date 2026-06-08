@@ -162,14 +162,22 @@ func serviceConfigToFallbackEntry(svc llm.ServiceConfig) (FallbackEntry, error) 
 	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
 
 	return FallbackEntry{
-		Provider:                provider,
-		Model:                   svc.DefaultModel,
-		APIKey:                  svc.APIKey,
-		APIURL:                  apiURL,
-		OrgID:                   svc.OrgID,
-		Region:                  svc.Region,
-		AWSAccessKeyID:          svc.AWSAccessKeyID,
-		AWSSecretAccessKey:      svc.AWSSecretAccessKey,
+		ID:                    svc.ID,
+		Provider:              provider,
+		Model:                 svc.DefaultModel,
+		APIKey:                svc.APIKey,
+		APIURL:                apiURL,
+		OrgID:                 svc.OrgID,
+		Region:                svc.Region,
+		AWSAccessKeyID:        svc.AWSAccessKeyID,
+		AWSSecretAccessKey:    svc.AWSSecretAccessKey,
+		VertexProjectID:       svc.VertexProjectID,
+		VertexProjectNumber:   svc.VertexProjectNumber,
+		VertexAuthCredentials: svc.VertexAuthCredentials,
+		// A fallback registered as a custom provider is keyless when it has no
+		// API key (e.g. a local Ollama server). Credential-based providers like
+		// Bedrock authenticate without an API key, so they are never keyless.
+		IsKeyLess:               svc.APIKey == "" && provider != schemas.Bedrock,
 		StreamingTimeoutSeconds: svc.StreamingTimeoutSeconds,
 	}, nil
 }

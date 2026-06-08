@@ -1491,12 +1491,14 @@ func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
 	defer llmInstance.Shutdown()
 
 	require.Len(t, llmInstance.fallbacks, 2)
+	// The Anthropic fallback has its own base provider type, so it keeps it.
 	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
 	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
-	// OpenAI Compatible maps to OpenAI provider, but since primary is also OpenAI,
-	// the second fallback with same provider is skipped in the account (first wins).
-	// However the fallback list still includes it so Bifrost can try it.
-	assert.Equal(t, schemas.OpenAI, llmInstance.fallbacks[1].Provider)
+	// The local OpenAI-compatible fallback maps to the OpenAI provider, which the
+	// primary already occupies. It is therefore registered under a distinct
+	// custom-provider name so it keeps its own base URL/key at fallback time
+	// (see TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint).
+	assert.Equal(t, customProviderName(schemas.OpenAI, "svc-local"), llmInstance.fallbacks[1].Provider)
 	assert.Equal(t, "llama3", llmInstance.fallbacks[1].Model)
 }
 
@@ -1532,6 +1534,76 @@ func TestNewFromServiceConfig_BotModelOverrideDoesNotAffectFallback(t *testing.T
 	// Fallback model uses the fallback service's DefaultModel, not the bot override
 	require.Len(t, llmInstance.fallbacks, 1)
 	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+}
+
+// chatCompletionSSE writes a minimal OpenAI-style streaming chat completion
+// response carrying the given content. bifrost.LLM issues streaming requests
+// under the hood even for ChatCompletionNoStream (see TestEnvProxyRouting).
+func chatCompletionSSE(w http.ResponseWriter, content string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	fmt.Fprintf(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":null}]}\n\n", content)
+	fmt.Fprint(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+	fmt.Fprint(w, "data: [DONE]\n\n")
+}
+
+// TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint is the
+// PR's flagship DDIL scenario: a cloud OpenAI-compatible primary that falls back
+// to a local OpenAI-compatible model (e.g. Ollama) when the cloud is unavailable.
+//
+// Both services map to schemas.OpenAI, so the request-level fallback must still
+// reach the local service's OWN base URL and key. This test drives a real
+// request through Bifrost on the chat-completions path: the cloud endpoint
+// fails, and the local endpoint must receive the fallback request and serve it.
+//
+// Using OpenAI-compatible for both keeps the request on /v1/chat/completions so
+// the assertion isolates fallback routing (the collision fix) from the separate
+// question of whether a local model supports the Responses API.
+func TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint(t *testing.T) {
+	var cloudHits, localHits atomic.Int32
+
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cloudHits.Add(1)
+		// Primary provider is unavailable (DDIL): fail every request.
+		http.Error(w, `{"error":{"message":"service unavailable"}}`, http.StatusInternalServerError)
+	}))
+	defer cloudServer.Close()
+
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		localHits.Add(1)
+		chatCompletionSSE(w, "from-local")
+	}))
+	defer localServer.Close()
+
+	primarySvc := llm.ServiceConfig{
+		ID:                "cloud-openai",
+		Type:              llm.ServiceTypeOpenAICompatible,
+		APIKey:            "cloud-key",
+		APIURL:            cloudServer.URL,
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "local-ollama",
+	}
+	localSvc := llm.ServiceConfig{
+		ID:           "local-ollama",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIKey:       "local-key",
+		APIURL:       localServer.URL,
+		DefaultModel: "llama3",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "cloud-openai"}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{localSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+
+	// The local fallback endpoint must have received the request once the
+	// cloud primary failed.
+	assert.Positive(t, localHits.Load(), "local fallback endpoint should have received the fallback request")
+	require.NoError(t, err, "fallback to the local OpenAI-compatible model should succeed")
+	assert.Equal(t, "from-local", result, "response must come from the local fallback model")
 }
 
 func TestServiceConfigToFallbackEntry(t *testing.T) {
@@ -1620,6 +1692,107 @@ func TestServiceConfigToFallbackEntry(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServiceConfigToFallbackEntry_VertexCredsAndKeyless(t *testing.T) {
+	t.Run("vertex carries project and credentials", func(t *testing.T) {
+		entry, err := serviceConfigToFallbackEntry(llm.ServiceConfig{
+			ID:                    "vertex-svc",
+			Type:                  llm.ServiceTypeVertex,
+			DefaultModel:          "gemini-1.5-pro",
+			Region:                "us-central1",
+			VertexProjectID:       "my-project",
+			VertexProjectNumber:   "12345",
+			VertexAuthCredentials: `{"type":"service_account"}`,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "vertex-svc", entry.ID)
+		assert.Equal(t, schemas.Vertex, entry.Provider)
+		assert.Equal(t, "my-project", entry.VertexProjectID)
+		assert.Equal(t, "12345", entry.VertexProjectNumber)
+		assert.Equal(t, `{"type":"service_account"}`, entry.VertexAuthCredentials)
+	})
+
+	t.Run("keyless when OpenAI-compatible has no API key", func(t *testing.T) {
+		entry, err := serviceConfigToFallbackEntry(llm.ServiceConfig{
+			ID:           "local",
+			Type:         llm.ServiceTypeOpenAICompatible,
+			APIURL:       "http://localhost:11434/v1",
+			DefaultModel: "llama3",
+		})
+		require.NoError(t, err)
+		assert.True(t, entry.IsKeyLess)
+	})
+
+	t.Run("not keyless when an API key is set", func(t *testing.T) {
+		entry, err := serviceConfigToFallbackEntry(llm.ServiceConfig{
+			ID:           "local",
+			Type:         llm.ServiceTypeOpenAICompatible,
+			APIKey:       "secret",
+			APIURL:       "http://localhost:11434/v1",
+			DefaultModel: "llama3",
+		})
+		require.NoError(t, err)
+		assert.False(t, entry.IsKeyLess)
+	})
+}
+
+// TestMultiProviderAccount_CustomProviderKeepsDistinctSlot verifies that a
+// service sharing a base provider type with the primary is registered under a
+// distinct custom-provider name with its own base URL and a CustomProviderConfig
+// — the account-level mechanism that makes same-base fallbacks routable.
+func TestMultiProviderAccount_CustomProviderKeepsDistinctSlot(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{provider: schemas.OpenAI, apiKey: "cloud", apiURL: "https://api.openai.com"})
+	customName := customProviderName(schemas.OpenAI, "local")
+	acc.addProvider(&providerAccount{
+		provider: schemas.OpenAI,
+		name:     customName,
+		keyless:  true,
+		apiURL:   "http://localhost:11434",
+	})
+
+	providers, err := acc.GetConfiguredProviders()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []schemas.ModelProvider{schemas.OpenAI, customName}, providers)
+
+	customCfg, err := acc.GetConfigForProvider(customName)
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost:11434", customCfg.NetworkConfig.BaseURL)
+	require.NotNil(t, customCfg.CustomProviderConfig)
+	assert.Equal(t, schemas.OpenAI, customCfg.CustomProviderConfig.BaseProviderType)
+	assert.True(t, customCfg.CustomProviderConfig.IsKeyLess)
+
+	// The standard primary slot keeps its own URL and is not a custom provider.
+	primaryCfg, err := acc.GetConfigForProvider(schemas.OpenAI)
+	require.NoError(t, err)
+	assert.Equal(t, "https://api.openai.com", primaryCfg.NetworkConfig.BaseURL)
+	assert.Nil(t, primaryCfg.CustomProviderConfig)
+}
+
+// TestNewFromServiceConfig_UnsupportedSameProviderCollisionSkipped verifies that
+// a same-type fallback whose provider cannot be a custom-provider base type
+// (e.g. Mistral) is dropped rather than silently misrouted to the primary's
+// endpoint.
+func TestNewFromServiceConfig_UnsupportedSameProviderCollisionSkipped(t *testing.T) {
+	primary := llm.ServiceConfig{
+		ID:           "mistral-1",
+		Type:         llm.ServiceTypeMistral,
+		APIKey:       "key1",
+		DefaultModel: "mistral-large-latest",
+	}
+	fallback := llm.ServiceConfig{
+		ID:           "mistral-2",
+		Type:         llm.ServiceTypeMistral,
+		APIKey:       "key2",
+		DefaultModel: "mistral-small-latest",
+	}
+
+	llmInstance, err := NewFromServiceConfig(primary, llm.BotConfig{ServiceID: "mistral-1"}, []llm.ServiceConfig{fallback})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	assert.Empty(t, llmInstance.fallbacks, "a same-type Mistral fallback cannot be disambiguated and must be skipped")
 }
 
 func TestConvertToBifrostResponsesRequestStructuredOutputStringEnum(t *testing.T) {

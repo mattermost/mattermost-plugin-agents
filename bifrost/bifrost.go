@@ -114,20 +114,42 @@ type Config struct {
 // in the chain. Each entry is registered with the Bifrost client (so it knows
 // about the provider) and converted into a schemas.Fallback on every request.
 type FallbackEntry struct {
-	Provider                schemas.ModelProvider
-	Model                   string
-	APIKey                  string
-	APIURL                  string
-	OrgID                   string
-	Region                  string
-	AWSAccessKeyID          string
-	AWSSecretAccessKey      string
+	// ID is the source service ID. It is used to mint a stable, unique
+	// custom-provider name when this fallback shares a base provider type with
+	// another service in the same client.
+	ID                    string
+	Provider              schemas.ModelProvider
+	Model                 string
+	APIKey                string
+	APIURL                string
+	OrgID                 string
+	Region                string
+	AWSAccessKeyID        string
+	AWSSecretAccessKey    string
+	VertexProjectID       string
+	VertexProjectNumber   string
+	VertexAuthCredentials string
+	// IsKeyLess marks a fallback that authenticates without an API key (e.g. a
+	// local Ollama server). Only consulted when the fallback is registered as a
+	// custom provider.
+	IsKeyLess               bool
 	StreamingTimeoutSeconds int
 }
 
 // providerAccount implements the Bifrost Account interface for a single provider.
 type providerAccount struct {
-	provider                schemas.ModelProvider
+	// provider is the base Bifrost provider type (e.g. schemas.OpenAI), used to
+	// build provider-specific key and network configuration.
+	provider schemas.ModelProvider
+	// name is the Bifrost registration name. It is empty for a standard provider
+	// (where it equals provider) and set to a unique custom-provider name when
+	// this account shares a base provider type with another in the same client
+	// — e.g. a local OpenAI-compatible service behind an OpenAI primary, which
+	// would otherwise collide on the single schemas.OpenAI slot.
+	name schemas.ModelProvider
+	// keyless marks a custom provider that authenticates without an API key
+	// (e.g. a local Ollama server). Only consulted when isCustom() is true.
+	keyless                 bool
 	apiKey                  string
 	apiURL                  string
 	orgID                   string
@@ -140,12 +162,29 @@ type providerAccount struct {
 	streamingTimeoutSeconds int
 }
 
+// registeredName returns the name this account is registered under with Bifrost,
+// defaulting to the base provider type when no custom name is set.
+func (a *providerAccount) registeredName() schemas.ModelProvider {
+	if a.name != "" {
+		return a.name
+	}
+	return a.provider
+}
+
+// isCustom reports whether this account is registered as a Bifrost custom
+// provider (a unique name backed by the base provider type). This is required
+// when two services in a fallback chain share a base provider type so that each
+// keeps its own base URL and credentials.
+func (a *providerAccount) isCustom() bool {
+	return a.name != "" && a.name != a.provider
+}
+
 func (a *providerAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{a.provider}, nil
+	return []schemas.ModelProvider{a.registeredName()}, nil
 }
 
 func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
-	if provider != a.provider {
+	if provider != a.registeredName() {
 		return nil, fmt.Errorf("provider %s not supported", provider)
 	}
 
@@ -188,7 +227,7 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 }
 
 func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
-	if provider != a.provider {
+	if provider != a.registeredName() {
 		return nil, fmt.Errorf("provider %s not supported", provider)
 	}
 
@@ -228,6 +267,18 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		},
 	}
 
+	// Register as a Bifrost custom provider when this account shares a base
+	// provider type with another in the same client. The base type drives the
+	// underlying provider implementation while the unique registration name gives
+	// it a dedicated config slot (its own base URL/credentials above), so the
+	// fallback reaches its own endpoint instead of colliding on the base slot.
+	if a.isCustom() {
+		config.CustomProviderConfig = &schemas.CustomProviderConfig{
+			BaseProviderType: a.provider,
+			IsKeyLess:        a.keyless,
+		}
+	}
+
 	return config, nil
 }
 
@@ -246,15 +297,37 @@ func newMultiProviderAccount() *multiProviderAccount {
 	}
 }
 
-// addProvider registers a provider. If the provider is already registered it is
-// silently skipped (first-registered wins), because Bifrost indexes by provider
-// and two entries with the same provider type would conflict.
+// isCustomCapableProvider reports whether Bifrost can host a second instance of
+// this provider type as a custom provider backed by the same base type. Only the
+// providers in schemas.SupportedBaseProviders qualify; others (e.g. Azure,
+// Mistral, Vertex) cannot be disambiguated this way.
+func isCustomCapableProvider(p schemas.ModelProvider) bool {
+	for _, base := range schemas.SupportedBaseProviders {
+		if base == p {
+			return true
+		}
+	}
+	return false
+}
+
+// customProviderName builds a stable, unique Bifrost custom-provider name for a
+// service that shares a base provider type with another in the same client.
+func customProviderName(base schemas.ModelProvider, serviceID string) schemas.ModelProvider {
+	return schemas.ModelProvider(fmt.Sprintf("%s::%s", base, serviceID))
+}
+
+// addProvider registers a provider under its Bifrost registration name. If a
+// provider is already registered under that name it is silently skipped
+// (first-registered wins), because Bifrost indexes by provider name. Distinct
+// custom-provider names (see providerAccount.name) do not collide, which is how
+// two services sharing a base provider type coexist.
 func (m *multiProviderAccount) addProvider(entry *providerAccount) {
-	if _, exists := m.entries[entry.provider]; exists {
+	name := entry.registeredName()
+	if _, exists := m.entries[name]; exists {
 		return
 	}
-	m.entries[entry.provider] = entry
-	m.order = append(m.order, entry.provider)
+	m.entries[name] = entry
+	m.order = append(m.order, name)
 }
 
 func (m *multiProviderAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
@@ -317,20 +390,55 @@ func New(cfg Config) (*LLM, error) {
 	account := newMultiProviderAccount()
 	account.addProvider(primaryEntry)
 
+	// Track the Bifrost provider names already registered. A fallback that
+	// shares a base provider type with an earlier service (e.g. a local
+	// OpenAI-compatible model behind an OpenAI primary) must get its own custom
+	// provider slot, otherwise it collides on the base provider's single slot and
+	// silently inherits the primary's base URL and key at fallback time.
+	usedNames := map[schemas.ModelProvider]bool{primaryEntry.registeredName(): true}
+
 	var fallbacks []schemas.Fallback
 	for _, fb := range cfg.Fallbacks {
-		account.addProvider(&providerAccount{
+		entry := &providerAccount{
 			provider:                fb.Provider,
+			keyless:                 fb.IsKeyLess,
 			apiKey:                  fb.APIKey,
 			apiURL:                  fb.APIURL,
 			orgID:                   fb.OrgID,
 			region:                  fb.Region,
 			awsKeyID:                fb.AWSAccessKeyID,
 			awsSecret:               fb.AWSSecretAccessKey,
+			vertexProjectID:         fb.VertexProjectID,
+			vertexProjectNumber:     fb.VertexProjectNumber,
+			vertexAuthCredentials:   fb.VertexAuthCredentials,
 			streamingTimeoutSeconds: fb.StreamingTimeoutSeconds,
-		})
+		}
+
+		name := fb.Provider
+		if usedNames[name] {
+			// The base provider slot is taken. Register this service under a
+			// distinct custom-provider name so its own base URL/credentials are
+			// used when Bifrost fails over to it.
+			if !isCustomCapableProvider(fb.Provider) {
+				// Bifrost cannot host a second instance of this provider type
+				// (e.g. Azure/Mistral/Vertex are not valid custom-provider base
+				// types), so we cannot give it a distinct slot. Skip it rather
+				// than misroute the fallback to the primary's endpoint.
+				continue
+			}
+			name = customProviderName(fb.Provider, fb.ID)
+			entry.name = name
+		}
+		if usedNames[name] {
+			// Defensive: this exact service is already registered. Upstream cycle
+			// detection should prevent it, but never register a duplicate name.
+			continue
+		}
+
+		account.addProvider(entry)
+		usedNames[name] = true
 		fallbacks = append(fallbacks, schemas.Fallback{
-			Provider: fb.Provider,
+			Provider: name,
 			Model:    fb.Model,
 		})
 	}
