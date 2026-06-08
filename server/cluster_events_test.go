@@ -57,7 +57,7 @@ func TestOnPluginClusterEventStreamStop(t *testing.T) {
 		name           string
 		event          model.PluginClusterEvent
 		expectStopped  []string
-		expectLogError bool
+		expectErrorLog string
 	}{
 		{
 			name: "valid event triggers local StopStreaming",
@@ -74,7 +74,7 @@ func TestOnPluginClusterEventStreamStop(t *testing.T) {
 				Data: []byte("not json"),
 			},
 			expectStopped:  nil,
-			expectLogError: true,
+			expectErrorLog: "Failed to unmarshal stream stop cluster payload",
 		},
 		{
 			name: "empty postID is logged and ignored",
@@ -83,7 +83,15 @@ func TestOnPluginClusterEventStreamStop(t *testing.T) {
 				Data: mustMarshal(t, streamStopClusterPayload{}),
 			},
 			expectStopped:  nil,
-			expectLogError: true,
+			expectErrorLog: "Received stream stop cluster event with empty postID",
+		},
+		{
+			name: "unrelated event id is a no-op",
+			event: model.PluginClusterEvent{
+				Id:   "some_other_event",
+				Data: mustMarshal(t, streamStopClusterPayload{PostID: "post12345678901234567890ab"}),
+			},
+			expectStopped: nil,
 		},
 	}
 
@@ -92,9 +100,11 @@ func TestOnPluginClusterEventStreamStop(t *testing.T) {
 			mockAPI := &plugintest.API{}
 			defer mockAPI.AssertExpectations(t)
 
-			if test.expectLogError {
-				mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
-				mockAPI.On("LogError", mock.Anything).Maybe()
+			if test.expectErrorLog != "" {
+				mockAPI.On("LogError",
+					test.expectErrorLog,
+					mock.Anything, mock.Anything,
+				).Once()
 			}
 
 			streamingSvc := &recordingStreamingService{}
@@ -109,6 +119,52 @@ func TestOnPluginClusterEventStreamStop(t *testing.T) {
 			require.Equal(t, test.expectStopped, streamingSvc.stoppedPostIDs)
 		})
 	}
+}
+
+// TestStreamStopClusterRoundTrip wires PublishStreamStop on a publisher
+// Plugin into OnPluginClusterEvent on a receiver Plugin to prove the
+// payload format the publisher emits is the payload format the receiver
+// decodes. This is the test that would have caught the original MM-67491
+// HA bug: divergence between the two halves would let the stream stop click
+// silently drop on peer nodes.
+func TestStreamStopClusterRoundTrip(t *testing.T) {
+	const postID = "post12345678901234567890ab"
+
+	publisherAPI := &plugintest.API{}
+	defer publisherAPI.AssertExpectations(t)
+	receiverAPI := &plugintest.API{}
+	defer receiverAPI.AssertExpectations(t)
+
+	receiverStreaming := &recordingStreamingService{}
+	receiver := &Plugin{
+		pluginAPI:        pluginapi.NewClient(receiverAPI, nil),
+		streamingService: receiverStreaming,
+	}
+	receiver.SetAPI(receiverAPI)
+
+	publisher := &Plugin{
+		pluginAPI: pluginapi.NewClient(publisherAPI, nil),
+	}
+	publisher.SetAPI(publisherAPI)
+
+	// Capture the broadcast event on the publisher and feed it verbatim
+	// to the receiver's OnPluginClusterEvent. This is exactly what the
+	// Mattermost cluster does across nodes: reliable delivery of the
+	// serialized event.
+	publisherAPI.On("PublishPluginClusterEvent",
+		mock.AnythingOfType("model.PluginClusterEvent"),
+		mock.MatchedBy(func(opts model.PluginClusterEventSendOptions) bool {
+			return opts.SendType == model.PluginClusterEventSendTypeReliable
+		}),
+	).Return(nil).Run(func(args mock.Arguments) {
+		ev := args.Get(0).(model.PluginClusterEvent)
+		receiver.OnPluginClusterEvent(&plugin.Context{}, ev)
+	}).Once()
+
+	require.NoError(t, publisher.PublishStreamStop(postID))
+
+	require.Equal(t, []string{postID}, receiverStreaming.stoppedPostIDs,
+		"a published stream stop must be decoded and applied by peer nodes verbatim")
 }
 
 // TestOnPluginClusterEventStreamStopWithoutService verifies the handler is
