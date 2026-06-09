@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -305,6 +306,79 @@ func TestWithLLMContextRequestingUser_NilUser(t *testing.T) {
 	opt(ctx)
 
 	assert.Nil(t, ctx.RequestingUser)
+}
+
+func TestWithLLMContextViewingChannel(t *testing.T) {
+	mockAPI := &plugintest.API{}
+	team := &model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}
+	mockAPI.On("GetTeam", "team1").Return(team, nil).Maybe()
+	mockAPI.On("LogError",
+		mock.Anything,
+		mock.Anything,
+	).Maybe()
+	t.Cleanup(func() { mockAPI.AssertExpectations(t) })
+
+	client := pluginapi.NewClient(mockAPI, nil)
+	builder := NewLLMContextBuilder(client, &emptyToolProvider{}, nil, &contextTestConfigProvider{})
+
+	tests := []struct {
+		name        string
+		channel     *model.Channel
+		wantChannel bool
+		wantTeam    bool
+	}{
+		{
+			name: "nil channel is a no-op",
+		},
+		{
+			name:        "DM channel: sets channel only",
+			channel:     &model.Channel{Id: "c1", Type: model.ChannelTypeDirect},
+			wantChannel: true,
+		},
+		{
+			name:        "group channel: sets channel only",
+			channel:     &model.Channel{Id: "c1", Type: model.ChannelTypeGroup},
+			wantChannel: true,
+		},
+		{
+			name:        "channel without TeamId: sets channel only",
+			channel:     &model.Channel{Id: "c1", Type: model.ChannelTypeOpen},
+			wantChannel: true,
+		},
+		{
+			name:        "public channel: resolves team",
+			channel:     &model.Channel{Id: "c1", Type: model.ChannelTypeOpen, TeamId: "team1"},
+			wantChannel: true,
+			wantTeam:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &llm.Context{}
+			builder.WithLLMContextViewingChannel(tt.channel)(ctx)
+
+			if tt.wantChannel {
+				require.NotNil(t, ctx.ViewingChannel)
+			} else {
+				assert.Nil(t, ctx.ViewingChannel)
+			}
+			if tt.wantTeam {
+				require.NotNil(t, ctx.ViewingTeam)
+				assert.Equal(t, "eng", ctx.ViewingTeam.Name)
+			} else {
+				assert.Nil(t, ctx.ViewingTeam)
+			}
+		})
+	}
+}
+
+func TestWithLLMContextViewingTeam(t *testing.T) {
+	builder := &Builder{}
+	ctx := &llm.Context{}
+	team := &model.Team{Id: "t1", Name: "eng"}
+	builder.WithLLMContextViewingTeam(team)(ctx)
+	assert.Same(t, team, ctx.ViewingTeam)
 }
 
 func TestNormalizeMCPServerOrigin(t *testing.T) {

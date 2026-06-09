@@ -118,6 +118,67 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 	}
 }
 
+func TestStandardPersonalityWithoutLocaleIncludesViewingChannel(t *testing.T) {
+	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name           string
+		viewingChannel *model.Channel
+		viewingTeam    *model.Team
+		wantContains   []string
+		wantMissing    []string
+	}{
+		{
+			name:           "viewing channel without team",
+			viewingChannel: &model.Channel{Name: "marketing", DisplayName: "Marketing", Type: "O"},
+			wantContains: []string{
+				"The user is currently viewing a channel in the center panel with name 'marketing' and display name 'Marketing'.",
+				"When the user uses implicit references such as \"this channel\", \"here\", \"this\", or \"what's going on\"",
+			},
+			wantMissing: []string{"That channel is on a team called"},
+		},
+		{
+			name:           "viewing channel with team",
+			viewingChannel: &model.Channel{Name: "marketing", DisplayName: "Marketing", Type: "O"},
+			viewingTeam:    &model.Team{Name: "eng", DisplayName: "Engineering"},
+			wantContains: []string{
+				"The user is currently viewing a channel in the center panel with name 'marketing' and display name 'Marketing'.",
+				"That channel is on a team called 'eng' with display name 'Engineering'.",
+			},
+		},
+		{
+			name: "no viewing channel, no block emitted",
+			wantMissing: []string{
+				"The user is currently viewing a channel in the center panel",
+				"implicit references",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &llm.Context{
+				Time:           "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:     "server",
+				BotName:        "agent",
+				BotUsername:    "agent",
+				BotModel:       "model-x",
+				ViewingChannel: tt.viewingChannel,
+				ViewingTeam:    tt.viewingTeam,
+			}
+			out, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, ctx)
+			require.NoError(t, err)
+			for _, want := range tt.wantContains {
+				assert.Contains(t, out, want)
+			}
+			for _, missing := range tt.wantMissing {
+				assert.NotContains(t, out, missing)
+			}
+		})
+	}
+}
+
 func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiAndVertexOnly(t *testing.T) {
 	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
