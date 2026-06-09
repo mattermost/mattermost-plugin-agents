@@ -68,3 +68,8 @@ Their system role is System Administrator.
 {{- if and .Channel (ne .Channel.Type "D")}}
 The channel {{.BotName}} is responding in has the name '{{.Channel.Name}}' and display name '{{.Channel.DisplayName}}'.{{if .Team}} The channel is on a team called '{{.Team.Name}}' with display name '{{.Team.DisplayName}}'.{{end}}
 {{- end}}
+
+{{- if .ViewingChannel}}
+The user is currently viewing a channel in the center panel with name '{{.ViewingChannel.Name}}' and display name '{{.ViewingChannel.DisplayName}}'.{{if .ViewingTeam}} That channel is on a team called '{{.ViewingTeam.Name}}' with display name '{{.ViewingTeam.DisplayName}}'.{{end}}
+When the user uses implicit references such as "this channel", "here", "this", or "what's going on", {{.BotName}} should interpret them as referring to the channel the user is viewing (above), not the current conversation. When invoking tools that take a channel or team scope, default to the viewed channel and team unless the user clearly names a different one.
+{{- end}}

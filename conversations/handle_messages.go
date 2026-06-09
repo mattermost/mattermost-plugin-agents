@@ -340,6 +340,7 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextTools(bot),
+		resolveViewingContextOption(c.mmClient, c.contextBuilder, post, postingUser.Id, channel.Id),
 	}
 	webSearchParams := c.extractWebSearchContext(post)
 	if len(webSearchParams) > 0 {

@@ -100,6 +100,35 @@ func (b *Builder) WithLLMContextChannel(channel *model.Channel) llm.ContextOptio
 	}
 }
 
+// WithLLMContextViewingChannel sets the channel the user is currently viewing
+// in the center panel (separate from the conversation channel). The viewing
+// team is looked up automatically for non-DM/non-group channels.
+func (b *Builder) WithLLMContextViewingChannel(channel *model.Channel) llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ViewingChannel = channel
+		if channel == nil || channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+			return
+		}
+		if channel.TeamId == "" {
+			return
+		}
+		team, err := b.pluginAPI.Team.Get(channel.TeamId)
+		if err != nil {
+			b.pluginAPI.Log.Error("Unable to get team for viewing context", "error", err.Error(), "team_id", channel.TeamId)
+			return
+		}
+		c.ViewingTeam = team
+	}
+}
+
+// WithLLMContextViewingTeam sets the viewing team directly. Useful when the
+// caller has already resolved the team or when only a team is known.
+func (b *Builder) WithLLMContextViewingTeam(team *model.Team) llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ViewingTeam = team
+	}
+}
+
 func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOption {
 	return func(c *llm.Context) {
 		if user != nil {

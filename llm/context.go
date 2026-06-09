@@ -33,6 +33,13 @@ type Context struct {
 	Channel *model.Channel
 	Thread  []Post // Normalized posts that already have been formatted. nil if not in a thread or a root post
 
+	// Viewing context: the channel/team the user is currently looking at in the
+	// center panel when sending a message from the Agents RHS. Distinct from
+	// Channel/Team, which describe where the conversation itself is happening
+	// (typically the bot DM channel for RHS interactions).
+	ViewingChannel *model.Channel
+	ViewingTeam    *model.Team
+
 	// User that is making the request
 	RequestingUser *model.User
 
@@ -110,6 +117,12 @@ func (c Context) String() string {
 	}
 	if c.Team != nil {
 		result.WriteString(fmt.Sprintf("\nTeam: %v", c.Team.Name))
+	}
+	if c.ViewingChannel != nil {
+		result.WriteString(fmt.Sprintf("\nViewingChannel: %v", c.ViewingChannel.Name))
+	}
+	if c.ViewingTeam != nil {
+		result.WriteString(fmt.Sprintf("\nViewingTeam: %v", c.ViewingTeam.Name))
 	}
 
 	result.WriteString("\n--- Parameters ---\n")
