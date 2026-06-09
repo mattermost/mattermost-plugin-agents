@@ -5,6 +5,7 @@ package conversations
 
 import (
 	stdcontext "context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -85,14 +86,13 @@ func TestHandleMessages(t *testing.T) {
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
 
+	// IsSystemMessage() is a simple prefix check ("system_"), so one header-change
+	// case (the actual bug from MM-67969) plus one structurally different type
+	// (join_channel) is enough to assert the gate; an exhaustive list would just
+	// re-test the same prefix check.
 	systemPostTypes := []string{
 		model.PostTypeHeaderChange,
-		model.PostTypePurposeChange,
-		model.PostTypeDisplaynameChange,
 		model.PostTypeJoinChannel,
-		model.PostTypeLeaveChannel,
-		model.PostTypeAddToChannel,
-		model.PostTypeRemoveFromChannel,
 	}
 	for _, postType := range systemPostTypes {
 		t.Run("don't respond to system message "+postType, func(t *testing.T) {
@@ -100,12 +100,36 @@ func TestHandleMessages(t *testing.T) {
 				UserId:    "userid",
 				ChannelId: "channelid",
 				Type:      postType,
-				Message:   "@agent updated the channel header",
 			}
 			err := e.conversations.handleMessages(ctx, post)
 			require.ErrorIs(t, err, ErrNoResponse)
 		})
 	}
+
+	// Inverse case: ensure the new guard is narrow enough that regular posts
+	// (PostTypeDefault and non-system custom_* types) still reach the channel
+	// lookup. We assert this by stubbing GetChannel to return a sentinel error
+	// and confirming we got past the guard. Without this, the system-message
+	// guard could be widened to `post.Type != ""` and the suite would still
+	// pass while breaking custom_* posts.
+	t.Run("non-system posts pass the system-message guard", func(t *testing.T) {
+		for _, postType := range []string{"", "custom_llmbot"} {
+			t.Run("type="+postType, func(t *testing.T) {
+				mmClient := mocks.NewMockClient(t)
+				sentinel := errors.New("reached channel lookup")
+				mmClient.EXPECT().GetChannel("channelid").Return(nil, sentinel).Once()
+
+				conv := &Conversations{mmClient: mmClient, bots: e.bots}
+				err := conv.handleMessages(ctx, &model.Post{
+					UserId:    "userid",
+					ChannelId: "channelid",
+					Type:      postType,
+				})
+				require.ErrorIs(t, err, sentinel)
+				require.NotErrorIs(t, err, ErrNoResponse)
+			})
+		}
+	})
 }
 
 func TestIsAutomatedInvoker(t *testing.T) {
