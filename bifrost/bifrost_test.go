@@ -1499,6 +1499,58 @@ func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
 	assert.Equal(t, "llama3", llmInstance.fallbacks[1].Model)
 }
 
+// TestNewFromServiceConfig_SkipsUnmappableFallbackInChain pins the resilience
+// contract that a fallback service which cannot be mapped to a Bifrost provider
+// is skipped rather than failing the whole bot — the whole point of a DDIL
+// failover feature is to degrade, not to break. A regression that returned the
+// error instead would fail bot construction whenever a chain contained such a
+// service. ServiceTypeScale is the realistic trigger: it is a valid plugin
+// service type (IsValidService accepts it, so ResolveFallbackChain keeps it in
+// the chain) that the Bifrost adapter's MapServiceTypeToProvider does not
+// support, so serviceConfigToFallbackEntry errors on it.
+func TestNewFromServiceConfig_SkipsUnmappableFallbackInChain(t *testing.T) {
+	primary := llm.ServiceConfig{
+		ID:           "svc-openai",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "openai-key",
+		DefaultModel: "gpt-4o",
+	}
+	anthropicFallback := llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	unmappableFallback := llm.ServiceConfig{
+		ID:           "svc-scale",
+		Type:         llm.ServiceTypeScale, // valid plugin type, unsupported by the Bifrost adapter
+		APIKey:       "scale-key",
+		APIURL:       "https://scale.example.com",
+		DefaultModel: "scale-model",
+	}
+	localFallback := llm.ServiceConfig{
+		ID:           "svc-local",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIURL:       "http://localhost:11434/v1",
+		DefaultModel: "llama3",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "svc-openai"}
+
+	llmInstance, err := NewFromServiceConfig(primary, bot,
+		[]llm.ServiceConfig{anthropicFallback, unmappableFallback, localFallback})
+	require.NoError(t, err, "an unmappable fallback must be skipped, not fail bot construction")
+	defer llmInstance.Shutdown()
+
+	// The two mappable fallbacks survive in chain order; the unmappable one is
+	// dropped from the middle without disturbing the others.
+	require.Len(t, llmInstance.fallbacks, 2)
+	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	assert.Equal(t, "llama3", llmInstance.fallbacks[1].Model)
+	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[1].Provider,
+		"the local fallback keeps its own distinct custom-provider slot")
+}
+
 func TestNewFromServiceConfig_BotModelOverrideDoesNotAffectFallback(t *testing.T) {
 	primarySvc := llm.ServiceConfig{
 		ID:           "svc-openai",
