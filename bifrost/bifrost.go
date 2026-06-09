@@ -54,7 +54,8 @@ const missingContentIndex = -1
 type LLM struct {
 	client           *bifrostcore.Bifrost
 	provider         schemas.ModelProvider
-	apiKey           string // used only to redact configured secrets from provider error surfaces
+	apiKey           string   // used only to redact configured secrets from provider error surfaces
+	fallbackAPIKeys  []string // fallback provider keys, redacted from error surfaces alongside apiKey
 	defaultModel     string
 	inputTokenLimit  int
 	outputTokenLimit int
@@ -418,8 +419,16 @@ func New(cfg Config) (*LLM, error) {
 	// silently inherits the primary's base URL and key at fallback time.
 	usedNames := map[schemas.ModelProvider]bool{primaryEntry.registeredName(): true}
 
+	// Keys to redact from error/log surfaces: the primary plus every fallback,
+	// so a fallback provider's credential never leaks even when it is in a key
+	// format the generic redaction patterns don't recognize.
+	redactKeys := []string{cfg.APIKey}
+
 	var fallbacks []schemas.Fallback
 	for _, fb := range cfg.Fallbacks {
+		if fb.APIKey != "" {
+			redactKeys = append(redactKeys, fb.APIKey)
+		}
 		entry := &providerAccount{
 			provider:                fb.Provider,
 			keyless:                 fb.IsKeyLess,
@@ -435,14 +444,19 @@ func New(cfg Config) (*LLM, error) {
 			streamingTimeoutSeconds: fb.StreamingTimeoutSeconds,
 		}
 
-		// A fallback needs a distinct custom-provider slot when either:
+		// A fallback needs a distinct custom-provider slot when any of:
 		//   - it collides on an already-registered base provider name (so its own
-		//     base URL/credentials are used instead of inheriting the primary's), or
+		//     base URL/credentials are used instead of inheriting the primary's),
 		//   - it is chat-only (an OpenAI-base endpoint without Responses API
 		//     support), so we can attach the chat-only AllowedRequests gate that
-		//     makes Bifrost downgrade a Responses request to chat completions.
+		//     makes Bifrost downgrade a Responses request to chat completions, or
+		//   - it is keyless (e.g. a local Ollama server with no API key): the
+		//     standard provider path ignores IsKeyLess, so Bifrost would otherwise
+		//     treat the empty key as real credentials. This is scoped to
+		//     custom-capable base types; providers like Vertex carry keyless auth
+		//     (ADC) on their standard config, so they stay registered as-is.
 		name := fb.Provider
-		if usedNames[name] || fb.ChatOnly {
+		if usedNames[name] || fb.ChatOnly || (fb.IsKeyLess && isCustomCapableProvider(fb.Provider)) {
 			if !isCustomCapableProvider(fb.Provider) {
 				// Bifrost cannot host a second instance of this provider type
 				// (e.g. Azure/Mistral/Vertex are not valid custom-provider base
@@ -468,7 +482,7 @@ func New(cfg Config) (*LLM, error) {
 		})
 	}
 
-	client, err := newBifrostClient(account, cfg.APIKey)
+	client, err := newBifrostClient(account, redactKeys...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client: %w", err)
 	}
@@ -482,6 +496,7 @@ func New(cfg Config) (*LLM, error) {
 		client:             client,
 		provider:           cfg.Provider,
 		apiKey:             cfg.APIKey,
+		fallbackAPIKeys:    redactKeys[1:],
 		defaultModel:       cfg.DefaultModel,
 		inputTokenLimit:    cfg.InputTokenLimit,
 		outputTokenLimit:   cfg.OutputTokenLimit,
@@ -500,6 +515,16 @@ func (b *LLM) Shutdown() {
 	if b.client != nil {
 		b.client.Shutdown()
 	}
+}
+
+// redactionKeys returns every configured API key (primary plus fallbacks) so
+// llm.SanitizeProviderError can strip any provider's credential from an error,
+// not just the primary's.
+func (b *LLM) redactionKeys() []string {
+	keys := make([]string, 0, 1+len(b.fallbackAPIKeys))
+	keys = append(keys, b.apiKey)
+	keys = append(keys, b.fallbackAPIKeys...)
+	return keys
 }
 
 // GetDefaultConfig returns the default language model configuration.
@@ -893,7 +918,7 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 		if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
 			msg = bifrostErr.Error.Message
 		}
-		return 0, llm.SanitizeProviderError(fmt.Errorf("bifrost count tokens error: %s", msg), b.apiKey)
+		return 0, llm.SanitizeProviderError(fmt.Errorf("bifrost count tokens error: %s", msg), b.redactionKeys()...)
 	}
 	if resp == nil {
 		return 0, fmt.Errorf("bifrost count tokens returned nil response")
@@ -936,7 +961,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
 		recordBifrostError(span, bifrostErr)
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -992,7 +1017,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 
 		if chunk.BifrostError != nil {
 			recordBifrostError(span, chunk.BifrostError)
-			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.redactionKeys()...)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
@@ -1973,7 +1998,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
 		recordBifrostError(span, bifrostErr)
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -2043,7 +2068,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 		if chunk.BifrostError != nil {
 			recordBifrostError(span, chunk.BifrostError)
-			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.redactionKeys()...)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{

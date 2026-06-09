@@ -674,6 +674,15 @@ func TestResolveFallbackChain(t *testing.T) {
 		APIKey:       "key",
 		DefaultModel: "gpt-4o",
 	}
+	// A valid primary whose fallback ID does not resolve to any service, so the
+	// chain stops at the primary instead of exercising the "primary not found" path.
+	missingFallbackSvc := ServiceConfig{
+		ID:                "missing-fallback-primary",
+		Type:              ServiceTypeOpenAI,
+		APIKey:            "key",
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "does-not-exist",
+	}
 
 	allServices := map[string]ServiceConfig{
 		openAISvc.ID:          openAISvc,
@@ -685,6 +694,7 @@ func TestResolveFallbackChain(t *testing.T) {
 		invalidFallbackSvc.ID: invalidFallbackSvc,
 		invalidSvc.ID:         invalidSvc,
 		noFallbackSvc.ID:      noFallbackSvc,
+		missingFallbackSvc.ID: missingFallbackSvc,
 	}
 
 	lookup := func(id string) (ServiceConfig, bool) {

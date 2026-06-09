@@ -1678,9 +1678,11 @@ func TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint(t *tes
 // Responses request to chat completions for it.
 func TestNewFromServiceConfig_ResponsesPrimaryDowngradesToChatForLocalFallback(t *testing.T) {
 	var localChatHit, localResponsesHit, cloudHit atomic.Bool
+	var cloudPath atomic.Value // request path the direct-OpenAI primary received
 
 	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cloudHit.Store(true)
+		cloudPath.Store(r.URL.Path)
 		// Primary is unavailable (DDIL): fail every request.
 		http.Error(w, `{"error":{"message":"service unavailable"}}`, http.StatusInternalServerError)
 	}))
@@ -1730,6 +1732,9 @@ func TestNewFromServiceConfig_ResponsesPrimaryDowngradesToChatForLocalFallback(t
 	require.NoError(t, err, "Responses-API primary should downgrade and succeed against the chat-only local fallback")
 	assert.Equal(t, "from-local", result)
 	assert.True(t, cloudHit.Load(), "cloud primary should have been attempted before falling back")
+	// The primary must start on the Responses API; otherwise no downgrade is
+	// exercised and the local /chat/completions hit below would prove nothing.
+	require.Equal(t, "/v1/responses", cloudPath.Load(), "direct-OpenAI primary must use the Responses API")
 	assert.True(t, localChatHit.Load(), "local model should have been called on /v1/chat/completions (downgraded)")
 	assert.False(t, localResponsesHit.Load(), "local model must not be called on /v1/responses")
 }
@@ -1794,7 +1799,8 @@ func TestNewFromServiceConfig_PrimarySuccessDoesNotInvokeFallback(t *testing.T) 
 // to the final OpenAI-compatible hop.
 func TestNewFromServiceConfig_MultiHopFailoverReachesSecondFallback(t *testing.T) {
 	var cloudHits, regionalHits, localHits atomic.Int32
-	var regionalAuth atomic.Value // x-api-key seen by the Anthropic hop
+	var regionalAuth atomic.Value            // x-api-key seen by the Anthropic hop
+	var regionalPath, localPath atomic.Value // request paths each hop received
 
 	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cloudHits.Add(1)
@@ -1805,12 +1811,14 @@ func TestNewFromServiceConfig_MultiHopFailoverReachesSecondFallback(t *testing.T
 	regionalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		regionalHits.Add(1)
 		regionalAuth.Store(r.Header.Get("x-api-key"))
+		regionalPath.Store(r.URL.Path)
 		http.Error(w, `{"type":"error","error":{"type":"overloaded_error"}}`, http.StatusServiceUnavailable)
 	}))
 	defer regionalServer.Close()
 
 	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		localHits.Add(1)
+		localPath.Store(r.URL.Path)
 		chatCompletionSSE(w, "from-local")
 	}))
 	defer localServer.Close()
@@ -1854,6 +1862,9 @@ func TestNewFromServiceConfig_MultiHopFailoverReachesSecondFallback(t *testing.T
 	assert.Positive(t, regionalHits.Load(), "the first fallback should have been attempted before the second")
 	assert.Positive(t, localHits.Load(), "the second fallback should have served the request")
 	assert.Equal(t, "anthropic-key", regionalAuth.Load(), "the cross-base fallback must reach its own endpoint with its own key (x-api-key)")
+	// Each hop must be routed to its provider's own API path, not merely its host.
+	assert.Equal(t, "/v1/messages", regionalPath.Load(), "the Anthropic hop must use the Messages API path")
+	assert.Equal(t, "/v1/chat/completions", localPath.Load(), "the final OpenAI-compatible hop must use the chat completions path")
 }
 
 func TestServiceConfigToFallbackEntry(t *testing.T) {
