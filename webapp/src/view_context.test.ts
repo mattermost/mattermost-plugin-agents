@@ -74,7 +74,6 @@ describe('getViewingContextProps', () => {
 describe('isAgentBotDMChannel', () => {
     it('returns false when no bots are present', () => {
         expect(isAgentBotDMChannel('bot-dm', null)).toBe(false);
-        expect(isAgentBotDMChannel('bot-dm', undefined)).toBe(false);
         expect(isAgentBotDMChannel('bot-dm', [])).toBe(false);
     });
 

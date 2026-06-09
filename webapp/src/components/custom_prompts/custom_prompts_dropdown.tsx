@@ -99,6 +99,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
         dismissMenu();
         try {
             const botUsername = selectedBot?.username;
+
             // In a bot DM, resolve template variables against the channel the user
             // is currently viewing in the center panel (if any), not the bot DM.
             let renderChannelId = channelId;
