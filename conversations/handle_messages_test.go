@@ -84,6 +84,28 @@ func TestHandleMessages(t *testing.T) {
 		err := e.conversations.handleMessages(ctx, post)
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
+
+	systemPostTypes := []string{
+		model.PostTypeHeaderChange,
+		model.PostTypePurposeChange,
+		model.PostTypeDisplaynameChange,
+		model.PostTypeJoinChannel,
+		model.PostTypeLeaveChannel,
+		model.PostTypeAddToChannel,
+		model.PostTypeRemoveFromChannel,
+	}
+	for _, postType := range systemPostTypes {
+		t.Run("don't respond to system message "+postType, func(t *testing.T) {
+			post := &model.Post{
+				UserId:    "userid",
+				ChannelId: "channelid",
+				Type:      postType,
+				Message:   "@agent updated the channel header",
+			}
+			err := e.conversations.handleMessages(ctx, post)
+			require.ErrorIs(t, err, ErrNoResponse)
+		})
+	}
 }
 
 func TestIsAutomatedInvoker(t *testing.T) {

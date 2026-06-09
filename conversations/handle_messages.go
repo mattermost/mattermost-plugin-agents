@@ -112,6 +112,13 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 		return fmt.Errorf("not responding to remote posts: %w", ErrNoResponse)
 	}
 
+	// Don't respond to system messages (e.g. channel header/purpose changes,
+	// join/leave notifications). Their generated message text can contain
+	// @mentions of an agent which would otherwise spuriously trigger a reply.
+	if post.IsSystemMessage() {
+		return fmt.Errorf("not responding to system messages: %w", ErrNoResponse)
+	}
+
 	// Wrangler posts should be ignored
 	if post.GetProp(WranglerProp) != nil {
 		return fmt.Errorf("not responding to wrangler posts: %w", ErrNoResponse)
