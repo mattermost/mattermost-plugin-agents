@@ -395,23 +395,6 @@ func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing
 	require.Equal(t, "com.example.valid", got[0].PluginID)
 }
 
-func TestClientManager_GetToolsForUser_NilContext(t *testing.T) {
-	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
-	client := pluginapi.NewClient(pluginTestAPI, nil)
-
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
-	t.Cleanup(m.Close)
-
-	var ctx context.Context
-	tools, mcpErrors := m.GetToolsForUser(ctx, "alice")
-
-	require.Empty(t, tools)
-	require.NotNil(t, mcpErrors)
-	require.Len(t, mcpErrors.Errors, 1)
-	assert.EqualError(t, mcpErrors.Errors[0], "nil context passed to GetToolsForUser")
-}
-
 func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	target := newFakePluginMCPServer(t, 2)
 	t.Cleanup(target.Close)

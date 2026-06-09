@@ -186,10 +186,6 @@ func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*U
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
 func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
-	if ctx == nil {
-		return nil, &Errors{Errors: []error{errors.New("nil context passed to GetToolsForUser")}}
-	}
-
 	// Get or create client for this user (connects to remote servers only)
 	userClient, initialErrors := m.getClientForUser(ctx, userID)
 	mcpErrors := cloneMCPErrors(initialErrors)
