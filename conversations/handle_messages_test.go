@@ -86,10 +86,7 @@ func TestHandleMessages(t *testing.T) {
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
 
-	// IsSystemMessage() is a simple prefix check ("system_"), so one header-change
-	// case (the actual bug from MM-67969) plus one structurally different type
-	// (join_channel) is enough to assert the gate; an exhaustive list would just
-	// re-test the same prefix check.
+	// Cover the MM-67969 header-change case and one other system_* type.
 	systemPostTypes := []string{
 		model.PostTypeHeaderChange,
 		model.PostTypeJoinChannel,
@@ -106,12 +103,8 @@ func TestHandleMessages(t *testing.T) {
 		})
 	}
 
-	// Inverse case: ensure the new guard is narrow enough that regular posts
-	// (PostTypeDefault and non-system custom_* types) still reach the channel
-	// lookup. We assert this by stubbing GetChannel to return a sentinel error
-	// and confirming we got past the guard. Without this, the system-message
-	// guard could be widened to `post.Type != ""` and the suite would still
-	// pass while breaking custom_* posts.
+	// Regular and custom non-system posts should still reach channel lookup,
+	// proving the system-message guard stays narrow.
 	t.Run("non-system posts pass the system-message guard", func(t *testing.T) {
 		for _, postType := range []string{"", "custom_llmbot"} {
 			t.Run("type="+postType, func(t *testing.T) {

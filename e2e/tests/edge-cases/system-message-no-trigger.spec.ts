@@ -1,5 +1,4 @@
-// spec: MM-67969 — system messages (e.g. channel header / purpose change with an @agent in the
-// new value) must not trigger an agent response.
+// spec: MM-67969 - system messages with @agent mentions must not trigger replies.
 // seed: tests/seed.spec.ts
 
 import { test, expect } from '@playwright/test';
@@ -31,9 +30,7 @@ test.afterAll(async () => {
 
 test.describe('System messages do not trigger agent', () => {
     test('updating a channel header to mention an agent does not trigger a response', async ({ page }) => {
-        // If the bug were to regress and the agent did respond, the mock would serve a real
-        // chat-completion stream. Pre-seeding it makes the regression observable in the post list
-        // rather than failing silently because no mock was registered.
+        // Seed a mock so a regressed agent call becomes visible as a bot post.
         await openAIMock.addCompletionMock(responseTest);
 
         const client = await mattermost.getClient(username, password);
@@ -54,9 +51,7 @@ test.describe('System messages do not trigger agent', () => {
 
         await client.patchChannel(townSquare.id, { header: '@mock please respond' });
 
-        // The system message reads "{user} updated the channel header to: @mock please respond"
-        // (or "from: X to: Y" when a previous header existed). Scope to the channel's post list
-        // to avoid colliding with the rendered channel header at the top of the page.
+        // Find the header-change system post, scoped away from the rendered channel header.
         const systemMessage = page
             .getByTestId('postContent')
             .filter({ hasText: /updated the channel header/i })
@@ -70,10 +65,7 @@ test.describe('System messages do not trigger agent', () => {
         const newPosts = Object.values(afterPosts.posts || {})
             .filter((p) => !beforeIds.has(p.id));
 
-        // Bot responses are tagged with the dedicated custom_llmbot post type
-        // (see streaming.ModifyPostForBot). Restricting to that type avoids
-        // false positives from unrelated posts that other tests in the shard
-        // might leave around.
+        // Scope to bot post type to avoid false positives from unrelated posts.
         const botResponses = newPosts.filter((p) => p.type === 'custom_llmbot');
         expect(
             botResponses,
