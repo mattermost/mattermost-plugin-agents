@@ -202,7 +202,6 @@ func (c *Conversations) ProcessDMRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conversation: %w", err)
 	}
-	llmCtx.ConversationID = convID
 	completionReq, err := c.convService.BuildCompletionRequest(conv, llmCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
@@ -226,13 +225,6 @@ func (c *Conversations) ProcessDMRequest(
 	return &DMStreamResult{Stream: stream}, nil
 }
 
-func llmToolsFromContext(llmCtx *llm.Context) *llm.ToolStore {
-	if llmCtx == nil {
-		return nil
-	}
-	return llmCtx.Tools
-}
-
 // shouldAutoExecuteTool returns a callback that decides whether a tool call
 // should be auto-executed based on the tool policy and the conversation
 // context. In DMs, both auto_run and auto_run_everywhere bypass approval.
@@ -247,8 +239,7 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 		if c.toolPolicyChecker == nil {
 			return false
 		}
-		toolStore := llmToolsFromContext(llmCtx)
-		lookup, ok := toolStore.LookupTool(tc.Name, tc.ServerOrigin)
+		lookup, ok := llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
 		if !ok {
 			return false
 		}
@@ -277,8 +268,7 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 			if c.toolPolicyChecker == nil {
 				return false
 			}
-			toolStore := llmToolsFromContext(llmCtx)
-			lookup, ok := toolStore.LookupTool(tc.Name, tc.ServerOrigin)
+			lookup, ok := llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
 			if !ok {
 				return false
 			}

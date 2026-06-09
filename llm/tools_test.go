@@ -1030,3 +1030,104 @@ func TestRemoveToolsByServerOriginPrunesUnloadedMCPTools(t *testing.T) {
 	assert.False(t, store.IsUnloadedMCPTool("github__search"))
 	assert.NotNil(t, store.GetTool("builtin"))
 }
+
+func TestEnrichToolCall(t *testing.T) {
+	newStore := func() *ToolStore {
+		store := NewNoTools()
+		store.AddTools([]Tool{
+			{Name: "jira__create_issue", Description: "Create a Jira issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
+			{Name: "builtin_tool", Description: "A builtin tool", Schema: map[string]any{"type": "string"}},
+		})
+		return store
+	}
+
+	tests := []struct {
+		name string
+		tc   *ToolCall
+		opts EnrichToolCallOptions
+
+		wantDescription string
+		wantServer      string
+		wantBareName    string
+		wantSchema      any
+	}{
+		{
+			name:            "preserves model description when OverwriteDescription is false",
+			tc:              &ToolCall{Name: "jira__create_issue", Description: "model text", ServerOrigin: "https://jira.example.com"},
+			opts:            EnrichToolCallOptions{},
+			wantDescription: "model text",
+			wantServer:      "https://jira.example.com",
+			wantBareName:    "create_issue",
+			wantSchema:      map[string]any{"type": "object"},
+		},
+		{
+			name:            "overwrites description when OverwriteDescription is true",
+			tc:              &ToolCall{Name: "jira__create_issue", Description: "model text", ServerOrigin: "https://jira.example.com"},
+			opts:            EnrichToolCallOptions{OverwriteDescription: true},
+			wantDescription: "Create a Jira issue",
+			wantServer:      "https://jira.example.com",
+			wantBareName:    "create_issue",
+			wantSchema:      map[string]any{"type": "object"},
+		},
+		{
+			name:            "BareNameFallback resolves when primary lookup misses",
+			tc:              &ToolCall{Name: "missing", MCPBareName: "create_issue", ServerOrigin: "https://jira.example.com"},
+			opts:            EnrichToolCallOptions{BareNameFallback: true},
+			wantDescription: "Create a Jira issue",
+			wantServer:      "https://jira.example.com",
+			wantBareName:    "create_issue",
+			wantSchema:      map[string]any{"type": "object"},
+		},
+		{
+			name:            "no fallback when BareNameFallback is false leaves call untouched",
+			tc:              &ToolCall{Name: "missing", MCPBareName: "create_issue", ServerOrigin: "https://jira.example.com"},
+			opts:            EnrichToolCallOptions{},
+			wantDescription: "",
+			wantServer:      "https://jira.example.com",
+			wantBareName:    "create_issue",
+			wantSchema:      nil,
+		},
+		{
+			name:            "populates ServerOrigin from lookup when empty",
+			tc:              &ToolCall{Name: "jira__create_issue"},
+			opts:            EnrichToolCallOptions{},
+			wantDescription: "Create a Jira issue",
+			wantServer:      "https://jira.example.com",
+			wantBareName:    "create_issue",
+			wantSchema:      map[string]any{"type": "object"},
+		},
+		{
+			name:            "leaves MCPBareName empty for a builtin tool",
+			tc:              &ToolCall{Name: "builtin_tool"},
+			opts:            EnrichToolCallOptions{},
+			wantDescription: "A builtin tool",
+			wantServer:      "",
+			wantBareName:    "",
+			wantSchema:      map[string]any{"type": "string"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			EnrichToolCall(tt.tc, newStore(), tt.opts)
+			assert.Equal(t, tt.wantDescription, tt.tc.Description)
+			assert.Equal(t, tt.wantServer, tt.tc.ServerOrigin)
+			assert.Equal(t, tt.wantBareName, tt.tc.MCPBareName)
+			assert.Equal(t, tt.wantSchema, tt.tc.Schema)
+		})
+	}
+}
+
+func TestEnrichToolCallNilSafe(t *testing.T) {
+	store := NewNoTools()
+	store.AddTools([]Tool{{Name: "builtin_tool", Description: "A builtin tool"}})
+
+	// nil tool call is a no-op.
+	EnrichToolCall(nil, store, EnrichToolCallOptions{})
+
+	// nil store leaves the call untouched.
+	tc := ToolCall{Name: "builtin_tool"}
+	EnrichToolCall(&tc, nil, EnrichToolCallOptions{})
+	assert.Empty(t, tc.Description)
+	assert.Nil(t, tc.Schema)
+}

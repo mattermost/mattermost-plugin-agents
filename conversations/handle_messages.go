@@ -110,20 +110,17 @@ func removePreFilteredMCPServersFromVisibleStore(llmContext *llm.Context) {
 
 // buildConversationContextWithTools assembles an LLM context for a bot
 // interaction in a single pass. It applies user MCP preferences for
-// DM/group channels, the caller's extra options, optional late-binding of
-// the conversation ID, and WithLLMContextTools. After the build it also
-// runs the post-build steps that all four conversation entry points share
-// (filtered visible-store cleanup for DM/group channels).
+// DM/group channels, the caller's extra options, and WithLLMContextTools.
+// After the build it also runs the post-build steps that all four
+// conversation entry points share (filtered visible-store cleanup for
+// DM/group channels).
 //
-// Pass conversationID == "" to defer late-binding; the caller should call
-// llmContext.SetConversationID once the conversation row exists.
 // Pass prefsLogMessage == "" to skip the user MCP preferences lookup.
 func (c *Conversations) buildConversationContextWithTools(
 	ctx context.Context,
 	bot *bots.Bot,
 	user *model.User,
 	channel *model.Channel,
-	conversationID string,
 	prefsLogMessage string,
 	extraOpts ...llm.ContextOption,
 ) *llm.Context {
@@ -134,9 +131,6 @@ func (c *Conversations) buildConversationContextWithTools(
 		opts = append(opts, c.userMCPPreferenceContextOptions(user.Id, prefsLogMessage)...)
 	}
 	opts = append(opts, extraOpts...)
-	if conversationID != "" {
-		opts = append(opts, c.contextBuilder.WithLLMContextConversationID(conversationID))
-	}
 	opts = append(opts, c.contextBuilder.WithLLMContextTools(ctx, bot))
 
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, opts...)
@@ -267,14 +261,11 @@ func (c *Conversations) handleMentionViaConversation(
 			return botChannelAutoEverywhereKeepTool(c.toolPolicyChecker, tool)
 		}))
 	}
-	// Build the context once WITH tools (no ConversationID yet) so the system
-	// prompt can reference .Tools and .DisabledToolsInfo. The conversation ID
-	// is late-bound below via SetConversationID after the conversation row
-	// has been created.
+	// Build the context once WITH tools so the system prompt can reference
+	// .Tools and .DisabledToolsInfo.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, postingUser, channel,
-		"", // conversationID late-bound after GetOrCreateConversation
 		"Failed to load user tool preferences",
 		extraOpts...,
 	)
@@ -311,7 +302,6 @@ func (c *Conversations) handleMentionViaConversation(
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
 	}
-	llmContext.SetConversationID(convResult.Conversation.ID)
 	if channelToolsAutoRunEverywhereOnly {
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
@@ -427,12 +417,10 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if webSearchParams := c.extractWebSearchContext(post); len(webSearchParams) > 0 {
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
-	// Build the context once WITH tools (no ConversationID yet); the
-	// conversation ID is late-bound below via SetConversationID.
+	// Build the context once WITH tools so the system prompt can reference them.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, postingUser, channel,
-		"", // conversationID late-bound after CreateOrGetDMConversation
 		"Failed to load user tool preferences",
 		extraOpts...,
 	)
@@ -448,7 +436,6 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
-	llmContext.SetConversationID(convResult.ConversationID)
 
 	// Anchor this run's trace to the user turn ID. Link to the previous user
 	// turn (if any) so consecutive DMs are navigable in Tempo.

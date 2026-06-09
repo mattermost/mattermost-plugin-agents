@@ -249,24 +249,10 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("failed to get conversation for regen: %w", err)
 	}
 
-	var contextOpts []llm.ContextOption
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		contextOpts = append(contextOpts, c.userMCPPreferenceContextOptions(
-			user.Id,
-			"Failed to load user tool preferences on regen, proceeding without filtering",
-		)...)
-	}
-	contextOpts = append(contextOpts,
-		c.contextBuilder.WithLLMContextConversationID(conv.ID),
-		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
+	llmContext := c.buildConversationContextWithTools(
+		ctx, bot, user, channel,
+		"Failed to load user tool preferences on regen, proceeding without filtering",
 	)
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
-
-	// Pre-build filtering protects strict registries; post-build removal preserves
-	// existing visible-store behavior for flag-off contexts.
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		removePreFilteredMCPServersFromVisibleStore(llmContext)
-	}
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	toolsDisabled := !isDM

@@ -36,9 +36,6 @@ type Context struct {
 	// User that is making the request
 	RequestingUser *model.User
 
-	// ConversationID identifies the conversation whose context is being built.
-	ConversationID string
-
 	// Bot Specific
 	BotName            string
 	BotUsername        string
@@ -115,14 +112,6 @@ func (c *Context) SetBotFields(displayName, username, userID, defaultModel, serv
 	c.BotModel = defaultModel
 	c.BotServiceType = serviceType
 	c.CustomInstructions = customInstructions
-}
-
-// SetConversationID late-binds a conversation ID onto an existing context.
-func (c *Context) SetConversationID(conversationID string) {
-	if c == nil || conversationID == "" {
-		return
-	}
-	c.ConversationID = conversationID
 }
 
 // CustomPromptVars returns a flat map of whitelisted variables for use in

@@ -100,7 +100,6 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, user, channel,
-		conv.ID,
 		"Failed to load user tool preferences for tool approval",
 	)
 
@@ -410,7 +409,6 @@ func (c *Conversations) streamToolFollowUp(
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, user, channel,
-		conv.ID,
 		"Failed to load user tool preferences for tool follow-up",
 		channelToolFilterOpts...,
 	)

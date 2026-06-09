@@ -952,36 +952,3 @@ func TestLoadMCPToolsLeavesRetainedHistoryAloneWhenFiltered(t *testing.T) {
 
 	require.Nil(t, context.Tools.GetTool("github__search"))
 }
-
-func TestSetConversationIDOnlySetsConversationID(t *testing.T) {
-	builder := newTestBuilder(t,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		&staticMCPToolProvider{tools: []llm.Tool{
-			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
-		}},
-	)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		MCPDynamicToolLoading: true,
-	})
-
-	context := buildToolsContext(builder, bot)
-	before := toolNames(context.Tools)
-	require.Empty(t, context.ConversationID)
-
-	context.SetConversationID("conv-id")
-
-	assert.Equal(t, "conv-id", context.ConversationID)
-	require.ElementsMatch(t, before, toolNames(context.Tools))
-
-	context.SetConversationID("")
-	assert.Equal(t, "conv-id", context.ConversationID)
-
-	require.NotPanics(t, func() {
-		var nilContext *llm.Context
-		nilContext.SetConversationID("other-id")
-	})
-}

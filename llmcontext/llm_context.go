@@ -132,15 +132,6 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 	}
 }
 
-func (b *Builder) WithLLMContextConversationID(conversationID string) llm.ContextOption {
-	return func(c *llm.Context) {
-		if conversationID == "" {
-			return
-		}
-		c.ConversationID = conversationID
-	}
-}
-
 // toolAuthErrorMatchesAllowlist reports whether authErr refers to a server that still
 // appears in the per-agent MCP allowlist (by ServerOrigin).
 func toolAuthErrorMatchesAllowlist(authErr llm.ToolAuthError, allowlist []llm.EnabledMCPTool) bool {

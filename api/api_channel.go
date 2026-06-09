@@ -192,19 +192,14 @@ func channelAnalysisToolAvailability(store *llm.ToolStore) ([]string, []string) 
 
 	var missing []string
 	for _, required := range channelAnalysisRequiredMCPTools {
-		if !hasRequiredChannelAnalysisTool(store, required) {
+		// Required channel-analysis MCP tools are preloaded into the visible
+		// store by WithLLMContextPreloadedMCPTools.
+		if _, ok := store.LookupTool(required.ToolName, required.ServerOrigin); !ok {
 			missing = append(missing, required.ToolName)
 		}
 	}
 
 	return available, missing
-}
-
-// hasRequiredChannelAnalysisTool expects channel-analysis MCP tools to be
-// preloaded into the visible tool store by WithLLMContextPreloadedMCPTools.
-func hasRequiredChannelAnalysisTool(store *llm.ToolStore, required llm.EnabledMCPTool) bool {
-	_, ok := store.LookupTool(required.ToolName, required.ServerOrigin)
-	return ok
 }
 
 func (a *API) handleInterval(c *gin.Context) {

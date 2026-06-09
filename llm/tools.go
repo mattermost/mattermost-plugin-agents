@@ -408,6 +408,43 @@ func toolLookup(tool Tool) ToolLookup {
 	}
 }
 
+// EnrichToolCallOptions controls how EnrichToolCall fills a tool call from the store.
+type EnrichToolCallOptions struct {
+	// OverwriteDescription replaces an existing Description with the store's
+	// value. Rehydration trusts the store; approval preserves the model's text.
+	OverwriteDescription bool
+	// BareNameFallback retries the lookup by MCPBareName when the primary
+	// (name, origin) lookup misses (needed when rehydrating persisted blocks).
+	BareNameFallback bool
+}
+
+// EnrichToolCall fills a tool call's Description, Schema, ServerOrigin, and
+// MCPBareName from the resolved store entry. MCPBareName is only set for MCP
+// tools (those with a server origin); builtins are left untouched.
+func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) {
+	if tc == nil || store == nil {
+		return
+	}
+	lookup, ok := store.LookupTool(tc.Name, tc.ServerOrigin)
+	if !ok && opts.BareNameFallback && tc.MCPBareName != "" {
+		lookup, ok = store.LookupTool(tc.MCPBareName, tc.ServerOrigin)
+	}
+	if !ok {
+		return
+	}
+	tool := lookup.Tool
+	if opts.OverwriteDescription || tc.Description == "" {
+		tc.Description = tool.Description
+	}
+	tc.Schema = tool.Schema
+	if tc.ServerOrigin == "" {
+		tc.ServerOrigin = lookup.ServerOrigin
+	}
+	if tc.MCPBareName == "" && lookup.ServerOrigin != "" {
+		tc.MCPBareName = lookup.BareName
+	}
+}
+
 func (s *ToolStore) lookupTool(name string) (Tool, bool) {
 	lookup, ok := s.LookupTool(name, "")
 	return lookup.Tool, ok

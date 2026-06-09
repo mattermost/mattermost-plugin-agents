@@ -250,10 +250,9 @@ func (r *ToolRunner) runLoop(
 
 		store := toolStoreFromRequest(request)
 		if containsUnavailableTools(toolCalls, store) {
-			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
-
 			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
-			resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
+			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
+			appendToolTurnAndPost(result, &request, text.String(), reasoningData, resolvedToolCalls, toolResults, usage)
 
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
 
@@ -290,7 +289,8 @@ func (r *ToolRunner) runLoop(
 		toolResults := r.executeTools(ctx, toolCalls, request)
 		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
-		resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
+		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
+		appendToolTurnAndPost(result, &request, text.String(), reasoningData, resolvedToolCalls, toolResults, usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
@@ -469,26 +469,8 @@ func recordMCPDynamicSearchLoadCallSuccess(llmContext *llm.Context, toolCalls []
 func enrichToolCallsForApproval(toolCalls []llm.ToolCall, store *llm.ToolStore) []llm.ToolCall {
 	enriched := make([]llm.ToolCall, len(toolCalls))
 	copy(enriched, toolCalls)
-	if store == nil {
-		return enriched
-	}
-
 	for i := range enriched {
-		lookup, ok := store.LookupTool(enriched[i].Name, enriched[i].ServerOrigin)
-		if !ok {
-			continue
-		}
-		tool := lookup.Tool
-		if enriched[i].Description == "" {
-			enriched[i].Description = tool.Description
-		}
-		if enriched[i].ServerOrigin == "" {
-			enriched[i].ServerOrigin = lookup.ServerOrigin
-		}
-		enriched[i].Schema = tool.Schema
-		if enriched[i].ServerOrigin != "" {
-			enriched[i].MCPBareName = lookup.BareName
-		}
+		llm.EnrichToolCall(&enriched[i], store, llm.EnrichToolCallOptions{})
 	}
 	return enriched
 }
@@ -498,17 +480,10 @@ func appendToolTurnAndPost(
 	request *llm.CompletionRequest,
 	text string,
 	reasoningData llm.ReasoningData,
-	toolCalls []llm.ToolCall,
+	resolvedToolCalls []llm.ToolCall,
 	toolResults []ToolResult,
 	usage llm.TokenUsage,
-) []llm.ToolCall {
-	// Build resolved tool calls with post-execution status
-	// (AutoApproved / Error). These flow into the ToolTurn so downstream
-	// persistence (WriteToolTurns → toolUseBlocks) can read the resolved
-	// status directly from tc.Status instead of inferring it from the
-	// fact that only the auto-execute path calls this function.
-	resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-
+) {
 	turn := ToolTurn{
 		AssistantMessage:   text,
 		AssistantToolCalls: resolvedToolCalls,
@@ -526,8 +501,6 @@ func appendToolTurnAndPost(
 		Reasoning:          reasoningData.Text,
 		ReasoningSignature: reasoningData.Signature,
 	})
-
-	return resolvedToolCalls
 }
 
 // buildResolvedToolCalls creates resolved ToolCall entries from executed results.

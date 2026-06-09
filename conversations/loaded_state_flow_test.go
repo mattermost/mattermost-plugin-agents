@@ -373,7 +373,7 @@ func seedLoadToolPair(t *testing.T, convStore *loadedStateFlowStore, convID, too
 	*nextSeq += 2
 }
 
-func TestProcessDMRequestThreadsConversationIDIntoContext(t *testing.T) {
+func TestProcessDMRequestIssuesSingleRequest(t *testing.T) {
 	convStore, _ := loadedStateConversationStore()
 	convService := conversation.NewService(convStore, nil, nil, nil)
 	lm := &loadedStateLLM{}
@@ -385,9 +385,7 @@ func TestProcessDMRequestThreadsConversationIDIntoContext(t *testing.T) {
 	_, readErr := streamResult.Stream.ReadAll()
 	require.NoError(t, readErr)
 
-	require.Equal(t, "conv-id", llmContext.ConversationID)
 	require.Len(t, lm.requests, 1)
-	require.Equal(t, "conv-id", lm.requests[0].Context.ConversationID)
 }
 
 func TestHandleToolCallExecutesApprovedToolRestoredFromLoadTurns(t *testing.T) {
@@ -669,7 +667,6 @@ func TestStreamToolFollowUpRestoresToolFromPriorLoadTurns(t *testing.T) {
 	streamingService.waitForStreaming()
 	require.Len(t, lm.requests, 1)
 	require.NotNil(t, lm.requests[0].Context.Tools.GetTool("jira__get_issue"))
-	require.Equal(t, "conv-id", lm.requests[0].Context.ConversationID)
 }
 
 func TestRegenerateRestoresLoadsBeforeAnchorButDropsLoadsInScrubbedGeneration(t *testing.T) {
@@ -770,7 +767,6 @@ func TestRegenerateRestoresLoadsBeforeAnchorButDropsLoadsInScrubbedGeneration(t 
 	require.NoError(t, readErr)
 
 	require.Len(t, lm.requests, 1)
-	require.Equal(t, "conv-id", lm.requests[0].Context.ConversationID)
 	require.NotNil(t, lm.requests[0].Context.Tools.GetTool("jira__get_issue"),
 		"pre-anchor load must survive truncation")
 	require.Nil(t, lm.requests[0].Context.Tools.GetTool("jira__transition_issue"),

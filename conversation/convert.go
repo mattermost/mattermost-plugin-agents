@@ -228,27 +228,10 @@ func BlocksToPost(
 }
 
 func enrichToolCallFromStore(toolCall *llm.ToolCall, toolStore *llm.ToolStore) {
-	if toolCall == nil || toolStore == nil {
-		return
-	}
-
-	lookup, ok := toolStore.LookupTool(toolCall.Name, toolCall.ServerOrigin)
-	if !ok && toolCall.MCPBareName != "" {
-		lookup, ok = toolStore.LookupTool(toolCall.MCPBareName, toolCall.ServerOrigin)
-	}
-	if !ok {
-		return
-	}
-
-	tool := lookup.Tool
-	toolCall.Description = tool.Description
-	toolCall.Schema = tool.Schema
-	if toolCall.ServerOrigin == "" {
-		toolCall.ServerOrigin = lookup.ServerOrigin
-	}
-	if toolCall.MCPBareName == "" && tool.ServerOrigin != "" {
-		toolCall.MCPBareName = lookup.BareName
-	}
+	llm.EnrichToolCall(toolCall, toolStore, llm.EnrichToolCallOptions{
+		OverwriteDescription: true,
+		BareNameFallback:     true,
+	})
 }
 
 // PostToBlocks converts an llm.Post into a slice of content blocks.
