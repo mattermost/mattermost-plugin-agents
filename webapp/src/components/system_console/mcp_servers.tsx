@@ -42,7 +42,7 @@ export type MCPEmbeddedServerConfig = {
 export type MCPConfig = {
     enabled: boolean;
     enablePluginServer: boolean;
-    servers: MCPServerConfig[];
+    servers: MCPServerConfig[] | null; // server sends nil Go slice as JSON null
     embeddedServer: MCPEmbeddedServerConfig;
     idleTimeoutMinutes?: number;
 };
@@ -432,10 +432,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     // Generate a server name
     const generateServerName = () => {
         const prefix = 'MCP Server ';
-        let counter = config.servers.length + 1;
+        let counter = normalizedServers.length + 1;
 
         // Make sure the name is unique
-        const isNameTaken = (name: string) => config.servers.some((server) => server.name === name);
+        const isNameTaken = (name: string) => normalizedServers.some((server) => server.name === name);
 
         while (isNameTaken(`${prefix}${counter}`)) {
             counter++;
@@ -452,7 +452,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         onChange({
             ...config,
             servers: [
-                ...config.servers,
+                ...normalizedServers,
                 {
                     ...defaultServerConfig,
                     name: serverName,
@@ -463,7 +463,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // Update a server's configuration
     const updateServer = (serverIndex: number, serverConfig: MCPServerConfig) => {
-        const updatedServers = [...config.servers];
+        const updatedServers = [...normalizedServers];
         updatedServers[serverIndex] = serverConfig;
 
         onChange({
@@ -474,7 +474,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // Delete a server
     const deleteServer = (serverIndex: number) => {
-        const newServers = config.servers.filter((_, index) => index !== serverIndex);
+        const newServers = normalizedServers.filter((_, index) => index !== serverIndex);
 
         onChange({
             ...config,
@@ -554,12 +554,12 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                             />
                         </ItemList>
                         <ServersList>
-                            {!Array.isArray(config.servers) || config.servers.length < 1 ? (
+                            {!Array.isArray(normalizedServers) || normalizedServers.length < 1 ? (
                                 <EmptyState>
                                     <FormattedMessage defaultMessage='No remote MCP servers configured. Add a server to connect to external MCP tools.'/>
                                 </EmptyState>
                             ) : (
-                                config.servers.map((serverConfig, index) => (
+                                normalizedServers.map((serverConfig, index) => (
                                     <MCPServer
                                         key={index}
                                         serverIndex={index}

@@ -23,8 +23,11 @@ func (f *fakeLLMForFallback) ChatCompletionNoStream(_ context.Context, _ Complet
 	return f.response, nil
 }
 
-func (f *fakeLLMForFallback) CountTokens(_ string) int { return 0 }
-func (f *fakeLLMForFallback) InputTokenLimit() int     { return 4096 }
+func (f *fakeLLMForFallback) CountTokens(_ context.Context, _ CompletionRequest, _ ...LanguageModelOption) (int, error) {
+	return 0, ErrUnsupportedTokenCount
+}
+func (f *fakeLLMForFallback) InputTokenLimit() int  { return 4096 }
+func (f *fakeLLMForFallback) OutputTokenLimit() int { return 4096 }
 
 func TestStructuredOutputFallbackWrapper(t *testing.T) {
 	jsonSchema := NewJSONSchemaFromStruct[struct {

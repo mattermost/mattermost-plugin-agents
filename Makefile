@@ -10,6 +10,11 @@ DLV_DEBUG_PORT := 2346
 DEFAULT_GOOS := $(shell go env GOOS)
 DEFAULT_GOARCH := $(shell go env GOARCH)
 
+# loadtest/controller is a nested Go module that keeps mattermost-load-test-ng out
+# of the production plugin build. It is invisible to the root-module gates, so the
+# loadtest-controller-* targets run the same lint/test/drift checks against it.
+LOADTEST_CONTROLLER_DIR := loadtest/controller
+
 export GO111MODULE=on
 
 # We need to export GOBIN to allow it to be set
@@ -171,7 +176,7 @@ all: check-style test dist
 ## target is still runnable individually so you can drill into a single
 ## failure.
 .PHONY: check
-check: check-style test check-shards check-i18n check-locks
+check: check-style test check-shards check-i18n check-locks check-go-mods
 
 ## Validates that every spec under e2e/tests/ is assigned to a CI shard group.
 .PHONY: check-shards
@@ -217,6 +222,35 @@ check-locks:
 		echo "*** Lockfile(s) regenerated; commit the result." >&2; \
 		exit 1; \
 	fi
+
+## Verify nested Go modules are tidy (no go.mod/go.sum drift).
+.PHONY: check-go-mods
+check-go-mods: loadtest-controller-mod-check
+
+## Run the controller module unit tests (race-enabled, matching root).
+.PHONY: loadtest-controller-test
+loadtest-controller-test: install-go-tools
+	cd $(LOADTEST_CONTROLLER_DIR) && $(GOBIN)/gotestsum -- $(GO_TEST_FLAGS) ./...
+
+## Lint the controller module: go vet, golangci-lint, and license headers.
+## golangci-lint v2 walks up to the root config; pass it explicitly since we run
+## from the module dir.
+.PHONY: loadtest-controller-lint
+loadtest-controller-lint: install-go-tools
+	cd $(LOADTEST_CONTROLLER_DIR) && $(GO) vet ./...
+	cd $(LOADTEST_CONTROLLER_DIR) && $(GOBIN)/golangci-lint run --config $(PWD)/.golangci.yml ./...
+	cd $(LOADTEST_CONTROLLER_DIR) && $(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 ./...
+
+## Fail when the controller module's go.mod/go.sum drift from `go mod tidy`.
+.PHONY: loadtest-controller-mod-check
+loadtest-controller-mod-check:
+	cd $(LOADTEST_CONTROLLER_DIR) && $(GO) mod tidy
+	git diff --exit-code $(LOADTEST_CONTROLLER_DIR)/go.mod $(LOADTEST_CONTROLLER_DIR)/go.sum
+
+## Compile-smoke the controller module.
+.PHONY: loadtest-controller-build
+loadtest-controller-build:
+	$(GO) build -C $(LOADTEST_CONTROLLER_DIR) ./...
 
 ## Ensures the plugin manifest is valid
 .PHONY: manifest-check
@@ -267,6 +301,7 @@ ifneq ($(HAS_SERVER),)
 	$(GO) vet ./...
 	$(GOBIN)/golangci-lint run ./...
 	$(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 ./...
+	$(MAKE) loadtest-controller-lint
 endif
 
 ## Runs all style checks but fixes anything it can. Also re-extracts webapp
@@ -491,6 +526,7 @@ detach: setup-attach
 test: apply webapp/node_modules install-go-tools
 ifneq ($(HAS_SERVER),)
 	$(GOBIN)/gotestsum -- -v ./...
+	$(MAKE) loadtest-controller-test
 endif
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run test;
@@ -502,6 +538,7 @@ endif
 test-ci: apply webapp/node_modules install-go-tools
 ifneq ($(HAS_SERVER),)
 	$(GOBIN)/gotestsum --format standard-verbose --junitfile report.xml -- ./...
+	$(MAKE) loadtest-controller-test
 endif
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run test;

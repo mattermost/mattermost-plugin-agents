@@ -97,6 +97,40 @@ func TestNewFromServiceConfigOpenAIForcesResponsesAPI(t *testing.T) {
 	}
 }
 
+// TestNewFromServiceConfigPropagatesInputTokenLimit pins the contract that a
+// manually-set "Input token limit" in the system console flows through to
+// the running LLM, so the context indicator can compute utilization. A user
+// configured 250000 for an OpenAI bot and the context endpoint returned no
+// input_token_limit; this catches that regression at the boundary.
+func TestNewFromServiceConfigPropagatesInputTokenLimit(t *testing.T) {
+	tests := []struct {
+		name            string
+		inputTokenLimit int
+	}{
+		{"manual 250000", 250000},
+		{"zero passes through unchanged", 0},
+		{"small value", 4096},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := llm.ServiceConfig{
+				ID:              "test",
+				Type:            llm.ServiceTypeOpenAI,
+				APIKey:          "key",
+				APIURL:          "http://localhost",
+				InputTokenLimit: tt.inputTokenLimit,
+			}
+			llmInstance, err := NewFromServiceConfig(service, llm.BotConfig{})
+			require.NoError(t, err)
+			defer llmInstance.client.Shutdown()
+
+			assert.Equal(t, tt.inputTokenLimit, llmInstance.InputTokenLimit(),
+				"the manually-configured token limit must survive the trip through bifrost.Config "+
+					"so the /context endpoint can render a utilization ring")
+		})
+	}
+}
+
 func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 	tests := []struct {
 		name        string

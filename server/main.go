@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/files"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -383,8 +384,9 @@ func (p *Plugin) OnActivate() error {
 
 	// Embedded MCP is always available after PR #617, even if older configs still
 	// have the legacy toggle stored as false.
+	fileContentService := files.New(mmClient)
 	var embeddedMCPServer mcp.EmbeddedMCPServer
-	embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
+	embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
 	if err != nil {
 		pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
 		// Continue without embedded server
@@ -402,7 +404,7 @@ func (p *Plugin) OnActivate() error {
 	}
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient)
 	p.configuration.RegisterUpdateListener(func() {
-		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
+		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
 		if embeddedErr != nil {
 			pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
 		}

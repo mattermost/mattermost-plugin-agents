@@ -422,8 +422,17 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
             }
 
             selectedServiceModel = await selectModelFromDropdown(serviceCard, page, provider.service.defaultModel, avoidModelTokens);
-            await serviceCard.getByPlaceholder(/input token limit/i).fill(String(provider.service.tokenLimit));
-            await serviceCard.getByPlaceholder(/output token limit/i).fill(String(provider.service.outputTokenLimit));
+
+            // Token-limit inputs are disabled when Bifrost auto-detects the
+            // limit for the selected model; the auto-filled value is used as-is.
+            const inputTokenLimitField = serviceCard.getByPlaceholder(/input token limit/i);
+            if (await inputTokenLimitField.isEnabled()) {
+                await inputTokenLimitField.fill(String(provider.service.tokenLimit));
+            }
+            const outputTokenLimitField = serviceCard.getByPlaceholder(/output token limit/i);
+            if (await outputTokenLimitField.isEnabled()) {
+                await outputTokenLimitField.fill(String(provider.service.outputTokenLimit));
+            }
 
             const streamingTimeoutInput = serviceCard.getByPlaceholder(/streaming timeout seconds/i);
             if (await streamingTimeoutInput.isVisible().catch(() => false)) {

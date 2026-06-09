@@ -6,6 +6,7 @@ package conversation
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -479,410 +480,381 @@ func newFakeReadCloser(s string) io.ReadCloser {
 // moment we build the LLM request, instead of being inlined when the user
 // turn was first written.
 func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
-	t.Run("image block with EnableVision=true populates Files", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id:       "img1",
-			Name:     "shot.png",
-			MimeType: "image/png",
-			Size:     1234,
-		}, nil)
-		mmClient.On("GetFile", "img1").Return(newFakeReadCloser("PNGDATA"), nil)
+	bigContent := strings.Repeat("x", int(InlineFileMaxBytes)+1)
+	boundaryBody := strings.Repeat("A", int(InlineFileMaxBytes))
 
-		blocks := []ContentBlock{
-			{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
-		}
+	tests := []struct {
+		name         string
+		role         string // defaults to "user"
+		enableVision bool
+		nilClient    bool
+		setup        func(m *mmapimocks.MockClient)
+		blocks       []ContentBlock
+		assert       func(t *testing.T, m *mmapimocks.MockClient, post llm.Post)
+	}{
+		{
+			name:         "image block with EnableVision=true populates Files",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "img1").Return(&model.FileInfo{
+					Id: "img1", Name: "shot.png", MimeType: "image/png", Size: 1234,
+				}, nil)
+				m.On("GetFile", "img1").Return(newFakeReadCloser("PNGDATA"), nil)
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
+			},
+			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
+				require.Len(t, post.Files, 1, "an image block with vision enabled must produce exactly one entry in Post.Files")
+				assert.Equal(t, "image/png", post.Files[0].MimeType)
+				assert.Equal(t, int64(1234), post.Files[0].Size)
+				assert.Equal(t, []byte("PNGDATA"), post.Files[0].Data)
+				require.NotNil(t, post.Files[0].Reader)
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+				// Read the bytes back and pin them to what the mock returned.
+				// Catches a wrong-FileID-resolution bug (e.g. iterating wrong
+				// FileID, returning a stale reader, etc.).
+				bytesBack, readErr := io.ReadAll(post.Files[0].Reader)
+				require.NoError(t, readErr)
+				assert.Equal(t, "PNGDATA", string(bytesBack),
+					"the Reader bound to Post.Files must yield the bytes that mmClient.GetFile returned for that exact FileID")
+			},
+		},
+		{
+			name:         "image block with EnableVision=false is skipped",
+			enableVision: false,
+			// No expectations: GetFile/GetFileInfo must NOT be called when
+			// vision is off. mockery will fail the test if either runs.
+			blocks: []ContentBlock{
+				{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
+			},
+			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
+				assert.Empty(t, post.Files, "image block must be silently dropped when vision is disabled")
+			},
+		},
+		{
+			name:         "unsupported image MIME is passed through without reading blob",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "img1").Return(&model.FileInfo{
+					Id: "img1", Name: "vector.svg", MimeType: "image/svg+xml", Size: 1234,
+				}, nil)
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeImage, FileID: "img1", Filename: "vector.svg", MimeType: "image/svg+xml"},
+			},
+			assert: func(t *testing.T, m *mmapimocks.MockClient, post llm.Post) {
+				require.Len(t, post.Files, 1)
+				m.AssertNotCalled(t, "GetFile", "img1")
+				assert.Equal(t, "image/svg+xml", post.Files[0].MimeType)
+				assert.Empty(t, post.Files[0].Data)
+				assert.Nil(t, post.Files[0].Reader)
+			},
+		},
+		{
+			name:         "text/plain file block reads content via GetFile and appends Attached File Contents",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+					Id: "doc1", Name: "foo.txt", MimeType: "text/plain", Size: 11,
+				}, nil)
+				m.On("GetFile", "doc1").Return(newFakeReadCloser("hello world"), nil)
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeText, Text: "look at this"},
+				{Type: BlockTypeFile, FileID: "doc1", Filename: "foo.txt", MimeType: "text/plain"},
+			},
+			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
+				assert.Empty(t, post.Files, "non-image text file must NOT go through Post.Files")
+				assert.Contains(t, post.Message, "look at this")
+				assert.Contains(t, post.Message, "\nAttached File Contents:\nFile Name: foo.txt\nContent: hello world")
+			},
+		},
+		{
+			name:         "file block uses pre-extracted FileInfo.Content without GetFile",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+					Id: "doc1", Name: "doc.pdf", MimeType: "application/pdf", Content: "pre-extracted content",
+				}, nil)
+				// No GetFile expectation — mockery fails if it is called.
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeFile, FileID: "doc1", Filename: "doc.pdf", MimeType: "application/pdf"},
+			},
+			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
+				assert.Contains(t, post.Message, "File Name: doc.pdf")
+				assert.Contains(t, post.Message, "Content: pre-extracted content")
+			},
+		},
+		{
+			name:         "large text file is surfaced as a descriptor without reading it",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+					Id: "doc1", Name: "bigdoc.txt", MimeType: "text/plain", Size: InlineFileMaxBytes + 1,
+				}, nil)
+				// No GetFile expectation — the inline-vs-descriptor decision is
+				// made from metadata alone, so a large file is never downloaded.
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeText, Text: "see attached"},
+				{Type: BlockTypeFile, FileID: "doc1", Filename: "bigdoc.txt", MimeType: "text/plain"},
+			},
+			assert: func(t *testing.T, m *mmapimocks.MockClient, post llm.Post) {
+				// Pin the full assembled suffix: the header sentence the read_file
+				// tool relies on, the per-entry header, and every descriptor field.
+				expected := "see attached\n" +
+					"Attached files (call the read_file tool with the File ID to read their contents):\n" +
+					fmt.Sprintf("**Attached File 1**:\nName: bigdoc.txt\nFile ID: doc1\nType: text/plain\nSize: %d bytes", InlineFileMaxBytes+1)
+				assert.Equal(t, expected, post.Message)
+				m.AssertNotCalled(t, "GetFile", "doc1")
+			},
+		},
+		{
+			name:         "large pre-extracted content is surfaced as a descriptor",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+					Id: "doc1", Name: "huge.pdf", MimeType: "application/pdf", Content: bigContent,
+				}, nil)
+				// No GetFile expectation — pre-extracted content is measured directly.
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeFile, FileID: "doc1", Filename: "huge.pdf", MimeType: "application/pdf"},
+			},
+			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
+				assert.Contains(t, post.Message, "File ID: doc1")
+				assert.NotContains(t, post.Message, bigContent,
+					"the descriptor must not inline the extracted content")
+				assert.NotContains(t, post.Message, "Attached File Contents:",
+					"a partial inline of the extracted content would still be a regression")
+			},
+		},
+		{
+			name:         "binary file with no extractable text is surfaced as a descriptor without GetFile",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+					Id: "doc1", Name: "archive.zip", MimeType: "application/zip",
+				}, nil)
+				// No GetFile expectation — a binary with no extractable text still
+				// gets a metadata descriptor so the LLM is aware of it.
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeText, Text: "see attached"},
+				{Type: BlockTypeFile, FileID: "doc1", Filename: "archive.zip", MimeType: "application/zip"},
+			},
+			assert: func(t *testing.T, m *mmapimocks.MockClient, post llm.Post) {
+				assert.Contains(t, post.Message, "see attached")
+				assert.Contains(t, post.Message, "Name: archive.zip")
+				assert.Contains(t, post.Message, "File ID: doc1")
+				m.AssertNotCalled(t, "GetFile", "doc1")
+			},
+		},
+		{
+			name:         "multiple mixed blocks: text + image + text/plain file",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "img1").Return(&model.FileInfo{
+					Id: "img1", Name: "shot.png", MimeType: "image/png", Size: 500,
+				}, nil)
+				m.On("GetFile", "img1").Return(newFakeReadCloser("PNGDATA"), nil)
+				m.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+					Id: "doc1", Name: "foo.txt", MimeType: "text/plain", Size: 5,
+				}, nil)
+				m.On("GetFile", "doc1").Return(newFakeReadCloser("hello"), nil)
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeText, Text: "the text"},
+				{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
+				{Type: BlockTypeFile, FileID: "doc1", Filename: "foo.txt", MimeType: "text/plain"},
+			},
+			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
+				require.Len(t, post.Files, 1, "exactly the image attachment should populate Post.Files")
+				assert.Equal(t, "image/png", post.Files[0].MimeType)
+				assert.Contains(t, post.Message, "the text")
+				assert.Contains(t, post.Message, "Attached File Contents:")
+				assert.Contains(t, post.Message, "File Name: foo.txt")
+				assert.Contains(t, post.Message, "Content: hello")
 
-		require.Len(t, post.Files, 1, "an image block with vision enabled must produce exactly one entry in Post.Files")
-		assert.Equal(t, "image/png", post.Files[0].MimeType)
-		assert.Equal(t, int64(1234), post.Files[0].Size)
-		assert.Equal(t, []byte("PNGDATA"), post.Files[0].Data)
-		require.NotNil(t, post.Files[0].Reader)
+				// Ordering contract: original user text precedes the
+				// "Attached File Contents:" suffix. Without this ordering,
+				// the LLM would see file content inserted before the user's
+				// own message.
+				idxText := strings.Index(post.Message, "the text")
+				idxAttach := strings.Index(post.Message, "Attached File Contents:")
+				require.NotEqual(t, -1, idxText)
+				require.NotEqual(t, -1, idxAttach)
+				assert.Less(t, idxText, idxAttach,
+					"user text must appear in the message before the Attached File Contents suffix")
+			},
+		},
+		{
+			name:         "multiple text/plain files appear in input order in the message",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "doc-a").Return(&model.FileInfo{
+					Id: "doc-a", Name: "a.txt", MimeType: "text/plain", Size: 5,
+				}, nil)
+				m.On("GetFile", "doc-a").Return(newFakeReadCloser("AAAAA"), nil)
+				m.On("GetFileInfo", "doc-b").Return(&model.FileInfo{
+					Id: "doc-b", Name: "b.txt", MimeType: "text/plain", Size: 5,
+				}, nil)
+				m.On("GetFile", "doc-b").Return(newFakeReadCloser("BBBBB"), nil)
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeText, Text: "two attachments"},
+				{Type: BlockTypeFile, FileID: "doc-a", Filename: "a.txt", MimeType: "text/plain"},
+				{Type: BlockTypeFile, FileID: "doc-b", Filename: "b.txt", MimeType: "text/plain"},
+			},
+			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
+				idxA := strings.Index(post.Message, "File Name: a.txt")
+				idxB := strings.Index(post.Message, "File Name: b.txt")
+				require.NotEqual(t, -1, idxA, "a.txt must appear in the message")
+				require.NotEqual(t, -1, idxB, "b.txt must appear in the message")
+				assert.Less(t, idxA, idxB,
+					"file blocks must appear in input order in the Attached File Contents suffix")
+			},
+		},
+		{
+			name:         "GetFile error on image is logged and skipped, conversation continues",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "img1").Return(&model.FileInfo{
+					Id: "img1", Name: "broken.png", MimeType: "image/png",
+				}, nil)
+				m.On("GetFile", "img1").Return(nil, errors.New("file store offline"))
+				// LogError must actually be invoked — without .Maybe() this fails
+				// if production silently swallows the error (the broken behavior).
+				m.On("LogError", mock.Anything, mock.Anything).Return()
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeText, Text: "still here"},
+				{Type: BlockTypeImage, FileID: "img1", Filename: "broken.png", MimeType: "image/png"},
+			},
+			assert: func(t *testing.T, m *mmapimocks.MockClient, post llm.Post) {
+				// Pin that GetFile was actually attempted — production simply
+				// dropping the image without trying to fetch it would still leave
+				// post.Files empty, so the previous broken behavior would pass
+				// without this AssertCalled.
+				m.AssertCalled(t, "GetFile", "img1")
+				assert.Empty(t, post.Files, "GetFile errors must drop the entry, not abort the request")
+				assert.Equal(t, "still here", post.Message,
+					"text content must still appear when an image attachment fails to load")
+			},
+		},
+		{
+			// Pin the inline-vs-descriptor boundary by name: a file whose readable
+			// size is at or below InlineFileMaxBytes is inlined; one byte over
+			// becomes a descriptor (covered by the large-text-file case above).
+			name:         "text file at exactly InlineFileMaxBytes is inlined",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+					Id: "doc1", Name: "boundary.txt", MimeType: "text/plain", Size: int64(len(boundaryBody)),
+				}, nil)
+				m.On("GetFile", "doc1").Return(newFakeReadCloser(boundaryBody), nil)
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeFile, FileID: "doc1", Filename: "boundary.txt", MimeType: "text/plain"},
+			},
+			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
+				assert.Contains(t, post.Message, "Attached File Contents:")
+				assert.Contains(t, post.Message, "File Name: boundary.txt")
+				assert.NotContains(t, post.Message, "read_file",
+					"a file at the inline threshold must be inlined, not described")
+			},
+		},
+		{
+			// Documents the zero-config safety guarantee: a turn with only
+			// text/thinking/tool blocks must not panic when mmClient is nil.
+			name:      "nil mmClient is safe when no file or image blocks are present",
+			role:      "assistant",
+			nilClient: true,
+			blocks: []ContentBlock{
+				{Type: BlockTypeText, Text: "hello"},
+				{Type: BlockTypeThinking, Text: "reason", Signature: "sig"},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+			},
+			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
+				assert.Equal(t, "hello", post.Message)
+				assert.Equal(t, "reason", post.Reasoning)
+				require.Len(t, post.ToolUse, 1)
+				assert.Equal(t, "tc1", post.ToolUse[0].ID)
+			},
+		},
+		{
+			// Dispatch must be by block.Type, not by MimeType — a malformed
+			// block (Type=file but MimeType=image/png) must not be sent to the
+			// LLM as an image. With empty FileInfo.Content and a non-text MIME
+			// there is no extractable text, so the block is surfaced as a
+			// metadata descriptor and GetFile must NOT be called.
+			name:         "BlockTypeFile with image/* MIME goes through file path, not image path",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+					Id: "doc1", Name: "weird.png", MimeType: "image/png",
+				}, nil)
+				// No GetFile expectation — mockery fails the test if production
+				// fetches bytes anyway (which would happen if dispatch went by
+				// MimeType into the image branch).
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeText, Text: "see attached"},
+				{Type: BlockTypeFile, FileID: "doc1", Filename: "weird.png", MimeType: "image/png"},
+			},
+			assert: func(t *testing.T, m *mmapimocks.MockClient, post llm.Post) {
+				m.AssertNotCalled(t, "GetFile", "doc1")
+				assert.Empty(t, post.Files,
+					"a BlockTypeFile must never populate Post.Files even when its MimeType says image/*")
+				assert.Contains(t, post.Message, "see attached")
+				assert.Contains(t, post.Message, "File ID: doc1",
+					"a file block with no extractable text is surfaced as a metadata descriptor")
+			},
+		},
+		{
+			name:         "FileInfo.Content non-empty wins over GetFile (explicit AssertNotCalled)",
+			enableVision: true,
+			setup: func(m *mmapimocks.MockClient) {
+				m.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+					Id: "doc1", Name: "extracted.pdf", MimeType: "application/pdf",
+					Content: "server-extracted text",
+				}, nil)
+				// No GetFile expectation: when fileInfo.Content is non-empty,
+				// the byte fetch must be skipped entirely.
+			},
+			blocks: []ContentBlock{
+				{Type: BlockTypeFile, FileID: "doc1", Filename: "extracted.pdf", MimeType: "application/pdf"},
+			},
+			assert: func(t *testing.T, m *mmapimocks.MockClient, post llm.Post) {
+				m.AssertNotCalled(t, "GetFile", "doc1",
+					"pre-extracted FileInfo.Content must short-circuit GetFile to avoid a redundant blob read")
+				assert.Contains(t, post.Message, "Content: server-extracted text")
+			},
+		},
+	}
 
-		// Read the bytes back and pin them to what the mock returned.
-		// Catches a wrong-FileID-resolution bug (e.g. iterating wrong
-		// FileID, returning a stale reader, etc.).
-		bytesBack, readErr := io.ReadAll(post.Files[0].Reader)
-		require.NoError(t, readErr)
-		assert.Equal(t, "PNGDATA", string(bytesBack),
-			"the Reader bound to Post.Files must yield the bytes that mmClient.GetFile returned for that exact FileID")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			role := tt.role
+			if role == "" {
+				role = "user"
+			}
 
-	t.Run("image block with EnableVision=false is skipped", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		// No expectations: GetFile/GetFileInfo must NOT be called when
-		// vision is off. mockery will fail the test if either runs.
+			if tt.nilClient {
+				post := BlocksToPost(tt.blocks, role, false, nil, tt.enableVision, 0)
+				tt.assert(t, nil, post)
+				return
+			}
 
-		blocks := []ContentBlock{
-			{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
-		}
+			mmClient := mmapimocks.NewMockClient(t)
+			if tt.setup != nil {
+				tt.setup(mmClient)
+			}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, false, 0)
-
-		assert.Empty(t, post.Files, "image block must be silently dropped when vision is disabled")
-	})
-
-	t.Run("unsupported image MIME is passed through without reading blob", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id:       "img1",
-			Name:     "vector.svg",
-			MimeType: "image/svg+xml",
-			Size:     1234,
-		}, nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeImage, FileID: "img1", Filename: "vector.svg", MimeType: "image/svg+xml"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		require.Len(t, post.Files, 1)
-		mmClient.AssertNotCalled(t, "GetFile", "img1")
-		assert.Equal(t, "image/svg+xml", post.Files[0].MimeType)
-		assert.Empty(t, post.Files[0].Data)
-		assert.Nil(t, post.Files[0].Reader)
-	})
-
-	t.Run("text/plain file block reads content via GetFile and appends Attached File Contents", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id:       "doc1",
-			Name:     "foo.txt",
-			MimeType: "text/plain",
-			Size:     11,
-		}, nil)
-		mmClient.On("GetFile", "doc1").Return(newFakeReadCloser("hello world"), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeText, Text: "look at this"},
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "foo.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		assert.Empty(t, post.Files, "non-image text file must NOT go through Post.Files")
-		assert.Contains(t, post.Message, "look at this")
-		assert.Contains(t, post.Message, "\nAttached File Contents:\nFile Name: foo.txt\nContent: hello world")
-	})
-
-	t.Run("file block uses pre-extracted FileInfo.Content without GetFile", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id:       "doc1",
-			Name:     "doc.pdf",
-			MimeType: "application/pdf",
-			Content:  "pre-extracted content",
-		}, nil)
-		// No GetFile expectation — mockery fails if it is called.
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "doc.pdf", MimeType: "application/pdf"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		assert.Contains(t, post.Message, "File Name: doc.pdf")
-		assert.Contains(t, post.Message, "Content: pre-extracted content")
-	})
-
-	t.Run("text/plain file at exactly maxFileSize gets truncation marker", func(t *testing.T) {
-		const maxBytes = int64(8)
-		body := "ABCDEFGH" // exactly 8 bytes
-
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id:       "doc1",
-			Name:     "big.txt",
-			MimeType: "text/plain",
-			Size:     int64(len(body)),
-		}, nil)
-		mmClient.On("GetFile", "doc1").Return(newFakeReadCloser(body), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "big.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
-
-		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
-			"reading exactly maxFileSize bytes must append the truncation marker so the LLM knows the content was cut")
-	})
-
-	t.Run("non-text non-image MIME with empty Content is skipped without GetFile", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id:       "doc1",
-			Name:     "binary.pdf",
-			MimeType: "application/pdf",
-		}, nil)
-		// No GetFile expectation — mockery fails if it is called.
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeText, Text: "see attached"},
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "binary.pdf", MimeType: "application/pdf"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		assert.Equal(t, "see attached", post.Message,
-			"non-text non-image attachments without pre-extracted Content must be silently skipped")
-	})
-
-	t.Run("multiple mixed blocks: text + image + text/plain file", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id:       "img1",
-			Name:     "shot.png",
-			MimeType: "image/png",
-			Size:     500,
-		}, nil)
-		mmClient.On("GetFile", "img1").Return(newFakeReadCloser("PNGDATA"), nil)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id:       "doc1",
-			Name:     "foo.txt",
-			MimeType: "text/plain",
-			Size:     5,
-		}, nil)
-		mmClient.On("GetFile", "doc1").Return(newFakeReadCloser("hello"), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeText, Text: "the text"},
-			{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "foo.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		require.Len(t, post.Files, 1, "exactly the image attachment should populate Post.Files")
-		assert.Equal(t, "image/png", post.Files[0].MimeType)
-		assert.Contains(t, post.Message, "the text")
-		assert.Contains(t, post.Message, "Attached File Contents:")
-		assert.Contains(t, post.Message, "File Name: foo.txt")
-		assert.Contains(t, post.Message, "Content: hello")
-
-		// Ordering contract: original user text precedes the
-		// "Attached File Contents:" suffix. Without this ordering,
-		// the LLM would see file content inserted before the user's
-		// own message.
-		idxText := strings.Index(post.Message, "the text")
-		idxAttach := strings.Index(post.Message, "Attached File Contents:")
-		require.NotEqual(t, -1, idxText)
-		require.NotEqual(t, -1, idxAttach)
-		assert.Less(t, idxText, idxAttach,
-			"user text must appear in the message before the Attached File Contents suffix")
-	})
-
-	t.Run("multiple text/plain files appear in input order in the message", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc-a").Return(&model.FileInfo{
-			Id: "doc-a", Name: "a.txt", MimeType: "text/plain", Size: 5,
-		}, nil)
-		mmClient.On("GetFile", "doc-a").Return(newFakeReadCloser("AAAAA"), nil)
-		mmClient.On("GetFileInfo", "doc-b").Return(&model.FileInfo{
-			Id: "doc-b", Name: "b.txt", MimeType: "text/plain", Size: 5,
-		}, nil)
-		mmClient.On("GetFile", "doc-b").Return(newFakeReadCloser("BBBBB"), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeText, Text: "two attachments"},
-			{Type: BlockTypeFile, FileID: "doc-a", Filename: "a.txt", MimeType: "text/plain"},
-			{Type: BlockTypeFile, FileID: "doc-b", Filename: "b.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		idxA := strings.Index(post.Message, "File Name: a.txt")
-		idxB := strings.Index(post.Message, "File Name: b.txt")
-		require.NotEqual(t, -1, idxA, "a.txt must appear in the message")
-		require.NotEqual(t, -1, idxB, "b.txt must appear in the message")
-		assert.Less(t, idxA, idxB,
-			"file blocks must appear in input order in the Attached File Contents suffix")
-	})
-
-	t.Run("GetFile error on image is logged and skipped, conversation continues", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
-			Id:       "img1",
-			Name:     "broken.png",
-			MimeType: "image/png",
-		}, nil)
-		mmClient.On("GetFile", "img1").Return(nil, errors.New("file store offline"))
-		// LogError must actually be invoked — without .Maybe() this fails
-		// if production silently swallows the error (the broken behavior).
-		mmClient.On("LogError", mock.Anything, mock.Anything).Return()
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeText, Text: "still here"},
-			{Type: BlockTypeImage, FileID: "img1", Filename: "broken.png", MimeType: "image/png"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		// Pin that GetFile was actually attempted — production simply
-		// dropping the image without trying to fetch it would still leave
-		// post.Files empty, so the previous broken behavior would pass
-		// without this AssertCalled.
-		mmClient.AssertCalled(t, "GetFile", "img1")
-		assert.Empty(t, post.Files, "GetFile errors must drop the entry, not abort the request")
-		assert.Equal(t, "still here", post.Message,
-			"text content must still appear when an image attachment fails to load")
-	})
-
-	// The maxFileSize=0 → DefaultMaxFileSize boundary trio. We pin the
-	// constant by name so this test has to be updated alongside any change
-	// to DefaultMaxFileSize.
-	t.Run("maxFileSize=0 default: payload of DefaultMaxFileSize-1 bytes has no truncation marker", func(t *testing.T) {
-		body := strings.Repeat("A", int(DefaultMaxFileSize-1))
-
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "under.txt", MimeType: "text/plain", Size: int64(len(body)),
-		}, nil)
-		mmClient.On("GetFile", "doc1").Return(newFakeReadCloser(body), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "under.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		assert.Contains(t, post.Message, "File Name: under.txt")
-		assert.NotContains(t, post.Message, "content truncated",
-			"a payload of DefaultMaxFileSize-1 bytes must NOT be marked truncated")
-	})
-
-	t.Run("maxFileSize=0 default: payload of exactly DefaultMaxFileSize bytes gets truncation marker", func(t *testing.T) {
-		body := strings.Repeat("A", int(DefaultMaxFileSize))
-
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "boundary.txt", MimeType: "text/plain", Size: int64(len(body)),
-		}, nil)
-		mmClient.On("GetFile", "doc1").Return(newFakeReadCloser(body), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "boundary.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
-			"reading exactly DefaultMaxFileSize bytes must append the truncation marker (LimitReader saw the cap)")
-	})
-
-	t.Run("maxFileSize=0 default: payload of DefaultMaxFileSize+1 bytes gets truncation marker", func(t *testing.T) {
-		body := strings.Repeat("A", int(DefaultMaxFileSize+1))
-
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "over.txt", MimeType: "text/plain", Size: int64(len(body)),
-		}, nil)
-		mmClient.On("GetFile", "doc1").Return(newFakeReadCloser(body), nil)
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "over.txt", MimeType: "text/plain"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
-			"a payload above DefaultMaxFileSize must be truncated with the marker")
-	})
-
-	t.Run("nil mmClient is safe when no file or image blocks are present", func(t *testing.T) {
-		// Documents the zero-config safety guarantee: a turn with only
-		// text/thinking/tool blocks must not panic when mmClient is nil.
-		blocks := []ContentBlock{
-			{Type: BlockTypeText, Text: "hello"},
-			{Type: BlockTypeThinking, Text: "reason", Signature: "sig"},
-			{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-		}
-
-		require.NotPanics(t, func() {
-			post := BlocksToPost(blocks, "assistant", false, nil, false, 0)
-			assert.Equal(t, "hello", post.Message)
-			assert.Equal(t, "reason", post.Reasoning)
-			require.Len(t, post.ToolUse, 1)
-			assert.Equal(t, "tc1", post.ToolUse[0].ID)
+			post := BlocksToPost(tt.blocks, role, false, mmClient, tt.enableVision, 0)
+			tt.assert(t, mmClient, post)
 		})
-	})
-
-	t.Run("BlockTypeFile with image/* MIME goes through file path, not image path", func(t *testing.T) {
-		// Dispatch must be by block.Type, not by MimeType — a malformed
-		// block (Type=file but MimeType=image/png) must not be sent to
-		// the LLM as an image. With empty FileInfo.Content and a
-		// non-text MIME, the file-text path skips the block, so GetFile
-		// must NOT be called.
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "weird.png", MimeType: "image/png",
-		}, nil)
-		// No GetFile expectation — mockery fails the test if production
-		// fetches bytes anyway (which would happen if dispatch went by
-		// MimeType into the image branch).
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeText, Text: "see attached"},
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "weird.png", MimeType: "image/png"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		mmClient.AssertNotCalled(t, "GetFile", "doc1")
-		assert.Empty(t, post.Files,
-			"a BlockTypeFile must never populate Post.Files even when its MimeType says image/*")
-		assert.Equal(t, "see attached", post.Message,
-			"a non-text non-image file block with empty Content must be silently skipped")
-	})
-
-	t.Run("FileInfo.Content non-empty wins over GetFile (explicit AssertNotCalled)", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "extracted.pdf", MimeType: "application/pdf",
-			Content: "server-extracted text",
-		}, nil)
-		// No GetFile expectation: when fileInfo.Content is non-empty,
-		// the byte fetch must be skipped entirely.
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "extracted.pdf", MimeType: "application/pdf"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
-
-		mmClient.AssertNotCalled(t, "GetFile", "doc1",
-			"pre-extracted FileInfo.Content must short-circuit GetFile to avoid a redundant blob read")
-		assert.Contains(t, post.Message, "Content: server-extracted text")
-	})
-
-	t.Run("pre-extracted FileInfo.Content larger than maxFileSize gets truncation marker", func(t *testing.T) {
-		// Mattermost's server-side text extraction is itself bounded, but
-		// a per-bot MaxFileSize lower than the server's cap could be
-		// silently violated by the pre-extracted-content shortcut. Cap it
-		// the same way the GetFile branch does.
-		const maxBytes = int64(8)
-		oversized := strings.Repeat("X", int(maxBytes)+1) // 9 bytes vs maxBytes=8
-
-		mmClient := mmapimocks.NewMockClient(t)
-		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
-			Id: "doc1", Name: "huge.pdf", MimeType: "application/pdf",
-			Content: oversized,
-		}, nil)
-		// GetFile must NOT be called — pre-extracted content path still
-		// short-circuits the byte fetch even when the cap clips it.
-
-		blocks := []ContentBlock{
-			{Type: BlockTypeFile, FileID: "doc1", Filename: "huge.pdf", MimeType: "application/pdf"},
-		}
-
-		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
-
-		mmClient.AssertNotCalled(t, "GetFile", "doc1",
-			"the pre-extracted-content cap must not trigger a GetFile fetch")
-		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
-			"FileInfo.Content longer than effectiveMax must be truncated with the marker")
-	})
+	}
 }

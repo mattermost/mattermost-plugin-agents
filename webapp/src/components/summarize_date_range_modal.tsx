@@ -55,18 +55,22 @@ const ModalSubtitle = styled.div`
 `;
 
 const CloseButton = styled.button`
+    width: 40px;
+    height: 40px;
+    padding: 0;
     background: none;
     border: none;
     cursor: pointer;
-    padding: 10px;
     border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
+    color: rgba(var(--center-channel-color-rgb), 0.56);
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);
+        color: rgba(var(--center-channel-color-rgb), 0.72);
     }
 `;
 
@@ -341,8 +345,11 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                             </ModalSubtitle>
                         )}
                     </HeaderContent>
-                    <CloseButton onClick={onClose}>
-                        <CloseIcon size={20}/>
+                    <CloseButton
+                        onClick={onClose}
+                        aria-label={intl.formatMessage({defaultMessage: 'Close'})}
+                    >
+                        <CloseIcon size={24}/>
                     </CloseButton>
                 </ModalHeader>
                 <ModalBody>

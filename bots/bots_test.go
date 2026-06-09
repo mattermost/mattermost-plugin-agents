@@ -4,12 +4,16 @@
 package bots
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/loadtest"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -60,6 +64,176 @@ func (m *mockConfig) EnableTokenUsageLogToFile() bool {
 
 func (m *mockConfig) GetTranscriptGenerator() string {
 	return "testbot"
+}
+
+func newTestMMBots(t *testing.T, cfg *mockConfig) *MMBots {
+	t.Helper()
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+	licenseChecker := enterprise.NewLicenseChecker(client)
+	return New(mockAPI, client, licenseChecker, cfg, nil, &http.Client{}, nil)
+}
+
+func loadTestService(raw json.RawMessage) llm.ServiceConfig {
+	return llm.ServiceConfig{
+		ID:                 "loadtest-svc",
+		Type:               llm.ServiceTypeLoadTestMock,
+		LoadTestMockConfig: raw,
+	}
+}
+
+func loadTestBot() llm.BotConfig {
+	return llm.BotConfig{
+		Name: "loadtest-bot",
+	}
+}
+
+func buildTinyLoadTestProfile(t *testing.T, profileWeights map[string]float64) json.RawMessage {
+	t.Helper()
+	type lat struct {
+		TTFTMs                    [2]int `json:"ttft_ms"`
+		ChunkCount                [2]int `json:"chunk_count"`
+		ChunkIntervalMs           [2]int `json:"chunk_interval_ms"`
+		TotalWallTimeMsPerRequest [2]int `json:"total_wall_time_ms_per_request"`
+	}
+	zero := lat{[2]int{0, 0}, [2]int{0, 0}, [2]int{0, 0}, [2]int{0, 0}}
+	if profileWeights == nil {
+		profileWeights = map[string]float64{
+			"realistic_default": 1,
+			"realistic_fast":    0,
+			"realistic_slow":    0,
+		}
+	}
+	payload := struct {
+		LatencyProfiles map[string]lat     `json:"latency_profiles"`
+		ProfileWeights  map[string]float64 `json:"profile_weights"`
+	}{
+		LatencyProfiles: map[string]lat{
+			"realistic_default": zero,
+			"realistic_fast":    zero,
+			"realistic_slow":    zero,
+		},
+		ProfileWeights: profileWeights,
+	}
+	b, err := json.Marshal(payload)
+	require.NoError(t, err)
+	return b
+}
+
+func TestGetBaseLLMLoadTestMockReturnsMock(t *testing.T) {
+	cfg := &mockConfig{}
+	mmBots := newTestMMBots(t, cfg)
+	mockAPI := mmBots.ensureBotsClusterMutex.(*plugintest.API)
+
+	mockAPI.On("LogInfo",
+		"Initialized load-test mock LLM",
+		"bot_name", loadTestBot().Name,
+		"service_id", "loadtest-svc",
+		"profile_summary", mock.MatchedBy(func(summary string) bool { return summary != "" }),
+	).Return().Once()
+
+	model, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot())
+	require.NoError(t, err)
+	require.IsType(t, &loadtest.MockLLM{}, model)
+	mockAPI.AssertExpectations(t)
+}
+
+func TestGetLLMLoadTestMockUsesWrapperChain(t *testing.T) {
+	cfg := &mockConfig{}
+	mmBots := newTestMMBots(t, cfg)
+	mockAPI := mmBots.ensureBotsClusterMutex.(*plugintest.API)
+
+	mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	model, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot())
+	require.NoError(t, err)
+	require.NotNil(t, model)
+	require.Equal(t, 100000, model.InputTokenLimit())
+	n, err := model.CountTokens(context.Background(), llm.CompletionRequest{Posts: []llm.Post{{Message: "abcd"}}})
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+}
+
+func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {
+	cfg := &mockConfig{}
+	mmBots := newTestMMBots(t, cfg)
+
+	_, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
+	require.Contains(t, err.Error(), "loadtest profile")
+
+	_, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
+}
+
+func TestGetBaseLLMLoadTestMockEmptyConfigUsesDefaultProfile(t *testing.T) {
+	cfg := &mockConfig{}
+	mmBots := newTestMMBots(t, cfg)
+	mockAPI := mmBots.ensureBotsClusterMutex.(*plugintest.API)
+
+	var summary string
+	mockAPI.On("LogInfo",
+		"Initialized load-test mock LLM",
+		"bot_name", loadTestBot().Name,
+		"service_id", "loadtest-svc",
+		"profile_summary", mock.MatchedBy(func(s string) bool {
+			summary = s
+			return strings.Contains(s, "name=read_search_heavy_default") &&
+				strings.Contains(s, "streaming=true") &&
+				strings.Contains(s, "defaults_source=spikes/llm-latency-benchmark") &&
+				strings.Contains(s, "realistic_default") &&
+				strings.Contains(s, "realistic_fast") &&
+				strings.Contains(s, "realistic_slow") &&
+				strings.Contains(s, "0.7000") &&
+				strings.Contains(s, "0.2000") &&
+				strings.Contains(s, "0.1000") &&
+				strings.Contains(s, "reasoning_skip_p=0.1000") &&
+				strings.Contains(s, "post_limits=10,25,50,100") &&
+				strings.Contains(s, "status update")
+		}),
+	).Return().Once()
+
+	svc := loadTestService(nil)
+	svc.LoadTestMockConfig = nil
+
+	model, err := mmBots.getBaseLLM(svc, loadTestBot())
+	require.NoError(t, err)
+	require.IsType(t, &loadtest.MockLLM{}, model)
+	require.NotEmpty(t, summary)
+	mockAPI.AssertExpectations(t)
+}
+
+func TestGetBaseLLMLoadTestMockProfileWeightOverride(t *testing.T) {
+	cfg := &mockConfig{}
+	mmBots := newTestMMBots(t, cfg)
+	mockAPI := mmBots.ensureBotsClusterMutex.(*plugintest.API)
+
+	var summary string
+	mockAPI.On("LogInfo",
+		"Initialized load-test mock LLM",
+		"bot_name", loadTestBot().Name,
+		"service_id", "loadtest-svc",
+		"profile_summary", mock.MatchedBy(func(s string) bool {
+			summary = s
+			return strings.Contains(s, "realistic_default=1.0000") &&
+				strings.Contains(s, "realistic_fast=0.0000") &&
+				strings.Contains(s, "realistic_slow=0.0000")
+		}),
+	).Return().Once()
+
+	weights := map[string]float64{
+		"realistic_default": 1.0,
+		"realistic_fast":    0.0,
+		"realistic_slow":    0.0,
+	}
+	model, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot())
+	require.NoError(t, err)
+	require.IsType(t, &loadtest.MockLLM{}, model)
+	require.NotEmpty(t, summary)
+	mockAPI.AssertExpectations(t)
 }
 
 func TestGetAllBotUserIDs(t *testing.T) {

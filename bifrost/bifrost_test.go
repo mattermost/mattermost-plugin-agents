@@ -1418,6 +1418,265 @@ func TestEnvProxyRouting(t *testing.T) {
 	assert.True(t, backendHit.Load(), "request should have reached the backend")
 }
 
+func TestConvertChatUsage(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage *schemas.BifrostLLMUsage
+		want  llm.TokenUsage
+	}{
+		{
+			name:  "nil usage yields zero value",
+			usage: nil,
+			want:  llm.TokenUsage{},
+		},
+		{
+			name: "nil detail and cost pointers stay zero",
+			usage: &schemas.BifrostLLMUsage{
+				PromptTokens:     100,
+				CompletionTokens: 50,
+			},
+			want: llm.TokenUsage{InputTokens: 100, OutputTokens: 50},
+		},
+		{
+			name: "fully populated payload carries every field",
+			usage: &schemas.BifrostLLMUsage{
+				PromptTokens:     1200,
+				CompletionTokens: 350,
+				PromptTokensDetails: &schemas.ChatPromptTokensDetails{
+					CachedReadTokens:  800,
+					CachedWriteTokens: 100,
+				},
+				CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
+					ReasoningTokens: 64,
+				},
+				Cost: &schemas.BifrostCost{TotalCost: 0.0123},
+			},
+			want: llm.TokenUsage{
+				InputTokens:       1200,
+				OutputTokens:      350,
+				CachedReadTokens:  800,
+				CachedWriteTokens: 100,
+				ReasoningTokens:   64,
+				Cost:              0.0123,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertChatUsage(tt.usage)
+			assert.Equal(t, tt.want.InputTokens, got.InputTokens)
+			assert.Equal(t, tt.want.OutputTokens, got.OutputTokens)
+			assert.Equal(t, tt.want.CachedReadTokens, got.CachedReadTokens)
+			assert.Equal(t, tt.want.CachedWriteTokens, got.CachedWriteTokens)
+			assert.Equal(t, tt.want.ReasoningTokens, got.ReasoningTokens)
+			assert.InDelta(t, tt.want.Cost, got.Cost, 1e-9)
+		})
+	}
+}
+
+func TestCountTokensReturnsCount(t *testing.T) {
+	var backendHit atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHit.Store(true)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 42}`))
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 42, count)
+	assert.True(t, backendHit.Load())
+}
+
+// TestCountTokensOmitsMaxOutputTokens pins the second body-shape fix for
+// the count_tokens endpoint. OpenAI's Responses-API count endpoint rejects
+// max_output_tokens with "Unknown parameter: 'max_output_tokens'." even
+// though the streaming endpoint requires it. We strip the whole Params
+// payload for the count call since none of those fields are needed for
+// token math.
+func TestCountTokensOmitsMaxOutputTokens(t *testing.T) {
+	var recordedBody []byte
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 99}`))
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-5.4",
+		OutputTokenLimit: 8192, // produces MaxGeneratedTokens > 0 → MaxOutputTokens in the request
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 99, count)
+	require.NotEmpty(t, recordedBody)
+	assert.NotContains(t, string(recordedBody), "max_output_tokens",
+		"the count_tokens endpoint rejects max_output_tokens; "+
+			"sending it falls us back to 'estimated' for any OpenAI bot")
+}
+
+// TestCountTokensOmitsNativeServerTools pins down the fix for the
+// production failure surfaced via the /conversations/:id/context endpoint:
+// Anthropic's count_tokens endpoint rejects any request that carries native
+// server tools (web_search, file_search, code_interpreter), so those must be
+// stripped before the count call. Function tool definitions are kept (see
+// TestCountTokensKeepsFunctionTools) because they contribute to the count.
+func TestCountTokensOmitsNativeServerTools(t *testing.T) {
+	var recordedBody []byte
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 42}`))
+	}))
+	defer backend.Close()
+
+	// Bot configured with native web_search — same shape that triggered
+	// the production "Server tools are not supported in the count_tokens
+	// endpoint" error.
+	llmClient, err := New(Config{
+		Provider:           schemas.Anthropic,
+		APIKey:             "test-key",
+		APIURL:             backend.URL,
+		DefaultModel:       "claude-sonnet-4-6",
+		StreamingTimeout:   10 * time.Second,
+		EnabledNativeTools: []string{"web_search"},
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 42, count)
+
+	require.NotEmpty(t, recordedBody, "backend must have received the count_tokens request")
+	assert.NotContains(t, string(recordedBody), "web_search",
+		"native server tools must be stripped before the count_tokens call — "+
+			"Anthropic 400s the request otherwise and we fall back to estimated")
+	assert.NotContains(t, string(recordedBody), "code_execution")
+	assert.NotContains(t, string(recordedBody), "file_search")
+}
+
+// TestCountTokensKeepsFunctionTools pins the other half of the count_tokens
+// body shape: function (custom) tool definitions are part of the prompt and
+// consume input tokens, so they must reach the count endpoint. Dropping them
+// undercounts every tools-enabled bot and surfaces a misleadingly low number.
+func TestCountTokensKeepsFunctionTools(t *testing.T) {
+	var recordedBody []byte
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens": 55}`))
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	tools := llm.NewToolStore()
+	tools.AddTools([]llm.Tool{
+		{Name: "get_weather", Description: "Returns weather for a city", Schema: map[string]interface{}{"type": "object"}},
+	})
+
+	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "hello world"}},
+		Context: &llm.Context{Tools: tools},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 55, count)
+
+	require.NotEmpty(t, recordedBody)
+	assert.Contains(t, string(recordedBody), "get_weather",
+		"function tool definitions contribute to the input-token count and must reach count_tokens")
+}
+
+func TestCountTokensUnsupportedProvider(t *testing.T) {
+	var backendHit atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHit.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// Mistral doesn't implement count-tokens in Bifrost; it returns the
+	// "unsupported_operation" error synchronously. CountTokens must classify
+	// that as ErrUnsupportedTokenCount without contacting the backend.
+	llmClient, err := New(Config{
+		Provider:         schemas.Mistral,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "mistral-large-latest",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	_, err = llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	})
+	require.ErrorIs(t, err, llm.ErrUnsupportedTokenCount)
+	assert.False(t, backendHit.Load(), "unsupported provider must not hit the backend")
+}
+
+func TestCountTokensScrubsAPIKeyFromError(t *testing.T) {
+	const secret = "sk-real-secret-key-do-not-leak" // #nosec G101 -- fixture, not a real credential
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Anthropic-shaped error payload that echoes the configured key.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprintf(w, `{"type":"error","error":{"type":"authentication_error","message":"invalid key %s"}}`, secret)
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		Provider:         schemas.Anthropic,
+		APIKey:           secret,
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	_, err = llmClient.CountTokens(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), secret, "API key must be redacted from provider error messages")
+}
+
 // newSearchToolStore builds a one-tool store for tool_choice tests.
 func newSearchToolStore() *llm.ToolStore {
 	store := llm.NewToolStore()

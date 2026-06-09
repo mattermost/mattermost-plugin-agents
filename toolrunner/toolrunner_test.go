@@ -62,8 +62,11 @@ func (m *testLLM) ChatCompletionNoStream(ctx context.Context, req llm.Completion
 	return result.ReadAll()
 }
 
-func (m *testLLM) CountTokens(_ string) int { return 1 }
-func (m *testLLM) InputTokenLimit() int     { return 4096 }
+func (m *testLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	return 0, llm.ErrUnsupportedTokenCount
+}
+func (m *testLLM) InputTokenLimit() int  { return 4096 }
+func (m *testLLM) OutputTokenLimit() int { return 4096 }
 
 // testToolDef defines a test tool for newTestToolStore.
 type testToolDef struct {
@@ -96,6 +99,22 @@ func newTestToolStore(tools ...testToolDef) *llm.ToolStore {
 func alwaysExecute(_ llm.ToolCall) bool { return true }
 func neverExecute(_ llm.ToolCall) bool  { return false }
 
+func loopToolResponses(total int, final testResponse) []testResponse {
+	responses := make([]testResponse, total)
+	for i := 0; i < total-1; i++ {
+		responses[i] = testResponse{
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			},
+		}
+	}
+	responses[total-1] = final
+	return responses
+}
+
 // optCapturingLLM wraps a testLLM to capture the opts from each ChatCompletion call.
 type optCapturingLLM struct {
 	inner        *testLLM
@@ -111,8 +130,11 @@ func (c *optCapturingLLM) ChatCompletionNoStream(ctx context.Context, req llm.Co
 	return c.inner.ChatCompletionNoStream(ctx, req, opts...)
 }
 
-func (c *optCapturingLLM) CountTokens(text string) int { return c.inner.CountTokens(text) }
-func (c *optCapturingLLM) InputTokenLimit() int        { return c.inner.InputTokenLimit() }
+func (c *optCapturingLLM) CountTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
+	return c.inner.CountTokens(ctx, request, opts...)
+}
+func (c *optCapturingLLM) InputTokenLimit() int  { return c.inner.InputTokenLimit() }
+func (c *optCapturingLLM) OutputTokenLimit() int { return c.inner.OutputTokenLimit() }
 
 func TestToolRunner_NoToolCalls(t *testing.T) {
 	// LLM returns text only, no tool calls.
@@ -480,23 +502,12 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 }
 
 func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
-	responses := make([]testResponse, llm.DefaultMaxToolTurns)
-	for i := 0; i < llm.DefaultMaxToolTurns-1; i++ {
-		responses[i] = testResponse{
-			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			},
-		}
-	}
-	responses[llm.DefaultMaxToolTurns-1] = testResponse{
+	responses := loopToolResponses(llm.DefaultMaxToolTurns, testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeText, Value: "synthesized answer"},
 			{Type: llm.EventTypeEnd},
 		},
-	}
+	})
 
 	inner := &testLLM{responses: responses}
 	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
@@ -545,23 +556,12 @@ func TestToolRunner_WithMaxRoundsOverrideClamps(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			responses := make([]testResponse, tc.expectedCalls)
-			for i := 0; i < tc.expectedCalls-1; i++ {
-				responses[i] = testResponse{
-					events: []llm.TextStreamEvent{
-						{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-							{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
-						}},
-						{Type: llm.EventTypeEnd},
-					},
-				}
-			}
-			responses[tc.expectedCalls-1] = testResponse{
+			responses := loopToolResponses(tc.expectedCalls, testResponse{
 				events: []llm.TextStreamEvent{
 					{Type: llm.EventTypeText, Value: "synthesized answer"},
 					{Type: llm.EventTypeEnd},
 				},
-			}
+			})
 			inner := &testLLM{responses: responses}
 			store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
 			runner := New(inner, tc.opt)
@@ -582,23 +582,12 @@ func TestToolRunner_WithMaxRoundsOverrideClamps(t *testing.T) {
 
 func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.T) {
 	// Verify the final round disables tools and seeds the iteration-limit message.
-	responses := make([]testResponse, llm.DefaultMaxToolTurns)
-	for i := 0; i < llm.DefaultMaxToolTurns-1; i++ {
-		responses[i] = testResponse{
-			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			},
-		}
-	}
-	responses[llm.DefaultMaxToolTurns-1] = testResponse{
+	responses := loopToolResponses(llm.DefaultMaxToolTurns, testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeText, Value: "wrapping up"},
 			{Type: llm.EventTypeEnd},
 		},
-	}
+	})
 
 	var capturedOpts [][]llm.LanguageModelOption
 	inner := &optCapturingLLM{
@@ -651,26 +640,15 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 // When the provider ignores tool_choice="none" and returns tool calls on the
 // synthesis round, the runner drops them and emits End with no fallback text.
 func TestToolRunner_MaxRoundsExhausted_ProviderEmitsToolCallDuringSynthesis(t *testing.T) {
-	responses := make([]testResponse, llm.DefaultMaxToolTurns)
-	for i := 0; i < llm.DefaultMaxToolTurns-1; i++ {
-		responses[i] = testResponse{
-			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			},
-		}
-	}
 	// Final round emits a tool call despite WithToolsDisabled.
-	responses[llm.DefaultMaxToolTurns-1] = testResponse{
+	responses := loopToolResponses(llm.DefaultMaxToolTurns, testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
 				{ID: "tc-final", Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
 			}},
 			{Type: llm.EventTypeEnd},
 		},
-	}
+	})
 
 	inner := &testLLM{responses: responses}
 	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})

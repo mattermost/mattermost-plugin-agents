@@ -31,7 +31,7 @@ type ToolProviderPopoverProps = {
     disabledServers: string[];
     onDisabledServersChange: (servers: string[]) => void;
     preloadedServers?: UserMCPServerInfo[];
-    enabledMCPTools?: EnabledMCPTool[];
+    enabledMCPTools?: EnabledMCPTool[] | null;
     autoEnableNewMCPTools?: boolean;
 };
 
@@ -40,7 +40,7 @@ type ToolProviderPopoverProps = {
 // every server is shown. Otherwise only servers appearing in enabledTools are kept.
 function filterServersByEnabledTools(
     servers: UserMCPServerInfo[],
-    enabledTools: EnabledMCPTool[] | undefined,
+    enabledTools: EnabledMCPTool[] | undefined | null,
     autoEnableNewMCPTools: boolean | undefined,
 ): UserMCPServerInfo[] {
     if (autoEnableNewMCPTools) {

@@ -7,9 +7,10 @@ import {MCPConfig} from './mcp_servers';
 import {LLMService} from './service';
 import {WebSearchConfig as WebSearchSettings} from './web_search/web_search_panel';
 
+// services/bots: server sends nil Go slices as JSON null.
 export type PluginConfig = {
-    services: LLMService[],
-    bots: LLMBotConfig[],
+    services: LLMService[] | null,
+    bots: LLMBotConfig[] | null,
     defaultBotName: string,
     transcriptBackend: string,
     telemetryOutput: 'off' | 'logs' | 'otlp' | '',

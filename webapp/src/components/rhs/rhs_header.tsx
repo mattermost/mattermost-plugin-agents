@@ -13,6 +13,7 @@ import {BotDropdown} from '../bot_selector';
 import {LLMBot} from '@/bots';
 
 import {Button} from './common';
+import ContextUsageIndicator from './context_usage_indicator';
 import ToolProviderPopover, {UserMCPServerInfo} from './tool_provider_popover';
 
 type Props = {
@@ -25,6 +26,7 @@ type Props = {
     disabledServers: string[]
     onDisabledServersChange: (servers: string[]) => void
     preloadedServers?: UserMCPServerInfo[]
+    activeConversationId?: string
 }
 
 const RHSHeader = (props: Props) => {
@@ -51,47 +53,54 @@ const RHSHeader = (props: Props) => {
         );
     }
     const currentBotName = props.activeBot?.displayName ?? '';
+
+    // All right-side controls share one flex group so the ring
+    // appearing/disappearing doesn't shift the others.
     return (
         <Header>
             {historyButton}
-            {props.currentTab !== 'new' && (
-                <NewChatButton
-                    data-testid='new-chat'
-                    className='new-button'
-                    onClick={() => {
-                        props.setCurrentTab('new');
-                        props.selectPost('');
-                    }}
-                >
-                    <i className='icon icon-pencil-outline'/>
-                    <FormattedMessage defaultMessage='New chat'/>
-                </NewChatButton>
-            )}
-            {props.currentTab === 'new' && (
-                <RightControls>
-                    <ToolProviderPopover
-                        disabledServers={props.disabledServers}
-                        onDisabledServersChange={props.onDisabledServersChange}
-                        preloadedServers={props.preloadedServers}
-                        enabledMCPTools={props.activeBot?.enabledMCPTools}
-                        autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
-                    />
-                    {props.bots && (
-                        <BotDropdown
-                            bots={props.bots}
-                            activeBot={props.activeBot}
-                            setActiveBot={props.setActiveBot}
-                            container={SelectorDropdown}
-                            testId='bot-selector-rhs'
-                        >
-                            <>
-                                <SelectorDropdownName>{currentBotName}</SelectorDropdownName>
-                                <ChevronDownIcon/>
-                            </>
-                        </BotDropdown>
-                    )}
-                </RightControls>
-            )}
+            <RightControls>
+                {props.activeConversationId && (
+                    <ContextUsageIndicator conversationId={props.activeConversationId}/>
+                )}
+                {props.currentTab === 'new' ? (
+                    <>
+                        <ToolProviderPopover
+                            disabledServers={props.disabledServers}
+                            onDisabledServersChange={props.onDisabledServersChange}
+                            preloadedServers={props.preloadedServers}
+                            enabledMCPTools={props.activeBot?.enabledMCPTools}
+                            autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
+                        />
+                        {props.bots && (
+                            <BotDropdown
+                                bots={props.bots}
+                                activeBot={props.activeBot}
+                                setActiveBot={props.setActiveBot}
+                                container={SelectorDropdown}
+                                testId='bot-selector-rhs'
+                            >
+                                <>
+                                    <SelectorDropdownName>{currentBotName}</SelectorDropdownName>
+                                    <ChevronDownIcon/>
+                                </>
+                            </BotDropdown>
+                        )}
+                    </>
+                ) : (
+                    <NewChatButton
+                        data-testid='new-chat'
+                        className='new-button'
+                        onClick={() => {
+                            props.setCurrentTab('new');
+                            props.selectPost('');
+                        }}
+                    >
+                        <i className='icon icon-pencil-outline'/>
+                        <FormattedMessage defaultMessage='New chat'/>
+                    </NewChatButton>
+                )}
+            </RightControls>
         </Header>
     );
 };

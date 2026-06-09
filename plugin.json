@@ -6,7 +6,7 @@
   "support_url": "https://github.com/mattermost/mattermost-plugin-agents/issues",
   "release_notes_url": "https://github.com/mattermost/mattermost-plugin-agents",
   "icon_path": "assets/bot_icon.png",
-  "min_server_version": "6.2.1",
+  "min_server_version": "11.8.0",
   "server": {
     "executables": {
       "linux-amd64": "server/dist/plugin-linux-amd64",

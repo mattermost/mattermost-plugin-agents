@@ -38,12 +38,16 @@ func (w *StructuredOutputFallbackWrapper) ChatCompletionNoStream(ctx context.Con
 	return response, nil
 }
 
-func (w *StructuredOutputFallbackWrapper) CountTokens(text string) int {
-	return w.wrapped.CountTokens(text)
+func (w *StructuredOutputFallbackWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	return w.wrapped.CountTokens(ctx, request, opts...)
 }
 
 func (w *StructuredOutputFallbackWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
+}
+
+func (w *StructuredOutputFallbackWrapper) OutputTokenLimit() int {
+	return w.wrapped.OutputTokenLimit()
 }
 
 func hasJSONOutputSchema(opts []LanguageModelOption) bool {
