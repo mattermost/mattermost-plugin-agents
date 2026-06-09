@@ -3,11 +3,12 @@
 
 import React, {useEffect, useCallback} from 'react';
 import styled from 'styled-components';
-import {useSelector, useDispatch} from 'react-redux';
+import {useSelector, useDispatch, useStore} from 'react-redux';
 
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
 import {renderCustomPrompt, createPost} from '@/client';
+import {getViewingContextProps} from '@/view_context';
 import {Button} from '../rhs/common';
 
 const ButtonContainer = styled.div`
@@ -40,6 +41,7 @@ interface Props {
 
 const RHSPromptButtons = ({channelId, selectPost, setCurrentTab}: Props) => {
     const dispatch = useDispatch();
+    const store = useStore();
     const prompts = useSelector(getCustomPrompts);
     const pinnedIds = useSelector(getPinnedPromptIds);
 
@@ -50,11 +52,14 @@ const RHSPromptButtons = ({channelId, selectPost, setCurrentTab}: Props) => {
 
     const handleClick = useCallback(async (promptId: string) => {
         try {
-            const result = await renderCustomPrompt(promptId, channelId);
+            const state = store.getState() as any;
+            const viewingProps = getViewingContextProps(state, channelId);
+            const renderChannelId = viewingProps.viewing_channel_id || channelId;
+            const result = await renderCustomPrompt(promptId, renderChannelId);
             const post = {
                 channel_id: channelId,
                 message: result.rendered,
-                props: {},
+                props: {...viewingProps},
                 file_ids: [],
             };
             const created = await createPost(post);
@@ -63,7 +68,7 @@ const RHSPromptButtons = ({channelId, selectPost, setCurrentTab}: Props) => {
         } catch (e) {
             console.error('Failed to execute custom prompt:', e); // eslint-disable-line no-console
         }
-    }, [channelId, selectPost, setCurrentTab]);
+    }, [channelId, selectPost, setCurrentTab, store]);
 
     const pinnedPrompts = (prompts || []).filter((p) => pinnedIds.includes(p.id));
 

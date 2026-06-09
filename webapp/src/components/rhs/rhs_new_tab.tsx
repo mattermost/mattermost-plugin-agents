@@ -5,11 +5,12 @@ import React, {useState, useEffect} from 'react';
 import styled from 'styled-components';
 import {useIntl, FormattedMessage} from 'react-intl';
 
-import {useDispatch, useSelector} from 'react-redux';
+import {useDispatch, useSelector, useStore} from 'react-redux';
 
 import RHSImage from '../assets/rhs_image';
 
 import {createPost, getBotDirectChannel} from '@/client';
+import {getViewingContextProps} from '@/view_context';
 
 import {AdvancedTextEditor, CreatePost} from '@/mm_webapp';
 
@@ -50,6 +51,7 @@ const EMPTY_BOTS: LLMBot[] = [];
 const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
     const intl = useIntl();
     const dispatch = useDispatch();
+    const store = useStore();
     const [draft, updateDraft] = useState<any>(null);
     const [creatingChannel, setCreatingChannel] = useState(false);
     const currentUserId = useSelector((state: any) => state.entities.users.currentUserId);
@@ -136,7 +138,9 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                 onSubmit={async (p: any) => {
                     const post = {...p};
                     post.channel_id = botChannelId || '';
-                    post.props = {};
+                    post.props = {
+                        ...getViewingContextProps(store.getState() as any, post.channel_id),
+                    };
                     post.uploadsInProgress = [];
                     post.file_ids = p.fileInfos.map((f: any) => f.id);
                     const created = await createPost(post);

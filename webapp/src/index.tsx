@@ -42,6 +42,7 @@ import {invalidateConversation} from './hooks/use_conversation';
 import '@/hooks/use_conversation_context';
 import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_connection_events';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
+import {getViewingContextProps, isAgentBotDMChannel} from './view_context';
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
 import {shouldSuppressBotNotification} from './notifications';
@@ -149,6 +150,32 @@ export default class Plugin {
         setSiteURL(siteURL);
 
         registry.registerDesktopNotificationHook(this.blockFastBotNotifications.bind(this));
+
+        // Attach viewing channel/team props when the user posts to an agent bot DM
+        // from the RHS while looking at a different channel in the center panel.
+        // The backend uses these to interpret implicit references like "this channel".
+        if (registry.registerMessageWillBePostedHook) {
+            registry.registerMessageWillBePostedHook((post: any) => {
+                try {
+                    const state = store.getState() as any;
+                    const bots = state['plugins-' + manifest.id]?.bots;
+                    if (!isAgentBotDMChannel(post?.channel_id, bots)) {
+                        return Promise.resolve({post});
+                    }
+                    const extra = getViewingContextProps(state, post.channel_id);
+                    if (Object.keys(extra).length === 0) {
+                        return Promise.resolve({post});
+                    }
+                    const next = {
+                        ...post,
+                        props: {...(post.props || {}), ...extra},
+                    };
+                    return Promise.resolve({post: next});
+                } catch {
+                    return Promise.resolve({post});
+                }
+            });
+        }
 
         registry.registerTranslations((locale: string) => {
             try {

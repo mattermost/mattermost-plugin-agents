@@ -4,13 +4,14 @@
 import React, {useEffect, useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
-import {useSelector, useDispatch} from 'react-redux';
+import {useSelector, useDispatch, useStore} from 'react-redux';
 
 import {CogOutlineIcon} from '@mattermost/compass-icons/components';
 
 import {getCustomPrompts, getSelectedBotId} from '@/selectors';
 import {fetchCustomPrompts, ShowCustomPromptsModalHandler, SelectedBotIdHandler} from '@/redux';
 import {renderCustomPrompt} from '@/client';
+import {getViewingContextProps} from '@/view_context';
 import {CustomPrompt} from '@/types';
 import {LLMBot} from '@/bots';
 import manifest from '@/manifest';
@@ -70,6 +71,7 @@ interface Props {
 
 const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     const dispatch = useDispatch();
+    const store = useStore();
     const prompts = useSelector(getCustomPrompts);
     const bots = useSelector((state: any) =>
         state[`plugins-${manifest.id}`]?.bots ?? EMPTY_BOTS,
@@ -97,7 +99,16 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
         dismissMenu();
         try {
             const botUsername = selectedBot?.username;
-            const result = await renderCustomPrompt(prompt.id, channelId, botUsername);
+            // In a bot DM, resolve template variables against the channel the user
+            // is currently viewing in the center panel (if any), not the bot DM.
+            let renderChannelId = channelId;
+            if (isBotDMChannel) {
+                const viewing = getViewingContextProps(store.getState() as any, channelId);
+                if (viewing.viewing_channel_id) {
+                    renderChannelId = viewing.viewing_channel_id;
+                }
+            }
+            const result = await renderCustomPrompt(prompt.id, renderChannelId, botUsername);
             if (!isBotDMChannel && botUsername) {
                 updateText(`@${botUsername} ${result.rendered}`);
             } else {
@@ -106,7 +117,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
         } catch (e) {
             console.error('Failed to render custom prompt:', e); // eslint-disable-line no-console
         }
-    }, [channelId, updateText, selectedBot, isBotDMChannel]);
+    }, [channelId, updateText, selectedBot, isBotDMChannel, store]);
 
     const handleCreateClick = useCallback(() => {
         dismissMenu();
