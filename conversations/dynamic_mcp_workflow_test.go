@@ -61,8 +61,11 @@ func (l *dynamicWorkflowLLM) ChatCompletionNoStream(ctx context.Context, request
 	return result.ReadAll()
 }
 
-func (l *dynamicWorkflowLLM) CountTokens(string) int { return 0 }
-func (l *dynamicWorkflowLLM) InputTokenLimit() int   { return 100000 }
+func (l *dynamicWorkflowLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	return 0, llm.ErrUnsupportedTokenCount
+}
+func (l *dynamicWorkflowLLM) InputTokenLimit() int  { return 100000 }
+func (l *dynamicWorkflowLLM) OutputTokenLimit() int { return 8192 }
 
 func dynamicWorkflowStream(events ...llm.TextStreamEvent) *llm.TextStreamResult {
 	stream := make(chan llm.TextStreamEvent, len(events)+1)

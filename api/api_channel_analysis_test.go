@@ -61,8 +61,11 @@ func (f *channelAnalysisSequenceLLM) ChatCompletionNoStream(context.Context, llm
 	return "", fmt.Errorf("not implemented")
 }
 
-func (f *channelAnalysisSequenceLLM) CountTokens(string) int { return 0 }
-func (f *channelAnalysisSequenceLLM) InputTokenLimit() int   { return 100000 }
+func (f *channelAnalysisSequenceLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	return 0, llm.ErrUnsupportedTokenCount
+}
+func (f *channelAnalysisSequenceLLM) InputTokenLimit() int  { return 100000 }
+func (f *channelAnalysisSequenceLLM) OutputTokenLimit() int { return 8192 }
 
 func channelAnalysisMCPTool(name string) llm.Tool {
 	return llm.Tool{

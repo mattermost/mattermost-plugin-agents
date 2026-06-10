@@ -223,8 +223,11 @@ func (l *loadedStateLLM) ChatCompletionNoStream(context.Context, llm.CompletionR
 	return "title", nil
 }
 
-func (l *loadedStateLLM) CountTokens(string) int { return 0 }
-func (l *loadedStateLLM) InputTokenLimit() int   { return 100000 }
+func (l *loadedStateLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	return 0, llm.ErrUnsupportedTokenCount
+}
+func (l *loadedStateLLM) InputTokenLimit() int  { return 100000 }
+func (l *loadedStateLLM) OutputTokenLimit() int { return 8192 }
 
 type loadedStateStreamingService struct {
 	wg sync.WaitGroup
