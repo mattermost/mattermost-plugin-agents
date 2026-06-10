@@ -586,6 +586,42 @@ func TestIsValidService(t *testing.T) {
 	}
 }
 
+func TestBotConfigMCPDynamicToolLoadingDefaulting(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    bool
+	}{
+		{
+			name:    "omitted defaults true",
+			payload: `{"id":"bot1","name":"bot1","displayName":"Bot One","serviceID":"svc-1"}`,
+			want:    true,
+		},
+		{
+			name:    "explicit false survives",
+			payload: `{"id":"bot1","name":"bot1","displayName":"Bot One","serviceID":"svc-1","mcpDynamicToolLoading":false}`,
+			want:    false,
+		},
+		{
+			name:    "explicit true survives",
+			payload: `{"id":"bot1","name":"bot1","displayName":"Bot One","serviceID":"svc-1","mcpDynamicToolLoading":true}`,
+			want:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg BotConfig
+			require.NoError(t, json.Unmarshal([]byte(tt.payload), &cfg))
+			assert.Equal(t, tt.want, cfg.MCPDynamicToolLoading)
+		})
+	}
+
+	raw, err := json.Marshal(BotConfig{MCPDynamicToolLoading: false})
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"mcpDynamicToolLoading":false`)
+}
+
 func TestServiceConfig_JSONRoundTrip_FallbackServiceID(t *testing.T) {
 	cfg := ServiceConfig{
 		ID:                "s1",

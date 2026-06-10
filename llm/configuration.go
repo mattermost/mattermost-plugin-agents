@@ -140,6 +140,10 @@ type BotConfig struct {
 	// in that mode. When false, only tools listed in EnabledMCPTools are available.
 	AutoEnableNewMCPTools bool `json:"autoEnableNewMCPTools"`
 
+	// MCPDynamicToolLoading controls whether this bot uses the JIT MCP tool loading flow.
+	// It defaults to true for omitted legacy config.
+	MCPDynamicToolLoading bool `json:"mcpDynamicToolLoading"`
+
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.
 	// Applicable to OpenAI (with ResponsesAPI), Anthropic, and Gemini / Vertex AI.
 	ReasoningEnabled bool `json:"reasoningEnabled"`
@@ -171,6 +175,18 @@ type BotConfig struct {
 	CreateAt     int64    `json:"createAt,omitempty"`
 	UpdateAt     int64    `json:"updateAt,omitempty"`
 	DeleteAt     int64    `json:"deleteAt,omitempty"`
+}
+
+func (c *BotConfig) UnmarshalJSON(data []byte) error {
+	type botConfigAlias BotConfig
+	defaults := botConfigAlias{
+		MCPDynamicToolLoading: true,
+	}
+	if err := json.Unmarshal(data, &defaults); err != nil {
+		return err
+	}
+	*c = BotConfig(defaults)
+	return nil
 }
 
 // Validate returns a descriptive error when the bot config is not valid. Service

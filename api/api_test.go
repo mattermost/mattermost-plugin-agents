@@ -98,10 +98,6 @@ func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
 
 type testLLMContextConfigProvider struct{}
 
-func (p *testLLMContextConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (p *testLLMContextConfigProvider) GetServiceByID(_ string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
@@ -594,6 +590,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		agentStore,
+		nil,
 		nil,
 		nil,
 		nil,

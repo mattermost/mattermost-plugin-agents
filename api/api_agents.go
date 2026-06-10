@@ -247,6 +247,7 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 		AdminUserIDs:            req.AdminUserIDs,
 		EnabledMCPTools:         req.EnabledMCPTools,
 		AutoEnableNewMCPTools:   req.AutoEnableNewMCPTools,
+		MCPDynamicToolLoading:   true,
 		Model:                   req.Model,
 		EnableVision:            req.EnableVision,
 		DisableTools:            req.DisableTools,

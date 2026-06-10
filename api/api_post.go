@@ -259,6 +259,18 @@ func (a *API) handleStop(c *gin.Context) {
 	}
 
 	a.streamingService.StopStreaming(post.Id)
+
+	// In HA without sticky sessions the /stop request can land on a node
+	// that does not hold the cancel function for this post; broadcast a
+	// reliable cluster event so peer nodes cancel locally too. The local
+	// stop above remains a no-op on those nodes, and the broadcast is a
+	// no-op on the node that already canceled — both calls are idempotent.
+	if a.streamStopNotifier != nil {
+		if err := a.streamStopNotifier.PublishStreamStop(post.Id); err != nil {
+			a.pluginAPI.Log.Error("Failed to publish stream stop cluster event", "post_id", post.Id, "error", err.Error())
+		}
+	}
+
 	c.Status(http.StatusOK)
 }
 

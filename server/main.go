@@ -58,6 +58,7 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
+	streamingService     streaming.Service
 	telemetryShutdown    telemetry.ShutdownFunc
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
@@ -499,6 +500,7 @@ func (p *Plugin) OnActivate() error {
 		p,
 		p,
 		p,
+		p,
 		p.store,
 		getSearchInitError,
 		customPromptsStore,
@@ -517,6 +519,7 @@ func (p *Plugin) OnActivate() error {
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
+	p.streamingService = streamingService
 
 	return nil
 }
