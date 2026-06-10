@@ -68,6 +68,35 @@ describe('MCPToolConfigRow', () => {
         });
     });
 
+    test('preserves retrieval override spaces while editing and trims on blur', () => {
+        const onToolConfigChange = jest.fn();
+        render(
+            <MCPToolConfigRow
+                tool={testTool}
+                toolConfig={testToolConfig()}
+                onToolConfigChange={onToolConfigChange}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Show tool details'}));
+        const input = screen.getByLabelText('Retrieval description override');
+        fireEvent.change(input, {
+            target: {value: 'Use for incident lookup '},
+        });
+        expect(onToolConfigChange).toHaveBeenLastCalledWith({
+            ...testToolConfig(),
+            retrieval_description_override: 'Use for incident lookup ',
+        });
+
+        fireEvent.blur(input, {
+            target: {value: 'Use for incident lookup '},
+        });
+        expect(onToolConfigChange).toHaveBeenLastCalledWith({
+            ...testToolConfig(),
+            retrieval_description_override: 'Use for incident lookup',
+        });
+    });
+
     test('clearing retrieval override removes the value from config', () => {
         const onToolConfigChange = jest.fn();
         render(

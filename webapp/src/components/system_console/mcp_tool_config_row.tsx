@@ -40,7 +40,17 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
 
     const handleRetrievalDescriptionOverrideChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const value = e.target.value;
-        const trimmedValue = value.trim();
+        const nextToolConfig = {...toolConfig};
+        if (value.trim() === '') {
+            delete nextToolConfig.retrieval_description_override;
+        } else {
+            nextToolConfig.retrieval_description_override = value;
+        }
+        onToolConfigChange(nextToolConfig);
+    };
+
+    const handleRetrievalDescriptionOverrideBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+        const trimmedValue = e.target.value.trim();
         const nextToolConfig = {...toolConfig};
         if (trimmedValue === '') {
             delete nextToolConfig.retrieval_description_override;
@@ -107,6 +117,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                             id={overrideInputId}
                             value={toolConfig.retrieval_description_override || ''}
                             onChange={handleRetrievalDescriptionOverrideChange}
+                            onBlur={handleRetrievalDescriptionOverrideBlur}
                             disabled={serverDisabled}
                             placeholder={intl.formatMessage({defaultMessage: 'Describe when the agent should use this tool...'})}
                         />
