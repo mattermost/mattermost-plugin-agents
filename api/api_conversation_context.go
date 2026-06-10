@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -51,7 +52,7 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 	// Same assembly the runtime uses so providers see the same shape (e.g.
 	// Anthropic's alternating-role requirement, which CountTokens enforces).
 	enableVision, maxFileSize := a.attachmentConfigForBot(conv.BotID)
-	llmCtx := a.buildContextForConversation(userID, conv)
+	llmCtx := a.buildContextForConversation(c.Request.Context(), userID, conv)
 	req, err := conversation.AssembleRequest(conv, turns, llmCtx, a.mmClient, enableVision, maxFileSize)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to build composition: %w", err))
@@ -72,7 +73,7 @@ func (a *API) handleGetConversationContext(c *gin.Context) {
 // runtime would attach for this user+bot+channel, so AssembleRequest emits
 // tool_defs composition rows. Returns an empty Context when prerequisites
 // aren't wired (unit tests, missing bot/user/channel).
-func (a *API) buildContextForConversation(userID string, conv *store.Conversation) *llm.Context {
+func (a *API) buildContextForConversation(ctx context.Context, userID string, conv *store.Conversation) *llm.Context {
 	if a.contextBuilder == nil || a.bots == nil {
 		return &llm.Context{}
 	}
@@ -95,7 +96,7 @@ func (a *API) buildContextForConversation(userID string, conv *store.Conversatio
 		bot,
 		user,
 		channel,
-		a.contextBuilder.WithLLMContextTools(bot),
+		a.contextBuilder.WithLLMContextTools(ctx, bot),
 	)
 }
 
