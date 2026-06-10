@@ -378,6 +378,84 @@ func TestFollowUpContinuesConversation(t *testing.T) {
 	assert.Equal(t, llm.OperationThreadAnalysis, request.Operation)
 }
 
+// TestSummarizeIncludesThreadPermalink verifies that the summarize_thread system
+// prompt instructs the LLM to cite the original thread using the citation
+// permalink format with the actual root post ID interpolated. This is the
+// guardrail for MM-67148 (thread summaries missing link back to original
+// thread): if the prompt template ever stops including the permalink
+// instruction or the root post ID, real LLM responses will lose the link.
+func TestSummarizeIncludesThreadPermalink(t *testing.T) {
+	const rootPostID = "rootpostid12345"
+	threadPost := &model.Post{Id: rootPostID, Message: "kicking off the discussion", UserId: "userPL"}
+	threadUsers := map[string]*model.User{
+		"userPL": {Id: "userPL", Username: "permalinkuser"},
+	}
+
+	ts := setupTest(t)
+	mockClient := setupMockThread(t, rootPostID, []*model.Post{threadPost}, threadUsers)
+	mockLLM := mocks.NewMockLanguageModel(t)
+
+	mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything, mock.Anything).
+		Return(&llm.TextStreamResult{}, nil)
+
+	botID := model.NewId()
+	userID := model.NewId()
+	ctx := llm.NewContext()
+	ctx.SiteURL = "https://mm.example.com"
+	ctx.Team = &model.Team{Name: "engineering"}
+	ctx.RequestingUser = &model.User{Id: userID, Username: "requester", Locale: "en"}
+
+	svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
+	result, err := svc.Analyze(context.Background(), rootPostID, ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	conv, err := ts.store.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+
+	expectedPermalink := "https://mm.example.com/engineering/pl/" + rootPostID + "?view=citation"
+	assert.Contains(t, conv.SystemPrompt, expectedPermalink,
+		"summarize_thread system prompt must include a permalink back to the root post")
+	assert.Contains(t, conv.SystemPrompt, "permalink",
+		"summarize_thread system prompt must include the citation format guidance")
+}
+
+// TestSummarizePermalinkUsesRedirectWithoutTeam verifies that when no team is
+// available on the context (for example a DM or GM), the summarize prompt still
+// produces a usable permalink by falling back to the `_redirect` path segment.
+func TestSummarizePermalinkUsesRedirectWithoutTeam(t *testing.T) {
+	const rootPostID = "dmrootpost9999"
+	threadPost := &model.Post{Id: rootPostID, Message: "DM topic", UserId: "userDM"}
+	threadUsers := map[string]*model.User{
+		"userDM": {Id: "userDM", Username: "dmuser"},
+	}
+
+	ts := setupTest(t)
+	mockClient := setupMockThread(t, rootPostID, []*model.Post{threadPost}, threadUsers)
+	mockLLM := mocks.NewMockLanguageModel(t)
+
+	mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything, mock.Anything).
+		Return(&llm.TextStreamResult{}, nil)
+
+	botID := model.NewId()
+	userID := model.NewId()
+	ctx := llm.NewContext()
+	ctx.SiteURL = "https://mm.example.com"
+	ctx.RequestingUser = &model.User{Id: userID, Username: "requester", Locale: "en"}
+
+	svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
+	result, err := svc.Analyze(context.Background(), rootPostID, ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	conv, err := ts.store.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+
+	expectedPermalink := "https://mm.example.com/_redirect/pl/" + rootPostID + "?view=citation"
+	assert.Contains(t, conv.SystemPrompt, expectedPermalink,
+		"summarize_thread system prompt must use _redirect path when no team is available")
+}
+
 func TestAnalyzeOperationSubType(t *testing.T) {
 	threadPost := &model.Post{Id: "postSub", Message: "subtype test", UserId: "userSub"}
 	threadUsers := map[string]*model.User{
