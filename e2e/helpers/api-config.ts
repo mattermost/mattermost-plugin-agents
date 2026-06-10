@@ -70,6 +70,7 @@ export interface LLMBotConfig {
     userIDs: string[];
     teamIDs: string[];
     enabledNativeTools?: string[];
+    mcpDynamicToolLoading?: boolean;
     reasoningEnabled?: boolean;
     reasoningEffort?: string;
     thinkingBudget?: number;

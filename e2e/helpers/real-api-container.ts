@@ -21,6 +21,21 @@ export interface ContainerConfig {
  */
 export const REAL_API_BEFORE_ALL_TIMEOUT_MS = 180000;
 
+/**
+ * Real-API container for legacy tool-config policy tests.
+ * These suites assert direct business-tool calls (auto_run, ask, disabled tools)
+ * without a search_tools/load_tool prelude, so dynamic loading must stay off.
+ */
+export async function RunToolConfigRealAPIContainer(config: ContainerConfig): Promise<MattermostContainer> {
+  return RunRealAPIContainer({
+    service: config.service,
+    bot: {
+      ...config.bot,
+      mcpDynamicToolLoading: false,
+    },
+  });
+}
+
 export async function RunRealAPIContainer(config: ContainerConfig): Promise<MattermostContainer> {
   // Pre-flight check: verify API is reachable with the configured model
   // Cached per service ID, so only runs once per provider per process

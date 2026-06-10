@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
-import { RunRealAPIContainer, REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
+import { RunToolConfigRealAPIContainer, REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
 import {
     getAPIConfig,
     getAvailableProviders,
@@ -63,7 +63,7 @@ for (const provider of providers) {
 
         test.beforeAll(async () => {
             test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
-            mattermost = await RunRealAPIContainer({
+            mattermost = await RunToolConfigRealAPIContainer({
                 service: provider.service,
                 bot: provider.bot,
             });
