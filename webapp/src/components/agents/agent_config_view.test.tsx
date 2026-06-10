@@ -2,12 +2,14 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitForElementToBeRemoved} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, waitForElementToBeRemoved} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {ServiceInfo} from '@/types/agents';
+import {ServiceInfo, UserAgent} from '@/types/agents';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
+
+import {getUserMCPTools} from '@/client';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -24,6 +26,11 @@ jest.mock('@/client', () => ({
     createAgent: jest.fn(),
     updateAgent: jest.fn(),
     uploadAgentAvatar: jest.fn(),
+    getUserMCPTools: jest.fn(),
+}));
+
+jest.mock('@/hooks/use_mcp_connection_events', () => ({
+    useMCPConnectionEvents: jest.fn(),
 }));
 
 jest.mock('@/components/system_console/bot', () => ({
@@ -47,11 +54,6 @@ jest.mock('./tabs/config_tab', () => ({
 }));
 
 jest.mock('./tabs/access_tab', () => ({
-    __esModule: true,
-    default: () => null,
-}));
-
-jest.mock('./tabs/mcps_tab', () => ({
     __esModule: true,
     default: () => null,
 }));
@@ -112,6 +114,88 @@ describe('AgentConfigView', () => {
 
         expect(onBack).toHaveBeenCalledTimes(1);
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    });
+
+    // Regression test for MM-69185.
+    //
+    // After saving on the MCP tab, navigating back to the same agent's MCP tab and
+    // clicking Cancel must not trigger the "Discard changes" modal when the user
+    // hasn't made any edits — even if the persisted enabledMCPTools list contains
+    // entries that aren't currently visible in the live MCP catalog (e.g. an
+    // MCP server is temporarily disconnected). Silently reconciling those entries
+    // is fine, but it must not be treated as a user edit.
+    test('does not prompt to discard when visiting MCP tab with orphaned saved tools and no user edits', async () => {
+        (getUserMCPTools as jest.Mock).mockResolvedValue({
+            servers: [
+                {
+                    name: 'Mattermost',
+                    serverOrigin: 'embedded://mattermost',
+                    authenticated: true,
+                    needsOAuth: false,
+                    authEmail: '',
+                    tools: [
+                        {name: 'read_post', description: '', enabled: true, policy: 'auto_run'},
+                    ],
+                },
+            ],
+        });
+
+        const agent: UserAgent = {
+            id: 'agent_1',
+            name: 'existingagent',
+            displayName: 'Existing Agent',
+            customInstructions: '',
+            serviceID: 'svc_1',
+            model: '',
+            enableVision: true,
+            disableTools: false,
+            channelAccessLevel: 0,
+            channelIDs: [],
+            userAccessLevel: 0,
+            userIDs: [],
+            teamIDs: [],
+            enabledNativeTools: ['web_search'],
+            // The persisted enabledMCPTools include an entry that's not present in the
+            // live MCP catalog above (orphan). The previous behavior silently mutated
+            // draft.enabledTools to drop it, dirtying the form on second open.
+            enabledMCPTools: [
+                {server_origin: 'embedded://mattermost', tool_name: 'read_post'},
+                {server_origin: 'embedded://mattermost', tool_name: 'deleted_tool'},
+            ],
+            autoEnableNewMCPTools: false,
+            reasoningEnabled: true,
+            reasoningEffort: 'medium',
+            thinkingBudget: 0,
+            structuredOutputEnabled: false,
+        };
+
+        const onBack = jest.fn();
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={agent}
+                    services={services}
+                    onBack={onBack}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        // Open the MCP tab — this mounts McpsTab which fetches the live catalog and
+        // historically auto-cleaned orphaned entries, silently mutating draft state.
+        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+
+        await waitFor(() => expect(getUserMCPTools).toHaveBeenCalled());
+
+        // Wait until the live MCP catalog has been processed (orphan warning visible).
+        await screen.findByText(/from servers that are no longer available/);
+
+        fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
+
+        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+        expect(onBack).toHaveBeenCalledTimes(1);
     });
 
     test('loads edit mode without treating existing values as dirty', () => {
