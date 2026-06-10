@@ -433,10 +433,10 @@ Traces include these semantic attributes for filtering and analysis. Cached toke
 | `agents.llm.cached_write_tokens` | Cached write token count, when reported | `100` |
 | `agents.llm.reasoning_tokens` | Reasoning token count, when reported | `64` |
 | `agents.llm.cost` | Provider-reported request cost, when reported | `0.0123` |
-| `agents.tool.name` | Tool being called | `web_search`, `read_channel` |
+| `agents.tool.name` | Tool being called. MCP tools may use namespaced runtime names | `web_search`, `mattermost__read_channel` |
 | `agents.tool.id` | Tool call identifier | `call_abc123` |
 | `agents.mcp.server` | MCP server name | `github-server` |
-| `agents.mcp.tool` | MCP tool name | `search_issues` |
+| `agents.mcp.tool` | MCP server's tool name | `search_issues` |
 | `agents.user.id` | Requesting user ID | `abc123def456` |
 | `agents.channel.id` | Channel ID | `abc123def456` |
 | `agents.post.id` | Post ID | `abc123def456` |
@@ -523,13 +523,14 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
    - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
    - Remote MCP servers, including URL, custom headers, OAuth client settings, and per-server enablement.
 
-3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Plugin-registered MCP servers appear as separate plugin rows in this tab.
+3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Plugin-registered MCP servers appear as separate plugin rows in this tab. Tool policies use the tool names shown in this tab.
 4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
 
 The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
 
 You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab.
 
+Runtime MCP tool names are namespaced as `{serverSlug}__{toolName}` to avoid collisions when multiple MCP servers expose the same tool name. For example, the embedded Mattermost `read_post` tool may appear in traces or tool execution diagnostics as `mattermost__read_post`. Admin configuration and agent MCP selections continue to use the tool names shown in the System Console, and those policies also apply to namespaced runtime tool calls.
 
 ### Add MCP servers
 
@@ -538,7 +539,7 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 
    - **Server URL**: The endpoint URL for your MCP server.
    - **Custom Headers**: Additional headers required by your MCP server (optional).
-   - **Server Name**: Descriptive name for the server (auto-generated if not provided).
+   - **Server Name**: Descriptive name for the server (auto-generated if not provided). This name is also used as the first candidate for the runtime namespace shown in traces and diagnostics.
 
 3. Select **Save** to add the server.
 
@@ -549,6 +550,8 @@ Compatible Mattermost plugins can register MCP servers with Agents. In the **Too
 These admin-owned settings persist across plugin re-registration and restart.
 
 The source plugin controls the plugin server's name, path, and whether it is eligible for external exposure. Admins do not configure the external exposure flag in the Agents UI.
+
+Runtime diagnostic names use the plugin-provided or configured server name when available.
 
 When a plugin server is enabled and the source plugin marks it for external exposure, its enabled tools can be added to the external Mattermost MCP HTTP endpoint. Per-tool admin policy applies to those tools there as well.
 
@@ -569,7 +572,7 @@ Enabling a server or tool for an agent controls what the agent is allowed to use
 - **Connection Management**: The system automatically manages user connections to MCP servers
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
-- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools
+- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools. Policies apply to the tool names shown in the System Console, even when traces or diagnostics show namespaced runtime tool names
 - **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
 
 ### OAuth-backed MCP servers

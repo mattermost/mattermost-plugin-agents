@@ -83,6 +83,10 @@ Admins configure each tool with one of three policy values:
 
 > **Note on naming:** the value `auto_run_in_dm` is sometimes shortened to "auto_run" in conversation. The canonical configuration value, including the DM scope, is `auto_run_in_dm`.
 
+For MCP tools, configure policies using the tool names shown in the System Console **Tools** tab. At runtime, MCP tool calls may use a namespaced form, `{serverSlug}__{toolName}` — for example, `mattermost__read_post` or `jira__search` — so tools from different MCP servers do not collide. Policies configured with the visible tool name continue to apply to those namespaced runtime calls.
+
+Bare tool names are accepted only when they resolve unambiguously. If multiple MCP servers provide the same bare tool name, the namespaced runtime name identifies which server's tool is being called.
+
 The decision tree at the start of each tool call is:
 
 ```
