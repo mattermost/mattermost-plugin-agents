@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
@@ -138,6 +139,10 @@ type ServiceInfo struct {
 // FreeTierAgentLimit is the maximum number of self-service agents allowed when
 // the server does not have a multi-LLM (E20+) license.
 const FreeTierAgentLimit = 1
+
+// AgentActiveCountHeader is returned on GET /agents for unlicensed servers so the
+// webapp can gate creation against the server-wide count (not the access-filtered list).
+const AgentActiveCountHeader = "X-Agent-Active-Count"
 
 // checkAgentCreateQuota allows unlimited creation when multi-LLM licensed; otherwise
 // enforces FreeTierAgentLimit across all self-service agents on the server. It writes
@@ -393,6 +398,15 @@ func (a *API) handleListAgents(c *gin.Context) {
 		if a.canUserAccessAgent(cfg, userID) {
 			accessible = append(accessible, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
 		}
+	}
+
+	if !a.licenseChecker.IsMultiLLMLicensed() {
+		count, err := a.agentStore.CountActiveAgents()
+		if err != nil {
+			abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
+			return
+		}
+		c.Header(AgentActiveCountHeader, strconv.Itoa(count))
 	}
 
 	c.JSON(http.StatusOK, accessible)

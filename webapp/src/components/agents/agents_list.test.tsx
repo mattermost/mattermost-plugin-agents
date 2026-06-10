@@ -99,7 +99,7 @@ beforeEach(() => {
 describe('AgentsList create-button gating', () => {
     test('Pro license with no agents enables Create button without chip', async () => {
         mockUseIsMultiLLMLicensed.mockReturnValue(false);
-        mockGetAgents.mockResolvedValue([]);
+        mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 0});
 
         renderList();
 
@@ -110,7 +110,7 @@ describe('AgentsList create-button gating', () => {
 
     test('Pro license at the free-tier limit disables Create button and shows chip', async () => {
         mockUseIsMultiLLMLicensed.mockReturnValue(false);
-        mockGetAgents.mockResolvedValue([makeAgent('a1')]);
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
 
         renderList();
 
@@ -120,9 +120,31 @@ describe('AgentsList create-button gating', () => {
         expect(screen.getByText(chipText)).not.toBeNull();
     });
 
+    test('Pro license disables Create when server quota is reached but list is empty', async () => {
+        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+        mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 1});
+
+        renderList();
+
+        await screen.findByText('Loading agents...').then(() => screen.findByText('No agents have been created yet.'));
+        const button = screen.getByRole('button', {name: 'Create agent'});
+        expect((button as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByText(chipText)).not.toBeNull();
+    });
+
+    test('Create button stays disabled while agents are loading', () => {
+        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+        mockGetAgents.mockImplementation(() => new Promise(() => {}));
+
+        renderList();
+
+        const button = screen.getByRole('button', {name: 'Create agent'});
+        expect((button as HTMLButtonElement).disabled).toBe(true);
+    });
+
     test('Enterprise license keeps Create button enabled regardless of agent count', async () => {
         mockUseIsMultiLLMLicensed.mockReturnValue(true);
-        mockGetAgents.mockResolvedValue([makeAgent('a1'), makeAgent('a2')]);
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1'), makeAgent('a2')]});
 
         renderList();
 

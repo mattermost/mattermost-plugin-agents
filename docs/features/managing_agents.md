@@ -247,9 +247,9 @@ Practical consequences:
 
 ## Troubleshooting
 
-### "Self-Service Agents" upgrade screen is shown instead of the agents list
+### "Create agent" is disabled and an upgrade hint is shown
 
-The server does not have a multi-LLM license applied. Apply an Entry, Enterprise, or Enterprise Advanced license in **System Console > About > Edition and License** to unlock the Agents page. There is no UI path to create the single free-tier agent permitted by `FreeTierAgentLimit`; that limit is an API-only safety rail and direct API access would be required to use it (not typical for end users).
+The server is at the free-tier self-service agent limit without a multi-LLM licence. The Agents page still shows the list, but after one self-service agent exists, **Create agent** is disabled. Apply an Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to create additional agents, or delete the existing free-tier agent before creating a replacement.
 
 ### "Create agent" button is hidden
 

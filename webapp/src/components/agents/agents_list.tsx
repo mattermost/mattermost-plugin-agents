@@ -49,9 +49,11 @@ const AgentsList = () => {
     const [viewOpen, setViewOpen] = useState(false);
     const [viewMode, setViewMode] = useState<'create' | 'edit'>('create');
     const [editingAgent, setEditingAgent] = useState<UserAgent | null>(null);
+    const [activeAgentCount, setActiveAgentCount] = useState<number | null>(null);
 
-    // Quota is server-wide (backend CountActiveAgents), so use the full agent list, not filteredAgents.
-    const createQuotaReached = !multiLLMLicensed && agents.length >= FREE_TIER_AGENT_LIMIT;
+    const serverAgentCount = activeAgentCount ?? agents.length;
+    const createQuotaReached = !multiLLMLicensed && serverAgentCount >= FREE_TIER_AGENT_LIMIT;
+    const createButtonDisabled = loading || createQuotaReached;
 
     const fetchAgents = useCallback(async () => {
         try {
@@ -59,7 +61,8 @@ const AgentsList = () => {
             setError(null);
             setServicesError(null);
             const agentResult = await getAgents();
-            setAgents(agentResult || []);
+            setAgents(agentResult.agents || []);
+            setActiveAgentCount(agentResult.activeAgentCount ?? null);
             try {
                 const serviceResult = await getServices();
                 setServices(serviceResult || []);
@@ -176,7 +179,7 @@ const AgentsList = () => {
                     <CreateActions>
                         <CreateButton
                             onClick={handleCreateAgent}
-                            disabled={createQuotaReached}
+                            disabled={createButtonDisabled}
                         >
                             <PlusIcon size={16}/>
                             <FormattedMessage defaultMessage='Create agent'/>

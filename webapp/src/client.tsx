@@ -821,14 +821,24 @@ export async function savePluginConfig(config: PluginConfig): Promise<void> {
 
 // --- Agent CRUD ---
 
-export async function getAgents(): Promise<UserAgent[]> {
+export type AgentsListResult = {
+    agents: UserAgent[];
+    activeAgentCount?: number;
+};
+
+export async function getAgents(): Promise<AgentsListResult> {
     const url = `${baseRoute()}/agents`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
 
     if (response.ok) {
-        return response.json();
+        const activeCountHeader = response.headers.get('X-Agent-Active-Count');
+        const activeAgentCount = activeCountHeader ? Number.parseInt(activeCountHeader, 10) : undefined;
+        return {
+            agents: await response.json(),
+            activeAgentCount: Number.isNaN(activeAgentCount) ? undefined : activeAgentCount,
+        };
     }
 
     throw new ClientError(Client4.url, {
