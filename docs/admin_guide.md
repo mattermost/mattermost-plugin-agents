@@ -650,6 +650,7 @@ The built-in Mattermost MCP server provides the following native Mattermost tool
 - **create_post**: Create new posts or replies in channels
 - **dm**: Send a direct message to a user
 - **group_message**: Send a message to a group conversation
+- **create_draft**: Save a draft message in a channel or thread for the user to review and send
 - **create_channel**: Create new public or private channels
 - **get_channel_info**: Retrieve channel details by ID or name
 - **get_team_info**: Retrieve team details by ID or name

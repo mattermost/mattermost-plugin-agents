@@ -77,6 +77,59 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 	})
 
+	t.Run("CreateDraftTool", func(t *testing.T) {
+		t.Run("HappyPath", func(t *testing.T) {
+			args := map[string]interface{}{
+				"channel_id":           testData.Channel.Id,
+				"channel_display_name": testData.Channel.DisplayName,
+				"team_display_name":    testData.Team.DisplayName,
+				"message":              "Draft from MCP integration test!",
+			}
+
+			result, err := executeToolWithMCP(t, suite, "create_draft", args)
+			require.NoError(t, err, "create_draft should succeed")
+			assert.NotEmpty(t, result.Content, "create_draft should return content")
+
+			// Verify the draft was actually saved and not posted to the channel
+			drafts, _, err := client.GetDrafts(context.Background(), "me", testData.Team.Id)
+			require.NoError(t, err)
+			found := false
+			for _, draft := range drafts {
+				if draft.ChannelId == testData.Channel.Id && draft.Message == "Draft from MCP integration test!" {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "Draft should be found for the channel")
+
+			posts, _, err := client.GetPostsForChannel(context.Background(), testData.Channel.Id, 0, 50, "", false, false)
+			require.NoError(t, err)
+			for _, post := range posts.Posts {
+				assert.NotEqual(t, "Draft from MCP integration test!", post.Message, "draft must not be posted to the channel")
+			}
+		})
+
+		t.Run("InvalidChannelID", func(t *testing.T) {
+			args := map[string]interface{}{
+				"channel_id": "invalid-channel-id",
+				"message":    "This should fail",
+			}
+
+			_, err := executeToolWithMCP(t, suite, "create_draft", args)
+			require.Error(t, err, "create_draft with invalid channel should fail")
+		})
+
+		t.Run("MissingParameters", func(t *testing.T) {
+			args := map[string]interface{}{
+				"channel_id": testData.Channel.Id,
+				// missing message
+			}
+
+			_, err := executeToolWithMCP(t, suite, "create_draft", args)
+			require.Error(t, err, "create_draft without message should fail")
+		})
+	})
+
 	t.Run("ReadChannelTool", func(t *testing.T) {
 		t.Run("HappyPath", func(t *testing.T) {
 			// Create a test post first

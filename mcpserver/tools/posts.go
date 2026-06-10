@@ -28,6 +28,16 @@ type CreatePostArgs struct {
 	Attachments        []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
 }
 
+// CreateDraftArgs represents arguments for the create_draft tool
+type CreateDraftArgs struct {
+	ChannelID          string   `json:"channel_id" jsonschema:"The ID of the channel to draft the message in,minLength=26,maxLength=26"`
+	ChannelDisplayName string   `json:"channel_display_name" jsonschema:"The display name of the channel (for context verification),minLength=1"`
+	TeamDisplayName    string   `json:"team_display_name" jsonschema:"The display name of the team (for context verification),minLength=1"`
+	Message            string   `json:"message" jsonschema:"The draft message content,minLength=1"`
+	RootID             string   `json:"root_id,omitempty" jsonschema:"Optional root post ID to draft a thread reply,minLength=26,maxLength=26"`
+	Attachments        []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the draft"`
+}
+
 // CreatePostAsUserArgs represents arguments for the create_post_as_user tool (dev mode only)
 type CreatePostAsUserArgs struct {
 	Username    string   `json:"username" jsonschema:"Username to login as"`
@@ -67,6 +77,8 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 
 	groupMessageDesc := fmt.Sprintf("Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}", attachmentsParam)
 
+	createDraftDesc := fmt.Sprintf("Create or update a draft message in a Mattermost channel. A draft is NOT sent — it is saved privately for the user and appears prefilled in their message input box for that channel (or thread) so they can review, edit, and send it themselves. Prefer this over create_post whenever the user wants to compose or stage a message rather than post it immediately. There is one draft per channel/thread, so calling this again for the same channel_id (and root_id) overwrites the previous draft. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Parameters: channel_id (required), message (required), root_id (optional - to draft a thread reply)%s. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Draft for your review\"}", attachmentsParam)
+
 	return []MCPTool{
 		{
 			Name:        "read_post",
@@ -91,6 +103,12 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 			Description: groupMessageDesc,
 			Schema:      NewJSONSchemaForAccessMode[GroupMessageArgs](string(p.accessMode)),
 			Resolver:    p.toolGroupMessage,
+		},
+		{
+			Name:        "create_draft",
+			Description: createDraftDesc,
+			Schema:      NewJSONSchemaForAccessMode[CreateDraftArgs](string(p.accessMode)),
+			Resolver:    p.toolCreateDraft,
 		},
 	}
 }
@@ -330,6 +348,103 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 
 	return fmt.Sprintf("Successfully created post in channel '%s' (Team: %s) with ID: %s%s",
 		channel.DisplayName, team.DisplayName, createdPost.Id, attachmentMessage), nil
+}
+
+// toolCreateDraft implements the create_draft tool
+func (p *MattermostToolProvider) toolCreateDraft(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+	var args CreateDraftArgs
+	err := argsGetter(&args)
+	if err != nil {
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_draft: %w", err)
+	}
+
+	// Validate required fields
+	if !model.IsValidId(args.ChannelID) {
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+	}
+	if args.Message == "" {
+		return "message is required", fmt.Errorf("message cannot be empty")
+	}
+	if args.ChannelDisplayName == "" {
+		return "channel_display_name is required", fmt.Errorf("channel_display_name cannot be empty - you must call get_channel_info first")
+	}
+	if args.TeamDisplayName == "" {
+		return "team_display_name is required", fmt.Errorf("team_display_name cannot be empty - you must call get_channel_info first")
+	}
+	// Validate root ID if provided (for thread replies)
+	if args.RootID != "" && !model.IsValidId(args.RootID) {
+		return "invalid root_id format", fmt.Errorf("root_id must be a valid ID")
+	}
+
+	// Get client from context
+	if mcpContext.Client == nil {
+		return "client not available", fmt.Errorf("client not available in context")
+	}
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	// Validate that the provided display names match the actual channel and team
+	channel, _, err := client.GetChannel(ctx, args.ChannelID)
+	if err != nil {
+		return "failed to validate channel", fmt.Errorf("error fetching channel for validation: %w", err)
+	}
+
+	if channel.DisplayName != args.ChannelDisplayName {
+		return fmt.Sprintf("channel_display_name mismatch: provided '%s' but channel ID '%s' has display name '%s'",
+				args.ChannelDisplayName, args.ChannelID, channel.DisplayName),
+			fmt.Errorf("channel display name validation failed")
+	}
+
+	team, _, err := client.GetTeam(ctx, channel.TeamId, "")
+	if err != nil {
+		return "failed to validate team", fmt.Errorf("error fetching team for validation: %w", err)
+	}
+
+	if team.DisplayName != args.TeamDisplayName {
+		return fmt.Sprintf("team_display_name mismatch: provided '%s' but team ID '%s' has display name '%s'",
+				args.TeamDisplayName, channel.TeamId, team.DisplayName),
+			fmt.Errorf("team display name validation failed")
+	}
+
+	// Upload files if specified
+	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
+
+	// Build the draft
+	draft := &model.Draft{
+		ChannelId: args.ChannelID,
+		RootId:    args.RootID,
+		Message:   args.Message,
+		FileIds:   fileIDs,
+	}
+
+	// Add AI-generated prop if tracking is enabled
+	if p.trackAIGenerated {
+		var userID string
+
+		// First check if bot user ID was provided via context metadata (from embedded server)
+		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
+			userID = mcpContext.BotUserID
+		} else {
+			// For external servers, fetch the authenticated user's ID
+			if user, _, getMeErr := client.GetMe(ctx, ""); getMeErr == nil && user != nil {
+				userID = user.Id
+			}
+		}
+
+		if userID != "" {
+			draft.SetProps(model.StringInterface{"ai_generated_by": userID})
+		}
+	}
+
+	if _, _, err := client.UpsertDraft(ctx, draft); err != nil {
+		return "failed to create draft", fmt.Errorf("error creating draft: %w", err)
+	}
+
+	target := fmt.Sprintf("channel '%s' (Team: %s)", channel.DisplayName, team.DisplayName)
+	if args.RootID != "" {
+		target = fmt.Sprintf("thread %s in %s", args.RootID, target)
+	}
+	return fmt.Sprintf("Successfully saved draft in %s. It is waiting in the user's message box for review before sending.%s", target, attachmentMessage), nil
 }
 
 // toolCreatePostAsUser implements the create_post_as_user tool with custom authentication

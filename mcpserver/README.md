@@ -52,6 +52,19 @@ Create a new post in Mattermost.
   - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
   - **File Path Format**: Use relative paths like `document.pdf` or `folder/image.png` (files are accessed from the `mcpserver/data/` directory)
 
+### `create_draft`
+Create or update a draft message in a channel. The draft is not sent — it is saved privately for the user and appears prefilled in their message input box for that channel (or thread) so they can review, edit, and send it themselves. There is one draft per channel/thread, so calling this again for the same `channel_id` (and `root_id`) overwrites the previous draft.
+
+**Parameters:**
+- `channel_id` (required): The ID of the channel to draft the message in
+- `channel_display_name` (required): The channel display name (for context verification)
+- `team_display_name` (required): The team display name (for context verification)
+- `message` (required): The draft message content
+- `root_id` (optional): Root post ID to draft a thread reply
+- `attachments` (optional): Array of file paths or URLs to attach to the draft
+  - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
+  - **File Path Format**: Use relative paths like `document.pdf` or `folder/image.png` (files are accessed from the `mcpserver/data/` directory)
+
 ### `create_channel`
 Create a new channel in Mattermost.
 
