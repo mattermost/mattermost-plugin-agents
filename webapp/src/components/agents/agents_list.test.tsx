@@ -134,7 +134,9 @@ describe('AgentsList create-button gating', () => {
 
     test('Create button stays disabled while agents are loading', () => {
         mockUseIsMultiLLMLicensed.mockReturnValue(false);
-        mockGetAgents.mockImplementation(() => new Promise(() => {}));
+        mockGetAgents.mockImplementation(() => new Promise(() => {
+            // Never resolves: keep the component in its loading state.
+        }));
 
         renderList();
 

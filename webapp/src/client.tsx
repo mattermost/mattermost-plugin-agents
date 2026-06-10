@@ -833,12 +833,14 @@ export async function getAgents(): Promise<AgentsListResult> {
     }));
 
     if (response.ok) {
+        const agents = await response.json() as UserAgent[];
         const activeCountHeader = response.headers.get('X-Agent-Active-Count');
-        const activeAgentCount = activeCountHeader ? Number.parseInt(activeCountHeader, 10) : undefined;
-        return {
-            agents: await response.json(),
-            activeAgentCount: Number.isNaN(activeAgentCount) ? undefined : activeAgentCount,
-        };
+        const parsedCount = activeCountHeader === null ? Number.NaN : Number.parseInt(activeCountHeader, 10);
+        const result: AgentsListResult = {agents};
+        if (!Number.isNaN(parsedCount)) {
+            result.activeAgentCount = parsedCount;
+        }
+        return result;
     }
 
     throw new ClientError(Client4.url, {

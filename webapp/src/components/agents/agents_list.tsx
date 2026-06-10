@@ -111,13 +111,13 @@ const AgentsList = () => {
     }, []);
 
     const handleCreateAgent = useCallback(() => {
-        if (createQuotaReached) {
+        if (createButtonDisabled) {
             return;
         }
         setEditingAgent(null);
         setViewMode('create');
         setViewOpen(true);
-    }, [createQuotaReached]);
+    }, [createButtonDisabled]);
 
     const handleViewBack = useCallback(() => {
         setViewOpen(false);
