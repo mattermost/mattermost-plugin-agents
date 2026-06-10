@@ -30,16 +30,19 @@ func (e *LicenseChecker) isAtLeastE20Licensed() bool {
 }
 
 // isAtLeastE10Licensed returns true when the server either has at least an E10 license or is configured for development.
-func (e *LicenseChecker) isAtLeastE10Licensed() bool { //nolint:unused
+func (e *LicenseChecker) isAtLeastE10Licensed() bool {
 	config := e.pluginAPIClient.Configuration.GetConfig()
 	license := e.pluginAPIClient.System.GetLicense()
 
 	return pluginapi.IsE10LicensedOrDevelopment(config, license)
 }
 
-// IsMultiLLMLicensed returns true when the server either has a multi-LLM license or is configured for development.
+// IsMultiLLMLicensed returns true when the server either has at least a Professional
+// license or is configured for development. Pro is included because the Pro pricing
+// page advertises "Bring-Your-Own & Multi-LLM Integration", "Interactive AI Bot Support",
+// and "Agent Control Plane" as Pro tier features (MM-69186).
 func (e *LicenseChecker) IsMultiLLMLicensed() bool {
-	return e.isAtLeastE20Licensed()
+	return e.isAtLeastE10Licensed()
 }
 
 // IsBasicsLicensed returns true when the server either has a license for basic features or is configured for development.

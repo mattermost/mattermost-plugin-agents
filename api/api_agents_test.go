@@ -372,6 +372,36 @@ func TestCreateAgentFreeTierBlocksWhenQuotaReached(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
 }
 
+// TestCreateAgentProfessionalLicensePastQuota guards MM-69186: with a Mattermost
+// Professional license, agent creation must not be capped at the free-tier limit.
+// Before the fix, IsMultiLLMLicensed() rejected Pro and the API returned 403.
+func TestCreateAgentProfessionalLicensePastQuota(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.OverrideLicense(&model.License{
+		Features:     &model.Features{},
+		SkuShortName: model.LicenseShortSkuProfessional,
+	})
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+		UserId:      "bot-user-id-created",
+		Username:    "my-agent",
+		DisplayName: "My Agent",
+		Description: "User-created AI agent",
+	}, nil)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	// Seed FreeTierAgentLimit existing agents so the quota check would fire if
+	// the Pro license were not recognized as multi-LLM licensed.
+	e.agentStore.agents["existing"] = &llm.BotConfig{
+		ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing",
+	}
+
+	recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(nil), testUserID)
+	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+}
+
 func TestListAgentsFiltersByAccess(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)

@@ -741,8 +741,8 @@ The following table outlines which features require a license:
 | Chat with agents in DMs and channels | No license required |
 | Image analysis (vision capabilities) | No license required |
 | Basic tool integrations | No license required |
-| Multiple agent configurations | Entry, Enterprise, and Enterprise Advanced |
-| Fine-grained access controls | Entry, Enterprise, and Enterprise Advanced |
+| Multiple agent configurations | Professional, Entry, Enterprise, and Enterprise Advanced |
+| Fine-grained access controls | Professional, Entry, Enterprise, and Enterprise Advanced |
 | Embedding search (semantic AI search) | Entry, Enterprise, and Enterprise Advanced |
 | MCP Support | Entry, Enterprise, and Enterprise Advanced |
 | Usage analytics and token tracking | Entry, Enterprise, and Enterprise Advanced |

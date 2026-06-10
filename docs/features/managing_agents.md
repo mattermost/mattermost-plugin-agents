@@ -67,7 +67,7 @@ By default, regular users do not have `manage_own_agent`. Grant it through your 
 
 ### License
 
-Self-service agent creation is gated by Mattermost's multi-LLM license check (Entry, Enterprise, or Enterprise Advanced).
+Self-service agent creation is gated by Mattermost's multi-LLM license check (Professional, Entry, Enterprise, or Enterprise Advanced).
 
 - **Without a multi-LLM license**, the Agents page shows a **Self-Service Agents** upgrade screen with a link to Mattermost pricing instead of the agent list. The plugin enforces a limit of `1` self-service agent at the API level (the `FreeTierAgentLimit` constant in `api/api_agents.go`), but **there is no UI path to create it** — agent creation requires a qualifying license. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
 - **With a multi-LLM license**, agent creation is unlimited (subject to permissions).
@@ -249,7 +249,7 @@ Practical consequences:
 
 ### "Self-Service Agents" upgrade screen is shown instead of the agents list
 
-The server does not have a multi-LLM license applied. Apply an Entry, Enterprise, or Enterprise Advanced license in **System Console > About > Edition and License** to unlock the Agents page. There is no UI path to create the single free-tier agent permitted by `FreeTierAgentLimit`; that limit is an API-only safety rail and direct API access would be required to use it (not typical for end users).
+The server does not have a multi-LLM license applied. Apply a Professional, Entry, Enterprise, or Enterprise Advanced license in **System Console > About > Edition and License** to unlock the Agents page. There is no UI path to create the single free-tier agent permitted by `FreeTierAgentLimit`; that limit is an API-only safety rail and direct API access would be required to use it (not typical for end users).
 
 ### "Create agent" button is hidden
 

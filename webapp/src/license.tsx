@@ -90,8 +90,13 @@ export const isProfessionalLicensedOrDevelopment = (state: GlobalState): boolean
     return checkProfessionalLicensed(license) || isConfiguredForDevelopment(state);
 };
 
+// useIsMultiLLMLicensed gates the Agents product page, the System Console
+// "Add an AI Bot" button, and other multi-LLM / multi-agent capabilities.
+// Mattermost Professional is a qualifying plan because the Pro pricing page
+// lists "Bring-Your-Own & Multi-LLM Integration", "Interactive AI Bot
+// Support", and "Agent Control Plane" as Pro features (MM-69186).
 export function useIsMultiLLMLicensed() {
-    return useSelector(isEnterpriseLicensedOrDevelopment);
+    return useSelector(isProfessionalLicensedOrDevelopment);
 }
 
 export function useIsBasicsLicensed() {
