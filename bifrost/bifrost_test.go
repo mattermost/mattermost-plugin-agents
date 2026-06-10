@@ -484,11 +484,13 @@ func TestBuildResponsesReasoning(t *testing.T) {
 func TestGetKeysForProviderVertex(t *testing.T) {
 	saJSON := `{"type":"service_account","project_id":"x"}`
 	acc := &providerAccount{
-		provider:              schemas.Vertex,
-		region:                "us-west1",
-		vertexProjectID:       "my-gcp-project",
-		vertexProjectNumber:   "123456789012",
-		vertexAuthCredentials: saJSON,
+		ProviderSettings: ProviderSettings{
+			Provider:              schemas.Vertex,
+			Region:                "us-west1",
+			VertexProjectID:       "my-gcp-project",
+			VertexProjectNumber:   "123456789012",
+			VertexAuthCredentials: saJSON,
+		},
 	}
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Vertex)
@@ -502,11 +504,13 @@ func TestGetKeysForProviderVertex(t *testing.T) {
 	assert.Equal(t, saJSON, vc.AuthCredentials.Val)
 
 	adc := &providerAccount{
-		provider:              schemas.Vertex,
-		region:                "europe-west1",
-		vertexProjectID:       "adc-project",
-		vertexProjectNumber:   "",
-		vertexAuthCredentials: "",
+		ProviderSettings: ProviderSettings{
+			Provider:              schemas.Vertex,
+			Region:                "europe-west1",
+			VertexProjectID:       "adc-project",
+			VertexProjectNumber:   "",
+			VertexAuthCredentials: "",
+		},
 	}
 	keysADC, err := adc.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.NoError(t, err)
@@ -515,7 +519,11 @@ func TestGetKeysForProviderVertex(t *testing.T) {
 	assert.Equal(t, "adc-project", keysADC[0].VertexKeyConfig.ProjectID.Val)
 	assert.Equal(t, "", keysADC[0].VertexKeyConfig.AuthCredentials.Val)
 
-	other := &providerAccount{provider: schemas.OpenAI}
+	other := &providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+		},
+	}
 	_, err = other.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.Error(t, err)
 }
@@ -1229,10 +1237,12 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 func TestMultiProviderAccount_SingleProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		provider: schemas.OpenAI,
-		apiKey:   "openai-key",
-		apiURL:   "https://api.openai.com",
-		orgID:    "org-123",
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "openai-key",
+			APIURL:   "https://api.openai.com",
+			OrgID:    "org-123",
+		},
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -1252,12 +1262,16 @@ func TestMultiProviderAccount_SingleProvider(t *testing.T) {
 func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		provider: schemas.OpenAI,
-		apiKey:   "openai-key",
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "openai-key",
+		},
 	})
 	acc.addProvider(&providerAccount{
-		provider: schemas.Anthropic,
-		apiKey:   "anthropic-key",
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.Anthropic,
+			APIKey:   "anthropic-key",
+		},
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -1279,8 +1293,10 @@ func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
 func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		provider: schemas.OpenAI,
-		apiKey:   "openai-key",
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "openai-key",
+		},
 	})
 
 	_, err := acc.GetKeysForProvider(context.Background(), schemas.Anthropic)
@@ -1293,13 +1309,17 @@ func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
 func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		provider: schemas.OpenAI,
-		apiKey:   "first-key",
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "first-key",
+		},
 	})
 	// Second add with same provider should be silently skipped (first wins)
 	acc.addProvider(&providerAccount{
-		provider: schemas.OpenAI,
-		apiKey:   "second-key",
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "second-key",
+		},
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -1315,9 +1335,11 @@ func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
 func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		provider: schemas.Azure,
-		apiKey:   "azure-key",
-		apiURL:   "https://myservice.openai.azure.com",
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.Azure,
+			APIKey:   "azure-key",
+			APIURL:   "https://myservice.openai.azure.com",
+		},
 	})
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Azure)
@@ -1330,11 +1352,13 @@ func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
 func TestMultiProviderAccount_BedrockKeyConfig(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		provider:  schemas.Bedrock,
-		apiKey:    "bedrock-key",
-		region:    "us-east-1",
-		awsKeyID:  "AKIA123",
-		awsSecret: "secret123",
+		ProviderSettings: ProviderSettings{
+			Provider:           schemas.Bedrock,
+			APIKey:             "bedrock-key",
+			Region:             "us-east-1",
+			AWSAccessKeyID:     "AKIA123",
+			AWSSecretAccessKey: "secret123",
+		},
 	})
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Bedrock)
@@ -1499,16 +1523,14 @@ func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
 	assert.Equal(t, "llama3", llmInstance.fallbacks[1].Model)
 }
 
-// TestNewFromServiceConfig_SkipsUnmappableFallbackInChain pins the resilience
-// contract that a fallback service which cannot be mapped to a Bifrost provider
-// is skipped rather than failing the whole bot — the whole point of a DDIL
-// failover feature is to degrade, not to break. A regression that returned the
-// error instead would fail bot construction whenever a chain contained such a
-// service. ServiceTypeScale is the realistic trigger: it is a valid plugin
-// service type (IsValidService accepts it, so ResolveFallbackChain keeps it in
-// the chain) that the Bifrost adapter's MapServiceTypeToProvider does not
-// support, so serviceConfigToFallbackEntry errors on it.
-func TestNewFromServiceConfig_SkipsUnmappableFallbackInChain(t *testing.T) {
+// TestNewFromServiceConfig_ErrorsOnUnmappableFallbackInChain pins the contract
+// that a fallback service which cannot be mapped to a Bifrost provider fails
+// bot construction instead of being silently dropped: an admin must find out
+// at setup that the configured fallback won't be there at failover time.
+// ServiceTypeScale is the realistic trigger: it is a valid plugin service type
+// (IsValidService accepts it, so ResolveFallbackChain keeps it in the chain)
+// that the Bifrost adapter's MapServiceTypeToProvider does not support.
+func TestNewFromServiceConfig_ErrorsOnUnmappableFallbackInChain(t *testing.T) {
 	primary := llm.ServiceConfig{
 		ID:           "svc-openai",
 		Type:         llm.ServiceTypeOpenAI,
@@ -1528,27 +1550,12 @@ func TestNewFromServiceConfig_SkipsUnmappableFallbackInChain(t *testing.T) {
 		APIURL:       "https://scale.example.com",
 		DefaultModel: "scale-model",
 	}
-	localFallback := llm.ServiceConfig{
-		ID:           "svc-local",
-		Type:         llm.ServiceTypeOpenAICompatible,
-		APIURL:       "http://localhost:11434/v1",
-		DefaultModel: "llama3",
-	}
 	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "svc-openai"}
 
-	llmInstance, err := NewFromServiceConfig(primary, bot,
-		[]llm.ServiceConfig{anthropicFallback, unmappableFallback, localFallback})
-	require.NoError(t, err, "an unmappable fallback must be skipped, not fail bot construction")
-	defer llmInstance.Shutdown()
-
-	// The two mappable fallbacks survive in chain order; the unmappable one is
-	// dropped from the middle without disturbing the others.
-	require.Len(t, llmInstance.fallbacks, 2)
-	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
-	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
-	assert.Equal(t, "llama3", llmInstance.fallbacks[1].Model)
-	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[1].Provider,
-		"the local fallback keeps its own distinct custom-provider slot")
+	_, err := NewFromServiceConfig(primary, bot,
+		[]llm.ServiceConfig{anthropicFallback, unmappableFallback})
+	require.Error(t, err, "an unmappable fallback must fail bot construction, not be silently dropped")
+	assert.Contains(t, err.Error(), "svc-scale", "the error must name the offending fallback service")
 }
 
 func TestNewFromServiceConfig_BotModelOverrideDoesNotAffectFallback(t *testing.T) {
@@ -1972,7 +1979,7 @@ func TestServiceConfigToFallbackEntry(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedProvider, entry.Provider)
-			assert.Equal(t, tt.expectedModel, entry.Model)
+			assert.Equal(t, tt.expectedModel, entry.DefaultModel)
 			assert.Equal(t, tt.expectedAPIURL, entry.APIURL)
 			assert.Equal(t, tt.expectedChatOnly, entry.ChatOnly)
 		})
@@ -2028,13 +2035,21 @@ func TestServiceConfigToFallbackEntry_VertexCredsAndKeyless(t *testing.T) {
 // — the account-level mechanism that makes same-base fallbacks routable.
 func TestMultiProviderAccount_CustomProviderKeepsDistinctSlot(t *testing.T) {
 	acc := newMultiProviderAccount()
-	acc.addProvider(&providerAccount{provider: schemas.OpenAI, apiKey: "cloud", apiURL: "https://api.openai.com"})
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "cloud",
+			APIURL:   "https://api.openai.com",
+		},
+	})
 	customName := customProviderName(schemas.OpenAI, "local")
 	acc.addProvider(&providerAccount{
-		provider: schemas.OpenAI,
-		name:     customName,
-		keyless:  true,
-		apiURL:   "http://localhost:11434",
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIURL:   "http://localhost:11434",
+		},
+		name:    customName,
+		keyless: true,
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -2055,11 +2070,11 @@ func TestMultiProviderAccount_CustomProviderKeepsDistinctSlot(t *testing.T) {
 	assert.Nil(t, primaryCfg.CustomProviderConfig)
 }
 
-// TestNewFromServiceConfig_UnsupportedSameProviderCollisionSkipped verifies that
+// TestNewFromServiceConfig_UnsupportedSameProviderCollisionErrors verifies that
 // a same-type fallback whose provider cannot be a custom-provider base type
-// (e.g. Mistral) is dropped rather than silently misrouted to the primary's
-// endpoint.
-func TestNewFromServiceConfig_UnsupportedSameProviderCollisionSkipped(t *testing.T) {
+// (e.g. Mistral) fails bot construction rather than being silently misrouted to
+// the primary's endpoint or dropped.
+func TestNewFromServiceConfig_UnsupportedSameProviderCollisionErrors(t *testing.T) {
 	primary := llm.ServiceConfig{
 		ID:           "mistral-1",
 		Type:         llm.ServiceTypeMistral,
@@ -2073,11 +2088,9 @@ func TestNewFromServiceConfig_UnsupportedSameProviderCollisionSkipped(t *testing
 		DefaultModel: "mistral-small-latest",
 	}
 
-	llmInstance, err := NewFromServiceConfig(primary, llm.BotConfig{ServiceID: "mistral-1"}, []llm.ServiceConfig{fallback})
-	require.NoError(t, err)
-	defer llmInstance.Shutdown()
-
-	assert.Empty(t, llmInstance.fallbacks, "a same-type Mistral fallback cannot be disambiguated and must be skipped")
+	_, err := NewFromServiceConfig(primary, llm.BotConfig{ServiceID: "mistral-1"}, []llm.ServiceConfig{fallback})
+	require.Error(t, err, "a same-type Mistral fallback cannot be disambiguated and must fail setup")
+	assert.Contains(t, err.Error(), "mistral-2", "the error must name the offending fallback service")
 }
 
 // TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision
@@ -2118,10 +2131,12 @@ func TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision
 // Responses → chat), while a non-chat-only custom provider leaves it unset.
 func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	chatOnly := &providerAccount{
-		provider: schemas.OpenAI,
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIURL:   "http://localhost:11434",
+		},
 		name:     customProviderName(schemas.OpenAI, "local"),
 		chatOnly: true,
-		apiURL:   "http://localhost:11434",
 	}
 	cfg, err := chatOnly.GetConfigForProvider(chatOnly.registeredName())
 	require.NoError(t, err)
@@ -2135,9 +2150,11 @@ func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	// A custom provider that does support the Responses API leaves AllowedRequests
 	// unset so all operations remain available.
 	responsesCapable := &providerAccount{
-		provider: schemas.OpenAI,
-		name:     customProviderName(schemas.OpenAI, "other"),
-		apiURL:   "https://api.example.com",
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIURL:   "https://api.example.com",
+		},
+		name: customProviderName(schemas.OpenAI, "other"),
 	}
 	cfg, err = responsesCapable.GetConfigForProvider(responsesCapable.registeredName())
 	require.NoError(t, err)
@@ -2322,11 +2339,13 @@ func TestEnvProxyRouting(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", proxy.URL)
 
 	llmClient, err := New(Config{
-		Provider:         schemas.OpenAI,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "gpt-4",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.OpenAI,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "gpt-4",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -2407,11 +2426,13 @@ func TestCountTokensReturnsCount(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		Provider:         schemas.Anthropic,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "claude-sonnet-4-5",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Anthropic,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "claude-sonnet-4-5",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -2440,12 +2461,14 @@ func TestCountTokensOmitsMaxOutputTokens(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		Provider:         schemas.OpenAI,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "gpt-5.4",
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.OpenAI,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "gpt-5.4",
+			StreamingTimeout: 10 * time.Second,
+		},
 		OutputTokenLimit: 8192, // produces MaxGeneratedTokens > 0 → MaxOutputTokens in the request
-		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -2480,11 +2503,13 @@ func TestCountTokensOmitsNativeServerTools(t *testing.T) {
 	// the production "Server tools are not supported in the count_tokens
 	// endpoint" error.
 	llmClient, err := New(Config{
-		Provider:           schemas.Anthropic,
-		APIKey:             "test-key",
-		APIURL:             backend.URL,
-		DefaultModel:       "claude-sonnet-4-6",
-		StreamingTimeout:   10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Anthropic,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "claude-sonnet-4-6",
+			StreamingTimeout: 10 * time.Second,
+		},
 		EnabledNativeTools: []string{"web_search"},
 	})
 	require.NoError(t, err)
@@ -2518,11 +2543,13 @@ func TestCountTokensKeepsFunctionTools(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		Provider:         schemas.Anthropic,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "claude-sonnet-4-6",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Anthropic,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "claude-sonnet-4-6",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -2556,11 +2583,13 @@ func TestCountTokensUnsupportedProvider(t *testing.T) {
 	// "unsupported_operation" error synchronously. CountTokens must classify
 	// that as ErrUnsupportedTokenCount without contacting the backend.
 	llmClient, err := New(Config{
-		Provider:         schemas.Mistral,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "mistral-large-latest",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Mistral,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "mistral-large-latest",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -2583,11 +2612,13 @@ func TestCountTokensScrubsAPIKeyFromError(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		Provider:         schemas.Anthropic,
-		APIKey:           secret,
-		APIURL:           backend.URL,
-		DefaultModel:     "claude-sonnet-4-5",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Anthropic,
+			APIKey:           secret,
+			APIURL:           backend.URL,
+			DefaultModel:     "claude-sonnet-4-5",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()

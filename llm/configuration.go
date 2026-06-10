@@ -205,12 +205,15 @@ func (c *BotConfig) IsValid() bool {
 
 // ResolveFallbackChain walks the fallback chain starting from the service
 // identified by primaryServiceID, returning an ordered slice of fallback
-// ServiceConfigs. It detects cycles by tracking visited service IDs and stops
-// if a fallback service is not found or is invalid.
-func ResolveFallbackChain(primaryServiceID string, getServiceByID func(id string) (ServiceConfig, bool)) []ServiceConfig {
+// ServiceConfigs. A misconfigured chain — a cycle, or a fallback ID that is
+// missing or invalid — returns an error so the problem surfaces at setup
+// instead of silently leaving the bot without the configured fallback. A
+// missing primary returns an empty chain; the caller surfaces that error when
+// it resolves the primary itself.
+func ResolveFallbackChain(primaryServiceID string, getServiceByID func(id string) (ServiceConfig, bool)) ([]ServiceConfig, error) {
 	primarySvc, ok := getServiceByID(primaryServiceID)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	var chain []ServiceConfig
@@ -219,20 +222,23 @@ func ResolveFallbackChain(primaryServiceID string, getServiceByID func(id string
 
 	for currentID != "" {
 		if visited[currentID] {
-			break // cycle detected
+			return nil, fmt.Errorf("fallback chain of service %q contains a cycle at service %q", primaryServiceID, currentID)
 		}
 		visited[currentID] = true
 
 		svc, ok := getServiceByID(currentID)
-		if !ok || !IsValidService(svc) {
-			break // missing or invalid service
+		if !ok {
+			return nil, fmt.Errorf("fallback service %q in the chain of service %q does not exist", currentID, primaryServiceID)
+		}
+		if !IsValidService(svc) {
+			return nil, fmt.Errorf("fallback service %q in the chain of service %q has an invalid configuration", currentID, primaryServiceID)
 		}
 
 		chain = append(chain, svc)
 		currentID = svc.FallbackServiceID
 	}
 
-	return chain
+	return chain, nil
 }
 
 // IsValidService validates a service configuration

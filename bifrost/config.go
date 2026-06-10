@@ -88,56 +88,60 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		return nil, err
 	}
 
-	// Calculate streaming timeout
-	streamingTimeout := DefaultStreamingTimeout
-	if serviceConfig.StreamingTimeoutSeconds > 0 {
-		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
+	settings := providerSettingsFromService(provider, serviceConfig)
+	if settings.StreamingTimeout <= 0 {
+		settings.StreamingTimeout = DefaultStreamingTimeout
 	}
 
-	// Don't fill in per-provider defaults here; bifrost has its own and they drift.
-	apiURL := normalizeOpenAIBaseURL(provider, serviceConfig.APIURL)
-	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
+	// Use bot's model if specified, otherwise use service's default model
+	if botConfig.Model != "" {
+		settings.DefaultModel = botConfig.Model
+	}
 
 	cfg := Config{
-		Provider:              provider,
-		APIKey:                serviceConfig.APIKey,
-		APIURL:                apiURL,
-		OrgID:                 serviceConfig.OrgID,
-		Region:                serviceConfig.Region,
-		AWSAccessKeyID:        serviceConfig.AWSAccessKeyID,
-		AWSSecretAccessKey:    serviceConfig.AWSSecretAccessKey,
-		VertexProjectID:       serviceConfig.VertexProjectID,
-		VertexProjectNumber:   serviceConfig.VertexProjectNumber,
-		VertexAuthCredentials: serviceConfig.VertexAuthCredentials,
-		DefaultModel:          serviceConfig.DefaultModel,
-		InputTokenLimit:       serviceConfig.InputTokenLimit,
-		OutputTokenLimit:      serviceConfig.OutputTokenLimit,
-		StreamingTimeout:      streamingTimeout,
-		UseResponsesAPI:       llm.ServiceUsesResponsesAPI(serviceConfig),
+		ProviderSettings: settings,
+		InputTokenLimit:  serviceConfig.InputTokenLimit,
+		OutputTokenLimit: serviceConfig.OutputTokenLimit,
+		UseResponsesAPI:  llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration
-		EnabledNativeTools: enabledNativeTools,
+		EnabledNativeTools: filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools),
 		ReasoningEnabled:   botConfig.ReasoningEnabled,
 		ReasoningEffort:    botConfig.ReasoningEffort,
 		ThinkingBudget:     botConfig.ThinkingBudget,
 	}
 
-	// Use bot's model if specified, otherwise use service's default model
-	if botConfig.Model != "" {
-		cfg.DefaultModel = botConfig.Model
-	}
-
-	// Build fallback entries from the resolved fallback service chain.
 	for _, fbSvc := range fallbackServices {
 		fbEntry, fbErr := serviceConfigToFallbackEntry(fbSvc)
 		if fbErr != nil {
-			// Skip unsupported fallback services rather than failing the whole bot.
-			continue
+			// Fail bot setup rather than silently dropping the fallback: an
+			// admin must not believe a fallback is in place when it isn't.
+			return nil, fmt.Errorf("fallback service %q cannot be used: %w", fbSvc.ID, fbErr)
 		}
 		cfg.Fallbacks = append(cfg.Fallbacks, fbEntry)
 	}
 
 	return New(cfg)
+}
+
+// providerSettingsFromService maps a ServiceConfig's provider connection fields
+// onto ProviderSettings. It does not fill in per-provider URL defaults; bifrost
+// has its own and they drift.
+func providerSettingsFromService(provider schemas.ModelProvider, svc llm.ServiceConfig) ProviderSettings {
+	return ProviderSettings{
+		Provider:              provider,
+		APIKey:                svc.APIKey,
+		APIURL:                normalizeOpenAIBaseURL(provider, svc.APIURL),
+		OrgID:                 svc.OrgID,
+		Region:                svc.Region,
+		AWSAccessKeyID:        svc.AWSAccessKeyID,
+		AWSSecretAccessKey:    svc.AWSSecretAccessKey,
+		VertexProjectID:       svc.VertexProjectID,
+		VertexProjectNumber:   svc.VertexProjectNumber,
+		VertexAuthCredentials: svc.VertexAuthCredentials,
+		DefaultModel:          svc.DefaultModel,
+		StreamingTimeout:      time.Duration(svc.StreamingTimeoutSeconds) * time.Second,
+	}
 }
 
 // serviceConfigToFallbackEntry converts a ServiceConfig into a FallbackEntry
@@ -148,43 +152,28 @@ func serviceConfigToFallbackEntry(svc llm.ServiceConfig) (FallbackEntry, error) 
 		return FallbackEntry{}, err
 	}
 
-	apiURL := svc.APIURL
-	switch svc.Type {
-	case llm.ServiceTypeCohere:
-		if apiURL == "" {
-			apiURL = "https://api.cohere.ai/compatibility/v1"
-		}
-	case llm.ServiceTypeMistral:
-		if apiURL == "" {
-			apiURL = "https://api.mistral.ai/v1"
+	// Unlike the primary path, fallbacks pin explicit base URLs for Cohere and
+	// Mistral when none is configured.
+	if svc.APIURL == "" {
+		switch svc.Type {
+		case llm.ServiceTypeCohere:
+			svc.APIURL = "https://api.cohere.ai/compatibility/v1"
+		case llm.ServiceTypeMistral:
+			svc.APIURL = "https://api.mistral.ai/v1"
 		}
 	}
-	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
 
 	return FallbackEntry{
-		ID:                    svc.ID,
-		Provider:              provider,
-		Model:                 svc.DefaultModel,
-		APIKey:                svc.APIKey,
-		APIURL:                apiURL,
-		OrgID:                 svc.OrgID,
-		Region:                svc.Region,
-		AWSAccessKeyID:        svc.AWSAccessKeyID,
-		AWSSecretAccessKey:    svc.AWSSecretAccessKey,
-		VertexProjectID:       svc.VertexProjectID,
-		VertexProjectNumber:   svc.VertexProjectNumber,
-		VertexAuthCredentials: svc.VertexAuthCredentials,
-		// A fallback registered as a custom provider is keyless when it has no
-		// API key (e.g. a local Ollama server). Credential-based providers like
-		// Bedrock authenticate without an API key, so they are never keyless.
+		ProviderSettings: providerSettingsFromService(provider, svc),
+		ID:               svc.ID,
+		// Credential-based providers like Bedrock authenticate without an API
+		// key, so an empty key does not make them keyless.
 		IsKeyLess: svc.APIKey == "" && provider != schemas.Bedrock,
 		// An OpenAI-base fallback that does not itself use the Responses API
-		// (e.g. a local Ollama/vLLM server) is chat-only: registering it as a
-		// custom provider with chat-only AllowedRequests lets Bifrost downgrade a
-		// Responses-API request to chat completions instead of failing on
+		// (e.g. a local Ollama/vLLM server) must be registered chat-only so
+		// Bifrost downgrades Responses-API requests instead of failing on
 		// /v1/responses. Other base providers handle the Responses API natively.
-		ChatOnly:                provider == schemas.OpenAI && !llm.ServiceUsesResponsesAPI(svc),
-		StreamingTimeoutSeconds: svc.StreamingTimeoutSeconds,
+		ChatOnly: provider == schemas.OpenAI && !llm.ServiceUsesResponsesAPI(svc),
 	}, nil
 }
 

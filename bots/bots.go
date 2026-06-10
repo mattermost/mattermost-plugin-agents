@@ -138,7 +138,10 @@ func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.Serv
 			}
 		}
 		// Include fallback chain services so changes to them trigger re-init.
-		for _, fbSvc := range llm.ResolveFallbackChain(botCfg.ServiceID, b.config.GetServiceByID) {
+		// Best-effort: a chain-resolution error is surfaced when the bot's LLM
+		// is built, so it is ignored here.
+		fbChain, _ := llm.ResolveFallbackChain(botCfg.ServiceID, b.config.GetServiceByID)
+		for _, fbSvc := range fbChain {
 			if _, exists := result[fbSvc.ID]; !exists {
 				result[fbSvc.ID] = fbSvc
 			}
@@ -388,10 +391,13 @@ func (b *MMBots) EnsureBots() error {
 
 		b.ensureDefaultProfileImage(bot)
 
-		// Resolve fallback chain for this bot's service.
-		fallbackServices := llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
+		// Resolve fallback chain for this bot's service. A misconfigured chain
+		// fails bot setup so the admin finds out now, not at failover time.
+		fallbackServices, err := llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
+		if err != nil {
+			return fmt.Errorf("failed to resolve fallback chain for bot %s: %w", bot.cfg.Name, err)
+		}
 
-		var err error
 		bot.llm, err = b.getLLM(bot.service, bot.cfg, fallbackServices)
 		if err != nil {
 			return err

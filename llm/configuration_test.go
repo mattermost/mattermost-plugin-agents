@@ -706,67 +706,65 @@ func TestResolveFallbackChain(t *testing.T) {
 		name           string
 		primaryID      string
 		expectedIDs    []string
-		expectedLen    int
 		expectedModels []string
+		expectErr      string
 	}{
 		{
 			name:        "no fallback configured",
 			primaryID:   noFallbackSvc.ID,
 			expectedIDs: nil,
-			expectedLen: 0,
 		},
 		{
 			name:           "simple chain A→B",
 			primaryID:      anthropicSvc.ID,
 			expectedIDs:    []string{"local-1"},
-			expectedLen:    1,
 			expectedModels: []string{"llama3"},
 		},
 		{
 			name:           "multi-hop chain A→B→C",
 			primaryID:      openAISvc.ID,
 			expectedIDs:    []string{"anthropic-1", "local-1"},
-			expectedLen:    2,
 			expectedModels: []string{"claude-sonnet-4-20250514", "llama3"},
 		},
 		{
-			name:           "cycle A→B→A stops at B",
-			primaryID:      cycleSvcA.ID,
-			expectedIDs:    []string{"cycle-b"},
-			expectedLen:    1,
-			expectedModels: []string{"claude-sonnet-4-20250514"},
+			name:      "cycle A→B→A errors",
+			primaryID: cycleSvcA.ID,
+			expectErr: "cycle",
 		},
 		{
-			name:        "self-cycle A→A returns empty",
-			primaryID:   selfCycleSvc.ID,
-			expectedIDs: nil,
-			expectedLen: 0,
+			name:      "self-cycle A→A errors",
+			primaryID: selfCycleSvc.ID,
+			expectErr: "cycle",
 		},
 		{
-			name:        "fallback to invalid service stops",
-			primaryID:   invalidFallbackSvc.ID,
-			expectedIDs: nil,
-			expectedLen: 0,
+			name:      "fallback to invalid service errors",
+			primaryID: invalidFallbackSvc.ID,
+			expectErr: "invalid configuration",
 		},
 		{
-			name:        "primary not found returns nil",
+			name:        "primary not found returns nil without error",
 			primaryID:   "nonexistent",
 			expectedIDs: nil,
-			expectedLen: 0,
 		},
 		{
-			name:        "fallback points to missing service",
-			primaryID:   "missing-fallback-primary",
-			expectedIDs: nil,
-			expectedLen: 0,
+			name:      "fallback points to missing service errors",
+			primaryID: "missing-fallback-primary",
+			expectErr: "does not exist",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			chain := ResolveFallbackChain(tt.primaryID, lookup)
+			chain, err := ResolveFallbackChain(tt.primaryID, lookup)
 
-			assert.Len(t, chain, tt.expectedLen)
+			if tt.expectErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectErr)
+				return
+			}
+			require.NoError(t, err)
+
+			assert.Len(t, chain, len(tt.expectedIDs))
 
 			if tt.expectedIDs != nil {
 				gotIDs := make([]string, len(chain))
