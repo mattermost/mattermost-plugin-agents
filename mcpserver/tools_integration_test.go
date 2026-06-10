@@ -109,6 +109,57 @@ func TestMCPToolsIntegration(t *testing.T) {
 			}
 		})
 
+		t.Run("ThreadReply", func(t *testing.T) {
+			rootPost := testhelpers.CreateTestPost(t, client, testData.Channel.Id, "Root post for draft thread reply")
+
+			args := map[string]interface{}{
+				"channel_id":           testData.Channel.Id,
+				"channel_display_name": testData.Channel.DisplayName,
+				"team_display_name":    testData.Team.DisplayName,
+				"message":              "Threaded draft reply!",
+				"root_id":              rootPost.Id,
+			}
+
+			result, err := executeToolWithMCP(t, suite, "create_draft", args)
+			require.NoError(t, err, "create_draft thread reply should succeed")
+			assert.NotEmpty(t, result.Content, "create_draft should return content")
+
+			drafts, _, err := client.GetDrafts(context.Background(), "me", testData.Team.Id)
+			require.NoError(t, err)
+			found := false
+			for _, draft := range drafts {
+				if draft.ChannelId == testData.Channel.Id && draft.RootId == rootPost.Id && draft.Message == "Threaded draft reply!" {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "Threaded draft should be found with the root_id set")
+		})
+
+		t.Run("ChannelDisplayNameMismatch", func(t *testing.T) {
+			args := map[string]interface{}{
+				"channel_id":           testData.Channel.Id,
+				"channel_display_name": "Wrong Channel Name",
+				"team_display_name":    testData.Team.DisplayName,
+				"message":              "This should fail validation",
+			}
+
+			_, err := executeToolWithMCP(t, suite, "create_draft", args)
+			require.Error(t, err, "create_draft with mismatched channel_display_name should fail")
+		})
+
+		t.Run("TeamDisplayNameMismatch", func(t *testing.T) {
+			args := map[string]interface{}{
+				"channel_id":           testData.Channel.Id,
+				"channel_display_name": testData.Channel.DisplayName,
+				"team_display_name":    "Wrong Team Name",
+				"message":              "This should fail validation",
+			}
+
+			_, err := executeToolWithMCP(t, suite, "create_draft", args)
+			require.Error(t, err, "create_draft with mismatched team_display_name should fail")
+		})
+
 		t.Run("InvalidChannelID", func(t *testing.T) {
 			args := map[string]interface{}{
 				"channel_id": "invalid-channel-id",
@@ -119,14 +170,40 @@ func TestMCPToolsIntegration(t *testing.T) {
 			require.Error(t, err, "create_draft with invalid channel should fail")
 		})
 
-		t.Run("MissingParameters", func(t *testing.T) {
+		t.Run("MissingMessage", func(t *testing.T) {
 			args := map[string]interface{}{
-				"channel_id": testData.Channel.Id,
+				"channel_id":           testData.Channel.Id,
+				"channel_display_name": testData.Channel.DisplayName,
+				"team_display_name":    testData.Team.DisplayName,
 				// missing message
 			}
 
 			_, err := executeToolWithMCP(t, suite, "create_draft", args)
 			require.Error(t, err, "create_draft without message should fail")
+		})
+
+		t.Run("MissingChannelDisplayName", func(t *testing.T) {
+			args := map[string]interface{}{
+				"channel_id":        testData.Channel.Id,
+				"team_display_name": testData.Team.DisplayName,
+				"message":           "This should fail",
+				// missing channel_display_name
+			}
+
+			_, err := executeToolWithMCP(t, suite, "create_draft", args)
+			require.Error(t, err, "create_draft without channel_display_name should fail")
+		})
+
+		t.Run("MissingTeamDisplayName", func(t *testing.T) {
+			args := map[string]interface{}{
+				"channel_id":           testData.Channel.Id,
+				"channel_display_name": testData.Channel.DisplayName,
+				"message":              "This should fail",
+				// missing team_display_name
+			}
+
+			_, err := executeToolWithMCP(t, suite, "create_draft", args)
+			require.Error(t, err, "create_draft without team_display_name should fail")
 		})
 	})
 
