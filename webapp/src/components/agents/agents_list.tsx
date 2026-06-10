@@ -13,12 +13,17 @@ import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
 import {userHasSystemPermission} from '@/utils/permissions';
 import {PrimaryButton} from '@/components/assets/buttons';
 import {UserAgent, ServiceInfo} from '@/types/agents';
+import {useIsMultiLLMLicensed} from '@/license';
+import EnterpriseChip from '@/components/system_console/enterprise_chip';
 
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
 
 type Tab = 'all' | 'yours';
+
+// Keep in sync with api.FreeTierAgentLimit (api/api_agents.go).
+const FREE_TIER_AGENT_LIMIT = 1;
 
 const AgentsList = () => {
     const intl = useIntl();
@@ -30,6 +35,7 @@ const AgentsList = () => {
     const hasManageSystem = useSelector((state: GlobalState) =>
         userHasSystemPermission(state, currentUserId, 'manage_system'));
     const userCanCreateAgent = hasManageOwnAgent || hasManageSystem;
+    const multiLLMLicensed = useIsMultiLLMLicensed();
 
     const [agents, setAgents] = useState<UserAgent[]>([]);
     const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -43,6 +49,9 @@ const AgentsList = () => {
     const [viewOpen, setViewOpen] = useState(false);
     const [viewMode, setViewMode] = useState<'create' | 'edit'>('create');
     const [editingAgent, setEditingAgent] = useState<UserAgent | null>(null);
+
+    // Quota is server-wide (backend CountActiveAgents), so use the full agent list, not filteredAgents.
+    const createQuotaReached = !multiLLMLicensed && agents.length >= FREE_TIER_AGENT_LIMIT;
 
     const fetchAgents = useCallback(async () => {
         try {
@@ -99,10 +108,13 @@ const AgentsList = () => {
     }, []);
 
     const handleCreateAgent = useCallback(() => {
+        if (createQuotaReached) {
+            return;
+        }
         setEditingAgent(null);
         setViewMode('create');
         setViewOpen(true);
-    }, []);
+    }, [createQuotaReached]);
 
     const handleViewBack = useCallback(() => {
         setViewOpen(false);
@@ -161,10 +173,21 @@ const AgentsList = () => {
                     </Subtitle>
                 </TitleRow>
                 {userCanCreateAgent && (
-                    <CreateButton onClick={handleCreateAgent}>
-                        <PlusIcon size={16}/>
-                        <FormattedMessage defaultMessage='Create agent'/>
-                    </CreateButton>
+                    <CreateActions>
+                        <CreateButton
+                            onClick={handleCreateAgent}
+                            disabled={createQuotaReached}
+                        >
+                            <PlusIcon size={16}/>
+                            <FormattedMessage defaultMessage='Create agent'/>
+                        </CreateButton>
+                        {createQuotaReached && (
+                            <EnterpriseChip
+                                text={intl.formatMessage({defaultMessage: 'Use multiple agents on qualifying Mattermost plans'})}
+                                subtext={intl.formatMessage({defaultMessage: 'Multiple self-service agents require a qualifying Mattermost plan'})}
+                            />
+                        )}
+                    </CreateActions>
                 )}
             </Header>
 
@@ -303,6 +326,14 @@ const Subtitle = styled.p`
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
     margin: 0;
+`;
+
+const CreateActions = styled.div`
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
 `;
 
 const CreateButton = styled(PrimaryButton)`
