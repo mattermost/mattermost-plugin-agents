@@ -146,32 +146,36 @@ func TestAnalyzeCreatesConversation(t *testing.T) {
 	userID := model.NewId()
 
 	tests := []struct {
-		name              string
-		promptName        string
-		expectedOperation string
-		expectedSystemSub string // substring expected in the system prompt
-		expectedUserSub   string // substring expected in the user turn
+		name                   string
+		promptName             string
+		expectedOperation      string
+		expectedSystemSub      string // substring expected in the system prompt
+		expectedUserSub        string // substring expected in the user turn
+		expectsThreadPermalink bool   // whether the prompt must include the MM-67148 "Original thread:" trailer
 	}{
 		{
-			name:              "summarize creates conversation with thread_analysis operation",
-			promptName:        prompts.PromptSummarizeThreadSystem,
-			expectedOperation: llm.OperationThreadAnalysis,
-			expectedSystemSub: "summary",
-			expectedUserSub:   "testuser123",
+			name:                   "summarize creates conversation with thread_analysis operation",
+			promptName:             prompts.PromptSummarizeThreadSystem,
+			expectedOperation:      llm.OperationThreadAnalysis,
+			expectedSystemSub:      "summary",
+			expectedUserSub:        "testuser123",
+			expectsThreadPermalink: true,
 		},
 		{
-			name:              "action items creates conversation with thread_analysis operation",
-			promptName:        prompts.PromptFindActionItemsSystem,
-			expectedOperation: llm.OperationThreadAnalysis,
-			expectedSystemSub: "action items",
-			expectedUserSub:   "testuser123",
+			name:                   "action items creates conversation with thread_analysis operation",
+			promptName:             prompts.PromptFindActionItemsSystem,
+			expectedOperation:      llm.OperationThreadAnalysis,
+			expectedSystemSub:      "action items",
+			expectedUserSub:        "testuser123",
+			expectsThreadPermalink: false,
 		},
 		{
-			name:              "open questions creates conversation with thread_analysis operation",
-			promptName:        prompts.PromptFindOpenQuestionsSystem,
-			expectedOperation: llm.OperationThreadAnalysis,
-			expectedSystemSub: "question",
-			expectedUserSub:   "testuser123",
+			name:                   "open questions creates conversation with thread_analysis operation",
+			promptName:             prompts.PromptFindOpenQuestionsSystem,
+			expectedOperation:      llm.OperationThreadAnalysis,
+			expectedSystemSub:      "question",
+			expectedUserSub:        "testuser123",
+			expectsThreadPermalink: false,
 		},
 	}
 
@@ -213,6 +217,18 @@ func TestAnalyzeCreatesConversation(t *testing.T) {
 			// Verify the system prompt contains expected content
 			assert.Contains(t, conv.SystemPrompt, tc.expectedSystemSub,
 				"system prompt should contain expected substring")
+
+			// Pin the MM-67148 scope: only summarize_thread carries the
+			// "Original thread:" permalink trailer. If the trailer ever
+			// expands to action items / open questions, this lock-in
+			// assertion forces an intentional update.
+			if tc.expectsThreadPermalink {
+				assert.Contains(t, conv.SystemPrompt, "Original thread: [permalink](",
+					"summarize_thread system prompt must include the Original thread permalink trailer")
+			} else {
+				assert.NotContains(t, conv.SystemPrompt, "Original thread: [permalink](",
+					"only summarize_thread should carry the Original thread permalink trailer")
+			}
 
 			// Verify user turn was created with formatted thread data
 			turns, err := ts.store.GetTurnsForConversation(result.ConversationID)
@@ -378,12 +394,13 @@ func TestFollowUpContinuesConversation(t *testing.T) {
 	assert.Equal(t, llm.OperationThreadAnalysis, request.Operation)
 }
 
-// TestSummarizeIncludesThreadPermalink verifies that the summarize_thread system
-// prompt instructs the LLM to cite the original thread using the citation
-// permalink format with the actual root post ID interpolated. This is the
-// guardrail for MM-67148 (thread summaries missing link back to original
-// thread): if the prompt template ever stops including the permalink
-// instruction or the root post ID, real LLM responses will lose the link.
+// TestSummarizeIncludesThreadPermalink is the regression guard for MM-67148
+// (thread summaries missing link back to original thread). It verifies that
+// the rendered summarize_thread system prompt ends with an explicit
+// "Original thread: [permalink](...)" instruction whose URL contains the
+// actual root post ID. The full literal trailer is asserted (rather than just
+// the URL) so the test fails if the citation_format.tmpl is included but the
+// per-thread instruction is dropped.
 func TestSummarizeIncludesThreadPermalink(t *testing.T) {
 	const rootPostID = "rootpostid12345"
 	threadPost := &model.Post{Id: rootPostID, Message: "kicking off the discussion", UserId: "userPL"}
@@ -391,69 +408,53 @@ func TestSummarizeIncludesThreadPermalink(t *testing.T) {
 		"userPL": {Id: "userPL", Username: "permalinkuser"},
 	}
 
-	ts := setupTest(t)
-	mockClient := setupMockThread(t, rootPostID, []*model.Post{threadPost}, threadUsers)
-	mockLLM := mocks.NewMockLanguageModel(t)
-
-	mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything, mock.Anything).
-		Return(&llm.TextStreamResult{}, nil)
-
-	botID := model.NewId()
-	userID := model.NewId()
-	ctx := llm.NewContext()
-	ctx.SiteURL = "https://mm.example.com"
-	ctx.Team = &model.Team{Name: "engineering"}
-	ctx.RequestingUser = &model.User{Id: userID, Username: "requester", Locale: "en"}
-
-	svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
-	result, err := svc.Analyze(context.Background(), rootPostID, ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	conv, err := ts.store.GetConversation(result.ConversationID)
-	require.NoError(t, err)
-
-	expectedPermalink := "https://mm.example.com/engineering/pl/" + rootPostID + "?view=citation"
-	assert.Contains(t, conv.SystemPrompt, expectedPermalink,
-		"summarize_thread system prompt must include a permalink back to the root post")
-	assert.Contains(t, conv.SystemPrompt, "permalink",
-		"summarize_thread system prompt must include the citation format guidance")
-}
-
-// TestSummarizePermalinkUsesRedirectWithoutTeam verifies that when no team is
-// available on the context (for example a DM or GM), the summarize prompt still
-// produces a usable permalink by falling back to the `_redirect` path segment.
-func TestSummarizePermalinkUsesRedirectWithoutTeam(t *testing.T) {
-	const rootPostID = "dmrootpost9999"
-	threadPost := &model.Post{Id: rootPostID, Message: "DM topic", UserId: "userDM"}
-	threadUsers := map[string]*model.User{
-		"userDM": {Id: "userDM", Username: "dmuser"},
+	tests := []struct {
+		name            string
+		team            *model.Team
+		expectedSegment string
+	}{
+		{
+			name:            "with team uses team name in permalink",
+			team:            &model.Team{Name: "engineering"},
+			expectedSegment: "engineering",
+		},
+		{
+			name:            "without team falls back to _redirect path",
+			team:            nil,
+			expectedSegment: "_redirect",
+		},
 	}
 
-	ts := setupTest(t)
-	mockClient := setupMockThread(t, rootPostID, []*model.Post{threadPost}, threadUsers)
-	mockLLM := mocks.NewMockLanguageModel(t)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := setupTest(t)
+			mockClient := setupMockThread(t, rootPostID, []*model.Post{threadPost}, threadUsers)
+			mockLLM := mocks.NewMockLanguageModel(t)
 
-	mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything, mock.Anything).
-		Return(&llm.TextStreamResult{}, nil)
+			mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything, mock.Anything).
+				Return(&llm.TextStreamResult{}, nil)
 
-	botID := model.NewId()
-	userID := model.NewId()
-	ctx := llm.NewContext()
-	ctx.SiteURL = "https://mm.example.com"
-	ctx.RequestingUser = &model.User{Id: userID, Username: "requester", Locale: "en"}
+			botID := model.NewId()
+			userID := model.NewId()
+			ctx := llm.NewContext()
+			ctx.SiteURL = "https://mm.example.com"
+			ctx.Team = tc.team
+			ctx.RequestingUser = &model.User{Id: userID, Username: "requester", Locale: "en"}
 
-	svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
-	result, err := svc.Analyze(context.Background(), rootPostID, ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
-	require.NoError(t, err)
-	require.NotNil(t, result)
+			svc := threads.New(mockLLM, ts.prompts, mockClient, ts.convService)
+			result, err := svc.Analyze(context.Background(), rootPostID, ctx, prompts.PromptSummarizeThreadSystem, botID, userID)
+			require.NoError(t, err)
+			require.NotNil(t, result)
 
-	conv, err := ts.store.GetConversation(result.ConversationID)
-	require.NoError(t, err)
+			conv, err := ts.store.GetConversation(result.ConversationID)
+			require.NoError(t, err)
 
-	expectedPermalink := "https://mm.example.com/_redirect/pl/" + rootPostID + "?view=citation"
-	assert.Contains(t, conv.SystemPrompt, expectedPermalink,
-		"summarize_thread system prompt must use _redirect path when no team is available")
+			expectedPermalink := "https://mm.example.com/" + tc.expectedSegment + "/pl/" + rootPostID + "?view=citation"
+			expectedTrailer := "Original thread: [permalink](" + expectedPermalink + ")"
+			assert.Contains(t, conv.SystemPrompt, expectedTrailer,
+				"summarize_thread system prompt must include the Original thread permalink trailer with the root post id interpolated")
+		})
+	}
 }
 
 func TestAnalyzeOperationSubType(t *testing.T) {
