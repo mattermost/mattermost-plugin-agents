@@ -5,6 +5,8 @@ import React from 'react';
 import {render, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
+import {getUserMCPTools} from '@/client';
+
 import McpsTab from './mcps_tab';
 
 jest.mock('react-intl', () => {
@@ -25,8 +27,6 @@ jest.mock('@/client', () => ({
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
-
-import {getUserMCPTools} from '@/client';
 
 const mockedGetUserMCPTools = getUserMCPTools as unknown as jest.Mock;
 

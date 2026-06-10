@@ -2,14 +2,13 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, fireEvent, render, screen, waitFor, waitForElementToBeRemoved} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor, waitForElementToBeRemoved} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
+import {getUserMCPTools} from '@/client';
 import {ServiceInfo, UserAgent} from '@/types/agents';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
-
-import {getUserMCPTools} from '@/client';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -155,6 +154,7 @@ describe('AgentConfigView', () => {
             userIDs: [],
             teamIDs: [],
             enabledNativeTools: ['web_search'],
+
             // The persisted enabledMCPTools include an entry that's not present in the
             // live MCP catalog above (orphan). The previous behavior silently mutated
             // draft.enabledTools to drop it, dirtying the form on second open.
