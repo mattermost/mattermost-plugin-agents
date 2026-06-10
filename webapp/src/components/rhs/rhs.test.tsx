@@ -113,6 +113,19 @@ const baseState = {
         teams: {
             currentTeamId: 'team-id',
         },
+        posts: {
+            posts: {
+                'post-id': {
+                    id: 'post-id',
+                    props: {
+                        conversation_id: 'conversation-id',
+                    },
+                },
+            },
+            postsInThread: {
+                'post-id': [],
+            },
+        },
     },
 };
 
