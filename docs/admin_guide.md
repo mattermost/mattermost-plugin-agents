@@ -61,7 +61,7 @@ Enable this setting only in trusted or otherwise mitigated environments, such as
 
 ### Service configuration
 
-Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication and model defaults. You can create multiple services for different providers or configurations, and share them across multiple agents.
+Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication, model defaults, and optional fallback behavior. You can create multiple services for different providers or configurations, and share them across multiple agents.
 
 Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 
@@ -71,10 +71,15 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
 | **API Key** | Your provider's API key (requirements vary by provider) |
 | **Default Model** | Default model to use for this service |
+| **Fallback Service** | Optional service to use when this service is unavailable. Defaults to **No fallback**. |
 | **Input Token Limit** | Maximum tokens allowed in input. When provider metadata includes an input limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an input limit, the field stays editable and Mattermost uses the saved manual value. Set this manually for models without provider metadata if you want Mattermost to enforce a request-size limit before sending upstream. A value of `0` means Mattermost does not apply client-side truncation. |
 | **Output Token Limit** | Maximum tokens allowed in output. When provider metadata includes an output limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an output limit, the field stays editable and Mattermost uses the saved manual value. |
 | **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
 | **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) always uses the Responses API, so this control isn't shown for that service type. |
+
+Fallback services are tried per request after the primary service fails, and the primary service is tried again on the next request. Fallback chains are supported, and each fallback uses its own default model, API endpoint, and settings. Invalid fallback chains, such as cycles or missing services, fail setup visibly.
+
+Fallback only changes which configured service handles an LLM request. It doesn't change user permissions, channel scoping, tool execution, or prompt construction. OpenAI-compatible services can be used as local or on-prem keyless fallbacks, including chat-only endpoints when the primary uses the Responses API.
 
 Input and output token limits are detected independently, so one field can be auto-detected while the other remains editable. If you switch back from an auto-detected model to an unknown or custom model, Mattermost restores the previously saved manual values.
 
@@ -473,7 +478,8 @@ This separation allows multiple agents to share the same LLM service configurati
         "name": "OpenAI Service",
         "type": "openai",
         "apiKey": "sk-...",
-        "defaultModel": "gpt-4o"
+        "defaultModel": "gpt-4o",
+        "fallbackServiceID": "550e8400-e29b-41d4-a716-446655440001"
       }
     ],
     "defaultBotName": "ai"
