@@ -835,10 +835,11 @@ export async function getAgents(): Promise<AgentsListResult> {
     if (response.ok) {
         const agents = await response.json() as UserAgent[];
         const activeCountHeader = response.headers.get('X-Agent-Active-Count');
-        const parsedCount = activeCountHeader === null ? Number.NaN : Number.parseInt(activeCountHeader, 10);
         const result: AgentsListResult = {agents};
-        if (!Number.isNaN(parsedCount)) {
-            result.activeAgentCount = parsedCount;
+
+        // Only trust a strict non-negative integer (rejects e.g. "1foo", "", null).
+        if (activeCountHeader !== null && (/^\d+$/).test(activeCountHeader)) {
+            result.activeAgentCount = Number.parseInt(activeCountHeader, 10);
         }
         return result;
     }

@@ -6,6 +6,8 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import {PlusIcon, MagnifyIcon} from '@mattermost/compass-icons/components';
+//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
+import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -14,7 +16,6 @@ import {userHasSystemPermission} from '@/utils/permissions';
 import {PrimaryButton} from '@/components/assets/buttons';
 import {UserAgent, ServiceInfo} from '@/types/agents';
 import {useIsMultiLLMLicensed} from '@/license';
-import EnterpriseChip from '@/components/system_console/enterprise_chip';
 
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
@@ -176,7 +177,27 @@ const AgentsList = () => {
                     </Subtitle>
                 </TitleRow>
                 {userCanCreateAgent && (
-                    <CreateActions>
+                    createQuotaReached ? (
+                        <OverlayTrigger
+                            placement='bottom'
+                            overlay={
+                                <Tooltip id='create-agent-quota-tooltip'>
+                                    <FormattedMessage defaultMessage='Multiple self-service agents require a qualifying Mattermost plan'/>
+                                </Tooltip>
+                            }
+                        >
+                            {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
+                            <CreateButtonWrapper>
+                                <CreateButton
+                                    onClick={handleCreateAgent}
+                                    disabled={true}
+                                >
+                                    <PlusIcon size={16}/>
+                                    <FormattedMessage defaultMessage='Create agent'/>
+                                </CreateButton>
+                            </CreateButtonWrapper>
+                        </OverlayTrigger>
+                    ) : (
                         <CreateButton
                             onClick={handleCreateAgent}
                             disabled={createButtonDisabled}
@@ -184,13 +205,7 @@ const AgentsList = () => {
                             <PlusIcon size={16}/>
                             <FormattedMessage defaultMessage='Create agent'/>
                         </CreateButton>
-                        {createQuotaReached && (
-                            <EnterpriseChip
-                                text={intl.formatMessage({defaultMessage: 'Use multiple agents on qualifying Mattermost plans'})}
-                                subtext={intl.formatMessage({defaultMessage: 'Multiple self-service agents require a qualifying Mattermost plan'})}
-                            />
-                        )}
-                    </CreateActions>
+                    )
                 )}
             </Header>
 
@@ -331,11 +346,8 @@ const Subtitle = styled.p`
     margin: 0;
 `;
 
-const CreateActions = styled.div`
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
+const CreateButtonWrapper = styled.div`
+    display: inline-flex;
     flex-shrink: 0;
 `;
 

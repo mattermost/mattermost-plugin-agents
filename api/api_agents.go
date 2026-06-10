@@ -400,13 +400,16 @@ func (a *API) handleListAgents(c *gin.Context) {
 		}
 	}
 
+	// Enrich (best-effort) with the server-wide count so the webapp can gate creation
+	// against the real quota, not the access-filtered list. A failure here must not fail
+	// the list request: just omit the header and let the create API enforce the limit.
 	if !a.licenseChecker.IsMultiLLMLicensed() {
 		count, err := a.agentStore.CountActiveAgents()
 		if err != nil {
-			abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
-			return
+			a.pluginAPI.Log.Warn("Failed to count active agents for quota header", "error", err.Error())
+		} else {
+			c.Header(AgentActiveCountHeader, strconv.Itoa(count))
 		}
-		c.Header(AgentActiveCountHeader, strconv.Itoa(count))
 	}
 
 	c.JSON(http.StatusOK, accessible)

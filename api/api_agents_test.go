@@ -394,6 +394,24 @@ func TestListAgentsIncludesActiveCountHeaderWhenUnlicensed(t *testing.T) {
 	assert.Empty(t, agents)
 }
 
+func TestListAgentsOmitsActiveCountHeaderWhenCountFails(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockUnlicensed(e.mockAPI)
+	e.mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.countErr = errors.New("boom")
+
+	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
+	resp := recorder.Result()
+
+	// A count failure must not fail the list request; the header is simply omitted.
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, resp.Header.Get(AgentActiveCountHeader))
+}
+
 func TestListAgentsFiltersByAccess(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)

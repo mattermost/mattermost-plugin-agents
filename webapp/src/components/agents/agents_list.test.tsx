@@ -30,8 +30,9 @@ jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
 }));
 
+// OverlayTrigger renders the overlay alongside children so tests can assert the tooltip text.
 jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
     Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
 }), {virtual: true});
 
@@ -70,7 +71,7 @@ const mockGetAgents = getAgents as unknown as jest.Mock;
 const mockGetServices = getServices as unknown as jest.Mock;
 const mockUserHasSystemPermission = userHasSystemPermission as unknown as jest.Mock;
 
-const chipText = 'Use multiple agents on qualifying Mattermost plans';
+const tooltipText = 'Multiple self-service agents require a qualifying Mattermost plan';
 
 function makeAgent(id: string): UserAgent {
     return {
@@ -97,7 +98,7 @@ beforeEach(() => {
 });
 
 describe('AgentsList create-button gating', () => {
-    test('Pro license with no agents enables Create button without chip', async () => {
+    test('Pro license with no agents enables Create button without tooltip', async () => {
         mockUseIsMultiLLMLicensed.mockReturnValue(false);
         mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 0});
 
@@ -105,10 +106,10 @@ describe('AgentsList create-button gating', () => {
 
         const button = await screen.findByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(false);
-        await waitFor(() => expect(screen.queryByText(chipText)).toBeNull());
+        await waitFor(() => expect(screen.queryByText(tooltipText)).toBeNull());
     });
 
-    test('Pro license at the free-tier limit disables Create button and shows chip', async () => {
+    test('Pro license at the free-tier limit disables Create button and shows tooltip', async () => {
         mockUseIsMultiLLMLicensed.mockReturnValue(false);
         mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
 
@@ -117,7 +118,7 @@ describe('AgentsList create-button gating', () => {
         await screen.findByText('Agent a1');
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByText(chipText)).not.toBeNull();
+        expect(screen.getByText(tooltipText)).not.toBeNull();
     });
 
     test('Pro license disables Create when server quota is reached but list is empty', async () => {
@@ -129,7 +130,7 @@ describe('AgentsList create-button gating', () => {
         await screen.findByText('Loading agents...').then(() => screen.findByText('No agents have been created yet.'));
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByText(chipText)).not.toBeNull();
+        expect(screen.getByText(tooltipText)).not.toBeNull();
     });
 
     test('Create button stays disabled while agents are loading', () => {
@@ -153,6 +154,6 @@ describe('AgentsList create-button gating', () => {
         await screen.findByText('Agent a1');
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(false);
-        expect(screen.queryByText(chipText)).toBeNull();
+        expect(screen.queryByText(tooltipText)).toBeNull();
     });
 });
