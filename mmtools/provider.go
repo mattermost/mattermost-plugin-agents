@@ -34,9 +34,9 @@ func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService) *MMTo
 // WithToolsDisabled() based on context (e.g., DM vs channel). This allows LLMs to be
 // aware of tool capabilities even when they can't be executed in the current context.
 //
-// The exception is tools answered by the user (UserInteraction): those are
-// only cataloged when the context says an interactive user is present, since
-// advertising them anywhere else invites tool calls nobody can ever answer.
+// The exception is user-interaction tools: advertising them where nobody can
+// answer would strand the conversation, so they are only cataloged when the
+// context says an interactive user is present.
 func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.Tool {
 	builtInTools := []llm.Tool{}
 

@@ -179,11 +179,10 @@ func (b *Builder) WithLLMContextPreloadedMCPTools(tools []llm.EnabledMCPTool) ll
 }
 
 // WithLLMContextInteractive marks the requesting user as interactively present
-// in Mattermost (DM or human channel mention), able to answer pending tool
-// approvals. Tools that require a user response (llm.Tool.UserInteraction) are
-// only cataloged when this option is applied, so it must be configured before
-// default tools are built. Automated invokers (bots, webhooks, bridge API,
-// evals, summarization flows) must never set this.
+// and able to answer pending tool approvals. User-interaction tools
+// (llm.Tool.UserInteraction) are only cataloged when this is applied, so it
+// must be configured before default tools are built. Automated invokers
+// (bots, webhooks, bridge API, evals) must never set this.
 func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
 	return func(c *llm.Context) {
 		c.ToolCatalog.InteractiveUserPresent = true

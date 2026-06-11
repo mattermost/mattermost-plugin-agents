@@ -38,11 +38,8 @@ type Tool struct {
 	ServerOrigin string
 
 	// UserInteraction marks a tool whose pending call is answered by the
-	// requesting user in the Mattermost UI instead of executed by the server.
-	// Empty for normal tools. Interaction tools are only cataloged in
-	// interactive contexts, are never auto-approved, and are resolved by the
-	// tool-approval flow with the user's response as the tool result; the
-	// Resolver is only an error backstop.
+	// requesting user in the Mattermost UI instead of executed by the server;
+	// the Resolver is only an error backstop. Empty for normal tools.
 	UserInteraction string
 
 	// CallMetadata is forwarded to the tool implementation as MCP CallToolParams.Meta.

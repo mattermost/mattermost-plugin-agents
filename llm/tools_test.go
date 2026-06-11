@@ -1037,6 +1037,7 @@ func TestEnrichToolCall(t *testing.T) {
 		store.AddTools([]Tool{
 			{Name: "jira__create_issue", Description: "Create a Jira issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
 			{Name: "builtin_tool", Description: "A builtin tool", Schema: map[string]any{"type": "string"}},
+			{Name: "AskUserQuestion", Description: "Ask the user", Schema: map[string]any{"type": "object"}, UserInteraction: UserInteractionSelect},
 		})
 		return store
 	}
@@ -1046,10 +1047,11 @@ func TestEnrichToolCall(t *testing.T) {
 		tc   *ToolCall
 		opts EnrichToolCallOptions
 
-		wantDescription string
-		wantServer      string
-		wantBareName    string
-		wantSchema      any
+		wantDescription     string
+		wantServer          string
+		wantBareName        string
+		wantSchema          any
+		wantUserInteraction string
 	}{
 		{
 			name:            "preserves model description when OverwriteDescription is false",
@@ -1105,6 +1107,14 @@ func TestEnrichToolCall(t *testing.T) {
 			wantBareName:    "",
 			wantSchema:      map[string]any{"type": "string"},
 		},
+		{
+			name:                "populates UserInteraction from the store",
+			tc:                  &ToolCall{Name: "AskUserQuestion"},
+			opts:                EnrichToolCallOptions{},
+			wantDescription:     "Ask the user",
+			wantSchema:          map[string]any{"type": "object"},
+			wantUserInteraction: UserInteractionSelect,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1114,6 +1124,7 @@ func TestEnrichToolCall(t *testing.T) {
 			assert.Equal(t, tt.wantServer, tt.tc.ServerOrigin)
 			assert.Equal(t, tt.wantBareName, tt.tc.MCPBareName)
 			assert.Equal(t, tt.wantSchema, tt.tc.Schema)
+			assert.Equal(t, tt.wantUserInteraction, tt.tc.UserInteraction)
 		})
 	}
 }

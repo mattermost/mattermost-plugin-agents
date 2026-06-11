@@ -1463,3 +1463,42 @@ func (f *fakeOrderingTurnStore) GetTurnByPostID(postID string) (*store.Turn, err
 	f.mu.Unlock()
 	return turn, err
 }
+
+// TestBuildContentBlocksCarriesUserInteraction pins the persistence link that
+// lets the webapp render a question card after reload: a pending interaction
+// tool call must keep its UserInteraction kind on the persisted block.
+func TestBuildContentBlocksCarriesUserInteraction(t *testing.T) {
+	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
+	acc.toolCalls = []llm.ToolCall{{
+		ID:              "q-1",
+		Name:            "AskUserQuestion",
+		Arguments:       json.RawMessage(`{"question":"Q?"}`),
+		Status:          llm.ToolCallStatusPending,
+		UserInteraction: llm.UserInteractionSelect,
+	}}
+
+	blocks := acc.buildContentBlocks()
+
+	require.Len(t, blocks, 1)
+	require.Equal(t, conversation.BlockTypeToolUse, blocks[0].Type)
+	require.Equal(t, llm.UserInteractionSelect, blocks[0].UserInteraction)
+}
+
+// TestRedactToolCallsPreservesUserInteraction pins that redaction for
+// non-requesters strips payloads but keeps the interaction kind, so their UI
+// can still distinguish a question from an ordinary tool call.
+func TestRedactToolCallsPreservesUserInteraction(t *testing.T) {
+	redacted := redactToolCalls([]llm.ToolCall{{
+		ID:              "q-1",
+		Name:            "AskUserQuestion",
+		Arguments:       json.RawMessage(`{"question":"secret"}`),
+		Result:          `{"selected":["secret"]}`,
+		Status:          llm.ToolCallStatusPending,
+		UserInteraction: llm.UserInteractionSelect,
+	}})
+
+	require.Len(t, redacted, 1)
+	require.Empty(t, redacted[0].Arguments)
+	require.Empty(t, redacted[0].Result)
+	require.Equal(t, llm.UserInteractionSelect, redacted[0].UserInteraction)
+}

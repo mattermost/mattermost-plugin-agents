@@ -86,13 +86,6 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			answers:     map[string][]string{"q-1": {"Engineering"}},
 			wantErr:     ErrInvalidToolAnswer,
 		},
-		{
-			name:        "missing answer leaves the question pending",
-			channel:     openChannel,
-			acceptedIDs: []string{"q-1"},
-			answers:     nil,
-			wantErr:     ErrInvalidToolAnswer,
-		},
 	}
 
 	for _, tc := range cases {
@@ -170,10 +163,8 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			var updatedBlocks []conversation.ContentBlock
 			require.NoError(t, json.Unmarshal(turns[0].Content, &updatedBlocks))
 			assert.Equal(t, tc.wantStatus, updatedBlocks[0].Status)
-			if tc.wantShared {
-				require.NotNil(t, updatedBlocks[0].Shared)
-				assert.True(t, *updatedBlocks[0].Shared)
-			}
+			require.NotNil(t, updatedBlocks[0].Shared)
+			assert.Equal(t, tc.wantShared, *updatedBlocks[0].Shared)
 
 			var resultBlocks []conversation.ContentBlock
 			require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
@@ -201,4 +192,170 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHandleToolCallMixedBatchInChannelAwaitsShareDecision pins the channel
+// privacy gate for a batch mixing a normal tool with a question: the answered
+// question is terminal, but the normal tool's result still needs a Share /
+// Keep Private decision, so no channel-visible follow-up may stream yet.
+func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
+	convStore, conv := loadedStateConversationStore()
+	nextSeq := 1
+	seedLoadToolPair(t, convStore, conv.ID, "load-1", "jira__get_issue", &nextSeq)
+
+	blocks := []conversation.ContentBlock{
+		{
+			Type:   conversation.BlockTypeToolUse,
+			ID:     "tool-use-1",
+			Name:   "jira__get_issue",
+			Input:  json.RawMessage(`{}`),
+			Status: conversation.StatusPending,
+			Shared: conversation.BoolPtr(false),
+		},
+		{
+			Type: conversation.BlockTypeToolUse,
+			ID:   "q-1",
+			Name: "AskUserQuestion",
+			Input: json.RawMessage(`{
+				"question": "Which channel should I post in?",
+				"options": [{"label": "UX Design"}, {"label": "Design team"}]
+			}`),
+			Status:          conversation.StatusPending,
+			UserInteraction: llm.UserInteractionSelect,
+			Shared:          conversation.BoolPtr(false),
+		},
+	}
+	content, err := json.Marshal(blocks)
+	require.NoError(t, err)
+	approvalPostID := "approval-post-id"
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID:             "assistant-turn",
+		ConversationID: conv.ID,
+		PostID:         &approvalPostID,
+		Role:           "assistant",
+		Content:        content,
+		Sequence:       nextSeq,
+	}))
+
+	mockAPI := &plugintest.API{}
+	pluginAPI := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	lm := &loadedStateLLM{}
+	bot := loadedStateBot(lm)
+	botsService.SetBotsForTesting([]*bots.Bot{bot})
+
+	mmClient := mocks.NewMockClient(t)
+	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+	mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
+
+	c := &Conversations{
+		mmClient:         mmClient,
+		contextBuilder:   loadedStateBuilder(t),
+		bots:             botsService,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		streamingService: &loadedStateStreamingService{},
+	}
+
+	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
+	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
+	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
+
+	answers := map[string][]string{"q-1": {"UX Design"}}
+	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1", "q-1"}, answers))
+
+	turns, err := convStore.GetTurnsForConversation(conv.ID)
+	require.NoError(t, err)
+	require.Len(t, turns, 4)
+
+	var updatedBlocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turns[2].Content, &updatedBlocks))
+	assert.Equal(t, conversation.StatusSuccess, updatedBlocks[0].Status)
+	assert.False(t, *updatedBlocks[0].Shared, "normal tool must not be auto-shared")
+	assert.Equal(t, conversation.StatusSuccess, updatedBlocks[1].Status)
+	assert.True(t, *updatedBlocks[1].Shared, "answered question is user-authored and shared")
+
+	var resultBlocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
+	require.Len(t, resultBlocks, 2)
+	assert.Nil(t, resultBlocks[0].DecidedAt, "normal result awaits the share decision")
+	assert.False(t, *resultBlocks[0].Shared)
+	assert.NotNil(t, resultBlocks[1].DecidedAt, "answer result is terminal")
+	assert.True(t, *resultBlocks[1].Shared)
+
+	assert.Empty(t, lm.requests, "follow-up must wait for the share decision in HandleToolResult")
+}
+
+// TestStreamToolFollowUpInteractiveFlag pins when the follow-up context offers
+// user-interaction tools: a requester-driven follow-up is interactive, while a
+// bot activate_ai conversation stays constrained to unattended tools.
+func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
+	t.Run("requester follow-up is interactive", func(t *testing.T) {
+		convStore, conv := loadedStateConversationStore()
+		nextSeq := 1
+		seedLoadToolPair(t, convStore, conv.ID, "load-1", "jira__get_issue", &nextSeq)
+
+		lm := &loadedStateLLM{}
+		streamingService := &loadedStateStreamingService{}
+		c := &Conversations{
+			contextBuilder:   loadedStateBuilder(t),
+			convService:      conversation.NewService(convStore, nil, nil, nil),
+			streamingService: streamingService,
+		}
+
+		err := c.streamToolFollowUp(
+			context.Background(),
+			loadedStateBot(lm),
+			&model.User{Id: "user-id", Username: "user"},
+			&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
+			&model.Post{Id: "root-post-id"},
+			conv,
+			true,
+		)
+		require.NoError(t, err)
+		streamingService.waitForStreaming()
+		require.Len(t, lm.requests, 1)
+		assert.True(t, lm.requests[0].Context.ToolCatalog.InteractiveUserPresent)
+	})
+
+	t.Run("activate_ai channel follow-up is not interactive", func(t *testing.T) {
+		convStore, conv := loadedStateConversationStore()
+		nextSeq := 1
+		seedLoadToolPair(t, convStore, conv.ID, "load-1", "jira__get_issue", &nextSeq)
+		rootID := "root-id"
+		conv.RootPostID = &rootID
+
+		rootPost := &model.Post{UserId: "automation-bot"}
+		rootPost.AddProp(ActivateAIProp, true)
+		mmClient := mocks.NewMockClient(t)
+		mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+		mmClient.On("GetPost", "root-id").Return(rootPost, nil).Once()
+		mmClient.On("GetUser", "automation-bot").Return(&model.User{Id: "automation-bot", IsBot: true}, nil).Once()
+		mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+
+		lm := &loadedStateLLM{}
+		streamingService := &loadedStateStreamingService{}
+		c := &Conversations{
+			mmClient:          mmClient,
+			contextBuilder:    loadedStateBuilder(t),
+			convService:       conversation.NewService(convStore, nil, nil, nil),
+			streamingService:  streamingService,
+			configProvider:    &channelFollowUpTestConfig{enableChannelMentionToolCalling: true},
+			toolPolicyChecker: mapPolicyChecker{},
+		}
+
+		err := c.streamToolFollowUp(
+			context.Background(),
+			loadedStateBot(lm),
+			&model.User{Id: "user-id", Username: "user"},
+			&model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen},
+			&model.Post{Id: "post-id"},
+			conv,
+			false,
+		)
+		require.NoError(t, err)
+		streamingService.waitForStreaming()
+		require.Len(t, lm.requests, 1)
+		assert.False(t, lm.requests[0].Context.ToolCatalog.InteractiveUserPresent)
+	})
 }

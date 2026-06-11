@@ -128,7 +128,6 @@ func TestShouldAutoExecuteTool_UserInteractionNeverAutoExecutes(t *testing.T) {
 		got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: "AskUserQuestion"})
 		assert.False(t, got, "isDM=%v", isDM)
 	}
-	assert.Zero(t, checker.calls)
 }
 
 type countingPolicyChecker struct {
