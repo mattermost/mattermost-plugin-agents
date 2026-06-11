@@ -573,25 +573,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PLUGIN_FILE=$(ls dist/*.tar.gz)
-          # Get the commit message and hash
-          COMMIT_MSG=$(git log -1 --pretty=%B)
+          # Get the commit hash
           COMMIT_HASH=$(git rev-parse --short HEAD)
 
           # Delete the old release if it exists
           gh release delete latest-master --yes || true
 
-          # Delete the old tag if it exists
+          # Delete the old tag (locally and remotely) so it can be recreated
           git tag -d latest-master || true
           git push origin :refs/tags/latest-master || true
 
-          # Create new tag and release
-          git tag latest-master
-          git push origin latest-master
-
+          # Create the release and let gh create the tag at the target commit.
+          # Using --target avoids a race where a freshly pushed tag is not yet
+          # visible to the GitHub API when gh release create runs.
           gh release create latest-master \
             --title "Latest Master Build" \
             --notes "Latest build from master branch - ${COMMIT_HASH}" \
             --prerelease \
+            --target "${GITHUB_SHA}" \
             $PLUGIN_FILE
 
       - name: Deploy to Mattermost instances
