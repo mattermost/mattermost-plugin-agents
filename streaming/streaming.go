@@ -147,14 +147,15 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 	// 4. Tool call blocks
 	for _, tc := range a.toolCalls {
 		blocks = append(blocks, conversation.ContentBlock{
-			Type:            conversation.BlockTypeToolUse,
-			ID:              tc.ID,
-			Name:            tc.Name,
-			ServerOrigin:    tc.ServerOrigin,
-			Input:           tc.Arguments,
-			Status:          conversation.StatusToString(tc.Status),
-			Shared:          conversation.BoolPtr(a.isDM),
-			UserInteraction: tc.UserInteraction,
+			Type:             conversation.BlockTypeToolUse,
+			ID:               tc.ID,
+			Name:             tc.Name,
+			ServerOrigin:     tc.ServerOrigin,
+			Input:            tc.Arguments,
+			Status:           conversation.StatusToString(tc.Status),
+			Shared:           conversation.BoolPtr(a.isDM),
+			UserInteraction:  tc.UserInteraction,
+			WouldAutoExecute: tc.WouldAutoExecute,
 		})
 	}
 
@@ -447,11 +448,12 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	redacted := make([]llm.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
 		redacted[i] = llm.ToolCall{
-			ID:              tc.ID,
-			Name:            tc.Name,
-			ServerOrigin:    tc.ServerOrigin,
-			Status:          tc.Status,
-			UserInteraction: tc.UserInteraction,
+			ID:               tc.ID,
+			Name:             tc.Name,
+			ServerOrigin:     tc.ServerOrigin,
+			Status:           tc.Status,
+			UserInteraction:  tc.UserInteraction,
+			WouldAutoExecute: tc.WouldAutoExecute,
 		}
 	}
 	return redacted

@@ -55,6 +55,11 @@ type ContentBlock struct {
 	// webapp renders the matching interaction UI for pending blocks.
 	UserInteraction string `json:"user_interaction,omitempty"`
 
+	// WouldAutoExecute marks a pending tool_use block that passed the
+	// auto-execution policy but was paused with the rest of its batch.
+	// Display-only (see llm.ToolCall.WouldAutoExecute).
+	WouldAutoExecute bool `json:"would_auto_execute,omitempty"`
+
 	// DecidedAt (tool_result blocks) records when the share/keep-private
 	// decision was made — either by the user clicking Share or Keep Private
 	// in a channel, or implicitly at creation time (DMs, rejected tools,

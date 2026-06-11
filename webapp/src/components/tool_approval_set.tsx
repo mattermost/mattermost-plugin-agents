@@ -104,7 +104,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         }
 
         if (isCallStage) {
-            return props.toolCalls.filter((call) => call.status === ToolCallStatus.Pending);
+            // Calls that passed the auto-execution policy run server-side
+            // once the rest of the batch is resolved — no decision needed.
+            return props.toolCalls.filter((call) =>
+                call.status === ToolCallStatus.Pending && !call.would_auto_execute,
+            );
         }
 
         if (!isResultStage) {
@@ -113,9 +117,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         }
 
         // User-interaction results are decided at answer time (the user
-        // authored them), so they never need a share/keep-private decision.
+        // authored them) and auto-executed results are decided at write time,
+        // so neither needs a share/keep-private decision.
         return props.toolCalls.filter((call) =>
             !call.user_interaction &&
+            !call.decided &&
             (call.status === ToolCallStatus.Success ||
             call.status === ToolCallStatus.Error ||
             call.status === ToolCallStatus.AutoApproved),
@@ -259,8 +265,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         return <div className='error'>{error}</div>;
     }
 
-    // Calculate how many tools are left to decide on
-    const undecidedCount = decisionToolCalls.filter((call) => !Object.hasOwn(toolDecisions, call.id)).length;
+    // The "N tools need decisions" bar and batch buttons only make sense for
+    // approval-type decisions; questions are self-describing cards that must
+    // be answered (or skipped) individually.
+    const approvalDecisionCalls = decisionToolCalls.filter((call) => !call.user_interaction);
+    const undecidedApprovalCount = approvalDecisionCalls.filter((call) => !Object.hasOwn(toolDecisions, call.id)).length;
 
     // Helper to compute if a tool should be collapsed
     const isToolCollapsed = (tool: ToolCall) => {
@@ -292,6 +301,14 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         <ToolCallsContainer>
             {props.toolCalls.map((tool) => {
                 const isDecisionCall = decisionToolIDSet.has(tool.id);
+
+                // Paused-but-auto-approved calls run server-side once the
+                // user resolves the rest of the batch; showing them pending
+                // would look like they need approval. They reappear as
+                // normal auto-approved cards once executed.
+                if (tool.status === ToolCallStatus.Pending && tool.would_auto_execute) {
+                    return null;
+                }
 
                 if (tool.user_interaction === UserInteractionSelect) {
                     // Redacted calls (non-requesters) have no arguments to
@@ -333,8 +350,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 );
             })}
 
-            {/* Only show status bar for multiple decisions */}
-            {decisionToolCalls.length > 1 && isSubmitting && (
+            {/* Only show status bar for multiple approval decisions */}
+            {approvalDecisionCalls.length > 1 && isSubmitting && (
                 <StatusBar>
                     <div>
                         <FormattedMessage
@@ -345,13 +362,13 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 </StatusBar>
             )}
 
-            {decisionToolCalls.length > 1 && undecidedCount > 0 && !isSubmitting && (
+            {approvalDecisionCalls.length > 1 && undecidedApprovalCount > 0 && !isSubmitting && (
                 <StatusBar>
                     <div>
                         <FormattedMessage
                             id='ai.tool_call.pending_decisions'
                             defaultMessage='{count, plural, =0 {All tools decided} one {# tool needs a decision} other {# tools need decisions}}'
-                            values={{count: undecidedCount}}
+                            values={{count: undecidedApprovalCount}}
                         />
                     </div>
                     <BatchButtonContainer>

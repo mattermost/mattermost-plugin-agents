@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
@@ -358,4 +359,139 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 		require.Len(t, lm.requests, 1)
 		assert.False(t, lm.requests[0].Context.ToolCatalog.InteractiveUserPresent)
 	})
+}
+
+// TestHandleToolCallAutoExecutesPolicyEligiblePendingTools pins the deferred
+// auto-execution contract: a tool paused only because its batch contained a
+// question runs server-side when the user answers — without being in
+// accepted_tool_ids — based on a fresh policy check, with its result terminal
+// and shared like any auto-run round. A policy disabled since the pause must
+// fall back to rejection.
+func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
+	const origin = "https://jira.example.com"
+
+	cases := []struct {
+		name           string
+		policyChecker  mapPolicyChecker
+		wantToolStatus string
+		wantToolResult string
+		wantFollowUp   bool
+	}{
+		{
+			name: "auto_run_everywhere policy executes on resume",
+			policyChecker: mapPolicyChecker{
+				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
+			},
+			wantToolStatus: conversation.StatusAutoApproved,
+			wantToolResult: "restored-result",
+			wantFollowUp:   true,
+		},
+		{
+			name: "policy disabled since the pause rejects instead",
+			policyChecker: mapPolicyChecker{
+				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false}},
+			},
+			wantToolStatus: conversation.StatusRejected,
+			wantToolResult: "Tool call rejected by user",
+			wantFollowUp:   true, // the answered question still warrants a follow-up
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+			nextSeq := 1
+			seedLoadToolPair(t, convStore, conv.ID, "load-1", "jira__get_issue", &nextSeq)
+
+			blocks := []conversation.ContentBlock{
+				{
+					Type:             conversation.BlockTypeToolUse,
+					ID:               "tool-use-1",
+					Name:             "jira__get_issue",
+					Input:            json.RawMessage(`{}`),
+					Status:           conversation.StatusPending,
+					Shared:           conversation.BoolPtr(false),
+					WouldAutoExecute: true,
+				},
+				{
+					Type: conversation.BlockTypeToolUse,
+					ID:   "q-1",
+					Name: "AskUserQuestion",
+					Input: json.RawMessage(`{
+						"question": "Which channel should I post in?",
+						"options": [{"label": "UX Design"}, {"label": "Design team"}]
+					}`),
+					Status:          conversation.StatusPending,
+					UserInteraction: llm.UserInteractionSelect,
+					Shared:          conversation.BoolPtr(false),
+				},
+			}
+			content, err := json.Marshal(blocks)
+			require.NoError(t, err)
+			approvalPostID := "approval-post-id"
+			require.NoError(t, convStore.CreateTurn(&store.Turn{
+				ID:             "assistant-turn",
+				ConversationID: conv.ID,
+				PostID:         &approvalPostID,
+				Role:           "assistant",
+				Content:        content,
+				Sequence:       nextSeq,
+			}))
+
+			mockAPI := &plugintest.API{}
+			pluginAPI := pluginapi.NewClient(mockAPI, nil)
+			licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
+			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+			lm := &loadedStateLLM{}
+			bot := loadedStateBot(lm)
+			botsService.SetBotsForTesting([]*bots.Bot{bot})
+
+			mmClient := mocks.NewMockClient(t)
+			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
+			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+
+			streamingService := &loadedStateStreamingService{}
+			c := &Conversations{
+				mmClient:          mmClient,
+				contextBuilder:    loadedStateBuilder(t),
+				bots:              botsService,
+				convService:       conversation.NewService(convStore, nil, nil, nil),
+				streamingService:  streamingService,
+				toolPolicyChecker: tc.policyChecker,
+			}
+
+			approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
+			approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
+			channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
+
+			// Only the question is in accepted_tool_ids: the paused tool is
+			// hidden in the UI and must be resolved by policy, not by click.
+			answers := map[string][]string{"q-1": {"UX Design"}}
+			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"q-1"}, answers))
+			streamingService.waitForStreaming()
+
+			turns, err := convStore.GetTurnsForConversation(conv.ID)
+			require.NoError(t, err)
+			require.Len(t, turns, 4)
+
+			var updatedBlocks []conversation.ContentBlock
+			require.NoError(t, json.Unmarshal(turns[2].Content, &updatedBlocks))
+			assert.Equal(t, tc.wantToolStatus, updatedBlocks[0].Status)
+			assert.Equal(t, conversation.StatusSuccess, updatedBlocks[1].Status)
+
+			var resultBlocks []conversation.ContentBlock
+			require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
+			require.Len(t, resultBlocks, 2)
+			assert.Equal(t, tc.wantToolResult, resultBlocks[0].Content)
+			assert.NotNil(t, resultBlocks[0].DecidedAt, "auto/rejected results are terminal")
+			assert.NotNil(t, resultBlocks[1].DecidedAt, "answer result is terminal")
+
+			if tc.wantFollowUp {
+				assert.Len(t, lm.requests, 1, "expected a follow-up LLM request")
+			} else {
+				assert.Empty(t, lm.requests)
+			}
+		})
+	}
 }

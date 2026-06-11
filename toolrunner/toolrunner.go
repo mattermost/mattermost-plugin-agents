@@ -267,15 +267,22 @@ func (r *ToolRunner) runLoop(
 
 		// Check shouldExecute for ALL tool calls.
 		allApproved := true
-		for _, tc := range toolCalls {
-			if !shouldExecute(tc) {
+		approved := make([]bool, len(toolCalls))
+		for i, tc := range toolCalls {
+			approved[i] = shouldExecute(tc)
+			if !approved[i] {
 				allApproved = false
-				break
 			}
 		}
 
-		// If NOT all approved, return with unresolved tool calls.
+		// If NOT all approved, return with unresolved tool calls. Calls that
+		// passed the policy are tagged so the UI hides their approval
+		// controls; they execute on resume (HandleToolCall re-checks the
+		// policy) once the user resolves the rest of the batch.
 		if !allApproved {
+			for i := range toolCalls {
+				toolCalls[i].WouldAutoExecute = approved[i]
+			}
 			r.deliverToolTurns(result, onToolTurns)
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}

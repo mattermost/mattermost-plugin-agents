@@ -65,6 +65,7 @@ export interface ContentBlock {
     status?: ToolCallStatus;
     shared?: boolean;
     user_interaction?: string;
+    would_auto_execute?: boolean;
 
     // ToolResult fields
     tool_use_id?: string;

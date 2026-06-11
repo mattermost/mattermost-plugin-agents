@@ -253,6 +253,12 @@ type ToolCall struct {
 	// the matching interaction UI (e.g. a question card) for pending calls.
 	UserInteraction string `json:"user_interaction,omitempty"`
 
+	// WouldAutoExecute marks a pending call that passed the auto-execution
+	// policy but was paused because another call in the batch needs the user.
+	// Display-only: the webapp hides the approval UI for it, and the server
+	// re-checks the policy before executing it on resume.
+	WouldAutoExecute bool `json:"would_auto_execute,omitempty"`
+
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in tools. Used for auto-approval decisions.
 	ServerOrigin string `json:"server_origin,omitempty"`

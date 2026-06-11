@@ -127,6 +127,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	}
 
 	// Execute approved tools and build results.
+	autoExec := c.shouldAutoExecuteTool(llmContext, isDM)
+	autoExecutedNow := make(map[string]bool)
+	executedAny := false
 	var toolResults []toolrunner.ToolResult
 	for i := range pendingBlocks {
 		block := &pendingBlocks[i]
@@ -144,6 +147,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// channel-visible follow-up may reference the question and answer.
 			block.Status = conversation.StatusSuccess
 			block.Shared = conversation.BoolPtr(true)
+			executedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
@@ -152,6 +156,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			})
 		case slices.Contains(acceptedToolIDs, block.ID):
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
+			executedAny = true
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -177,6 +182,32 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				Result:     "User skipped the question",
 				IsError:    true,
 			})
+		case autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}):
+			// The block was paused only because the rest of its batch needed
+			// the user (see ToolCall.WouldAutoExecute). The policy is
+			// re-checked here rather than trusting the persisted marker.
+			// Results match an auto-run round: shared and terminal.
+			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
+			autoExecutedNow[block.ID] = true
+			executedAny = true
+			block.Shared = conversation.BoolPtr(true)
+			if resolveErr != nil {
+				block.Status = conversation.StatusError
+				toolResults = append(toolResults, toolrunner.ToolResult{
+					ToolCallID: block.ID,
+					Name:       block.Name,
+					Result:     resolveErr.Error(),
+					IsError:    true,
+				})
+			} else {
+				block.Status = conversation.StatusAutoApproved
+				toolResults = append(toolResults, toolrunner.ToolResult{
+					ToolCallID: block.ID,
+					Name:       block.Name,
+					Result:     result,
+					IsError:    false,
+				})
+			}
 		default:
 			block.Status = conversation.StatusRejected
 			toolResults = append(toolResults, toolrunner.ToolResult{
@@ -221,14 +252,15 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			status = conversation.StatusError
 		}
 		answered := interactionByID[tr.ToolCallID] && toolUseStatusByID[tr.ToolCallID] == conversation.StatusSuccess
+		terminal := isDM || answered || autoExecutedNow[tr.ToolCallID]
 		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			Status:    status,
-			Shared:    conversation.BoolPtr(isDM || answered),
+			Shared:    conversation.BoolPtr(terminal),
 		}
-		if isDM || answered || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
+		if terminal || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
 			rb.DecidedAt = conversation.Int64Ptr(now)
 		} else {
 			needsShareDecision = true
@@ -250,11 +282,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
 
-	hasExecuted := slices.ContainsFunc(pendingBlocks, func(b conversation.ContentBlock) bool {
-		return b.Type == conversation.BlockTypeToolUse &&
-			(b.Status == conversation.StatusSuccess || b.Status == conversation.StatusError)
-	})
-	if !hasExecuted {
+	if !executedAny {
 		return nil
 	}
 
