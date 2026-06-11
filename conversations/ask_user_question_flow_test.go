@@ -375,6 +375,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 		policyChecker  mapPolicyChecker
 		wantToolStatus string
 		wantToolResult string
+		wantToolShared bool
 		wantFollowUp   bool
 	}{
 		{
@@ -384,6 +385,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			},
 			wantToolStatus: conversation.StatusAutoApproved,
 			wantToolResult: "restored-result",
+			wantToolShared: true,
 			wantFollowUp:   true,
 		},
 		{
@@ -393,6 +395,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			},
 			wantToolStatus: conversation.StatusRejected,
 			wantToolResult: "Tool call rejected by user",
+			wantToolShared: false,
 			wantFollowUp:   true, // the answered question still warrants a follow-up
 		},
 	}
@@ -478,12 +481,16 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			var updatedBlocks []conversation.ContentBlock
 			require.NoError(t, json.Unmarshal(turns[2].Content, &updatedBlocks))
 			assert.Equal(t, tc.wantToolStatus, updatedBlocks[0].Status)
+			require.NotNil(t, updatedBlocks[0].Shared)
+			assert.Equal(t, tc.wantToolShared, *updatedBlocks[0].Shared)
 			assert.Equal(t, conversation.StatusSuccess, updatedBlocks[1].Status)
 
 			var resultBlocks []conversation.ContentBlock
 			require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
 			require.Len(t, resultBlocks, 2)
 			assert.Equal(t, tc.wantToolResult, resultBlocks[0].Content)
+			require.NotNil(t, resultBlocks[0].Shared)
+			assert.Equal(t, tc.wantToolShared, *resultBlocks[0].Shared)
 			assert.NotNil(t, resultBlocks[0].DecidedAt, "auto/rejected results are terminal")
 			assert.NotNil(t, resultBlocks[1].DecidedAt, "answer result is terminal")
 

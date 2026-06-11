@@ -98,6 +98,7 @@ describe('extractToolCallsForPost', () => {
             arguments: {city: 'NYC'},
             result: '72F sunny',
             status: ToolCallStatus.Success,
+            decided: false,
         });
         expect(result[1]).toEqual({
             id: 'tc_2',
@@ -106,7 +107,38 @@ describe('extractToolCallsForPost', () => {
             arguments: {q: 'test'},
             result: 'not found',
             status: ToolCallStatus.Error,
+            decided: false,
         });
+    });
+
+    test('maps interaction, auto-execution, and decided fields onto ToolCall', () => {
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {type: 'tool_use', id: 'q_1', name: 'AskUserQuestion', status: 'pending', user_interaction: 'select'},
+                {type: 'tool_use', id: 'tc_1', name: 'auto_tool', status: 'pending', would_auto_execute: true},
+                {type: 'tool_use', id: 'tc_2', name: 'shared_tool', status: 'success'},
+            ],
+        });
+        const resultTurn = makeTurn({
+            id: 'turn_2',
+            post_id: null,
+            sequence: 2,
+            role: 'tool_result',
+            content: [
+                {type: 'tool_result', tool_use_id: 'tc_2', content: 'done', status: 'success', decided_at: 1234},
+            ],
+        });
+
+        const conv = makeConversation([assistantTurn, resultTurn]);
+        const result = extractToolCallsForPost(conv, 'post_1');
+
+        expect(result).toHaveLength(3);
+        expect(result[0].user_interaction).toBe('select');
+        expect(result[1].would_auto_execute).toBe(true);
+        expect(result[1].decided).toBe(false);
+        expect(result[2].decided).toBe(true);
     });
 
     test('handles tool_use with null input (redacted)', () => {
