@@ -3,6 +3,7 @@
 
 import {Client4 as Client4Class, ClientError} from '@mattermost/client';
 import {ChannelWithTeamData} from '@mattermost/types/channels';
+import {PreferenceType} from '@mattermost/types/preferences';
 
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
@@ -29,6 +30,10 @@ type MCPToolConfig = {
 
 export function setSiteURL(siteURL: string) {
     Client4.setUrl(siteURL);
+}
+
+export function savePreferences(userId: string, preferences: PreferenceType[]) {
+    return Client4.savePreferences(userId, preferences);
 }
 
 function baseRoute(): string {

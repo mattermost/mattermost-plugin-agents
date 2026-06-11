@@ -8,12 +8,11 @@ import {useSelector, useDispatch} from 'react-redux';
 
 import {CogOutlineIcon} from '@mattermost/compass-icons/components';
 
-import {getCustomPrompts, getSelectedBotId} from '@/selectors';
-import {fetchCustomPrompts, ShowCustomPromptsModalHandler, SelectedBotIdHandler} from '@/redux';
+import {getCustomPrompts} from '@/selectors';
+import {fetchCustomPrompts, ShowCustomPromptsModalHandler} from '@/redux';
 import {renderCustomPrompt} from '@/client';
 import {CustomPrompt} from '@/types';
-import {LLMBot} from '@/bots';
-import manifest from '@/manifest';
+import {LLMBot, useBotlist} from '@/bots';
 import {DropdownBotSelector} from '@/components/bot_selector';
 
 const EMPTY_BOTS: LLMBot[] = [];
@@ -71,26 +70,16 @@ interface Props {
 const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     const dispatch = useDispatch();
     const prompts = useSelector(getCustomPrompts);
-    const bots = useSelector((state: any) =>
-        state[`plugins-${manifest.id}`]?.bots ?? EMPTY_BOTS,
-    );
 
-    const selectedBotId = useSelector(getSelectedBotId);
+    // Selection is backed by the shared selected-agent preference so the
+    // "GENERATE WITH:" menu stays in sync with the RHS and all other surfaces.
+    const {bots: botlist, activeBot, setActiveBot} = useBotlist();
+    const bots = botlist ?? EMPTY_BOTS;
     const isBotDMChannel = bots.some((b: LLMBot) => b.dmChannelID === channelId);
-    const selectedBot = bots.find((b: LLMBot) => b.id === selectedBotId) ?? bots[0] ?? null;
+    const selectedBot = activeBot;
 
     useEffect(() => {
         dispatch(fetchCustomPrompts() as any);
-    }, [dispatch]);
-
-    useEffect(() => {
-        if (bots.length > 0 && !selectedBotId) {
-            dispatch({type: SelectedBotIdHandler, botId: bots[0].id});
-        }
-    }, [bots, selectedBotId, dispatch]);
-
-    const setSelectedBot = useCallback((bot: LLMBot) => {
-        dispatch({type: SelectedBotIdHandler, botId: bot.id});
     }, [dispatch]);
 
     const handlePromptClick = useCallback(async (prompt: CustomPrompt) => {
@@ -122,7 +111,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                     <DropdownBotSelector
                         bots={bots}
                         activeBot={selectedBot}
-                        setActiveBot={setSelectedBot}
+                        setActiveBot={setActiveBot}
                     />
                 </AgentSelectorWrapper>
             )}

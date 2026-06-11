@@ -11,7 +11,6 @@ interface PluginState {
     customPrompts: CustomPrompt[] | null;
     pinnedPromptIds: string[] | null;
     showCustomPromptsModal: boolean;
-    selectedBotId: string | null;
 }
 
 type AppState = GlobalState & {
@@ -26,6 +25,3 @@ export const getPinnedPromptIds = (state: AppState): string[] =>
 
 export const getShowCustomPromptsModal = (state: AppState): boolean =>
     state[`plugins-${manifest.id}`]?.showCustomPromptsModal ?? false;
-
-export const getSelectedBotId = (state: AppState): string | null =>
-    state[`plugins-${manifest.id}`]?.selectedBotId ?? null;
