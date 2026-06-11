@@ -176,7 +176,33 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 7, count, "Should have 7 migration records")
+				assert.Equal(t, 8, count, "Should have 8 migration records")
+			},
+		},
+		{
+			name: "user agent dynamic loading column defaults true",
+			validate: func(t *testing.T, s *Store) {
+				_, err := s.db.Exec(`
+					INSERT INTO Agents_UserAgents (
+						ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
+						CreateAt, UpdateAt, DeleteAt
+					) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+					"agent-default-dynamic-01",
+					"bot-default-dynamic-001",
+					"creator-1",
+					"Default Dynamic",
+					"default-dynamic",
+					"svc-1",
+					int64(1),
+					int64(1),
+					int64(0),
+				)
+				require.NoError(t, err)
+
+				agent, err := s.GetAgent("agent-default-dynamic-01")
+				require.NoError(t, err)
+				require.NotNil(t, agent)
+				assert.True(t, agent.MCPDynamicToolLoading)
 			},
 		},
 	}

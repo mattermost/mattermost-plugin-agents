@@ -92,10 +92,11 @@ func MigrateServicesToBots(cfg Config, loadLegacyConfig func() (LegacyServiceCon
 		botName := fmt.Sprintf("ai%d", i+1)
 		displayName := service.Name
 		existingConfig.Bots = append(existingConfig.Bots, llm.BotConfig{
-			ID:          botID,
-			Name:        botName,
-			DisplayName: displayName,
-			ServiceID:   service.ID,
+			ID:                    botID,
+			Name:                  botName,
+			DisplayName:           displayName,
+			ServiceID:             service.ID,
+			MCPDynamicToolLoading: true,
 		})
 	}
 

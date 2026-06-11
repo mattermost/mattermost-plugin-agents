@@ -54,7 +54,8 @@ const missingContentIndex = -1
 type LLM struct {
 	client           *bifrostcore.Bifrost
 	provider         schemas.ModelProvider
-	apiKey           string // used only to redact configured secrets from provider error surfaces
+	apiKey           string   // used only to redact configured secrets from provider error surfaces
+	fallbackAPIKeys  []string // fallback provider keys, redacted from error surfaces alongside apiKey
 	defaultModel     string
 	inputTokenLimit  int
 	outputTokenLimit int
@@ -68,28 +69,40 @@ type LLM struct {
 
 	// UseResponsesAPI enables OpenAI Responses API for native tools support
 	useResponsesAPI bool
+
+	// fallbacks is attached to every outgoing request so Bifrost retries with
+	// alternative providers when the primary fails.
+	fallbacks []schemas.Fallback
 }
 
-// Config holds the configuration for creating a LLM instance.
-type Config struct {
+// ProviderSettings holds the connection and credential fields needed to reach
+// one provider. It is shared by the primary Config and every FallbackEntry in
+// the chain.
+type ProviderSettings struct {
 	Provider           schemas.ModelProvider
 	APIKey             string
 	APIURL             string // Custom base URL (for Azure, OpenAI Compatible, etc.)
 	OrgID              string
-	Region             string // For AWS Bedrock
+	Region             string // For AWS Bedrock and Vertex
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
 
-	// Vertex AI (GCP). Region is reused from the shared Region field.
-	// VertexAuthCredentials holds the service-account JSON; empty falls back to ADC/IAM.
+	// Vertex AI (GCP). VertexAuthCredentials holds the service-account JSON;
+	// empty falls back to ADC/IAM.
 	VertexProjectID       string
 	VertexProjectNumber   string
 	VertexAuthCredentials string
 
 	DefaultModel     string
+	StreamingTimeout time.Duration
+}
+
+// Config holds the configuration for creating a LLM instance.
+type Config struct {
+	ProviderSettings
+
 	InputTokenLimit  int
 	OutputTokenLimit int
-	StreamingTimeout time.Duration
 
 	// Native tools and reasoning configuration
 	EnabledNativeTools []string
@@ -99,34 +112,68 @@ type Config struct {
 
 	// UseResponsesAPI enables OpenAI Responses API for native tools support
 	UseResponsesAPI bool
+
+	// Fallbacks is the ordered list of providers Bifrost tries sequentially
+	// when the primary provider fails.
+	Fallbacks []FallbackEntry
+}
+
+// FallbackEntry holds the settings for a single fallback in the chain.
+type FallbackEntry struct {
+	ProviderSettings
+
+	// ID is the source service ID, used to mint a unique custom-provider name
+	// when this fallback shares a base provider type with another service.
+	ID string
+	// IsKeyLess marks a fallback that authenticates without an API key (e.g. a
+	// local Ollama server).
+	IsKeyLess bool
+	// ChatOnly marks an OpenAI-base fallback whose endpoint lacks the Responses
+	// API; it is registered chat-only so Bifrost downgrades Responses-API
+	// requests to chat completions for it.
+	ChatOnly bool
 }
 
 // providerAccount implements the Bifrost Account interface for a single provider.
 type providerAccount struct {
-	provider                schemas.ModelProvider
-	apiKey                  string
-	apiURL                  string
-	orgID                   string
-	region                  string
-	awsKeyID                string
-	awsSecret               string
-	vertexProjectID         string
-	vertexProjectNumber     string
-	vertexAuthCredentials   string
-	streamingTimeoutSeconds int
+	ProviderSettings
+
+	// name is the Bifrost registration name: empty for a standard provider, or
+	// a unique custom-provider name when this account shares a base provider
+	// type with another in the same client (which would otherwise collide on
+	// the base type's single slot).
+	name     schemas.ModelProvider
+	keyless  bool
+	chatOnly bool
+}
+
+// registeredName returns the name this account is registered under with Bifrost,
+// defaulting to the base provider type when no custom name is set.
+func (a *providerAccount) registeredName() schemas.ModelProvider {
+	if a.name != "" {
+		return a.name
+	}
+	return a.Provider
+}
+
+// isCustom reports whether this account is registered as a Bifrost custom
+// provider (a unique name backed by the base provider type), which lets two
+// services sharing a base provider type keep their own base URL and credentials.
+func (a *providerAccount) isCustom() bool {
+	return a.name != "" && a.name != a.Provider
 }
 
 func (a *providerAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{a.provider}, nil
+	return []schemas.ModelProvider{a.registeredName()}, nil
 }
 
 func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
-	if provider != a.provider {
+	if provider != a.registeredName() {
 		return nil, fmt.Errorf("provider %s not supported", provider)
 	}
 
 	key := schemas.Key{
-		Value:  schemas.EnvVar{Val: a.apiKey},
+		Value:  schemas.EnvVar{Val: a.APIKey},
 		Weight: 1.0,
 		// Bifrost v1.5+ requires keys to declare which models they support;
 		// "*" allows any model the configured provider can serve.
@@ -134,29 +181,29 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	}
 
 	// Handle Azure config
-	if a.provider == schemas.Azure && a.apiURL != "" {
+	if a.Provider == schemas.Azure && a.APIURL != "" {
 		key.AzureKeyConfig = &schemas.AzureKeyConfig{
-			Endpoint: schemas.EnvVar{Val: a.apiURL},
+			Endpoint: schemas.EnvVar{Val: a.APIURL},
 		}
 	}
 
 	// Handle Bedrock config
-	if a.provider == schemas.Bedrock {
-		region := schemas.EnvVar{Val: a.region}
+	if a.Provider == schemas.Bedrock {
+		region := schemas.EnvVar{Val: a.Region}
 		key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
-			AccessKey: schemas.EnvVar{Val: a.awsKeyID},
-			SecretKey: schemas.EnvVar{Val: a.awsSecret},
+			AccessKey: schemas.EnvVar{Val: a.AWSAccessKeyID},
+			SecretKey: schemas.EnvVar{Val: a.AWSSecretAccessKey},
 			Region:    &region,
 		}
 	}
 
 	// Handle Vertex config. Empty AuthCredentials signals ADC / attached IAM role.
-	if a.provider == schemas.Vertex {
+	if a.Provider == schemas.Vertex {
 		key.VertexKeyConfig = &schemas.VertexKeyConfig{
-			ProjectID:       schemas.EnvVar{Val: a.vertexProjectID},
-			ProjectNumber:   schemas.EnvVar{Val: a.vertexProjectNumber},
-			Region:          schemas.EnvVar{Val: a.region},
-			AuthCredentials: schemas.EnvVar{Val: a.vertexAuthCredentials},
+			ProjectID:       schemas.EnvVar{Val: a.VertexProjectID},
+			ProjectNumber:   schemas.EnvVar{Val: a.VertexProjectNumber},
+			Region:          schemas.EnvVar{Val: a.Region},
+			AuthCredentials: schemas.EnvVar{Val: a.VertexAuthCredentials},
 		}
 	}
 
@@ -164,7 +211,7 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 }
 
 func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
-	if provider != a.provider {
+	if provider != a.registeredName() {
 		return nil, fmt.Errorf("provider %s not supported", provider)
 	}
 
@@ -173,21 +220,21 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	// Pass through the streaming timeout to the Bifrost HTTP client so that
 	// long-running requests (e.g. thinking models) are not killed by the
 	// underlying fasthttp ReadTimeout before the watchdog timer fires.
-	if a.streamingTimeoutSeconds > 0 {
-		networkConfig.DefaultRequestTimeoutInSeconds = a.streamingTimeoutSeconds * 10
+	if a.StreamingTimeout > 0 {
+		networkConfig.DefaultRequestTimeoutInSeconds = int(a.StreamingTimeout.Seconds()) * 10
 	} else {
 		networkConfig.DefaultRequestTimeoutInSeconds = int(DefaultStreamingTimeout.Seconds()) * 10
 	}
 
 	// Use BaseURL for providers that support custom endpoints (not Azure, which uses AzureKeyConfig)
-	if a.apiURL != "" && a.provider != schemas.Azure {
-		networkConfig.BaseURL = a.apiURL
+	if a.APIURL != "" && a.Provider != schemas.Azure {
+		networkConfig.BaseURL = a.APIURL
 	}
 
 	// Pass OrgID via ExtraHeaders for OpenAI
-	if a.orgID != "" && a.provider == schemas.OpenAI {
+	if a.OrgID != "" && a.Provider == schemas.OpenAI {
 		networkConfig.ExtraHeaders = map[string]string{
-			"OpenAI-Organization": a.orgID,
+			"OpenAI-Organization": a.OrgID,
 		}
 	}
 
@@ -204,7 +251,87 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		},
 	}
 
+	if a.isCustom() {
+		cpc := &schemas.CustomProviderConfig{
+			BaseProviderType: a.Provider,
+			IsKeyLess:        a.keyless,
+		}
+		if a.chatOnly {
+			// Chat-only AllowedRequests makes Bifrost transparently downgrade a
+			// Responses-API request to /v1/chat/completions instead of POSTing
+			// /v1/responses to an endpoint that does not implement it.
+			cpc.AllowedRequests = &schemas.AllowedRequests{
+				ChatCompletion:       true,
+				ChatCompletionStream: true,
+			}
+		}
+		config.CustomProviderConfig = cpc
+	}
+
 	return config, nil
+}
+
+// multiProviderAccount implements the Bifrost Account interface for the
+// primary provider plus every fallback in the chain.
+type multiProviderAccount struct {
+	entries map[schemas.ModelProvider]*providerAccount
+	order   []schemas.ModelProvider
+}
+
+func newMultiProviderAccount() *multiProviderAccount {
+	return &multiProviderAccount{
+		entries: make(map[schemas.ModelProvider]*providerAccount),
+	}
+}
+
+// isCustomCapableProvider reports whether Bifrost can host a second instance of
+// this provider type as a custom provider backed by the same base type. Only the
+// providers in schemas.SupportedBaseProviders qualify; others (e.g. Azure,
+// Mistral, Vertex) cannot be disambiguated this way.
+func isCustomCapableProvider(p schemas.ModelProvider) bool {
+	for _, base := range schemas.SupportedBaseProviders {
+		if base == p {
+			return true
+		}
+	}
+	return false
+}
+
+// customProviderName builds a stable, unique Bifrost custom-provider name for a
+// service that shares a base provider type with another in the same client.
+func customProviderName(base schemas.ModelProvider, serviceID string) schemas.ModelProvider {
+	return schemas.ModelProvider(fmt.Sprintf("%s::%s", base, serviceID))
+}
+
+// addProvider registers a provider under its Bifrost registration name.
+// First-registered wins on a name collision, because Bifrost indexes by name.
+func (m *multiProviderAccount) addProvider(entry *providerAccount) {
+	name := entry.registeredName()
+	if _, exists := m.entries[name]; exists {
+		return
+	}
+	m.entries[name] = entry
+	m.order = append(m.order, name)
+}
+
+func (m *multiProviderAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
+	return m.order, nil
+}
+
+func (m *multiProviderAccount) GetKeysForProvider(ctx context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
+	entry, ok := m.entries[provider]
+	if !ok {
+		return nil, fmt.Errorf("provider %s not configured", provider)
+	}
+	return entry.GetKeysForProvider(ctx, provider)
+}
+
+func (m *multiProviderAccount) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
+	entry, ok := m.entries[provider]
+	if !ok {
+		return nil, fmt.Errorf("provider %s not configured", provider)
+	}
+	return entry.GetConfigForProvider(provider)
 }
 
 // toolArgsToJSON ensures tool arguments are valid JSON.
@@ -227,23 +354,63 @@ func readFileData(file llm.File) ([]byte, error) {
 	return io.ReadAll(file.Reader)
 }
 
-// New creates a new LLM instance with the given configuration.
+// New creates a new LLM instance with the given configuration. It errors when
+// a fallback cannot be registered, so a misconfigured fallback chain fails at
+// setup instead of silently shrinking.
 func New(cfg Config) (*LLM, error) {
-	account := &providerAccount{
-		provider:                cfg.Provider,
-		apiKey:                  cfg.APIKey,
-		apiURL:                  cfg.APIURL,
-		orgID:                   cfg.OrgID,
-		region:                  cfg.Region,
-		awsKeyID:                cfg.AWSAccessKeyID,
-		awsSecret:               cfg.AWSSecretAccessKey,
-		vertexProjectID:         cfg.VertexProjectID,
-		vertexProjectNumber:     cfg.VertexProjectNumber,
-		vertexAuthCredentials:   cfg.VertexAuthCredentials,
-		streamingTimeoutSeconds: int(cfg.StreamingTimeout.Seconds()),
+	primaryEntry := &providerAccount{ProviderSettings: cfg.ProviderSettings}
+
+	account := newMultiProviderAccount()
+	account.addProvider(primaryEntry)
+
+	// Bifrost registration names already taken. A fallback that shares a base
+	// provider type with an earlier service must get its own custom-provider
+	// slot, otherwise it silently inherits the earlier service's base URL and
+	// key at fallback time.
+	usedNames := map[schemas.ModelProvider]bool{primaryEntry.registeredName(): true}
+
+	// Redact the primary and every fallback key from error/log surfaces, even
+	// key formats the generic redaction patterns don't recognize.
+	redactKeys := []string{cfg.APIKey}
+
+	var fallbacks []schemas.Fallback
+	for _, fb := range cfg.Fallbacks {
+		if fb.APIKey != "" {
+			redactKeys = append(redactKeys, fb.APIKey)
+		}
+		entry := &providerAccount{
+			ProviderSettings: fb.ProviderSettings,
+			keyless:          fb.IsKeyLess,
+		}
+
+		// A fallback needs its own custom-provider slot when it collides on an
+		// already-registered name, is chat-only (the slot carries the downgrade
+		// gate), or is keyless (the standard provider path would treat the empty
+		// key as real credentials). Keyless is scoped to custom-capable base
+		// types; providers like Vertex carry keyless auth (ADC) on their
+		// standard config.
+		name := fb.Provider
+		if usedNames[name] || fb.ChatOnly || (fb.IsKeyLess && isCustomCapableProvider(fb.Provider)) {
+			if !isCustomCapableProvider(fb.Provider) {
+				return nil, fmt.Errorf("fallback service %q: provider %s is already registered and cannot host a second instance", fb.ID, fb.Provider)
+			}
+			name = customProviderName(fb.Provider, fb.ID)
+			entry.name = name
+			entry.chatOnly = fb.ChatOnly
+		}
+		if usedNames[name] {
+			return nil, fmt.Errorf("fallback service %q resolves to already-registered provider %q", fb.ID, name)
+		}
+
+		account.addProvider(entry)
+		usedNames[name] = true
+		fallbacks = append(fallbacks, schemas.Fallback{
+			Provider: name,
+			Model:    fb.DefaultModel,
+		})
 	}
 
-	client, err := newBifrostClient(account, cfg.APIKey)
+	client, err := newBifrostClient(account, redactKeys...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client: %w", err)
 	}
@@ -257,6 +424,7 @@ func New(cfg Config) (*LLM, error) {
 		client:             client,
 		provider:           cfg.Provider,
 		apiKey:             cfg.APIKey,
+		fallbackAPIKeys:    redactKeys[1:],
 		defaultModel:       cfg.DefaultModel,
 		inputTokenLimit:    cfg.InputTokenLimit,
 		outputTokenLimit:   cfg.OutputTokenLimit,
@@ -266,6 +434,7 @@ func New(cfg Config) (*LLM, error) {
 		reasoningEffort:    cfg.ReasoningEffort,
 		thinkingBudget:     cfg.ThinkingBudget,
 		useResponsesAPI:    cfg.UseResponsesAPI,
+		fallbacks:          fallbacks,
 	}, nil
 }
 
@@ -274,6 +443,16 @@ func (b *LLM) Shutdown() {
 	if b.client != nil {
 		b.client.Shutdown()
 	}
+}
+
+// redactionKeys returns every configured API key (primary plus fallbacks) so
+// llm.SanitizeProviderError can strip any provider's credential from an error,
+// not just the primary's.
+func (b *LLM) redactionKeys() []string {
+	keys := make([]string, 0, 1+len(b.fallbackAPIKeys))
+	keys = append(keys, b.apiKey)
+	keys = append(keys, b.fallbackAPIKeys...)
+	return keys
 }
 
 // GetDefaultConfig returns the default language model configuration.
@@ -667,7 +846,7 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 		if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
 			msg = bifrostErr.Error.Message
 		}
-		return 0, llm.SanitizeProviderError(fmt.Errorf("bifrost count tokens error: %s", msg), b.apiKey)
+		return 0, llm.SanitizeProviderError(fmt.Errorf("bifrost count tokens error: %s", msg), b.redactionKeys()...)
 	}
 	if resp == nil {
 		return 0, fmt.Errorf("bifrost count tokens returned nil response")
@@ -710,7 +889,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
 		recordBifrostError(span, bifrostErr)
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -766,7 +945,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 
 		if chunk.BifrostError != nil {
 			recordBifrostError(span, chunk.BifrostError)
-			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.redactionKeys()...)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
@@ -1020,6 +1199,9 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
 	}
 	req.Params = params
+
+	// Attach fallback chain so Bifrost retries with alternative providers on failure.
+	req.Fallbacks = b.fallbacks
 
 	return req
 }
@@ -1709,6 +1891,9 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	}
 	req.Params = params
 
+	// Attach fallback chain so Bifrost retries with alternative providers on failure.
+	req.Fallbacks = b.fallbacks
+
 	return req, nil
 }
 
@@ -1741,7 +1926,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
 		recordBifrostError(span, bifrostErr)
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -1811,7 +1996,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 		if chunk.BifrostError != nil {
 			recordBifrostError(span, chunk.BifrostError)
-			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey)
+			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.redactionKeys()...)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{

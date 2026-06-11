@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/channels"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
@@ -24,6 +25,11 @@ const (
 	TitleSummarizeUnreads = "Summarize Unreads"
 	TitleSummarizeChannel = "Summarize Channel"
 )
+
+var channelAnalysisRequiredMCPTools = []llm.EnabledMCPTool{
+	{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
+	{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "get_channel_info"},
+}
 
 func (a *API) channelAuthorizationRequired(c *gin.Context) {
 	channelID := c.Param("channelid")
@@ -59,6 +65,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
+	toolBot := channelAnalysisToolBot(bot)
 
 	var data struct {
 		AnalysisType string `json:"analysis_type" binding:"required"`
@@ -87,7 +94,8 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	opts := []llm.ContextOption{
-		a.contextBuilder.WithLLMContextDefaultTools(bot),
+		a.contextBuilder.WithLLMContextPreloadedMCPTools(channelAnalysisRequiredMCPTools),
+		a.contextBuilder.WithLLMContextDefaultTools(c.Request.Context(), toolBot),
 	}
 
 	// If the channel is a DM/GM and we have a team ID from the client, use it for context
@@ -108,33 +116,16 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		opts...,
 	)
 
-	// Validate that required tools are available for channel analysis
-	// The read_channel tool is essential for this feature
-	if llmContext.Tools == nil {
-		a.pluginAPI.Log.Error("Channel analysis failed: no tools available in context",
-			"userID", userID,
-			"channelID", channel.Id)
-		c.AbortWithError(http.StatusInternalServerError, errors.New("channel analysis requires MCP tools which are not available - check embedded server configuration"))
-		return
-	}
-
-	// Check if read_channel tool is available
-	availableTools := llmContext.Tools.GetTools()
-	hasReadChannel := false
-	var toolNames []string
-	for _, tool := range availableTools {
-		toolNames = append(toolNames, tool.Name)
-		if tool.Name == "read_channel" {
-			hasReadChannel = true
-		}
-	}
-
-	if !hasReadChannel {
-		a.pluginAPI.Log.Error("Channel analysis failed: read_channel tool not available",
+	// Validate that required tools are available for channel analysis.
+	availableTools, missingTools := channelAnalysisToolAvailability(llmContext.Tools)
+	if len(missingTools) > 0 {
+		a.pluginAPI.Log.Error("Channel analysis failed: required embedded MCP tools not available",
 			"userID", userID,
 			"channelID", channel.Id,
-			"availableTools", toolNames)
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("channel analysis requires read_channel tool which is not available (found %d tools: %v) - ensure embedded MCP server is enabled and working", len(availableTools), toolNames))
+			"dynamicToolLoading", llmContext.ToolCatalog.MCPDynamicToolLoading,
+			"missingTools", missingTools,
+			"availableTools", availableTools)
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("channel analysis requires embedded MCP tool(s) %v which are not available (dynamic loading: %t, found %d tools: %v) - ensure embedded MCP server is enabled, authorized, and working", missingTools, llmContext.ToolCatalog.MCPDynamicToolLoading, len(availableTools), availableTools))
 		return
 	}
 
@@ -176,6 +167,39 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		"postid":    analysisPost.Id,
 		"channelid": analysisPost.ChannelId,
 	})
+}
+
+func channelAnalysisToolBot(bot *bots.Bot) *bots.Bot {
+	cfg := bot.GetConfig()
+	if cfg.AutoEnableNewMCPTools {
+		return bot
+	}
+
+	// Channel analysis immediately scopes the catalog to bound read-only tools,
+	// so load the MCP catalog even when the agent uses a narrower allowlist.
+	cfg.AutoEnableNewMCPTools = true
+	cfg.EnabledMCPTools = nil
+	return bots.NewBot(cfg, bot.GetService(), bot.GetMMBot(), bot.LLM())
+}
+
+func channelAnalysisToolAvailability(store *llm.ToolStore) ([]string, []string) {
+	var available []string
+	if store != nil {
+		for _, tool := range store.GetTools() {
+			available = append(available, tool.Name)
+		}
+	}
+
+	var missing []string
+	for _, required := range channelAnalysisRequiredMCPTools {
+		// Required channel-analysis MCP tools are preloaded into the visible
+		// store by WithLLMContextPreloadedMCPTools.
+		if _, ok := store.LookupTool(required.ToolName, required.ServerOrigin); !ok {
+			missing = append(missing, required.ToolName)
+		}
+	}
+
+	return available, missing
 }
 
 func (a *API) handleInterval(c *gin.Context) {

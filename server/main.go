@@ -419,6 +419,7 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		&p.configuration,
 	)
+	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
 
 	conversationsService := conversations.New(
 		prompts,
@@ -455,7 +456,7 @@ func (p *Plugin) OnActivate() error {
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations.
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
-		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, toolName)
+		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, llm.BareMCPToolName(toolName))
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)

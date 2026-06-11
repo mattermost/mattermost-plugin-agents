@@ -14,21 +14,24 @@ import (
 )
 
 type sanitizingLogger struct {
-	inner  schemas.Logger
-	apiKey string
+	inner   schemas.Logger
+	apiKeys []string
 }
 
-func newSanitizingLogger(inner schemas.Logger, apiKey string) schemas.Logger {
+func newSanitizingLogger(inner schemas.Logger, apiKeys ...string) schemas.Logger {
 	return &sanitizingLogger{
-		inner:  inner,
-		apiKey: apiKey,
+		inner:   inner,
+		apiKeys: apiKeys,
 	}
 }
 
-func newBifrostClient(account schemas.Account, apiKey string) (*bifrostcore.Bifrost, error) {
+// newBifrostClient initializes a Bifrost client whose logger redacts the given
+// API keys. Pass the primary key plus every fallback key so a fallback
+// provider's credential never leaks through Bifrost's own request/error logs.
+func newBifrostClient(account schemas.Account, apiKeys ...string) (*bifrostcore.Bifrost, error) {
 	return bifrostcore.Init(context.Background(), schemas.BifrostConfig{
 		Account: account,
-		Logger:  newSanitizingLogger(bifrostcore.NewDefaultLogger(schemas.LogLevelInfo), apiKey),
+		Logger:  newSanitizingLogger(bifrostcore.NewDefaultLogger(schemas.LogLevelInfo), apiKeys...),
 		Tracer:  newOTelTracer(),
 	})
 }
@@ -88,8 +91,8 @@ func (l *sanitizingLogger) LogHTTPRequest(level schemas.LogLevel, msg string) sc
 	}
 
 	return &sanitizingLogEventBuilder{
-		inner:  l.inner.LogHTTPRequest(level, l.sanitizeMessage(msg)),
-		apiKey: l.apiKey,
+		inner:   l.inner.LogHTTPRequest(level, l.sanitizeMessage(msg)),
+		apiKeys: l.apiKeys,
 	}
 }
 
@@ -97,12 +100,12 @@ func (l *sanitizingLogger) sanitizeMessage(msg string, args ...any) string {
 	if len(args) > 0 {
 		msg = fmt.Sprintf(msg, args...)
 	}
-	return llm.SanitizeProviderErrorMessage(msg, l.apiKey)
+	return llm.SanitizeProviderErrorMessage(msg, l.apiKeys...)
 }
 
 type sanitizingLogEventBuilder struct {
-	inner  schemas.LogEventBuilder
-	apiKey string
+	inner   schemas.LogEventBuilder
+	apiKeys []string
 }
 
 func (b *sanitizingLogEventBuilder) Str(key, val string) schemas.LogEventBuilder {
@@ -110,7 +113,7 @@ func (b *sanitizingLogEventBuilder) Str(key, val string) schemas.LogEventBuilder
 		return schemas.NoopLogEvent
 	}
 
-	b.inner.Str(key, llm.SanitizeProviderErrorMessage(val, b.apiKey))
+	b.inner.Str(key, llm.SanitizeProviderErrorMessage(val, b.apiKeys...))
 	return b
 }
 

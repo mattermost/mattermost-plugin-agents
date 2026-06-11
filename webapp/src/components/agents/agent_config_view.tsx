@@ -34,6 +34,7 @@ export type AgentDraft = {
     adminUserIds: string[];
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading: boolean;
     model: string;
     enableVision: boolean;
     disableTools: boolean;
@@ -57,6 +58,7 @@ const emptyDraft: AgentDraft = {
     adminUserIds: [],
     enabledTools: [],
     autoEnableNewMCPTools: true,
+    mcpDynamicToolLoading: true,
     model: '',
     enableVision: true,
     disableTools: false,
@@ -101,6 +103,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         adminUserIDs: draft.adminUserIds,
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
+        mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -130,6 +133,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         adminUserIDs: draft.adminUserIds,
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
+        mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -155,6 +159,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         adminUserIds: agent.adminUserIDs ?? [],
         enabledTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools ?? false,
+        mcpDynamicToolLoading: agent.mcpDynamicToolLoading ?? true,
         model: agent.model ?? '',
         enableVision: agent.enableVision ?? true,
         disableTools: agent.disableTools ?? false,
@@ -391,6 +396,7 @@ const AgentConfigView = (props: Props) => {
                         <McpsTab
                             enabledTools={draft.enabledTools}
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
+                            mcpDynamicToolLoading={draft.mcpDynamicToolLoading}
                             onChange={(updates) => updateDraft(updates)}
                         />
                     )}

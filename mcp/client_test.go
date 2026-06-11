@@ -4,14 +4,230 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
-	"net/url"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost/server/public/model"
+	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
+
+const testListToolsMethod = "tools/list"
+
+type fixedPluginAPI struct {
+	plugintest.API
+	kvGet       func(string) ([]byte, *model.AppError)
+	sessionByID map[string]*model.Session
+	userByID    map[string]*model.User
+}
+
+func (f *fixedPluginAPI) LogDebug(string, ...interface{}) {}
+
+func (f *fixedPluginAPI) LogInfo(string, ...interface{}) {}
+
+func (f *fixedPluginAPI) LogWarn(string, ...interface{}) {}
+
+func (f *fixedPluginAPI) LogError(string, ...interface{}) {}
+
+func (f *fixedPluginAPI) KVGet(key string) ([]byte, *model.AppError) {
+	if f.kvGet != nil {
+		return f.kvGet(key)
+	}
+	return nil, nil
+}
+
+func (f *fixedPluginAPI) KVSet(string, []byte) *model.AppError {
+	return nil
+}
+
+func (f *fixedPluginAPI) KVSetWithOptions(string, []byte, model.PluginKVSetOptions) (bool, *model.AppError) {
+	return true, nil
+}
+
+func (f *fixedPluginAPI) KVDelete(string) *model.AppError {
+	return nil
+}
+
+func (f *fixedPluginAPI) GetSession(sessionID string) (*model.Session, *model.AppError) {
+	if f.sessionByID == nil {
+		return nil, nil
+	}
+	return f.sessionByID[sessionID], nil
+}
+
+func (f *fixedPluginAPI) GetUser(userID string) (*model.User, *model.AppError) {
+	if f.userByID == nil {
+		return nil, nil
+	}
+	return f.userByID[userID], nil
+}
+
+type fakeEmbeddedMCPServer struct {
+	ctx    context.Context
+	server *mcp.Server
+}
+
+func (f *fakeEmbeddedMCPServer) CreateClientTransport(_ string, _ string, _ *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	go func() {
+		_ = f.server.Run(f.ctx, serverTransport)
+	}()
+	return clientTransport, nil
+}
+
+func newTestMCPServer(pageSize int, toolNames ...string) *mcp.Server {
+	return newTestMCPServerWithCapabilities(pageSize, nil, toolNames...)
+}
+
+func newTestMCPServerWithCapabilities(pageSize int, capabilities *mcp.ServerCapabilities, toolNames ...string) *mcp.Server {
+	var opts *mcp.ServerOptions
+	if pageSize > 0 || capabilities != nil {
+		opts = &mcp.ServerOptions{
+			PageSize:     pageSize,
+			Capabilities: capabilities,
+		}
+	}
+	server := mcp.NewServer(&mcp.Implementation{
+		Name:    "test-mcp-server",
+		Version: "1.0.0",
+	}, opts)
+	for _, toolName := range toolNames {
+		addTestMCPTool(server, toolName)
+	}
+	return server
+}
+
+func newStaticToolListMCPServer(pageSize int, toolNames ...string) *mcp.Server {
+	return newTestMCPServerWithCapabilities(pageSize, &mcp.ServerCapabilities{
+		Tools: &mcp.ToolCapabilities{ListChanged: false},
+	}, toolNames...)
+}
+
+func newEmptyToolsMCPServer() *mcp.Server {
+	return mcp.NewServer(&mcp.Implementation{
+		Name:    "test-empty-mcp-server",
+		Version: "1.0.0",
+	}, &mcp.ServerOptions{
+		Capabilities: &mcp.ServerCapabilities{
+			Tools: &mcp.ToolCapabilities{ListChanged: true},
+		},
+	})
+}
+
+func addTestMCPTool(server *mcp.Server, toolName string) {
+	server.AddTool(&mcp.Tool{
+		Name:        toolName,
+		Description: fmt.Sprintf("Test tool %s", toolName),
+		InputSchema: map[string]any{"type": "object"},
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%s ok", toolName)}},
+		}, nil
+	})
+}
+
+func connectInMemoryTestSession(t *testing.T, server *mcp.Server) *mcp.ClientSession {
+	t.Helper()
+
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go func() {
+		_ = server.Run(ctx, serverTransport)
+	}()
+
+	client := mcp.NewClient(&mcp.Implementation{
+		Name:    "test-client",
+		Version: "1.0.0",
+	}, nil)
+
+	session, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+func startStreamableMCPServer(t *testing.T, server *mcp.Server) *httptest.Server {
+	t.Helper()
+
+	httpServer := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return server
+	}, nil))
+	t.Cleanup(httpServer.Close)
+	return httpServer
+}
+
+func newTestToolsCache() *ToolsCache {
+	return NewToolsCache(newMockKVService(), &mockLogService{})
+}
+
+func newTestLogService() pluginapi.LogService {
+	return newTestPluginAPIWithSession("").Log
+}
+
+func newTestOAuthManager() *OAuthManager {
+	pluginAPI := newTestPluginAPIWithSession("")
+	return NewOAuthManager(mmapi.NewClient(pluginAPI), "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", http.DefaultClient, nil)
+}
+
+func newTestPluginAPIWithSession(sessionID string) *pluginapi.Client {
+	fakeAPI := &fixedPluginAPI{
+		sessionByID: map[string]*model.Session{
+			sessionID: {
+				Id:     sessionID,
+				UserId: "test-user",
+				Token:  "test-token",
+			},
+		},
+	}
+	return pluginapi.NewClient(fakeAPI, nil)
+}
+
+func newTestPluginAPIForEmbeddedManager(userID, sessionID string) *pluginapi.Client {
+	fakeAPI := &fixedPluginAPI{
+		kvGet: func(key string) ([]byte, *model.AppError) {
+			if key == buildEmbeddedSessionKey(userID) {
+				return []byte(sessionID), nil
+			}
+			return nil, nil
+		},
+		sessionByID: map[string]*model.Session{
+			sessionID: {
+				Id:        sessionID,
+				UserId:    userID,
+				Token:     "test-token",
+				ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
+			},
+		},
+		userByID: map[string]*model.User{
+			userID: {
+				Id:    userID,
+				Roles: "system_user",
+			},
+		},
+	}
+	return pluginapi.NewClient(fakeAPI, nil)
+}
+
+func requireToolNames(t *testing.T, tools []llm.Tool, expectedNames ...string) {
+	t.Helper()
+
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	require.ElementsMatch(t, expectedNames, names)
+}
 
 // TestCacheHitBehavior verifies that when tools are in cache,
 // they can be retrieved and reused correctly
@@ -99,216 +315,159 @@ func TestCacheUpdateOnNewTools(t *testing.T) {
 	require.Contains(t, cachedTools, "file_write")
 }
 
-func TestExtractOAuthMetadataURL(t *testing.T) {
-	tests := []struct {
-		name      string
-		errMsg    string
-		wantURL   string
-		wantFound bool
-	}{
-		{
-			name:      "nil error",
-			errMsg:    "",
-			wantURL:   "",
-			wantFound: false,
-		},
-		{
-			name:      "unrelated error",
-			errMsg:    "connection refused",
-			wantURL:   "",
-			wantFound: false,
-		},
-		{
-			name:      "metadata URL without wrapped error",
-			errMsg:    "OAuth authentication needed for resource at https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantURL:   "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantFound: true,
-		},
-		{
-			name:      "metadata URL with wrapped error",
-			errMsg:    "OAuth authentication needed for resource at https://example.com/.well-known/oauth-protected-resource: Got error: token refresh failed",
-			wantURL:   "https://example.com/.well-known/oauth-protected-resource",
-			wantFound: true,
-		},
-		{
-			name:      "metadata URL embedded in longer error chain",
-			errMsg:    "failed to connect: OAuth authentication needed for resource at https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantURL:   "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantFound: true,
-		},
-		{
-			name:      "empty metadata URL",
-			errMsg:    "OAuth authentication needed for resource at ",
-			wantURL:   "",
-			wantFound: false,
-		},
-		{
-			name:      "URL with port",
-			errMsg:    "OAuth authentication needed for resource at https://example.com:8443/.well-known/oauth-protected-resource",
-			wantURL:   "https://example.com:8443/.well-known/oauth-protected-resource",
-			wantFound: true,
-		},
-		{
-			name:      "URL with port and wrapped error",
-			errMsg:    "OAuth authentication needed for resource at https://example.com:8443/.well-known/oauth-protected-resource: Got error: something failed",
-			wantURL:   "https://example.com:8443/.well-known/oauth-protected-resource",
-			wantFound: true,
-		},
-	}
+func TestListAllToolsCollectsPaginatedTools(t *testing.T) {
+	server := newTestMCPServer(2, "tool_1", "tool_2", "tool_3", "tool_4", "tool_5")
+	session := connectInMemoryTestSession(t, server)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var err error
-			if tt.errMsg != "" {
-				err = fmt.Errorf("%s", tt.errMsg)
+	tools, err := listAllTools(context.Background(), session)
+	require.NoError(t, err)
+	require.Len(t, tools, 5)
+	for _, toolName := range []string{"tool_1", "tool_2", "tool_3", "tool_4", "tool_5"} {
+		require.Contains(t, tools, toolName)
+	}
+}
+
+func TestListAllToolsSkipsNilTools(t *testing.T) {
+	server := newTestMCPServer(0, "tool_1")
+	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if err != nil || method != testListToolsMethod {
+				return result, err
 			}
-			gotURL, gotFound := extractOAuthMetadataURL(err)
-			require.Equal(t, tt.wantFound, gotFound)
-			require.Equal(t, tt.wantURL, gotURL)
-		})
-	}
-}
+			listResult, ok := result.(*mcp.ListToolsResult)
+			require.True(t, ok)
+			listResult.Tools = append(listResult.Tools, nil)
+			return listResult, nil
+		}
+	})
+	session := connectInMemoryTestSession(t, server)
 
-func TestClientOAuthNeededError(t *testing.T) {
-	client := &Client{
-		config: ServerConfig{
-			Name: "OAuth Server",
-		},
-		oauthManager: &OAuthManager{
-			callbackURL: "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback",
-		},
-	}
-
-	tests := []struct {
-		name string
-		err  error
-	}{
-		{
-			name: "mcp unauthorized error",
-			err: &mcpUnauthorized{
-				metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
-			},
-		},
-		{
-			name: "string matched oauth error",
-			err:  fmt.Errorf("OAuth authentication needed for resource at https://oauth.example.com/.well-known/oauth-protected-resource"),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := client.oauthNeededError(tt.err)
-			require.Error(t, err)
-
-			var oauthErr *OAuthNeededError
-			require.ErrorAs(t, err, &oauthErr)
-			authURL, parseErr := url.Parse(oauthErr.AuthURL())
-			require.NoError(t, parseErr)
-			require.Equal(t, "https://mattermost.example.com", authURL.Scheme+"://"+authURL.Host)
-			require.Equal(t, "/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start", authURL.EscapedPath())
-			require.Equal(t, "https://oauth.example.com/.well-known/oauth-protected-resource", authURL.Query().Get("resource_metadata"))
-		})
-	}
-}
-
-// TestNilCacheHandling verifies that nil cache is handled gracefully in the cache code
-func TestNilCacheHandling(t *testing.T) {
-	// This test documents that the cache code handles nil properly
-	// The actual NewClient function checks if toolsCache is nil before using it
-	kvAPI := newMockKVService()
-	log := &mockLogService{}
-	cache := NewToolsCache(kvAPI, log)
-
-	// Verify cache can be created and used
-	require.NotNil(t, cache)
-
-	// Test that GetTools returns nil for non-existent server (not a panic)
-	tools := cache.GetTools("nonexistent")
-	require.Nil(t, tools)
-}
-
-func TestShouldUseSharedToolsCache(t *testing.T) {
-	tests := []struct {
-		name         string
-		serverConfig ServerConfig
-		expected     bool
-	}{
-		{
-			name: "server without static oauth creds uses shared cache",
-			serverConfig: ServerConfig{
-				Name:    "no-oauth",
-				BaseURL: "https://example.com",
-			},
-			expected: true,
-		},
-		{
-			name: "server with static oauth creds skips shared cache",
-			serverConfig: ServerConfig{
-				Name:         "static-oauth",
-				BaseURL:      "https://example.com",
-				ClientID:     "client-id",
-				ClientSecret: "client-secret",
-			},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.expected, shouldUseSharedToolsCache(tt.serverConfig))
-		})
-	}
-}
-
-func TestInvalidateSharedToolsCacheForOAuthDiscovery(t *testing.T) {
-	kvAPI := newMockKVService()
-	log := &mockLogService{}
-	cache := NewToolsCache(kvAPI, log)
-
-	serverID := "oauth-server"
-	tools := map[string]*mcp.Tool{
-		"search": {
-			Name:        "search",
-			Description: "Searches data",
-		},
-	}
-
-	err := cache.SetTools(serverID, "OAuth Server", "https://example.com", tools, time.Now())
+	tools, err := listAllTools(context.Background(), session)
 	require.NoError(t, err)
-	require.NotNil(t, cache.GetTools(serverID))
-
-	invalidateSharedToolsCacheForOAuthDiscovery(cache, log, "user-id", serverID, ServerConfig{
-		Name:         serverID,
-		BaseURL:      "https://example.com",
-		ClientID:     "client-id",
-		ClientSecret: "client-secret",
-	}, false)
-
-	require.Nil(t, cache.GetTools(serverID))
+	require.Len(t, tools, 1)
+	require.Contains(t, tools, "tool_1")
 }
 
-func TestInvalidateSharedToolsCacheForOAuthDiscoveryKeepsCacheWithStoredToken(t *testing.T) {
-	kvAPI := newMockKVService()
-	log := &mockLogService{}
-	cache := NewToolsCache(kvAPI, log)
+func TestNewClientDiscoversPaginatedRemoteTools(t *testing.T) {
+	server := newTestMCPServer(2, "tool_1", "tool_2", "tool_3", "tool_4", "tool_5")
+	httpServer := startStreamableMCPServer(t, server)
+	cache := newTestToolsCache()
 
-	serverID := "oauth-server"
-	tools := map[string]*mcp.Tool{
-		"search": {
-			Name:        "search",
-			Description: "Searches data",
+	client, err := NewClient(context.Background(), "user-id", ServerConfig{
+		Name:    "paged",
+		BaseURL: httpServer.URL,
+		Enabled: true,
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	require.Len(t, client.Tools(), 5)
+	cachedTools := cache.GetTools("paged")
+	require.Len(t, cachedTools, 5)
+	for _, toolName := range []string{"tool_1", "tool_2", "tool_3", "tool_4", "tool_5"} {
+		require.Contains(t, client.Tools(), toolName)
+		require.Contains(t, cachedTools, toolName)
+	}
+}
+
+func TestRemoteReconnectRefreshesToolCatalog(t *testing.T) {
+	server := newTestMCPServer(0, "tool_1")
+	httpServer := startStreamableMCPServer(t, server)
+	cache := newTestToolsCache()
+
+	client, err := NewClient(context.Background(), "user-id", ServerConfig{
+		Name:    "remote",
+		BaseURL: httpServer.URL,
+		Enabled: true,
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	require.Len(t, client.Tools(), 1)
+
+	addTestMCPTool(server, "new_tool")
+	require.NoError(t, client.session.Close())
+
+	result, err := client.CallTool(context.Background(), "tool_1", map[string]any{})
+	require.NoError(t, err)
+	require.Contains(t, result, "tool_1 ok")
+	require.Contains(t, client.Tools(), "new_tool")
+	require.Len(t, client.Tools(), 2)
+	require.Len(t, cache.GetTools("remote"), 2)
+}
+
+func TestNewClientUsesCacheWithoutPaginationCall(t *testing.T) {
+	var listCalls atomic.Int32
+	server := newStaticToolListMCPServer(2, "server_tool")
+	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == testListToolsMethod {
+				listCalls.Add(1)
+				return nil, fmt.Errorf("unexpected tools/list call on cache hit")
+			}
+			return next(ctx, method, req)
+		}
+	})
+	httpServer := startStreamableMCPServer(t, server)
+	cache := newTestToolsCache()
+	cachedTools := map[string]*mcp.Tool{
+		"cached_tool": {
+			Name:        "cached_tool",
+			Description: "Cached tool",
+			InputSchema: map[string]any{"type": "object"},
 		},
 	}
+	require.NoError(t, cache.SetTools("paged", "Paged", httpServer.URL, cachedTools, time.Now()))
 
-	err := cache.SetTools(serverID, "OAuth Server", "https://example.com", tools, time.Now())
+	client, err := NewClient(context.Background(), "user-id", ServerConfig{
+		Name:    "paged",
+		BaseURL: httpServer.URL,
+		Enabled: true,
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
 
-	invalidateSharedToolsCacheForOAuthDiscovery(cache, log, "user-id", serverID, ServerConfig{
-		Name:         serverID,
-		BaseURL:      "https://example.com",
-		ClientID:     "client-id",
-		ClientSecret: "client-secret",
-	}, true)
+	require.Zero(t, listCalls.Load())
+	require.Equal(t, cachedTools, client.Tools())
+}
 
-	require.NotNil(t, cache.GetTools(serverID))
+func TestNewClientDoesNotCachePartialPaginationOnError(t *testing.T) {
+	server := newTestMCPServer(2, "tool_1", "tool_2", "tool_3")
+	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == testListToolsMethod {
+				if params, ok := req.GetParams().(*mcp.ListToolsParams); ok && params.Cursor != "" {
+					return nil, fmt.Errorf("page 2 failed")
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
+	httpServer := startStreamableMCPServer(t, server)
+	cache := newTestToolsCache()
+
+	client, err := NewClient(context.Background(), "user-id", ServerConfig{
+		Name:    "paged",
+		BaseURL: httpServer.URL,
+		Enabled: true,
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	require.Error(t, err)
+	require.Nil(t, client)
+	require.Nil(t, cache.GetTools("paged"))
+}
+
+func TestNewClientErrorsOnEmptyRemoteToolCatalog(t *testing.T) {
+	server := newEmptyToolsMCPServer()
+	httpServer := startStreamableMCPServer(t, server)
+	cache := newTestToolsCache()
+
+	client, err := NewClient(context.Background(), "user-id", ServerConfig{
+		Name:    "empty",
+		BaseURL: httpServer.URL,
+		Enabled: true,
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	require.Error(t, err)
+	require.Nil(t, client)
+	require.Contains(t, err.Error(), "no tools found")
+	require.Nil(t, cache.GetTools("empty"))
 }

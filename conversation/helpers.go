@@ -108,6 +108,7 @@ func toolUseBlocks(
 			Name:         tc.Name,
 			ServerOrigin: tc.ServerOrigin,
 			Input:        tc.Arguments,
+			MCPBareName:  tc.MCPBareName,
 			Status:       StatusToString(tc.Status),
 			Shared:       BoolPtr(shared),
 		})

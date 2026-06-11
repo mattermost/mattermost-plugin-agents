@@ -17,7 +17,7 @@ import (
 const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 	CustomInstructions, ChannelAccessLevel, ChannelIDs,
 	UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-	EnabledTools, AutoEnableNewMCPTools,
+	EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 	CreateAt, UpdateAt, DeleteAt`
@@ -109,6 +109,7 @@ type agentRow struct {
 	AdminUserIDs            string `db:"adminuserids"`
 	EnabledTools            string `db:"enabledtools"`
 	AutoEnableNewMCPTools   bool   `db:"autoenablenewmcptools"`
+	MCPDynamicToolLoading   bool   `db:"mcp_dynamic_tool_loading"`
 	Model                   string `db:"model"`
 	EnableVision            bool   `db:"enablevision"`
 	DisableTools            bool   `db:"disabletools"`
@@ -135,6 +136,7 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		ChannelAccessLevel:      llm.ChannelAccessLevel(r.ChannelAccessLevel),
 		UserAccessLevel:         llm.UserAccessLevel(r.UserAccessLevel),
 		AutoEnableNewMCPTools:   r.AutoEnableNewMCPTools,
+		MCPDynamicToolLoading:   r.MCPDynamicToolLoading,
 		Model:                   r.Model,
 		EnableVision:            r.EnableVision,
 		DisableTools:            r.DisableTools,
@@ -183,11 +185,11 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 			ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 			CustomInstructions, ChannelAccessLevel, ChannelIDs,
 			UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-			EnabledTools, AutoEnableNewMCPTools,
+			EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -203,6 +205,7 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 		mustMarshalSlice(cfg.AdminUserIDs),
 		marshalEnabledMCPTools(cfg.EnabledMCPTools),
 		cfg.AutoEnableNewMCPTools,
+		cfg.MCPDynamicToolLoading,
 		cfg.Model,
 		cfg.EnableVision,
 		cfg.DisableTools,
@@ -327,16 +330,17 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 			AdminUserIDs = $10,
 			EnabledTools = $11,
 			AutoEnableNewMCPTools = $12,
-			Model = $13,
-			EnableVision = $14,
-			DisableTools = $15,
-			EnabledNativeTools = $16,
-			ReasoningEnabled = $17,
-			ReasoningEffort = $18,
-			ThinkingBudget = $19,
-			StructuredOutputEnabled = $20,
-			UpdateAt = $21
-		WHERE ID = $22 AND DeleteAt = 0`,
+			mcp_dynamic_tool_loading = $13,
+			Model = $14,
+			EnableVision = $15,
+			DisableTools = $16,
+			EnabledNativeTools = $17,
+			ReasoningEnabled = $18,
+			ReasoningEffort = $19,
+			ThinkingBudget = $20,
+			StructuredOutputEnabled = $21,
+			UpdateAt = $22
+		WHERE ID = $23 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
@@ -349,6 +353,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 		mustMarshalSlice(cfg.AdminUserIDs),
 		marshalEnabledMCPTools(cfg.EnabledMCPTools),
 		cfg.AutoEnableNewMCPTools,
+		cfg.MCPDynamicToolLoading,
 		cfg.Model,
 		cfg.EnableVision,
 		cfg.DisableTools,

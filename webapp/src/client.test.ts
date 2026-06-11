@@ -6,7 +6,7 @@ import type {OptsSignalExt} from '@mattermost/types/client4';
 
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
-import {normalizeConversationResponse, searchAllChannels} from './client';
+import {normalizeConversationResponse, searchAllChannels, updateRead} from './client';
 
 type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
 
@@ -15,21 +15,30 @@ jest.mock('@mattermost/client', () => {
         Promise<ChannelWithTeamData[]>,
         [string, SearchAllChannelsOpts | undefined]
     >();
+    const mockUpdateThreadReadForUser = jest.fn();
 
     return {
 
         // client.tsx constructs `new Client4()`; the mocked class exposes instance methods.
         Client4: class Client4 {
             searchAllChannels = mockSearchAllChannels;
+            updateThreadReadForUser = mockUpdateThreadReadForUser;
         },
         ClientError: class extends Error {},
         mockSearchAllChannels,
+        mockUpdateThreadReadForUser,
     };
 });
 
 const {mockSearchAllChannels} = jest.requireMock('@mattermost/client') as {
     mockSearchAllChannels: jest.MockedFunction<
         (term: string, opts?: SearchAllChannelsOpts) => Promise<ChannelWithTeamData[]>
+    >;
+};
+
+const {mockUpdateThreadReadForUser} = jest.requireMock('@mattermost/client') as {
+    mockUpdateThreadReadForUser: jest.MockedFunction<
+        (userId: string, teamId: string, postId: string, timestamp: number) => Promise<void>
     >;
 };
 
@@ -120,5 +129,29 @@ describe('searchAllChannels', () => {
             include_deleted: false,
             deleted: false,
         });
+    });
+});
+
+describe('updateRead', () => {
+    beforeEach(() => {
+        mockUpdateThreadReadForUser.mockReset();
+    });
+
+    test('returns the updateThreadReadForUser promise', async () => {
+        const readPromise = Promise.resolve();
+        mockUpdateThreadReadForUser.mockReturnValue(readPromise);
+
+        const result = updateRead('user-id', 'team-id', 'post-id', 123);
+
+        expect(result).toBe(readPromise);
+        await expect(result).resolves.toBeUndefined();
+        expect(mockUpdateThreadReadForUser).toHaveBeenCalledWith('user-id', 'team-id', 'post-id', 123);
+    });
+
+    test('propagates updateThreadReadForUser rejection', async () => {
+        const error = new Error('User thread membership doesn\'t exist');
+        mockUpdateThreadReadForUser.mockRejectedValue(error);
+
+        await expect(updateRead('user-id', 'team-id', 'post-id', 123)).rejects.toBe(error);
     });
 });

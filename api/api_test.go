@@ -98,10 +98,6 @@ func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
 
 type testLLMContextConfigProvider struct{}
 
-func (p *testLLMContextConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (p *testLLMContextConfigProvider) GetServiceByID(_ string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
@@ -189,7 +185,7 @@ func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 	return nil
 }
 
-func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
 	return m.tools, m.mcpErrors
 }
 

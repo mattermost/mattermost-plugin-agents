@@ -599,6 +599,80 @@ func TestBuildCompletionRequest_WithToolTurns(t *testing.T) {
 	assert.Equal(t, "The weather is 72F and sunny.", req.Posts[3].Message)
 }
 
+func TestBuildCompletionRequest_StripsPersistedAssistantReasoning(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "use tool with thinking",
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	assistantBlocks := []ContentBlock{
+		{Type: BlockTypeThinking, Text: "I should call the weather tool", Signature: "sig_abc123"},
+		{Type: BlockTypeText, Text: "Let me call a tool"},
+		{
+			Type:   BlockTypeToolUse,
+			ID:     "tc1",
+			Name:   "get_weather",
+			Input:  json.RawMessage(`{"city":"NYC"}`),
+			Status: StatusSuccess,
+			Shared: BoolPtr(true),
+		},
+	}
+	assistantContent, err := json.Marshal(assistantBlocks)
+	require.NoError(t, err)
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		Role:           "assistant",
+		Content:        assistantContent,
+		Sequence:       2,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	resultBlocks := []ContentBlock{
+		{
+			Type:      BlockTypeToolResult,
+			ToolUseID: "tc1",
+			Content:   "72F, sunny",
+			Status:    StatusSuccess,
+			Shared:    BoolPtr(true),
+		},
+	}
+	resultContent, err := json.Marshal(resultBlocks)
+	require.NoError(t, err)
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		Role:           "tool_result",
+		Content:        resultContent,
+		Sequence:       3,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+	require.NoError(t, err)
+
+	require.Len(t, req.Posts, 3)
+	toolRound := req.Posts[2]
+	assert.Equal(t, llm.PostRoleBot, toolRound.Role)
+	assert.Equal(t, "Let me call a tool", toolRound.Message)
+	assert.Empty(t, toolRound.Reasoning)
+	assert.Empty(t, toolRound.ReasoningSignature)
+	require.Len(t, toolRound.ToolUse, 1)
+	assert.Equal(t, "72F, sunny", toolRound.ToolUse[0].Result)
+}
+
 // TestBuildCompletionRequest_MultipleToolRoundsMerged verifies that multiple
 // tool rounds (each stored as a separate assistant + tool_result turn pair)
 // each get merged into a single assistant llm.Post with Result populated on

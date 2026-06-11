@@ -37,7 +37,7 @@ func (m *mockToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 			Name:        "WebSearch",
 			Description: "Search the web for information.",
 			Schema:      llm.NewJSONSchemaFromStruct[struct{ Term string }](),
-			Resolver: func(context *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
 				return "No results found.", nil
 			},
 		},
@@ -46,7 +46,7 @@ func (m *mockToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 
 type mockMCPClientManager struct{}
 
-func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
 	return []llm.Tool{}, nil
 }
 

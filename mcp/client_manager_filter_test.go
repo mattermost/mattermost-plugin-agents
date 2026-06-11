@@ -154,6 +154,56 @@ func TestFilterToolsByConfig(t *testing.T) {
 			wantToolNames: []string{"create_post", "search_users"},
 		},
 		{
+			name: "namespaced tool is denormalized before disabled admin policy lookup",
+			config: Config{
+				Servers: []ServerConfig{
+					{
+						Name:    "Jira",
+						Enabled: true,
+						BaseURL: "https://mcp.atlassian.com",
+						ToolConfigs: []ToolConfig{
+							{Name: "get_issue", Policy: ToolPolicyAsk, Enabled: false},
+						},
+					},
+				},
+			},
+			rawTools: []llm.Tool{
+				{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+		},
+		{
+			name: "unconfigured namespaced tool defaults enabled by bare name",
+			config: Config{
+				Servers: []ServerConfig{
+					{
+						Name:    "Jira",
+						Enabled: true,
+						BaseURL: "https://mcp.atlassian.com",
+						ToolConfigs: []ToolConfig{
+							{Name: "get_issue", Policy: ToolPolicyAsk, Enabled: true},
+						},
+					},
+				},
+			},
+			rawTools: []llm.Tool{
+				{Name: "jira__new_tool", Description: "New tool", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+			wantToolNames: []string{"jira__new_tool"},
+		},
+		{
+			name: "embedded namespaced tool is denormalized before admin policy lookup",
+			config: Config{
+				EmbeddedServer: EmbeddedServerConfig{
+					ToolConfigs: []ToolConfig{
+						{Name: "search_users", Policy: ToolPolicyAsk, Enabled: false},
+					},
+				},
+			},
+			rawTools: []llm.Tool{
+				{Name: "mattermost__search_users", Description: "Search users", ServerOrigin: EmbeddedClientKey},
+			},
+		},
+		{
 			name:   "plugin server enabled, tools flow through default-allow",
 			config: Config{},
 			pluginServers: []PluginServerConfig{

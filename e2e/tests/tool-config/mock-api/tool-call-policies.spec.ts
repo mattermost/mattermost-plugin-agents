@@ -25,6 +25,13 @@ import { createBotConfigHelper } from 'helpers/bot-config';
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
+const embeddedReadPostTool = 'mattermost__read_post';
+const embeddedReadChannelTool = 'mattermost__read_channel';
+const embeddedGetChannelInfoTool = 'mattermost__get_channel_info';
+const embeddedReadPostLabel = 'Read Post';
+const embeddedReadChannelLabel = 'Read Channel';
+const embeddedGetChannelInfoLabel = 'Get Channel Info';
+
 type EmbeddedToolConfig = {
     name: string;
     policy: 'ask' | 'auto_run_in_dm' | 'auto_run_everywhere';
@@ -205,7 +212,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // Build a tool-call response for an auto_run tool
         const toolCallSSE = buildToolCallResponse(
             'call_001',
-            'read_post',
+            embeddedReadPostTool,
             '{"post_id": "test123"}',
         );
         const followUpTextSSE = buildTextResponse('Here is the post content you requested.');
@@ -354,7 +361,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                         },
                         body: buildToolCallResponse(
                             'call_unsafe_read_post',
-                            'read_post',
+                            embeddedReadPostTool,
                             JSON.stringify({post_id: seededPost.id}),
                         ),
                     },
@@ -389,10 +396,10 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
             const rhs = page.locator('#rhsContainer');
             const latestBotPost = rhs.locator('[data-testid="llm-bot-post"]').last();
-            await expect(latestBotPost.getByText('Read Post', {exact: true})).toBeVisible({timeout: 30000});
+            await expect(latestBotPost.getByText(embeddedReadPostLabel, {exact: true})).toBeVisible({timeout: 30000});
             await expect(rhs.getByText('Finished reading the unsafe post.')).toBeVisible({timeout: 45000});
 
-            await latestBotPost.getByText('Read Post', {exact: true}).click();
+            await latestBotPost.getByText(embeddedReadPostLabel, {exact: true}).click();
             await expect(latestBotPost.getByText(seedMessage, {exact: false})).toBeVisible({timeout: 30000});
             await expect(latestBotPost.getByText('blocked-image')).toBeVisible({timeout: 30000});
             await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
@@ -464,7 +471,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     },
                     body: buildToolCallResponse(
                         'call_manual_channel_lookup',
-                        'get_channel_info',
+                        embeddedGetChannelInfoTool,
                         '{"channel_name":"Town Square"}',
                     ),
                 },
@@ -488,7 +495,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     },
                     body: buildToolCallResponse(
                         'call_auto_read_channel',
-                        'read_channel',
+                        embeddedReadChannelTool,
                         `{"channel_id":"${townSquareChannelID}","limit":50}`,
                     ),
                 },
@@ -532,21 +539,21 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const initialBotPost = botPosts.last();
-        await expect(initialBotPost.getByText('Get Channel Info', {exact: true})).toBeVisible({timeout: 30000});
+        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
 
         const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
         await expect(acceptButton).toBeVisible({timeout: 30000});
         await acceptButton.click();
 
         const latestBotPost = botPosts.last();
-        await expect(latestBotPost.getByText('Read Channel', {exact: true})).toBeVisible({timeout: 30000});
+        await expect(latestBotPost.getByText(embeddedReadChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
 
         // Completion text proves the final mock ran; wait for it before badge (post props may update after stream).
         await expect(rhs.getByText('The follow-up read_channel tool completed successfully.')).toBeVisible({timeout: 45000});
         await expect(rhs.getByText('Auto-approved')).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
-        await latestBotPost.getByText('Read Channel', {exact: true}).click();
+        await latestBotPost.getByText(embeddedReadChannelLabel, {exact: true}).click();
         // read_channel result is rendered as markdown; the seed string is not a single text node (bold, etc.).
         await expect(latestBotPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
@@ -586,7 +593,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     headers: {'Content-Type': 'text/event-stream'},
                     body: buildToolCallResponse(
                         toolCallID,
-                        'get_channel_info',
+                        embeddedGetChannelInfoTool,
                         `{"channel_id":"${townSquareChannelID}"}`,
                     ),
                 },
@@ -624,7 +631,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const postA = botPosts.nth(0);
 
-        await expect(postA.getByText('Get Channel Info', {exact: true})).toBeVisible({timeout: 30000});
+        await expect(postA.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
 
         // A pending-tool response has no text; it must not be overwritten with
         // the empty-result fallback that would mask the tool approval UI.
@@ -638,7 +645,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // Both the original tool card and the follow-up text are visible in
         // postA; no second bot post is created.
         await expect(postA.getByText(continuationMarker)).toBeVisible({timeout: 30000});
-        await expect(postA.getByText('Get Channel Info', {exact: true})).toBeVisible();
+        await expect(postA.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
         await expect(botPosts).toHaveCount(1);
     });
 
@@ -699,7 +706,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     },
                     body: buildToolCallResponse(
                         'call_channel_dm_only',
-                        'read_channel',
+                        embeddedReadChannelTool,
                         `{"channel_id":"${townSquareChannelID}","limit":5}`,
                     ),
                 },
@@ -763,7 +770,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     },
                     body: buildToolCallResponse(
                         'call_channel_everywhere',
-                        'read_channel',
+                        embeddedReadChannelTool,
                         `{"channel_id":"${townSquareChannelID}","limit":5}`,
                     ),
                 },
@@ -853,7 +860,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     headers: {'Content-Type': 'text/event-stream'},
                     body: buildToolCallResponse(
                         toolCallID,
-                        'get_channel_info',
+                        embeddedGetChannelInfoTool,
                         `{"channel_id":"${townSquareChannelID}"}`,
                     ),
                 },
