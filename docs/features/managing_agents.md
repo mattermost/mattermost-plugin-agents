@@ -69,8 +69,10 @@ By default, regular users do not have `manage_own_agent`. Grant it through your 
 
 The number of self-service agents you can create is gated by Mattermost's multi-LLM license check (Entry, Enterprise, or Enterprise Advanced).
 
-- **Without a multi-LLM license**, you can create and fully manage a single agent (`FreeTierAgentLimit = 1`, defined in `api/api_agents.go`). The Agents page always shows the agent list; once one agent exists the **Create agent** button is disabled with an upgrade hint. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
+- **Without a multi-LLM license**, you can create and fully manage one active self-service agent (`FreeTierAgentLimit = 1`, defined in `api/api_agents.go`). The Agents page always shows the agent list; once the server-wide active agent limit is reached the **Create agent** button is disabled with an upgrade hint. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
 - **With a multi-LLM license**, agent creation is unlimited (subject to permissions).
+
+The free-tier quota is server-wide and based on active agents, not only the agents visible to the current user. A user may see no accessible agents but still be blocked from creating one if another active self-service agent exists elsewhere on the server.
 
 For the full feature/license matrix, see [License requirements](../admin_guide.md#license-requirements) in the Admin Guide.
 
@@ -249,7 +251,9 @@ Practical consequences:
 
 ### "Create agent" is disabled and an upgrade hint is shown
 
-The server is at the free-tier self-service agent limit without a multi-LLM licence. The Agents page still shows the list, but after one self-service agent exists, **Create agent** is disabled. Apply an Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to create additional agents, or delete the existing free-tier agent before creating a replacement.
+The server is at the free-tier active self-service agent limit without a multi-LLM license. The Agents page still shows the list, but **Create agent** is disabled because multiple self-service agents require a qualifying Mattermost plan. The existing active agent may be one the signed-in user cannot see.
+
+Apply an Entry, Enterprise, or Enterprise Advanced license in **System Console > About > Edition and License** to create additional agents, or delete the existing free-tier agent before creating a replacement.
 
 ### "Create agent" button is hidden
 
