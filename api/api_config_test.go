@@ -409,3 +409,63 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	assert.Equal(t, 1, updater.callCount)
 	assert.Equal(t, 1, notifier.callCount)
 }
+
+func TestAdminConfigRoundTripsMCPRetrievalOverride(t *testing.T) {
+	store := &testConfigStore{}
+	updater := &testConfigUpdater{}
+	notifier := &testClusterNotifier{}
+	router := setupTestRouter(store, updater, notifier)
+
+	saveCfg := config.Config{
+		MCP: config.MCPConfig{
+			Servers: []config.MCPServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []config.MCPToolConfig{
+						{
+							Name:                         "get_issue",
+							Policy:                       config.MCPToolPolicyAsk,
+							Enabled:                      true,
+							RetrievalDescriptionOverride: "Find Jira issues by incident context",
+						},
+					},
+				},
+			},
+			EmbeddedServer: config.MCPEmbeddedServerConfig{
+				ToolConfigs: []config.MCPToolConfig{
+					{
+						Name:                         "search_users",
+						Policy:                       config.MCPToolPolicyAutoRunInDM,
+						Enabled:                      true,
+						RetrievalDescriptionOverride: "Find Mattermost people",
+					},
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(saveCfg)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/config", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var loadedCfg config.Config
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &loadedCfg))
+	require.Len(t, loadedCfg.MCP.Servers, 1)
+	require.Len(t, loadedCfg.MCP.Servers[0].ToolConfigs, 1)
+	require.Equal(t, "Find Jira issues by incident context", loadedCfg.MCP.Servers[0].ToolConfigs[0].RetrievalDescriptionOverride)
+	require.Len(t, loadedCfg.MCP.EmbeddedServer.ToolConfigs, 1)
+	require.Equal(t, "Find Mattermost people", loadedCfg.MCP.EmbeddedServer.ToolConfigs[0].RetrievalDescriptionOverride)
+	require.Equal(t, 1, updater.callCount)
+	require.Equal(t, 1, notifier.callCount)
+}

@@ -3,13 +3,40 @@
 
 package llm
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 const MaxConsecutiveToolCallFailures = 3
+
+const batchSkippedToolResultPrefix = "[batch_skipped] "
+
+// BatchSkippedToolResult marks a tool result as skipped because another tool in
+// the same batch was unavailable. The message is still surfaced to the LLM and
+// UI as an error, but it must not count toward MaxConsecutiveToolCallFailures.
+func BatchSkippedToolResult(toolName string, unavailableNames []string) string {
+	return batchSkippedToolResultPrefix + fmt.Sprintf(
+		"tool %s was not executed because the batch contained unavailable tool(s): %s",
+		toolName,
+		strings.Join(unavailableNames, ", "),
+	)
+}
+
+func IsBatchSkippedToolResult(result string) bool {
+	return strings.HasPrefix(result, batchSkippedToolResultPrefix)
+}
 
 const ToolRetryLimitSystemMessage = "The last 3 tool attempts failed. Do not call any more tools. Explain the latest error to the user and ask for guidance or missing information."
 
 const ToolIterationLimitUserMessage = "You have used all available tool calls. Do not call any more tools. Answer the user's question using the results from your previous tool calls. If those results did not provide enough information, say so and summarize what you tried."
+
+// IsToolRetryExempt identifies MCP dynamic-loading meta-tools. Keep these
+// names in sync with mcp.SearchToolsName and mcp.LoadToolName without importing
+// mcp here, which would create a package cycle.
+func IsToolRetryExempt(name string) bool {
+	return name == "search_tools" || name == "load_tool"
+}
 
 // CountTrailingFailedToolCalls counts consecutive trailing tool executions that
 // failed. A successful tool execution resets the streak. Posts without executed
@@ -84,9 +111,20 @@ func trailingFailedToolCalls(toolCalls []ToolCall) (count int, allFailed bool, h
 		return 0, false, false
 	}
 
+	sawRetryExemptError := false
+	sawBatchSkippedError := false
 	for _, toolCall := range toolCalls {
 		switch toolCall.Status {
 		case ToolCallStatusError:
+			if IsToolRetryExempt(toolCall.Name) {
+				sawRetryExemptError = true
+				continue
+			}
+			if IsBatchSkippedToolResult(toolCall.Result) {
+				sawBatchSkippedError = true
+				hasExecutedTool = true
+				continue
+			}
 			count++
 			hasExecutedTool = true
 		case ToolCallStatusSuccess, ToolCallStatusAutoApproved:
@@ -98,5 +136,8 @@ func trailingFailedToolCalls(toolCalls []ToolCall) (count int, allFailed bool, h
 		}
 	}
 
+	if count == 0 && (sawRetryExemptError || sawBatchSkippedError) {
+		return 0, true, true
+	}
 	return count, count > 0, hasExecutedTool
 }

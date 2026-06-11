@@ -13,7 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
-	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +42,7 @@ func newFakePluginMCPServer(t *testing.T, toolCount int) *httptest.Server {
 // prefix; UserClients.GetTools dedupes by tool name across servers.
 func newFakePluginMCPServerWithPrefix(t *testing.T, prefix string, toolCount int) *httptest.Server {
 	t.Helper()
-	srv := gosdkmcp.NewServer(&gosdkmcp.Implementation{Name: "fake", Version: "1.0"}, nil)
+	srv := gomcp.NewServer(&gomcp.Implementation{Name: "fake", Version: "1.0"}, nil)
 	type echoIn struct {
 		Message string `json:"message"`
 	}
@@ -51,13 +51,13 @@ func newFakePluginMCPServerWithPrefix(t *testing.T, prefix string, toolCount int
 	}
 	for i := 0; i < toolCount; i++ {
 		name := fmt.Sprintf("%s_%d", prefix, i)
-		gosdkmcp.AddTool(srv, &gosdkmcp.Tool{Name: name, Description: "test"}, func(_ context.Context, _ *gosdkmcp.CallToolRequest, in echoIn) (*gosdkmcp.CallToolResult, echoOut, error) {
+		gomcp.AddTool(srv, &gomcp.Tool{Name: name, Description: "test"}, func(_ context.Context, _ *gomcp.CallToolRequest, in echoIn) (*gomcp.CallToolResult, echoOut, error) {
 			return nil, echoOut{Echo: in.Message}, nil
 		})
 	}
-	h := gosdkmcp.NewStreamableHTTPHandler(
-		func(*http.Request) *gosdkmcp.Server { return srv },
-		&gosdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+	h := gomcp.NewStreamableHTTPHandler(
+		func(*http.Request) *gomcp.Server { return srv },
+		&gomcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
 	)
 	return httptest.NewServer(h)
 }
@@ -74,6 +74,110 @@ func newPluginHTTPForwarder(t *testing.T, target *httptest.Server) *fakePluginHT
 			return rec.Result()
 		},
 	}
+}
+
+func TestUserClientsGetToolsNamespacesDuplicateBareNames(t *testing.T) {
+	userClients := &UserClients{
+		userID: "user-id",
+		clients: map[string]*Client{
+			"github": testClientWithTools("GitHub", "https://api.githubcopilot.com", "search"),
+			"jira":   testClientWithTools("Jira", "https://mcp.atlassian.com", "search"),
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+
+	requireToolNames(t, tools, "github__search", "jira__search")
+}
+
+func TestUserClientsGetToolsResolverUsesBareToolName(t *testing.T) {
+	server := newTestMCPServer(0, "search")
+	session := connectInMemoryTestSession(t, server)
+	userClients := &UserClients{
+		userID: "user-id",
+		clients: map[string]*Client{
+			"jira": {
+				session: session,
+				config:  ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+				tools: map[string]*gomcp.Tool{
+					"search": {
+						Name:        "search",
+						Description: "Search Jira",
+					},
+				},
+			},
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+	requireToolNames(t, tools, "jira__search")
+
+	result, err := tools[0].Resolver(context.Background(), &llm.Context{}, func(args any) error {
+		*(args.(*map[string]any)) = map[string]any{}
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "search ok\n", result)
+}
+
+func TestUserClientsGetToolsEmbeddedToolNamesUseMattermostSlug(t *testing.T) {
+	userClients := &UserClients{
+		userID: "user-id",
+		clients: map[string]*Client{
+			EmbeddedClientKey: testClientWithTools(EmbeddedClientKey, EmbeddedClientKey, "search_users"),
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+
+	requireToolNames(t, tools, "mattermost__search_users")
+}
+
+func TestUserClientsGetToolsDeterministicSlugCollision(t *testing.T) {
+	userClients := &UserClients{
+		userID: "user-id",
+		clients: map[string]*Client{
+			"server-a": testClientWithTools("Jira!", "https://a.example.com", "search"),
+			"server-b": testClientWithTools("Jira", "https://b.example.com", "search"),
+		},
+	}
+	expectedDedupedName := "jira_" + shortSlugHash("https://b.example.com") + "__search"
+
+	first := userClients.GetTools(context.Background())
+	second := userClients.GetTools(context.Background())
+
+	requireToolNames(t, first, "jira__search", expectedDedupedName)
+	requireToolNames(t, second, "jira__search", expectedDedupedName)
+}
+
+func TestUserClientsGetToolsUsesCachedCatalog(t *testing.T) {
+	server := newTestMCPServer(0, "old_tool")
+	session := connectInMemoryTestSession(t, server)
+	addTestMCPTool(server, "new_tool")
+	client := &Client{
+		session: session,
+		config:  ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+		tools: map[string]*gomcp.Tool{
+			"old_tool": {
+				Name:        "old_tool",
+				Description: "Old tool",
+			},
+		},
+		userID: "user-id",
+		log:    newTestLogService(),
+	}
+	userClients := &UserClients{
+		userID: "user-id",
+		log:    newTestLogService(),
+		clients: map[string]*Client{
+			"jira": client,
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+
+	requireToolNames(t, tools, "jira__old_tool")
 }
 
 func TestConnectToPluginServer_HappyPath(t *testing.T) {
@@ -98,11 +202,11 @@ func TestConnectToPluginServer_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 
 	originKey := "plugin://" + cfg.PluginID
-	c, ok := uc.clients[originKey]
-	require.True(t, ok, "expected client under origin key %s", originKey)
-	require.NotNil(t, c)
-	require.Equal(t, originKey, c.config.BaseURL)
-	require.Len(t, c.tools, 2)
+	require.True(t, uc.hasClient(originKey))
+	snapshot := uc.snapshotClients()
+	require.Len(t, snapshot, 1)
+	require.Equal(t, originKey, snapshot[0].client.config.BaseURL)
+	require.Len(t, snapshot[0].client.Tools(), 2)
 }
 
 func TestConnectToPluginServer_Idempotent(t *testing.T) {
@@ -130,6 +234,94 @@ func TestConnectToPluginServer_NilAPI(t *testing.T) {
 	uc := NewUserClients("alice", client.Log, nil, nil, nil)
 	err := uc.ConnectToPluginServer(context.Background(), PluginServerConfig{PluginID: "x", Path: "/mcp"}, nil)
 	require.Error(t, err)
+}
+
+func TestConnectToEmbeddedServerIfAvailable_Idempotent(t *testing.T) {
+	server := newTestMCPServer(0, "tool_1")
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
+
+	pluginAPI := newTestPluginAPIForEmbeddedManager("alice", "session-id")
+	embeddedClient := NewEmbeddedServerClient(&fakeEmbeddedMCPServer{ctx: runCtx, server: server}, pluginAPI.Log, pluginAPI)
+	uc := NewUserClients("alice", pluginAPI.Log, nil, nil, nil)
+	cfg := EmbeddedServerConfig{Enabled: true}
+
+	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "session-id", embeddedClient, cfg))
+	firstSnapshot := uc.snapshotClients()
+	require.Len(t, firstSnapshot, 1)
+	firstClient := firstSnapshot[0].client
+
+	// Stop the embedded server so a second dial would fail if Connect re-created a client.
+	cancelRun()
+	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "session-id", embeddedClient, cfg))
+
+	secondSnapshot := uc.snapshotClients()
+	require.Len(t, secondSnapshot, 1)
+	require.Same(t, firstClient, secondSnapshot[0].client)
+}
+
+func TestUserClientsGetToolsResolverUsesResolverContext(t *testing.T) {
+	callCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	server := newTestMCPServer(0, "search")
+	session := connectInMemoryTestSession(t, server)
+	userClients := &UserClients{
+		userID: "user-id",
+		clients: map[string]*Client{
+			"jira": {
+				session: session,
+				config:  ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+				tools: map[string]*gomcp.Tool{
+					"search": {
+						Name:        "search",
+						Description: "Search Jira",
+					},
+				},
+			},
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+	require.Len(t, tools, 1)
+
+	_, err := tools[0].Resolver(callCtx, &llm.Context{}, func(args any) error {
+		*(args.(*map[string]any)) = map[string]any{}
+		return nil
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestUserClientsGetToolsResolverWorksWithEmptyLLMContext(t *testing.T) {
+	server := newTestMCPServer(0, "search")
+	session := connectInMemoryTestSession(t, server)
+	userClients := &UserClients{
+		userID: "user-id",
+		clients: map[string]*Client{
+			"jira": {
+				session: session,
+				config:  ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+				tools: map[string]*gomcp.Tool{
+					"search": {
+						Name:        "search",
+						Description: "Search Jira",
+					},
+				},
+			},
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+	require.Len(t, tools, 1)
+
+	result, err := tools[0].Resolver(context.Background(), &llm.Context{}, func(args any) error {
+		*(args.(*map[string]any)) = map[string]any{}
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "search ok\n", result)
 }
 
 func TestPrepareToolCallMetadata_EmbeddedMergesCallMetadataAndBotUserID(t *testing.T) {
@@ -163,4 +355,22 @@ func TestPrepareToolCallMetadata_EmbeddedMergesCallMetadataAndBotUserID(t *testi
 
 	remoteMeta := clients.prepareToolCallMetadata(remoteClient, "search_posts", llmContext)
 	require.Nil(t, remoteMeta)
+}
+
+func testClientWithTools(name, baseURL string, toolNames ...string) *Client {
+	tools := make(map[string]*gomcp.Tool, len(toolNames))
+	for _, toolName := range toolNames {
+		tools[toolName] = &gomcp.Tool{
+			Name:        toolName,
+			Description: "Test tool " + toolName,
+		}
+	}
+	return &Client{
+		config: ServerConfig{
+			Name:    name,
+			BaseURL: baseURL,
+			Enabled: true,
+		},
+		tools: tools,
+	}
 }

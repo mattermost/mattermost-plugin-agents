@@ -1,4 +1,4 @@
-# Schema Migration Review: 000008 — Add MaxToolTurns to Agents_UserAgents
+# Schema Migration Review: 000009 — Add MaxToolTurns to Agents_UserAgents
 
 > **Context:** Persists per-agent override for the tool-call-execute-recall loop ceiling enforced by `toolrunner`. `Agents_UserAgents` is admin-configured and bounded (typically tens of rows).
 

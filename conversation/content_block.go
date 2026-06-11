@@ -46,6 +46,7 @@ type ContentBlock struct {
 	Name         string          `json:"name,omitempty"`
 	ServerOrigin string          `json:"server_origin,omitempty"`
 	Input        json.RawMessage `json:"input,omitempty"`
+	MCPBareName  string          `json:"mcp_bare_name,omitempty"`
 	Status       string          `json:"status,omitempty"`
 	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
 
@@ -112,6 +113,7 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 		case BlockTypeToolUse:
 			if block.Shared == nil || !*block.Shared {
 				result[i].Input = nil
+				result[i].MCPBareName = ""
 			}
 		case BlockTypeToolResult:
 			if block.Shared == nil || !*block.Shared {

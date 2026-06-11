@@ -5,6 +5,7 @@ package api
 
 import (
 	"bytes"
+	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -163,7 +164,7 @@ func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRe
 	return context, nil
 }
 
-func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, operation, operationSubType string) (llm.CompletionRequest, error) {
+func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
 		return llm.CompletionRequest{}, err
@@ -172,7 +173,7 @@ func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclien
 	bridgeContext := llm.NewContext()
 	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
 	if includeTools && a.contextBuilder != nil {
-		a.contextBuilder.WithLLMContextTools(bot)(bridgeContext)
+		a.contextBuilder.WithLLMContextConcreteTools(ctx, bot)(bridgeContext)
 	}
 
 	resolvedOperation := operation
@@ -270,6 +271,7 @@ func validateCompletionRequestIDs(req bridgeclient.CompletionRequest) (int, erro
 }
 
 func (a *API) prepareAgentBridgeCompletion(
+	ctx stdcontext.Context,
 	agent string,
 	req bridgeclient.CompletionRequest,
 	pluginID string,
@@ -314,7 +316,7 @@ func (a *API) prepareAgentBridgeCompletion(
 	}
 
 	toolsRequested := allowedToolNames != nil
-	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested, operation, operationSubType)
+	llmRequest, err := a.convertAgentBridgeRequestToInternal(ctx, bot, req, toolsRequested, operation, operationSubType)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
 	}
@@ -695,7 +697,7 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 	toolContext := llm.NewContext()
 	toolContext.RequestingUser = &model.User{Id: userID}
 	if a.contextBuilder != nil {
-		a.contextBuilder.WithLLMContextTools(bot)(toolContext)
+		a.contextBuilder.WithLLMContextConcreteTools(c.Request.Context(), bot)(toolContext)
 	}
 
 	var tools []bridgeclient.BridgeToolInfo
@@ -786,7 +788,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, shouldExecute, beforeHookKeys, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeStreaming)
+	bot, llmRequest, opts, shouldExecute, beforeHookKeys, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
@@ -817,7 +819,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, shouldExecute, beforeHookKeys, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeNoStream)
+	bot, llmRequest, opts, shouldExecute, beforeHookKeys, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),

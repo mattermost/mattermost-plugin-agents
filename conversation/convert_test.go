@@ -170,7 +170,7 @@ func TestBlocksToPost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := BlocksToPost(tt.blocks, tt.role, false, nil, false, 0)
+			result := BlocksToPost(tt.blocks, tt.role, PostConversionOptions{})
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -180,14 +180,22 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	blocks := []ContentBlock{
 		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{"q":"public"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
 		{Type: BlockTypeToolResult, ToolUseID: "t-shared", Content: "PUBLIC", Status: StatusSuccess, Shared: BoolPtr(true)},
-		{Type: BlockTypeToolUse, ID: "t-private", Name: "read_dm", Input: json.RawMessage(`{"channel":"secret-dm"}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+		{
+			Type:        BlockTypeToolUse,
+			ID:          "t-private",
+			Name:        "read_dm",
+			Input:       json.RawMessage(`{"channel":"secret-dm"}`),
+			MCPBareName: "read_dm",
+			Status:      StatusSuccess,
+			Shared:      BoolPtr(false),
+		},
 		{Type: BlockTypeToolResult, ToolUseID: "t-private", Content: "SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
 		{Type: BlockTypeToolUse, ID: "t-nilshared", Name: "foo", Input: json.RawMessage(`{"token":"xyz"}`), Status: StatusSuccess},
 		{Type: BlockTypeToolResult, ToolUseID: "t-nilshared", Content: "ALSO SECRET", Status: StatusSuccess},
 	}
 
 	t.Run("redactUnshared=false", func(t *testing.T) {
-		got := BlocksToPost(blocks, "assistant", false, nil, false, 0)
+		got := BlocksToPost(blocks, "assistant", PostConversionOptions{})
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
 		args := map[string]string{}
@@ -204,7 +212,7 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	})
 
 	t.Run("redactUnshared=true", func(t *testing.T) {
-		got := BlocksToPost(blocks, "assistant", true, nil, false, 0)
+		got := BlocksToPost(blocks, "assistant", PostConversionOptions{RedactUnshared: true})
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
 		args := map[string]string{}
@@ -221,7 +229,82 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 		assert.JSONEq(t, `{"q":"public"}`, args["t-shared"])
 		assert.JSONEq(t, `{}`, args["t-private"])
 		assert.JSONEq(t, `{}`, args["t-nilshared"])
+		for _, tc := range got.ToolUse {
+			if tc.ID == "t-private" {
+				assert.Nil(t, tc.Schema)
+				assert.Empty(t, tc.MCPBareName)
+				assert.Empty(t, tc.Description)
+			}
+		}
 	})
+}
+
+func TestPostToBlocksPreservesToolIdentityMetadata(t *testing.T) {
+	post := llm.Post{
+		Role: llm.PostRoleBot,
+		ToolUse: []llm.ToolCall{{
+			ID:           "tc1",
+			Name:         "jira__get_issue",
+			Description:  "Get a Jira issue",
+			ServerOrigin: "https://jira.example.com",
+			Arguments:    json.RawMessage(`{"key":"MM-1"}`),
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"key": map[string]any{"type": "string"},
+				},
+			},
+			MCPBareName: "get_issue",
+			Status:      llm.ToolCallStatusPending,
+		}},
+	}
+
+	blocks := PostToBlocks(post, false)
+
+	require.Len(t, blocks, 1)
+	assert.Equal(t, BlockTypeToolUse, blocks[0].Type)
+	assert.Equal(t, "jira__get_issue", blocks[0].Name)
+	assert.Equal(t, "https://jira.example.com", blocks[0].ServerOrigin)
+	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
+
+	data, err := json.Marshal(blocks[0])
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "input_schema")
+	assert.NotContains(t, string(data), "tool_description")
+}
+
+func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
+	// Persisted block omits the bare name on purpose: rehydration must derive
+	// it from the namespaced catalog entry, not echo a value the test pre-set.
+	blocks := []ContentBlock{{
+		Type:         BlockTypeToolUse,
+		ID:           "tc1",
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Input:        json.RawMessage(`{"key":"MM-1"}`),
+		Status:       StatusPending,
+		Shared:       BoolPtr(true),
+	}}
+	toolStore := llm.NewToolStore()
+	schema := json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`)
+	toolStore.AddTools([]llm.Tool{{
+		Name:         "jira__get_issue",
+		Description:  "Get a Jira issue",
+		Schema:       schema,
+		ServerOrigin: "https://jira.example.com",
+	}})
+
+	post := BlocksToPost(blocks, "assistant", PostConversionOptions{ToolStore: toolStore})
+
+	require.Len(t, post.ToolUse, 1)
+	toolCall := post.ToolUse[0]
+	assert.Equal(t, "tc1", toolCall.ID)
+	assert.Equal(t, "jira__get_issue", toolCall.Name)
+	assert.Equal(t, "https://jira.example.com", toolCall.ServerOrigin)
+	assert.Equal(t, "get_issue", toolCall.MCPBareName)
+	assert.Equal(t, "Get a Jira issue", toolCall.Description)
+	require.IsType(t, json.RawMessage{}, toolCall.Schema)
+	assert.JSONEq(t, `{"type":"object","properties":{"key":{"type":"string"}}}`, string(toolCall.Schema.(json.RawMessage)))
 }
 
 func TestPostToBlocks(t *testing.T) {
@@ -444,7 +527,7 @@ func TestPostToBlocksToPostRoundTrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			blocks := PostToBlocks(tt.post, tt.shared)
 			role := RoleToString(tt.post.Role)
-			roundTripped := BlocksToPost(blocks, role, false, nil, false, 0)
+			roundTripped := BlocksToPost(blocks, role, PostConversionOptions{})
 
 			assert.Equal(t, tt.post.Role, roundTripped.Role)
 			assert.Equal(t, tt.post.Message, roundTripped.Message)
@@ -843,7 +926,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			}
 
 			if tt.nilClient {
-				post := BlocksToPost(tt.blocks, role, false, nil, tt.enableVision, 0)
+				post := BlocksToPost(tt.blocks, role, PostConversionOptions{EnableVision: tt.enableVision})
 				tt.assert(t, nil, post)
 				return
 			}
@@ -853,7 +936,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 				tt.setup(mmClient)
 			}
 
-			post := BlocksToPost(tt.blocks, role, false, mmClient, tt.enableVision, 0)
+			post := BlocksToPost(tt.blocks, role, PostConversionOptions{MMClient: mmClient, EnableVision: tt.enableVision})
 			tt.assert(t, mmClient, post)
 		})
 	}

@@ -58,6 +58,7 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
+	streamingService     streaming.Service
 	telemetryShutdown    telemetry.ShutdownFunc
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
@@ -418,6 +419,7 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		&p.configuration,
 	)
+	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
 
 	conversationsService := conversations.New(
 		prompts,
@@ -454,7 +456,7 @@ func (p *Plugin) OnActivate() error {
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations.
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
-		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, toolName)
+		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, llm.BareMCPToolName(toolName))
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
@@ -499,6 +501,7 @@ func (p *Plugin) OnActivate() error {
 		p,
 		p,
 		p,
+		p,
 		p.store,
 		getSearchInitError,
 		customPromptsStore,
@@ -517,6 +520,7 @@ func (p *Plugin) OnActivate() error {
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
+	p.streamingService = streamingService
 
 	return nil
 }

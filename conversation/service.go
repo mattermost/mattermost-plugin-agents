@@ -431,6 +431,10 @@ func AssembleRequest(
 		}
 	}
 
+	if context != nil {
+		RestoreLoadedMCPToolsFromTurns(context.Tools, turns)
+	}
+
 	posts := make([]llm.Post, 0, len(turns)+1)
 
 	// System prompt is always first.
@@ -439,7 +443,16 @@ func AssembleRequest(
 		Message: conv.SystemPrompt,
 	})
 
-	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, mmClient, enableVision, maxFileSize)
+	conversionOpts := PostConversionOptions{
+		RedactUnshared: redactUnshared,
+		MMClient:       mmClient,
+		EnableVision:   enableVision,
+		MaxFileSize:    maxFileSize,
+	}
+	if context != nil {
+		conversionOpts.ToolStore = context.Tools
+	}
+	turnPosts, err := turnsToLLMPosts(turns, conversionOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -473,10 +486,7 @@ func (s *Service) attachmentConfigForBot(botID string) (bool, int64) {
 // Anthropic rejects with "text content blocks must be non-empty".
 func turnsToLLMPosts(
 	turns []store.Turn,
-	redactUnshared bool,
-	mmClient mmapi.Client,
-	enableVision bool,
-	maxFileSize int64,
+	conversionOpts PostConversionOptions,
 ) ([]llm.Post, error) {
 	posts := make([]llm.Post, 0, len(turns))
 	for i := 0; i < len(turns); i++ {
@@ -493,7 +503,16 @@ func turnsToLLMPosts(
 			blocks = append(blocks, nextBlocks...)
 			i++
 		}
-		post := BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize)
+		post := BlocksToPost(blocks, turn.Role, conversionOpts)
+		if turn.Role == "assistant" {
+			// Anthropic signed thinking must be replayed byte-for-byte. Our stored
+			// content blocks intentionally normalize assistant output (merge text
+			// blocks, pair tool_use/result turns, redact private content), so the
+			// persisted thinking block is not safe to send back as provider history.
+			// Keep reasoning for UI/persistence, but omit it from rebuilt requests.
+			post.Reasoning = ""
+			post.ReasoningSignature = ""
+		}
 		posts = append(posts, post)
 	}
 	return posts, nil
@@ -675,6 +694,10 @@ func (s *Service) BuildChannelMentionRequest(
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
 
+	if context != nil {
+		RestoreLoadedMCPToolsFromTurns(context.Tools, turns)
+	}
+
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
 
 	// Build a set of post IDs that belong to the bot's turns.
@@ -743,7 +766,16 @@ func (s *Service) BuildChannelMentionRequest(
 	// (precedingSeq = 0). Route through turnsToLLMPosts so tool_use and
 	// tool_result within the same tool round merge into a single llm.Post,
 	// matching BuildCompletionRequest's behavior.
-	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared, s.mmClient, enableVision, maxFileSize)
+	conversionOpts := PostConversionOptions{
+		RedactUnshared: redactUnshared,
+		MMClient:       s.mmClient,
+		EnableVision:   enableVision,
+		MaxFileSize:    maxFileSize,
+	}
+	if context != nil {
+		conversionOpts.ToolStore = context.Tools
+	}
+	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], conversionOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -756,7 +788,7 @@ func (s *Service) BuildChannelMentionRequest(
 			// preceding assistant turn's tool_use blocks.
 			turn := turnByPostID[threadPost.Id]
 			run := append([]store.Turn{turn}, turnsByPrecedingPost[turn.Sequence]...)
-			runPosts, err := turnsToLLMPosts(run, redactUnshared, s.mmClient, enableVision, maxFileSize)
+			runPosts, err := turnsToLLMPosts(run, conversionOpts)
 			if err != nil {
 				return nil, err
 			}
@@ -769,8 +801,7 @@ func (s *Service) BuildChannelMentionRequest(
 				username = user.Username
 			}
 			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient)
-			post := BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize)
-			posts = append(posts, post)
+			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: s.mmClient, EnableVision: enableVision, MaxFileSize: maxFileSize}))
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break

@@ -98,10 +98,6 @@ func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
 
 type testLLMContextConfigProvider struct{}
 
-func (p *testLLMContextConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (p *testLLMContextConfigProvider) GetServiceByID(_ string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
@@ -189,7 +185,7 @@ func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 	return nil
 }
 
-func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
 	return m.tools, m.mcpErrors
 }
 
@@ -335,6 +331,9 @@ func (m *mockConversationStore) GetConversationSummariesForUser(_ string, _, _ i
 // mockAgentStore is a minimal in-memory implementation of AgentStore for testing.
 type mockAgentStore struct {
 	agents map[string]*llm.BotConfig
+
+	// countErr, when set, makes CountActiveAgents fail (to exercise best-effort paths).
+	countErr error
 }
 
 func newMockAgentStore() *mockAgentStore {
@@ -406,6 +405,9 @@ func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig
 }
 
 func (m *mockAgentStore) CountActiveAgents() (int, error) {
+	if m.countErr != nil {
+		return 0, m.countErr
+	}
 	count := 0
 	for _, cfg := range m.agents {
 		if cfg.DeleteAt == 0 {
@@ -594,6 +596,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		agentStore,
+		nil,
 		nil,
 		nil,
 		nil,

@@ -170,6 +170,14 @@ func (t *otelTracer) GetDeferredSpanHandle(traceID string) bschemas.SpanHandle {
 	return t.deferredSpans[traceID]
 }
 
+// GetSpanHandleByID returns the span handle stored for the trace. This OTel
+// adapter keeps a single deferred (root) span per trace ID and does not index
+// individual spans by ID, so spanID is ignored and the trace's stored handle is
+// returned (nil if none), mirroring NoOpTracer's behavior.
+func (t *otelTracer) GetSpanHandleByID(traceID string, _ *string) bschemas.SpanHandle {
+	return t.GetDeferredSpanHandle(traceID)
+}
+
 func (t *otelTracer) ClearDeferredSpan(traceID string) {
 	t.mu.Lock()
 	delete(t.deferredSpans, traceID)
@@ -246,7 +254,7 @@ func (t *otelTracer) GetAccumulatedChunks(traceID string) (*bschemas.BifrostResp
 // returns a result on the final chunk. Bifrost's exporter plugins
 // expect a non-nil result on the terminating call so they can flush;
 // we only synthesize one when isFinalChunk is true.
-func (t *otelTracer) ProcessStreamingChunk(traceID string, isFinalChunk bool, result *bschemas.BifrostResponse, bErr *bschemas.BifrostError) *bschemas.StreamAccumulatorResult {
+func (t *otelTracer) ProcessStreamingChunk(_ *bschemas.BifrostContext, traceID string, isFinalChunk bool, result *bschemas.BifrostResponse, bErr *bschemas.BifrostError) *bschemas.StreamAccumulatorResult {
 	if traceID == "" {
 		return nil
 	}

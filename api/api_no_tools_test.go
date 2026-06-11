@@ -36,11 +36,12 @@ func (p *noToolsTestToolProvider) GetTools(*bots.Bot) []llm.Tool {
 
 type noToolsTestMCPProvider struct {
 	calls int
+	tools []llm.Tool
 }
 
-func (p *noToolsTestMCPProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
+func (p *noToolsTestMCPProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
-	return nil, nil
+	return p.tools, nil
 }
 
 type noToolsTestContextConfigProvider struct{}
@@ -281,6 +282,39 @@ func TestHandleIntervalDoesNotLoadToolsWhenToolsAreDisabled(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.Equal(t, 1, streamingService.newDMCalls)
 	require.Equal(t, 0, mcpProvider.calls, "channel interval should not build MCP tools when the LLM call disables tools")
+}
+
+func TestHandleChannelAnalysisAcceptsNamespacedEmbeddedTools(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	mcpProvider := &noToolsTestMCPProvider{
+		tools: []llm.Tool{
+			{Name: "mattermost__read_channel", ServerOrigin: mcp.EmbeddedClientKey},
+			{Name: "mattermost__get_channel_info", ServerOrigin: mcp.EmbeddedClientKey},
+		},
+	}
+	mmClient := mmapimocks.NewMockClient(t)
+	e, streamingService, _ := setupNoToolsAPI(t, mcpProvider, mmClient)
+	defer e.Cleanup(t)
+
+	requestingUser := &model.User{Id: testUserID, Username: "requester", Locale: "en"}
+	channel := &model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen, TeamId: "teamid"}
+
+	e.mockAPI.On("GetChannel", testChannelID).Return(channel, nil)
+	e.mockAPI.On("GetTeam", "teamid").Return(&model.Team{Id: "teamid", Name: "team"}, nil)
+	e.mockAPI.On("HasPermissionToChannel", testUserID, testChannelID, model.PermissionReadChannel).Return(true)
+	e.mockAPI.On("GetUser", testUserID).Return(requestingUser, nil)
+
+	request := httptest.NewRequest(http.MethodPost, "/channel/"+testChannelID+"/analyze", strings.NewReader(`{"analysis_type":"custom","prompt":"summarize this channel"}`))
+	request.Header.Add("Mattermost-User-ID", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode, recorder.Body.String())
+	require.Equal(t, 1, streamingService.newDMCalls)
+	require.Equal(t, 1, mcpProvider.calls)
 }
 
 // TestHandleIntervalSetsConversationRootPostID verifies that after an

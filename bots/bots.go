@@ -125,15 +125,26 @@ func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, map[string]struct{}
 	return botCfgs, activeDBBotUsernames, serviceCfgs, nil
 }
 
-// resolveServiceCfgs builds a map of service configs referenced by the given bot configs.
+// resolveServiceCfgs builds a map of service configs referenced by the given
+// bot configs, including any services in each service's fallback chain. This
+// ensures that changes to fallback services are detected for optimistic
+// change-detection in EnsureBots.
 func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.ServiceConfig {
 	result := make(map[string]llm.ServiceConfig, len(botCfgs))
 	for _, botCfg := range botCfgs {
-		if _, exists := result[botCfg.ServiceID]; exists {
-			continue
+		if _, exists := result[botCfg.ServiceID]; !exists {
+			if svc, ok := b.config.GetServiceByID(botCfg.ServiceID); ok {
+				result[botCfg.ServiceID] = svc
+			}
 		}
-		if svc, ok := b.config.GetServiceByID(botCfg.ServiceID); ok {
-			result[botCfg.ServiceID] = svc
+		// Include fallback chain services so changes to them trigger re-init.
+		// Best-effort: a chain-resolution error is surfaced when the bot's LLM
+		// is built, so it is ignored here.
+		fbChain, _ := llm.ResolveFallbackChain(botCfg.ServiceID, b.config.GetServiceByID)
+		for _, fbSvc := range fbChain {
+			if _, exists := result[fbSvc.ID]; !exists {
+				result[fbSvc.ID] = fbSvc
+			}
 		}
 	}
 	return result
@@ -380,8 +391,14 @@ func (b *MMBots) EnsureBots() error {
 
 		b.ensureDefaultProfileImage(bot)
 
-		var err error
-		bot.llm, err = b.getLLM(bot.service, bot.cfg)
+		// Resolve fallback chain for this bot's service. A misconfigured chain
+		// fails bot setup so the admin finds out now, not at failover time.
+		fallbackServices, err := llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
+		if err != nil {
+			return fmt.Errorf("failed to resolve fallback chain for bot %s: %w", bot.cfg.Name, err)
+		}
+
+		bot.llm, err = b.getLLM(bot.service, bot.cfg, fallbackServices)
 		if err != nil {
 			return err
 		}
@@ -423,8 +440,8 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 	}
 }
 
-func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
-	result, err := b.getBaseLLM(serviceConfig, botConfig)
+func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, error) {
+	result, err := b.getBaseLLM(serviceConfig, botConfig, fallbackServices)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +468,7 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	return result, nil
 }
 
-func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
+func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, error) {
 	if serviceConfig.Type == llm.ServiceTypeLoadTestMock {
 		profile, err := loadtest.ParseProfile(serviceConfig.LoadTestMockConfig)
 		if err != nil {
@@ -469,7 +486,7 @@ func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotCo
 		return loadtest.NewMockLLM(profile), nil
 	}
 
-	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig)
+	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, fallbackServices)
 	if err != nil {
 		if b.pluginAPI != nil {
 			b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)

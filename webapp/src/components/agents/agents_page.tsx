@@ -6,7 +6,6 @@ import styled from 'styled-components';
 
 import manifest from '@/manifest';
 
-import AgentsLicenseGate from './agents_license_gate';
 import AgentsList from './agents_list';
 
 export const AGENTS_ROUTE = `/plug/${manifest.id}/agents`;
@@ -27,9 +26,7 @@ const AgentsPage = () => {
     return (
         <PageWrapper>
             <PageContainer>
-                <AgentsLicenseGate>
-                    <AgentsList/>
-                </AgentsLicenseGate>
+                <AgentsList/>
             </PageContainer>
         </PageWrapper>
     );

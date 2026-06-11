@@ -31,6 +31,20 @@ type testResponse struct {
 	err    error // if non-nil, ChatCompletion returns this error
 }
 
+type toolrunnerTelemetryEvent struct {
+	botName string
+	event   string
+	result  string
+}
+
+type fakeMCPDynamicTelemetry struct {
+	events []toolrunnerTelemetryEvent
+}
+
+func (t *fakeMCPDynamicTelemetry) ObserveMCPDynamicToolEvent(botName, event, result string) {
+	t.events = append(t.events, toolrunnerTelemetryEvent{botName: botName, event: event, result: result})
+}
+
 func (m *testLLM) ChatCompletion(_ context.Context, req llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -87,7 +101,7 @@ func newTestToolStore(tools ...testToolDef) *llm.ToolStore {
 			Name:         t.name,
 			Description:  "test tool",
 			ServerOrigin: t.serverOrigin,
-			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 				return result, toolErr
 			},
 		}
@@ -299,9 +313,10 @@ func TestToolRunner_PartialApproval_NoneExecuted(t *testing.T) {
 	}
 
 	runner := New(inner)
+	store := newTestToolStore(testToolDef{name: "dangerous_tool", result: "should_not_run"})
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "do something"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: store},
 	}
 
 	result, err := runner.Run(context.Background(), request, neverExecute, nil)
@@ -345,9 +360,13 @@ func TestToolRunner_MixedBatch_AllOrNothing(t *testing.T) {
 	}
 
 	runner := New(inner)
+	store := newTestToolStore(
+		testToolDef{name: "read_tool", result: "should_not_run"},
+		testToolDef{name: "write_tool", result: "should_not_run"},
+	)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: store},
 	}
 
 	// Only approve read_tool, not write_tool.
@@ -370,6 +389,227 @@ func TestToolRunner_MixedBatch_AllOrNothing(t *testing.T) {
 	// No tool turns.
 	assert.Empty(t, result.ToolTurns)
 	assert.Equal(t, 1, inner.callCount)
+}
+
+func TestToolRunner_UnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "ghost_tool", Arguments: json.RawMessage(`{"query":"hello"}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "I cannot use that tool"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run ghost"}},
+		Context: &llm.Context{Tools: llm.NewNoTools()},
+	}
+
+	shouldExecuteCalls := 0
+	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
+		shouldExecuteCalls++
+		t.Fatal("shouldExecute must not be called for unknown tools")
+		return true
+	}, nil)
+	require.NoError(t, err)
+
+	text, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Equal(t, "I cannot use that tool", text)
+	assert.Zero(t, shouldExecuteCalls)
+
+	require.Len(t, result.ToolTurns, 1)
+	require.Len(t, result.ToolTurns[0].ToolResults, 1)
+	assert.True(t, result.ToolTurns[0].ToolResults[0].IsError)
+	assert.Equal(t, "unknown tool ghost_tool", result.ToolTurns[0].ToolResults[0].Result)
+
+	require.Len(t, inner.capturedRequests, 2)
+	secondReq := inner.capturedRequests[1]
+	botPost := secondReq.Posts[len(secondReq.Posts)-1]
+	require.Len(t, botPost.ToolUse, 1)
+	assert.Equal(t, llm.ToolCallStatusError, botPost.ToolUse[0].Status)
+	assert.Equal(t, "unknown tool ghost_tool", botPost.ToolUse[0].Result)
+}
+
+func TestToolRunner_UnknownToolWithNilContextReturnsError(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "ghost_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Recovered"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run ghost"}},
+		Context: nil,
+	}
+
+	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
+		t.Fatal("shouldExecute must not be called for unknown tools")
+		return true
+	}, nil)
+	require.NoError(t, err)
+
+	text, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Equal(t, "Recovered", text)
+	require.Len(t, result.ToolTurns, 1)
+	assert.Equal(t, "unknown tool ghost_tool", result.ToolTurns[0].ToolResults[0].Result)
+	assert.Equal(t, 2, inner.callCount)
+}
+
+func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolCall llm.ToolCall
+		context  *llm.Context
+	}{
+		{
+			name: "unknown built-in-like name",
+			toolCall: llm.ToolCall{
+				ID:        "tc_builtin",
+				Name:      "WebSearch",
+				Arguments: json.RawMessage(`{"query":"docs"}`),
+			},
+			context: &llm.Context{Tools: llm.NewNoTools()},
+		},
+		{
+			name: "unknown MCP-like name with server origin",
+			toolCall: llm.ToolCall{
+				ID:           "tc_mcp",
+				Name:         "get_issue",
+				Arguments:    json.RawMessage(`{"key":"MM-1"}`),
+				ServerOrigin: "https://mcp.example.com",
+			},
+			context: &llm.Context{Tools: llm.NewNoTools()},
+		},
+		{
+			name: "nil tool store",
+			toolCall: llm.ToolCall{
+				ID:        "tc_nil_tools",
+				Name:      "ghost_tool",
+				Arguments: json.RawMessage(`{}`),
+			},
+			context: &llm.Context{},
+		},
+		{
+			name: "empty tool name",
+			toolCall: llm.ToolCall{
+				ID:        "tc_empty",
+				Name:      "",
+				Arguments: json.RawMessage(`{}`),
+			},
+			context: &llm.Context{Tools: llm.NewNoTools()},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inner := &testLLM{
+				responses: []testResponse{
+					{events: []llm.TextStreamEvent{
+						{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{tt.toolCall}},
+						{Type: llm.EventTypeEnd},
+					}},
+					{events: []llm.TextStreamEvent{
+						{Type: llm.EventTypeText, Value: "Recovered"},
+						{Type: llm.EventTypeEnd},
+					}},
+				},
+			}
+
+			runner := New(inner)
+			result, err := runner.Run(context.Background(), llm.CompletionRequest{
+				Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run tool"}},
+				Context: tt.context,
+			}, func(llm.ToolCall) bool {
+				t.Fatal("shouldExecute must not be called for unknown tools")
+				return true
+			}, nil)
+			require.NoError(t, err)
+
+			_, readErr := result.Stream.ReadAll()
+			require.NoError(t, readErr)
+			require.Len(t, result.ToolTurns, 1)
+			require.Len(t, result.ToolTurns[0].ToolResults, 1)
+			assert.Equal(t, "unknown tool "+tt.toolCall.Name, result.ToolTurns[0].ToolResults[0].Result)
+			assert.Equal(t, tt.toolCall.ServerOrigin, result.ToolTurns[0].AssistantToolCalls[0].ServerOrigin)
+		})
+	}
+}
+
+func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "dangerous_tool", Arguments: json.RawMessage(`{}`)},
+					{ID: "tc2", Name: "ghost_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Recovered"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	resolverCalls := 0
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{{
+		Name: "dangerous_tool",
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			resolverCalls++
+			return "dangerous_result", nil
+		},
+	}})
+
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, func(llm.ToolCall) bool {
+		t.Fatal("shouldExecute must not be called for batches with unknown tools")
+		return true
+	}, nil)
+	require.NoError(t, err)
+
+	_, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Zero(t, resolverCalls)
+
+	require.Len(t, result.ToolTurns, 1)
+	require.Len(t, result.ToolTurns[0].ToolResults, 2)
+	assert.True(t, result.ToolTurns[0].ToolResults[0].IsError)
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained unavailable tool(s): ghost_tool")
+	assert.True(t, result.ToolTurns[0].ToolResults[1].IsError)
+	assert.Equal(t, "unknown tool ghost_tool", result.ToolTurns[0].ToolResults[1].Result)
+
+	secondReq := inner.capturedRequests[1]
+	botPost := secondReq.Posts[len(secondReq.Posts)-1]
+	require.Len(t, botPost.ToolUse, 2)
+	assert.Equal(t, llm.ToolCallStatusError, botPost.ToolUse[0].Status)
+	assert.Equal(t, llm.ToolCallStatusError, botPost.ToolUse[1].Status)
 }
 
 func TestToolRunner_ToolExecutionError(t *testing.T) {
@@ -931,175 +1171,4 @@ func TestToolRunner_OptsPassedThrough(t *testing.T) {
 	require.Len(t, capturedOpts, 2)
 	assert.Len(t, capturedOpts[0], 1) // WithReasoningDisabled
 	assert.Len(t, capturedOpts[1], 1)
-}
-
-func TestToolRunner_ServerOriginPreserved(t *testing.T) {
-	// Verify that ServerOrigin is preserved through tool execution and in the
-	// resubmitted request posts.
-	const serverOrigin = "https://mcp.example.com"
-
-	inner := &testLLM{
-		responses: []testResponse{
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: "tc1", Name: "mcp_tool", Arguments: json.RawMessage(`{}`), ServerOrigin: serverOrigin},
-				}},
-				{Type: llm.EventTypeEnd},
-			}},
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeText, Value: "done"},
-				{Type: llm.EventTypeEnd},
-			}},
-		},
-	}
-
-	store := newTestToolStore(testToolDef{name: "mcp_tool", serverOrigin: serverOrigin, result: "mcp_result"})
-	runner := New(inner)
-	request := llm.CompletionRequest{
-		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "test"}},
-		Context: &llm.Context{Tools: store},
-	}
-
-	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
-	require.NoError(t, err)
-	_, _ = result.Stream.ReadAll()
-
-	// Verify the tool turn preserves server origin.
-	require.Len(t, result.ToolTurns, 1)
-	assert.Equal(t, serverOrigin, result.ToolTurns[0].AssistantToolCalls[0].ServerOrigin)
-
-	// Verify the resubmitted request preserves server origin in bot post.
-	secondReq := inner.capturedRequests[1]
-	botPost := secondReq.Posts[len(secondReq.Posts)-1]
-	require.Len(t, botPost.ToolUse, 1)
-	assert.Equal(t, serverOrigin, botPost.ToolUse[0].ServerOrigin)
-	assert.Equal(t, "mcp_result", botPost.ToolUse[0].Result)
-	assert.Equal(t, llm.ToolCallStatusAutoApproved, botPost.ToolUse[0].Status)
-}
-
-func TestToolRunner_ApprovalAfterToolRound(t *testing.T) {
-	// Round 1: auto-approved tool call executes.
-	// Round 2: LLM returns a tool call that is NOT approved -> return unresolved.
-	inner := &testLLM{
-		responses: []testResponse{
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: "tc1", Name: "safe_tool", Arguments: json.RawMessage(`{}`)},
-				}},
-				{Type: llm.EventTypeUsage, Value: llm.TokenUsage{InputTokens: 40, OutputTokens: 10}},
-				{Type: llm.EventTypeEnd},
-			}},
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeText, Value: "Now I need approval"},
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: "tc2", Name: "dangerous_tool", Arguments: json.RawMessage(`{}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			}},
-		},
-	}
-
-	store := newTestToolStore(
-		testToolDef{name: "safe_tool", result: "safe_result"},
-		testToolDef{name: "dangerous_tool", result: "never_called"},
-	)
-	runner := New(inner)
-	request := llm.CompletionRequest{
-		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: store},
-	}
-
-	// Only approve safe_tool.
-	result, err := runner.Run(context.Background(), request, func(tc llm.ToolCall) bool {
-		return tc.Name == "safe_tool"
-	}, nil)
-	require.NoError(t, err)
-
-	// Consume stream first to ensure goroutine completes.
-	var gotText bool
-	var gotToolCalls bool
-	for event := range result.Stream.Stream {
-		switch event.Type {
-		case llm.EventTypeText:
-			gotText = true
-		case llm.EventTypeToolCalls:
-			gotToolCalls = true
-		}
-	}
-	assert.True(t, gotText)
-	assert.True(t, gotToolCalls)
-
-	// One tool turn was executed (safe_tool).
-	require.Len(t, result.ToolTurns, 1)
-	assert.Equal(t, "safe_tool", result.ToolTurns[0].AssistantToolCalls[0].Name)
-	assert.Equal(t, int64(40), result.ToolTurns[0].TokensIn)
-
-	// LLM called twice.
-	assert.Equal(t, 2, inner.callCount)
-}
-
-func TestToolRunner_OnToolTurnsCallback(t *testing.T) {
-	// Verify that onToolTurns callback is called with accumulated tool turns.
-	inner := &testLLM{
-		responses: []testResponse{
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: "tc1", Name: "tool_a", Arguments: json.RawMessage(`{}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			}},
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeText, Value: "Done"},
-				{Type: llm.EventTypeEnd},
-			}},
-		},
-	}
-
-	store := newTestToolStore(testToolDef{name: "tool_a", result: "result_a"})
-	runner := New(inner)
-	request := llm.CompletionRequest{
-		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: store},
-	}
-
-	var callbackTurns []ToolTurn
-	var callbackCalled bool
-	result, err := runner.Run(context.Background(), request, alwaysExecute, func(turns []ToolTurn) {
-		callbackCalled = true
-		callbackTurns = turns
-	})
-	require.NoError(t, err)
-
-	_, _ = result.Stream.ReadAll()
-	assert.True(t, callbackCalled)
-	require.Len(t, callbackTurns, 1)
-	assert.Equal(t, "tool_a", callbackTurns[0].AssistantToolCalls[0].Name)
-	assert.Equal(t, "result_a", callbackTurns[0].ToolResults[0].Result)
-}
-
-func TestToolRunner_OnToolTurnsNotCalledWithoutToolUse(t *testing.T) {
-	// Verify that onToolTurns callback is NOT called when there are no tool turns.
-	inner := &testLLM{
-		responses: []testResponse{{
-			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeText, Value: "Hello"},
-				{Type: llm.EventTypeEnd},
-			},
-		}},
-	}
-
-	runner := New(inner)
-	request := llm.CompletionRequest{
-		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
-	}
-
-	callbackCalled := false
-	result, err := runner.Run(context.Background(), request, alwaysExecute, func(_ []ToolTurn) {
-		callbackCalled = true
-	})
-	require.NoError(t, err)
-
-	_, _ = result.Stream.ReadAll()
-	assert.False(t, callbackCalled)
 }

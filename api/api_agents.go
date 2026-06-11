@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
@@ -70,6 +71,7 @@ type CreateAgentRequest struct {
 	AdminUserIDs            []string             `json:"adminUserIDs"`
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
+	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
 	Model                   string               `json:"model"`
 	EnableVision            bool                 `json:"enableVision"`
 	DisableTools            bool                 `json:"disableTools"`
@@ -96,6 +98,7 @@ type UpdateAgentRequest struct {
 	AdminUserIDs            []string             `json:"adminUserIDs"`
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
+	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
 	Model                   string               `json:"model"`
 	EnableVision            bool                 `json:"enableVision"`
 	DisableTools            bool                 `json:"disableTools"`
@@ -140,6 +143,10 @@ type ServiceInfo struct {
 // FreeTierAgentLimit is the maximum number of self-service agents allowed when
 // the server does not have a multi-LLM (E20+) license.
 const FreeTierAgentLimit = 1
+
+// AgentActiveCountHeader is returned on GET /agents for unlicensed servers so the
+// webapp can gate creation against the server-wide count (not the access-filtered list).
+const AgentActiveCountHeader = "X-Agent-Active-Count"
 
 // checkAgentCreateQuota allows unlimited creation when multi-LLM licensed; otherwise
 // enforces FreeTierAgentLimit across all self-service agents on the server. It writes
@@ -249,6 +256,7 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 		AdminUserIDs:            req.AdminUserIDs,
 		EnabledMCPTools:         req.EnabledMCPTools,
 		AutoEnableNewMCPTools:   req.AutoEnableNewMCPTools,
+		MCPDynamicToolLoading:   req.MCPDynamicToolLoading,
 		Model:                   req.Model,
 		EnableVision:            req.EnableVision,
 		DisableTools:            req.DisableTools,
@@ -275,6 +283,7 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.AdminUserIDs = req.AdminUserIDs
 	cfg.EnabledMCPTools = req.EnabledMCPTools
 	cfg.AutoEnableNewMCPTools = req.AutoEnableNewMCPTools
+	cfg.MCPDynamicToolLoading = req.MCPDynamicToolLoading
 	cfg.Model = req.Model
 	cfg.EnableVision = req.EnableVision
 	cfg.DisableTools = req.DisableTools
@@ -396,6 +405,18 @@ func (a *API) handleListAgents(c *gin.Context) {
 	for _, cfg := range agents {
 		if a.canUserAccessAgent(cfg, userID) {
 			accessible = append(accessible, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
+		}
+	}
+
+	// Enrich (best-effort) with the server-wide count so the webapp can gate creation
+	// against the real quota, not the access-filtered list. A failure here must not fail
+	// the list request: just omit the header and let the create API enforce the limit.
+	if !a.licenseChecker.IsMultiLLMLicensed() {
+		count, err := a.agentStore.CountActiveAgents()
+		if err != nil {
+			a.pluginAPI.Log.Warn("Failed to count active agents for quota header", "error", err.Error())
+		} else {
+			c.Header(AgentActiveCountHeader, strconv.Itoa(count))
 		}
 	}
 
