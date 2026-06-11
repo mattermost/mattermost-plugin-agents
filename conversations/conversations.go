@@ -243,6 +243,11 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 		if !ok {
 			return false
 		}
+		// Interaction tools are answered by the user; auto-executing one
+		// would bypass the question entirely.
+		if lookup.Tool.UserInteraction != "" {
+			return false
+		}
 		policy, enabled := c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
 		if !enabled {
 			return false

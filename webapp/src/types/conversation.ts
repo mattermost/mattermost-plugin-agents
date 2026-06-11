@@ -64,6 +64,7 @@ export interface ContentBlock {
     input?: Record<string, unknown> | null;
     status?: ToolCallStatus;
     shared?: boolean;
+    user_interaction?: string;
 
     // ToolResult fields
     tool_use_id?: string;

@@ -37,6 +37,14 @@ type Tool struct {
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
 
+	// UserInteraction marks a tool whose pending call is answered by the
+	// requesting user in the Mattermost UI instead of executed by the server.
+	// Empty for normal tools. Interaction tools are only cataloged in
+	// interactive contexts, are never auto-approved, and are resolved by the
+	// tool-approval flow with the user's response as the tool result; the
+	// Resolver is only an error backstop.
+	UserInteraction string
+
 	// CallMetadata is forwarded to the tool implementation as MCP CallToolParams.Meta.
 	// It is invisible to the LLM, not part of the input schema, and not parsed from the
 	// model's arguments. Set it at scope-time via WithCallMetadata when callers need to
@@ -44,6 +52,10 @@ type Tool struct {
 	// needs but the model shouldn't see or be able to manipulate.
 	CallMetadata map[string]any
 }
+
+// UserInteractionSelect identifies tools answered by the user picking from a
+// set of options presented in the Mattermost UI.
+const UserInteractionSelect = "select"
 
 type ToolResolver func(ctx context.Context, llmCtx *Context, argsGetter ToolArgumentGetter) (string, error)
 
@@ -239,6 +251,10 @@ type ToolCall struct {
 	Result      string          `json:"result"`
 	Status      ToolCallStatus  `json:"status"`
 	MCPBareName string          `json:"mcp_bare_name,omitempty"`
+
+	// UserInteraction mirrors Tool.UserInteraction so the webapp can render
+	// the matching interaction UI (e.g. a question card) for pending calls.
+	UserInteraction string `json:"user_interaction,omitempty"`
 
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in tools. Used for auto-approval decisions.
@@ -437,6 +453,7 @@ func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) 
 		tc.Description = tool.Description
 	}
 	tc.Schema = tool.Schema
+	tc.UserInteraction = tool.UserInteraction
 	if tc.ServerOrigin == "" {
 		tc.ServerOrigin = lookup.ServerOrigin
 	}

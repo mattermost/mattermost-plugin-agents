@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
@@ -40,10 +41,20 @@ var ErrPostMissingConversationID = errors.New("post missing conversation_id")
 // maps this to 403 Forbidden.
 var ErrNotRequester = errors.New("only the original requester can approve/reject tool calls")
 
+// ErrInvalidToolAnswer is returned when an accepted user-interaction tool call
+// (e.g. AskUserQuestion) arrives without a valid answer. The pending state is
+// left untouched so the user can answer again. The HTTP layer maps this to
+// 400 Bad Request.
+var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool call")
+
 // HandleToolCall handles user approval/rejection of pending tool calls via conversation entities.
 // It looks up pending tool_use blocks in the conversation turns, executes approved tools,
 // writes results back as turns, and streams a follow-up LLM response.
-func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+//
+// toolAnswers carries the user's answers for accepted user-interaction tool
+// calls (e.g. AskUserQuestion), keyed by tool_use block ID. Those blocks are
+// not executed; the validated answer becomes the tool result.
+func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string, toolAnswers map[string][]string) error {
 	// Resume: chain into the originating run's trace if we can find it. If
 	// the post or its assistant turn is missing, fall back to a fresh trace.
 	ctx = c.rehydrateRunTrace(ctx, post)
@@ -96,14 +107,24 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 
-	// Build the execution context bound to this conversation.
+	// Build the execution context bound to this conversation. A tool-approval
+	// click is by definition an interactive user action.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, user, channel,
 		"Failed to load user tool preferences for tool approval",
+		c.contextBuilder.WithLLMContextInteractive(),
 	)
 
 	conversation.RestoreLoadedMCPToolsFromTurns(llmContext.Tools, turns)
+
+	// Validate answers for accepted interaction blocks before mutating any
+	// state, so a malformed or missing answer leaves the question pending and
+	// answerable instead of burning it as an error result.
+	interactionResults, err := resolveInteractionAnswers(pendingBlocks, acceptedToolIDs, toolAnswers)
+	if err != nil {
+		return err
+	}
 
 	// Execute approved tools and build results.
 	var toolResults []toolrunner.ToolResult
@@ -117,7 +138,19 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			continue
 		}
 
-		if slices.Contains(acceptedToolIDs, block.ID) {
+		switch {
+		case slices.Contains(acceptedToolIDs, block.ID) && block.UserInteraction != "":
+			// The user's answer is the result. Mark the block shared so the
+			// channel-visible follow-up may reference the question and answer.
+			block.Status = conversation.StatusSuccess
+			block.Shared = conversation.BoolPtr(true)
+			toolResults = append(toolResults, toolrunner.ToolResult{
+				ToolCallID: block.ID,
+				Name:       block.Name,
+				Result:     interactionResults[block.ID],
+				IsError:    false,
+			})
+		case slices.Contains(acceptedToolIDs, block.ID):
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
@@ -136,7 +169,15 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 					IsError:    false,
 				})
 			}
-		} else {
+		case block.UserInteraction != "":
+			block.Status = conversation.StatusRejected
+			toolResults = append(toolResults, toolrunner.ToolResult{
+				ToolCallID: block.ID,
+				Name:       block.Name,
+				Result:     "User skipped the question",
+				IsError:    true,
+			})
+		default:
 			block.Status = conversation.StatusRejected
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
@@ -158,32 +199,39 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 	// Write tool results as a tool_result turn. DecidedAt is set when the
 	// result is terminal — no share/keep-private decision remains. That
-	// applies to every DM result (auto-shared) and every rejected tool
-	// (nothing was produced to share). Channel results from accepted tools
+	// applies to every DM result (auto-shared), every rejected tool (nothing
+	// was produced to share), and every user-interaction result (the user
+	// authored the answer to a question that was already visible, so there is
+	// nothing private to withhold). Channel results from other accepted tools
 	// stay undecided until the requester clicks Share or Keep Private.
-	shared := isDM
 	toolUseStatusByID := make(map[string]string, len(pendingBlocks))
+	interactionByID := make(map[string]bool, len(pendingBlocks))
 	for _, b := range pendingBlocks {
 		if b.Type == conversation.BlockTypeToolUse {
 			toolUseStatusByID[b.ID] = b.Status
+			interactionByID[b.ID] = b.UserInteraction != ""
 		}
 	}
 	now := model.GetMillis()
+	needsShareDecision := false
 	resultBlocks := make([]conversation.ContentBlock, 0, len(toolResults))
 	for _, tr := range toolResults {
 		status := conversation.StatusSuccess
 		if tr.IsError {
 			status = conversation.StatusError
 		}
+		answered := interactionByID[tr.ToolCallID] && toolUseStatusByID[tr.ToolCallID] == conversation.StatusSuccess
 		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			Status:    status,
-			Shared:    conversation.BoolPtr(shared),
+			Shared:    conversation.BoolPtr(isDM || answered),
 		}
-		if isDM || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
+		if isDM || answered || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
 			rb.DecidedAt = conversation.Int64Ptr(now)
+		} else {
+			needsShareDecision = true
 		}
 		resultBlocks = append(resultBlocks, rb)
 	}
@@ -212,12 +260,39 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 	// In channels the follow-up is a channel-visible post that may paraphrase tool
 	// output, so it must not stream until the requester approves sharing in
-	// HandleToolResult.
-	if !isDM {
+	// HandleToolResult. When no share decision remains (every executed result
+	// was a user-interaction answer), HandleToolResult will never fire, so
+	// stream the follow-up now.
+	if !isDM && needsShareDecision {
 		return nil
 	}
 
 	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM)
+}
+
+// resolveInteractionAnswers validates the user's answers for every accepted
+// pending user-interaction block and returns the tool result content keyed by
+// block ID. Any invalid or missing answer fails the whole request with
+// ErrInvalidToolAnswer before any state is mutated.
+func resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolIDs []string, toolAnswers map[string][]string) (map[string]string, error) {
+	results := make(map[string]string)
+	for _, b := range blocks {
+		if b.Type != conversation.BlockTypeToolUse || b.UserInteraction == "" {
+			continue
+		}
+		if b.Status != conversation.StatusPending && b.Status != conversation.StatusAccepted {
+			continue
+		}
+		if !slices.Contains(acceptedToolIDs, b.ID) {
+			continue
+		}
+		result, err := mmtools.ResolveUserInteractionAnswer(b.UserInteraction, b.Input, toolAnswers[b.ID])
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidToolAnswer, err.Error())
+		}
+		results[b.ID] = result
+	}
+	return results, nil
 }
 
 // HandleToolResult handles user approval of the second-stage tool-result sharing.
@@ -405,6 +480,12 @@ func (c *Conversations) streamToolFollowUp(
 	defer span.End()
 
 	channelToolFilterOpts, channelToolsAutoRunEverywhereOnly := c.channelFollowUpMCPToolFilterContextOptions(isDM, conv)
+	// The follow-up runs because a user clicked an approval control, so the
+	// requester is interactively present — unless the conversation root was a
+	// bot activate_ai flow, which stays constrained to unattended tools.
+	if !channelToolsAutoRunEverywhereOnly {
+		channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextInteractive())
+	}
 	// Build the execution context bound to this conversation.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,

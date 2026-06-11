@@ -50,6 +50,11 @@ type ContentBlock struct {
 	Status       string          `json:"status,omitempty"`
 	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
 
+	// UserInteraction marks a tool_use block answered by the requesting user
+	// instead of executed by the server (see llm.Tool.UserInteraction). The
+	// webapp renders the matching interaction UI for pending blocks.
+	UserInteraction string `json:"user_interaction,omitempty"`
+
 	// DecidedAt (tool_result blocks) records when the share/keep-private
 	// decision was made — either by the user clicking Share or Keep Private
 	// in a channel, or implicitly at creation time (DMs, rejected tools,

@@ -249,9 +249,12 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("failed to get conversation for regen: %w", err)
 	}
 
+	// Regeneration is triggered by the requester clicking the regen control,
+	// so the user is interactively present.
 	llmContext := c.buildConversationContextWithTools(
 		ctx, bot, user, channel,
 		"Failed to load user tool preferences on regen, proceeding without filtering",
+		c.contextBuilder.WithLLMContextInteractive(),
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)

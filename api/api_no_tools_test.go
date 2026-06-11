@@ -30,7 +30,7 @@ import (
 
 type noToolsTestToolProvider struct{}
 
-func (p *noToolsTestToolProvider) GetTools(*bots.Bot) []llm.Tool {
+func (p *noToolsTestToolProvider) GetTools(*bots.Bot, *llm.Context) []llm.Tool {
 	return nil
 }
 

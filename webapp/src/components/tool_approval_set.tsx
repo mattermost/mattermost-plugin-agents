@@ -8,8 +8,9 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {doToolCall, doToolResult} from '@/client';
 import {invalidateConversation} from '@/hooks/use_conversation';
 
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+import {ToolApprovalStage, ToolCall, ToolCallStatus, UserInteractionSelect} from './tool_types';
 import ToolCard from './tool_card';
+import QuestionCard, {parseQuestionArgs} from './question_card';
 
 // Styled components
 const ToolCallsContainer = styled.div`
@@ -86,6 +87,10 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     const submitInFlightRef = useRef(false);
     const toolDecisionsRef = useRef<ToolDecision>({});
 
+    // Selected option labels for accepted user-interaction tools, keyed by
+    // tool call ID. Sent as tool_answers alongside accepted_tool_ids.
+    const toolAnswersRef = useRef<Record<string, string[]>>({});
+
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
 
@@ -107,10 +112,13 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             return [];
         }
 
+        // User-interaction results are decided at answer time (the user
+        // authored them), so they never need a share/keep-private decision.
         return props.toolCalls.filter((call) =>
-            call.status === ToolCallStatus.Success ||
+            !call.user_interaction &&
+            (call.status === ToolCallStatus.Success ||
             call.status === ToolCallStatus.Error ||
-            call.status === ToolCallStatus.AutoApproved,
+            call.status === ToolCallStatus.AutoApproved),
         );
     }, [props.toolCalls, effectiveCanApprove, isCallStage, isResultStage]);
 
@@ -124,6 +132,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         setError('');
         submitInFlightRef.current = false;
         toolDecisionsRef.current = {};
+        toolAnswersRef.current = {};
     }, [props.toolCalls, props.approvalStage]);
 
     const submitDecisions = useCallback(async (approvedToolIDs: string[]) => {
@@ -135,7 +144,13 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         setIsSubmitting(true);
         try {
             if (isCallStage) {
-                await doToolCall(props.postID, approvedToolIDs);
+                const answers: Record<string, string[]> = {};
+                for (const id of approvedToolIDs) {
+                    if (toolAnswersRef.current[id]) {
+                        answers[id] = toolAnswersRef.current[id];
+                    }
+                }
+                await doToolCall(props.postID, approvedToolIDs, answers);
             } else {
                 await doToolResult(props.postID, approvedToolIDs);
             }
@@ -187,6 +202,14 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         submitDecisions(approvedToolIDs);
     }, [effectiveCanApprove, isSubmitting, decisionToolIDSet, decisionToolCalls, submitDecisions]);
 
+    const handleQuestionAnswer = useCallback((toolID: string, selections: string[]) => {
+        toolAnswersRef.current = {
+            ...toolAnswersRef.current,
+            [toolID]: selections,
+        };
+        handleToolDecision(toolID, true);
+    }, [handleToolDecision]);
+
     const handleBatchDecision = useCallback((approved: boolean) => {
         if (!effectiveCanApprove || isSubmitting || submitInFlightRef.current) {
             return;
@@ -194,10 +217,24 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
         const updatedDecisions = {...toolDecisionsRef.current};
         for (const tool of decisionToolCalls) {
+            // Questions cannot be batch-decided: an answer (or explicit skip)
+            // is required per question.
+            if (isCallStage && tool.user_interaction) {
+                continue;
+            }
             updatedDecisions[tool.id] = approved;
         }
         toolDecisionsRef.current = updatedDecisions;
         setToolDecisions(updatedDecisions);
+
+        // Submitting marks every undecided tool as rejected server-side, so
+        // wait for the remaining questions to be answered or skipped first.
+        const hasUndecided = decisionToolCalls.some((tool) => {
+            return !Object.hasOwn(updatedDecisions, tool.id);
+        });
+        if (hasUndecided) {
+            return;
+        }
 
         const approvedToolIDs = decisionToolCalls.
             filter((tool) => {
@@ -206,7 +243,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             map((tool) => tool.id);
 
         submitDecisions(approvedToolIDs);
-    }, [effectiveCanApprove, isSubmitting, decisionToolCalls, submitDecisions]);
+    }, [effectiveCanApprove, isSubmitting, isCallStage, decisionToolCalls, submitDecisions]);
 
     const toggleCollapse = (toolID: string) => {
         setCollapsedTools((prev) =>
@@ -255,6 +292,27 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         <ToolCallsContainer>
             {props.toolCalls.map((tool) => {
                 const isDecisionCall = decisionToolIDSet.has(tool.id);
+
+                if (tool.user_interaction === UserInteractionSelect) {
+                    // Redacted calls (non-requesters) have no arguments to
+                    // render; fall through to the generic tool card.
+                    const question = parseQuestionArgs(tool.arguments);
+                    if (question) {
+                        return (
+                            <QuestionCard
+                                key={tool.id}
+                                tool={tool}
+                                question={question}
+                                isProcessing={isDecisionCall && isSubmitting}
+                                localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
+                                canAnswer={isDecisionCall && isCallStage}
+                                onAnswer={isDecisionCall ? (selections) => handleQuestionAnswer(tool.id, selections) : undefined} // eslint-disable-line no-undefined
+                                onSkip={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
+                            />
+                        );
+                    }
+                }
+
                 return (
                     <ToolCard
                         key={tool.id}

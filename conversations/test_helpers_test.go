@@ -253,7 +253,7 @@ type testToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *testToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
+func (p *testToolProvider) GetTools(_ *bots.Bot, _ *llm.Context) []llm.Tool {
 	return p.tools
 }
 

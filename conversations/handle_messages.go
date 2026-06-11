@@ -261,6 +261,11 @@ func (c *Conversations) handleMentionViaConversation(
 			return botChannelAutoEverywhereKeepTool(c.toolPolicyChecker, tool)
 		}))
 	}
+	// User-interaction tools need someone who can answer them: a human invoker
+	// with channel tool calling enabled. Bot activate_ai flows run unattended.
+	if allowToolsInChannel && !channelToolsAutoRunEverywhereOnly {
+		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextInteractive())
+	}
 	// Build the context once WITH tools so the system prompt can reference
 	// .Tools and .DisabledToolsInfo.
 	llmContext := c.buildConversationContextWithTools(
@@ -413,7 +418,7 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
 func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
-	var extraOpts []llm.ContextOption
+	extraOpts := []llm.ContextOption{c.contextBuilder.WithLLMContextInteractive()}
 	if webSearchParams := c.extractWebSearchContext(post); len(webSearchParams) > 0 {
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}

@@ -102,6 +102,7 @@ function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, Cont
         arguments: (block.input as ToolCall['arguments']) ?? undefined, // eslint-disable-line no-undefined
         result: resultBlock?.content ?? undefined, // eslint-disable-line no-undefined
         status: statusStringToEnum(block.status),
+        user_interaction: block.user_interaction ?? undefined, // eslint-disable-line no-undefined
     };
 }
 
