@@ -11,6 +11,7 @@ import (
 	localmcp "github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -38,7 +39,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 	}
 
 	// Determine the internal server URL for API communication
-	internalServerURL := deriveInternalServerURL(pluginAPI)
+	internalServerURL := deriveInternalServerURL(pluginAPI, siteURL)
 
 	logger.Debug("Embedded MCP server configuration",
 		"siteURL", siteURL,
@@ -114,24 +115,48 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 
 // deriveInternalServerURL determines the internal server URL for API communication.
 // When running inside the Mattermost process, the external SiteURL might be mapped
-// to a different port (e.g., in Docker environments), so we use the internal
-// listen address instead.
-func deriveInternalServerURL(pluginAPI *pluginapi.Client) string {
-	internalServerURL := "http://localhost:8065"
-	if config := pluginAPI.Configuration.GetConfig(); config != nil {
-		if config.ServiceSettings.ListenAddress != nil && *config.ServiceSettings.ListenAddress != "" {
-			listenAddr := *config.ServiceSettings.ListenAddress
-			switch {
-			case len(listenAddr) > 0 && listenAddr[0] == ':':
-				internalServerURL = "http://localhost" + listenAddr
-			case len(listenAddr) > 7 && listenAddr[:7] == "0.0.0.0":
-				internalServerURL = "http://localhost" + listenAddr[7:]
-			case strings.HasPrefix(listenAddr, "[::]:"):
-				internalServerURL = "http://localhost:" + listenAddr[5:]
-			default:
-				internalServerURL = "http://" + listenAddr
-			}
-		}
+// to a different port (e.g., in Docker environments), so we prefer the internal
+// listen address. When Mattermost terminates TLS itself we fall back to SiteURL,
+// because hitting localhost over HTTPS would fail certificate verification (the
+// cert is issued for the public hostname, not localhost) — see MM-69180.
+func deriveInternalServerURL(pluginAPI *pluginapi.Client, siteURL string) string {
+	return deriveInternalServerURLFromConfig(pluginAPI.Configuration.GetConfig(), siteURL)
+}
+
+// deriveInternalServerURLFromConfig is the testable core of deriveInternalServerURL.
+func deriveInternalServerURLFromConfig(config *model.Config, siteURL string) string {
+	const defaultURL = "http://localhost:8065"
+	if config == nil {
+		return defaultURL
 	}
-	return internalServerURL
+
+	tlsTerminated := config.ServiceSettings.ConnectionSecurity != nil &&
+		*config.ServiceSettings.ConnectionSecurity == model.ConnSecurityTLS
+
+	// When Mattermost terminates TLS, hitting localhost on the HTTPS listener
+	// fails cert verification (cert is for the public hostname). Prefer
+	// SiteURL, which matches the certificate.
+	if tlsTerminated && siteURL != "" {
+		return siteURL
+	}
+
+	scheme := "http://"
+	if tlsTerminated {
+		scheme = "https://"
+	}
+
+	if config.ServiceSettings.ListenAddress == nil || *config.ServiceSettings.ListenAddress == "" {
+		return defaultURL
+	}
+	listenAddr := *config.ServiceSettings.ListenAddress
+	switch {
+	case listenAddr[0] == ':':
+		return scheme + "localhost" + listenAddr
+	case strings.HasPrefix(listenAddr, "0.0.0.0"):
+		return scheme + "localhost" + listenAddr[len("0.0.0.0"):]
+	case strings.HasPrefix(listenAddr, "[::]:"):
+		return scheme + "localhost:" + listenAddr[len("[::]:"):]
+	default:
+		return scheme + listenAddr
+	}
 }
