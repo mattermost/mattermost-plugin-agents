@@ -113,17 +113,16 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 	return clientTransport, nil
 }
 
-// deriveInternalServerURL determines the internal server URL for API communication.
-// When running inside the Mattermost process, the external SiteURL might be mapped
-// to a different port (e.g., in Docker environments), so we prefer the internal
-// listen address. When Mattermost terminates TLS itself we fall back to SiteURL,
-// because hitting localhost over HTTPS would fail certificate verification (the
-// cert is issued for the public hostname, not localhost) — see MM-69180.
+// deriveInternalServerURL determines the internal server URL for API
+// communication. We prefer the listen address (localhost) so the call stays
+// in-process and survives external port remapping (e.g. Docker), but when
+// Mattermost terminates TLS itself we fall back to SiteURL — hitting localhost
+// on the HTTPS listener fails cert verification because the cert is issued for
+// the public hostname (MM-69180).
 func deriveInternalServerURL(pluginAPI *pluginapi.Client, siteURL string) string {
 	return deriveInternalServerURLFromConfig(pluginAPI.Configuration.GetConfig(), siteURL)
 }
 
-// deriveInternalServerURLFromConfig is the testable core of deriveInternalServerURL.
 func deriveInternalServerURLFromConfig(config *model.Config, siteURL string) string {
 	const defaultURL = "http://localhost:8065"
 	if config == nil {
@@ -133,9 +132,6 @@ func deriveInternalServerURLFromConfig(config *model.Config, siteURL string) str
 	tlsTerminated := config.ServiceSettings.ConnectionSecurity != nil &&
 		*config.ServiceSettings.ConnectionSecurity == model.ConnSecurityTLS
 
-	// When Mattermost terminates TLS, hitting localhost on the HTTPS listener
-	// fails cert verification (cert is for the public hostname). Prefer
-	// SiteURL, which matches the certificate.
 	if tlsTerminated && siteURL != "" {
 		return siteURL
 	}
