@@ -19,8 +19,8 @@ const (
 
 	askUserQuestionDescription = "Ask the requesting user a question and present a set of options to pick from. " +
 		"Use this when you need the user's input to proceed — choosing between approaches, picking a target, or confirming intent — and the answer cannot be inferred from the conversation. " +
-		"Provide 2 to 5 concise, mutually exclusive options. Set multi_select to true only when picking several options together is meaningful. " +
-		"By default the user may also type a free-form answer; set allow_free_form to false to require a listed option. " +
+		"Provide 2 to 5 concise, mutually exclusive options that each represent a real answer. Set multi_select to true only when picking several options together is meaningful. " +
+		"By default the user can also type their own free-form answer, so do NOT add a catch-all option like \"Something else\", \"Other\", or \"None of the above\" — the free-form field already serves that purpose and such an option just wastes a slot. Set allow_free_form to false to require a listed option, in which case the options must be exhaustive. " +
 		"The tool result contains the option label(s) the user selected and any free-form text they typed. The user may also skip the question; if they do, proceed sensibly without the answer. " +
 		"Do not use this tool to ask open-ended questions — ask those in your normal response text instead."
 )

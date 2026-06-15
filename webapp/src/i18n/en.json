@@ -275,7 +275,6 @@
   "ah95aAGi": "Action Title",
   "ai.question.accept": "Accept",
   "ai.question.answered": "Answered",
-  "ai.question.custom_placeholder": "Type your answer",
   "ai.question.selected_count": "{count, plural, =0 {None selected} one {# selected} other {# selected}}",
   "ai.question.skip": "Skip",
   "ai.question.skipped": "Skipped",

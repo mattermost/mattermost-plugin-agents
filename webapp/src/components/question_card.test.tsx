@@ -171,9 +171,9 @@ describe('QuestionCard', () => {
             onSkip: jest.fn(),
         });
 
-        expect(queryByPlaceholderText('Type your answer')).toBeNull();
+        expect(queryByPlaceholderText('Something else…')).toBeNull();
         fireEvent.click(getByText('Something else…'));
-        expect(queryByPlaceholderText('Type your answer')).not.toBeNull();
+        expect(queryByPlaceholderText('Something else…')).not.toBeNull();
     });
 
     test('typing a free-form answer and accepting calls onAnswer with the custom text', () => {
@@ -185,7 +185,7 @@ describe('QuestionCard', () => {
         });
 
         fireEvent.click(getByText('Something else…'));
-        fireEvent.change(getByPlaceholderText('Type your answer'), {target: {value: 'Post it in #random'}});
+        fireEvent.change(getByPlaceholderText('Something else…'), {target: {value: 'Post it in #random'}});
         fireEvent.click(getByText('Accept'));
 
         expect(onAnswer).toHaveBeenCalledWith([], 'Post it in #random');
@@ -201,7 +201,7 @@ describe('QuestionCard', () => {
 
         fireEvent.click(getByText('UX Design'));
         fireEvent.click(getByText('Something else…')); // replaces the predefined choice
-        fireEvent.change(getByPlaceholderText('Type your answer'), {target: {value: 'My own answer'}});
+        fireEvent.change(getByPlaceholderText('Something else…'), {target: {value: 'My own answer'}});
         fireEvent.click(getByText('Accept'));
 
         expect(onAnswer).toHaveBeenCalledWith([], 'My own answer');
@@ -218,7 +218,7 @@ describe('QuestionCard', () => {
         expect((getByText('Accept').closest('button') as HTMLButtonElement).disabled).toBe(true);
 
         // Whitespace-only text is treated as empty, so Accept stays disabled.
-        fireEvent.change(getByPlaceholderText('Type your answer'), {target: {value: '   '}});
+        fireEvent.change(getByPlaceholderText('Something else…'), {target: {value: '   '}});
         expect((getByText('Accept').closest('button') as HTMLButtonElement).disabled).toBe(true);
     });
 

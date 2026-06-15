@@ -202,11 +202,32 @@ const OptionDescription = styled.span`
     word-break: break-word;
 `;
 
-const FreeFormInput = styled.textarea`
-    margin: 4px 12px 0;
-    padding: 8px 12px;
-    min-height: 60px;
-    resize: vertical;
+// FreeFormRow mirrors a selected OptionRow but is a div so it can hold the
+// inline text input (an input cannot be nested inside the button OptionRow).
+const FreeFormRow = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 12px;
+    border-radius: 4px;
+    background: rgba(var(--button-bg-rgb), 0.08);
+`;
+
+const FreeFormToggle = styled.button<{$disabled: boolean}>`
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: ${(props) => (props.$disabled ? 'default' : 'pointer')};
+`;
+
+const FreeFormInput = styled.input`
+    flex: 1;
+    min-width: 0;
+    padding: 6px 10px;
     font-size: 14px;
     line-height: 20px;
     color: var(--center-channel-color);
@@ -446,41 +467,58 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                     );
                 })}
                 {question.allowFreeForm && (interactive || shownFreeFormSelected) && (
-                    <OptionRow
-                        type='button'
-                        $selected={shownFreeFormSelected}
-                        $disabled={!interactive}
-                        onClick={toggleFreeForm}
-                    >
-                        {question.multiSelect ? (
-                            <Checkbox $checked={shownFreeFormSelected}>
-                                {shownFreeFormSelected && <CheckIcon size={16}/>}
-                            </Checkbox>
-                        ) : (
-                            <NumberBadge $selected={shownFreeFormSelected}>{question.options.length + 1}</NumberBadge>
-                        )}
-                        <OptionText>
-                            <OptionLabel>
-                                <FormattedMessage
-                                    id='ai.question.something_else'
-                                    defaultMessage='Something else…'
-                                />
-                            </OptionLabel>
-                        </OptionText>
-                    </OptionRow>
+
+                    // Selected: the "Something else…" label becomes the
+                    // placeholder of an inline single-line input.
+                    shownFreeFormSelected ? (
+                        <FreeFormRow>
+                            <FreeFormToggle
+                                type='button'
+                                $disabled={!interactive}
+                                onClick={toggleFreeForm}
+                            >
+                                {question.multiSelect ? (
+                                    <Checkbox $checked={true}>
+                                        <CheckIcon size={16}/>
+                                    </Checkbox>
+                                ) : (
+                                    <NumberBadge $selected={true}>{question.options.length + 1}</NumberBadge>
+                                )}
+                            </FreeFormToggle>
+                            <FreeFormInput
+                                value={shownCustomText}
+                                placeholder={formatMessage({
+                                    id: 'ai.question.something_else',
+                                    defaultMessage: 'Something else…',
+                                })}
+                                disabled={!interactive}
+                                onChange={(e) => setCustomText(e.target.value)}
+                            />
+                        </FreeFormRow>
+                    ) : (
+                        <OptionRow
+                            type='button'
+                            $selected={false}
+                            $disabled={!interactive}
+                            onClick={toggleFreeForm}
+                        >
+                            {question.multiSelect ? (
+                                <Checkbox $checked={false}/>
+                            ) : (
+                                <NumberBadge $selected={false}>{question.options.length + 1}</NumberBadge>
+                            )}
+                            <OptionText>
+                                <OptionLabel>
+                                    <FormattedMessage
+                                        id='ai.question.something_else'
+                                        defaultMessage='Something else…'
+                                    />
+                                </OptionLabel>
+                            </OptionText>
+                        </OptionRow>
+                    )
                 )}
             </OptionList>
-            {question.allowFreeForm && shownFreeFormSelected && (
-                <FreeFormInput
-                    value={shownCustomText}
-                    placeholder={formatMessage({
-                        id: 'ai.question.custom_placeholder',
-                        defaultMessage: 'Type your answer',
-                    })}
-                    disabled={!interactive}
-                    onChange={(e) => setCustomText(e.target.value)}
-                />
-            )}
             {interactive && (
                 <Footer>
                     {question.multiSelect && (
