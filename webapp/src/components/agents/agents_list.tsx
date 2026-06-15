@@ -98,14 +98,18 @@ const AgentsList = () => {
         setDeleteInFlight(true);
         try {
             await deleteAgentAPI(deletingAgent.id);
-            setAgents((prev) => prev.filter((a) => a.id !== deletingAgent.id));
+            const nextAgents = agents.filter((a) => a.id !== deletingAgent.id);
+            setAgents(nextAgents);
+            if (nextAgents.length === 0) {
+                fetchAgents();
+            }
         } catch (e: any) {
             setError(intl.formatMessage({defaultMessage: 'Failed to delete agent.'}));
         } finally {
             setDeleteInFlight(false);
             setDeletingAgent(null);
         }
-    }, [deletingAgent, deleteInFlight, intl]);
+    }, [agents, deletingAgent, deleteInFlight, fetchAgents, intl]);
 
     const handleDeleteCancel = useCallback(() => {
         setDeletingAgent(null);

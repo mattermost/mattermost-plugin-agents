@@ -2,10 +2,10 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen, waitFor} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {useSelector} from 'react-redux';
 
-import {getAgents, getServices} from '@/client';
+import {deleteAgent, getAgents, getServices} from '@/client';
 import {useIsMultiLLMLicensed} from '@/license';
 import {userHasSystemPermission} from '@/utils/permissions';
 import {UserAgent} from '@/types/agents';
@@ -52,7 +52,17 @@ jest.mock('@/utils/permissions', () => ({
 
 jest.mock('./agent_row', () => ({
     __esModule: true,
-    default: ({agent}: {agent: UserAgent}) => <div data-testid='agent-row'>{agent.displayName}</div>,
+    default: ({agent, onDelete}: {agent: UserAgent; onDelete: (agent: UserAgent) => void}) => (
+        <div data-testid='agent-row'>
+            {agent.displayName}
+            <button
+                type='button'
+                onClick={() => onDelete(agent)}
+            >
+                {`Delete ${agent.displayName}`}
+            </button>
+        </div>
+    ),
 }));
 
 jest.mock('./agent_config_view', () => ({
@@ -62,13 +72,29 @@ jest.mock('./agent_config_view', () => ({
 
 jest.mock('./delete_agent_dialog', () => ({
     __esModule: true,
-    default: () => null,
+    default: ({onConfirm, onCancel}: {onConfirm: () => void; onCancel: () => void}) => (
+        <div data-testid='delete-agent-dialog'>
+            <button
+                type='button'
+                onClick={onConfirm}
+            >
+                {'Confirm delete'}
+            </button>
+            <button
+                type='button'
+                onClick={onCancel}
+            >
+                {'Cancel delete'}
+            </button>
+        </div>
+    ),
 }));
 
 const mockUseSelector = useSelector as unknown as jest.Mock;
 const mockUseIsMultiLLMLicensed = useIsMultiLLMLicensed as unknown as jest.Mock;
 const mockGetAgents = getAgents as unknown as jest.Mock;
 const mockGetServices = getServices as unknown as jest.Mock;
+const mockDeleteAgent = deleteAgent as unknown as jest.Mock;
 const mockUserHasSystemPermission = userHasSystemPermission as unknown as jest.Mock;
 
 const tooltipText = 'Multiple self-service agents require a qualifying Mattermost plan';
@@ -155,5 +181,50 @@ describe('AgentsList create-button gating', () => {
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(false);
         expect(screen.queryByText(tooltipText)).toBeNull();
+    });
+});
+
+describe('AgentsList delete quota refresh', () => {
+    async function deleteLastVisibleAgent() {
+        fireEvent.click(screen.getByRole('button', {name: 'Delete Agent a1'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}));
+        await waitFor(() => expect(mockDeleteAgent).toHaveBeenCalledWith('a1'));
+        await waitFor(() => expect(mockGetAgents).toHaveBeenCalledTimes(2));
+    }
+
+    test('refetches quota after deleting last visible agent and re-enables Create when server count is 0', async () => {
+        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+        mockGetAgents.
+            mockResolvedValueOnce({agents: [makeAgent('a1')], activeAgentCount: 1}).
+            mockResolvedValueOnce({agents: [], activeAgentCount: 0});
+        mockDeleteAgent.mockImplementation(() => Promise.resolve());
+
+        renderList();
+
+        await screen.findByText('Agent a1');
+        expect((screen.getByRole('button', {name: 'Create agent'}) as HTMLButtonElement).disabled).toBe(true);
+
+        await deleteLastVisibleAgent();
+
+        const button = screen.getByRole('button', {name: 'Create agent'});
+        expect((button as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.queryByText(tooltipText)).toBeNull();
+    });
+
+    test('refetches quota after delete and keeps Create disabled when invisible agents remain', async () => {
+        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+        mockGetAgents.
+            mockResolvedValueOnce({agents: [makeAgent('a1')], activeAgentCount: 1}).
+            mockResolvedValueOnce({agents: [], activeAgentCount: 1});
+        mockDeleteAgent.mockImplementation(() => Promise.resolve());
+
+        renderList();
+
+        await screen.findByText('Agent a1');
+        await deleteLastVisibleAgent();
+
+        const button = screen.getByRole('button', {name: 'Create agent'});
+        expect((button as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByText(tooltipText)).not.toBeNull();
     });
 });
