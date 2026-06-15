@@ -50,9 +50,7 @@ type ContentBlock struct {
 	Status       string          `json:"status,omitempty"`
 	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
 
-	// UserInteraction marks a tool_use block answered by the requesting user
-	// instead of executed by the server (see llm.Tool.UserInteraction). The
-	// webapp renders the matching interaction UI for pending blocks.
+	// UserInteraction is the persisted form of llm.Tool.UserInteraction.
 	UserInteraction string `json:"user_interaction,omitempty"`
 
 	// WouldAutoExecute marks a pending tool_use block that passed the

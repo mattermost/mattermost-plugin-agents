@@ -143,8 +143,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 		switch {
 		case slices.Contains(acceptedToolIDs, block.ID) && block.UserInteraction != "":
-			// The user's answer is the result. Mark the block shared so the
-			// channel-visible follow-up may reference the question and answer.
+			// Shared so the channel-visible follow-up may reference the answer.
 			block.Status = conversation.StatusSuccess
 			block.Shared = conversation.BoolPtr(true)
 			executedAny = true
@@ -175,7 +174,13 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				})
 			}
 		case block.UserInteraction != "":
+			// Skipped question: record the decline as the result and stream a
+			// follow-up so the model can proceed without the answer, per the
+			// tool contract. Shared because the decline is user-authored, not
+			// private tool output.
 			block.Status = conversation.StatusRejected
+			block.Shared = conversation.BoolPtr(true)
+			executedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
@@ -228,13 +233,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return fmt.Errorf("failed to update turn with resolved statuses: %w", updateErr)
 	}
 
-	// Write tool results as a tool_result turn. DecidedAt is set when the
-	// result is terminal — no share/keep-private decision remains. That
-	// applies to every DM result (auto-shared), every rejected tool (nothing
-	// was produced to share), and every user-interaction result (the user
-	// authored the answer to a question that was already visible, so there is
-	// nothing private to withhold). Channel results from other accepted tools
-	// stay undecided until the requester clicks Share or Keep Private.
+	// Write tool results as a tool_result turn. DecidedAt is set when no
+	// share/keep-private decision remains (see terminal below); other channel
+	// results stay undecided until the requester clicks Share or Keep Private.
 	toolUseStatusByID := make(map[string]string, len(pendingBlocks))
 	interactionByID := make(map[string]bool, len(pendingBlocks))
 	for _, b := range pendingBlocks {
@@ -251,8 +252,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		if tr.IsError {
 			status = conversation.StatusError
 		}
-		answered := interactionByID[tr.ToolCallID] && toolUseStatusByID[tr.ToolCallID] == conversation.StatusSuccess
-		terminal := isDM || answered || autoExecutedNow[tr.ToolCallID]
+		// Interaction results (answered or skipped) are user-authored, so they
+		// are terminal and shared with no separate share/keep-private step.
+		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID]
 		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,

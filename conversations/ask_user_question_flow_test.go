@@ -27,8 +27,9 @@ import (
 
 // TestHandleToolCallAnswersUserQuestion covers the AskUserQuestion answer
 // round-trip: the user's selection becomes the tool result, answer results are
-// terminal (no share stage) even in channels, skips record a decline, and an
-// invalid answer fails the request without consuming the pending question.
+// terminal (no share stage) even in channels, a skip records a decline and
+// still continues, and an invalid answer fails the request without consuming
+// the pending question.
 func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 	questionInput := json.RawMessage(`{
 		"question": "Which channel should I post in?",
@@ -71,13 +72,13 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			wantFollowUp: true,
 		},
 		{
-			name:          "skipped question records decline without follow-up",
+			name:          "skipped question records decline and continues",
 			channel:       openChannel,
 			acceptedIDs:   []string{},
 			wantStatus:    conversation.StatusRejected,
 			wantResult:    "User skipped the question",
-			wantShared:    false,
-			wantFollowUp:  false,
+			wantShared:    true,
+			wantFollowUp:  true,
 			wantResultErr: true,
 		},
 		{
