@@ -4,6 +4,7 @@ import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
+import { resetSelectedAgentPreference } from 'helpers/agent_preferences';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
 
 // Test configuration
@@ -23,6 +24,11 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await openAIMock.stop();
   await mattermost.stop();
+});
+
+// Agent selection persists server-side; reset so mock-bot tests stay isolated.
+test.beforeEach(async () => {
+  await resetSelectedAgentPreference(mattermost, username, password);
 });
 
 // Common test setup
