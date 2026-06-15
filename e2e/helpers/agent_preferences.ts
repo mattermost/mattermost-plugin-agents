@@ -1,8 +1,14 @@
+import {ClientError} from '@mattermost/client';
+
 import MattermostContainer from './mmcontainer';
 
 // Must match webapp/src/bots.tsx preference contract.
 export const SELECTED_AGENT_PREFERENCE_CATEGORY = 'agents';
 export const SELECTED_AGENT_PREFERENCE_NAME = 'selected_agent';
+
+function isMissingPreferenceError(err: unknown): boolean {
+    return err instanceof ClientError && err.status_code === 404;
+}
 
 export async function resetSelectedAgentPreference(
     mattermost: MattermostContainer,
@@ -17,7 +23,10 @@ export async function resetSelectedAgentPreference(
             category: SELECTED_AGENT_PREFERENCE_CATEGORY,
             name: SELECTED_AGENT_PREFERENCE_NAME,
         }]);
-    } catch {
-        // Preference may not exist.
+    } catch (err) {
+        if (isMissingPreferenceError(err)) {
+            return;
+        }
+        throw err;
     }
 }
