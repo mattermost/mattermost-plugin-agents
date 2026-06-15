@@ -78,13 +78,13 @@ jest.mock('./delete_agent_dialog', () => ({
                 type='button'
                 onClick={onConfirm}
             >
-                Confirm delete
+                {'Confirm delete'}
             </button>
             <button
                 type='button'
                 onClick={onCancel}
             >
-                Cancel delete
+                {'Cancel delete'}
             </button>
         </div>
     ),
@@ -194,10 +194,10 @@ describe('AgentsList delete quota refresh', () => {
 
     test('refetches quota after deleting last visible agent and re-enables Create when server count is 0', async () => {
         mockUseIsMultiLLMLicensed.mockReturnValue(false);
-        mockGetAgents
-            .mockResolvedValueOnce({agents: [makeAgent('a1')], activeAgentCount: 1})
-            .mockResolvedValueOnce({agents: [], activeAgentCount: 0});
-        mockDeleteAgent.mockResolvedValue(undefined);
+        mockGetAgents.
+            mockResolvedValueOnce({agents: [makeAgent('a1')], activeAgentCount: 1}).
+            mockResolvedValueOnce({agents: [], activeAgentCount: 0});
+        mockDeleteAgent.mockImplementation(() => Promise.resolve());
 
         renderList();
 
@@ -213,10 +213,10 @@ describe('AgentsList delete quota refresh', () => {
 
     test('refetches quota after delete and keeps Create disabled when invisible agents remain', async () => {
         mockUseIsMultiLLMLicensed.mockReturnValue(false);
-        mockGetAgents
-            .mockResolvedValueOnce({agents: [makeAgent('a1')], activeAgentCount: 1})
-            .mockResolvedValueOnce({agents: [], activeAgentCount: 1});
-        mockDeleteAgent.mockResolvedValue(undefined);
+        mockGetAgents.
+            mockResolvedValueOnce({agents: [makeAgent('a1')], activeAgentCount: 1}).
+            mockResolvedValueOnce({agents: [], activeAgentCount: 1});
+        mockDeleteAgent.mockImplementation(() => Promise.resolve());
 
         renderList();
 
