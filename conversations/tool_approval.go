@@ -188,14 +188,11 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				IsError:    true,
 			})
 		case block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}):
-			// The block was hidden from approval at pause time because it
-			// passed the policy (WouldAutoExecute), so it runs on resume
-			// without an explicit click. Both the persisted marker and a fresh
-			// policy check must agree: a tool persisted as "ask" (or one the
-			// user rejected) never auto-runs even if the admin flipped its
-			// policy mid-turn, and a marked tool whose policy was since revoked
-			// does not run either. Results match an auto-run round: shared and
-			// terminal.
+			// Runs on resume without a click. Requiring both the marker and a
+			// fresh policy check means a mid-turn policy flip can neither
+			// auto-run a tool the user was asked to approve (or rejected) nor
+			// run one whose policy was since revoked. Shared and terminal, like
+			// any auto-run round.
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			autoExecutedNow[block.ID] = true
 			executedAny = true

@@ -52,10 +52,8 @@ type AskUserQuestionResult struct {
 	Custom   string   `json:"custom,omitempty"`
 }
 
-// UserInteractionAnswer is the structured answer a user gives to a pending
-// user-interaction tool call. Selected holds the predefined option labels the
-// user picked; Custom holds optional free-form text entered via the
-// "Something else…" option.
+// UserInteractionAnswer is a user's answer to a pending user-interaction tool
+// call: the predefined option labels picked, plus optional free-form text.
 type UserInteractionAnswer struct {
 	Selected []string `json:"selected"`
 	Custom   string   `json:"custom,omitempty"`

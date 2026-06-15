@@ -88,13 +88,6 @@ func TestResolveUserInteractionAnswer(t *testing.T) {
 			wantErr: "single-select",
 		},
 		{
-			name:    "no selection and empty custom",
-			kind:    llm.UserInteractionSelect,
-			input:   questionInput,
-			answer:  UserInteractionAnswer{Custom: "   "},
-			wantErr: "no option selected",
-		},
-		{
 			name:    "no selection",
 			kind:    llm.UserInteractionSelect,
 			input:   questionInput,

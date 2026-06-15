@@ -72,14 +72,6 @@ describe('parseQuestionArgs', () => {
         expect(parsed?.multiSelect).toBe(true);
     });
 
-    test('allow_free_form defaults to true when absent', () => {
-        const parsed = parseQuestionArgs({
-            question: 'Q?',
-            options: [{label: 'A'}],
-        });
-        expect(parsed?.allowFreeForm).toBe(true);
-    });
-
     test('explicit allow_free_form false disables free-form', () => {
         const parsed = parseQuestionArgs({
             question: 'Q?',

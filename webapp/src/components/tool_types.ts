@@ -22,9 +22,8 @@ export type JSONValue =
 // of options. Mirrors llm.UserInteractionSelect on the server.
 export const UserInteractionSelect = 'select';
 
-// ToolAnswer is the structured answer a user gives to a user-interaction tool
-// call. Mirrors mmtools.UserInteractionAnswer on the server: selected holds the
-// predefined option labels picked, custom holds optional free-form text.
+// ToolAnswer is a user's answer to a user-interaction tool call. Mirrors
+// mmtools.UserInteractionAnswer on the server.
 export interface ToolAnswer {
     selected: string[];
     custom?: string;
