@@ -372,15 +372,17 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 	const origin = "https://jira.example.com"
 
 	cases := []struct {
-		name           string
-		policyChecker  mapPolicyChecker
-		wantToolStatus string
-		wantToolResult string
-		wantToolShared bool
-		wantFollowUp   bool
+		name             string
+		wouldAutoExecute bool
+		policyChecker    mapPolicyChecker
+		wantToolStatus   string
+		wantToolResult   string
+		wantToolShared   bool
+		wantFollowUp     bool
 	}{
 		{
-			name: "auto_run_everywhere policy executes on resume",
+			name:             "auto_run_everywhere policy executes on resume",
+			wouldAutoExecute: true,
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
@@ -390,7 +392,8 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wantFollowUp:   true,
 		},
 		{
-			name: "policy disabled since the pause rejects instead",
+			name:             "policy disabled since the pause rejects instead",
+			wouldAutoExecute: true,
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false}},
 			},
@@ -398,6 +401,17 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wantToolResult: "Tool call rejected by user",
 			wantToolShared: false,
 			wantFollowUp:   true, // the answered question still warrants a follow-up
+		},
+		{
+			name:             "unmarked tool does not auto-run even if policy flipped to auto",
+			wouldAutoExecute: false,
+			policyChecker: mapPolicyChecker{
+				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
+			},
+			wantToolStatus: conversation.StatusRejected,
+			wantToolResult: "Tool call rejected by user",
+			wantToolShared: false,
+			wantFollowUp:   true,
 		},
 	}
 
@@ -415,7 +429,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 					Input:            json.RawMessage(`{}`),
 					Status:           conversation.StatusPending,
 					Shared:           conversation.BoolPtr(false),
-					WouldAutoExecute: true,
+					WouldAutoExecute: tc.wouldAutoExecute,
 				},
 				{
 					Type: conversation.BlockTypeToolUse,

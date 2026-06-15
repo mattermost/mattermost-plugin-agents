@@ -187,11 +187,15 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				Result:     "User skipped the question",
 				IsError:    true,
 			})
-		case autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}):
-			// The block was paused only because the rest of its batch needed
-			// the user (see ToolCall.WouldAutoExecute). The policy is
-			// re-checked here rather than trusting the persisted marker.
-			// Results match an auto-run round: shared and terminal.
+		case block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}):
+			// The block was hidden from approval at pause time because it
+			// passed the policy (WouldAutoExecute), so it runs on resume
+			// without an explicit click. Both the persisted marker and a fresh
+			// policy check must agree: a tool persisted as "ask" (or one the
+			// user rejected) never auto-runs even if the admin flipped its
+			// policy mid-turn, and a marked tool whose policy was since revoked
+			// does not run either. Results match an auto-run round: shared and
+			// terminal.
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			autoExecutedNow[block.ID] = true
 			executedAny = true
