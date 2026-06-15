@@ -8,7 +8,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {doToolCall, doToolResult} from '@/client';
 import {invalidateConversation} from '@/hooks/use_conversation';
 
-import {ToolApprovalStage, ToolCall, ToolCallStatus, UserInteractionSelect} from './tool_types';
+import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus, UserInteractionSelect} from './tool_types';
 import ToolCard from './tool_card';
 import QuestionCard, {parseQuestionArgs} from './question_card';
 
@@ -87,9 +87,9 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     const submitInFlightRef = useRef(false);
     const toolDecisionsRef = useRef<ToolDecision>({});
 
-    // Selected option labels for accepted user-interaction tools, keyed by
-    // tool call ID. Sent as tool_answers alongside accepted_tool_ids.
-    const toolAnswersRef = useRef<Record<string, string[]>>({});
+    // Structured answers for accepted user-interaction tools, keyed by tool
+    // call ID. Sent as tool_answers alongside accepted_tool_ids.
+    const toolAnswersRef = useRef<Record<string, ToolAnswer>>({});
 
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
@@ -150,7 +150,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         setIsSubmitting(true);
         try {
             if (isCallStage) {
-                const answers: Record<string, string[]> = {};
+                const answers: Record<string, ToolAnswer> = {};
                 for (const id of approvedToolIDs) {
                     if (toolAnswersRef.current[id]) {
                         answers[id] = toolAnswersRef.current[id];
@@ -208,10 +208,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         submitDecisions(approvedToolIDs);
     }, [effectiveCanApprove, isSubmitting, decisionToolIDSet, decisionToolCalls, submitDecisions]);
 
-    const handleQuestionAnswer = useCallback((toolID: string, selections: string[]) => {
+    const handleQuestionAnswer = useCallback((toolID: string, selections: string[], custom: string) => {
+        const answer: ToolAnswer = custom ? {selected: selections, custom} : {selected: selections};
         toolAnswersRef.current = {
             ...toolAnswersRef.current,
-            [toolID]: selections,
+            [toolID]: answer,
         };
         handleToolDecision(toolID, true);
     }, [handleToolDecision]);
@@ -323,7 +324,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                                 isProcessing={isDecisionCall && isSubmitting}
                                 localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
                                 canAnswer={isDecisionCall && isCallStage}
-                                onAnswer={isDecisionCall ? (selections) => handleQuestionAnswer(tool.id, selections) : undefined} // eslint-disable-line no-undefined
+                                onAnswer={isDecisionCall ? (selections, custom) => handleQuestionAnswer(tool.id, selections, custom) : undefined} // eslint-disable-line no-undefined
                                 onSkip={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
                             />
                         );

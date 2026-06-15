@@ -3,7 +3,7 @@
 
 import React, {useMemo, useState} from 'react';
 import styled from 'styled-components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 import {CheckIcon, CloseCircleOutlineIcon} from '@mattermost/compass-icons/components';
 
 import {ToolCall, ToolCallStatus} from './tool_types';
@@ -20,6 +20,7 @@ export interface QuestionArgs {
     question: string;
     options: QuestionOption[];
     multiSelect: boolean;
+    allowFreeForm: boolean;
 }
 
 // parseQuestionArgs extracts a renderable question from tool call arguments.
@@ -53,24 +54,29 @@ export function parseQuestionArgs(args: ToolCall['arguments']): QuestionArgs | n
         question,
         options: parsedOptions,
         multiSelect: obj.multi_select === true,
+
+        // Mirror the server pointer semantics (mmtools.AskUserQuestionArgs):
+        // an absent key means enabled, an explicit false disables.
+        allowFreeForm: obj.allow_free_form !== false,
     };
 }
 
-// parseSelectedFromResult extracts the selected option labels from the tool
-// result content ({"selected": [...]}, see mmtools.AskUserQuestionResult).
-function parseSelectedFromResult(result?: string): string[] {
+// parseAnswerFromResult extracts the selected option labels and any free-form
+// text from the tool result content ({"selected": [...], "custom": "..."},
+// see mmtools.AskUserQuestionResult).
+function parseAnswerFromResult(result?: string): {selected: string[]; custom: string} {
     if (!result) {
-        return [];
+        return {selected: [], custom: ''};
     }
     try {
         const parsed = JSON.parse(result);
-        if (parsed && Array.isArray(parsed.selected)) {
-            return parsed.selected.filter((s: unknown) => typeof s === 'string');
-        }
+        const selected = Array.isArray(parsed?.selected) ? parsed.selected.filter((s: unknown) => typeof s === 'string') : [];
+        const custom = typeof parsed?.custom === 'string' ? parsed.custom : '';
+        return {selected, custom};
     } catch {
-        // Not JSON — no selections to highlight.
+        // Not JSON — no answer to highlight.
     }
-    return [];
+    return {selected: [], custom: ''};
 }
 
 const Card = styled.div`
@@ -196,6 +202,28 @@ const OptionDescription = styled.span`
     word-break: break-word;
 `;
 
+const FreeFormInput = styled.textarea`
+    margin: 4px 12px 0;
+    padding: 8px 12px;
+    min-height: 60px;
+    resize: vertical;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--center-channel-color);
+    background: var(--center-channel-bg);
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.24);
+    border-radius: 4px;
+
+    &:focus {
+        outline: none;
+        border-color: var(--button-bg);
+    }
+
+    &::placeholder {
+        color: rgba(var(--center-channel-color-rgb), 0.42);
+    }
+`;
+
 const Footer = styled.div`
     display: flex;
     align-items: center;
@@ -273,7 +301,7 @@ interface QuestionCardProps {
     isProcessing: boolean;
     localDecision?: boolean;
     canAnswer: boolean;
-    onAnswer?: (selections: string[]) => void;
+    onAnswer?: (selections: string[], custom: string) => void;
     onSkip?: () => void;
 }
 
@@ -286,7 +314,13 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     onAnswer,
     onSkip,
 }) => {
+    const {formatMessage} = useIntl();
     const [selections, setSelections] = useState<string[]>([]);
+
+    // Whether the free-form "Something else…" row is selected, plus the text
+    // typed into it. The row behaves like any other option for select rules.
+    const [freeFormSelected, setFreeFormSelected] = useState(false);
+    const [customText, setCustomText] = useState('');
 
     const isPending = tool.status === ToolCallStatus.Pending || tool.status === ToolCallStatus.Accepted;
     const isAnswered = tool.status === ToolCallStatus.Success;
@@ -294,8 +328,10 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     const hasLocalDecision = localDecision != null;
     const interactive = isPending && canAnswer && !isProcessing && !hasLocalDecision && Boolean(onAnswer && onSkip);
 
-    const answeredSelections = useMemo(() => parseSelectedFromResult(tool.result), [tool.result]);
-    const shownSelections = isAnswered ? answeredSelections : selections;
+    const answered = useMemo(() => parseAnswerFromResult(tool.result), [tool.result]);
+    const shownSelections = isAnswered ? answered.selected : selections;
+    const shownFreeFormSelected = isAnswered ? answered.custom !== '' : freeFormSelected;
+    const shownCustomText = isAnswered ? answered.custom : customText;
 
     const toggleOption = (label: string) => {
         if (!interactive) {
@@ -306,9 +342,33 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                 prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
             ));
         } else {
+            // Single-select: a predefined choice replaces any other choice,
+            // including the free-form row.
             setSelections([label]);
+            setFreeFormSelected(false);
         }
     };
+
+    const toggleFreeForm = () => {
+        if (!interactive) {
+            return;
+        }
+        if (question.multiSelect) {
+            setFreeFormSelected((prev) => !prev);
+        } else {
+            // Single-select: choosing free-form replaces any predefined choice.
+            setFreeFormSelected(true);
+            setSelections([]);
+        }
+    };
+
+    const trimmedCustom = customText.trim();
+    const customAnswered = freeFormSelected && trimmedCustom !== '';
+
+    // Accept requires at least one valid choice. When free-form is selected its
+    // text must be non-empty; otherwise a predefined option must be selected.
+    const canSubmit = freeFormSelected ? (customAnswered || selections.length > 0) : selections.length > 0;
+    const selectedCount = selections.length + (customAnswered ? 1 : 0);
 
     const renderStatus = () => {
         if (isProcessing || (hasLocalDecision && isPending)) {
@@ -385,7 +445,42 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                         </OptionRow>
                     );
                 })}
+                {question.allowFreeForm && (interactive || shownFreeFormSelected) && (
+                    <OptionRow
+                        type='button'
+                        $selected={shownFreeFormSelected}
+                        $disabled={!interactive}
+                        onClick={toggleFreeForm}
+                    >
+                        {question.multiSelect ? (
+                            <Checkbox $checked={shownFreeFormSelected}>
+                                {shownFreeFormSelected && <CheckIcon size={16}/>}
+                            </Checkbox>
+                        ) : (
+                            <NumberBadge $selected={shownFreeFormSelected}>{question.options.length + 1}</NumberBadge>
+                        )}
+                        <OptionText>
+                            <OptionLabel>
+                                <FormattedMessage
+                                    id='ai.question.something_else'
+                                    defaultMessage='Something else…'
+                                />
+                            </OptionLabel>
+                        </OptionText>
+                    </OptionRow>
+                )}
             </OptionList>
+            {question.allowFreeForm && shownFreeFormSelected && (
+                <FreeFormInput
+                    value={shownCustomText}
+                    placeholder={formatMessage({
+                        id: 'ai.question.custom_placeholder',
+                        defaultMessage: 'Type your answer',
+                    })}
+                    disabled={!interactive}
+                    onChange={(e) => setCustomText(e.target.value)}
+                />
+            )}
             {interactive && (
                 <Footer>
                     {question.multiSelect && (
@@ -393,7 +488,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                             <FormattedMessage
                                 id='ai.question.selected_count'
                                 defaultMessage='{count, plural, =0 {None selected} one {# selected} other {# selected}}'
-                                values={{count: selections.length}}
+                                values={{count: selectedCount}}
                             />
                         </SelectedCount>
                     )}
@@ -411,8 +506,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                         <FooterButton
                             type='button'
                             $primary={true}
-                            disabled={selections.length === 0}
-                            onClick={() => onAnswer?.(selections)}
+                            disabled={!canSubmit}
+                            onClick={() => onAnswer?.(selections, customAnswered ? trimmedCustom : '')}
                         >
                             <FormattedMessage
                                 id='ai.question.accept'

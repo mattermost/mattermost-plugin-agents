@@ -54,7 +54,7 @@ var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool 
 // toolAnswers carries the user's answers for accepted user-interaction tool
 // calls (e.g. AskUserQuestion), keyed by tool_use block ID. Those blocks are
 // not executed; the validated answer becomes the tool result.
-func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string, toolAnswers map[string][]string) error {
+func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) error {
 	// Resume: chain into the originating run's trace if we can find it. If
 	// the post or its assistant turn is missing, fall back to a fresh trace.
 	ctx = c.rehydrateRunTrace(ctx, post)
@@ -308,7 +308,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 // pending user-interaction block and returns the tool result content keyed by
 // block ID. Any invalid or missing answer fails the whole request with
 // ErrInvalidToolAnswer before any state is mutated.
-func resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolIDs []string, toolAnswers map[string][]string) (map[string]string, error) {
+func resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) (map[string]string, error) {
 	results := make(map[string]string)
 	for _, b := range blocks {
 		if b.Type != conversation.BlockTypeToolUse || b.UserInteraction == "" {

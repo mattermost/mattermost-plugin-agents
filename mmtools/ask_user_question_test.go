@@ -24,97 +24,144 @@ func TestResolveUserInteractionAnswer(t *testing.T) {
 		"options": [{"label": "UX Design"}, {"label": "Design team"}, {"label": "Product"}],
 		"multi_select": true
 	}`)
+	noFreeFormInput := json.RawMessage(`{
+		"question": "Which channel should I post in?",
+		"options": [{"label": "UX Design"}, {"label": "Design team"}],
+		"allow_free_form": false
+	}`)
 
 	cases := []struct {
-		name       string
-		kind       string
-		input      json.RawMessage
-		selections []string
-		want       string
-		wantErr    string
+		name    string
+		kind    string
+		input   json.RawMessage
+		answer  UserInteractionAnswer
+		want    string
+		wantErr string
 	}{
 		{
-			name:       "single select valid",
-			kind:       llm.UserInteractionSelect,
-			input:      questionInput,
-			selections: []string{"Design team"},
-			want:       `{"selected":["Design team"]}`,
+			name:   "single select valid",
+			kind:   llm.UserInteractionSelect,
+			input:  questionInput,
+			answer: UserInteractionAnswer{Selected: []string{"Design team"}},
+			want:   `{"selected":["Design team"]}`,
 		},
 		{
-			name:       "multi select valid",
-			kind:       llm.UserInteractionSelect,
-			input:      multiSelectInput,
-			selections: []string{"UX Design", "Product"},
-			want:       `{"selected":["UX Design","Product"]}`,
+			name:   "multi select valid",
+			kind:   llm.UserInteractionSelect,
+			input:  multiSelectInput,
+			answer: UserInteractionAnswer{Selected: []string{"UX Design", "Product"}},
+			want:   `{"selected":["UX Design","Product"]}`,
 		},
 		{
-			name:       "no selection",
-			kind:       llm.UserInteractionSelect,
-			input:      questionInput,
-			selections: nil,
-			wantErr:    "no option selected",
+			name:   "single select custom only",
+			kind:   llm.UserInteractionSelect,
+			input:  questionInput,
+			answer: UserInteractionAnswer{Custom: "Post it in #random"},
+			want:   `{"selected":null,"custom":"Post it in #random"}`,
 		},
 		{
-			name:       "multiple selections on single select",
-			kind:       llm.UserInteractionSelect,
-			input:      questionInput,
-			selections: []string{"UX Design", "Product"},
-			wantErr:    "single-select",
+			name:   "multi select with custom alongside predefined",
+			kind:   llm.UserInteractionSelect,
+			input:  multiSelectInput,
+			answer: UserInteractionAnswer{Selected: []string{"UX Design"}, Custom: "and somewhere else"},
+			want:   `{"selected":["UX Design"],"custom":"and somewhere else"}`,
 		},
 		{
-			name:       "selection not among options",
-			kind:       llm.UserInteractionSelect,
-			input:      questionInput,
-			selections: []string{"Engineering"},
-			wantErr:    "not one of the offered options",
+			name:   "whitespace custom treated as empty",
+			kind:   llm.UserInteractionSelect,
+			input:  questionInput,
+			answer: UserInteractionAnswer{Selected: []string{"Design team"}, Custom: "   "},
+			want:   `{"selected":["Design team"]}`,
 		},
 		{
-			name:       "duplicate selection",
-			kind:       llm.UserInteractionSelect,
-			input:      multiSelectInput,
-			selections: []string{"Product", "Product"},
-			wantErr:    "selected more than once",
+			name:    "custom rejected when free-form disabled",
+			kind:    llm.UserInteractionSelect,
+			input:   noFreeFormInput,
+			answer:  UserInteractionAnswer{Custom: "anything"},
+			wantErr: "free-form answer is not allowed",
 		},
 		{
-			name:       "malformed input",
-			kind:       llm.UserInteractionSelect,
-			input:      json.RawMessage(`{not json`),
-			selections: []string{"UX Design"},
-			wantErr:    "failed to parse question arguments",
+			name:    "single select predefined plus custom is too many",
+			kind:    llm.UserInteractionSelect,
+			input:   questionInput,
+			answer:  UserInteractionAnswer{Selected: []string{"Design team"}, Custom: "also this"},
+			wantErr: "single-select",
 		},
 		{
-			name:       "empty question",
-			kind:       llm.UserInteractionSelect,
-			input:      json.RawMessage(`{"question": " ", "options": [{"label": "A"}]}`),
-			selections: []string{"A"},
-			wantErr:    "question must not be empty",
+			name:    "no selection and empty custom",
+			kind:    llm.UserInteractionSelect,
+			input:   questionInput,
+			answer:  UserInteractionAnswer{Custom: "   "},
+			wantErr: "no option selected",
 		},
 		{
-			name:       "no options",
-			kind:       llm.UserInteractionSelect,
-			input:      json.RawMessage(`{"question": "Q?", "options": []}`),
-			selections: []string{"A"},
-			wantErr:    "at least one option",
+			name:    "no selection",
+			kind:    llm.UserInteractionSelect,
+			input:   questionInput,
+			answer:  UserInteractionAnswer{},
+			wantErr: "no option selected",
 		},
 		{
-			name:       "duplicate option labels",
-			kind:       llm.UserInteractionSelect,
-			input:      json.RawMessage(`{"question": "Q?", "options": [{"label": "A"}, {"label": "A"}]}`),
-			selections: []string{"A"},
-			wantErr:    "duplicate option label",
+			name:    "multiple selections on single select",
+			kind:    llm.UserInteractionSelect,
+			input:   questionInput,
+			answer:  UserInteractionAnswer{Selected: []string{"UX Design", "Product"}},
+			wantErr: "single-select",
 		},
 		{
-			name:       "unknown interaction kind",
-			kind:       "telepathy",
-			input:      questionInput,
-			selections: []string{"UX Design"},
-			wantErr:    "unknown user interaction kind",
+			name:    "selection not among options",
+			kind:    llm.UserInteractionSelect,
+			input:   questionInput,
+			answer:  UserInteractionAnswer{Selected: []string{"Engineering"}},
+			wantErr: "not one of the offered options",
+		},
+		{
+			name:    "duplicate selection",
+			kind:    llm.UserInteractionSelect,
+			input:   multiSelectInput,
+			answer:  UserInteractionAnswer{Selected: []string{"Product", "Product"}},
+			wantErr: "selected more than once",
+		},
+		{
+			name:    "malformed input",
+			kind:    llm.UserInteractionSelect,
+			input:   json.RawMessage(`{not json`),
+			answer:  UserInteractionAnswer{Selected: []string{"UX Design"}},
+			wantErr: "failed to parse question arguments",
+		},
+		{
+			name:    "empty question",
+			kind:    llm.UserInteractionSelect,
+			input:   json.RawMessage(`{"question": " ", "options": [{"label": "A"}]}`),
+			answer:  UserInteractionAnswer{Selected: []string{"A"}},
+			wantErr: "question must not be empty",
+		},
+		{
+			name:    "no options",
+			kind:    llm.UserInteractionSelect,
+			input:   json.RawMessage(`{"question": "Q?", "options": []}`),
+			answer:  UserInteractionAnswer{Selected: []string{"A"}},
+			wantErr: "at least one option",
+		},
+		{
+			name:    "duplicate option labels",
+			kind:    llm.UserInteractionSelect,
+			input:   json.RawMessage(`{"question": "Q?", "options": [{"label": "A"}, {"label": "A"}]}`),
+			answer:  UserInteractionAnswer{Selected: []string{"A"}},
+			wantErr: "duplicate option label",
+		},
+		{
+			name:    "unknown interaction kind",
+			kind:    "telepathy",
+			input:   questionInput,
+			answer:  UserInteractionAnswer{Selected: []string{"UX Design"}},
+			wantErr: "unknown user interaction kind",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ResolveUserInteractionAnswer(tc.kind, tc.input, tc.selections)
+			got, err := ResolveUserInteractionAnswer(tc.kind, tc.input, tc.answer)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)

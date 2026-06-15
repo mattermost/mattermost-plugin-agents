@@ -7,6 +7,7 @@ import {ChannelWithTeamData} from '@mattermost/types/channels';
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
+import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
 
@@ -195,7 +196,7 @@ export async function doRegenerate(postid: string) {
     });
 }
 
-export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?: Record<string, string[]>) {
+export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?: Record<string, ToolAnswer>) {
     const url = `${postRoute(postid)}/tool_call`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',

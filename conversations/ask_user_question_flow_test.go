@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -43,7 +44,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 		name          string
 		channel       *model.Channel
 		acceptedIDs   []string
-		answers       map[string][]string
+		answers       map[string]mmtools.UserInteractionAnswer
 		wantErr       error
 		wantStatus    string
 		wantResult    string
@@ -55,7 +56,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			name:         "answered in DM streams follow-up",
 			channel:      dmChannel,
 			acceptedIDs:  []string{"q-1"},
-			answers:      map[string][]string{"q-1": {"UX Design"}},
+			answers:      map[string]mmtools.UserInteractionAnswer{"q-1": {Selected: []string{"UX Design"}}},
 			wantStatus:   conversation.StatusSuccess,
 			wantResult:   `{"selected":["UX Design"]}`,
 			wantShared:   true,
@@ -65,9 +66,19 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			name:         "answered in channel is terminal and streams follow-up immediately",
 			channel:      openChannel,
 			acceptedIDs:  []string{"q-1"},
-			answers:      map[string][]string{"q-1": {"Design team"}},
+			answers:      map[string]mmtools.UserInteractionAnswer{"q-1": {Selected: []string{"Design team"}}},
 			wantStatus:   conversation.StatusSuccess,
 			wantResult:   `{"selected":["Design team"]}`,
+			wantShared:   true,
+			wantFollowUp: true,
+		},
+		{
+			name:         "custom free-form answer round-trips into the result",
+			channel:      dmChannel,
+			acceptedIDs:  []string{"q-1"},
+			answers:      map[string]mmtools.UserInteractionAnswer{"q-1": {Custom: "Post it in #random instead"}},
+			wantStatus:   conversation.StatusSuccess,
+			wantResult:   `{"selected":null,"custom":"Post it in #random instead"}`,
 			wantShared:   true,
 			wantFollowUp: true,
 		},
@@ -85,7 +96,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			name:        "invalid answer leaves the question pending",
 			channel:     openChannel,
 			acceptedIDs: []string{"q-1"},
-			answers:     map[string][]string{"q-1": {"Engineering"}},
+			answers:     map[string]mmtools.UserInteractionAnswer{"q-1": {Selected: []string{"Engineering"}}},
 			wantErr:     ErrInvalidToolAnswer,
 		},
 	}
@@ -263,7 +274,7 @@ func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
 	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	answers := map[string][]string{"q-1": {"UX Design"}}
+	answers := map[string]mmtools.UserInteractionAnswer{"q-1": {Selected: []string{"UX Design"}}}
 	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1", "q-1"}, answers))
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
@@ -485,7 +496,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 
 			// Only the question is in accepted_tool_ids: the paused tool is
 			// hidden in the UI and must be resolved by policy, not by click.
-			answers := map[string][]string{"q-1": {"UX Design"}}
+			answers := map[string]mmtools.UserInteractionAnswer{"q-1": {Selected: []string{"UX Design"}}}
 			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"q-1"}, answers))
 			streamingService.waitForStreaming()
 

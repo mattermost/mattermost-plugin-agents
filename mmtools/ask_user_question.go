@@ -20,7 +20,8 @@ const (
 	askUserQuestionDescription = "Ask the requesting user a question and present a set of options to pick from. " +
 		"Use this when you need the user's input to proceed — choosing between approaches, picking a target, or confirming intent — and the answer cannot be inferred from the conversation. " +
 		"Provide 2 to 5 concise, mutually exclusive options. Set multi_select to true only when picking several options together is meaningful. " +
-		"The tool result contains the option label(s) the user selected. The user may also skip the question; if they do, proceed sensibly without the answer. " +
+		"By default the user may also type a free-form answer; set allow_free_form to false to require a listed option. " +
+		"The tool result contains the option label(s) the user selected and any free-form text they typed. The user may also skip the question; if they do, proceed sensibly without the answer. " +
 		"Do not use this tool to ask open-ended questions — ask those in your normal response text instead."
 )
 
@@ -32,15 +33,32 @@ type AskUserQuestionOption struct {
 
 // AskUserQuestionArgs is the LLM-visible input schema for the question tool.
 type AskUserQuestionArgs struct {
-	Question    string                  `json:"question" jsonschema_description:"The question to ask the user. Must be clear and answerable by picking from the options."`
-	Options     []AskUserQuestionOption `json:"options" jsonschema_description:"The choices to present. Provide 2 to 5 distinct options."`
-	MultiSelect bool                    `json:"multi_select,omitempty" jsonschema_description:"Set to true to let the user select more than one option. Defaults to single-select."`
+	Question      string                  `json:"question" jsonschema_description:"The question to ask the user. Must be clear and answerable by picking from the options."`
+	Options       []AskUserQuestionOption `json:"options" jsonschema_description:"The choices to present. Provide 2 to 5 distinct options."`
+	MultiSelect   bool                    `json:"multi_select,omitempty" jsonschema_description:"Set to true to let the user select more than one option. Defaults to single-select."`
+	AllowFreeForm *bool                   `json:"allow_free_form,omitempty" jsonschema_description:"Whether to offer a free-form \"Something else…\" option that lets the user type their own answer. Defaults to true; set to false to require the user to pick from the listed options."`
+}
+
+// freeFormEnabled reports whether the free-form "Something else…" option should
+// be offered. An omitted field (nil) means enabled; an explicit false disables.
+func (a AskUserQuestionArgs) freeFormEnabled() bool {
+	return a.AllowFreeForm == nil || *a.AllowFreeForm
 }
 
 // AskUserQuestionResult is the tool result content written after the user
 // answers. It is JSON so both the LLM and the webapp can consume it.
 type AskUserQuestionResult struct {
 	Selected []string `json:"selected"`
+	Custom   string   `json:"custom,omitempty"`
+}
+
+// UserInteractionAnswer is the structured answer a user gives to a pending
+// user-interaction tool call. Selected holds the predefined option labels the
+// user picked; Custom holds optional free-form text entered via the
+// "Something else…" option.
+type UserInteractionAnswer struct {
+	Selected []string `json:"selected"`
+	Custom   string   `json:"custom,omitempty"`
 }
 
 // NewAskUserQuestionTool returns the built-in question tool. The resolver is
@@ -60,20 +78,20 @@ func NewAskUserQuestionTool() llm.Tool {
 
 // ResolveUserInteractionAnswer turns a user's answer to a pending interaction
 // tool call into the tool result content. kind is the block's UserInteraction
-// value, input the tool_use block's original arguments, and selections the
-// option labels the user picked.
-func ResolveUserInteractionAnswer(kind string, input json.RawMessage, selections []string) (string, error) {
+// value, input the tool_use block's original arguments, and answer the
+// structured selection (predefined labels plus optional free-form text).
+func ResolveUserInteractionAnswer(kind string, input json.RawMessage, answer UserInteractionAnswer) (string, error) {
 	switch kind {
 	case llm.UserInteractionSelect:
-		return resolveAskUserQuestionAnswer(input, selections)
+		return resolveAskUserQuestionAnswer(input, answer)
 	default:
 		return "", fmt.Errorf("unknown user interaction kind %q", kind)
 	}
 }
 
-// resolveAskUserQuestionAnswer validates the selections against the options
-// the LLM offered and returns the JSON tool result.
-func resolveAskUserQuestionAnswer(input json.RawMessage, selections []string) (string, error) {
+// resolveAskUserQuestionAnswer validates the answer against the options the LLM
+// offered and returns the JSON tool result.
+func resolveAskUserQuestionAnswer(input json.RawMessage, answer UserInteractionAnswer) (string, error) {
 	var args AskUserQuestionArgs
 	if err := json.Unmarshal(input, &args); err != nil {
 		return "", fmt.Errorf("failed to parse question arguments: %w", err)
@@ -82,10 +100,23 @@ func resolveAskUserQuestionAnswer(input json.RawMessage, selections []string) (s
 		return "", err
 	}
 
-	if len(selections) == 0 {
+	selections := answer.Selected
+	// Whitespace-only free-form text counts as no custom answer.
+	custom := strings.TrimSpace(answer.Custom)
+	if custom != "" && !args.freeFormEnabled() {
+		return "", errors.New("free-form answer is not allowed for this question")
+	}
+	hasCustom := custom != ""
+
+	if len(selections) == 0 && !hasCustom {
 		return "", errors.New("no option selected")
 	}
-	if !args.MultiSelect && len(selections) > 1 {
+
+	chosen := len(selections)
+	if hasCustom {
+		chosen++
+	}
+	if !args.MultiSelect && chosen > 1 {
 		return "", errors.New("question is single-select but multiple options were selected")
 	}
 
@@ -105,7 +136,7 @@ func resolveAskUserQuestionAnswer(input json.RawMessage, selections []string) (s
 		seen[sel] = true
 	}
 
-	result, err := json.Marshal(AskUserQuestionResult{Selected: selections})
+	result, err := json.Marshal(AskUserQuestionResult{Selected: selections, Custom: custom})
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal question result: %w", err)
 	}

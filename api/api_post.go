@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/react"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
@@ -324,7 +325,7 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 		// ToolAnswers carries the user's answers for accepted
 		// user-interaction tool calls, keyed by tool_use block ID.
-		ToolAnswers map[string][]string `json:"tool_answers"`
+		ToolAnswers map[string]mmtools.UserInteractionAnswer `json:"tool_answers"`
 	}
 
 	if err := c.ShouldBindJSON(&data); err != nil {

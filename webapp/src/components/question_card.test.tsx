@@ -24,6 +24,7 @@ function makeQuestion(overrides: Partial<QuestionArgs> = {}): QuestionArgs {
         question: 'Which channel should I post in?',
         options: [{label: 'UX Design'}, {label: 'Design team'}, {label: 'Product'}],
         multiSelect: false,
+        allowFreeForm: false,
         ...overrides,
     };
 }
@@ -53,10 +54,12 @@ describe('parseQuestionArgs', () => {
 
         // toEqual treats an absent key as equal to an undefined one, so the
         // second option (no description key) asserts none was parsed.
+        // allow_free_form defaults to true when absent.
         expect(parsed).toEqual({
             question: 'Pick one',
             options: [{label: 'A', description: 'first'}, {label: 'B'}],
             multiSelect: false,
+            allowFreeForm: true,
         });
     });
 
@@ -67,6 +70,23 @@ describe('parseQuestionArgs', () => {
             multi_select: true,
         });
         expect(parsed?.multiSelect).toBe(true);
+    });
+
+    test('allow_free_form defaults to true when absent', () => {
+        const parsed = parseQuestionArgs({
+            question: 'Q?',
+            options: [{label: 'A'}],
+        });
+        expect(parsed?.allowFreeForm).toBe(true);
+    });
+
+    test('explicit allow_free_form false disables free-form', () => {
+        const parsed = parseQuestionArgs({
+            question: 'Q?',
+            options: [{label: 'A'}],
+            allow_free_form: false,
+        });
+        expect(parsed?.allowFreeForm).toBe(false);
     });
 
     test.each([
@@ -101,7 +121,7 @@ describe('QuestionCard', () => {
         fireEvent.click(screen.getByText('Design team')); // replaces the prior choice
         fireEvent.click(screen.getByText('Accept'));
 
-        expect(onAnswer).toHaveBeenCalledWith(['Design team']);
+        expect(onAnswer).toHaveBeenCalledWith(['Design team'], '');
     });
 
     test('multi-select accumulates and toggles options off', () => {
@@ -113,7 +133,7 @@ describe('QuestionCard', () => {
         fireEvent.click(screen.getByText('UX Design')); // toggle the first back off
         fireEvent.click(screen.getByText('Accept'));
 
-        expect(onAnswer).toHaveBeenCalledWith(['Product']);
+        expect(onAnswer).toHaveBeenCalledWith(['Product'], '');
     });
 
     test('Accept is disabled until something is selected', () => {
@@ -131,6 +151,83 @@ describe('QuestionCard', () => {
 
         expect(onSkip).toHaveBeenCalledTimes(1);
         expect(onAnswer).not.toHaveBeenCalled();
+    });
+
+    test('free-form row appears only when allowFreeForm is enabled', () => {
+        const {queryByText, rerender} = renderCard({onAnswer: jest.fn(), onSkip: jest.fn()});
+        expect(queryByText('Something else…')).toBeNull();
+
+        rerender(
+            <IntlProvider locale='en'>
+                <QuestionCard
+                    tool={makeTool()}
+                    question={makeQuestion({allowFreeForm: true})}
+                    isProcessing={false}
+                    canAnswer={true}
+                    onAnswer={jest.fn()}
+                    onSkip={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+        expect(queryByText('Something else…')).not.toBeNull();
+    });
+
+    test('selecting the free-form row reveals the text input', () => {
+        const {queryByPlaceholderText, getByText} = renderCard({
+            question: makeQuestion({allowFreeForm: true}),
+            onAnswer: jest.fn(),
+            onSkip: jest.fn(),
+        });
+
+        expect(queryByPlaceholderText('Type your answer')).toBeNull();
+        fireEvent.click(getByText('Something else…'));
+        expect(queryByPlaceholderText('Type your answer')).not.toBeNull();
+    });
+
+    test('typing a free-form answer and accepting calls onAnswer with the custom text', () => {
+        const onAnswer = jest.fn();
+        const {getByText, getByPlaceholderText} = renderCard({
+            question: makeQuestion({allowFreeForm: true}),
+            onAnswer,
+            onSkip: jest.fn(),
+        });
+
+        fireEvent.click(getByText('Something else…'));
+        fireEvent.change(getByPlaceholderText('Type your answer'), {target: {value: 'Post it in #random'}});
+        fireEvent.click(getByText('Accept'));
+
+        expect(onAnswer).toHaveBeenCalledWith([], 'Post it in #random');
+    });
+
+    test('single-select free-form replaces a predefined choice', () => {
+        const onAnswer = jest.fn();
+        const {getByText, getByPlaceholderText} = renderCard({
+            question: makeQuestion({allowFreeForm: true}),
+            onAnswer,
+            onSkip: jest.fn(),
+        });
+
+        fireEvent.click(getByText('UX Design'));
+        fireEvent.click(getByText('Something else…')); // replaces the predefined choice
+        fireEvent.change(getByPlaceholderText('Type your answer'), {target: {value: 'My own answer'}});
+        fireEvent.click(getByText('Accept'));
+
+        expect(onAnswer).toHaveBeenCalledWith([], 'My own answer');
+    });
+
+    test('Accept is disabled when the free-form row is selected but empty', () => {
+        const {getByText, getByPlaceholderText} = renderCard({
+            question: makeQuestion({allowFreeForm: true}),
+            onAnswer: jest.fn(),
+            onSkip: jest.fn(),
+        });
+
+        fireEvent.click(getByText('Something else…'));
+        expect((getByText('Accept').closest('button') as HTMLButtonElement).disabled).toBe(true);
+
+        // Whitespace-only text is treated as empty, so Accept stays disabled.
+        fireEvent.change(getByPlaceholderText('Type your answer'), {target: {value: '   '}});
+        expect((getByText('Accept').closest('button') as HTMLButtonElement).disabled).toBe(true);
     });
 
     test('renders no controls and an Answered status for a resolved question', () => {
