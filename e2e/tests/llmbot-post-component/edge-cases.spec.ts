@@ -62,13 +62,18 @@ function createProviderTestSuite(provider: ProviderBundle) {
             test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
             if (!config.shouldRunTests) return;
 
-            // Customize provider for edge case tests
+            const isAnthropic = provider.service.type === 'anthropic';
             const customProvider = {
                 ...provider,
                 bot: {
                     ...provider.bot,
+                    enabledNativeTools: [], // Disable web search so reasoning events surface reliably
+                    reasoningEnabled: true,
+                    ...(isAnthropic && {
+                        thinkingBudget: 4096,
+                    }),
                     ...(provider.service.type === 'openaicompatible' && {
-                        reasoningEffort: 'high', // High effort to reliably surface reasoning events
+                        reasoningEffort: 'high',
                     }),
                 }
             };
