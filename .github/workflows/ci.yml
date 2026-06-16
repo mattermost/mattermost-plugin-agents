@@ -126,6 +126,7 @@ jobs:
     - name: Run LLMBot tests with real APIs for ${{ matrix.shard.name }}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-6' }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       shell: bash
       run: |
@@ -173,6 +174,7 @@ jobs:
     - name: Run Channel Analysis tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-6' }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       shell: bash
       run: |
@@ -220,6 +222,7 @@ jobs:
     - name: Run System Console tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-6' }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       shell: bash
       run: |
@@ -267,6 +270,7 @@ jobs:
     - name: Run Tool Config tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-6' }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       shell: bash
       run: |
@@ -323,6 +327,7 @@ jobs:
     - name: Run Tool Calling tests with real APIs for ${{ matrix.provider.display_name }}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-6' }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         E2E_PROVIDER: ${{ matrix.provider.name }}
       shell: bash
