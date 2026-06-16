@@ -36,9 +36,11 @@ type TranscriptionConfig struct {
 // NewTranscriber creates a new Transcriber.
 func NewTranscriber(cfg TranscriptionConfig) (*Transcriber, error) {
 	account := &providerAccount{
-		provider: cfg.Provider,
-		apiKey:   cfg.APIKey,
-		apiURL:   cfg.APIURL,
+		ProviderSettings: ProviderSettings{
+			Provider: cfg.Provider,
+			APIKey:   cfg.APIKey,
+			APIURL:   cfg.APIURL,
+		},
 	}
 
 	client, err := newBifrostClient(account, cfg.APIKey)

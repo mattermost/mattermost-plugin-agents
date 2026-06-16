@@ -331,6 +331,9 @@ func (m *mockConversationStore) GetConversationSummariesForUser(_ string, _, _ i
 // mockAgentStore is a minimal in-memory implementation of AgentStore for testing.
 type mockAgentStore struct {
 	agents map[string]*llm.BotConfig
+
+	// countErr, when set, makes CountActiveAgents fail (to exercise best-effort paths).
+	countErr error
 }
 
 func newMockAgentStore() *mockAgentStore {
@@ -402,6 +405,9 @@ func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig
 }
 
 func (m *mockAgentStore) CountActiveAgents() (int, error) {
+	if m.countErr != nil {
+		return 0, m.countErr
+	}
 	count := 0
 	for _, cfg := range m.agents {
 		if cfg.DeleteAt == 0 {

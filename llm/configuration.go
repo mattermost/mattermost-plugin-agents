@@ -47,6 +47,12 @@ type ServiceConfig struct {
 	// Only applicable to OpenAI and OpenAI-compatible services
 	UseResponsesAPI bool `json:"useResponsesAPI"`
 
+	// FallbackServiceID is the ID of another service to fall back to when this
+	// service's provider/model fails (e.g. network error, rate limit, model
+	// unavailable). The fallback service's DefaultModel is used. Chains are
+	// followed (A→B→C) with cycle detection.
+	FallbackServiceID string `json:"fallbackServiceID,omitempty"`
+
 	// LoadTestMockConfig is raw JSON merged by loadtest.ParseProfile for ServiceTypeLoadTestMock.
 	// Nil, empty, or whitespace-only means the default read/search-heavy profile.
 	LoadTestMockConfig json.RawMessage `json:"loadTestMockConfig,omitempty"`
@@ -211,6 +217,44 @@ func (c *BotConfig) Validate() error {
 // descriptive error is useful.
 func (c *BotConfig) IsValid() bool {
 	return c.Validate() == nil
+}
+
+// ResolveFallbackChain walks the fallback chain starting from the service
+// identified by primaryServiceID, returning an ordered slice of fallback
+// ServiceConfigs. A misconfigured chain — a cycle, or a fallback ID that is
+// missing or invalid — returns an error so the problem surfaces at setup
+// instead of silently leaving the bot without the configured fallback. A
+// missing primary returns an empty chain; the caller surfaces that error when
+// it resolves the primary itself.
+func ResolveFallbackChain(primaryServiceID string, getServiceByID func(id string) (ServiceConfig, bool)) ([]ServiceConfig, error) {
+	primarySvc, ok := getServiceByID(primaryServiceID)
+	if !ok {
+		return nil, nil
+	}
+
+	var chain []ServiceConfig
+	visited := map[string]bool{primaryServiceID: true}
+	currentID := primarySvc.FallbackServiceID
+
+	for currentID != "" {
+		if visited[currentID] {
+			return nil, fmt.Errorf("fallback chain of service %q contains a cycle at service %q", primaryServiceID, currentID)
+		}
+		visited[currentID] = true
+
+		svc, ok := getServiceByID(currentID)
+		if !ok {
+			return nil, fmt.Errorf("fallback service %q in the chain of service %q does not exist", currentID, primaryServiceID)
+		}
+		if !IsValidService(svc) {
+			return nil, fmt.Errorf("fallback service %q in the chain of service %q has an invalid configuration", currentID, primaryServiceID)
+		}
+
+		chain = append(chain, svc)
+		currentID = svc.FallbackServiceID
+	}
+
+	return chain, nil
 }
 
 // IsValidService validates a service configuration

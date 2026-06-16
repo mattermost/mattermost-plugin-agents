@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen, waitFor} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {ServiceFields, type LLMService} from './service';
@@ -44,6 +44,7 @@ const baseService: LLMService = {
     vertexProjectID: '',
     vertexProjectNumber: '',
     vertexAuthCredentials: '',
+    fallbackServiceID: '',
 };
 
 function renderFields(service: LLMService = baseService) {
@@ -232,5 +233,51 @@ describe('ServiceFields token-limit inputs', () => {
         expect(inputField.disabled).toBe(false);
         const outputField = screen.getByDisplayValue('4096') as HTMLInputElement;
         expect(outputField.disabled).toBe(false);
+    });
+});
+
+describe('ServiceFields fallback selector', () => {
+    // Names avoid the service-type display strings so the fallback options are
+    // unambiguous from the service-type dropdown.
+    const current: LLMService = {...baseService, id: 'svc-current', name: 'Primary Service'};
+    const other: LLMService = {...baseService, id: 'svc-other', name: 'Backup Service'};
+
+    beforeEach(() => {
+        // A stable empty array keeps the model-fetch effect from looping.
+        fetchModels.mockResolvedValue([]);
+    });
+
+    async function renderFallback(service: LLMService, services: LLMService[]) {
+        const onChange = jest.fn();
+        const result = render(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={service}
+                    services={services}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+        await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+        const fallbackSelect = screen.getByText('No fallback').closest('select') as HTMLSelectElement;
+        return {...result, onChange, fallbackSelect};
+    }
+
+    it('defaults to "No fallback" when no fallback is configured', async () => {
+        const {fallbackSelect} = await renderFallback(current, [current, other]);
+        expect(fallbackSelect.value).toBe('');
+    });
+
+    it('excludes the current service from the options but lists the others', async () => {
+        const {fallbackSelect} = await renderFallback(current, [current, other]);
+        const optionValues = Array.from(fallbackSelect.options).map((o) => o.value);
+        expect(optionValues).not.toContain(current.id);
+        expect(optionValues).toContain(other.id);
+    });
+
+    it('writes fallbackServiceID when a service is selected', async () => {
+        const {fallbackSelect, onChange} = await renderFallback(current, [current, other]);
+        fireEvent.change(fallbackSelect, {target: {value: other.id}});
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: other.id}));
     });
 });

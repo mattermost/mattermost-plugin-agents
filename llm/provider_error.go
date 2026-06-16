@@ -34,24 +34,28 @@ func (e *SanitizedProviderError) Unwrap() error {
 }
 
 // SanitizeProviderErrorMessage applies the same redaction rules as [SanitizeProviderError] to a plain string.
-// configuredAPIKey is additionally redacted when it appears as a substring (word-boundary safe).
-func SanitizeProviderErrorMessage(message string, configuredAPIKey string) string {
+// Each configured API key is additionally redacted when it appears as a substring (word-boundary safe).
+// Pass the primary key plus any fallback keys so a fallback provider's credential in a custom key format
+// (e.g. Gemini, Mistral, or a local OpenAI-compatible key) is redacted even when the generic patterns miss it.
+func SanitizeProviderErrorMessage(message string, configuredAPIKeys ...string) string {
 	sanitized := sanitizeProviderErrorMessagePlain(message)
-	apiKey := strings.TrimSpace(configuredAPIKey)
-	if apiKey != "" {
-		sanitized = replaceConfiguredAPIKeyInMessage(sanitized, apiKey)
+	for _, key := range configuredAPIKeys {
+		apiKey := strings.TrimSpace(key)
+		if apiKey != "" {
+			sanitized = replaceConfiguredAPIKeyInMessage(sanitized, apiKey)
+		}
 	}
 	return sanitized
 }
 
 // SanitizeProviderError redacts API keys, bearer tokens, and similar material from provider errors
 // before those strings are logged, streamed to clients, or returned to callers.
-func SanitizeProviderError(err error, configuredAPIKey string) error {
+func SanitizeProviderError(err error, configuredAPIKeys ...string) error {
 	if err == nil {
 		return nil
 	}
 
-	sanitized := SanitizeProviderErrorMessage(err.Error(), configuredAPIKey)
+	sanitized := SanitizeProviderErrorMessage(err.Error(), configuredAPIKeys...)
 	if sanitized == err.Error() {
 		return err
 	}
