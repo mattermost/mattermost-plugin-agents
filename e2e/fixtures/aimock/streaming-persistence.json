@@ -1,0 +1,18 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:"
+      },
+      "response": {
+        "content": "Aimock streaming persistence title"
+      }
+    },
+    {
+      "match": { "userMessage": "brief aimock typescript benefits" },
+      "response": {
+        "content": "Aimock: TypeScript adds static types, safer refactors, and better IDE support for large codebases."
+      }
+    }
+  ]
+}

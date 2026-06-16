@@ -1,0 +1,33 @@
+{
+  "fixtures": [
+    {
+      "match": { "toolCallId": "call_aimock_ask_1" },
+      "response": {
+        "content": "Aimock ask policy continuation after channel lookup."
+      }
+    },
+    {
+      "match": {
+        "userMessage": "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:"
+      },
+      "response": {
+        "content": "Aimock ask policy title"
+      }
+    },
+    {
+      "match": {
+        "userMessage": "trigger aimock ask policy get channel",
+        "hasToolResult": false
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "id": "call_aimock_ask_1",
+            "name": "mattermost__get_channel_info",
+            "arguments": { "channel_name": "Town Square" }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "hello aimock e2e" },
+      "response": { "content": "Hello from aimock E2E!" }
+    }
+  ]
+}
