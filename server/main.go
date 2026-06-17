@@ -467,7 +467,7 @@ func (p *Plugin) OnActivate() error {
 	var mcpHandlers *mcpserver.PluginMCPHandlers
 	// Create logger adapter to route MCP handler logs through plugin logging
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
-	internalServerURL := deriveInternalServerURL(pluginAPI)
+	internalServerURL := deriveInternalServerURL(pluginAPI, *siteURL)
 	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger)
 	if err != nil {
 		pluginAPI.Log.Error("Failed to create MCP handlers", "error", err)
