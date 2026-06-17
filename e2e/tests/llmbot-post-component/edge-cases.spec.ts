@@ -129,8 +129,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             await aiPlugin.sendMessage(prompt);
 
-            // Wait for reasoning to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForReasoning();
+            // Wait for reasoning to complete (smart wait, up to 5 min).
+            // The "extreme detail" prompt can have a slower time-to-first reasoning
+            // token against the real API, so allow a longer initial-appearance budget.
+            await llmBotHelper.waitForReasoning(undefined, 300000, 120000);
 
             // Wait for streaming to complete (smart wait, up to 5 min)
             await llmBotHelper.waitForStreamingComplete();
