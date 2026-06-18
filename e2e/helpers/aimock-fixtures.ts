@@ -140,17 +140,6 @@ export function buildReasoningResponse(options: {
     return wrapFixtures(fixtures);
 }
 
-/** Semantic alias for Anthropic-real-API migrations; Phase 1 uses openaicompatible only. */
-export function buildAnthropicThinkingResponse(options: {
-    userMessage: string;
-    reasoning: string;
-    content: string;
-    title?: string;
-    chunkSize?: number;
-}): AIMockFixtureFile {
-    return buildReasoningResponse(options);
-}
-
 export function buildTitleResponse(userMessage: string, title: string): AIMockFixture {
     return {
         match: { userMessage: `${TITLE_GENERATION_PROMPT_PREFIX} ${userMessage}` },
