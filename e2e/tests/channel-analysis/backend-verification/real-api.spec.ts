@@ -2,177 +2,170 @@
 // seed: tests/seed.spec.ts
 
 import { test, expect, Page } from '@playwright/test';
-import RunRealAPIContainer, { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
+
+import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
+import { AIMockFixtureFile } from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { LLMBotPostHelper } from 'helpers/llmbot-post';
-import {
-    getAPIConfig,
-    getSkipMessage,
-    getAvailableProviders,
-    ProviderBundle,
-} from 'helpers/api-config';
-import { attachAPIErrorContext } from 'helpers/log-scanner';
-
-/**
- * Test Suite: Channel Analysis Real API Verification
- *
- * A streamlined test suite that verifies the backend pipeline works correctly with real LLMs.
- * These tests ensure that context fetching, prompt construction, and LLM communication
- * are functioning as expected without testing exhaustive UI edge cases.
- *
- * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic
- * - OPENAI_API_KEY: To run tests with OpenAI
- */
+import { RunAIMockContainer } from 'helpers/plugincontainer';
 
 const username = 'regularuser';
 const password = 'regularuser';
-const config = getAPIConfig();
-const skipMessage = getSkipMessage();
 
-/**
- * Helper class for Integration test interactions
- */
-class RealAPIHelper {
+const CHANNEL_ANALYSIS_MCP = {
+    embeddedServer: { enabled: true },
+    enablePluginServer: true,
+    enabled: true,
+    idleTimeoutMinutes: 30,
+    servers: [] as unknown[],
+};
+
+class ChannelAnalysisBackendHelper {
     constructor(private page: Page) {}
 
-    /**
-     * Wait for the page to be fully loaded after login
-     */
     async waitForPageReady() {
         await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        // Wait for plugin to initialize
         await this.page.waitForTimeout(2000);
     }
 
-    /**
-     * Navigate to a specific channel
-     */
     async navigateToChannel(mattermost: MattermostContainer, channelName: string) {
         await this.page.goto(mattermost.url() + `/test/channels/${channelName}`);
         await this.waitForPageReady();
     }
-
-    /**
-     * Open the channel agents popover by clicking the agents button in channel header
-     */
-    async openChannelAgentsPopover() {
-        await new AIPlugin(this.page).openChannelAnalysisPopover();
-    }
-
-    /**
-     * Type and submit a custom query in the channel agents input
-     */
-    async submitChannelQuery(query: string) {
-        const input = this.page.locator('.channel-summarize-popover input[type="text"]');
-        await expect(input).toBeVisible();
-        await input.fill(query);
-        await input.press('Enter');
-    }
 }
 
-async function setupTestPage(page: Page, mattermost: MattermostContainer, provider: ProviderBundle) {
-    const mmPage = new MattermostPage(page);
-    const aiPlugin = new AIPlugin(page);
-    const llmBotHelper = new LLMBotPostHelper(page);
-    const apiHelper = new RealAPIHelper(page);
-    const botUsername = provider.bot.name;
-
-    return { mmPage, aiPlugin, llmBotHelper, apiHelper, botUsername };
+function buildReadChannelAnalysisFixtures(options: {
+    toolCallId: string;
+    finalContent: string;
+}): AIMockFixtureFile {
+    return {
+        fixtures: [
+            {
+                match: { toolCallId: options.toolCallId },
+                response: { content: options.finalContent },
+            },
+            {
+                match: {
+                    toolName: 'read_channel',
+                    hasToolResult: false,
+                },
+                response: {
+                    toolCalls: [
+                        {
+                            id: options.toolCallId,
+                            name: 'read_channel',
+                            arguments: {},
+                        },
+                    ],
+                    finishReason: 'tool_calls',
+                },
+            },
+        ],
+    };
 }
 
-function createProviderTestSuite(provider: ProviderBundle) {
-    test.describe(`Channel Analysis Real API - ${provider.name}`, () => {
-        let mattermost: MattermostContainer;
+test.describe('Channel Analysis Aimock Backend Verification', () => {
+    let mattermost: MattermostContainer;
+    let aimock: AIMockContainer;
 
-        test.beforeAll(async () => {
-            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
-            if (!config.shouldRunTests) return;
-
-            const customProvider = {
-                ...provider,
-                bot: {
-                    ...provider.bot,
-                    reasoningEnabled: true,
-                    enabledNativeTools: [],
-                }
-            };
-
-            mattermost = await RunRealAPIContainer(customProvider);
-        });
-
-        test.afterAll(async () => {
-            if (mattermost) {
-                await mattermost.stop();
-            }
-        });
-
-        test.afterEach(async ({}, testInfo) => {
-            await attachAPIErrorContext(testInfo);
-        });
-
-        test('Sanity check: Channel analysis produces valid summary', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(360000);
-
-            const { mmPage, llmBotHelper, apiHelper } = await setupTestPage(page, mattermost, provider);
-
-            await mmPage.login(mattermost.url(), username, password);
-            await apiHelper.waitForPageReady();
-
-            await mmPage.sendChannelMessage('Feature discussion: We need to implement SSO.');
-            await mmPage.sendChannelMessage('Deadline: Next Friday.');
-
-            await apiHelper.openChannelAgentsPopover();
-            await apiHelper.submitChannelQuery('What feature and deadline were discussed?');
-
-            await llmBotHelper.waitForStreamingComplete();
-
-            const postText = llmBotHelper.getPostText();
-            await expect(postText).toBeVisible();
-            const content = await postText.textContent();
-            expect(content).toBeTruthy();
-            expect(content!.toLowerCase()).toMatch(/sso|feature/);
-            expect(content!.toLowerCase()).toMatch(/friday|deadline/);
-        });
-
-        test('Context isolation: Analysis reflects correct channel after switching', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(480000);
-
-            const { mmPage, llmBotHelper, apiHelper } = await setupTestPage(page, mattermost, provider);
-
-            await mmPage.login(mattermost.url(), username, password);
-            await apiHelper.waitForPageReady();
-
-            // Channel 1: Town Square
-            await mmPage.sendChannelMessage('Town square topic: Company picnic.');
-
-            // Channel 2: Off-Topic
-            await apiHelper.navigateToChannel(mattermost, 'off-topic');
-            await mmPage.sendChannelMessage('Off-topic discussion: Best sci-fi movies.');
-
-            // Analyze Channel 2
-            await apiHelper.openChannelAgentsPopover();
-            await apiHelper.submitChannelQuery('What is the discussion topic?');
-
-            await llmBotHelper.waitForStreamingComplete();
-
-            const postText = llmBotHelper.getPostText();
-            const content = await postText.textContent();
-            expect(content).toBeTruthy();
-
-            // Should mention sci-fi/movies (Channel 2), NOT picnic (Channel 1)
-            expect(content!.toLowerCase()).toMatch(/sci-fi|movie/);
-            expect(content!.toLowerCase()).not.toContain('picnic');
+    test.beforeAll(async () => {
+        test.setTimeout(180000);
+        mattermost = await RunAIMockContainer({ mcp: CHANNEL_ANALYSIS_MCP });
+        // aimock strict mode requires at least one fixture at startup; each test replaces these.
+        aimock = await RunAIMockSidecar(mattermost.network, {
+            fixtures: buildReadChannelAnalysisFixtures({
+                toolCallId: 'bootstrap_read_channel',
+                finalContent: 'bootstrap response',
+            }),
         });
     });
-}
 
-const providers = getAvailableProviders();
-providers.forEach(provider => {
-    createProviderTestSuite(provider);
+    test.afterAll(async () => {
+        if (aimock) {
+            await aimock.stop();
+        }
+        if (mattermost) {
+            await mattermost.stop();
+        }
+    });
+
+    test('Sanity check: Channel analysis produces valid summary', async ({ page }) => {
+        test.setTimeout(360000);
+
+        const mmPage = new MattermostPage(page);
+        const aiPlugin = new AIPlugin(page);
+        const llmBotHelper = new LLMBotPostHelper(page);
+        const apiHelper = new ChannelAnalysisBackendHelper(page);
+
+        const summaryMarker = `phase5-summary-sso-${Date.now()}`;
+        const deadlineMarker = `phase5-summary-friday-${Date.now()}`;
+        const toolCallId = `call_phase5_summary_read_${Date.now()}`;
+
+        await aimock.setFixtures(
+            buildReadChannelAnalysisFixtures({
+                toolCallId,
+                finalContent: 'The channel discussed implementing SSO, with the deadline next Friday.',
+            }),
+        );
+
+        await mmPage.login(mattermost.url(), username, password);
+        await apiHelper.waitForPageReady();
+
+        await mmPage.sendChannelMessage(`Feature discussion ${summaryMarker}: We need to implement SSO.`);
+        await mmPage.sendChannelMessage(`Deadline ${deadlineMarker}: Next Friday.`);
+
+        await aiPlugin.openChannelAnalysisPopover();
+        await aiPlugin.sendChannelAnalysisMessage('What feature and deadline were discussed?');
+
+        await llmBotHelper.waitForStreamingComplete();
+
+        const postText = llmBotHelper.getPostText();
+        await expect(postText).toBeVisible();
+        const content = await postText.textContent();
+        expect(content).toBeTruthy();
+        expect(content!.toLowerCase()).toContain('sso');
+        expect(content!.toLowerCase()).toContain('friday');
+    });
+
+    test('Context isolation: Analysis reflects correct channel after switching', async ({ page }) => {
+        test.setTimeout(480000);
+
+        const mmPage = new MattermostPage(page);
+        const aiPlugin = new AIPlugin(page);
+        const llmBotHelper = new LLMBotPostHelper(page);
+        const apiHelper = new ChannelAnalysisBackendHelper(page);
+
+        const townMarker = `phase5-town-picnic-${Date.now()}`;
+        const offTopicMarker = `phase5-offtopic-scifi-${Date.now()}`;
+        const toolCallId = `call_phase5_isolation_read_${Date.now()}`;
+
+        await mmPage.login(mattermost.url(), username, password);
+        await apiHelper.waitForPageReady();
+
+        await mmPage.sendChannelMessage(`Town square topic ${townMarker}: Company picnic.`);
+        await apiHelper.navigateToChannel(mattermost, 'off-topic');
+        await mmPage.sendChannelMessage(`Off-topic discussion ${offTopicMarker}: Best sci-fi movies.`);
+
+        await aimock.setFixtures(
+            buildReadChannelAnalysisFixtures({
+                toolCallId,
+                finalContent: 'The active channel discussion is about sci-fi movies.',
+            }),
+        );
+
+        await aiPlugin.openChannelAnalysisPopover();
+        await aiPlugin.sendChannelAnalysisMessage('What is the discussion topic?');
+
+        await llmBotHelper.waitForStreamingComplete();
+
+        const postText = llmBotHelper.getPostText();
+        await expect(postText).toBeVisible();
+        const content = await postText.textContent();
+        expect(content).toBeTruthy();
+        expect(content!.toLowerCase()).toMatch(/sci-fi|movie/);
+        expect(content!.toLowerCase()).not.toContain('picnic');
+        expect(content!).not.toContain(townMarker);
+    });
 });
-
