@@ -6,12 +6,12 @@ import { AIMockFixtureFile } from './aimock-fixtures';
 import { LLMBotPostHelper } from './llmbot-post';
 import { MattermostPage } from './mm';
 import MattermostContainer from './mmcontainer';
+import { AIMOCK_BOT_NAME, RunAIMockContainer } from './plugincontainer';
 import {
-    AIMOCK_BOT_NAME,
-    RunAIMockContainer,
+    RunWebSearchMockSidecar,
+    WebSearchMockContainer,
     WEB_SEARCH_PLUGIN_CONFIG,
-} from './plugincontainer';
-import { RunWebSearchMockSidecar, WebSearchMockContainer } from './web-search-mock-container';
+} from './web-search-mock-container';
 
 // Citation suites use deterministic WebSearch tool fallback (useResponsesAPI: false).
 export const AIMOCK_CITATION_MODE = 'webSearchTool' as const;

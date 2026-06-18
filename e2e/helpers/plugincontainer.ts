@@ -7,17 +7,6 @@ export const AIMOCK_SERVICE_ID = 'aimock-service';
 export const AIMOCK_BOT_ID = 'aimock-bot';
 export const AIMOCK_BOT_NAME = 'aimock';
 
-export const WEB_SEARCH_PLUGIN_CONFIG = {
-  enabled: true,
-  provider: 'google',
-  google: {
-    apiKey: 'mock-key',
-    searchEngineId: 'mock-cx',
-    apiURL: 'http://websearch:8090/customsearch/v1',
-    resultLimit: 5,
-  },
-};
-
 function findPluginTarball(): string {
   const distPath = path.join(__dirname, '..', '..', 'dist');
   let filename = '';

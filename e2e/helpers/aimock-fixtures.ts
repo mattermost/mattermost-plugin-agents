@@ -125,11 +125,6 @@ export function buildAnthropicThinkingResponse(options: {
     return buildReasoningResponse(options);
 }
 
-/**
- * Native URL citations via aimock webSearches. Verified in Phase 1 smoke against
- * Bifrost chat completions (useResponsesAPI: false). If annotations do not render,
- * later citation suites should use deterministic tool-call fallback instead.
- */
 export function buildTitleResponse(userMessage: string, title: string): AIMockFixture {
     return {
         match: { userMessage: `${TITLE_GENERATION_PROMPT_PREFIX} ${userMessage}` },
@@ -224,6 +219,11 @@ export function buildRegenerateCitationResponse(options: {
     );
 }
 
+/**
+ * Native URL citations via aimock webSearches. Verified in Phase 1 smoke against
+ * Bifrost chat completions (useResponsesAPI: false). If annotations do not render,
+ * later citation suites should use deterministic tool-call fallback instead.
+ */
 export function buildCitationResponse(options: {
     userMessage: string;
     content: string;

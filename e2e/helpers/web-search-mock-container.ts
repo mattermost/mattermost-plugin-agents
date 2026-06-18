@@ -8,6 +8,19 @@ export const WEB_SEARCH_MOCK_IMAGE = 'node:20-alpine';
 export const WEB_SEARCH_MOCK_PORT = 8090;
 export const WEB_SEARCH_MOCK_ALIAS = 'websearch';
 export const WEB_SEARCH_MOCK_API_PATH = '/customsearch/v1';
+export const WEB_SEARCH_MOCK_NETWORK_URL = `http://${WEB_SEARCH_MOCK_ALIAS}:${WEB_SEARCH_MOCK_PORT}${WEB_SEARCH_MOCK_API_PATH}`;
+
+// Points the plugin's built-in Google WebSearch provider at the deterministic mock.
+export const WEB_SEARCH_PLUGIN_CONFIG = {
+    enabled: true,
+    provider: 'google',
+    google: {
+        apiKey: 'mock-key',
+        searchEngineId: 'mock-cx',
+        apiURL: WEB_SEARCH_MOCK_NETWORK_URL,
+        resultLimit: 5,
+    },
+};
 
 export type WebSearchMockResult = {
     title: string;
@@ -115,10 +128,6 @@ export class WebSearchMockContainer {
         }
 
         this.serverDir = null;
-    }
-
-    getNetworkApiUrl(): string {
-        return `http://${WEB_SEARCH_MOCK_ALIAS}:${WEB_SEARCH_MOCK_PORT}${WEB_SEARCH_MOCK_API_PATH}`;
     }
 }
 
