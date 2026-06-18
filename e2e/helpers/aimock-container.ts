@@ -144,17 +144,10 @@ export class AIMockContainer {
             fs.rmSync(path.join(fixturesDir, entry), { force: true });
         }
 
-        if (this.startOptions.fixtureFiles?.length) {
-            for (const file of this.startOptions.fixtureFiles) {
-                const normalized = normalizeFixtureInput(file.contents);
-                fs.writeFileSync(
-                    path.join(fixturesDir, file.name),
-                    JSON.stringify(normalized, null, 2),
-                );
-            }
-            return;
-        }
-
+        // aimock concatenates every fixture file under /fixtures, so a single
+        // merged file keeps first-match ordering deterministic and lets
+        // setFixtures/appendFixtures reload correctly regardless of how the
+        // sidecar was originally started.
         fs.writeFileSync(
             path.join(fixturesDir, DEFAULT_FIXTURE_FILE),
             JSON.stringify(this.fixtureFileContents, null, 2),

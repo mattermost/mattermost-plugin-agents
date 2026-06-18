@@ -126,16 +126,7 @@ export async function RunAIMockContainer(overrides?: {
 }
 
 const RunContainer = async (): Promise<MattermostContainer> => {
-  let filename = "";
-  const distPath = path.join(__dirname, "../../dist/");
-  fs.readdirSync(distPath).forEach(file => {
-      if (file.endsWith(".tar.gz")) {
-          filename = path.join(distPath, file);
-      }
-  })
-  if (filename === "") {
-      throw("No tar.gz file found in dist folder")
-  }
+  const filename = findPluginTarball();
   const pluginConfig = {
 	  "config": {
 		  "allowPrivateChannels": true,
