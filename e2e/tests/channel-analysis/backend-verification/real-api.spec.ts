@@ -4,7 +4,7 @@
 import { test, expect, Page } from '@playwright/test';
 
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
-import { AIMockFixtureFile } from 'helpers/aimock-fixtures';
+import { buildToolNameAndTextResponse } from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -36,34 +36,12 @@ class ChannelAnalysisBackendHelper {
     }
 }
 
-function buildReadChannelAnalysisFixtures(options: {
-    toolCallId: string;
-    finalContent: string;
-}): AIMockFixtureFile {
-    return {
-        fixtures: [
-            {
-                match: { toolCallId: options.toolCallId },
-                response: { content: options.finalContent },
-            },
-            {
-                match: {
-                    toolName: 'read_channel',
-                    hasToolResult: false,
-                },
-                response: {
-                    toolCalls: [
-                        {
-                            id: options.toolCallId,
-                            name: 'read_channel',
-                            arguments: {},
-                        },
-                    ],
-                    finishReason: 'tool_calls',
-                },
-            },
-        ],
-    };
+function buildReadChannelAnalysisFixtures(options: { toolCallId: string; finalContent: string }) {
+    return buildToolNameAndTextResponse({
+        toolName: 'read_channel',
+        toolCallId: options.toolCallId,
+        finalContent: options.finalContent,
+    });
 }
 
 test.describe('Channel Analysis Aimock Backend Verification', () => {

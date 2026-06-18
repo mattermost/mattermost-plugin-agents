@@ -255,8 +255,8 @@ export function buildCitationResponse(options: {
     return wrapFixtures(fixtures);
 }
 
-export function buildToolCallAndTextResponse(options: {
-    userMessage: string;
+function buildToolCallThenTextFile(options: {
+    firstTurnMatch: Pick<AIMockMatch, 'userMessage' | 'toolName'>;
     toolCallId: string;
     toolName: string;
     toolArguments: Record<string, unknown>;
@@ -275,7 +275,7 @@ export function buildToolCallAndTextResponse(options: {
     }
 
     fixtures.push({
-        match: { userMessage: options.userMessage, hasToolResult: false },
+        match: { ...options.firstTurnMatch, hasToolResult: false },
         response: {
             toolCalls: [
                 {
@@ -289,6 +289,46 @@ export function buildToolCallAndTextResponse(options: {
     });
 
     return wrapFixtures(fixtures);
+}
+
+export function buildToolCallAndTextResponse(options: {
+    userMessage: string;
+    toolCallId: string;
+    toolName: string;
+    toolArguments: Record<string, unknown>;
+    finalContent: string;
+    title?: string;
+}): AIMockFixtureFile {
+    return buildToolCallThenTextFile({
+        firstTurnMatch: { userMessage: options.userMessage },
+        toolCallId: options.toolCallId,
+        toolName: options.toolName,
+        toolArguments: options.toolArguments,
+        finalContent: options.finalContent,
+        title: options.title,
+    });
+}
+
+/**
+ * Two-turn tool fixture matched on the offered tool name rather than the user
+ * message. Use when the model turn is driven by an available tool (e.g. channel
+ * analysis binds bare `read_channel`) and there is no stable user message to match.
+ */
+export function buildToolNameAndTextResponse(options: {
+    toolName: string;
+    toolCallId: string;
+    finalContent: string;
+    toolArguments?: Record<string, unknown>;
+    title?: string;
+}): AIMockFixtureFile {
+    return buildToolCallThenTextFile({
+        firstTurnMatch: { toolName: options.toolName },
+        toolCallId: options.toolCallId,
+        toolName: options.toolName,
+        toolArguments: options.toolArguments ?? {},
+        finalContent: options.finalContent,
+        title: options.title,
+    });
 }
 
 export function buildMultiTurnToolSequence(
