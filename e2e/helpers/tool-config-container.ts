@@ -7,6 +7,26 @@ export type ToolPolicyConfig = {
     enabled: boolean;
 };
 
+async function setupRegularTestUser(mattermost: MattermostContainer): Promise<void> {
+    await mattermost.createUser('regularuser@sample.com', 'regularuser', 'regularuser');
+    await mattermost.addUserToTeam('regularuser', 'test');
+
+    const userClient = await mattermost.getClient('regularuser', 'regularuser');
+    const user = await userClient.getMe();
+    await userClient.savePreferences(user.id, [
+        { user_id: user.id, category: 'tutorial_step', name: user.id, value: '999' },
+        { user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_show', value: 'false' },
+        { user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_open', value: 'false' },
+        {
+            user_id: user.id,
+            category: 'drafts',
+            name: 'drafts_tour_tip_showed',
+            value: JSON.stringify({ drafts_tour_tip_showed: true }),
+        },
+        { user_id: user.id, category: 'crt_thread_pane_step', name: user.id, value: '999' },
+    ]);
+}
+
 /**
  * Plugin config for tool-config E2E tests.
  *
@@ -144,7 +164,7 @@ export async function RunToolConfigContainerWithDynamicPolicies(): Promise<Matte
 export async function RunToolConfigAIMockContainer(
     toolConfigs?: ToolPolicyConfig[],
 ): Promise<MattermostContainer> {
-    return RunSystemConsoleContainer({
+    const mattermost = await RunSystemConsoleContainer({
         enableChannelMentionToolCalling: true,
         services: [
             {
@@ -180,4 +200,7 @@ export async function RunToolConfigAIMockContainer(
             servers: [],
         },
     });
+
+    await setupRegularTestUser(mattermost);
+    return mattermost;
 }
