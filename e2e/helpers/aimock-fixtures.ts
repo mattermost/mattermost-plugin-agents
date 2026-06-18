@@ -130,13 +130,6 @@ export function buildAnthropicThinkingResponse(options: {
  * Bifrost chat completions (useResponsesAPI: false). If annotations do not render,
  * later citation suites should use deterministic tool-call fallback instead.
  */
-export type CitationSource = {
-    url: string;
-    title: string;
-    startIndex?: number;
-    endIndex?: number;
-};
-
 export function buildTitleResponse(userMessage: string, title: string): AIMockFixture {
     return {
         match: { userMessage: `${TITLE_GENERATION_PROMPT_PREFIX} ${userMessage}` },
@@ -183,23 +176,6 @@ export function buildWebSearchCitationSequence(options: {
     });
 
     return wrapFixtures(fixtures);
-}
-
-export function buildMultipleCitationResponse(options: {
-    userMessage: string;
-    toolCallId: string;
-    searchQuery: string;
-    content: string;
-    citations: CitationSource[];
-    title?: string;
-}): AIMockFixtureFile {
-    return buildWebSearchCitationSequence({
-        userMessage: options.userMessage,
-        toolCallId: options.toolCallId,
-        searchQuery: options.searchQuery,
-        content: options.content,
-        title: options.title,
-    });
 }
 
 export function buildCombinedReasoningCitationResponse(options: {

@@ -109,20 +109,6 @@ export function describeAIMockCitationCase(options: {
     });
 }
 
-export async function reloadAIMockCitationFixtures(
-    stack: AIMockCitationStack,
-    fixtures: AIMockFixtureFile,
-): Promise<void> {
-    await stack.aimock.setFixtures(fixtures);
-}
-
-export async function approvePendingWebSearchToolIfVisible(page: Page): Promise<void> {
-    const acceptButton = page.getByRole('button', { name: /^Accept$/i });
-    if (await acceptButton.isVisible().catch(() => false)) {
-        await acceptButton.click();
-    }
-}
-
 export async function approvePendingWebSearchTool(page: Page): Promise<void> {
     const acceptButton = page.getByRole('button', { name: /^Accept$/i });
     await expect(acceptButton).toBeVisible({ timeout: 120000 });

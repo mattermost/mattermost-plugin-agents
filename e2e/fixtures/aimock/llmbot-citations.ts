@@ -1,5 +1,4 @@
 import {
-    buildMultipleCitationResponse,
     buildWebSearchCitationSequence,
     mergeFixtureFiles,
 } from '../../helpers/aimock-fixtures';
@@ -12,10 +11,6 @@ export const CITATION_PERSISTENCE_PROMPT = 'llmbot-citation-persistence-001';
 export const CITATION_MARKDOWN_PROMPT = 'llmbot-citation-markdown-001';
 export const CITATION_INLINE_PROMPT = 'llmbot-citation-inline-001';
 export const CITATION_FAVICON_PROMPT = 'llmbot-citation-favicon-001';
-
-export const TYPESCRIPT_CITATION_URL = 'https://www.typescriptlang.org/docs/';
-export const MDN_CITATION_URL = 'https://developer.mozilla.org/';
-export const REACT_CITATION_URL = 'https://react.dev/';
 
 const SINGLE_CITATION_CONTENT =
     'TypeScript adds optional static typing !!CITE1!! for safer JavaScript development.';
@@ -52,15 +47,11 @@ export function buildLLMBotCitationsFixtures() {
             content: 'The official TypeScript site is cited here !!CITE1!!.',
             title: 'TypeScript citation click',
         }),
-        buildMultipleCitationResponse({
+        buildWebSearchCitationSequence({
             userMessage: MULTIPLE_CITATIONS_PROMPT,
             toolCallId: 'call_citation_multiple_001',
             searchQuery: 'typescript javascript react comparison',
             content: MULTIPLE_CITATION_CONTENT,
-            citations: [
-                { url: TYPESCRIPT_CITATION_URL, title: 'TypeScript Documentation' },
-                { url: MDN_CITATION_URL, title: 'JavaScript | MDN' },
-            ],
             title: 'Multiple citations',
         }),
         buildWebSearchCitationSequence({
@@ -77,15 +68,11 @@ export function buildLLMBotCitationsFixtures() {
             content: MARKDOWN_CITATION_CONTENT,
             title: 'Citation markdown',
         }),
-        buildMultipleCitationResponse({
+        buildWebSearchCitationSequence({
             userMessage: CITATION_INLINE_PROMPT,
             toolCallId: 'call_citation_inline_001',
             searchQuery: 'typescript javascript inline citations',
             content: INLINE_CITATION_CONTENT,
-            citations: [
-                { url: TYPESCRIPT_CITATION_URL, title: 'TypeScript Documentation' },
-                { url: MDN_CITATION_URL, title: 'JavaScript | MDN' },
-            ],
             title: 'Inline citations',
         }),
         buildWebSearchCitationSequence({

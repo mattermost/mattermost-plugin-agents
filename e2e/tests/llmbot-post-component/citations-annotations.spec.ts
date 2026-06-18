@@ -25,7 +25,7 @@ const EXPECTED_MULTIPLE_CITATION_COUNT = 2;
 const CITATION_FIXTURES = buildLLMBotCitationsFixtures();
 
 describeAIMockCitationCase({
-    title: 'Citation Display - Renders from Real API',
+    title: 'Citation Display - Renders Citation Annotations',
     fixtures: CITATION_FIXTURES,
     run: async ({ page, aiPlugin, llmBotHelper }) => {
         await sendMessageWithWebSearchApproval(page, aiPlugin, CITATION_DISPLAY_PROMPT);
