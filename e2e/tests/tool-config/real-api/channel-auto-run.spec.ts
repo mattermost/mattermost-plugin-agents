@@ -3,7 +3,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
-import { RunToolConfigAIMockContainer } from 'helpers/tool-config-container';
+import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 import { createToolConfigAPIHelper } from 'helpers/tool-config';
 
 const username = 'regularuser';
@@ -74,6 +74,7 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
         mattermost = await RunToolConfigAIMockContainer([
             { name: readChannelConfigName, policy: 'auto_run_in_dm', enabled: true },
         ]);
+        await setupRegularTestUser(mattermost);
         townSquareChannelID = await getTownSquareChannelID(mattermost);
         aimock = await RunAIMockSidecar(mattermost.network, {
             fixtures: buildToolCallAndTextResponse({

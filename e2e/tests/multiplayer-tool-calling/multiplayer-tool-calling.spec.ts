@@ -13,7 +13,10 @@ import {
 } from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
-import {RunMultiplayerToolCallingAIMockContainer} from 'helpers/tool-config-container';
+import {
+    MULTIPLAYER_ASK_TOOL_CONFIGS,
+    RunToolConfigAIMockContainer,
+} from 'helpers/tool-config-container';
 import {adminUsername, adminPassword} from 'helpers/system-console-container';
 
 /**
@@ -27,6 +30,11 @@ const onlookerUsername = 'seconduser';
 const onlookerPassword = 'seconduser';
 const botUsername = 'toolbot';
 const createPostToolLabel = 'Create Post';
+
+const multiplayerCustomInstructions = [
+    'You have access to Mattermost tools including create_post and get_channel_info.',
+    'When a user asks you to post a message, call get_channel_info first, then create_post.',
+].join(' ');
 
 let mattermost: MattermostContainer;
 let aimock: AIMockContainer;
@@ -82,7 +90,7 @@ async function getTownSquareChannel(mattermostInstance: MattermostContainer): Pr
     };
 }
 
-function registerTitleFixture(title: string) {
+function titleFixtures(title: string) {
     return {fixtures: [buildTitleFixture(title)]};
 }
 
@@ -260,13 +268,23 @@ async function navigateToChannel(page: Page, baseUrl: string, channelName: strin
 }
 
 test.describe('Multiplayer Tool Calling (Aimock)', () => {
+    // Serial: one shared Mattermost + aimock sidecar; each test reloads fixtures via setFixtures/restart.
+    // Keep-private runs first so a prior happy-path create_post does not leave Town Square posts that
+    // could confuse later reject-path assertions (reject verifies the post text stays absent).
     test.describe.configure({mode: 'serial'});
 
     let townSquare: TownSquareChannel;
 
     test.beforeAll(async () => {
         test.setTimeout(180000);
-        mattermost = await RunMultiplayerToolCallingAIMockContainer();
+        mattermost = await RunToolConfigAIMockContainer({
+            toolConfigs: MULTIPLAYER_ASK_TOOL_CONFIGS,
+            customInstructions: multiplayerCustomInstructions,
+            enableVectorIndex: true,
+            defaultBotName: 'toolbot',
+            botId: 'tool-test-bot',
+            botDisplayName: 'Tool Test Bot',
+        });
         await setupMultiplayerUsers(mattermost);
         townSquare = await getTownSquareChannel(mattermost);
         aimock = await RunAIMockSidecar(mattermost.network, {
@@ -291,7 +309,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
         const privateCreateCallId = `call_private_create_${Date.now()}`;
 
         await aimock.setFixtures(mergeFixtureFiles(
-            registerTitleFixture('Multiplayer keep private'),
+            titleFixtures('Multiplayer keep private'),
             buildPostToolSequence({
                 userPromptMarker: privatePrompt,
                 infoCallId: privateInfoCallId,
@@ -303,7 +321,6 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
                 finalText: privateFinalText,
             }),
         ));
-        await aimock.waitUntilReady();
 
         const invokerContext = await browser.newContext();
         const onlookerContext = await browser.newContext();
@@ -359,7 +376,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
         const happyCreateCallId = `call_happy_create_${Date.now()}`;
 
         await aimock.setFixtures(mergeFixtureFiles(
-            registerTitleFixture('Multiplayer happy path'),
+            titleFixtures('Multiplayer happy path'),
             buildPostToolSequence({
                 userPromptMarker: happyPrompt,
                 infoCallId: happyInfoCallId,
@@ -371,7 +388,6 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
                 finalText: happyFinalText,
             }),
         ));
-        await aimock.waitUntilReady();
 
         const invokerContext = await browser.newContext();
         const onlookerContext = await browser.newContext();
@@ -426,7 +442,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
         const rejectFinalText = `REJECT_FINAL_${Date.now()}`;
 
         await aimock.setFixtures(mergeFixtureFiles(
-            registerTitleFixture('Multiplayer reject path'),
+            titleFixtures('Multiplayer reject path'),
             buildRejectAfterFirstToolSequence({
                 userPromptMarker: rejectPrompt,
                 toolCallId: rejectInfoCallId,
@@ -435,7 +451,6 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
                 finalContent: rejectFinalText,
             }),
         ));
-        await aimock.waitUntilReady();
 
         const context = await browser.newContext();
         const page = await context.newPage();

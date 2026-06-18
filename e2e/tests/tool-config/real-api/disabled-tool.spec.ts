@@ -4,7 +4,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildTextResponse } from 'helpers/aimock-fixtures';
-import { RunToolConfigAIMockContainer } from 'helpers/tool-config-container';
+import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 import { createToolConfigAPIHelper } from 'helpers/tool-config';
 
 const username = 'regularuser';
@@ -43,6 +43,7 @@ test.describe('Disabled Tool Excluded (Aimock)', () => {
     test.beforeAll(async () => {
         test.setTimeout(180000);
         mattermost = await RunToolConfigAIMockContainer(buildEmbeddedToolConfigs([TARGET_TOOL_NAME]));
+        await setupRegularTestUser(mattermost);
         aimock = await RunAIMockSidecar(mattermost.network, {
             fixtures: buildTextResponse({
                 userMessage: 'aimock-disabled-tool-placeholder',

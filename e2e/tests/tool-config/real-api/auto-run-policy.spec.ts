@@ -4,7 +4,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
-import { RunToolConfigAIMockContainer } from 'helpers/tool-config-container';
+import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 
 const username = 'regularuser';
 const password = 'regularuser';
@@ -25,6 +25,7 @@ test.describe('Auto Run (DM) Policy (Aimock)', () => {
         mattermost = await RunToolConfigAIMockContainer([
             { name: getChannelInfoConfigName, policy: 'auto_run_in_dm', enabled: true },
         ]);
+        await setupRegularTestUser(mattermost);
         aimock = await RunAIMockSidecar(mattermost.network, {
             fixtures: buildToolCallAndTextResponse({
                 userMessage,

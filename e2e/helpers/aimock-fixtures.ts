@@ -357,45 +357,11 @@ export function buildToolNameAndTextResponse(options: {
     });
 }
 
-export function buildMultiTurnToolSequence(
-    rounds: Array<{
-        userMessage: string;
-        toolCallId: string;
-        toolName: string;
-        toolArguments: Record<string, unknown>;
-        finalContent: string;
-        turnIndex?: number;
-    }>,
-): AIMockFixtureFile {
-    const fixtures: AIMockFixture[] = [];
-
-    for (const round of rounds) {
-        fixtures.push({
-            match: { toolCallId: round.toolCallId },
-            response: { content: round.finalContent },
-        });
-
-        fixtures.push({
-            match: {
-                userMessage: round.userMessage,
-                hasToolResult: false,
-                ...(round.turnIndex !== undefined ? { turnIndex: round.turnIndex } : {}),
-            },
-            response: {
-                toolCalls: [
-                    {
-                        id: round.toolCallId,
-                        name: round.toolName,
-                        arguments: round.toolArguments,
-                    },
-                ],
-                finishReason: 'tool_calls',
-            },
-        });
-    }
-
-    return wrapFixtures(fixtures);
-}
+export type MultiTurnToolSequenceOptions = {
+    title?: string;
+    userPromptMarker: string;
+    steps: MultiTurnToolSequenceStep[];
+};
 
 export type ChainedToolCallStep = {
     toolCallId: string;
@@ -410,18 +376,16 @@ export type ChainedTextStep = {
     hasToolResult?: boolean;
 };
 
-export type ChainedToolSequenceStep = ChainedToolCallStep | ChainedTextStep;
+export type MultiTurnToolSequenceStep = ChainedToolCallStep | ChainedTextStep;
 
-function isChainedTextStep(step: ChainedToolSequenceStep): step is ChainedTextStep {
+function isChainedTextStep(step: MultiTurnToolSequenceStep): step is ChainedTextStep {
     return 'text' in step;
 }
 
 /** Chains tool-call rounds keyed by prompt marker and prior toolCallId matches. */
-export function buildChainedToolSequence(options: {
-    title?: string;
-    userPromptMarker: string;
-    steps: ChainedToolSequenceStep[];
-}): AIMockFixtureFile {
+export function buildMultiTurnToolSequence(
+    options: MultiTurnToolSequenceOptions,
+): AIMockFixtureFile {
     const fixtures: AIMockFixture[] = [];
 
     if (options.title !== undefined) {
@@ -472,7 +436,7 @@ export function buildRejectAfterFirstToolSequence(options: {
     toolArguments: Record<string, unknown>;
     finalContent: string;
 }): AIMockFixtureFile {
-    const sequence = buildChainedToolSequence({
+    const sequence = buildMultiTurnToolSequence({
         title: options.title,
         userPromptMarker: options.userPromptMarker,
         steps: [
@@ -505,7 +469,7 @@ export function buildPostToolSequence(options: {
     postText: string;
     finalText: string;
 }): AIMockFixtureFile {
-    return buildChainedToolSequence({
+    return buildMultiTurnToolSequence({
         title: options.title,
         userPromptMarker: options.userPromptMarker,
         steps: [

@@ -8,7 +8,22 @@ export type ToolPolicyConfig = {
     enabled: boolean;
 };
 
-async function setupRegularTestUser(mattermost: MattermostContainer): Promise<void> {
+export type ToolConfigAIMockOptions = {
+    toolConfigs?: ToolPolicyConfig[];
+    customInstructions?: string;
+    enableVectorIndex?: boolean;
+    defaultBotName?: string;
+    botId?: string;
+    botDisplayName?: string;
+};
+
+export const MULTIPLAYER_ASK_TOOL_CONFIGS: ToolPolicyConfig[] = [
+    {name: 'get_channel_info', policy: 'ask', enabled: true},
+    {name: 'create_post', policy: 'ask', enabled: true},
+];
+
+/** Creates regularuser with standard onboarding prefs for tool-config aimock specs. */
+export async function setupRegularTestUser(mattermost: MattermostContainer): Promise<void> {
     await mattermost.createUser('regularuser@sample.com', 'regularuser', 'regularuser');
     await mattermost.addUserToTeam('regularuser', 'test');
 
@@ -161,75 +176,36 @@ export async function RunToolConfigContainerWithDynamicPolicies(): Promise<Matte
 /**
  * Aimock-backed tool-config container for migrated real-API policy suites.
  * Smocker-backed helpers above remain unchanged for mock-api shards.
- */
-export async function RunMultiplayerToolCallingAIMockContainer(): Promise<MattermostContainer> {
-    return RunSystemConsoleContainer({
-        enableChannelMentionToolCalling: true,
-        enableVectorIndex: true,
-        defaultBotName: 'toolbot',
-        services: [
-            {
-                ...AIMOCK_COMPATIBLE_SERVICE,
-            },
-        ],
-        bots: [
-            {
-                id: 'tool-test-bot',
-                name: 'toolbot',
-                displayName: 'Tool Test Bot',
-                serviceID: AIMOCK_COMPATIBLE_SERVICE.id,
-                disableTools: false,
-                mcpDynamicToolLoading: false,
-                enabledNativeTools: [],
-                customInstructions: [
-                    'You have access to Mattermost tools including create_post and get_channel_info.',
-                    'When a user asks you to post a message, call get_channel_info first, then create_post.',
-                ].join(' '),
-            },
-        ],
-        mcp: {
-            enabled: true,
-            enablePluginServer: true,
-            embeddedServer: {
-                enabled: true,
-                tool_configs: [
-                    {name: 'get_channel_info', policy: 'ask', enabled: true},
-                    {name: 'create_post', policy: 'ask', enabled: true},
-                ],
-            },
-            idleTimeoutMinutes: 30,
-            servers: [],
-        },
-    });
-}
-
-/**
- * Aimock-backed tool-config container for migrated real-API policy suites.
- * Smocker-backed helpers above remain unchanged for mock-api shards.
+ * Callers that need regularuser should invoke setupRegularTestUser separately.
  */
 export async function RunToolConfigAIMockContainer(
-    toolConfigs?: ToolPolicyConfig[],
+    options: ToolConfigAIMockOptions | ToolPolicyConfig[] = {},
 ): Promise<MattermostContainer> {
-    const mattermost = await RunSystemConsoleContainer({
+    const resolved: ToolConfigAIMockOptions = Array.isArray(options)
+        ? {toolConfigs: options}
+        : options;
+
+    const {
+        toolConfigs = [],
+        customInstructions = '',
+        enableVectorIndex = false,
+        defaultBotName,
+        botId = 'aimock-toolbot',
+        botDisplayName = 'Aimock Tool Bot',
+    } = resolved;
+
+    return RunSystemConsoleContainer({
         enableChannelMentionToolCalling: true,
-        services: [
-            {
-                id: 'aimock-service',
-                name: 'Aimock Service',
-                type: 'openaicompatible',
-                apiKey: 'mock',
-                apiURL: 'http://openai:8080',
-                defaultModel: 'gpt-mock',
-                useResponsesAPI: false,
-            },
-        ],
+        enableVectorIndex,
+        defaultBotName,
+        services: [{...AIMOCK_COMPATIBLE_SERVICE}],
         bots: [
             {
-                id: 'aimock-toolbot',
+                id: botId,
                 name: 'toolbot',
-                displayName: 'Aimock Tool Bot',
-                serviceID: 'aimock-service',
-                customInstructions: '',
+                displayName: botDisplayName,
+                serviceID: AIMOCK_COMPATIBLE_SERVICE.id,
+                customInstructions,
                 disableTools: false,
                 mcpDynamicToolLoading: false,
                 enabledNativeTools: [],
@@ -240,13 +216,10 @@ export async function RunToolConfigAIMockContainer(
             enablePluginServer: true,
             embeddedServer: {
                 enabled: true,
-                tool_configs: toolConfigs ?? [],
+                tool_configs: toolConfigs,
             },
             idleTimeoutMinutes: 30,
             servers: [],
         },
     });
-
-    await setupRegularTestUser(mattermost);
-    return mattermost;
 }
