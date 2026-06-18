@@ -20,6 +20,8 @@ export type AIMockToolCall = {
 export type AIMockResponse = {
     content?: string | null;
     role?: 'assistant';
+    error?: { message: string; code?: string; type?: string };
+    status?: number;
     reasoning?: string | { text: string; signature?: string };
     webSearches?: Array<{
         query?: string;
