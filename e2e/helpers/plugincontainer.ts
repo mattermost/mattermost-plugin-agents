@@ -7,6 +7,17 @@ export const AIMOCK_SERVICE_ID = 'aimock-service';
 export const AIMOCK_BOT_ID = 'aimock-bot';
 export const AIMOCK_BOT_NAME = 'aimock';
 
+export const WEB_SEARCH_PLUGIN_CONFIG = {
+  enabled: true,
+  provider: 'google',
+  google: {
+    apiKey: 'mock-key',
+    searchEngineId: 'mock-cx',
+    apiURL: 'http://websearch:8090/customsearch/v1',
+    resultLimit: 5,
+  },
+};
+
 function findPluginTarball(): string {
   const distPath = path.join(__dirname, '..', '..', 'dist');
   let filename = '';
@@ -69,6 +80,7 @@ export async function RunAIMockContainer(overrides?: {
   service?: Partial<Record<string, unknown>>;
   bot?: Partial<Record<string, unknown>>;
   mcp?: Record<string, unknown>;
+  webSearch?: Record<string, unknown>;
   enableChannelMentionToolCalling?: boolean;
 }): Promise<MattermostContainer> {
   const filename = findPluginTarball();
@@ -113,11 +125,13 @@ export async function RunAIMockContainer(overrides?: {
           ...overrides?.bot,
         },
       ],
+      ...(overrides?.webSearch ? { webSearch: overrides.webSearch } : {}),
     },
   };
 
+  const allowedConnections = overrides?.webSearch ? 'openai,websearch' : 'openai';
   const mattermost = await new MattermostContainer()
-    .withEnv('MM_SERVICESETTINGS_ALLOWEDUNTRUSTEDINTERNALCONNECTIONS', 'openai')
+    .withEnv('MM_SERVICESETTINGS_ALLOWEDUNTRUSTEDINTERNALCONNECTIONS', allowedConnections)
     .withPlugin(filename, 'mattermost-ai', pluginConfig)
     .start();
 
