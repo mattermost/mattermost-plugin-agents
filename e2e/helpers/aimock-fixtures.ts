@@ -481,16 +481,12 @@ export function buildRejectAfterFirstToolSequence(options: {
                 toolName: options.toolName,
                 args: options.toolArguments,
             },
-            {
-                matchAfterToolCallId: options.toolCallId,
-                text: options.finalContent,
-                hasToolResult: true,
-            },
         ],
     });
 
-    // Some reject continuations omit hasToolResult in the matcher payload.
-    sequence.fixtures.unshift({
+    // If the plugin sends a continuation after rejection, match it by the rejected
+    // tool call id alone so it works whether or not a tool-result marker is present.
+    sequence.fixtures.push({
         match: {toolCallId: options.toolCallId},
         response: {content: options.finalContent},
     });
