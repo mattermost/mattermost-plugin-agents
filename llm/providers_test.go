@@ -20,14 +20,14 @@ func TestGetOpenAICompatibleProvider(t *testing.T) {
 			wantFound:   true,
 		},
 		{
-			name:        "cohere not in compatible registry",
+			name:        "cohere returns provider",
 			serviceType: ServiceTypeCohere,
-			wantFound:   false,
+			wantFound:   true,
 		},
 		{
-			name:        "mistral not in compatible registry",
+			name:        "mistral returns provider",
 			serviceType: ServiceTypeMistral,
-			wantFound:   false,
+			wantFound:   true,
 		},
 		{
 			name:        "unregistered type returns false",

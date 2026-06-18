@@ -538,7 +538,7 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey),
+			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
 		}
 		return
 	}
@@ -590,7 +590,7 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 		if chunk.BifrostError != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey),
+				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
 			}
 			return
 		}
@@ -770,6 +770,7 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
+	reasoning := &schemas.ChatReasoning{}
 
 	switch b.provider {
 	case schemas.Anthropic:
@@ -777,12 +778,11 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		return &schemas.ChatReasoning{MaxTokens: Ptr(budget)}
+		reasoning.MaxTokens = Ptr(budget)
 	case schemas.Gemini, schemas.Vertex:
 		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
 		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
 		// When an explicit budget is set use it; otherwise fall back to effort.
-		reasoning := &schemas.ChatReasoning{}
 		if b.thinkingBudget > 0 {
 			reasoning.MaxTokens = Ptr(b.thinkingBudget)
 		} else {
@@ -792,12 +792,14 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 			}
 			reasoning.Effort = Ptr(effort)
 		}
-		return reasoning
 	default:
-		// OpenAI/Azure reasoning goes through the Responses API; providers that
-		// reach chat completions here (Cohere, Mistral, Bedrock) reject reasoning_effort.
-		return nil
+		effort := b.reasoningEffort
+		if effort == "" {
+			effort = "medium"
+		}
+		reasoning.Effort = Ptr(effort)
 	}
+	return reasoning
 }
 
 // calculateThinkingBudget computes the thinking budget for Anthropic models.
@@ -1432,6 +1434,7 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
+	reasoning := &schemas.ResponsesParametersReasoning{}
 
 	switch b.provider {
 	case schemas.Anthropic:
@@ -1439,13 +1442,12 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		return &schemas.ResponsesParametersReasoning{MaxTokens: Ptr(budget)}
+		reasoning.MaxTokens = Ptr(budget)
 	case schemas.Gemini, schemas.Vertex:
 		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
 		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
 		// Prefer an explicit budget; otherwise fall back to effort. Enable summary
 		// so the provider returns reasoning text in the stream.
-		reasoning := &schemas.ResponsesParametersReasoning{Summary: Ptr("auto")}
 		if b.thinkingBudget > 0 {
 			reasoning.MaxTokens = Ptr(b.thinkingBudget)
 		} else {
@@ -1455,24 +1457,18 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 			}
 			reasoning.Effort = Ptr(effort)
 		}
-		return reasoning
-	case schemas.OpenAI, schemas.Azure:
+		reasoning.Summary = Ptr("auto")
+	default:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"
 		}
-		// Enable reasoning summaries so the provider returns reasoning text in
-		// the stream; without this OpenAI omits reasoning_summary events.
-		return &schemas.ResponsesParametersReasoning{
-			Effort:  Ptr(effort),
-			Summary: Ptr("auto"),
-		}
-	default:
-		// Bifrost will route a Responses-API request to chat completions for
-		// providers without native Responses support (e.g. Mistral). Those
-		// providers don't accept reasoning_effort, so drop it here too.
-		return nil
+		reasoning.Effort = Ptr(effort)
+		// Enable reasoning summaries so the provider returns reasoning text in the stream.
+		// Without this, providers like OpenAI will not include reasoning_summary events.
+		reasoning.Summary = Ptr("auto")
 	}
+	return reasoning
 }
 
 // convertToBifrostResponsesRequest converts our CompletionRequest to Bifrost's Responses API format.
@@ -1529,7 +1525,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.apiKey),
+			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
 		}
 		return
 	}
@@ -1589,7 +1585,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 		if chunk.BifrostError != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", bifrostErrorString(chunk.BifrostError)), b.apiKey),
+				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
 			}
 			return
 		}
