@@ -1,12 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 
-import { AIMockHarness, RunAIMockHarness } from 'helpers/aimock-harness';
-import { MattermostPage } from 'helpers/mm';
-import { AIPlugin } from 'helpers/ai-plugin';
-import { LLMBotPostHelper } from 'helpers/llmbot-post';
-
-const username = 'regularuser';
-const password = 'regularuser';
+import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
 
 const PHASE3_EMPTY_REASONING_PROMPT = 'phase3-empty-reasoning-001';
 const PHASE3_EMPTY_REASONING_ANSWER = 'Empty reasoning answer marker four.';
@@ -47,14 +41,6 @@ const PHASE3_RAPID_MSG_THREE_PROMPT = 'phase3-rapid-msg-three-001';
 const PHASE3_RAPID_MSG_MARKER_ONE = 'Rapid msg marker one';
 const PHASE3_RAPID_MSG_MARKER_TWO = 'Rapid msg marker two';
 const PHASE3_RAPID_MSG_MARKER_THREE = 'Rapid msg marker three';
-
-async function setupTestPage(page: Page) {
-    const mmPage = new MattermostPage(page);
-    const aiPlugin = new AIPlugin(page);
-    const llmBotHelper = new LLMBotPostHelper(page);
-
-    return { mmPage, aiPlugin, llmBotHelper };
-}
 
 async function waitForPostTextCount(page: Page, minCount: number, maxTimeout = 120000): Promise<void> {
     const allPosts = page.locator('[data-testid="posttext"]');
@@ -102,9 +88,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Empty Reasoning Response', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_EMPTY_REASONING_PROMPT);
         await llmBotHelper.waitForStreamingComplete();
@@ -117,9 +101,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Empty Post Content', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_EMPTY_POST_PROMPT);
         await llmBotHelper.waitForStreamingComplete();
@@ -129,9 +111,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Very Long Reasoning Content', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_LONG_REASONING_PROMPT);
         await llmBotHelper.waitForReasoning();
@@ -148,9 +128,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Special Characters in Response', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_SPECIAL_CHARS_PROMPT);
         await llmBotHelper.waitForStreamingComplete();
@@ -165,9 +143,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Unicode Content', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_UNICODE_PROMPT);
         await llmBotHelper.waitForStreamingComplete();
@@ -181,9 +157,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Concurrent Posts', async ({ page }) => {
         test.setTimeout(180000);
 
-        const { mmPage, aiPlugin } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_ONE_PROMPT);
         await page.waitForTimeout(2000);
@@ -208,9 +182,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Large Post with Reasoning', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_LARGE_REASONING_PROMPT);
         await llmBotHelper.waitForReasoning();
@@ -226,9 +198,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Network Error Handling', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_NETWORK_ERROR_PROMPT);
         await llmBotHelper.waitForStreamingComplete();
@@ -243,9 +213,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Multiple Rapid Messages', async ({ page }) => {
         test.setTimeout(180000);
 
-        const { mmPage, aiPlugin } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_ONE_PROMPT);
         await page.waitForTimeout(1000);
@@ -273,9 +241,7 @@ test.describe('Edge Cases - aimock', () => {
     test('Rapid Reasoning Toggle', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_RAPID_TOGGLE_PROMPT);
         await llmBotHelper.waitForReasoning();

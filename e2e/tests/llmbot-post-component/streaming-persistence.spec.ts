@@ -1,12 +1,6 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
-import { AIMockHarness, RunAIMockHarness } from 'helpers/aimock-harness';
-import { MattermostPage } from 'helpers/mm';
-import { AIPlugin } from 'helpers/ai-plugin';
-import { LLMBotPostHelper } from 'helpers/llmbot-post';
-
-const username = 'regularuser';
-const password = 'regularuser';
+import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
 
 const PHASE3_STREAMING_CURSOR_PROMPT = 'phase3-streaming-cursor-001';
 const PHASE3_STREAMING_CURSOR_MARKER = 'Streaming cursor marker part one two three complete.';
@@ -21,14 +15,7 @@ const PHASE3_THREAD_PERSIST_PROMPT = 'phase3-thread-persist-001';
 
 const PHASE3_STOP_GENERATING_PROMPT = 'phase3-stop-generating-001';
 const PHASE3_STOP_GENERATING_PREFIX = 'Stop generating prefix marker';
-
-async function setupTestPage(page: Page) {
-    const mmPage = new MattermostPage(page);
-    const aiPlugin = new AIPlugin(page);
-    const llmBotHelper = new LLMBotPostHelper(page);
-
-    return { mmPage, aiPlugin, llmBotHelper };
-}
+const PHASE3_STOP_GENERATING_TAIL = 'large scale application development.';
 
 test.describe('Streaming and Persistence - aimock', () => {
     test.describe.configure({ mode: 'serial' });
@@ -52,9 +39,7 @@ test.describe('Streaming and Persistence - aimock', () => {
     test('Streaming Cursor Display', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_STREAMING_CURSOR_PROMPT);
         await llmBotHelper.waitForStreamingComplete();
@@ -64,9 +49,7 @@ test.describe('Streaming and Persistence - aimock', () => {
     test('Streaming Complete Lifecycle', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_STREAMING_LIFECYCLE_PROMPT);
         await llmBotHelper.waitForReasoning();
@@ -82,9 +65,7 @@ test.describe('Streaming and Persistence - aimock', () => {
     test('Navigation Persistence', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_NAV_PERSISTENCE_PROMPT);
         await llmBotHelper.waitForStreamingComplete();
@@ -108,9 +89,7 @@ test.describe('Streaming and Persistence - aimock', () => {
     test('Thread View Persistence', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_THREAD_PERSIST_PROMPT);
         await llmBotHelper.waitForStreamingComplete();
@@ -155,9 +134,7 @@ test.describe('Stop Generating Button - aimock', () => {
     test('Stop Generating Button', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_STOP_GENERATING_PROMPT);
 
@@ -165,26 +142,16 @@ test.describe('Stop Generating Button - aimock', () => {
         await expect(postText).toBeVisible({ timeout: 60000 });
 
         const stopButton = llmBotHelper.getStopGeneratingButton();
-        let stopButtonVisible = false;
+        await expect(stopButton).toBeVisible({ timeout: 30000 });
+        await expect
+            .poll(async () => (await postText.textContent()) ?? '')
+            .toContain(PHASE3_STOP_GENERATING_PREFIX);
 
-        for (let i = 0; i < 20; i++) {
-            stopButtonVisible = await stopButton.isVisible().catch(() => false);
-            if (stopButtonVisible) {
-                break;
-            }
-            await page.waitForTimeout(500);
-        }
+        await llmBotHelper.stopGenerating();
+        await expect(stopButton).not.toBeVisible({ timeout: 10000 });
 
-        if (stopButtonVisible) {
-            await llmBotHelper.stopGenerating();
-            await page.waitForTimeout(1000);
-            await expect(stopButton).not.toBeVisible({ timeout: 5000 });
-            await expect(postText).toBeVisible();
-            const content = await postText.textContent();
-            expect(content).toContain(PHASE3_STOP_GENERATING_PREFIX);
-        } else {
-            await llmBotHelper.waitForStreamingComplete();
-            await llmBotHelper.expectPostText(PHASE3_STOP_GENERATING_PREFIX);
-        }
+        const content = await postText.textContent();
+        expect(content).toContain(PHASE3_STOP_GENERATING_PREFIX);
+        expect(content).not.toContain(PHASE3_STOP_GENERATING_TAIL);
     });
 });

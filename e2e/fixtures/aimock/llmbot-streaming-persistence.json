@@ -52,7 +52,12 @@
       "response": {
         "content": "Stop generating prefix marker followed by extended TypeScript feature explanation covering types interfaces generics decorators modules namespaces and compiler options for large scale application development."
       },
-      "chunkSize": 2
+      "chunkSize": 2,
+      "streamingProfile": {
+        "ttft": 300,
+        "tps": 6,
+        "jitter": 0
+      }
     }
   ]
 }

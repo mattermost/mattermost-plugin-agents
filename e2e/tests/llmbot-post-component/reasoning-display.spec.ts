@@ -1,12 +1,6 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
-import { AIMockHarness, RunAIMockHarness } from 'helpers/aimock-harness';
-import { MattermostPage } from 'helpers/mm';
-import { AIPlugin } from 'helpers/ai-plugin';
-import { LLMBotPostHelper } from 'helpers/llmbot-post';
-
-const username = 'regularuser';
-const password = 'regularuser';
+import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
 
 const PHASE3_REASONING_RENDER_PROMPT = 'phase3-reasoning-render-001';
 const PHASE3_REASONING_RENDER_REASONING = 'Reasoning render marker';
@@ -21,14 +15,6 @@ const PHASE3_REASONING_COMPLETE_PROMPT = 'phase3-reasoning-complete-001';
 
 const PHASE3_REASONING_MULTI_FIRST_PROMPT = 'phase3-reasoning-multi-first-001';
 const PHASE3_REASONING_MULTI_SECOND_PROMPT = 'phase3-reasoning-multi-second-001';
-
-async function setupTestPage(page: Page) {
-    const mmPage = new MattermostPage(page);
-    const aiPlugin = new AIPlugin(page);
-    const llmBotHelper = new LLMBotPostHelper(page);
-
-    return { mmPage, aiPlugin, llmBotHelper };
-}
 
 test.describe('Reasoning Display - aimock', () => {
     test.describe.configure({ mode: 'serial' });
@@ -55,9 +41,7 @@ test.describe('Reasoning Display - aimock', () => {
     test('Reasoning Display - Renders from aimock', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_REASONING_RENDER_PROMPT);
         await llmBotHelper.waitForReasoning();
@@ -75,9 +59,7 @@ test.describe('Reasoning Display - aimock', () => {
     test('Reasoning Toggle - Expand and Collapse', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_REASONING_TOGGLE_PROMPT);
         await llmBotHelper.waitForReasoning();
@@ -98,9 +80,7 @@ test.describe('Reasoning Display - aimock', () => {
     test('Reasoning States - Complete State', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_REASONING_COMPLETE_PROMPT);
         await llmBotHelper.waitForReasoning();
@@ -117,9 +97,7 @@ test.describe('Reasoning Display - aimock', () => {
     test('Multiple Posts with Reasoning', async ({ page }) => {
         test.setTimeout(180000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_REASONING_MULTI_FIRST_PROMPT);
         await llmBotHelper.waitForReasoning();
@@ -183,9 +161,7 @@ test.describe('Reasoning Persistence After Refresh - aimock', () => {
     test('Reasoning Persistence After Refresh', async ({ page }) => {
         test.setTimeout(120000);
 
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
-        await mmPage.login(harness.mattermost.url(), username, password);
-        await aiPlugin.resetState();
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
 
         await aiPlugin.sendMessage(PHASE3_REASONING_PERSIST_PROMPT);
         await llmBotHelper.waitForReasoning();
