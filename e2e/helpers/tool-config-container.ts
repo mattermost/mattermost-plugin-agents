@@ -1,6 +1,12 @@
 import RunSystemConsoleContainer from './system-console-container';
 import MattermostContainer from './mmcontainer';
 
+export type ToolPolicyConfig = {
+    name: string;
+    policy: 'ask' | 'auto_run_in_dm' | 'auto_run_everywhere';
+    enabled: boolean;
+};
+
 /**
  * Plugin config for tool-config E2E tests.
  *
@@ -124,6 +130,51 @@ export async function RunToolConfigContainerWithDynamicPolicies(): Promise<Matte
                 tool_configs: [
                     {name: 'get_channel_info', policy: 'ask', enabled: true},
                 ],
+            },
+            idleTimeoutMinutes: 30,
+            servers: [],
+        },
+    });
+}
+
+/**
+ * Aimock-backed tool-config container for migrated real-API policy suites.
+ * Smocker-backed helpers above remain unchanged for mock-api shards.
+ */
+export async function RunToolConfigAIMockContainer(
+    toolConfigs?: ToolPolicyConfig[],
+): Promise<MattermostContainer> {
+    return RunSystemConsoleContainer({
+        enableChannelMentionToolCalling: true,
+        services: [
+            {
+                id: 'aimock-service',
+                name: 'Aimock Service',
+                type: 'openaicompatible',
+                apiKey: 'mock',
+                apiURL: 'http://openai:8080',
+                defaultModel: 'gpt-mock',
+                useResponsesAPI: false,
+            },
+        ],
+        bots: [
+            {
+                id: 'aimock-toolbot',
+                name: 'toolbot',
+                displayName: 'Aimock Tool Bot',
+                serviceID: 'aimock-service',
+                customInstructions: '',
+                disableTools: false,
+                mcpDynamicToolLoading: false,
+                enabledNativeTools: [],
+            },
+        ],
+        mcp: {
+            enabled: true,
+            enablePluginServer: true,
+            embeddedServer: {
+                enabled: true,
+                tool_configs: toolConfigs ?? [],
             },
             idleTimeoutMinutes: 30,
             servers: [],
