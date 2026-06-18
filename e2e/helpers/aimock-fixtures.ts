@@ -1,3 +1,5 @@
+import type {Page} from '@playwright/test';
+
 export type AIMockMatch = {
     userMessage?: string;
     inputText?: string;
@@ -45,6 +47,30 @@ export type AIMockFixture = {
 export type AIMockFixtureFile = {
     fixtures: AIMockFixture[];
 };
+
+export type AimockModelInfo = {
+    id: string;
+    displayName: string;
+    inputTokenLimit?: number;
+    outputTokenLimit?: number;
+    contextLength?: number;
+};
+
+export const AIMOCK_COMPATIBLE_SERVICE = {
+    id: 'aimock-service',
+    name: 'Aimock Service',
+    type: 'openaicompatible',
+    apiKey: 'mock',
+    apiURL: 'http://openai:8080',
+    defaultModel: 'gpt-mock',
+    tokenLimit: 16384,
+    outputTokenLimit: 4096,
+    streamingTimeoutSeconds: 30,
+    useResponsesAPI: false,
+} as const;
+
+export const EMBEDDED_GET_CHANNEL_INFO_TOOL = 'mattermost__get_channel_info';
+export const EMBEDDED_CREATE_POST_TOOL = 'mattermost__create_post';
 
 export const TITLE_GENERATION_PROMPT_PREFIX =
     'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:';
@@ -369,6 +395,179 @@ export function buildMultiTurnToolSequence(
     }
 
     return wrapFixtures(fixtures);
+}
+
+export type ChainedToolCallStep = {
+    toolCallId: string;
+    toolName: string;
+    args: Record<string, unknown>;
+    matchAfterToolCallId?: string;
+};
+
+export type ChainedTextStep = {
+    matchAfterToolCallId: string;
+    text: string;
+    hasToolResult?: boolean;
+};
+
+export type ChainedToolSequenceStep = ChainedToolCallStep | ChainedTextStep;
+
+function isChainedTextStep(step: ChainedToolSequenceStep): step is ChainedTextStep {
+    return 'text' in step;
+}
+
+/** Chains tool-call rounds keyed by prompt marker and prior toolCallId matches. */
+export function buildChainedToolSequence(options: {
+    title?: string;
+    userPromptMarker: string;
+    steps: ChainedToolSequenceStep[];
+}): AIMockFixtureFile {
+    const fixtures: AIMockFixture[] = [];
+
+    if (options.title !== undefined) {
+        fixtures.push(buildTitleFixture(options.title));
+    }
+
+    for (let index = options.steps.length - 1; index >= 0; index--) {
+        const step = options.steps[index];
+
+        if (isChainedTextStep(step)) {
+            fixtures.unshift({
+                match: {
+                    toolCallId: step.matchAfterToolCallId,
+                    ...(step.hasToolResult ? {hasToolResult: true} : {}),
+                },
+                response: {content: step.text},
+            });
+            continue;
+        }
+
+        const match = step.matchAfterToolCallId
+            ? {toolCallId: step.matchAfterToolCallId}
+            : {userMessage: options.userPromptMarker, hasToolResult: false};
+
+        fixtures.unshift({
+            match,
+            response: {
+                toolCalls: [
+                    {
+                        id: step.toolCallId,
+                        name: step.toolName,
+                        arguments: step.args,
+                    },
+                ],
+                finishReason: 'tool_calls',
+            },
+        });
+    }
+
+    return wrapFixtures(fixtures);
+}
+
+export function buildRejectAfterFirstToolSequence(options: {
+    title?: string;
+    userPromptMarker: string;
+    toolCallId: string;
+    toolName: string;
+    toolArguments: Record<string, unknown>;
+    finalContent: string;
+}): AIMockFixtureFile {
+    const sequence = buildChainedToolSequence({
+        title: options.title,
+        userPromptMarker: options.userPromptMarker,
+        steps: [
+            {
+                toolCallId: options.toolCallId,
+                toolName: options.toolName,
+                args: options.toolArguments,
+            },
+            {
+                matchAfterToolCallId: options.toolCallId,
+                text: options.finalContent,
+                hasToolResult: true,
+            },
+        ],
+    });
+
+    // Some reject continuations omit hasToolResult in the matcher payload.
+    sequence.fixtures.unshift({
+        match: {toolCallId: options.toolCallId},
+        response: {content: options.finalContent},
+    });
+
+    return sequence;
+}
+
+export function buildPostToolSequence(options: {
+    title?: string;
+    userPromptMarker: string;
+    infoCallId: string;
+    createCallId: string;
+    channelId: string;
+    channelDisplayName: string;
+    teamDisplayName: string;
+    postText: string;
+    finalText: string;
+}): AIMockFixtureFile {
+    return buildChainedToolSequence({
+        title: options.title,
+        userPromptMarker: options.userPromptMarker,
+        steps: [
+            {
+                toolCallId: options.infoCallId,
+                toolName: EMBEDDED_GET_CHANNEL_INFO_TOOL,
+                args: {channel_name: options.channelDisplayName},
+            },
+            {
+                matchAfterToolCallId: options.infoCallId,
+                toolCallId: options.createCallId,
+                toolName: EMBEDDED_CREATE_POST_TOOL,
+                args: {
+                    channel_id: options.channelId,
+                    channel_display_name: options.channelDisplayName,
+                    team_display_name: options.teamDisplayName,
+                    message: options.postText,
+                },
+            },
+            {
+                matchAfterToolCallId: options.createCallId,
+                text: options.finalText,
+            },
+        ],
+    });
+}
+
+const DEFAULT_AIMOCK_MODELS: AimockModelInfo[] = [
+    {
+        id: 'gpt-mock',
+        displayName: 'gpt-mock',
+        inputTokenLimit: 16384,
+        outputTokenLimit: 4096,
+        contextLength: 16384,
+    },
+];
+
+export async function stubAimockModelFetch(
+    page: Page,
+    models: AimockModelInfo[] = DEFAULT_AIMOCK_MODELS,
+): Promise<void> {
+    const body = JSON.stringify(models);
+
+    const fulfillModelsFetch = async (route: Parameters<Parameters<Page['route']>[1]>[0]) => {
+        if (route.request().method() !== 'POST') {
+            await route.continue();
+            return;
+        }
+
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body,
+        });
+    };
+
+    await page.context().route(/\/plugins\/mattermost-ai\/admin\/models\/fetch(\?.*)?$/, fulfillModelsFetch);
+    await page.context().route(/\/plugins\/mattermost-ai\/agents\/models\/fetch(\?.*)?$/, fulfillModelsFetch);
 }
 
 export function normalizeFixtureInput(

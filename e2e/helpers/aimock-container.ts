@@ -107,6 +107,28 @@ export class AIMockContainer {
         });
     }
 
+    async waitUntilReady(timeoutMs: number = 60000): Promise<void> {
+        if (!this.container) {
+            throw new Error('AIMockContainer.waitUntilReady called before start');
+        }
+
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            try {
+                const response = await fetch(`${this.getMappedBaseUrl()}/ready`);
+                if (response.ok) {
+                    return;
+                }
+            } catch {
+                // Sidecar may still be restarting after fixture reload.
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+
+        throw new Error(`AIMockContainer.waitUntilReady timed out after ${timeoutMs}ms`);
+    }
+
     private buildInitialFixtureFile(options: AIMockStartOptions): AIMockFixtureFile {
         if (options.fixtureFiles?.length) {
             return mergeFixtureFiles(

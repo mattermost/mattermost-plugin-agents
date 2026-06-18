@@ -1,5 +1,6 @@
 import RunSystemConsoleContainer from './system-console-container';
 import MattermostContainer from './mmcontainer';
+import {AIMOCK_COMPATIBLE_SERVICE} from './aimock-fixtures';
 
 export type ToolPolicyConfig = {
     name: string;
@@ -149,6 +150,51 @@ export async function RunToolConfigContainerWithDynamicPolicies(): Promise<Matte
                 enabled: true,
                 tool_configs: [
                     {name: 'get_channel_info', policy: 'ask', enabled: true},
+                ],
+            },
+            idleTimeoutMinutes: 30,
+            servers: [],
+        },
+    });
+}
+
+/**
+ * Aimock-backed tool-config container for migrated real-API policy suites.
+ * Smocker-backed helpers above remain unchanged for mock-api shards.
+ */
+export async function RunMultiplayerToolCallingAIMockContainer(): Promise<MattermostContainer> {
+    return RunSystemConsoleContainer({
+        enableChannelMentionToolCalling: true,
+        enableVectorIndex: true,
+        defaultBotName: 'toolbot',
+        services: [
+            {
+                ...AIMOCK_COMPATIBLE_SERVICE,
+            },
+        ],
+        bots: [
+            {
+                id: 'tool-test-bot',
+                name: 'toolbot',
+                displayName: 'Tool Test Bot',
+                serviceID: AIMOCK_COMPATIBLE_SERVICE.id,
+                disableTools: false,
+                mcpDynamicToolLoading: false,
+                enabledNativeTools: [],
+                customInstructions: [
+                    'You have access to Mattermost tools including create_post and get_channel_info.',
+                    'When a user asks you to post a message, call get_channel_info first, then create_post.',
+                ].join(' '),
+            },
+        ],
+        mcp: {
+            enabled: true,
+            enablePluginServer: true,
+            embeddedServer: {
+                enabled: true,
+                tool_configs: [
+                    {name: 'get_channel_info', policy: 'ask', enabled: true},
+                    {name: 'create_post', policy: 'ask', enabled: true},
                 ],
             },
             idleTimeoutMinutes: 30,
