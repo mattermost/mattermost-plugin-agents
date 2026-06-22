@@ -180,3 +180,113 @@ func TestEnsureToolIterationLimitUserMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestCountTrailingFailedToolCallsIgnoresFailedMetaTools(t *testing.T) {
+	posts := []Post{{
+		Role: PostRoleBot,
+		ToolUse: []ToolCall{
+			{Name: "search_tools", Status: ToolCallStatusError},
+			{Name: "load_tool", Status: ToolCallStatusError},
+		},
+	}}
+
+	assert.Equal(t, 0, CountTrailingFailedToolCalls(posts))
+}
+
+func TestCountTrailingFailedToolCallsMetaFailuresDoNotBreakNormalFailureStreak(t *testing.T) {
+	posts := []Post{{
+		Role: PostRoleBot,
+		ToolUse: []ToolCall{
+			{Name: "normal_a", Status: ToolCallStatusError},
+			{Name: "search_tools", Status: ToolCallStatusError},
+			{Name: "normal_b", Status: ToolCallStatusError},
+			{Name: "load_tool", Status: ToolCallStatusError},
+		},
+	}}
+
+	assert.Equal(t, 2, CountTrailingFailedToolCalls(posts))
+}
+
+func TestCountTrailingFailedToolCallsMetaFailurePostDoesNotBreakNormalFailureStreak(t *testing.T) {
+	posts := []Post{
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "normal_a", Status: ToolCallStatusError},
+			},
+		},
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "search_tools", Status: ToolCallStatusError},
+			},
+		},
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "normal_b", Status: ToolCallStatusError},
+			},
+		},
+	}
+
+	assert.Equal(t, 2, CountTrailingFailedToolCalls(posts))
+}
+
+func TestCountTrailingFailedToolCallsSuccessfulMetaToolResetsStreak(t *testing.T) {
+	posts := []Post{
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "normal", Status: ToolCallStatusError},
+			},
+		},
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "load_tool", Status: ToolCallStatusAutoApproved},
+			},
+		},
+	}
+
+	assert.Equal(t, 0, CountTrailingFailedToolCalls(posts))
+}
+
+func TestCountTrailingFailedToolCallsIgnoresBatchSkippedTools(t *testing.T) {
+	posts := []Post{{
+		Role: PostRoleBot,
+		ToolUse: []ToolCall{
+			{Name: "safe_tool", Status: ToolCallStatusError, Result: BatchSkippedToolResult("safe_tool", []string{"ghost_tool"})},
+			{Name: "ghost_tool", Status: ToolCallStatusError, Result: "unknown tool ghost_tool"},
+		},
+	}}
+
+	assert.Equal(t, 1, CountTrailingFailedToolCalls(posts))
+}
+
+func TestCountTrailingFailedToolCallsBatchSkippedOnlyDoesNotCount(t *testing.T) {
+	posts := []Post{{
+		Role: PostRoleBot,
+		ToolUse: []ToolCall{
+			{Name: "safe_tool", Status: ToolCallStatusError, Result: BatchSkippedToolResult("safe_tool", []string{"ghost_tool"})},
+		},
+	}}
+
+	assert.Equal(t, 0, CountTrailingFailedToolCalls(posts))
+}
+
+func TestCountTrailingFailedToolCallsBatchSkippedDoesNotExhaustRetryLimit(t *testing.T) {
+	posts := []Post{
+		{Role: PostRoleUser, Message: "run tools"},
+	}
+	for range MaxConsecutiveToolCallFailures {
+		posts = append(posts, Post{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "safe_tool", Status: ToolCallStatusError, Result: BatchSkippedToolResult("safe_tool", []string{"ghost_tool"})},
+				{Name: "ghost_tool", Status: ToolCallStatusError, Result: "unknown tool ghost_tool"},
+			},
+		})
+	}
+
+	assert.Equal(t, MaxConsecutiveToolCallFailures, CountTrailingFailedToolCalls(posts))
+}

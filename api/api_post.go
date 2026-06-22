@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/react"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/telemetry"
@@ -321,6 +322,10 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 	var data struct {
 		AcceptedToolIDs []string `json:"accepted_tool_ids" binding:"required"`
+
+		// ToolAnswers carries the user's answers for accepted
+		// user-interaction tool calls, keyed by tool_use block ID.
+		ToolAnswers map[string]mmtools.UserInteractionAnswer `json:"tool_answers"`
 	}
 
 	if err := c.ShouldBindJSON(&data); err != nil {
@@ -328,7 +333,7 @@ func (a *API) handleToolCall(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
+	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs, data.ToolAnswers); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
 		return
 	}
@@ -343,7 +348,8 @@ func (a *API) handleToolCall(c *gin.Context) {
 func toolApprovalHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrStaleToolClick),
-		errors.Is(err, conversations.ErrPostMissingConversationID):
+		errors.Is(err, conversations.ErrPostMissingConversationID),
+		errors.Is(err, conversations.ErrInvalidToolAnswer):
 		return http.StatusBadRequest
 	case errors.Is(err, conversations.ErrNotRequester):
 		return http.StatusForbidden

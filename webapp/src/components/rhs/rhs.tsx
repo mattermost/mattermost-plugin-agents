@@ -28,6 +28,13 @@ const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
     height: 100%;
 `;
 
+const missingThreadMembershipMessage = 'User thread membership doesn\'t exist';
+
+function isMissingThreadMembershipError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes(missingThreadMembershipMessage);
+}
+
 const ThreadsList = styled.div`
     flex: 1;
     min-height: 0;
@@ -64,6 +71,17 @@ export default function RHS() {
     const [disabledServers, setDisabledServers] = useState<string[]>([]);
     const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
 
+    const markSelectedThreadRead = useCallback((postId: string) => {
+        updateRead(currentUserId, currentTeamId, postId, Date.now() + twentyFourHoursInMS).catch((error) => {
+            if (isMissingThreadMembershipError(error)) {
+                console.warn('Skipping AI thread read marker because thread membership is missing.', error); // eslint-disable-line no-console
+                return;
+            }
+
+            console.error('Failed to update AI thread read marker:', error); // eslint-disable-line no-console
+        });
+    }, [currentTeamId, currentUserId]);
+
     useEffect(() => {
         const fetchPreferences = async () => {
             try {
@@ -94,15 +112,15 @@ export default function RHS() {
             fetchThreads();
         } else if (currentTab === 'thread' && Boolean(selectedPostId)) {
             // Update read for the thread to tomorrow. We don't really want the unreads thing to show up.
-            updateRead(currentUserId, currentTeamId, selectedPostId, Date.now() + twentyFourHoursInMS);
+            markSelectedThreadRead(selectedPostId);
         }
         return () => {
             // Sometimes we are too fast for the server, so try again on unmount/switch.
             if (selectedPostId) {
-                updateRead(currentUserId, currentTeamId, selectedPostId, Date.now() + twentyFourHoursInMS);
+                markSelectedThreadRead(selectedPostId);
             }
         };
-    }, [currentTab, selectedPostId]);
+    }, [currentTab, markSelectedThreadRead, selectedPostId]);
 
     const selectPost = useCallback((postId: string) => {
         dispatch({type: 'SELECT_AI_POST', postId});

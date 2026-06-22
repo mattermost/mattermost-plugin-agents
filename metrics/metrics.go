@@ -14,6 +14,7 @@ const (
 	MetricsSubsystemHTTP   = "http"
 	MetricsSubsystemAPI    = "api"
 	MetricsSubsystemLLM    = "llm"
+	MetricsSubsystemMCP    = "mcp"
 
 	MetricsCloudInstallationLabel = "installationId"
 	MetricsVersionLabel           = "version"
@@ -28,6 +29,7 @@ type Metrics interface {
 	IncrementHTTPErrors()
 
 	ObserveTokenUsage(botName, teamID, userID string, inputTokens, outputTokens int)
+	ObserveMCPDynamicToolEvent(botName, event, result string)
 }
 
 type InstanceInfo struct {
@@ -50,6 +52,8 @@ type metrics struct {
 
 	llmInputTokensTotal  *prometheus.CounterVec
 	llmOutputTokensTotal *prometheus.CounterVec
+
+	mcpDynamicToolEventsTotal *prometheus.CounterVec
 }
 
 // NewMetrics Factory method to create a new metrics collector.
@@ -139,6 +143,15 @@ func NewMetrics(info InstanceInfo) Metrics {
 	}, []string{"bot_name", "team_id"})
 	m.registry.MustRegister(m.llmOutputTokensTotal)
 
+	m.mcpDynamicToolEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace:   MetricsNamespace,
+		Subsystem:   MetricsSubsystemMCP,
+		Name:        "dynamic_tool_events_total",
+		Help:        "The total number of MCP dynamic tool loading events.",
+		ConstLabels: additionalLabels,
+	}, []string{"bot_name", "event", "result"})
+	m.registry.MustRegister(m.mcpDynamicToolEventsTotal)
+
 	return m
 }
 
@@ -189,4 +202,18 @@ func (m *metrics) ObserveTokenUsage(botName, teamID, userID string, inputTokens,
 	if outputTokens > 0 {
 		m.llmOutputTokensTotal.With(labels).Add(float64(outputTokens))
 	}
+}
+
+func (m *metrics) ObserveMCPDynamicToolEvent(botName, event, result string) {
+	if m == nil {
+		return
+	}
+	if botName == "" {
+		botName = "unknown"
+	}
+	m.mcpDynamicToolEventsTotal.With(prometheus.Labels{
+		"bot_name": botName,
+		"event":    event,
+		"result":   result,
+	}).Inc()
 }

@@ -133,7 +133,7 @@ func TestGetBaseLLMLoadTestMockReturnsMock(t *testing.T) {
 		"profile_summary", mock.MatchedBy(func(summary string) bool { return summary != "" }),
 	).Return().Once()
 
-	model, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot())
+	model, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
 	require.NoError(t, err)
 	require.IsType(t, &loadtest.MockLLM{}, model)
 	mockAPI.AssertExpectations(t)
@@ -146,7 +146,7 @@ func TestGetLLMLoadTestMockUsesWrapperChain(t *testing.T) {
 
 	mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	model, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot())
+	model, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, model)
 	require.Equal(t, 100000, model.InputTokenLimit())
@@ -159,12 +159,12 @@ func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {
 	cfg := &mockConfig{}
 	mmBots := newTestMMBots(t, cfg)
 
-	_, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot())
+	_, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 	require.Contains(t, err.Error(), "loadtest profile")
 
-	_, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot())
+	_, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 }
@@ -199,7 +199,7 @@ func TestGetBaseLLMLoadTestMockEmptyConfigUsesDefaultProfile(t *testing.T) {
 	svc := loadTestService(nil)
 	svc.LoadTestMockConfig = nil
 
-	model, err := mmBots.getBaseLLM(svc, loadTestBot())
+	model, err := mmBots.getBaseLLM(svc, loadTestBot(), nil)
 	require.NoError(t, err)
 	require.IsType(t, &loadtest.MockLLM{}, model)
 	require.NotEmpty(t, summary)
@@ -229,7 +229,7 @@ func TestGetBaseLLMLoadTestMockProfileWeightOverride(t *testing.T) {
 		"realistic_fast":    0.0,
 		"realistic_slow":    0.0,
 	}
-	model, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot())
+	model, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot(), nil)
 	require.NoError(t, err)
 	require.IsType(t, &loadtest.MockLLM{}, model)
 	require.NotEmpty(t, summary)
@@ -940,6 +940,87 @@ func TestEnsureBotsRebuildsBotWhenServiceInputTokenLimitChanges(t *testing.T) {
 	require.NotEqual(t, initialLimit, bots[0].LLM().InputTokenLimit(),
 		"EnsureBots must rebuild after a service-config change for a DB-backed agent")
 	assert.Equal(t, 250000, bots[0].LLM().InputTokenLimit())
+}
+
+// TestEnsureBotsRebuildsBotWhenFallbackServiceChanges pins that EnsureBots
+// detects changes to a service reached only through another service's fallback
+// chain. resolveServiceCfgs must include fallback-chain services in the snapshot
+// used for optimistic change detection; otherwise a change to a fallback service
+// is missed and the bot keeps an LLM built from the stale fallback config. The
+// bot references only svc1, which falls back to svc2 — so svc2 is visible to
+// change detection solely because resolveServiceCfgs walks the chain.
+func TestEnsureBotsRebuildsBotWhenFallbackServiceChanges(t *testing.T) {
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+
+	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
+	mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot { return bot }, nil).Maybe()
+	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 0}, nil).Maybe()
+	mockAPI.On("SetProfileImage", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
+	mockAPI.On("UpdateBotActive", mock.AnythingOfType("string"), mock.AnythingOfType("bool")).Return(&model.Bot{}, nil).Maybe()
+	mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockAPI.On("LogDebug", mock.Anything).Return(nil).Maybe()
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	licenseChecker := enterprise.NewLicenseChecker(client)
+	primaryWithFallback := func(fallbackModel string) []llm.ServiceConfig {
+		return []llm.ServiceConfig{
+			{
+				ID:                "svc1",
+				Type:              llm.ServiceTypeOpenAI,
+				APIKey:            "k",
+				DefaultModel:      "gpt-5.4",
+				FallbackServiceID: "svc2",
+			},
+			{
+				ID:           "svc2",
+				Type:         llm.ServiceTypeAnthropic,
+				APIKey:       "k2",
+				DefaultModel: fallbackModel,
+			},
+		}
+	}
+	cfg := &mockConfig{
+		bots:     []llm.BotConfig{},
+		services: primaryWithFallback("claude-sonnet-4-20250514"),
+	}
+	agentStore := &stubAgentStore{
+		agents: []llm.BotConfig{
+			{ID: "bot1", Name: "openai", DisplayName: "OpenAI", ServiceID: "svc1"},
+		},
+	}
+	mmBots := New(mockAPI, client, licenseChecker, cfg, agentStore, &http.Client{}, nil)
+
+	require.NoError(t, mmBots.EnsureBots())
+	bots := mmBots.GetAllBots()
+	require.Len(t, bots, 1)
+	require.NotNil(t, bots[0].LLM(), "bot must have an LLM after initial EnsureBots")
+	initialLLM := bots[0].LLM()
+
+	// Control: with no config change EnsureBots must take the optimistic
+	// fast-path and keep the same LLM instance. This proves the fallback service
+	// is represented in the snapshot *stably* — it must not look changed on every
+	// run, which would defeat the fast-path.
+	require.NoError(t, mmBots.EnsureBots())
+	bots = mmBots.GetAllBots()
+	require.Len(t, bots, 1)
+	require.Same(t, initialLLM, bots[0].LLM(), "EnsureBots must not rebuild when nothing changed")
+
+	// Mutate ONLY the fallback service (svc2). The bot references svc1, so this
+	// change reaches change-detection solely through the fallback chain.
+	cfg.services = primaryWithFallback("claude-3-7-sonnet-20250219")
+
+	require.NoError(t, mmBots.EnsureBots())
+	bots = mmBots.GetAllBots()
+	require.Len(t, bots, 1)
+	require.NotSame(t, initialLLM, bots[0].LLM(),
+		"EnsureBots must rebuild when a fallback-chain service changes")
 }
 
 func TestEnsureBotsFailsWhenListAgentsFails(t *testing.T) {

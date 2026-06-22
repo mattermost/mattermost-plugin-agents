@@ -61,10 +61,12 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:         schemas.OpenAI,
-			APIKey:           apiKey,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:         schemas.OpenAI,
+				APIKey:           apiKey,
+				DefaultModel:     model,
+				StreamingTimeout: timeout,
+			},
 		})
 
 	case "anthropic":
@@ -82,10 +84,12 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:         schemas.Anthropic,
-			APIKey:           apiKey,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:         schemas.Anthropic,
+				APIKey:           apiKey,
+				DefaultModel:     model,
+				StreamingTimeout: timeout,
+			},
 			ReasoningEnabled: true,
 		})
 
@@ -109,11 +113,13 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:         schemas.Azure,
-			APIKey:           apiKey,
-			APIURL:           apiURL,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:         schemas.Azure,
+				APIKey:           apiKey,
+				APIURL:           apiURL,
+				DefaultModel:     model,
+				StreamingTimeout: timeout,
+			},
 		})
 
 	case "openaicompatible":
@@ -134,11 +140,13 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		apiKey := os.Getenv("OPENAI_COMPATIBLE_API_KEY")
 
 		return bifrost.New(bifrost.Config{
-			Provider:         schemas.OpenAI,
-			APIKey:           apiKey,
-			APIURL:           apiURL,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:         schemas.OpenAI,
+				APIKey:           apiKey,
+				APIURL:           apiURL,
+				DefaultModel:     model,
+				StreamingTimeout: timeout,
+			},
 		})
 
 	case "mistral":
@@ -156,10 +164,12 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:         schemas.Mistral,
-			APIKey:           apiKey,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:         schemas.Mistral,
+				APIKey:           apiKey,
+				DefaultModel:     model,
+				StreamingTimeout: timeout,
+			},
 		})
 
 	case "bedrock":
@@ -177,12 +187,14 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:           schemas.Bedrock,
-			Region:             region,
-			AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
-			AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-			DefaultModel:       model,
-			StreamingTimeout:   timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:           schemas.Bedrock,
+				Region:             region,
+				AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
+				AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+				DefaultModel:       model,
+				StreamingTimeout:   timeout,
+			},
 		})
 
 	case "cohere":
@@ -200,10 +212,12 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:         schemas.Cohere,
-			APIKey:           apiKey,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:         schemas.Cohere,
+				APIKey:           apiKey,
+				DefaultModel:     model,
+				StreamingTimeout: timeout,
+			},
 		})
 
 	default:

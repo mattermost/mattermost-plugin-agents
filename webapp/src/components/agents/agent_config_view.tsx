@@ -34,6 +34,7 @@ export type AgentDraft = {
     adminUserIds: string[];
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading: boolean;
     model: string;
     enableVision: boolean;
     disableTools: boolean;
@@ -42,7 +43,14 @@ export type AgentDraft = {
     reasoningEffort: string;
     thinkingBudget: number;
     structuredOutputEnabled: boolean;
+    maxToolTurns: number;
 }
+
+// DefaultMaxToolTurns mirrors llm.DefaultMaxToolTurns on the backend. Kept
+// here so the create form pre-populates the field even before any service is
+// selected.
+export const DefaultMaxToolTurns = 30;
+export const MaxAllowedMaxToolTurns = 250;
 
 const emptyDraft: AgentDraft = {
     displayName: '',
@@ -57,6 +65,7 @@ const emptyDraft: AgentDraft = {
     adminUserIds: [],
     enabledTools: [],
     autoEnableNewMCPTools: true,
+    mcpDynamicToolLoading: true,
     model: '',
     enableVision: true,
     disableTools: false,
@@ -65,6 +74,7 @@ const emptyDraft: AgentDraft = {
     reasoningEffort: 'medium',
     thinkingBudget: 0,
     structuredOutputEnabled: false,
+    maxToolTurns: DefaultMaxToolTurns,
 };
 
 function cloneDraft(draft: AgentDraft): AgentDraft {
@@ -101,6 +111,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         adminUserIDs: draft.adminUserIds,
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
+        mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -109,6 +120,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         structuredOutputEnabled: draft.structuredOutputEnabled,
+        maxToolTurns: draft.maxToolTurns,
     };
 }
 
@@ -130,6 +142,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         adminUserIDs: draft.adminUserIds,
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
+        mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -138,6 +151,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         structuredOutputEnabled: draft.structuredOutputEnabled,
+        maxToolTurns: draft.maxToolTurns,
     };
 }
 
@@ -155,6 +169,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         adminUserIds: agent.adminUserIDs ?? [],
         enabledTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools ?? false,
+        mcpDynamicToolLoading: agent.mcpDynamicToolLoading ?? true,
         model: agent.model ?? '',
         enableVision: agent.enableVision ?? true,
         disableTools: agent.disableTools ?? false,
@@ -163,6 +178,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         reasoningEffort: agent.reasoningEffort || 'medium',
         thinkingBudget: agent.thinkingBudget ?? 0,
         structuredOutputEnabled: agent.structuredOutputEnabled ?? false,
+        maxToolTurns: agent.maxToolTurns && agent.maxToolTurns > 0 ? agent.maxToolTurns : DefaultMaxToolTurns,
     };
 }
 
@@ -276,6 +292,12 @@ const AgentConfigView = (props: Props) => {
         }
         if (!draft.serviceId) {
             errs.serviceId = intl.formatMessage({defaultMessage: 'AI Service is required'});
+        }
+        if (draft.maxToolTurns < 1 || draft.maxToolTurns > MaxAllowedMaxToolTurns) {
+            errs.maxToolTurns = intl.formatMessage(
+                {defaultMessage: 'Max tool turns must be between 1 and {max}'},
+                {max: MaxAllowedMaxToolTurns},
+            );
         }
         return errs;
     }, [draft, intl]);
@@ -401,6 +423,7 @@ const AgentConfigView = (props: Props) => {
                         <McpsTab
                             enabledTools={draft.enabledTools}
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
+                            mcpDynamicToolLoading={draft.mcpDynamicToolLoading}
                             onChange={(updates) => updateDraft(updates)}
                             onReconcileEnabledTools={reconcileEnabledTools}
                         />

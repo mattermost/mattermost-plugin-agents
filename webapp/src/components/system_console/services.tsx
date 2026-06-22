@@ -30,6 +30,7 @@ const defaultNewService: LLMService = {
     vertexProjectID: '',
     vertexProjectNumber: '',
     vertexAuthCredentials: '',
+    fallbackServiceID: '',
 };
 
 export const firstNewService = {
@@ -83,7 +84,12 @@ const Services = (props: Props) => {
             return;
         }
 
-        props.onChange(props.services.filter((b) => b.id !== id));
+        // Drop the service and clear any remaining service's fallback link to it,
+        // so deletion never leaves a dangling fallbackServiceID behind.
+        const remaining = props.services.
+            filter((b) => b.id !== id).
+            map((b) => (b.fallbackServiceID === id ? {...b, fallbackServiceID: ''} : b));
+        props.onChange(remaining);
     };
 
     return (
@@ -93,6 +99,7 @@ const Services = (props: Props) => {
                     <Service
                         key={service.id}
                         service={service}
+                        services={props.services}
                         onChange={onChange}
                         onDelete={() => onDelete(service.id)}
                     />

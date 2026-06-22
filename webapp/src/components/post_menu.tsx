@@ -27,6 +27,7 @@ import {DropdownBotSelector} from './bot_selector';
 
 type Props = {
     post: Post,
+    handleDropdownOpened?: (open: boolean) => void,
 }
 
 const PostMenu = (props: Props) => {
@@ -56,6 +57,7 @@ const PostMenu = (props: Props) => {
             title={intl.formatMessage({defaultMessage: 'AI Actions'})}
             dropdownMenu={StyledDropdownMenu}
             testId='ai-actions-menu'
+            onOpenChange={props.handleDropdownOpened}
         >
             <DropdownBotSelector
                 bots={bots ?? []}

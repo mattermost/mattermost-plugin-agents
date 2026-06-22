@@ -5,15 +5,20 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
-	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ToolInfo represents a tool's metadata for discovery purposes
@@ -25,6 +30,7 @@ type ToolInfo struct {
 
 // UserClients represents a per-user MCP client with multiple server connections
 type UserClients struct {
+	clientsMu    sync.RWMutex
 	clients      map[string]*Client // serverID -> client (both remote and embedded)
 	userID       string
 	log          pluginapi.LogService
@@ -36,6 +42,11 @@ type UserClients struct {
 	// user client is cached; otherwise callers only see those errors once (first
 	// GetToolsForUser) and lose stable auth-required state on subsequent requests.
 	initialRemoteConnectErrors *Errors
+}
+
+type userClientSnapshot struct {
+	serverID string
+	client   *Client
 }
 
 func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
@@ -50,7 +61,7 @@ func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuth
 }
 
 // ConnectToRemoteServers initializes connections to remote MCP servers
-func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
+func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []ServerConfig) *Errors {
 	if len(servers) == 0 {
 		c.log.Debug("No remote MCP servers provided for user", "userID", c.userID)
 		return nil
@@ -65,7 +76,7 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 			continue
 		}
 
-		if err := c.connectToServer(context.TODO(), serverConfig.Name, serverConfig); err != nil {
+		if err := c.connectToServer(ctx, serverConfig.Name, serverConfig); err != nil {
 			// Initialize errors struct if needed
 			if mcpErrors == nil {
 				mcpErrors = &Errors{}
@@ -93,12 +104,12 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 
 // ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
 // If a connection already exists, it is reused.
-func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
+func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
 	if !embeddedConfig.Enabled || embeddedClient == nil {
 		return nil
 	}
 
-	if _, exists := c.clients[EmbeddedClientKey]; exists {
+	if c.hasClient(EmbeddedClientKey) {
 		return nil
 	}
 
@@ -106,12 +117,23 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embed
 		return nil
 	}
 
-	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := c.connectToEmbeddedServerWithClient(ctxWithTimeout, c.userID, sessionID, embeddedClient); err != nil {
+
+	serverClient, err := embeddedClient.CreateClient(ctxWithTimeout, c.userID, sessionID)
+	if err != nil {
 		c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
 		return fmt.Errorf("failed to connect to embedded server: %w", err)
 	}
+
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+	if _, exists := c.clients[EmbeddedClientKey]; exists {
+		_ = serverClient.Close()
+		return nil
+	}
+
+	c.clients[EmbeddedClientKey] = serverClient
 	c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
 
 	return nil
@@ -123,22 +145,59 @@ func (c *UserClients) connectToServer(ctx context.Context, serverID string, serv
 	if err != nil {
 		return err
 	}
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
 	c.clients[serverID] = serverClient
 	return nil
 }
 
-// connectToEmbeddedServerWithClient establishes a connection to the embedded server using the embedded client helper
-func (c *UserClients) connectToEmbeddedServerWithClient(ctx context.Context, userID, sessionID string, embeddedClient *EmbeddedServerClient) error {
-	serverClient, err := embeddedClient.CreateClient(ctx, userID, sessionID)
-	if err != nil {
-		return err
+func (c *UserClients) hasClient(serverID string) bool {
+	c.clientsMu.RLock()
+	defer c.clientsMu.RUnlock()
+	_, exists := c.clients[serverID]
+	return exists
+}
+
+func (c *UserClients) snapshotClients() []userClientSnapshot {
+	c.clientsMu.RLock()
+	defer c.clientsMu.RUnlock()
+	if len(c.clients) == 0 {
+		return nil
 	}
-	c.clients[EmbeddedClientKey] = serverClient
-	return nil
+
+	serverIDs := make([]string, 0, len(c.clients))
+	for serverID := range c.clients {
+		serverIDs = append(serverIDs, serverID)
+	}
+	sort.Strings(serverIDs)
+
+	snapshot := make([]userClientSnapshot, 0, len(serverIDs))
+	for _, serverID := range serverIDs {
+		snapshot = append(snapshot, userClientSnapshot{
+			serverID: serverID,
+			client:   c.clients[serverID],
+		})
+	}
+	return snapshot
+}
+
+func (c *UserClients) InitialRemoteConnectErrors() *Errors {
+	c.clientsMu.RLock()
+	defer c.clientsMu.RUnlock()
+	return c.initialRemoteConnectErrors
+}
+
+func (c *UserClients) setInitialRemoteConnectErrors(mcpErrors *Errors) {
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+	c.initialRemoteConnectErrors = mcpErrors
 }
 
 // Close closes all server connections for a user client
 func (c *UserClients) Close() {
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+
 	// Close all MCP server clients (both remote and embedded)
 	for serverID, client := range c.clients {
 		if err := client.Close(); err != nil {
@@ -151,32 +210,44 @@ func (c *UserClients) Close() {
 }
 
 // GetTools returns the tools available from the clients
-func (c *UserClients) GetTools() []llm.Tool {
-	if len(c.clients) == 0 {
+func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
+	clientSnapshot := c.snapshotClients()
+	if len(clientSnapshot) == 0 {
 		return nil
 	}
 
 	var tools []llm.Tool
-	seenTools := make(map[string]string) // toolName -> serverID for conflict detection
+	seenTools := make(map[string]string) // runtime toolName -> serverID for conflict detection
+	usedSlugs := make(map[string]string) // slug -> server origin for collision suffixing
 
-	// Iterate over all clients and collect their tools
-	for serverID, client := range c.clients {
+	// Iterate over a snapshot so callers do not hold clientsMu during network work.
+	for _, entry := range clientSnapshot {
+		serverID := entry.serverID
+		client := entry.client
 		clientTools := client.Tools()
-		for toolName, tool := range clientTools {
-			// Check for tool name conflicts across servers
-			if existingServerID, exists := seenTools[toolName]; exists {
-				c.log.Warn("Tool name conflict detected",
+		serverSlug := dedupeMCPServerSlug(mcpServerSlug(serverID, client), client.config.BaseURL, serverID, usedSlugs)
+		toolNames := make([]string, 0, len(clientTools))
+		for toolName := range clientTools {
+			toolNames = append(toolNames, toolName)
+		}
+		sort.Strings(toolNames)
+		for _, toolName := range toolNames {
+			tool := clientTools[toolName]
+			runtimeToolName := llm.NamespaceMCPToolName(serverSlug, toolName)
+			// Namespacing should make cross-server duplicate bare names safe. A
+			// final collision means the slug de-dupe or upstream catalog is broken.
+			if existingServerID, exists := seenTools[runtimeToolName]; exists {
+				c.log.Warn("Namespaced MCP tool name conflict detected",
 					"userID", c.userID,
-					"tool", toolName,
+					"tool", runtimeToolName,
 					"server1", existingServerID,
 					"server2", serverID)
-				// Skip duplicate tool (first server wins)
 				continue
 			}
-			seenTools[toolName] = serverID
+			seenTools[runtimeToolName] = serverID
 
 			tools = append(tools, llm.Tool{
-				Name:         toolName,
+				Name:         runtimeToolName,
 				Description:  tool.Description,
 				Schema:       tool.InputSchema,
 				Resolver:     c.createToolResolver(client, toolName),
@@ -267,8 +338,8 @@ func (c *UserClients) rememberOAuthNeededForToolCall(client *Client, err error) 
 }
 
 // createToolResolver creates a resolver function for the given tool
-func (c *UserClients) createToolResolver(client *Client, toolName string) func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
-	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (c *UserClients) createToolResolver(client *Client, toolName string) llm.ToolResolver {
+	return func(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		var args map[string]any
 		if err := argsGetter(&args); err != nil {
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
@@ -276,7 +347,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 
 		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
 
-		result, err := client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
+		result, err := client.CallToolWithMetadata(ctx, toolName, args, metadata)
 		if err != nil {
 			c.rememberOAuthNeededForToolCall(client, err)
 			return result, err
@@ -285,6 +356,77 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 		c.clearOAuthNeededForServer(client)
 		return result, nil
 	}
+}
+
+func mcpServerSlug(serverID string, client *Client) string {
+	if client != nil && (client.config.BaseURL == EmbeddedClientKey || client.config.Name == EmbeddedClientKey || serverID == EmbeddedClientKey) {
+		return "mattermost"
+	}
+
+	candidates := []string{}
+	if client != nil {
+		candidates = append(candidates, client.config.Name)
+	}
+	candidates = append(candidates, serverID)
+	if client != nil && client.config.BaseURL != "" {
+		if parsed, err := url.Parse(client.config.BaseURL); err == nil {
+			baseURLName := strings.Trim(strings.Trim(parsed.Host+parsed.Path, "/"), "_")
+			candidates = append(candidates, baseURLName)
+		}
+	}
+	candidates = append(candidates, "mcp")
+
+	for _, candidate := range candidates {
+		if slug := sanitizeMCPServerSlug(candidate); slug != "" {
+			return slug
+		}
+	}
+	return "mcp"
+}
+
+func dedupeMCPServerSlug(slug, serverOrigin, serverID string, usedSlugs map[string]string) string {
+	if slug == "" {
+		slug = "mcp"
+	}
+	if existingOrigin, exists := usedSlugs[slug]; !exists || existingOrigin == serverOrigin {
+		usedSlugs[slug] = serverOrigin
+		return slug
+	}
+
+	hashInput := serverOrigin
+	if hashInput == "" {
+		hashInput = serverID
+	}
+	if hashInput == "" {
+		hashInput = slug
+	}
+	dedupedSlug := slug + "_" + shortSlugHash(hashInput)
+	usedSlugs[dedupedSlug] = serverOrigin
+	return dedupedSlug
+}
+
+func sanitizeMCPServerSlug(value string) string {
+	value = strings.ToLower(value)
+	var b strings.Builder
+	lastWasSeparator := false
+	for _, r := range value {
+		isAllowed := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAllowed {
+			b.WriteRune(r)
+			lastWasSeparator = false
+			continue
+		}
+		if b.Len() > 0 && !lastWasSeparator {
+			b.WriteByte('_')
+			lastWasSeparator = true
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func shortSlugHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 // pluginServerOriginKey returns the synthetic origin string for plugin-server
@@ -297,72 +439,24 @@ func pluginServerOriginKey(pluginID string) string {
 // over PluginHTTP, injecting X-Mattermost-UserID. Plugin servers use
 // inter-plugin auth, not user OAuth.
 func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) error {
-	if sourcePluginAPI == nil {
-		return fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)
-	}
-
 	originKey := pluginServerOriginKey(cfg.PluginID)
-	if _, exists := c.clients[originKey]; exists {
+	if c.hasClient(originKey) {
 		return nil
 	}
 
-	roundTripper := NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI)
-	httpClient := &http.Client{
-		Transport: &headerTransport{
-			base:    roundTripper,
-			headers: map[string]string{MMUserIDHeader: c.userID},
-		},
-	}
-
-	// Endpoint URL is a placeholder — PluginHTTPRoundTripper rewrites
-	// req.URL.Path on each round trip. go-sdk requires a parseable URL.
-	mcpClient := gosdkmcp.NewClient(
-		&gosdkmcp.Implementation{
-			Name:    "mattermost-agents-plugin-bridge",
-			Version: "1.0",
-		},
-		&gosdkmcp.ClientOptions{},
-	)
-	session, err := mcpClient.Connect(ctx, &gosdkmcp.StreamableClientTransport{
-		Endpoint:   "http://plugin" + cfg.Path,
-		HTTPClient: httpClient,
-	}, nil)
+	client, err := NewPluginClient(ctx, c.userID, cfg, sourcePluginAPI, c.log)
 	if err != nil {
-		return fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)
+		return err
 	}
 
-	initResult, err := session.ListTools(ctx, &gosdkmcp.ListToolsParams{})
-	if err != nil {
-		_ = session.Close()
-		return fmt.Errorf("failed to list tools on plugin MCP server %s: %w", cfg.PluginID, err)
-	}
-	if len(initResult.Tools) == 0 {
-		_ = session.Close()
-		return fmt.Errorf("no tools found on plugin MCP server %s for user %s", cfg.PluginID, c.userID)
-	}
-
-	// Synthetic ServerConfig: BaseURL == originKey ties the client into
-	// filterToolsByConfig via llm.Tool.ServerOrigin in GetTools.
-	pluginCfg := ServerConfig{
-		Name:    cfg.Name,
-		Enabled: true,
-		BaseURL: originKey,
-	}
-
-	client := &Client{
-		session:    session,
-		config:     pluginCfg,
-		tools:      make(map[string]*gosdkmcp.Tool, len(initResult.Tools)),
-		userID:     c.userID,
-		log:        c.log,
-		httpClient: httpClient,
-		// oauthManager/embeddedClient stay nil; reconnect reuses httpClient.
-	}
-	for _, tool := range initResult.Tools {
-		client.tools[tool.Name] = tool
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+	if _, exists := c.clients[originKey]; exists {
+		_ = client.Close()
+		return nil
 	}
 
 	c.clients[originKey] = client
-	c.log.Debug("Connected to plugin MCP server", "userID", c.userID, "pluginID", cfg.PluginID, "toolCount", len(client.tools))
+	c.log.Debug("Connected to plugin MCP server", "userID", c.userID, "pluginID", cfg.PluginID, "toolCount", len(client.Tools()))
 	return nil
 }

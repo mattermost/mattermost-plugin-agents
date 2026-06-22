@@ -9,7 +9,7 @@
  */
 
 // Default models for each provider. Update these when bumping model versions.
-export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-20250514';
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
 export const DEFAULT_OPENAI_MODEL = 'gpt-5.2';
 
 /**
@@ -70,6 +70,7 @@ export interface LLMBotConfig {
     userIDs: string[];
     teamIDs: string[];
     enabledNativeTools?: string[];
+    mcpDynamicToolLoading?: boolean;
     reasoningEnabled?: boolean;
     reasoningEffort?: string;
     thinkingBudget?: number;

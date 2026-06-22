@@ -90,7 +90,7 @@ func TestNewFromServiceConfigOpenAIForcesResponsesAPI(t *testing.T) {
 			bot := llm.BotConfig{
 				EnabledNativeTools: []string{"web_search"},
 			}
-			llmInstance, err := NewFromServiceConfig(service, bot)
+			llmInstance, err := NewFromServiceConfig(service, bot, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantUseResponsesAPI, llmInstance.useResponsesAPI)
 		})
@@ -120,7 +120,7 @@ func TestNewFromServiceConfigPropagatesInputTokenLimit(t *testing.T) {
 				APIURL:          "http://localhost",
 				InputTokenLimit: tt.inputTokenLimit,
 			}
-			llmInstance, err := NewFromServiceConfig(service, llm.BotConfig{})
+			llmInstance, err := NewFromServiceConfig(service, llm.BotConfig{}, nil)
 			require.NoError(t, err)
 			defer llmInstance.client.Shutdown()
 
@@ -158,7 +158,7 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 			bot := llm.BotConfig{
 				EnabledNativeTools: []string{"web_search"},
 			}
-			llmInstance, err := NewFromServiceConfig(service, bot)
+			llmInstance, err := NewFromServiceConfig(service, bot, nil)
 			require.NoError(t, err)
 			if tt.wantTools {
 				assert.Equal(t, []string{"web_search"}, llmInstance.enabledNativeTools)

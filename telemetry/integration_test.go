@@ -263,7 +263,7 @@ func TestToolResolveSpan(t *testing.T) {
 		{
 			Name:        "test_tool",
 			Description: "A test tool",
-			Resolver: func(_ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 				return "tool result", nil
 			},
 		},
@@ -390,7 +390,7 @@ func TestFullRequestTrace(t *testing.T) {
 	store.AddTools([]llm.Tool{
 		{
 			Name: "web_search",
-			Resolver: func(_ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+			Resolver: func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 				var args struct {
 					Query string `json:"query"`
 				}
