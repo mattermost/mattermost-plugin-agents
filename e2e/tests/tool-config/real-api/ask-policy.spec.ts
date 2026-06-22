@@ -65,14 +65,24 @@ for (const provider of providers) {
             const rhsContainer = page.getByTestId('mattermost-ai-rhs');
             await expect(rhsContainer).toBeVisible();
 
-            // Check for Accept/Reject buttons — these appear when an "ask" tool is invoked.
-            // If the LLM didn't call a tool, skip so the result clearly signals the
-            // ask-policy approval flow was not exercised (avoids a false-green pass).
-            const acceptButton = page.getByRole('button', { name: /accept/i });
-            const rejectButton = page.getByRole('button', { name: /reject/i });
-            const isAcceptVisible = await acceptButton.isVisible().catch(() => false);
+            // Pending-approval controls render as "Accept"/"Reject" inside the
+            // RHS. Scope to the RHS and use exact-match names so the batch
+            // "Accept all"/"Reject all" controls (shown when multiple tools
+            // need decisions) don't interfere with the single-tool assertions.
+            const acceptButton = rhsContainer.getByRole('button', { name: /^accept$/i });
+            const rejectButton = rhsContainer.getByRole('button', { name: /^reject$/i });
 
-            if (!isAcceptVisible) {
+            // Real providers are nondeterministic: the approval UI only appears
+            // if the LLM invoked the "ask" tool, and it may take a moment to
+            // render after streaming stops. Wait (rather than snapshotting with
+            // isVisible) so we don't race the render. If it never appears, the
+            // ask-policy flow wasn't exercised, so skip instead of failing.
+            const approvalShown = await acceptButton.first().
+                waitFor({ state: 'visible', timeout: 15000 }).
+                then(() => true).
+                catch(() => false);
+
+            if (!approvalShown) {
                 test.skip(true, 'LLM did not invoke a tool; ask-policy approval flow was not exercised');
             }
 
