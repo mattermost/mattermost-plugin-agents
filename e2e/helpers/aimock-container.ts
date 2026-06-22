@@ -55,12 +55,21 @@ export type AIMockStartOptions = {
 
 const DEFAULT_FIXTURE_FILE = 'fixtures.json';
 
+// Unique user message used to confirm that an in-place fixture reload (--watch)
+// has taken effect. Each write embeds a fresh token in a sentinel fixture; after
+// rewriting we poll until aimock serves the new token, so callers observe the new
+// fixtures without restarting the container.
+const AIMOCK_RELOAD_PROBE_MESSAGE = '__aimock_reload_probe__';
+const AIMOCK_RELOAD_TIMEOUT_MS = 15000;
+
 export class AIMockContainer {
     private container: StartedTestContainer | null = null;
     private network: StartedNetwork | null = null;
     private fixturesDir: string | null = null;
     private startOptions: AIMockStartOptions = {};
     private fixtureFileContents: AIMockFixtureFile = { fixtures: [] };
+    private reloadToken = '';
+    private reloadCounter = 0;
 
     async start(network: StartedNetwork, options: AIMockStartOptions = {}): Promise<void> {
         this.network = network;
@@ -96,9 +105,7 @@ export class AIMockContainer {
 
     async setFixtures(fixtures: AIMockFixtureFile | AIMockFixture[]): Promise<void> {
         this.fixtureFileContents = normalizeFixtureInput(fixtures);
-        if (this.container) {
-            await this.restart();
-        }
+        await this.reloadFixtures();
     }
 
     async appendFixtures(fixtures: AIMockFixtureFile | AIMockFixture[]): Promise<void> {
@@ -106,9 +113,7 @@ export class AIMockContainer {
             this.fixtureFileContents,
             normalizeFixtureInput(fixtures),
         );
-        if (this.container) {
-            await this.restart();
-        }
+        await this.reloadFixtures();
     }
 
     getMappedBaseUrl(): string {
@@ -170,9 +175,27 @@ export class AIMockContainer {
 
     private async writeFixtureFiles(): Promise<void> {
         const fixturesDir = this.ensureFixturesDir();
+        this.reloadToken = `${Date.now()}-${++this.reloadCounter}`;
 
+        // Embed a sentinel fixture carrying the current reload token so reloads
+        // can be confirmed over HTTP (see reloadFixtures).
+        const fileContents: AIMockFixtureFile = {
+            fixtures: [
+                {
+                    match: { userMessage: AIMOCK_RELOAD_PROBE_MESSAGE },
+                    response: { content: this.reloadToken },
+                },
+                ...this.fixtureFileContents.fixtures,
+            ],
+        };
+
+        // Drop any stray files but overwrite the active fixture file in place so a
+        // watch reload sees one atomic change instead of an unlink+add that could
+        // momentarily leave aimock with no fixtures.
         for (const entry of fs.readdirSync(fixturesDir)) {
-            fs.rmSync(path.join(fixturesDir, entry), { force: true });
+            if (entry !== DEFAULT_FIXTURE_FILE) {
+                fs.rmSync(path.join(fixturesDir, entry), { force: true });
+            }
         }
 
         // aimock concatenates every fixture file under /fixtures, so a single
@@ -181,8 +204,42 @@ export class AIMockContainer {
         // sidecar was originally started.
         fs.writeFileSync(
             path.join(fixturesDir, DEFAULT_FIXTURE_FILE),
-            JSON.stringify(this.fixtureFileContents, null, 2),
+            JSON.stringify(fileContents, null, 2),
         );
+    }
+
+    // Rewrites the fixture file and waits for aimock's --watch reload to take
+    // effect (confirmed via the sentinel token), avoiding a container restart.
+    // Falls back to a full restart if the reload cannot be confirmed in time.
+    private async reloadFixtures(): Promise<void> {
+        await this.writeFixtureFiles();
+        if (!this.container) {
+            return;
+        }
+
+        const token = this.reloadToken;
+        const deadline = Date.now() + AIMOCK_RELOAD_TIMEOUT_MS;
+        while (Date.now() < deadline) {
+            try {
+                const response = await this.postChatCompletion({
+                    model: 'gpt-mock',
+                    messages: [{ role: 'user', content: AIMOCK_RELOAD_PROBE_MESSAGE }],
+                });
+                if (response.ok) {
+                    const data = (await response.json()) as {
+                        choices?: Array<{ message?: { content?: string } }>;
+                    };
+                    if (data.choices?.[0]?.message?.content === token) {
+                        return;
+                    }
+                }
+            } catch {
+                // aimock may briefly drop the connection while reloading; retry.
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        await this.restart();
     }
 
     private buildCommand(): string[] {
@@ -194,6 +251,12 @@ export class AIMockContainer {
             '0.0.0.0',
             '--port',
             String(AIMOCK_PORT),
+            // Reload fixtures in place on file change so setFixtures/appendFixtures
+            // never restart the container; restarting would leave the plugin's
+            // pooled connections pointing at the dead container and flake the
+            // first streaming request after a fixture swap (fasthttp does not
+            // retry streaming connection errors).
+            '--watch',
         ];
 
         if (strict) {
