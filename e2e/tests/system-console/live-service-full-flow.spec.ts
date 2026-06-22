@@ -304,6 +304,7 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
         await page.goto(`${mattermost.url()}/test/messages/@${botUsername}`);
         await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
 
+        const postTimeSkewMs = 5000;
         const dmStartTime = Date.now();
         await mmPage.sendChannelMessage(dmPrompt);
 
@@ -311,7 +312,7 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
             regularClient,
             dmChannel.id,
             (post) => post.user_id === botUserID &&
-                post.create_at >= dmStartTime &&
+                post.create_at >= dmStartTime - postTimeSkewMs &&
                 post.message.includes(dmReplyText),
         );
         expect(dmBotReply.user_id).toBe(botUserID);
@@ -329,7 +330,7 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
             regularClient,
             townSquareChannelID,
             (post) => post.user_id === regularUser.id &&
-                post.create_at >= mentionStartTime &&
+                post.create_at >= mentionStartTime - postTimeSkewMs &&
                 post.message.includes(mentionPrompt),
             60000,
         );
@@ -338,7 +339,7 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
             regularClient,
             townSquareChannelID,
             (post) => post.user_id === botUserID &&
-                post.create_at >= mentionStartTime &&
+                post.create_at >= mentionStartTime - postTimeSkewMs &&
                 post.root_id === mentionPost.id &&
                 post.message.includes(mentionReplyText),
         );

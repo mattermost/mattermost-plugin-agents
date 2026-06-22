@@ -65,6 +65,8 @@ async function closeRHSIfOpen(page: Page): Promise<void> {
 }
 
 test.describe('Channel Auto Run Policy (Aimock)', () => {
+    test.describe.configure({ mode: 'serial' });
+
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
     let townSquareChannelID: string;

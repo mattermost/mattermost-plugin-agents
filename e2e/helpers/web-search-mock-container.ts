@@ -101,28 +101,39 @@ export class WebSearchMockContainer {
         this.serverDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-search-mock-'));
         fs.writeFileSync(path.join(this.serverDir, 'server.js'), buildServerScript());
 
-        this.container = await new GenericContainer(WEB_SEARCH_MOCK_IMAGE)
-            .withExposedPorts(WEB_SEARCH_MOCK_PORT)
-            .withNetwork(network)
-            .withNetworkAliases(WEB_SEARCH_MOCK_ALIAS)
-            .withBindMounts([
-                {
-                    source: this.serverDir,
-                    target: '/app',
-                    mode: 'ro',
-                },
-            ])
-            .withCommand(['node', '/app/server.js'])
-            .withWaitStrategy(Wait.forListeningPorts())
-            .start();
+        try {
+            this.container = await new GenericContainer(WEB_SEARCH_MOCK_IMAGE)
+                .withExposedPorts(WEB_SEARCH_MOCK_PORT)
+                .withNetwork(network)
+                .withNetworkAliases(WEB_SEARCH_MOCK_ALIAS)
+                .withBindMounts([
+                    {
+                        source: this.serverDir,
+                        target: '/app',
+                        mode: 'ro',
+                    },
+                ])
+                .withCommand(['node', '/app/server.js'])
+                .withWaitStrategy(Wait.forListeningPorts())
+                .start();
+        } catch (error) {
+            this.removeServerDir();
+            throw error;
+        }
     }
 
     async stop(): Promise<void> {
-        if (this.container) {
-            await this.container.stop();
+        try {
+            if (this.container) {
+                await this.container.stop();
+            }
+        } finally {
             this.container = null;
+            this.removeServerDir();
         }
+    }
 
+    private removeServerDir(): void {
         if (this.serverDir && fs.existsSync(this.serverDir)) {
             fs.rmSync(this.serverDir, { recursive: true, force: true });
         }

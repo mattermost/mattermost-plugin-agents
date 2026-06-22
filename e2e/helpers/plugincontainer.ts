@@ -9,16 +9,16 @@ export const AIMOCK_BOT_NAME = 'aimock';
 
 function findPluginTarball(): string {
   const distPath = path.join(__dirname, '..', '..', 'dist');
-  let filename = '';
-  fs.readdirSync(distPath).forEach((file) => {
-    if (file.endsWith('.tar.gz')) {
-      filename = path.join(distPath, file);
-    }
-  });
-  if (filename === '') {
+  const tarballs = fs.readdirSync(distPath)
+    .filter((file) => file.endsWith('.tar.gz'))
+    .sort();
+  if (tarballs.length === 0) {
     throw new Error('No tar.gz file found in dist folder');
   }
-  return filename;
+  if (tarballs.length > 1) {
+    throw new Error(`Expected exactly one plugin tarball in dist, found: ${tarballs.join(', ')}`);
+  }
+  return path.join(distPath, tarballs[0]);
 }
 
 async function setupStandardTestUsers(mattermost: MattermostContainer): Promise<void> {
@@ -63,6 +63,16 @@ async function setupStandardTestUsers(mattermost: MattermostContainer): Promise<
   });
 
   await mattermost.grantSelfServiceAgentPermissions();
+}
+
+async function finalizeContainerSetup(mattermost: MattermostContainer): Promise<MattermostContainer> {
+  try {
+    await setupStandardTestUsers(mattermost);
+    return mattermost;
+  } catch (error) {
+    await mattermost.stop().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function RunAIMockContainer(overrides?: {
@@ -124,8 +134,7 @@ export async function RunAIMockContainer(overrides?: {
     .withPlugin(filename, 'mattermost-ai', pluginConfig)
     .start();
 
-  await setupStandardTestUsers(mattermost);
-  return mattermost;
+  return finalizeContainerSetup(mattermost);
 }
 
 const RunContainer = async (): Promise<MattermostContainer> => {
@@ -209,8 +218,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
   const mattermost = await new MattermostContainer()
         .withPlugin(filename, "mattermost-ai", pluginConfig)
         .start();
-  await setupStandardTestUsers(mattermost);
-  return mattermost;
+  return finalizeContainerSetup(mattermost);
 }
 
 export default RunContainer

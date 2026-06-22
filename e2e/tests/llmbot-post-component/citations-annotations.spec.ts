@@ -162,9 +162,6 @@ describeAIMockCitationCase({
         await expect(tooltip).toContainText('typescriptlang.org');
 
         const favicon = tooltip.locator('img[src*="favicon"], svg');
-        const faviconCount = await favicon.count();
-        if (faviconCount > 0) {
-            await expect(favicon.first()).toBeVisible();
-        }
+        await expect(favicon.first()).toBeVisible();
     },
 });

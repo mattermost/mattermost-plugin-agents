@@ -47,6 +47,7 @@ export class AIMockContainer {
         }
 
         this.removeFixturesDir();
+        this.network = null;
     }
 
     async restart(): Promise<void> {

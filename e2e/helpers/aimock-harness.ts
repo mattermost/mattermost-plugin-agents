@@ -59,16 +59,31 @@ export async function RunAIMockHarness(options: {
         bot: options.bot,
         service: options.service,
     });
-    const aimock = await RunAIMockSidecar(mattermost.network, {
-        fixtures,
-    });
+    try {
+        const aimock = await RunAIMockSidecar(mattermost.network, {
+            fixtures,
+        });
 
-    return {
-        mattermost,
-        aimock,
-        stop: async () => {
-            await aimock.stop();
-            await mattermost.stop();
-        },
-    };
+        return {
+            mattermost,
+            aimock,
+            stop: async () => {
+                const errors: unknown[] = [];
+                for (const stop of [() => aimock.stop(), () => mattermost.stop()]) {
+                    try {
+                        await stop();
+                    } catch (error) {
+                        errors.push(error);
+                    }
+                }
+
+                if (errors.length > 0) {
+                    throw errors[0];
+                }
+            },
+        };
+    } catch (error) {
+        await mattermost.stop().catch(() => undefined);
+        throw error;
+    }
 }

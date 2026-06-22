@@ -8,7 +8,7 @@ import {
     buildPostToolSequence,
     buildRejectAfterFirstToolSequence,
     buildTitleFixture,
-    EMBEDDED_GET_CHANNEL_INFO_TOOL,
+    EMBEDDED_CREATE_POST_TOOL,
     mergeFixtureFiles,
 } from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -244,10 +244,11 @@ async function waitForApprovalFlowToSettle(page: Page, timeout: number = 30000):
 
     while (Date.now() - startTime < timeout) {
         const hasAccept = await rhs.getByRole('button', {name: 'Accept'}).first().isVisible().catch(() => false);
+        const hasReject = await rhs.getByRole('button', {name: 'Reject'}).first().isVisible().catch(() => false);
         const hasShare = await rhs.getByRole('button', {name: 'Share'}).first().isVisible().catch(() => false);
         const hasKeepPrivate = await rhs.getByRole('button', {name: 'Keep private'}).first().isVisible().catch(() => false);
 
-        if (!hasAccept && !hasShare && !hasKeepPrivate) {
+        if (!hasAccept && !hasReject && !hasShare && !hasKeepPrivate) {
             await page.waitForTimeout(2000);
             return;
         }
@@ -438,16 +439,21 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
 
         const rejectPrompt = `multiplayer reject path ${Date.now()}`;
         const rejectPostText = `This should be rejected ${Date.now()}`;
-        const rejectInfoCallId = `call_reject_info_${Date.now()}`;
+        const rejectCreateCallId = `call_reject_create_${Date.now()}`;
         const rejectFinalText = `REJECT_FINAL_${Date.now()}`;
 
         await aimock.setFixtures(mergeFixtureFiles(
             titleFixtures('Multiplayer reject path'),
             buildRejectAfterFirstToolSequence({
                 userPromptMarker: rejectPrompt,
-                toolCallId: rejectInfoCallId,
-                toolName: EMBEDDED_GET_CHANNEL_INFO_TOOL,
-                toolArguments: {channel_name: townSquare.displayName},
+                toolCallId: rejectCreateCallId,
+                toolName: EMBEDDED_CREATE_POST_TOOL,
+                toolArguments: {
+                    channel_id: townSquare.id,
+                    channel_display_name: townSquare.displayName,
+                    team_display_name: townSquare.teamDisplayName,
+                    message: rejectPostText,
+                },
                 finalContent: rejectFinalText,
             }),
         ));
@@ -479,7 +485,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             await waitForApprovalFlowToSettle(page, 60000);
             await expect(rhs.getByRole('button', {name: 'Share'})).not.toBeVisible();
             await expect(rhs.getByRole('button', {name: 'Keep private'})).not.toBeVisible();
-            await expect(rhs.getByText('Get Channel Info', {exact: true})).toBeVisible({timeout: 30000});
+            await expect(rhs.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 30000});
 
             await navigateToChannel(page, baseUrl, 'town-square');
             await expect(page.getByText(rejectPostText)).not.toBeVisible();

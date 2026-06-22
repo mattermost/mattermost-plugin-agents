@@ -29,31 +29,63 @@ export async function startAIMockCitationStack(options: {
     fixtures: AIMockFixtureFile;
     reasoningEnabled?: boolean;
 }): Promise<AIMockCitationStack> {
-    const mattermost = await RunAIMockContainer({
-        webSearch: WEB_SEARCH_PLUGIN_CONFIG,
-        bot: {
-            reasoningEnabled: options.reasoningEnabled ?? false,
-            enabledNativeTools: [],
-        },
-    });
+    let mattermost: MattermostContainer | null = null;
+    let webSearchMock: WebSearchMockContainer | null = null;
+    let aimock: AIMockContainer | null = null;
 
-    const webSearchMock = await RunWebSearchMockSidecar(mattermost.network);
-    const aimock = await RunAIMockSidecar(mattermost.network, {
-        fixtures: options.fixtures,
-    });
+    try {
+        mattermost = await RunAIMockContainer({
+            webSearch: WEB_SEARCH_PLUGIN_CONFIG,
+            bot: {
+                reasoningEnabled: options.reasoningEnabled ?? false,
+                enabledNativeTools: [],
+            },
+        });
 
-    return {
-        mattermost,
-        aimock,
-        webSearchMock,
-        botUsername: AIMOCK_BOT_NAME,
-    };
+        webSearchMock = await RunWebSearchMockSidecar(mattermost.network);
+        aimock = await RunAIMockSidecar(mattermost.network, {
+            fixtures: options.fixtures,
+        });
+
+        return {
+            mattermost,
+            aimock,
+            webSearchMock,
+            botUsername: AIMOCK_BOT_NAME,
+        };
+    } catch (error) {
+        if (aimock) {
+            await aimock.stop().catch(() => undefined);
+        }
+        if (webSearchMock) {
+            await webSearchMock.stop().catch(() => undefined);
+        }
+        if (mattermost) {
+            await mattermost.stop().catch(() => undefined);
+        }
+        throw error;
+    }
 }
 
 export async function stopAIMockCitationStack(stack: AIMockCitationStack): Promise<void> {
-    await stack.aimock.stop();
-    await stack.webSearchMock.stop();
-    await stack.mattermost.stop();
+    const errors: unknown[] = [];
+    const stops = [
+        () => stack.aimock.stop(),
+        () => stack.webSearchMock.stop(),
+        () => stack.mattermost.stop(),
+    ];
+
+    for (const stop of stops) {
+        try {
+            await stop();
+        } catch (error) {
+            errors.push(error);
+        }
+    }
+
+    if (errors.length > 0) {
+        throw errors[0];
+    }
 }
 
 // aimock strict fixtures are single-use; give each Playwright case its own stack.

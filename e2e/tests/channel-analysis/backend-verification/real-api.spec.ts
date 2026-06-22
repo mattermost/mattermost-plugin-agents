@@ -2,6 +2,7 @@
 // seed: tests/seed.spec.ts
 
 import { test, expect, Page } from '@playwright/test';
+import type { Client4 } from '@mattermost/client';
 
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolNameAndTextResponse } from 'helpers/aimock-fixtures';
@@ -9,7 +10,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { LLMBotPostHelper } from 'helpers/llmbot-post';
-import { RunAIMockContainer } from 'helpers/plugincontainer';
+import { AIMOCK_BOT_NAME, RunAIMockContainer } from 'helpers/plugincontainer';
 
 const username = 'regularuser';
 const password = 'regularuser';
@@ -20,6 +21,29 @@ const CHANNEL_ANALYSIS_MCP = {
     enabled: true,
     idleTimeoutMinutes: 30,
     servers: [] as unknown[],
+};
+
+type ConversationBlock = {
+    type: string;
+    name?: string;
+    content?: string;
+};
+
+type ConversationResponse = {
+    turns: Array<{
+        role: string;
+        content: ConversationBlock[];
+    }>;
+};
+
+type MattermostPost = {
+    id: string;
+    user_id: string;
+    message: string;
+    create_at: number;
+    props?: {
+        conversation_id?: string;
+    };
 };
 
 class ChannelAnalysisBackendHelper {
@@ -36,15 +60,89 @@ class ChannelAnalysisBackendHelper {
     }
 }
 
-function buildReadChannelAnalysisFixtures(options: { toolCallId: string; finalContent: string }) {
+function buildReadChannelAnalysisFixtures(options: {
+    toolCallId: string;
+    finalContent: string;
+    toolArguments?: Record<string, unknown>;
+}) {
     return buildToolNameAndTextResponse({
         toolName: 'read_channel',
         toolCallId: options.toolCallId,
         finalContent: options.finalContent,
+        toolArguments: options.toolArguments,
     });
 }
 
+function getPostsArray(postsResponse: {posts?: Record<string, MattermostPost>}): MattermostPost[] {
+    return Object.values(postsResponse.posts || {});
+}
+
+async function fetchPostsForChannel(client: Client4, channelID: string): Promise<MattermostPost[]> {
+    const getPosts = (client as unknown as { getPostsForChannel?: typeof client.getPosts }).getPostsForChannel ||
+        client.getPosts;
+    if (typeof getPosts !== 'function') {
+        throw new Error('Mattermost client does not expose getPostsForChannel or getPosts');
+    }
+
+    const postsResponse = await getPosts.call(client, channelID, 0, 20);
+    return getPostsArray(postsResponse);
+}
+
+async function fetchConversationForLatestLLMBotPost(
+    mattermost: MattermostContainer,
+): Promise<ConversationResponse> {
+    const userClient = await mattermost.getClient(username, password);
+    const user = await userClient.getMe();
+    const botUser = await userClient.getUserByUsername(AIMOCK_BOT_NAME);
+    const dmChannel = await userClient.createDirectChannel([user.id, botUser.id]);
+    const latestBotPost = (await fetchPostsForChannel(userClient, dmChannel.id))
+        .filter((post) => post.user_id === botUser.id && post.props?.conversation_id)
+        .sort((a, b) => b.create_at - a.create_at)[0];
+
+    if (!latestBotPost) {
+        throw new Error(`Could not find latest ${AIMOCK_BOT_NAME} post with a conversation_id prop`);
+    }
+
+    const conversationID = latestBotPost.props?.conversation_id;
+    if (!conversationID) {
+        throw new Error(`Post ${latestBotPost.id} did not include a conversation_id prop`);
+    }
+
+    const response = await fetch(`${mattermost.url()}/plugins/mattermost-ai/conversations/${conversationID}`, {
+        headers: {
+            Authorization: `Bearer ${userClient.getToken()}`,
+        },
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to fetch conversation ${conversationID}: ${response.status}`);
+    }
+
+    return response.json() as Promise<ConversationResponse>;
+}
+
+async function expectReadChannelToolResult(
+    mattermost: MattermostContainer,
+    expectedMarkers: string[],
+    rejectedMarkers: string[] = [],
+): Promise<void> {
+    const conversation = await fetchConversationForLatestLLMBotPost(mattermost);
+    const readChannelToolResult = conversation.turns
+        .flatMap((turn) => turn.content)
+        .filter((block) => block.type === 'tool_result')
+        .map((block) => block.content ?? '')
+        .join('\n');
+
+    for (const marker of expectedMarkers) {
+        expect(readChannelToolResult).toContain(marker);
+    }
+    for (const marker of rejectedMarkers) {
+        expect(readChannelToolResult).not.toContain(marker);
+    }
+}
+
 test.describe('Channel Analysis Aimock Backend Verification', () => {
+    test.describe.configure({ mode: 'serial' });
+
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
 
@@ -105,6 +203,7 @@ test.describe('Channel Analysis Aimock Backend Verification', () => {
         expect(content).toBeTruthy();
         expect(content!.toLowerCase()).toContain('sso');
         expect(content!.toLowerCase()).toContain('friday');
+        await expectReadChannelToolResult(mattermost, [summaryMarker, deadlineMarker]);
     });
 
     test('Context isolation: Analysis reflects correct channel after switching', async ({ page }) => {
@@ -145,5 +244,6 @@ test.describe('Channel Analysis Aimock Backend Verification', () => {
         expect(content!.toLowerCase()).toMatch(/sci-fi|movie/);
         expect(content!.toLowerCase()).not.toContain('picnic');
         expect(content!).not.toContain(townMarker);
+        await expectReadChannelToolResult(mattermost, [offTopicMarker], [townMarker]);
     });
 });
