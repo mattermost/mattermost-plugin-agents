@@ -310,7 +310,14 @@ async function completeAllToolCallRounds(page: Page, action: 'accept-share' | 'a
 
 /**
  * Wait for the tool approval flow to settle after all tool calls.
- * Polls until no Accept/Share/Keep private buttons remain.
+ *
+ * Real providers are non-deterministic: after a decision such as Keep private,
+ * the model may still propose additional tool-call rounds (its result was never
+ * shared back, so it can decide to act again). Those surface fresh approval
+ * buttons that linger until resolved. Rather than failing on stray buttons, we
+ * actively drain any remaining round by accepting the call and keeping the
+ * result private — this keeps onlooker-visibility assertions valid — until no
+ * approval buttons remain.
  *
  * We intentionally do not wait for the final streaming response to fully
  * complete here. The OpenAI provider can keep the stop button visible for a
@@ -319,19 +326,37 @@ async function completeAllToolCallRounds(page: Page, action: 'accept-share' | 'a
  * states directly (no approval buttons remain and the requested post was
  * created), which is sufficient to verify the happy path.
  */
-async function waitForApprovalFlowToSettle(page: Page, timeout: number = 30000): Promise<void> {
+async function waitForApprovalFlowToSettle(page: Page, timeout: number = 90000): Promise<void> {
     const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
 
-    while (Date.now() - startTime < timeout) {
-        const hasAccept = await rhs.getByRole('button', { name: 'Accept' }).first().isVisible().catch(() => false);
-        const hasShare = await rhs.getByRole('button', { name: 'Share' }).first().isVisible().catch(() => false);
-        const hasKeepPrivate = await rhs.getByRole('button', { name: 'Keep private' }).first().isVisible().catch(() => false);
+    const anyApprovalButtonVisible = async (): Promise<{accept: boolean; result: boolean}> => {
+        const accept = await rhs.getByRole('button', { name: 'Accept', exact: true }).first().isVisible().catch(() => false);
+        const share = await rhs.getByRole('button', { name: 'Share', exact: true }).first().isVisible().catch(() => false);
+        const keepPrivate = await rhs.getByRole('button', { name: 'Keep private', exact: true }).first().isVisible().catch(() => false);
+        return {accept, result: share || keepPrivate};
+    };
 
-        if (!hasAccept && !hasShare && !hasKeepPrivate) {
+    while (Date.now() - startTime < timeout) {
+        const {accept, result} = await anyApprovalButtonVisible();
+
+        if (!accept && !result) {
             await page.waitForTimeout(2000); // Let final UI settle
-            return;
+            // A late round may have surfaced new buttons while we waited.
+            const recheck = await anyApprovalButtonVisible();
+            if (!recheck.accept && !recheck.result) {
+                return;
+            }
+            continue;
         }
+
+        // Drain a lingering round, keeping the result private so onlooker
+        // visibility assertions stay valid.
+        if (accept) {
+            await clickAllButtonsInThread(page, 'Accept');
+            await waitForButtonInThread(page, 'Keep private', 120000, false);
+        }
+        await clickAllButtonsInThread(page, 'Keep private');
         await page.waitForTimeout(1000);
     }
     throw new Error('Timeout waiting for tool approval flow to settle');
