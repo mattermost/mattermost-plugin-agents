@@ -568,3 +568,54 @@ func TestExecuteToolsDefensiveUnloadedGuard(t *testing.T) {
 	assert.Contains(t, results[0].Result, "available but not loaded")
 	assert.Contains(t, results[0].Result, `load_tool`)
 }
+
+// TestToolRunner_PausedBatchMarksWouldAutoExecute pins that a paused mixed
+// batch tags the policy-passing calls (and only those) so the UI can hide
+// their approval controls, while still executing nothing in the batch.
+func TestToolRunner_PausedBatchMarksWouldAutoExecute(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "safe_tool", Arguments: json.RawMessage(`{}`)},
+					{ID: "tc2", Name: "dangerous_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	store := newTestToolStore(
+		testToolDef{name: "safe_tool", result: "never_called"},
+		testToolDef{name: "dangerous_tool", result: "never_called"},
+	)
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, func(tc llm.ToolCall) bool {
+		return tc.Name == "safe_tool"
+	}, nil)
+	require.NoError(t, err)
+
+	var pausedCalls []llm.ToolCall
+	for event := range result.Stream.Stream {
+		if event.Type == llm.EventTypeToolCalls {
+			if tcs, ok := event.Value.([]llm.ToolCall); ok {
+				pausedCalls = tcs
+			}
+		}
+	}
+
+	require.Len(t, pausedCalls, 2)
+	assert.Equal(t, llm.ToolCallStatusPending, pausedCalls[0].Status)
+	assert.True(t, pausedCalls[0].WouldAutoExecute)
+	assert.Equal(t, llm.ToolCallStatusPending, pausedCalls[1].Status)
+	assert.False(t, pausedCalls[1].WouldAutoExecute)
+
+	// Nothing executed: the batch pauses whole.
+	assert.Empty(t, result.ToolTurns)
+	assert.Equal(t, 1, inner.callCount)
+}

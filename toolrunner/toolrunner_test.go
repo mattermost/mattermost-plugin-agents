@@ -113,6 +113,22 @@ func newTestToolStore(tools ...testToolDef) *llm.ToolStore {
 func alwaysExecute(_ llm.ToolCall) bool { return true }
 func neverExecute(_ llm.ToolCall) bool  { return false }
 
+func loopToolResponses(total int, final testResponse) []testResponse {
+	responses := make([]testResponse, total)
+	for i := 0; i < total-1; i++ {
+		responses[i] = testResponse{
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			},
+		}
+	}
+	responses[total-1] = final
+	return responses
+}
+
 // optCapturingLLM wraps a testLLM to capture the opts from each ChatCompletion call.
 type optCapturingLLM struct {
 	inner        *testLLM
@@ -726,23 +742,12 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 }
 
 func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
-	responses := make([]testResponse, MaxToolRounds)
-	for i := 0; i < MaxToolRounds-1; i++ {
-		responses[i] = testResponse{
-			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			},
-		}
-	}
-	responses[MaxToolRounds-1] = testResponse{
+	responses := loopToolResponses(llm.DefaultMaxToolTurns, testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeText, Value: "synthesized answer"},
 			{Type: llm.EventTypeEnd},
 		},
-	}
+	})
 
 	inner := &testLLM{responses: responses}
 	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
@@ -761,30 +766,68 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 	assert.Equal(t, "synthesized answer", text)
 	assert.Equal(t, "synthesized answer", result.FinalText)
 
-	// Tools ran on MaxToolRounds-1 rounds; the last round was the synthesis.
-	assert.Len(t, result.ToolTurns, MaxToolRounds-1)
-	assert.Equal(t, MaxToolRounds, inner.callCount)
+	// Tools ran on llm.DefaultMaxToolTurns-1 rounds; the last round was synthesis.
+	assert.Len(t, result.ToolTurns, llm.DefaultMaxToolTurns-1)
+	assert.Equal(t, llm.DefaultMaxToolTurns, inner.callCount)
+}
+
+func TestToolRunner_WithMaxRoundsOverrideClamps(t *testing.T) {
+	tests := []struct {
+		name          string
+		opt           Option
+		expectedCalls int
+	}{
+		{
+			name:          "explicit lower override clamps the loop",
+			opt:           WithMaxRounds(3),
+			expectedCalls: 3,
+		},
+		{
+			name:          "non-positive override falls back to default",
+			opt:           WithMaxRounds(0),
+			expectedCalls: llm.DefaultMaxToolTurns,
+		},
+		{
+			name:          "negative override falls back to default",
+			opt:           WithMaxRounds(-5),
+			expectedCalls: llm.DefaultMaxToolTurns,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			responses := loopToolResponses(tc.expectedCalls, testResponse{
+				events: []llm.TextStreamEvent{
+					{Type: llm.EventTypeText, Value: "synthesized answer"},
+					{Type: llm.EventTypeEnd},
+				},
+			})
+			inner := &testLLM{responses: responses}
+			store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
+			runner := New(inner, tc.opt)
+			request := llm.CompletionRequest{
+				Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+				Context: &llm.Context{Tools: store},
+			}
+
+			result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+			require.NoError(t, err)
+			_, readErr := result.Stream.ReadAll()
+			require.NoError(t, readErr)
+			assert.Equal(t, tc.expectedCalls, inner.callCount)
+			assert.Len(t, result.ToolTurns, tc.expectedCalls-1)
+		})
+	}
 }
 
 func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.T) {
 	// Verify the final round disables tools and seeds the iteration-limit message.
-	responses := make([]testResponse, MaxToolRounds)
-	for i := 0; i < MaxToolRounds-1; i++ {
-		responses[i] = testResponse{
-			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			},
-		}
-	}
-	responses[MaxToolRounds-1] = testResponse{
+	responses := loopToolResponses(llm.DefaultMaxToolTurns, testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeText, Value: "wrapping up"},
 			{Type: llm.EventTypeEnd},
 		},
-	}
+	})
 
 	var capturedOpts [][]llm.LanguageModelOption
 	inner := &optCapturingLLM{
@@ -803,10 +846,10 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 	require.NoError(t, err)
 	_, _ = result.Stream.ReadAll()
 
-	require.Len(t, capturedOpts, MaxToolRounds)
+	require.Len(t, capturedOpts, llm.DefaultMaxToolTurns)
 
 	// Earlier calls must not have tools disabled.
-	for round := 0; round < MaxToolRounds-1; round++ {
+	for round := 0; round < llm.DefaultMaxToolTurns-1; round++ {
 		var cfg llm.LanguageModelConfig
 		for _, opt := range capturedOpts[round] {
 			opt(&cfg)
@@ -816,14 +859,14 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 
 	// The final synthesis call must have tools disabled.
 	var finalCfg llm.LanguageModelConfig
-	for _, opt := range capturedOpts[MaxToolRounds-1] {
+	for _, opt := range capturedOpts[llm.DefaultMaxToolTurns-1] {
 		opt(&finalCfg)
 	}
 	assert.True(t, finalCfg.ToolsDisabled, "final synthesis call must disable tools")
 
 	// The final request's posts must contain the iteration-limit user message.
-	require.Len(t, inner.inner.capturedRequests, MaxToolRounds)
-	finalReq := inner.inner.capturedRequests[MaxToolRounds-1]
+	require.Len(t, inner.inner.capturedRequests, llm.DefaultMaxToolTurns)
+	finalReq := inner.inner.capturedRequests[llm.DefaultMaxToolTurns-1]
 	var foundUserMessage bool
 	for _, post := range finalReq.Posts {
 		if post.Role == llm.PostRoleUser && strings.Contains(post.Message, llm.ToolIterationLimitUserMessage) {
@@ -837,26 +880,15 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 // When the provider ignores tool_choice="none" and returns tool calls on the
 // synthesis round, the runner drops them and emits End with no fallback text.
 func TestToolRunner_MaxRoundsExhausted_ProviderEmitsToolCallDuringSynthesis(t *testing.T) {
-	responses := make([]testResponse, MaxToolRounds)
-	for i := 0; i < MaxToolRounds-1; i++ {
-		responses[i] = testResponse{
-			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: fmt.Sprintf("tc%d", i), Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			},
-		}
-	}
 	// Final round emits a tool call despite WithToolsDisabled.
-	responses[MaxToolRounds-1] = testResponse{
+	responses := loopToolResponses(llm.DefaultMaxToolTurns, testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
 				{ID: "tc-final", Name: "loop_tool", Arguments: json.RawMessage(`{}`)},
 			}},
 			{Type: llm.EventTypeEnd},
 		},
-	}
+	})
 
 	inner := &testLLM{responses: responses}
 	store := newTestToolStore(testToolDef{name: "loop_tool", result: "ok"})
@@ -874,9 +906,9 @@ func TestToolRunner_MaxRoundsExhausted_ProviderEmitsToolCallDuringSynthesis(t *t
 	assert.Empty(t, text, "no synthetic fallback when synthesis round emits only tool calls")
 	assert.Empty(t, result.FinalText)
 
-	// MaxToolRounds-1 tool turns; the final round's tool call was ignored.
-	assert.Len(t, result.ToolTurns, MaxToolRounds-1)
-	assert.Equal(t, MaxToolRounds, inner.callCount, "still exactly MaxToolRounds LLM calls")
+	// llm.DefaultMaxToolTurns-1 tool turns; the final round's tool call was ignored.
+	assert.Len(t, result.ToolTurns, llm.DefaultMaxToolTurns-1)
+	assert.Equal(t, llm.DefaultMaxToolTurns, inner.callCount, "still exactly llm.DefaultMaxToolTurns LLM calls")
 }
 
 func TestToolRunner_FinalText_OmitsToolRoundPreamble(t *testing.T) {
@@ -912,8 +944,8 @@ func TestToolRunner_FinalText_OmitsToolRoundPreamble(t *testing.T) {
 }
 
 func TestToolRunner_FinalText_DropsFailedSynthesisPreamble(t *testing.T) {
-	responses := make([]testResponse, MaxToolRounds)
-	for i := 0; i < MaxToolRounds-1; i++ {
+	responses := make([]testResponse, llm.DefaultMaxToolTurns)
+	for i := 0; i < llm.DefaultMaxToolTurns-1; i++ {
 		responses[i] = testResponse{
 			events: []llm.TextStreamEvent{
 				{Type: llm.EventTypeText, Value: fmt.Sprintf("preamble %d ", i)},
@@ -924,7 +956,7 @@ func TestToolRunner_FinalText_DropsFailedSynthesisPreamble(t *testing.T) {
 			},
 		}
 	}
-	responses[MaxToolRounds-1] = testResponse{
+	responses[llm.DefaultMaxToolTurns-1] = testResponse{
 		events: []llm.TextStreamEvent{
 			{Type: llm.EventTypeText, Value: "Let me try broader searches. "},
 			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{

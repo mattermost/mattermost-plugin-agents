@@ -115,6 +115,21 @@ func TestShouldAutoExecuteToolMetaToolDoesNotAuthorizeBusinessTool(t *testing.T)
 	assert.False(t, c.shouldAutoExecuteTool(nil, true)(llm.ToolCall{Name: "jira__get_issue"}))
 }
 
+// TestShouldAutoExecuteTool_UserInteractionNeverAutoExecutes pins the contract
+// that tools answered by the user (e.g. AskUserQuestion) never auto-execute,
+// even if a policy claims auto_run — auto-running one would skip the question.
+func TestShouldAutoExecuteTool_UserInteractionNeverAutoExecutes(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: "AskUserQuestion", UserInteraction: llm.UserInteractionSelect}})
+
+	for _, isDM := range []bool{true, false} {
+		got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: "AskUserQuestion"})
+		assert.False(t, got, "isDM=%v", isDM)
+	}
+}
+
 type countingPolicyChecker struct {
 	calls        int
 	lastOrigin   string

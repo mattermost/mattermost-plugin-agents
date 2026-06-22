@@ -92,7 +92,7 @@ type testLLMContextToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
+func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot, _ *llm.Context) []llm.Tool {
 	return p.tools
 }
 

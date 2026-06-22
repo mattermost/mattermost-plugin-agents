@@ -249,9 +249,12 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("failed to get conversation for regen: %w", err)
 	}
 
+	// Regeneration is triggered by the requester clicking the regen control,
+	// so the user is interactively present.
 	llmContext := c.buildConversationContextWithTools(
 		ctx, bot, user, channel,
 		"Failed to load user tool preferences on regen, proceeding without filtering",
+		c.contextBuilder.WithLLMContextInteractive(),
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
@@ -291,7 +294,7 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM())
+	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
 	runResult, runErr := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {

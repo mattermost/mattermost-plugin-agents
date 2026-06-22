@@ -15,6 +15,15 @@ import (
 // the system prompt bounded on every conversation turn.
 const MaxCustomInstructionsRunes = 16384
 
+// DefaultMaxToolTurns is the default tool-call-execute-recall ceiling per LLM turn.
+// Agents that store 0 (legacy config bots, freshly-migrated rows before the column
+// was added) fall back to this value via BotConfig.EffectiveMaxToolTurns.
+const DefaultMaxToolTurns = 30
+
+// MaxAllowedMaxToolTurns caps user-provided MaxToolTurns to keep runaway loops bounded
+// even if a misconfigured agent requests an unreasonably high value.
+const MaxAllowedMaxToolTurns = 250
+
 type ServiceConfig struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -168,6 +177,13 @@ type BotConfig struct {
 	// Only applicable to Anthropic (Claude 4.5/4.6+ models)
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 
+	// MaxToolTurns is the maximum number of LLM-call → tool-execute iterations
+	// the tool runner will perform for this agent before stopping. A non-positive
+	// value falls back to DefaultMaxToolTurns. Lower this when using a smaller
+	// model that tends to call tools in loops; raise it for agents that rely on
+	// long dynamic-tool-discovery chains (e.g. search → load → execute).
+	MaxToolTurns int `json:"maxToolTurns"`
+
 	// Admin / lifecycle metadata.
 	BotUserID    string   `json:"botUserID,omitempty"`
 	CreatorID    string   `json:"creatorID,omitempty"`
@@ -210,7 +226,22 @@ func (c *BotConfig) Validate() error {
 	if utf8.RuneCountInString(c.CustomInstructions) > MaxCustomInstructionsRunes {
 		return fmt.Errorf("customInstructions exceeds maximum length of %d characters", MaxCustomInstructionsRunes)
 	}
+	if c.MaxToolTurns < 0 {
+		return errors.New("maxToolTurns must be greater than or equal to 0")
+	}
+	if c.MaxToolTurns > MaxAllowedMaxToolTurns {
+		return fmt.Errorf("maxToolTurns must be less than or equal to %d", MaxAllowedMaxToolTurns)
+	}
 	return nil
+}
+
+// EffectiveMaxToolTurns returns the configured MaxToolTurns or DefaultMaxToolTurns
+// when the value is non-positive (e.g. legacy config bots that never set the field).
+func (c BotConfig) EffectiveMaxToolTurns() int {
+	if c.MaxToolTurns <= 0 {
+		return DefaultMaxToolTurns
+	}
+	return c.MaxToolTurns
 }
 
 // IsValid reports whether the bot config is valid. Prefer Validate when a

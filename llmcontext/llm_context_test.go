@@ -21,7 +21,7 @@ import (
 
 type emptyToolProvider struct{}
 
-func (p *emptyToolProvider) GetTools(*bots.Bot) []llm.Tool {
+func (p *emptyToolProvider) GetTools(*bots.Bot, *llm.Context) []llm.Tool {
 	return nil
 }
 
@@ -29,7 +29,7 @@ type staticToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *staticToolProvider) GetTools(*bots.Bot) []llm.Tool {
+func (p *staticToolProvider) GetTools(*bots.Bot, *llm.Context) []llm.Tool {
 	return p.tools
 }
 

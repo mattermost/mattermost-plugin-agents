@@ -543,7 +543,7 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 	var err error
 	if shouldExecute != nil {
 		var runResult *toolrunner.ToolRunResult
-		runResult, err = toolrunner.New(bot.LLM()).Run(c.Request.Context(), llmRequest, shouldExecute, nil, opts...)
+		runResult, err = toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns())).Run(c.Request.Context(), llmRequest, shouldExecute, nil, opts...)
 		if runResult != nil {
 			streamResult = runResult.Stream
 		}
@@ -602,7 +602,7 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 		return
 	}
 
-	runResult, err := toolrunner.New(bot.LLM()).Run(c.Request.Context(), llmRequest, shouldExecute, nil, opts...)
+	runResult, err := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns())).Run(c.Request.Context(), llmRequest, shouldExecute, nil, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("failed to complete LLM request: %v", err),

@@ -92,10 +92,13 @@ func (a *API) buildContextForConversation(ctx context.Context, userID string, co
 			channel = ch
 		}
 	}
+	// Interactive: mirror the tool catalog a real DM/channel request would
+	// get, so token estimates include user-interaction tools.
 	return a.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		user,
 		channel,
+		a.contextBuilder.WithLLMContextInteractive(),
 		a.contextBuilder.WithLLMContextTools(ctx, bot),
 	)
 }

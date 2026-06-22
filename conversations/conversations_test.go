@@ -31,7 +31,7 @@ import (
 // Mock implementations
 type mockToolProvider struct{}
 
-func (m *mockToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
+func (m *mockToolProvider) GetTools(bot *bots.Bot, _ *llm.Context) []llm.Tool {
 	return []llm.Tool{
 		{
 			Name:        "WebSearch",

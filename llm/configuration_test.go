@@ -200,6 +200,54 @@ func TestBotConfig_IsValid(t *testing.T) {
 	}
 }
 
+func TestBotConfig_MaxToolTurnsValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		maxToolTurns int
+		wantValid    bool
+	}{
+		{name: "zero is allowed and means use default", maxToolTurns: 0, wantValid: true},
+		{name: "small positive is allowed", maxToolTurns: 5, wantValid: true},
+		{name: "30 (current default) is allowed", maxToolTurns: 30, wantValid: true},
+		{name: "ceiling is allowed", maxToolTurns: MaxAllowedMaxToolTurns, wantValid: true},
+		{name: "negative is rejected", maxToolTurns: -1, wantValid: false},
+		{name: "above ceiling is rejected", maxToolTurns: MaxAllowedMaxToolTurns + 1, wantValid: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &BotConfig{
+				Name:               "n",
+				DisplayName:        "d",
+				ServiceID:          "svc",
+				ChannelAccessLevel: ChannelAccessLevelAll,
+				UserAccessLevel:    UserAccessLevelAll,
+				MaxToolTurns:       tt.maxToolTurns,
+			}
+			assert.Equal(t, tt.wantValid, c.IsValid())
+		})
+	}
+}
+
+func TestBotConfig_EffectiveMaxToolTurns(t *testing.T) {
+	tests := []struct {
+		name string
+		set  int
+		want int
+	}{
+		{name: "unset falls back to default", set: 0, want: DefaultMaxToolTurns},
+		{name: "negative falls back to default", set: -10, want: DefaultMaxToolTurns},
+		{name: "explicit positive is honored", set: 7, want: 7},
+		{name: "default value passes through", set: DefaultMaxToolTurns, want: DefaultMaxToolTurns},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := BotConfig{MaxToolTurns: tt.set}
+			assert.Equal(t, tt.want, c.EffectiveMaxToolTurns())
+		})
+	}
+}
+
 func TestIsValidService(t *testing.T) {
 	tests := []struct {
 		name    string

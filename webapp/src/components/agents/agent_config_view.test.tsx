@@ -15,7 +15,15 @@ jest.mock('react-intl', () => {
     return {
         ...actual,
         useIntl: () => ({
-            formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+            formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: Record<string, string | number>) => {
+                if (!values) {
+                    return defaultMessage;
+                }
+                return Object.entries(values).reduce(
+                    (message, [key, value]) => message.replace(`{${key}}`, String(value)),
+                    defaultMessage,
+                );
+            },
         }),
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
@@ -38,7 +46,7 @@ jest.mock('@/components/system_console/bot', () => ({
 
 jest.mock('./tabs/config_tab', () => ({
     __esModule: true,
-    default: ({draft, onChange}: {draft: AgentDraft; onChange: (updates: Partial<AgentDraft>) => void}) => (
+    default: ({draft, onChange, errors = {}}: {draft: AgentDraft; onChange: (updates: Partial<AgentDraft>) => void; errors?: Record<string, string>}) => (
         <>
             <input
                 aria-label='Display Name'
@@ -50,6 +58,12 @@ jest.mock('./tabs/config_tab', () => ({
                 value={draft.username}
                 onChange={(e) => onChange({username: e.target.value})}
             />
+            <input
+                aria-label='Max tool turns'
+                value={draft.maxToolTurns}
+                onChange={(e) => onChange({maxToolTurns: Number(e.target.value)})}
+            />
+            {errors.maxToolTurns && <div>{errors.maxToolTurns}</div>}
             <button
                 type='button'
                 onClick={() => onChange({serviceId: 'svc_1'})}
@@ -119,6 +133,7 @@ const savedAgent = {
     reasoningEffort: 'medium',
     thinkingBudget: 0,
     structuredOutputEnabled: false,
+    maxToolTurns: 30,
 } satisfies UserAgent;
 
 function renderView(onBack = jest.fn()) {
@@ -201,6 +216,50 @@ describe('AgentConfigView', () => {
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
                         structuredOutputEnabled: false,
+                        maxToolTurns: 30,
+                    }}
+                    services={services}
+                    onBack={onBack}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.keyDown(document, {key: 'Escape'});
+
+        expect(onBack).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    });
+
+    test('legacy agent with unset maxToolTurns is not treated as dirty in edit mode', () => {
+        const onBack = jest.fn();
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={{
+                        id: 'agent_legacy',
+                        name: 'legacyagent',
+                        displayName: 'Legacy Agent',
+                        customInstructions: '',
+                        serviceID: 'svc_1',
+                        model: '',
+                        enableVision: true,
+                        disableTools: false,
+                        channelAccessLevel: 0,
+                        channelIDs: [],
+                        userAccessLevel: 0,
+                        userIDs: [],
+                        teamIDs: [],
+                        enabledNativeTools: ['web_search'],
+                        enabledMCPTools: [],
+                        autoEnableNewMCPTools: true,
+                        reasoningEnabled: true,
+                        reasoningEffort: 'medium',
+                        thinkingBudget: 0,
+                        structuredOutputEnabled: false,
+                        maxToolTurns: 0,
                     }}
                     services={services}
                     onBack={onBack}
@@ -276,6 +335,49 @@ describe('AgentConfigView', () => {
         expect(mockUpdateAgent).toHaveBeenCalledWith('agent_legacy', expect.objectContaining({
             mcpDynamicToolLoading: true,
         }));
+    });
+
+    test('blocks saving when maxToolTurns exceeds the hard cap', () => {
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={{
+                        id: 'agent_1',
+                        name: 'existingagent',
+                        displayName: 'Existing Agent',
+                        customInstructions: '',
+                        serviceID: 'svc_1',
+                        model: '',
+                        enableVision: true,
+                        disableTools: false,
+                        channelAccessLevel: 0,
+                        channelIDs: [],
+                        userAccessLevel: 0,
+                        userIDs: [],
+                        teamIDs: [],
+                        enabledNativeTools: ['web_search'],
+                        enabledMCPTools: [],
+                        autoEnableNewMCPTools: true,
+                        mcpDynamicToolLoading: true,
+                        reasoningEnabled: true,
+                        reasoningEffort: 'medium',
+                        thinkingBudget: 0,
+                        structuredOutputEnabled: false,
+                        maxToolTurns: 30,
+                    }}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.change(screen.getByLabelText('Max tool turns'), {target: {value: '251'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(screen.getByText('Max tool turns must be between 1 and 250')).not.toBeNull();
+        expect(updateAgent).not.toHaveBeenCalled();
     });
 
     test('preserves explicit dynamic tool loading false on update', async () => {
