@@ -2,7 +2,7 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
-import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
+import { buildToolCallAndTextResponse, mergeFixtureFiles } from 'helpers/aimock-fixtures';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 import { createToolConfigAPIHelper } from 'helpers/tool-config';
 
@@ -13,6 +13,10 @@ const botName = 'toolbot';
 const embeddedReadChannelTool = 'mattermost__read_channel';
 const readChannelConfigName = 'read_channel';
 const readChannelLabel = 'Read Channel';
+const dmOnlyUserMessage = 'aimock channel dm-only read channel';
+const dmOnlyContinuationText = 'Aimock channel dm-only follow-up after share.';
+const everywhereUserMessage = 'aimock channel everywhere read channel';
+const everywhereContinuationText = 'Aimock channel everywhere auto-run completed.';
 
 async function getTownSquareChannelID(mattermost: MattermostContainer): Promise<string> {
     const userClient = await mattermost.getClient(username, password);
@@ -79,14 +83,23 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
         await setupRegularTestUser(mattermost);
         townSquareChannelID = await getTownSquareChannelID(mattermost);
         aimock = await RunAIMockSidecar(mattermost.network, {
-            fixtures: buildToolCallAndTextResponse({
-                userMessage: 'aimock channel dm-only read channel',
-                toolCallId: 'call_aimock_channel_dm_only_read_channel',
-                toolName: embeddedReadChannelTool,
-                toolArguments: { channel_id: townSquareChannelID, limit: 5 },
-                finalContent: 'Aimock channel dm-only follow-up after share.',
-                title: 'Aimock channel dm-only',
-            }),
+            fixtures: mergeFixtureFiles(
+                buildToolCallAndTextResponse({
+                    userMessage: dmOnlyUserMessage,
+                    toolCallId: 'call_aimock_channel_dm_only_read_channel',
+                    toolName: embeddedReadChannelTool,
+                    toolArguments: { channel_id: townSquareChannelID, limit: 5 },
+                    finalContent: dmOnlyContinuationText,
+                    title: 'Aimock channel dm-only',
+                }),
+                buildToolCallAndTextResponse({
+                    userMessage: everywhereUserMessage,
+                    toolCallId: 'call_aimock_channel_everywhere_read_channel',
+                    toolName: embeddedReadChannelTool,
+                    toolArguments: { channel_id: townSquareChannelID, limit: 5 },
+                    finalContent: everywhereContinuationText,
+                }),
+            ),
         });
     });
 
@@ -98,9 +111,6 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
     test('auto_run_in_dm in channel requires call approval and then share approval', async ({ page }) => {
         test.setTimeout(180000);
 
-        const userMessage = 'aimock channel dm-only read channel';
-        const continuationText = 'Aimock channel dm-only follow-up after share.';
-
         const mmPage = new MattermostPage(page);
         await mmPage.login(mattermost.url(), username, password);
         await page.goto(`${mattermost.url()}/test/channels/off-topic`);
@@ -109,7 +119,7 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
             timeout: 10000,
         });
 
-        await mentionBotAndOpenThread(page, mmPage, userMessage);
+        await mentionBotAndOpenThread(page, mmPage, dmOnlyUserMessage);
 
         const rhs = page.locator('#rhsContainer');
         const latestBotPost = rhs.locator('[data-testid="llm-bot-post"]').last();
@@ -124,39 +134,25 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
         await expect(acceptButton).toBeVisible({ timeout: 30000 });
         await expect(shareButton).not.toBeVisible();
         await expect(keepPrivateButton).not.toBeVisible();
-        await expect(rhs.getByText(continuationText)).not.toBeVisible();
+        await expect(rhs.getByText(dmOnlyContinuationText)).not.toBeVisible();
 
         await acceptButton.click();
         await expect(shareButton).toBeVisible({ timeout: 30000 });
         await expect(keepPrivateButton).toBeVisible();
-        await expect(rhs.getByText(continuationText)).not.toBeVisible();
+        await expect(rhs.getByText(dmOnlyContinuationText)).not.toBeVisible();
 
         await shareButton.click();
-        await expect(rhs.getByText(continuationText)).toBeVisible({ timeout: 45000 });
+        await expect(rhs.getByText(dmOnlyContinuationText)).toBeVisible({ timeout: 45000 });
         await expect(rhs.getByRole('button', { name: /^share$/i })).not.toBeVisible();
     });
 
     test('auto_run_everywhere in channel skips approval and shares automatically', async ({ page }) => {
         test.setTimeout(180000);
 
-        const userMessage = 'aimock channel everywhere read channel';
-        const continuationText = 'Aimock channel everywhere auto-run completed.';
-
         const apiHelper = await createToolConfigAPIHelper(mattermost);
         await apiHelper.setEmbeddedServerToolConfigs([
             { name: readChannelConfigName, policy: 'auto_run_everywhere', enabled: true },
         ]);
-
-        await aimock.setFixtures(
-            buildToolCallAndTextResponse({
-                userMessage,
-                toolCallId: 'call_aimock_channel_everywhere_read_channel',
-                toolName: embeddedReadChannelTool,
-                toolArguments: { channel_id: townSquareChannelID, limit: 5 },
-                finalContent: continuationText,
-                title: 'Aimock channel everywhere',
-            }),
-        );
 
         const mmPage = new MattermostPage(page);
         await mmPage.login(mattermost.url(), username, password);
@@ -167,10 +163,10 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
         });
 
         await closeRHSIfOpen(page);
-        await mentionBotAndOpenThread(page, mmPage, userMessage);
+        await mentionBotAndOpenThread(page, mmPage, everywhereUserMessage);
 
         const rhs = page.locator('#rhsContainer');
-        await expect(rhs.getByText(continuationText)).toBeVisible({ timeout: 45000 });
+        await expect(rhs.getByText(everywhereContinuationText)).toBeVisible({ timeout: 45000 });
         await expect(rhs.getByRole('button', { name: /^accept$/i })).not.toBeVisible();
         await expect(rhs.getByRole('button', { name: /^reject$/i })).not.toBeVisible();
         await expect(rhs.getByRole('button', { name: /^share$/i })).not.toBeVisible();
