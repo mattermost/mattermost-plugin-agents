@@ -1,0 +1,35 @@
+name: 'Pre-pull test container images'
+description: >-
+  Pre-pull the Docker images used by Testcontainers, retrying with backoff so a
+  transient Docker Hub timeout primes the local cache instead of failing the run.
+inputs:
+  images:
+    description: 'Whitespace-separated list of container images to pre-pull.'
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Pre-pull container images
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+      run: |
+        set -euo pipefail
+        max_attempts=5
+        for image in $IMAGES; do
+          echo "::group::Pulling ${image}"
+          attempt=1
+          delay=4
+          until docker pull "${image}"; do
+            if [[ "${attempt}" -ge "${max_attempts}" ]]; then
+              echo "::error::Failed to pull ${image} after ${max_attempts} attempts"
+              echo "::endgroup::"
+              exit 1
+            fi
+            echo "Pull of ${image} failed (attempt ${attempt}/${max_attempts}); retrying in ${delay}s..."
+            sleep "${delay}"
+            delay=$(( delay * 2 ))
+            attempt=$(( attempt + 1 ))
+          done
+          echo "::endgroup::"
+        done

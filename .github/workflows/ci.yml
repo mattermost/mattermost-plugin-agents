@@ -10,6 +10,12 @@ on:
 permissions:
   contents: write
 
+# Testcontainers' Ryuk resource-reaper needs its own image pull and is
+# unnecessary on ephemeral CI runners (they are torn down after the job).
+# Disabling it removes one Docker Hub pull that frequently times out in CI.
+env:
+  TESTCONTAINERS_RYUK_DISABLED: 'true'
+
 # Set the CI_RUNNER repository or organization variable to a larger runner label
 # for the heavier e2e path jobs. Other CI jobs intentionally stay on the
 # standard GitHub-hosted Ubuntu runner.
@@ -68,6 +74,13 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Pre-pull Testcontainers images
+      uses: ./.github/actions/prepull-test-images
+      with:
+        images: >-
+          ${{ env.MM_IMAGE }}
+          pgvector/pgvector:pg15
+          thiht/smocker
     - name: Run Playwright tests for ${{ matrix.shard.name }}
       shell: bash
       run: |
@@ -123,6 +136,13 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Pre-pull Testcontainers images
+      uses: ./.github/actions/prepull-test-images
+      with:
+        images: >-
+          ${{ env.MM_IMAGE }}
+          pgvector/pgvector:pg15
+          thiht/smocker
     - name: Run LLMBot tests with real APIs for ${{ matrix.shard.name }}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -171,6 +191,13 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Pre-pull Testcontainers images
+      uses: ./.github/actions/prepull-test-images
+      with:
+        images: >-
+          ${{ env.MM_IMAGE }}
+          pgvector/pgvector:pg15
+          thiht/smocker
     - name: Run Channel Analysis tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -219,6 +246,13 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Pre-pull Testcontainers images
+      uses: ./.github/actions/prepull-test-images
+      with:
+        images: >-
+          ${{ env.MM_IMAGE }}
+          pgvector/pgvector:pg15
+          thiht/smocker
     - name: Run System Console tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -267,6 +301,13 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Pre-pull Testcontainers images
+      uses: ./.github/actions/prepull-test-images
+      with:
+        images: >-
+          ${{ env.MM_IMAGE }}
+          pgvector/pgvector:pg15
+          thiht/smocker
     - name: Run Tool Config tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -324,6 +365,13 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Pre-pull Testcontainers images
+      uses: ./.github/actions/prepull-test-images
+      with:
+        images: >-
+          ${{ env.MM_IMAGE }}
+          pgvector/pgvector:pg15
+          thiht/smocker
     - name: Run Tool Calling tests with real APIs for ${{ matrix.provider.display_name }}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -372,6 +420,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
+
+      - name: Pre-pull Testcontainers images
+        uses: ./.github/actions/prepull-test-images
+        with:
+          images: >-
+            postgres:16-alpine
+            pgvector/pgvector:pg17
+            mattermost/mattermost-enterprise-edition:release-9.6
 
       - name: Run tests
         env:
