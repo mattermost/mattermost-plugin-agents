@@ -54,6 +54,7 @@ export type UserAgent = {
     reasoningEffort: string;
     thinkingBudget: number;
     structuredOutputEnabled: boolean;
+    maxToolTurns: number;
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
@@ -98,6 +99,7 @@ export type CreateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     structuredOutputEnabled?: boolean;
+    maxToolTurns?: number;
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -127,6 +129,7 @@ export type UpdateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     structuredOutputEnabled?: boolean;
+    maxToolTurns?: number;
 }
 
 // ServiceInfo matches api.ServiceInfo in Go (safe subset, no secrets).

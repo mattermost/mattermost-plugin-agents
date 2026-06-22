@@ -15,6 +15,9 @@ interface NumberItemProps {
     defaultValue?: number;
     placeholder?: string;
     helptext?: string;
+    clampOnChange?: boolean;
+    onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
+    onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void;
 }
 
 export const IntItem: React.FC<NumberItemProps> = ({
@@ -24,19 +27,27 @@ export const IntItem: React.FC<NumberItemProps> = ({
     max,
     allowEmpty = false,
     defaultValue = 0,
+    clampOnChange = true,
+    onFocus,
+    onBlur,
     ...restProps
 }) => {
     const [textValue, setTextValue] = useState('');
+    const [isFocused, setIsFocused] = useState(false);
 
     // Initialize and update the text value when the number value changes
     useEffect(() => {
+        if (isFocused) {
+            return;
+        }
+
         // Only update if value is a number
         if (typeof value === 'number' && !isNaN(value)) {
             setTextValue(value.toString());
         } else if (typeof value !== 'number' && allowEmpty) {
             setTextValue('');
         }
-    }, [value, allowEmpty]);
+    }, [value, allowEmpty, isFocused]);
 
     const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
         const newValue = e.target.value;
@@ -57,22 +68,34 @@ export const IntItem: React.FC<NumberItemProps> = ({
         if (!isNaN(parsedValue)) {
             // Apply constraints if specified
             let constrainedValue = parsedValue;
-            if (typeof min === 'number' && parsedValue < min) {
+            if (clampOnChange && typeof min === 'number' && parsedValue < min) {
                 constrainedValue = min;
             }
-            if (typeof max === 'number' && parsedValue > max) {
+            if (clampOnChange && typeof max === 'number' && parsedValue > max) {
                 constrainedValue = max;
             }
             onChange(constrainedValue);
         }
     };
 
+    const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+        setIsFocused(true);
+        onFocus?.(e);
+    };
+
+    const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+        setIsFocused(false);
+        onBlur?.(e);
+    };
+
     return (
         <TextItem
             type='text'
+            {...restProps}
             value={textValue}
             onChange={handleChange}
-            {...restProps}
+            onFocus={handleFocus}
+            onBlur={handleBlur}
         />
     );
 };
