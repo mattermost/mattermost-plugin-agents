@@ -116,9 +116,9 @@ To summarize a discussion thread:
 2. Select the **AI Actions** icon.
 3. Select **Summarize Thread**. 
 
-The thread summary is generated in the Agents pane, and only you can view the summary.
+The thread summary is generated in the Agents pane, and only you can view the summary. The summary ends with a link to the original thread so you can return to the full discussion.
 
-This is particularly useful for catching up on long discussions, creating meeting notes, and sharing outcomes with team members. You can also extract action items or find open questions in the same menu.
+This is particularly useful for catching up on long discussions, creating meeting notes, and sharing outcomes with team members. You can also extract action items or find open questions in the same menu. You can also extract action items or find open questions in the same menu.
 
 ### Summarize unread channels
 
