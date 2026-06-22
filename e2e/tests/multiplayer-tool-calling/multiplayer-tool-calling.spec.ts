@@ -512,12 +512,16 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
                 const rhs = invokerPage.locator('#rhsContainer');
 
-                // The LLM will make multiple tool calls: get_channel_info then create_post.
-                // We need to Accept+Share the intermediate calls (so the LLM gets the data
-                // it needs for the next call), but Keep Private the LAST call's result.
+                // The LLM typically makes multiple tool calls: get_channel_info then
+                // create_post. We Accept+Share the intermediate calls (so the model gets the
+                // data it needs to continue), but Keep Private the create_post result.
                 //
-                // Strategy: Accept+Share rounds until we see create_post being called,
-                // then Accept+Keep Private that final round.
+                // We detect the create_post round by its tool-card name ("Create Post"),
+                // which renders as soon as the approval card appears (call stage). This is far
+                // more reliable than scanning result text: that text only renders after the
+                // tool runs and lags behind the buttons, so matching on it could keep the
+                // wrong round private (stalling the model) or never fire — letting the loop
+                // grind through extra slow real-API rounds until the whole test timed out.
                 let rounds = 0;
                 const maxRounds = 10;
                 while (rounds < maxRounds) {
@@ -531,6 +535,9 @@ function createProviderTestSuite(provider: ProviderBundle) {
                         break;
                     }
 
+                    const createPostCard = rhs.getByText('Create Post', { exact: true });
+                    const isCreatePostRound = await createPostCard.first().isVisible().catch(() => false);
+
                     if (firstDecisionButton === 'Accept') {
                         // Accept all tool calls in this round
                         await clickAllButtonsInThread(invokerPage, 'Accept');
@@ -541,21 +548,16 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
                     rounds++;
 
-                    // Peek: does the thread contain text suggesting this is a create_post result?
-                    // If we see "Successfully created post" or similar, this is the final round.
-                    const resultText = rhs.getByText(/created post|post.*created|Successfully/i);
-                    const isCreatePostResult = await resultText.first().isVisible().catch(() => false);
-
-                    if (isCreatePostResult) {
-                        // This is the create_post result — Keep Private
+                    if (isCreatePostRound) {
+                        // Keep the create_post result private, then stop.
                         await clickAllButtonsInThread(invokerPage, 'Keep private');
                         await invokerPage.waitForTimeout(2000);
                         break;
-                    } else {
-                        // Intermediate round (e.g. get_channel_info) — Share so LLM can continue
-                        await clickAllButtonsInThread(invokerPage, 'Share');
-                        await invokerPage.waitForTimeout(2000);
                     }
+
+                    // Intermediate round (e.g. get_channel_info) — Share so the model can continue.
+                    await clickAllButtonsInThread(invokerPage, 'Share');
+                    await invokerPage.waitForTimeout(2000);
                 }
                 expect(rounds).toBeGreaterThanOrEqual(1);
 
