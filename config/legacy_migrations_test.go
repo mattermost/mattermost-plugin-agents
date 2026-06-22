@@ -928,6 +928,7 @@ func TestMigrateServicesToBots(t *testing.T) {
 				assert.Equal(t, "ai1", result.Bots[0].Name)
 				assert.Equal(t, "OpenAI GPT-4", result.Bots[0].DisplayName)
 				assert.Equal(t, result.Services[0].ID, result.Bots[0].ServiceID)
+				assert.True(t, result.Bots[0].MCPDynamicToolLoading)
 			},
 		},
 		{
@@ -969,8 +970,10 @@ func TestMigrateServicesToBots(t *testing.T) {
 				require.Len(t, result.Bots, 2)
 				assert.Equal(t, "OpenAI GPT-4", result.Bots[0].DisplayName)
 				assert.Equal(t, result.Services[0].ID, result.Bots[0].ServiceID)
+				assert.True(t, result.Bots[0].MCPDynamicToolLoading)
 				assert.Equal(t, "Anthropic Claude", result.Bots[1].DisplayName)
 				assert.Equal(t, result.Services[1].ID, result.Bots[1].ServiceID)
+				assert.True(t, result.Bots[1].MCPDynamicToolLoading)
 			},
 		},
 		{
@@ -1000,6 +1003,7 @@ func TestMigrateServicesToBots(t *testing.T) {
 
 				require.Len(t, result.Bots, 1)
 				assert.Equal(t, "ai1", result.Bots[0].Name)
+				assert.True(t, result.Bots[0].MCPDynamicToolLoading)
 			},
 		},
 		{

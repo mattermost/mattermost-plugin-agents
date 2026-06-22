@@ -52,7 +52,7 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestS
 		clusterNotifier: &testClusterNotifier{},
 	}
 
-	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, stores.configStore, nil, stores.configUpdater, stores.clusterNotifier, nil, nil, nil, nil, nil)
+	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, stores.configStore, nil, stores.configUpdater, stores.clusterNotifier, nil, nil, nil, nil, nil, nil)
 
 	return api, mockAPI, stores
 }

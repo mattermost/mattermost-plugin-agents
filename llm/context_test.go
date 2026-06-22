@@ -10,6 +10,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type contextTelemetryEvent struct {
+	botName string
+	event   string
+	result  string
+}
+
+type fakeMCPDynamicTelemetry struct {
+	events []contextTelemetryEvent
+}
+
+func (t *fakeMCPDynamicTelemetry) ObserveMCPDynamicToolEvent(botName, event, result string) {
+	t.events = append(t.events, contextTelemetryEvent{botName: botName, event: event, result: result})
+}
+
 func TestContext_SetBotFields(t *testing.T) {
 	c := NewContext()
 	c.SetBotFields("BotDisplay", "botuser", "user-id-123", "gpt-4", "openai", "Be helpful and concise")
@@ -106,4 +120,52 @@ func TestContext_CustomPromptVars(t *testing.T) {
 			assert.Equal(t, tt.expected, vars)
 		})
 	}
+}
+
+func TestContextObserveMCPDynamicToolEventBotLabelFallbacks(t *testing.T) {
+	tests := []struct {
+		name        string
+		context     *Context
+		wantBotName string
+	}{
+		{
+			name:        "username",
+			context:     &Context{BotUsername: "matty", BotName: "Matty"},
+			wantBotName: "matty",
+		},
+		{
+			name:        "display name",
+			context:     &Context{BotName: "Matty"},
+			wantBotName: "Matty",
+		},
+		{
+			name:        "unknown",
+			context:     &Context{},
+			wantBotName: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			telemetry := &fakeMCPDynamicTelemetry{}
+			tt.context.ToolRuntime.MCPDynamicToolTelemetry = telemetry
+
+			tt.context.ObserveMCPDynamicToolEvent("search", "success")
+
+			assert.Equal(t, []contextTelemetryEvent{{botName: tt.wantBotName, event: "search", result: "success"}}, telemetry.events)
+		})
+	}
+}
+
+func TestContextMCPDynamicSearchLoadCallSuccessState(t *testing.T) {
+	c := &Context{}
+
+	assert.False(t, c.ShouldRecordMCPDynamicSearchLoadCallSuccess("jira__get_issue"))
+
+	c.MarkMCPDynamicToolSearch()
+	assert.False(t, c.ShouldRecordMCPDynamicSearchLoadCallSuccess("jira__get_issue"))
+
+	c.MarkMCPDynamicToolLoaded("jira__get_issue")
+	assert.True(t, c.ShouldRecordMCPDynamicSearchLoadCallSuccess("jira__get_issue"))
+	assert.False(t, c.ShouldRecordMCPDynamicSearchLoadCallSuccess("jira__get_issue"))
 }

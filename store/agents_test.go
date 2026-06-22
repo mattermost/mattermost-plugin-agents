@@ -33,6 +33,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 			{ServerOrigin: "https://mcp.example.com", ToolName: "file_search"},
 		},
 		AutoEnableNewMCPTools:   true,
+		MCPDynamicToolLoading:   true,
 		Model:                   "gpt-4",
 		EnableVision:            true,
 		DisableTools:            false,
@@ -41,6 +42,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		ReasoningEffort:         "medium",
 		ThinkingBudget:          10000,
 		StructuredOutputEnabled: true,
+		MaxToolTurns:            42,
 	}
 }
 
@@ -89,6 +91,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, "https://mcp.example.com", fetched.EnabledMCPTools[0].ServerOrigin)
 	assert.Equal(t, "file_search", fetched.EnabledMCPTools[1].ToolName)
 	assert.True(t, fetched.AutoEnableNewMCPTools)
+	assert.True(t, fetched.MCPDynamicToolLoading)
 
 	assert.Equal(t, "gpt-4", fetched.Model)
 	assert.True(t, fetched.EnableVision)
@@ -98,6 +101,39 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, "medium", fetched.ReasoningEffort)
 	assert.Equal(t, 10000, fetched.ThinkingBudget)
 	assert.True(t, fetched.StructuredOutputEnabled)
+	assert.Equal(t, 42, fetched.MaxToolTurns)
+}
+
+// TestAgentMaxToolTurnsDefaultsToThirty verifies that the SQL DEFAULT 30 supplied
+// by migration 000008 lets agents inserted before/around the migration come back
+// with 30 even if the caller never set the column explicitly.
+func TestAgentMaxToolTurnsDefaultsToThirty(t *testing.T) {
+	s := setupTestStore(t)
+	err := s.RunMigrations()
+	require.NoError(t, err)
+
+	// Insert directly without specifying MaxToolTurns to exercise the column default.
+	now := int64(1_700_000_000_000)
+	id := "abcdefghijklmnopqrstuvwxyz"
+	_, err = s.db.Exec(`INSERT INTO Agents_UserAgents
+		(ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
+		 CustomInstructions, ChannelAccessLevel, ChannelIDs,
+		 UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
+		 EnabledTools, AutoEnableNewMCPTools,
+		 CreateAt, UpdateAt, DeleteAt)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		id, "bot-user-id-default", "creator-1", "Default Agent", "default-agent", "svc-1",
+		"", 0, "[]",
+		0, "[]", "[]", "[]",
+		"[]", false,
+		now, now, 0,
+	)
+	require.NoError(t, err)
+
+	fetched, err := s.GetAgent(id)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.Equal(t, 30, fetched.MaxToolTurns, "column default should populate MaxToolTurns at 30")
 }
 
 func TestAgentGetNonexistent(t *testing.T) {
@@ -343,6 +379,59 @@ func TestAgentAutoEnableNewMCPToolsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, again)
 	assert.False(t, again.AutoEnableNewMCPTools)
+}
+
+func TestAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
+	s := setupTestStore(t)
+	err := s.RunMigrations()
+	require.NoError(t, err)
+
+	agent := testAgent("creator-1", "dynamic-off", "Dynamic Off Agent")
+	agent.MCPDynamicToolLoading = false
+	require.NoError(t, s.CreateAgent(agent))
+
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.False(t, fetched.MCPDynamicToolLoading)
+
+	fetched.MCPDynamicToolLoading = true
+	require.NoError(t, s.UpdateAgent(fetched))
+
+	again, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, again)
+	assert.True(t, again.MCPDynamicToolLoading)
+}
+
+func TestAgentEnabledMCPToolsBareAndNamespacedRoundTrip(t *testing.T) {
+	s := setupTestStore(t)
+	err := s.RunMigrations()
+	require.NoError(t, err)
+
+	agent := testAgent("creator-1", "mixed-mcp", "Mixed MCP Agent")
+	agent.AutoEnableNewMCPTools = false
+	agent.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: "https://mcp.example.com", ToolName: "read_post"},
+		{ServerOrigin: "embedded://mattermost", ToolName: "mattermost__search_users"},
+	}
+	require.NoError(t, s.CreateAgent(agent))
+
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	require.Equal(t, agent.EnabledMCPTools, fetched.EnabledMCPTools)
+
+	fetched.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: "https://mcp.atlassian.com", ToolName: "get_issue"},
+		{ServerOrigin: "https://api.githubcopilot.com", ToolName: "github__search"},
+	}
+	require.NoError(t, s.UpdateAgent(fetched))
+
+	again, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, again)
+	require.Equal(t, fetched.EnabledMCPTools, again.EnabledMCPTools)
 }
 
 func TestAgentConcurrentCreates(t *testing.T) {

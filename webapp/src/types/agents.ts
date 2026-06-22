@@ -29,6 +29,7 @@ export type EnabledTool = {
 // MCP tool access is controlled by two independent fields:
 // - autoEnableNewMCPTools=true: agent gets every MCP tool, including ones added later.
 // - autoEnableNewMCPTools=false: agent gets only the tools listed in enabledMCPTools.
+// - mcpDynamicToolLoading=false: agent uses the full MCP schema list instead of JIT loading.
 export type UserAgent = {
     id: string;
     name: string;
@@ -48,10 +49,12 @@ export type UserAgent = {
     enabledNativeTools: string[] | null;
     enabledMCPTools: EnabledTool[] | null;
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading?: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
     structuredOutputEnabled: boolean;
+    maxToolTurns: number;
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
@@ -87,6 +90,7 @@ export type CreateAgentRequest = {
     adminUserIDs?: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -95,6 +99,7 @@ export type CreateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     structuredOutputEnabled?: boolean;
+    maxToolTurns?: number;
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -115,6 +120,7 @@ export type UpdateAgentRequest = {
     adminUserIDs?: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -123,6 +129,7 @@ export type UpdateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     structuredOutputEnabled?: boolean;
+    maxToolTurns?: number;
 }
 
 // ServiceInfo matches api.ServiceInfo in Go (safe subset, no secrets).

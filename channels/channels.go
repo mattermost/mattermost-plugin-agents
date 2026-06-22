@@ -11,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
@@ -81,26 +82,21 @@ func (c *Channels) AnalyzeChannel(
 		"Analysis": analysisData,
 	}
 
-	systemPrompt, err := c.prompts.Format(prompts.PromptSummarizeChannelSystem, context)
-	if err != nil {
-		return nil, fmt.Errorf("failed to format system prompt: %w", err)
-	}
-
 	userPrompt := "Please summarize the channel activity as requested."
 	operationSubType, _ := analysisData["AnalysisType"].(string)
 	if operationSubType == "" {
 		operationSubType = llm.TokenUsageUnknown
 	}
 
-	// Get tools and bind channel_id so it cannot be manipulated by the LLM
-	readChannel := context.Tools.GetTool("read_channel")
-	if readChannel == nil {
+	// Get tools and bind channel_id so it cannot be manipulated by the LLM.
+	readChannel, ok := requiredEmbeddedToolByExactOrBareName(context.Tools, "read_channel")
+	if !ok {
 		return nil, fmt.Errorf("read_channel tool not available - ensure MCP embedded server is enabled and running")
 	}
 	boundReadChannel := readChannel.WithBoundParams(map[string]interface{}{"channel_id": channelID})
 
-	getChannelInfo := context.Tools.GetTool("get_channel_info")
-	if getChannelInfo == nil {
+	getChannelInfo, ok := requiredEmbeddedToolByExactOrBareName(context.Tools, "get_channel_info")
+	if !ok {
 		return nil, fmt.Errorf("get_channel_info tool not available - ensure MCP embedded server is enabled and running")
 	}
 	boundGetChannelInfo := getChannelInfo.WithBoundParams(map[string]interface{}{"channel_id": channelID})
@@ -110,7 +106,24 @@ func (c *Channels) AnalyzeChannel(
 	scopedTools.AddTools([]llm.Tool{boundReadChannel, boundGetChannelInfo})
 	context.Tools = scopedTools
 
+	systemPrompt, err := c.prompts.Format(prompts.PromptSummarizeChannelSystem, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format system prompt: %w", err)
+	}
+
 	return c.AnalyzeChannelWithRequest(ctx, context, userID, botID, systemPrompt, userPrompt, operationSubType)
+}
+
+func requiredEmbeddedToolByExactOrBareName(store *llm.ToolStore, name string) (llm.Tool, bool) {
+	lookup, ok := store.LookupTool(name, mcp.EmbeddedClientKey)
+	if !ok {
+		return llm.Tool{}, false
+	}
+
+	tool := lookup.Tool
+	// Channel analysis exposes bound embedded tools under their bare names.
+	tool.Name = name
+	return tool, true
 }
 
 // AnalyzeChannelWithRequest creates a conversation and runs the ToolRunner with

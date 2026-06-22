@@ -85,9 +85,8 @@ test.describe('Vetted Server Seed', () => {
         expect(toolsResponse.servers).toBeDefined();
         expect(toolsResponse.servers.length).toBeGreaterThan(0);
 
-        // Find the embedded server (identified by having Mattermost tools)
-        const embeddedServer = toolsResponse.servers.find((s: any) =>
-            s.tools?.some((t: any) => VETTED_READ_TOOLS.includes(t.name)),
+        const embeddedServer = toolsResponse.servers.find(
+            (s: any) => s.serverOrigin === 'embedded://mattermost',
         );
 
         // If embedded server tools are in the response, verify they are present

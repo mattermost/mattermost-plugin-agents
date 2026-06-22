@@ -108,6 +108,23 @@ func TestSanitizeProviderError(t *testing.T) {
 		assert.NotContains(t, sanitizedErr.Error(), "Incorrect API key provided: t")
 	})
 
+	t.Run("redacts fallback keys the generic patterns miss", func(t *testing.T) {
+		// A fallback provider's key in a custom format (here a Gemini-style key)
+		// matches none of the generic OpenAI/Anthropic patterns, so it only gets
+		// redacted because it is passed alongside the primary key.
+		primaryKey := "sk-1234567890abcdefghij"
+		fallbackKey := "AIzaSyD-fallback-gemini-key-1234567890"
+		input := fmt.Sprintf("provider error: primary %s and fallback %s failed", primaryKey, fallbackKey)
+
+		// Without the fallback key, the custom-format secret survives.
+		primaryOnly := SanitizeProviderErrorMessage(input, primaryKey)
+		assert.Contains(t, primaryOnly, fallbackKey, "guards the test: generic patterns alone do not catch this key")
+
+		sanitized := SanitizeProviderErrorMessage(input, primaryKey, fallbackKey)
+		assert.NotContains(t, sanitized, primaryKey)
+		assert.NotContains(t, sanitized, fallbackKey)
+	})
+
 	t.Run("preserves wrapped provider error chain", func(t *testing.T) {
 		originalErr := errors.New("provider error: short")
 

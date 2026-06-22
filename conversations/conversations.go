@@ -182,11 +182,16 @@ type DMStreamResult struct {
 // ProcessDMRequest builds a completion request from the conversation and
 // runs the tool loop, returning the final stream. The conversation must
 // already exist (created via CreateOrGetDMConversation).
+//
+// maxToolTurns bounds the tool-call-execute-recall loop for this bot; pass 0
+// or any non-positive value to use the system default
+// (llm.DefaultMaxToolTurns).
 func (c *Conversations) ProcessDMRequest(
 	ctx stdcontext.Context,
 	convID string,
 	lm llm.LanguageModel,
 	llmCtx *llm.Context,
+	maxToolTurns int,
 ) (*DMStreamResult, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "process dm request")
 	defer span.End()
@@ -207,7 +212,7 @@ func (c *Conversations) ProcessDMRequest(
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
 
-	runner := toolrunner.New(lm)
+	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxToolTurns))
 	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)
@@ -233,14 +238,22 @@ func (c *Conversations) ProcessDMRequest(
 // reveal unshared tool output without an explicit Share from the requester.
 func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) func(llm.ToolCall) bool {
 	return func(tc llm.ToolCall) bool {
+		if isMCPMetaToolCall(tc, llmCtx) {
+			return true
+		}
 		if c.toolPolicyChecker == nil {
 			return false
 		}
-		origin := tc.ServerOrigin
-		if origin == "" && llmCtx.Tools != nil {
-			origin = llmCtx.Tools.GetServerOrigin(tc.Name)
+		lookup, ok := llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
+		if !ok {
+			return false
 		}
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
+		// Interaction tools are answered by the user; auto-executing one
+		// would bypass the question entirely.
+		if lookup.Tool.UserInteraction != "" {
+			return false
+		}
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
 		if !enabled {
 			return false
 		}
@@ -255,20 +268,35 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 // tool turns has an auto_run_everywhere policy.  When true, tool results can
 // be written with shared=true so the result-approval UI is skipped.
 func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, llmCtx *llm.Context) bool {
-	if c.toolPolicyChecker == nil {
-		return false
-	}
+	sawToolCall := false
 	for _, turn := range turns {
 		for _, tc := range turn.AssistantToolCalls {
-			origin := tc.ServerOrigin
-			if origin == "" && llmCtx.Tools != nil {
-				origin = llmCtx.Tools.GetServerOrigin(tc.Name)
+			sawToolCall = true
+			if isMCPMetaToolCall(tc, llmCtx) {
+				continue
 			}
-			policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
+			if c.toolPolicyChecker == nil {
+				return false
+			}
+			lookup, ok := llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
+			if !ok {
+				return false
+			}
+			policy, enabled := c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
 			if !enabled || !mcp.IsToolPolicyAutoRunEverywhere(policy) {
 				return false
 			}
 		}
 	}
-	return len(turns) > 0
+	return sawToolCall
+}
+
+func isMCPMetaToolCall(tc llm.ToolCall, llmCtx *llm.Context) bool {
+	if !mcp.IsMCPMetaTool(tc.Name) || tc.ServerOrigin != "" {
+		return false
+	}
+	if llmCtx == nil || llmCtx.Tools == nil {
+		return true
+	}
+	return llmCtx.Tools.GetServerOrigin(tc.Name) == ""
 }

@@ -1,7 +1,10 @@
 # FIPS-compliant Linux/amd64 build. Linux/amd64 is the only platform
 # mattermost-server's FIPS release path supports.
 
-FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.26.3-dev@sha256:48ab99fede7fb33e132a0636072971e1ec4a69520865bfa1e4b517ee9cfdef34
+# Microsoft Go FIPS toolchain image, digest-pinned. Bumped to 1.26.4-dev because
+# bifrost/core v1.5.18 requires Go >= 1.26.4 (1.26.3-dev ships Go 1.26.3, which no
+# longer satisfies go.mod).
+FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.26.4-dev@sha256:f04210e84c5582448848a616f046a2048e94fdae59c2b7dc973c444cdf53468c
 BUNDLE_NAME_FIPS ?= $(PLUGIN_ID)-$(PLUGIN_VERSION)-fips.tar.gz
 FIPS_BIN := server/dist-fips/plugin-linux-amd64-fips
 

@@ -27,25 +27,31 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
 
-	buildToolStore := func(name string) *llm.ToolStore {
+	buildToolStore := func(names ...string) *llm.ToolStore {
 		store := llm.NewToolStore()
-		store.AddTools([]llm.Tool{{
-			Name:        name,
-			Description: "test tool",
-			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-				return "", nil
-			},
-		}})
+		tools := make([]llm.Tool, 0, len(names))
+		for _, name := range names {
+			tools = append(tools, llm.Tool{
+				Name:        name,
+				Description: "test tool",
+				Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+					return "", nil
+				},
+			})
+		}
+		store.AddTools(tools)
 		return store
 	}
 
 	toolModes := []struct {
-		name  string
-		tools *llm.ToolStore
+		name                  string
+		tools                 *llm.ToolStore
+		mcpDynamicToolLoading bool
 	}{
 		{name: "tools_nil", tools: nil},
 		{name: "tools_without_websearch", tools: buildToolStore("ReadPost")},
 		{name: "tools_with_websearch", tools: buildToolStore("WebSearch")},
+		{name: "tools_with_dynamic_mcp_meta_tools", tools: buildToolStore("search_tools", "load_tool"), mcpDynamicToolLoading: true},
 	}
 	channelModes := []struct {
 		name    string
@@ -97,6 +103,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 						BotUsername:    "agent",
 						BotModel:       "model-x",
 						Tools:          toolMode.tools,
+						ToolCatalog:    llm.ToolCatalogContext{MCPDynamicToolLoading: toolMode.mcpDynamicToolLoading},
 						RequestingUser: requestingUserMode.buildRequestingUser(),
 						Channel:        channelMode.channel,
 					}
@@ -110,7 +117,9 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 					label := fmt.Sprintf("tools=%s channel=%s requesting_user=%s flags=%0*b", toolMode.name, channelMode.name, requestingUserMode.name, len(mutators), flags)
 					output, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, context)
 					require.NoError(t, err, label)
-					require.Falsef(t, horizontalWhitespaceRun.MatchString(output), "%s contains repeated horizontal whitespace", label)
+					if !toolMode.mcpDynamicToolLoading {
+						require.Falsef(t, horizontalWhitespaceRun.MatchString(output), "%s contains repeated horizontal whitespace", label)
+					}
 					require.Falsef(t, trailingHorizontalWhitespace.MatchString(output), "%s contains trailing horizontal whitespace", label)
 					require.Falsef(t, newlineRun.MatchString(output), "%s contains repeated newline runs", label)
 				}
@@ -171,4 +180,124 @@ func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiAndVertexOn
 	require.NoError(t, err)
 	assert.NotContains(t, openAIOutput, "The tools currently available to agent in this conversation are:")
 	assert.NotContains(t, openAIOutput, "When asked about capabilities or tool access, agent may mention the tools listed above.")
+}
+
+func TestStandardPersonalityDynamicToolWorkflow(t *testing.T) {
+	dynamicWorkflowText := []string{
+		"You have access to a large set of MCP tools through two meta-tools.",
+		"You MUST load a tool",
+		"CRITICAL: For side-effecting external actions",
+	}
+	tests := []struct {
+		name        string
+		context     *llm.Context
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "includes workflow when enabled",
+			context: &llm.Context{
+				Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:  "server",
+				BotName:     "agent",
+				BotUsername: "agent",
+				BotModel:    "model-x",
+				Tools:       dynamicMetaToolStore(),
+				ToolCatalog: llm.ToolCatalogContext{MCPDynamicToolLoading: true},
+			},
+			contains: append(dynamicWorkflowText, "ask one focused clarification question"),
+			notContains: []string{
+				"pick a reasonable default",
+			},
+		},
+		{
+			name: "includes workflow with disabled tools info",
+			context: &llm.Context{
+				Time:              "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:        "server",
+				BotName:           "agent",
+				BotUsername:       "agent",
+				BotModel:          "model-x",
+				Tools:             dynamicMetaToolStore(),
+				DisabledToolsInfo: []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}},
+				ToolCatalog:       llm.ToolCatalogContext{MCPDynamicToolLoading: true},
+			},
+			contains: append(dynamicWorkflowText,
+				"ask one focused clarification question",
+				"IMPORTANT: You have capabilities that can only be used in a Direct Message (DM) or via the Agents tab",
+			),
+			notContains: []string{
+				"pick a reasonable default",
+			},
+		},
+		{
+			name: "omits workflow when flag off",
+			context: &llm.Context{
+				Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:  "server",
+				BotName:     "agent",
+				BotUsername: "agent",
+				BotModel:    "model-x",
+				Tools:       dynamicMetaToolStore(),
+			},
+			notContains: dynamicWorkflowText,
+		},
+		{
+			name: "omits workflow without meta tools",
+			context: &llm.Context{
+				Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:  "server",
+				BotName:     "agent",
+				BotUsername: "agent",
+				BotModel:    "model-x",
+				Tools:       llm.NewNoTools(),
+				ToolCatalog: llm.ToolCatalogContext{MCPDynamicToolLoading: true},
+			},
+			notContains: dynamicWorkflowText,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := renderStandardPersonalityWithoutLocale(t, tt.context)
+			for _, expected := range tt.contains {
+				assert.Contains(t, output, expected)
+			}
+			for _, unexpected := range tt.notContains {
+				assert.NotContains(t, output, unexpected)
+			}
+		})
+	}
+}
+
+func renderStandardPersonalityWithoutLocale(t *testing.T, context *llm.Context) string {
+	t.Helper()
+
+	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+
+	output, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, context)
+	require.NoError(t, err)
+	return output
+}
+
+func dynamicMetaToolStore() *llm.ToolStore {
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{
+		{
+			Name:        "search_tools",
+			Description: "Search tools",
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "", nil
+			},
+		},
+		{
+			Name:        "load_tool",
+			Description: "Load tool",
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "", nil
+			},
+		},
+	})
+	return store
 }

@@ -67,9 +67,9 @@ By default, regular users do not have `manage_own_agent`. Grant it through your 
 
 ### License
 
-Self-service agent creation is gated by Mattermost's multi-LLM license check (Entry, Enterprise, or Enterprise Advanced).
+The number of self-service agents you can create is gated by Mattermost's multi-LLM license check (Entry, Enterprise, or Enterprise Advanced).
 
-- **Without a multi-LLM license**, the Agents page shows a **Self-Service Agents** upgrade screen with a link to Mattermost pricing instead of the agent list. The plugin enforces a limit of `1` self-service agent at the API level (the `FreeTierAgentLimit` constant in `api/api_agents.go`), but **there is no UI path to create it** — agent creation requires a qualifying license. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
+- **Without a multi-LLM license**, you can create and fully manage a single agent (`FreeTierAgentLimit = 1`, defined in `api/api_agents.go`). The Agents page always shows the agent list; once one agent exists the **Create agent** button is disabled with an upgrade hint. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
 - **With a multi-LLM license**, agent creation is unlimited (subject to permissions).
 
 For the full feature/license matrix, see [License requirements](../admin_guide.md#license-requirements) in the Admin Guide.
@@ -247,9 +247,9 @@ Practical consequences:
 
 ## Troubleshooting
 
-### "Self-Service Agents" upgrade screen is shown instead of the agents list
+### "Create agent" is disabled and an upgrade hint is shown
 
-The server does not have a multi-LLM license applied. Apply an Entry, Enterprise, or Enterprise Advanced license in **System Console > About > Edition and License** to unlock the Agents page. There is no UI path to create the single free-tier agent permitted by `FreeTierAgentLimit`; that limit is an API-only safety rail and direct API access would be required to use it (not typical for end users).
+The server is at the free-tier self-service agent limit without a multi-LLM licence. The Agents page still shows the list, but after one self-service agent exists, **Create agent** is disabled. Apply an Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to create additional agents, or delete the existing free-tier agent before creating a replacement.
 
 ### "Create agent" button is hidden
 

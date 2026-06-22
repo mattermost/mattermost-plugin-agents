@@ -7,6 +7,7 @@ import {ChannelWithTeamData} from '@mattermost/types/channels';
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
+import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
 
@@ -213,12 +214,13 @@ export async function doRegenerate(postid: string) {
     });
 }
 
-export async function doToolCall(postid: string, toolIDs: string[]) {
+export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?: Record<string, ToolAnswer>) {
     const url = `${postRoute(postid)}/tool_call`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
             accepted_tool_ids: toolIDs,
+            tool_answers: toolAnswers,
         }),
     }));
 
@@ -391,8 +393,8 @@ export async function createPost(post: any) {
     return created;
 }
 
-export async function updateRead(userId: string, teamId: string, selectedPostId: string, timestamp: number) {
-    Client4.updateThreadReadForUser(userId, teamId, selectedPostId, timestamp);
+export function updateRead(userId: string, teamId: string, selectedPostId: string, timestamp: number) {
+    return Client4.updateThreadReadForUser(userId, teamId, selectedPostId, timestamp);
 }
 
 export function getProfilePictureUrl(userId: string, lastIconUpdate: number) {
@@ -856,14 +858,27 @@ export async function savePluginConfig(config: PluginConfig): Promise<void> {
 
 // --- Agent CRUD ---
 
-export async function getAgents(): Promise<UserAgent[]> {
+export type AgentsListResult = {
+    agents: UserAgent[];
+    activeAgentCount?: number;
+};
+
+export async function getAgents(): Promise<AgentsListResult> {
     const url = `${baseRoute()}/agents`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
 
     if (response.ok) {
-        return response.json();
+        const agents = await response.json() as UserAgent[];
+        const activeCountHeader = response.headers.get('X-Agent-Active-Count');
+        const result: AgentsListResult = {agents};
+
+        // Only trust a strict non-negative integer (rejects e.g. "1foo", "", null).
+        if (activeCountHeader !== null && (/^\d+$/).test(activeCountHeader)) {
+            result.activeAgentCount = Number.parseInt(activeCountHeader, 10);
+        }
+        return result;
     }
 
     throw new ClientError(Client4.url, {

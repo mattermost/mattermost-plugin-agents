@@ -4,10 +4,12 @@
 package conversations
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,4 +118,156 @@ func TestFindPendingToolTurn_StaleClickErrorsAreTyped(t *testing.T) {
 		require.ErrorIs(t, err, ErrStaleToolClick,
 			"a second click on an already-resolved approval is a client-side staleness issue, not a server error")
 	})
+}
+
+func TestResolveApprovedToolUseBlockUsesPersistedMetadata(t *testing.T) {
+	called := false
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Schema:       json.RawMessage(`{"type":"object"}`),
+		Resolver: func(_ context.Context, _ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+			called = true
+			var args struct {
+				Key string `json:"key"`
+			}
+			require.NoError(t, argsGetter(&args))
+			assert.Equal(t, "MM-1", args.Key)
+			return "issue details", nil
+		},
+	}})
+
+	result, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: store}, conversation.ContentBlock{
+		Type:         conversation.BlockTypeToolUse,
+		ID:           "tc1",
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Input:        json.RawMessage(`{"key":"MM-1"}`),
+		MCPBareName:  "get_issue",
+	})
+
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Equal(t, "issue details", result)
+}
+
+func TestResolveApprovedToolUseBlockRejectsServerOriginMismatch(t *testing.T) {
+	called := false
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://evil.example.com",
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			called = true
+			return "wrong", nil
+		},
+	}})
+
+	_, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: store}, conversation.ContentBlock{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Input:        json.RawMessage(`{}`),
+		MCPBareName:  "get_issue",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no longer matches the approved tool metadata")
+	assert.False(t, called)
+}
+
+func TestResolveApprovedToolUseBlockRejectsBareNameMismatch(t *testing.T) {
+	called := false
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			called = true
+			return "wrong", nil
+		},
+	}})
+
+	_, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: store}, conversation.ContentBlock{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Input:        json.RawMessage(`{}`),
+		MCPBareName:  "delete_issue",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no longer matches the approved tool metadata")
+	assert.False(t, called)
+}
+
+func TestResolveApprovedToolUseBlockLoadedStateMissingFailsSafely(t *testing.T) {
+	store := llm.NewNoTools()
+	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
+
+	_, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: store}, conversation.ContentBlock{
+		Name:        "jira__get_issue",
+		Input:       json.RawMessage(`{}`),
+		MCPBareName: "get_issue",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "available but not loaded")
+	assert.Contains(t, err.Error(), "load_tool")
+}
+
+func TestResolveApprovedToolUseBlockNoLongerAvailable(t *testing.T) {
+	_, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: llm.NewNoTools()}, conversation.ContentBlock{
+		Name:  "jira__get_issue",
+		Input: json.RawMessage(`{}`),
+	})
+
+	require.Error(t, err)
+	assert.EqualError(t, err, "tool jira__get_issue is no longer available")
+}
+
+func TestResolveApprovedToolUseBlockSchemaDriftDoesNotBlockMatchingTool(t *testing.T) {
+	called := false
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Schema:       json.RawMessage(`{"type":"object","properties":{"new":{"type":"string"}}}`),
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			called = true
+			return "ok", nil
+		},
+	}})
+
+	result, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: store}, conversation.ContentBlock{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Input:        json.RawMessage(`{}`),
+		MCPBareName:  "get_issue",
+	})
+
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Equal(t, "ok", result)
+}
+
+func TestResolveApprovedToolUseBlockAllowsOldBlockWithoutNewMetadata(t *testing.T) {
+	called := false
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{{
+		Name:         "jira__get_issue",
+		ServerOrigin: "https://jira.example.com",
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			called = true
+			return "ok", nil
+		},
+	}})
+
+	result, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: store}, conversation.ContentBlock{
+		Name:  "jira__get_issue",
+		Input: json.RawMessage(`{}`),
+	})
+
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Equal(t, "ok", result)
 }

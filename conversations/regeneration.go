@@ -11,7 +11,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
@@ -250,20 +249,13 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("failed to get conversation for regen: %w", err)
 	}
 
-	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextDefaultTools(ctx, bot),
-	}
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
-
-	// Apply user-disabled-provider filtering for DM/group channels only.
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
-		if prefsErr != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences on regen, proceeding without filtering", "error", prefsErr.Error(), "userID", user.Id)
-		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
-			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-		}
-	}
+	// Regeneration is triggered by the requester clicking the regen control,
+	// so the user is interactively present.
+	llmContext := c.buildConversationContextWithTools(
+		ctx, bot, user, channel,
+		"Failed to load user tool preferences on regen, proceeding without filtering",
+		c.contextBuilder.WithLLMContextInteractive(),
+	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	toolsDisabled := !isDM
@@ -302,7 +294,7 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM())
+	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
 	runResult, runErr := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {

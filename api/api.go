@@ -123,6 +123,13 @@ type MCPOAuthClusterNotifier interface {
 	PublishMCPOAuthUpdate(userID string) error
 }
 
+// StreamStopClusterNotifier broadcasts a stop-streaming request to peer nodes
+// so HA deployments without sticky sessions can cancel an in-flight LLM
+// stream no matter which node handles the /stop request.
+type StreamStopClusterNotifier interface {
+	PublishStreamStop(postID string) error
+}
+
 // API represents the HTTP API functionality for the plugin
 type API struct {
 	bots                  *bots.MMBots
@@ -152,6 +159,7 @@ type API struct {
 	clusterNotifier       ClusterNotifier
 	clusterAgentNotifier  ClusterAgentNotifier
 	mcpOAuthNotifier      MCPOAuthClusterNotifier
+	streamStopNotifier    StreamStopClusterNotifier
 	conversationStore     ConversationStore
 	convService           *conversation.Service
 	getSearchInitError    func() string
@@ -193,6 +201,7 @@ func New(
 	clusterNotifier ClusterNotifier,
 	clusterAgentNotifier ClusterAgentNotifier,
 	mcpOAuthNotifier MCPOAuthClusterNotifier,
+	streamStopNotifier StreamStopClusterNotifier,
 	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
@@ -225,6 +234,7 @@ func New(
 		clusterNotifier:       clusterNotifier,
 		clusterAgentNotifier:  clusterAgentNotifier,
 		mcpOAuthNotifier:      mcpOAuthNotifier,
+		streamStopNotifier:    streamStopNotifier,
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,

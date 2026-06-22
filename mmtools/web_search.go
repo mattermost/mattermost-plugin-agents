@@ -209,8 +209,8 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 	}
 
 	t := *s.sourceTool
-	t.Resolver = func(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
-		return s.resolveSource(ctx, bot, llmContext, argsGetter)
+	t.Resolver = func(ctx context.Context, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+		return s.resolveSource(ctx, bot, llmCtx, argsGetter)
 	}
 
 	return &t
@@ -452,10 +452,10 @@ func (s *webSearchService) resolveSource(ctx context.Context, bot *bots.Bot, llm
 	if llmContext != nil && llmContext.Parameters != nil {
 		if raw, ok := llmContext.Parameters[WebSearchContextKey]; ok {
 			if searchContexts, ok := raw.([]WebSearchContextValue); ok {
-				for _, searchCtx := range searchContexts {
-					for i := range searchCtx.Results {
-						if searchCtx.Results[i].URL == pageURL {
-							matchedResult = &searchCtx.Results[i]
+				for _, ctx := range searchContexts {
+					for i := range ctx.Results {
+						if ctx.Results[i].URL == pageURL {
+							matchedResult = &ctx.Results[i]
 							break
 						}
 					}
@@ -557,7 +557,7 @@ func (s *webSearchService) resolveSource(ctx context.Context, bot *bots.Bot, llm
 	}
 
 	// Perform recursive summarization
-	summary, err := s.summarizeContent(bot, textContent)
+	summary, err := s.summarizeContent(ctx, bot, textContent)
 	if err != nil {
 		s.logWarn("recursive summarization failed, falling back to raw content with warnings", "error", err)
 		return s.wrapSourceContentWithContext(textContent, matchedResult, llmContext), nil
@@ -566,7 +566,7 @@ func (s *webSearchService) resolveSource(ctx context.Context, bot *bots.Bot, llm
 	return s.formatSummarizedContent(summary, matchedResult), nil
 }
 
-func (s *webSearchService) summarizeContent(bot *bots.Bot, content string) (string, error) {
+func (s *webSearchService) summarizeContent(ctx context.Context, bot *bots.Bot, content string) (string, error) {
 	if bot == nil {
 		return "", errors.New("bot instance is nil")
 	}
@@ -606,7 +606,7 @@ func (s *webSearchService) summarizeContent(bot *bots.Bot, content string) (stri
 	}
 
 	// Use a reasonable token limit for the summary (e.g. 4000 tokens)
-	return languageModel.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(4000))
+	return languageModel.ChatCompletionNoStream(ctx, req, llm.WithMaxGeneratedTokens(4000))
 }
 
 func (s *webSearchService) formatSummarizedContent(summary string, matchedResult *WebSearchResult) string {

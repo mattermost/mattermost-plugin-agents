@@ -509,6 +509,48 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 	}
 }
 
+func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *testing.T) {
+	target := newFakePluginMCPServer(t, 1)
+	t.Cleanup(target.Close)
+
+	var calls atomic.Int32
+	mockAPI := &fakePluginHTTPClient{
+		pluginHTTP: func(req *http.Request) *http.Response {
+			if calls.Add(1) == 1 {
+				rec := httptest.NewRecorder()
+				rec.WriteHeader(http.StatusInternalServerError)
+				return rec.Result()
+			}
+
+			rec := httptest.NewRecorder()
+			target.Config.Handler.ServeHTTP(rec, req)
+			return rec.Result()
+		},
+	}
+
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	t.Cleanup(m.Close)
+	m.RegisterPluginServer(PluginServerConfig{
+		PluginID: "com.example.mcp",
+		Name:     "Example",
+		Path:     "/mcp",
+		Enabled:  true,
+	})
+
+	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
+	require.Empty(t, tools)
+	require.NotNil(t, mcpErrors)
+	require.NotEmpty(t, mcpErrors.Errors)
+
+	tools, mcpErrors = m.GetToolsForUser(context.Background(), "alice")
+	require.Nil(t, mcpErrors, "successful plugin reconnect must not return the prior transient error")
+	require.Len(t, tools, 1)
+}
+
 func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	targetA := newFakePluginMCPServerWithPrefix(t, "tool_a", 2)
 	t.Cleanup(targetA.Close)
@@ -607,6 +649,143 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 		stop.Store(true)
 		t.Fatal("deadlock or excessive contention in Register/Unregister vs List/snapshot")
 	}
+}
+
+func TestClientManagerGetToolRetrievalOverridesRemote(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find Jira issues by key"},
+						{Name: "create_issue", Policy: ToolPolicyAsk, Enabled: true},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
+			Summary: "Find Jira issues by key",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesEmbedded(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			EmbeddedServer: EmbeddedServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find Mattermost people"},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey(EmbeddedClientKey, "search_users"): {
+			Summary: "Find Mattermost people",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesPlugin(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			PluginServers: []PluginServerConfig{
+				{
+					PluginID: "com.example.mcp",
+					Enabled:  true,
+					ToolConfigs: []ToolConfig{
+						{Name: "lookup", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find plugin records"},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey("plugin://com.example.mcp", "lookup"): {
+			Summary: "Find plugin records",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesTrimsAndSkipsEmpty(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", RetrievalDescriptionOverride: "  Find Jira issues  "},
+						{Name: "create_issue", RetrievalDescriptionOverride: "   "},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
+			Summary: "Find Jira issues",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesLastDuplicateWins(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", RetrievalDescriptionOverride: "old summary"},
+						{Name: "get_issue", RetrievalDescriptionOverride: "new summary"},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverrides()
+
+	require.Equal(t, "new summary", overrides[ToolRetrievalOverrideKey("https://jira.example.com", "get_issue")].Summary)
+}
+
+func TestClientManagerGetToolRetrievalOverridesDisabledServer(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: false,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", RetrievalDescriptionOverride: "Find Jira issues"},
+					},
+				},
+			},
+		},
+	}
+
+	require.Empty(t, manager.GetToolRetrievalOverrides())
 }
 
 func TestClientManagerInvalidateUserClients(t *testing.T) {

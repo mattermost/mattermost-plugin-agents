@@ -11,9 +11,10 @@ const (
 
 // MCPToolConfig represents per-tool configuration for an MCP server.
 type MCPToolConfig struct {
-	Name    string `json:"name"`
-	Policy  string `json:"policy"` // "auto_run_in_dm" | "auto_run_everywhere" | "ask"
-	Enabled bool   `json:"enabled"`
+	Name                         string `json:"name"`
+	Policy                       string `json:"policy"` // "auto_run_in_dm" | "auto_run_everywhere" | "ask"
+	Enabled                      bool   `json:"enabled"`
+	RetrievalDescriptionOverride string `json:"retrieval_description_override,omitempty"`
 }
 
 // IsToolPolicyAutoRunInDM returns true when the policy auto-executes in a DM

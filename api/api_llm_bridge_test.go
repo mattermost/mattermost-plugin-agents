@@ -1450,6 +1450,32 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 	require.Equal(t, "ineligible_tool", tools[1].Name)
 }
 
+func TestBridgeGetAgentToolsReturnsConcreteToolsForDynamicMCPAgent(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	botConfig := llm.BotConfig{
+		Name:                  "testbot",
+		DisplayName:           "Test Bot",
+		UserAccessLevel:       llm.UserAccessLevelAll,
+		MCPDynamicToolLoading: true,
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	tools, err := client.GetAgentTools(testBotUserID, testUserID)
+	require.NoError(t, err)
+	require.Len(t, tools, 1)
+	require.Equal(t, "eligible_tool", tools[0].Name)
+	require.Equal(t, server.URL, tools[0].ServerOrigin)
+}
+
 func TestBridgeGetAgentToolsReturnsEmbeddedServerTools(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -1680,6 +1706,42 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.NotNil(t, fakeLLM.LastConversation.Context)
 	require.NotNil(t, fakeLLM.LastConversation.Context.Tools)
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
+}
+
+func TestBridgeClientAgentCompletionAllowedToolsWorksWithDynamicMCPAgent(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	botConfig := llm.BotConfig{
+		Name:                  "testbot",
+		DisplayName:           "Test Bot",
+		UserAccessLevel:       llm.UserAccessLevelAll,
+		MCPDynamicToolLoading: true,
+	}
+	e.setupTestBot(botConfig)
+
+	fakeLLM := NewFakeLLM("auto run enabled")
+	fakeLLM.StreamEventSequence = fakeLLMAutoRunSequence("tc1", "eligible_tool", "auto run enabled")
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts:        []bridgeclient.Post{{Role: "user", Message: "Use the tool"}},
+		AllowedTools: []string{"eligible_tool"},
+		UserID:       testUserID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "auto run enabled", result)
+	require.Len(t, fakeLLM.AllRequests, 2)
+	require.Equal(t, 1, findAutoApprovedToolUse(fakeLLM.AllRequests[1], "eligible_tool"))
 }
 
 func TestPrepareAgentBridgeCompletionAllowedToolsRequiresUserID(t *testing.T) {

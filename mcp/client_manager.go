@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,7 +110,7 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 
 	// Update embedded server client
 	if embeddedServer != nil {
-		m.embeddedClient = NewEmbeddedServerClient(embeddedServer, m.log, m.pluginAPI)
+		m.embeddedClient = NewEmbeddedServerClientWithCache(embeddedServer, m.log, m.pluginAPI, m.toolsCache)
 	} else {
 		m.embeddedClient = nil
 	}
@@ -152,24 +153,42 @@ func (m *ClientManager) Close() {
 }
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager.
-// When forceRefresh is true the remote connect bypasses the shared tools cache.
+// When forceRefresh is true the remote connect bypasses the shared tools cache and any
+// existing cached client is replaced.
 func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string, forceRefresh bool) (*UserClients, *Errors) {
-	m.clientsMu.Lock()
-	defer m.clientsMu.Unlock()
-
-	// Check again in case another goroutine created the client while we were waiting for the lock
-	client, exists := m.clients[userID]
-	if exists && !forceRefresh {
-		m.activity[userID] = time.Now()
-		return client, client.initialRemoteConnectErrors
+	// Unless forcing a refresh, reuse an already-cached client so we skip a
+	// redundant remote connect when another goroutine cached one first.
+	if !forceRefresh {
+		m.clientsMu.Lock()
+		if client, exists := m.clients[userID]; exists {
+			m.activity[userID] = time.Now()
+			m.clientsMu.Unlock()
+			return client, client.InitialRemoteConnectErrors()
+		}
+		m.clientsMu.Unlock()
 	}
 
 	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 
+	// Connect outside the manager lock so remote MCP handshakes do not block other users.
 	// Cacheable client creation must not inherit request cancellation; a canceled
 	// popover/tab close would otherwise poison initialRemoteConnectErrors until TTL.
 	mcpErrors := userClients.ConnectToRemoteServers(cacheableContext(ctx), m.config.Servers, forceRefresh)
-	userClients.initialRemoteConnectErrors = mcpErrors
+	userClients.setInitialRemoteConnectErrors(mcpErrors)
+
+	m.clientsMu.Lock()
+	defer m.clientsMu.Unlock()
+
+	// Check again in case another goroutine created the client while we were connecting.
+	// On a forced refresh we intentionally replace (and close) any existing client.
+	if client, exists := m.clients[userID]; exists {
+		if !forceRefresh {
+			userClients.Close()
+			m.activity[userID] = time.Now()
+			return client, client.InitialRemoteConnectErrors()
+		}
+		client.Close()
+	}
 
 	// Store the client even if some servers failed to connect
 	// This allows partial success - user gets tools from working servers
@@ -186,7 +205,7 @@ func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*U
 	if exists {
 		m.activity[userID] = time.Now()
 		m.clientsMu.Unlock()
-		return client, client.initialRemoteConnectErrors
+		return client, client.InitialRemoteConnectErrors()
 	}
 	m.clientsMu.Unlock()
 
@@ -196,7 +215,8 @@ func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*U
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
 func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
-	userClient, mcpErrors := m.getClientForUser(ctx, userID)
+	userClient, initialErrors := m.getClientForUser(ctx, userID)
+	mcpErrors := cloneMCPErrors(initialErrors)
 
 	// Embedded and plugin connects intentionally receive the raw cancelable ctx:
 	// they run per-request and are not cached, so a canceled request should abort
@@ -207,7 +227,7 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
 		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient); embeddedErr != nil {
+			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
 				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
 			}
 		}
@@ -218,16 +238,11 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	for _, cfg := range pluginSnap {
 		if connectErr := userClient.ConnectToPluginServer(ctx, cfg, m.sourcePluginAPI); connectErr != nil {
 			m.log.Error("Failed to connect to plugin MCP server", "userID", userID, "pluginID", cfg.PluginID, "error", connectErr)
-			if mcpErrors == nil {
-				mcpErrors = &Errors{}
-			}
-			mcpErrors.Errors = append(mcpErrors.Errors, connectErr)
-			// Surface plugin connect failures on subsequent cached lookups.
-			userClient.initialRemoteConnectErrors = mcpErrors
+			mcpErrors = appendMCPError(mcpErrors, connectErr)
 		}
 	}
 
-	rawTools := userClient.GetTools()
+	rawTools := userClient.GetTools(ctx)
 	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
 	return filtered, mcpErrors
 }
@@ -267,6 +282,71 @@ func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
 		}
 	}
 	return refreshErr
+}
+
+func cloneMCPErrors(src *Errors) *Errors {
+	if src == nil || (len(src.ToolAuthErrors) == 0 && len(src.Errors) == 0) {
+		return nil
+	}
+	return &Errors{
+		ToolAuthErrors: append([]llm.ToolAuthError(nil), src.ToolAuthErrors...),
+		Errors:         append([]error(nil), src.Errors...),
+	}
+}
+
+func appendMCPError(mcpErrors *Errors, err error) *Errors {
+	if err == nil {
+		return mcpErrors
+	}
+	if mcpErrors == nil {
+		mcpErrors = &Errors{}
+	}
+	mcpErrors.Errors = append(mcpErrors.Errors, err)
+	return mcpErrors
+}
+
+func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOverride {
+	if m == nil {
+		return nil
+	}
+
+	var overrides map[string]ToolRetrievalOverride
+	addOverride := func(serverOrigin string, toolConfig ToolConfig) {
+		summary := strings.TrimSpace(toolConfig.RetrievalDescriptionOverride)
+		if summary == "" {
+			return
+		}
+		if overrides == nil {
+			overrides = make(map[string]ToolRetrievalOverride)
+		}
+		overrides[ToolRetrievalOverrideKey(serverOrigin, toolConfig.Name)] = ToolRetrievalOverride{
+			Summary: summary,
+		}
+	}
+
+	for _, server := range m.config.Servers {
+		if !server.Enabled {
+			continue
+		}
+		for _, toolConfig := range server.ToolConfigs {
+			addOverride(server.BaseURL, toolConfig)
+		}
+	}
+
+	for _, toolConfig := range m.config.EmbeddedServer.ToolConfigs {
+		addOverride(EmbeddedClientKey, toolConfig)
+	}
+
+	for _, server := range m.config.PluginServers {
+		if !server.Enabled || server.PluginID == "" {
+			continue
+		}
+		for _, toolConfig := range server.ToolConfigs {
+			addOverride(pluginServerOriginKey(server.PluginID), toolConfig)
+		}
+	}
+
+	return overrides
 }
 
 // snapshotEnabledPluginServers returns a copy of enabled plugin configs so
@@ -511,7 +591,7 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 
 		var filtered []llm.Tool
 		for _, t := range tools {
-			_, enabled := sc.GetToolPolicy(t.Name)
+			_, enabled := sc.GetToolPolicy(ToolPolicyLookupName(sc, t.Name))
 			if enabled {
 				filtered = append(filtered, t)
 			}

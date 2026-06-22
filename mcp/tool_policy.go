@@ -3,7 +3,11 @@
 
 package mcp
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+)
 
 // ToolPolicyChecker looks up the per-tool policy for a given MCP server/tool.
 type ToolPolicyChecker interface {
@@ -16,6 +20,21 @@ type ToolPolicyFunc func(serverBaseURL string, toolName string) (string, bool)
 // GetToolPolicy implements ToolPolicyChecker.
 func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string) (string, bool) {
 	return f(serverBaseURL, toolName)
+}
+
+// ToolPolicyLookupName returns the configured name to use for a runtime tool name.
+// Runtime MCP tools may be namespaced while persisted policy config is usually
+// stored by the server's bare tool name. An exact configured name still wins.
+func ToolPolicyLookupName(sc *ServerConfig, toolName string) string {
+	if sc == nil || toolName == "" || llm.IsBareMCPToolName(toolName) {
+		return toolName
+	}
+	for _, toolConfig := range sc.ToolConfigs {
+		if toolConfig.Name == toolName {
+			return toolName
+		}
+	}
+	return llm.BareMCPToolName(toolName)
 }
 
 // LookupToolPolicy resolves a tool's policy for embedded, remote, and plugin
@@ -32,12 +51,12 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 			BaseURL:     EmbeddedClientKey,
 			ToolConfigs: toolConfigs,
 		}
-		return embeddedCfg.GetToolPolicy(toolName)
+		return embeddedCfg.GetToolPolicy(ToolPolicyLookupName(embeddedCfg, toolName))
 	}
 
 	for i := range cfg.Servers {
 		if cfg.Servers[i].BaseURL == serverBaseURL {
-			return cfg.Servers[i].GetToolPolicy(toolName)
+			return cfg.Servers[i].GetToolPolicy(ToolPolicyLookupName(&cfg.Servers[i], toolName))
 		}
 	}
 
@@ -60,7 +79,7 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 			BaseURL:     serverBaseURL,
 			ToolConfigs: ps.ToolConfigs,
 		}
-		return synthetic.GetToolPolicy(toolName)
+		return synthetic.GetToolPolicy(ToolPolicyLookupName(synthetic, toolName))
 	}
 
 	return ToolPolicyAsk, false
