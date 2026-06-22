@@ -182,11 +182,16 @@ type DMStreamResult struct {
 // ProcessDMRequest builds a completion request from the conversation and
 // runs the tool loop, returning the final stream. The conversation must
 // already exist (created via CreateOrGetDMConversation).
+//
+// maxToolTurns bounds the tool-call-execute-recall loop for this bot; pass 0
+// or any non-positive value to use the system default
+// (llm.DefaultMaxToolTurns).
 func (c *Conversations) ProcessDMRequest(
 	ctx stdcontext.Context,
 	convID string,
 	lm llm.LanguageModel,
 	llmCtx *llm.Context,
+	maxToolTurns int,
 ) (*DMStreamResult, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "process dm request")
 	defer span.End()
@@ -207,7 +212,7 @@ func (c *Conversations) ProcessDMRequest(
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
 
-	runner := toolrunner.New(lm)
+	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxToolTurns))
 	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)

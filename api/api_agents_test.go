@@ -147,6 +147,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"reasoningEffort":         cfg.ReasoningEffort,
 		"thinkingBudget":          cfg.ThinkingBudget,
 		"structuredOutputEnabled": cfg.StructuredOutputEnabled,
+		"maxToolTurns":            cfg.MaxToolTurns,
 	}
 	for k, v := range overrides {
 		body[k] = v
@@ -224,6 +225,74 @@ func TestCreateAgentPersistsExplicitRequestValues(t *testing.T) {
 	assert.Equal(t, "high", agent.ReasoningEffort)
 	assert.False(t, agent.StructuredOutputEnabled)
 	assert.Empty(t, agent.EnabledNativeTools)
+}
+
+func TestCreateAgentMaxToolTurnsRoundTrip(t *testing.T) {
+	tests := []struct {
+		name             string
+		requestValue     any
+		expectStatus     int
+		expectStoredVal  int
+		expectStoredCall bool
+	}{
+		{
+			name:             "explicit positive value persists",
+			requestValue:     42,
+			expectStatus:     http.StatusCreated,
+			expectStoredVal:  42,
+			expectStoredCall: true,
+		},
+		{
+			name:             "zero persists as zero (effective value is the runner default)",
+			requestValue:     0,
+			expectStatus:     http.StatusCreated,
+			expectStoredVal:  0,
+			expectStoredCall: true,
+		},
+		{
+			name:             "negative is rejected by validation",
+			requestValue:     -1,
+			expectStatus:     http.StatusBadRequest,
+			expectStoredCall: false,
+		},
+		{
+			name:             "above ceiling is rejected by validation",
+			requestValue:     llm.MaxAllowedMaxToolTurns + 1,
+			expectStatus:     http.StatusBadRequest,
+			expectStoredCall: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			if tt.expectStoredCall {
+				e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+					UserId:      "bot-user-id-created",
+					Username:    "my-agent",
+					DisplayName: "My Agent",
+					Description: "User-created AI agent",
+				}, nil)
+			}
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			body := createAgentBody(map[string]any{"maxToolTurns": tt.requestValue})
+
+			recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
+			require.Equal(t, tt.expectStatus, recorder.Result().StatusCode)
+			if tt.expectStatus != http.StatusCreated {
+				return
+			}
+
+			var agent llm.BotConfig
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+			assert.Equal(t, tt.expectStoredVal, agent.MaxToolTurns)
+		})
+	}
 }
 
 func TestCreateAgentAutoEnableAllMCPTools(t *testing.T) {

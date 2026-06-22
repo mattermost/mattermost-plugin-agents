@@ -150,7 +150,7 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 				},
 			}
 
-			streamResult, err := c.ProcessDMRequest(context.Background(), conv.ID, lm, llmContext)
+			streamResult, err := c.ProcessDMRequest(context.Background(), conv.ID, lm, llmContext, 0)
 			require.NoError(t, err)
 
 			text := ""

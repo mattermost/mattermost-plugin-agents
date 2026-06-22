@@ -383,7 +383,7 @@ func TestProcessDMRequestIssuesSingleRequest(t *testing.T) {
 	c := &Conversations{convService: convService}
 	llmContext := &llm.Context{Tools: llm.NewNoTools()}
 
-	streamResult, err := c.ProcessDMRequest(context.Background(), "conv-id", lm, llmContext)
+	streamResult, err := c.ProcessDMRequest(context.Background(), "conv-id", lm, llmContext, 0)
 	require.NoError(t, err)
 	_, readErr := streamResult.Stream.ReadAll()
 	require.NoError(t, readErr)
