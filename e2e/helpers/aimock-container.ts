@@ -16,6 +16,36 @@ export const AIMOCK_IMAGE =
 export const AIMOCK_PORT = 8080;
 export const AIMOCK_NETWORK_ALIAS = 'openai';
 
+// aimock runs a Node HTTP server whose default keep-alive idle timeout is 5s.
+// The plugin's bifrost client (fasthttp) keeps idle connections pooled for up to
+// 30s (MaxIdleConnDuration), so between 5s and 30s of idle it reuses a connection
+// aimock has already closed. For streaming requests fasthttp surfaces this as a
+// hard error without retrying, which the plugin renders as an LLM error post and
+// flakes the e2e tests. Preloading this script raises the server keep-alive idle
+// timeout above the client reuse window so connections are never stale on reuse.
+const AIMOCK_KEEPALIVE_PRELOAD_TARGET = '/preload/keepalive.cjs';
+const AIMOCK_KEEPALIVE_PRELOAD = `'use strict';
+const http = require('http');
+const KEEP_ALIVE_MS = 120000;
+const HEADERS_MS = 125000;
+function applyTimeouts(server) {
+  try {
+    server.keepAliveTimeout = KEEP_ALIVE_MS;
+    server.headersTimeout = HEADERS_MS;
+  } catch (e) { /* ignore */ }
+  return server;
+}
+const origCreateServer = http.createServer;
+http.createServer = function (...args) {
+  return applyTimeouts(origCreateServer.apply(this, args));
+};
+const origListen = http.Server.prototype.listen;
+http.Server.prototype.listen = function (...args) {
+  applyTimeouts(this);
+  return origListen.apply(this, args);
+};
+`;
+
 export type AIMockStartOptions = {
     fixtures?: AIMockFixtureFile | AIMockFixture[];
     fixtureFiles?: Array<{ name: string; contents: AIMockFixtureFile | AIMockFixture[] }>;
@@ -192,6 +222,15 @@ export class AIMockContainer {
                     mode: 'ro',
                 },
             ])
+            .withCopyContentToContainer([
+                {
+                    content: AIMOCK_KEEPALIVE_PRELOAD,
+                    target: AIMOCK_KEEPALIVE_PRELOAD_TARGET,
+                },
+            ])
+            .withEnvironment({
+                NODE_OPTIONS: `--require=${AIMOCK_KEEPALIVE_PRELOAD_TARGET}`,
+            })
             .withCommand(this.buildCommand())
             .withWaitStrategy(Wait.forHttp('/ready', AIMOCK_PORT))
             .start();
