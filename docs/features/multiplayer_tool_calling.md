@@ -71,6 +71,8 @@ Pending tool calls remain pending. They do not auto-approve after a timeout, and
 
 A single Agent response can include multiple tool calls. If some of those calls are governed by an `auto_run` policy (§5) and others require approval, the auto-approved tools render with an **Auto-approved** badge and execute immediately, while the pending ones still show **Accept** / **Reject** buttons for the initiator. The badge applies per-tool, not per-response. (This is the behavior fixed in PR #645; earlier builds rendered the entire stream as either pending or approved.)
 
+When an `auto_run` tool is batched with a user-interaction tool such as `AskUserQuestion`, the auto-run call is paused until the initiator answers or skips the question. While pending, it is hidden from the UI so it does not look like it needs a separate approval click. Once the question is resolved, the server re-checks the tool policy and executes the paused auto-run tool without prompting again.
+
 ## 5. Per-tool policy interaction
 
 Admins configure each tool with one of three policy values:
@@ -105,6 +107,8 @@ The intent behind the three values, in plain language:
 
 The policy list is not user-editable from the chat surface. Admins set it in the agent's tool configuration; per-call approvals do not promote a tool from `ask` to `auto_run_*`.
 
+User-interaction tools (currently `AskUserQuestion`) always require the initiator to answer or skip. They never auto-execute, regardless of the configured policy, and are only available in human-initiated DMs and channel mentions with tool calling enabled.
+
 ## 6. Channel privacy: the Share / Keep Private two-step
 
 In a DM, when a tool runs, its arguments and results are visible to the only human in the conversation — the initiator — and there is nothing to decide. Channels add a second decision: even after a tool has run, its arguments and result may not be appropriate for everyone in the channel to see.
@@ -124,6 +128,7 @@ A few important properties of the two-step flow:
 - **Keep Private does not delete the result.** It is stored on the conversation and remains available to the Agent for generating the follow-up response. It is filtered out of channel-visible rendering for non-initiator members.
 - **The decision is recorded once.** Re-clicking **Share** or **Keep Private** after the decision is made is idempotent.
 - **A tool governed by `auto_run_everywhere` skips both steps — the tool auto-executes and its results are immediately marked as shared with the channel. There is no Share / Keep Private decision for `auto_run_everywhere` tools.** Admins setting a tool to `auto_run_everywhere` should treat the tool's results as unconditionally visible to every channel member, with no per-call privacy control.
+- **Interactive question answers skip the Share / Keep Private step.** The initiator's selection (or skip) is treated as user-authored content, marked shared, and the Agent's follow-up streams as soon as no other share decision remains.
 
 ## 7. The onlooker experience
 
@@ -134,6 +139,7 @@ Observers — channel members who did not trigger the Agent — see a deliberate
 | The Agent's prose response to the channel | Tool arguments — replaced with a placeholder while the call is pending or kept private (PR #681) |
 | The tool name, so they know which tool ran | The contents of any tool result that the initiator chose **Keep Private** for |
 | The **Auto-approved** badge for tools that ran without a prompt | Active **Accept** / **Reject** buttons — the buttons are inert for non-initiators, or hidden, depending on UI state |
+| A pending `AskUserQuestion` card showing "Waiting for an answer from the requester" once the initiator has seen it | The question text and offered options while the question is still pending — onlookers see a generic tool card instead |
 | The eventual Agent response built from approved + shared content | Anything the Agent generates from kept-private tool results that would leak the underlying data |
 
 In other words: by default, onlookers see that a conversation is happening, not what was passed to a third-party API. The Share / Keep Private decision (§6) gives the initiator the option to widen visibility deliberately.
@@ -149,6 +155,7 @@ The tool-call card is the single piece of UI that ties this whole model together
 - **The card is bound to the post and the conversation, not just the post.** PR #642 threaded the originating `postId` through the markdown renderer so the tool card always finds its conversation, including in edge cases like edited posts and rendered-image regressions.
 - **Mixed streams render correctly.** A response that contains both auto-approved tools and pending-approval tools renders each tool with its own state (PR #645). There is no longer a single "this whole response is approved" or "this whole response is pending" rendering bug.
 - **Bulk controls.** When multiple tools are pending in the same response, the card may surface **Accept all** and **Reject all** controls in addition to per-tool buttons. Bulk controls obey the same initiator-only rule as the individual buttons.
+- **Question cards for `AskUserQuestion`.** Pending user-interaction tools render as a question card for the initiator: numbered options for single-select, checkboxes for multi-select, an optional **Something else…** free-form field (enabled by default), and **Accept** / **Skip** actions. Resolved questions show **Answered** or **Skipped** status. Non-initiators see the generic tool card when the question arguments are redacted.
 
 ## 9. Bot-triggered flows
 
@@ -166,6 +173,7 @@ In practice this means:
 - A bot-posted message that asks an Agent to do something tool-heavy does not produce a tool-approval card with no human attached to it.
 - Tools governed by `auto_run_everywhere` may still execute under bot-triggered flows because they do not require approval at all. This is consistent with the policy model: `auto_run_everywhere` is the admin's pre-declared statement that this tool is safe to run without a human in the loop.
 - Tools governed by `ask` or `auto_run_in_dm` will not run when the trigger is automated, because there is no eligible human approver.
+- **`AskUserQuestion` is not cataloged for automated flows.** Bot-triggered invocations, bridge API calls, evals, and summarization flows never receive the question tool, so no orphaned question card can appear without a human initiator.
 
 This is the intentional behavior. If a workflow needs an Agent to invoke `ask`-policy tools on a recurring schedule, the right answer is for an admin to either (a) reclassify those tools as `auto_run_everywhere` after a security review, or (b) keep a human in the loop. Bots cannot promote themselves into the approver role.
 
