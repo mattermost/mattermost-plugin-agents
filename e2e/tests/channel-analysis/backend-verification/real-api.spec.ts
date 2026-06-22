@@ -25,7 +25,9 @@ const CHANNEL_ANALYSIS_MCP = {
 
 type ConversationBlock = {
     type: string;
+    id?: string;
     name?: string;
+    tool_use_id?: string;
     content?: string;
 };
 
@@ -126,9 +128,21 @@ async function expectReadChannelToolResult(
     rejectedMarkers: string[] = [],
 ): Promise<void> {
     const conversation = await fetchConversationForLatestLLMBotPost(mattermost);
-    const readChannelToolResult = conversation.turns
+    const contentBlocks = conversation.turns.flatMap((turn) => turn.content);
+    const readChannelToolUseIDs = new Set(contentBlocks
+        .filter((block) => block.type === 'tool_use' && block.name === 'read_channel' && block.id)
+        .map((block) => block.id!));
+    const readChannelToolResultBlocks = conversation.turns
         .flatMap((turn) => turn.content)
-        .filter((block) => block.type === 'tool_result')
+        .filter((block) => block.type === 'tool_result' && (
+            block.name === 'read_channel' ||
+            (block.tool_use_id !== undefined && readChannelToolUseIDs.has(block.tool_use_id))
+        ));
+    if (readChannelToolResultBlocks.length === 0) {
+        throw new Error('Could not find a read_channel tool_result block in the latest conversation');
+    }
+
+    const readChannelToolResult = readChannelToolResultBlocks
         .map((block) => block.content ?? '')
         .join('\n');
 
