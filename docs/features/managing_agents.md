@@ -94,6 +94,7 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Agent avatar** | Optional. Upload a custom image. Avatar upload is a second step after the agent record is created or updated; if the avatar upload fails the rest of the save still succeeds. |
 | **AI Service** | Required. Pick a configured service from the dropdown. Services are managed in **System Console > Plugins > Agents** and shared across agents. If the agent references a service that has been deleted, an "Unknown service (deleted)" entry appears in the dropdown until you pick a new one. |
 | **Model** | Optional. Override the service's default model for this agent. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, and Vertex AI services the field becomes a combobox populated by a live model fetch from the provider; for other services it is a free-text field. Leave empty to use the service default. |
+| **Max tool turns** | Maximum number of consecutive tool-call/execute rounds the agent performs in a single response before stopping. Defaults to **30** (allowed range **1–250**). Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn (for example dynamic MCP discovery: search → load → execute). Clearing the field saves the default. |
 | **Custom instructions** | Free-text. Prepended to every request as the agent's system prompt. Use it for tone, role, vocabulary, or workflow guidance. |
 | **Enable Vision** | Available for service types that support image input. Lets the agent process attached images. Requires a vision-capable model. |
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
@@ -145,7 +146,7 @@ The editor uses a full-document `PUT /agents/:id` save, so every visible field o
 
 ### What's editable vs locked
 
-- **Display name**, **avatar**, **service**, **model**, **custom instructions**, **vision**, **tools**, **native tools**, **reasoning**, **structured output**, **channel access**, **user access**, **agent admins**, and the **MCP tool grants** can all be changed at any time.
+- **Display name**, **avatar**, **service**, **model**, **max tool turns**, **custom instructions**, **vision**, **tools**, **native tools**, **reasoning**, **structured output**, **channel access**, **user access**, **agent admins**, and the **MCP tool grants** can all be changed at any time.
 - **Agent username is permanent.** Once the agent is created, the username field is disabled in the editor. The Mattermost bot account is keyed off this username, and changing it would orphan existing `@mentions` and conversation history. To use a different username, create a new agent.
 
 ### Unsaved-changes warning
