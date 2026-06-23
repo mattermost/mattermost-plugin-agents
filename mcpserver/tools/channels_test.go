@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -168,6 +169,60 @@ func TestToolReadChannelPagination(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestToolReadChannelSinceWithPagination documents that `since` filters within
+// the fetched page (reducing the displayed count) while the next-page hint is
+// driven by how many posts the server returned, not the filtered count.
+func TestToolReadChannelSinceWithPagination(t *testing.T) {
+	channelID := model.NewId()
+	teamID := model.NewId()
+	userID := model.NewId()
+
+	const perPage = 5
+	base := int64(1_700_000_000) // seconds; spaced one second apart for second-granularity `since`
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", channelID), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.Channel{Id: channelID, Name: "general", DisplayName: "General", Type: model.ChannelTypeOpen, TeamId: teamID})
+	})
+	mux.HandleFunc(fmt.Sprintf("/api/v4/teams/%s", teamID), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.Team{Id: teamID, Name: "eng", DisplayName: "Engineering"})
+	})
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s/posts", channelID), func(w http.ResponseWriter, r *http.Request) {
+		list := &model.PostList{Order: make([]string, 0, perPage), Posts: make(map[string]*model.Post, perPage)}
+		for i := 0; i < perPage; i++ {
+			id := fmt.Sprintf("post%023d", i)
+			list.Order = append(list.Order, id)
+			list.Posts[id] = &model.Post{Id: id, ChannelId: channelID, UserId: userID, Message: fmt.Sprintf("message %d", i), CreateAt: (base + int64(i)) * 1000}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(list)
+	})
+	mux.HandleFunc("/api/v4/users/ids", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]*model.User{{Id: userID, Username: "author"}})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+	mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}
+
+	// `since` drops the two oldest of a full 5-post page, leaving 3.
+	since := time.Unix(base+2, 0).UTC().Format(time.RFC3339)
+	argsGetter := func(target any) error {
+		return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q,"per_page":%d,"since":%q}`, channelID, perPage, since)), target)
+	}
+
+	out, err := provider.toolReadChannel(mcpCtx, argsGetter)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "Found 3 posts (page 0):", "since should reduce the displayed count to the matching posts")
+	assert.Contains(t, out, "More posts available", "a full fetched page should still hint at more, independent of since filtering")
 }
 
 func TestToolGetChannelInfoChannelRole(t *testing.T) {
