@@ -5,6 +5,8 @@ package mcpserver_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -107,6 +109,42 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 			_, err := executeToolWithMCP(t, suite, "read_channel", args)
 			require.Error(t, err, "read_channel with invalid channel should fail")
+		})
+
+		t.Run("PaginationBeyond100", func(t *testing.T) {
+			// Seed more posts than the legacy hard cap of 100 so we can prove the
+			// tool can now return >100 posts in a single call and page through them.
+			paginationChannel := testhelpers.CreateTestChannel(t, client, testData.Team.Id, "pagination-channel", "Pagination Channel")
+			const totalPosts = 130
+			for i := 0; i < totalPosts; i++ {
+				testhelpers.CreateTestPost(t, client, paginationChannel.Id, fmt.Sprintf("paginate-msg-%03d", i))
+			}
+
+			// Page 0 with per_page=120 returns more than the old 100 cap allowed.
+			firstPage, err := executeToolWithMCP(t, suite, "read_channel", map[string]interface{}{
+				"channel_id": paginationChannel.Id,
+				"per_page":   120,
+				"page":       0,
+			})
+			require.NoError(t, err, "read_channel page 0 should succeed")
+			firstText := textContent(t, firstPage)
+			assert.Contains(t, firstText, "Found 120 posts (page 0)", "page 0 should return 120 posts, exceeding the old 100 cap")
+			assert.Contains(t, firstText, "More posts available", "page 0 should hint that more posts exist")
+
+			// Page 1 returns the remaining 10 posts.
+			secondPage, err := executeToolWithMCP(t, suite, "read_channel", map[string]interface{}{
+				"channel_id": paginationChannel.Id,
+				"per_page":   120,
+				"page":       1,
+			})
+			require.NoError(t, err, "read_channel page 1 should succeed")
+			secondText := textContent(t, secondPage)
+			assert.Contains(t, secondText, "(page 1)", "page 1 should be labeled as the second page")
+			assert.NotContains(t, secondText, "More posts available", "the final page should not hint at more posts")
+
+			// The oldest post is only reachable beyond the first 100 newest posts,
+			// confirming pagination retrieves content the old cap hid.
+			assert.Contains(t, secondText, "paginate-msg-000", "oldest post should be reachable on a later page")
 		})
 	})
 
@@ -276,6 +314,37 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 			_, err := executeToolWithMCP(t, suite, "read_post", args)
 			require.Error(t, err, "read_post with invalid ID should fail")
+		})
+
+		t.Run("ThreadPagination", func(t *testing.T) {
+			// Build a thread with a root and several replies, then page through it.
+			root := testhelpers.CreateTestPost(t, client, testData.Channel.Id, "thread root post")
+			const replies = 9 // 10 posts total including the root
+			for i := 0; i < replies; i++ {
+				reply := &model.Post{ChannelId: testData.Channel.Id, RootId: root.Id, Message: fmt.Sprintf("thread reply %d", i)}
+				_, _, err := client.CreatePost(context.Background(), reply)
+				require.NoError(t, err, "should create thread reply")
+			}
+
+			firstPage, err := executeToolWithMCP(t, suite, "read_post", map[string]interface{}{
+				"post_id":  root.Id,
+				"per_page": 4,
+				"page":     0,
+			})
+			require.NoError(t, err, "read_post thread page 0 should succeed")
+			firstText := textContent(t, firstPage)
+			assert.Contains(t, firstText, "Thread with 10 posts (page 0, showing 4)", "page 0 should show 4 of 10 thread posts")
+			assert.Contains(t, firstText, "More posts in this thread", "page 0 should hint that more thread posts exist")
+
+			lastPage, err := executeToolWithMCP(t, suite, "read_post", map[string]interface{}{
+				"post_id":  root.Id,
+				"per_page": 4,
+				"page":     2,
+			})
+			require.NoError(t, err, "read_post thread page 2 should succeed")
+			lastText := textContent(t, lastPage)
+			assert.Contains(t, lastText, "Thread with 10 posts (page 2, showing 2)", "final page should show the last 2 posts")
+			assert.NotContains(t, lastText, "More posts in this thread", "the final page should not hint at more posts")
 		})
 	})
 
@@ -593,4 +662,17 @@ func TestMCPToolsIntegration(t *testing.T) {
 func executeToolWithMCP(t *testing.T, suite *TestSuite, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
 	require.NotNil(t, suite.mcpServer, "MCP server must be created before creating client sessions")
 	return testhelpers.ExecuteMCPTool(t, suite.mcpServer.GetMCPServer(), toolName, args)
+}
+
+// textContent returns the concatenated text of a tool result's content blocks.
+func textContent(t *testing.T, result *mcp.CallToolResult) string {
+	t.Helper()
+	require.NotNil(t, result, "tool result must not be nil")
+	var sb strings.Builder
+	for _, content := range result.Content {
+		if tc, ok := content.(*mcp.TextContent); ok {
+			sb.WriteString(tc.Text)
+		}
+	}
+	return sb.String()
 }
