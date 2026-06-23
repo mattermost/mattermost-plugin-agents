@@ -189,10 +189,14 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 		if perPage > readPostMaxPerPage {
 			perPage = readPostMaxPerPage
 		}
-		pageStart = page * perPage
-		if pageStart >= len(posts) {
+		totalPages := totalThreadPosts / perPage
+		if totalThreadPosts%perPage != 0 {
+			totalPages++
+		}
+		if page >= totalPages {
 			return fmt.Sprintf("no posts found on page %d (thread has %d posts)", page, totalThreadPosts), nil
 		}
+		pageStart = page * perPage
 		pageEnd := pageStart + perPage
 		if pageEnd > len(posts) {
 			pageEnd = len(posts)

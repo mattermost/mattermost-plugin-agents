@@ -6,6 +6,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -169,4 +170,25 @@ func TestToolReadPostThreadPerPageCap(t *testing.T) {
 	assert.Contains(t, out, fmt.Sprintf("Thread with %d posts (page 0, showing 200):", threadSize),
 		"per_page above 200 should be clamped to 200 posts per page")
 	assert.Contains(t, out, "More posts in this thread", "a capped first page should hint at more posts")
+}
+
+func TestToolReadPostThreadPageOverflow(t *testing.T) {
+	rootID := model.NewId()
+	channelID := model.NewId()
+	teamID := model.NewId()
+	userID := model.NewId()
+	const threadSize = 10
+
+	ts := readPostThreadServer(t, rootID, channelID, teamID, userID, threadSize)
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+	mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}
+
+	argsGetter := func(target any) error {
+		return json.Unmarshal([]byte(fmt.Sprintf(`{"post_id":%q,"per_page":4,"page":%d}`, rootID, math.MaxInt64)), target)
+	}
+
+	out, err := provider.toolReadPost(mcpCtx, argsGetter)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("no posts found on page %d (thread has %d posts)", math.MaxInt64, threadSize), out)
 }
