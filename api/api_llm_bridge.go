@@ -330,9 +330,19 @@ func (a *API) prepareAgentBridgeCompletion(
 	// hooks by either the bare or namespaced form; both collapse to the same bare
 	// key. Keys are issued lazily per scoped tool below, tracked in beforeHookKeys
 	// so the deferred cleanup runs even on later failures.
+	//
+	// Reject two distinct keys (e.g. "search_posts" and "mattermost__search_posts")
+	// that collapse to the same bare name: silently keeping one would be
+	// non-deterministic. Each tool may be hooked once.
 	hooksByBareName := make(map[string]bridgeclient.ToolHookConfig, len(req.ToolHooks))
+	hookKeyByBareName := make(map[string]string, len(req.ToolHooks))
 	for name, cfg := range req.ToolHooks {
-		hooksByBareName[llm.BareMCPToolName(name)] = cfg
+		bare := llm.BareMCPToolName(name)
+		if existing, ok := hookKeyByBareName[bare]; ok {
+			return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, fmt.Errorf("tool_hooks has conflicting entries %q and %q for the same tool; specify it once", existing, name)
+		}
+		hookKeyByBareName[bare] = name
+		hooksByBareName[bare] = cfg
 	}
 
 	autoRunNames := make(map[string]struct{})

@@ -2193,6 +2193,51 @@ func TestPrepareAgentBridgeCompletionToolHooksNormalizeToBare(t *testing.T) {
 	}
 }
 
+// TestPrepareAgentBridgeCompletionToolHooksRejectsConflictingKeys verifies that
+// two tool_hooks keys for the same tool (one bare, one namespaced) that normalize
+// to the same bare name are rejected deterministically rather than silently
+// keeping one.
+func TestPrepareAgentBridgeCompletionToolHooksRejectsConflictingKeys(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.setupBridgeMCPProvider([]llm.Tool{
+		bridgeMCPTool("mattermost", "search_posts", embeddedOrigin),
+	})
+	e.setupTestBot(llm.BotConfig{
+		Name:                  "testbot",
+		DisplayName:           "Test Bot",
+		UserAccessLevel:       llm.UserAccessLevelAll,
+		MCPDynamicToolLoading: true,
+		EnabledMCPTools: []llm.EnabledMCPTool{
+			{ServerOrigin: embeddedOrigin, ToolName: "search_posts"},
+		},
+	})
+
+	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		context.Background(),
+		testBotUserID,
+		bridgeclient.CompletionRequest{
+			Posts:        []bridgeclient.Post{{Role: "user", Message: "Hi"}},
+			AllowedTools: []string{"search_posts"},
+			UserID:       testUserID,
+			ToolHooks: map[string]bridgeclient.ToolHookConfig{
+				"search_posts":             {BeforeCallback: "/hooks/before-a"},
+				"mattermost__search_posts": {BeforeCallback: "/hooks/before-b"},
+			},
+		},
+		"com.example.caller",
+		llm.OperationBridgeAgent,
+		llm.SubTypeNoStream,
+	)
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, statusCode)
+	require.Contains(t, err.Error(), "conflicting entries")
+}
+
 func TestCleanupBeforeHookKeysDeletesIssuedKeys(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
