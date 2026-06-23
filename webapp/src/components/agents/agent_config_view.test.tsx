@@ -112,7 +112,6 @@ jest.mock('./tabs/mcps_tab', () => ({
     ),
 }));
 
-
 const services: ServiceInfo[] = [
     {
         id: 'svc_1',
