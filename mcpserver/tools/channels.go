@@ -19,9 +19,15 @@ import (
 // ReadChannelArgs represents arguments for the read_channel tool
 type ReadChannelArgs struct {
 	ChannelID string `json:"channel_id" jsonschema:"The ID of the channel to read from,minLength=26,maxLength=26"`
-	Limit     int    `json:"limit,omitempty" jsonschema:"Number of posts to retrieve (default: 20, max: 100),minimum=1,maximum=100"`
+	Page      int    `json:"page,omitempty" jsonschema:"Page number for pagination, starting at 0 (default: 0). Increment to retrieve older posts beyond the first page,minimum=0"`
+	PerPage   int    `json:"per_page,omitempty" jsonschema:"Number of posts to retrieve per page (default: 20, max: 200),minimum=1,maximum=200"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"Deprecated alias for per_page; use per_page instead (max: 200),minimum=1,maximum=200"`
 	Since     string `json:"since,omitempty" jsonschema:"Only get posts since this timestamp (ISO 8601 format),format=date-time"`
 }
+
+// readChannelMaxPerPage caps per_page to protect against oversized responses,
+// consistent with the other paginated channel tools.
+const readChannelMaxPerPage = 200
 
 // CreateChannelArgs represents arguments for the create_channel tool
 type CreateChannelArgs struct {
@@ -66,7 +72,7 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "read_channel",
-			Description: "Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20), since (ISO 8601 timestamp, optional). Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"since\": \"2024-01-01T00:00:00Z\"}",
+			Description: "Read recent posts from a Mattermost channel. Parameters: channel_id (required), per_page (1-200, default 20), page (0+, default 0), since (ISO 8601 timestamp, optional). Posts are returned newest-first across pages; increment page to retrieve more than per_page posts (e.g. page=1 for the next batch). Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"per_page\": 50, \"page\": 0, \"since\": \"2024-01-01T00:00:00Z\"}",
 			Schema:      llm.NewJSONSchemaFromStruct[ReadChannelArgs](),
 			Resolver:    p.toolReadChannel,
 		},
@@ -119,12 +125,21 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
-	// Set defaults and validate
-	if args.Limit == 0 {
-		args.Limit = 20
+	// Resolve per_page, accepting the deprecated `limit` alias when per_page is unset.
+	perPage := args.PerPage
+	if perPage <= 0 {
+		perPage = args.Limit
 	}
-	if args.Limit > 100 {
-		args.Limit = 100
+	if perPage <= 0 {
+		perPage = 20
+	}
+	if perPage > readChannelMaxPerPage {
+		perPage = readChannelMaxPerPage
+	}
+
+	page := args.Page
+	if page < 0 {
+		page = 0
 	}
 
 	// Get client and context
@@ -182,22 +197,29 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	// Get posts from the channel
-	posts, _, err := client.GetPostsForChannel(ctx, args.ChannelID, 0, args.Limit, "", false, false)
+	posts, _, err := client.GetPostsForChannel(ctx, args.ChannelID, page, perPage, "", false, false)
 	if err != nil {
 		return "failed to fetch channel posts", fmt.Errorf("error fetching posts: %w", err)
 	}
 
 	// Filter by since timestamp if provided
+	fetched := posts.ToSlice()
 	var filteredPosts []*model.Post
-	for _, post := range posts.ToSlice() {
+	for _, post := range fetched {
 		if since == 0 || post.CreateAt >= since {
 			filteredPosts = append(filteredPosts, post)
 		}
 	}
 
 	if len(filteredPosts) == 0 {
+		if page > 0 {
+			return fmt.Sprintf("no posts found on page %d", page), nil
+		}
 		return "no posts found in the specified timeframe", nil
 	}
+
+	// A full page implies more posts may exist on the next page.
+	hasMore := len(fetched) >= perPage
 
 	// Sort chronologically (oldest first) for natural reading order
 	sort.Slice(filteredPosts, func(i, j int) bool {
@@ -236,7 +258,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	// Format the response
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channelDisplayName, teamDisplayName))
-	result.WriteString(fmt.Sprintf("Found %d posts:\n\n", len(filteredPosts)))
+	result.WriteString(fmt.Sprintf("Found %d posts (page %d):\n\n", len(filteredPosts), page))
 
 	postIndex := format.BuildPostIndex(filteredPosts)
 	for i, post := range filteredPosts {
@@ -252,6 +274,10 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 			ReplyAnnotation: replyAnnotation,
 			Post:            post,
 		})
+	}
+
+	if hasMore {
+		result.WriteString(fmt.Sprintf("More posts available — call read_channel again with page=%d to retrieve the next %d.\n", page+1, perPage))
 	}
 
 	return result.String(), nil

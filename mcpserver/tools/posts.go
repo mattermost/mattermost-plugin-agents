@@ -16,7 +16,12 @@ import (
 type ReadPostArgs struct {
 	PostID        string `json:"post_id" jsonschema:"The ID of the post to read,minLength=26,maxLength=26"`
 	IncludeThread bool   `json:"include_thread,omitempty" jsonschema:"Whether to include the entire thread (default: true)"`
+	Page          int    `json:"page,omitempty" jsonschema:"Page number for paginating large threads, starting at 0 (default: 0). Only applies when include_thread is true,minimum=0"`
+	PerPage       int    `json:"per_page,omitempty" jsonschema:"Maximum number of thread posts to return per page (max: 200). When omitted, the entire thread is returned. Only applies when include_thread is true,minimum=1,maximum=200"`
 }
+
+// readPostMaxPerPage caps per_page to protect against oversized responses.
+const readPostMaxPerPage = 200
 
 // CreatePostArgs represents arguments for the create_post tool
 type CreatePostArgs struct {
@@ -70,7 +75,7 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "read_post",
-			Description: "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}",
+			Description: "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true), per_page (1-200, optional — caps thread posts per page; omit to return the whole thread), page (0+, default 0 — increment to page through a long thread). Returns post content, author info, and optionally replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true, \"per_page\": 50, \"page\": 0}",
 			Schema:      NewJSONSchemaForAccessMode[ReadPostArgs](string(p.accessMode)),
 			Resolver:    p.toolReadPost,
 		},
@@ -170,6 +175,31 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 		return "no posts found", nil
 	}
 
+	// Paginate the thread in memory when per_page is provided so callers can page
+	// through large threads instead of receiving every reply at once.
+	totalThreadPosts := len(posts)
+	page := args.Page
+	if page < 0 {
+		page = 0
+	}
+	pageStart := 0
+	paginated := args.IncludeThread && args.PerPage > 0
+	if paginated {
+		perPage := args.PerPage
+		if perPage > readPostMaxPerPage {
+			perPage = readPostMaxPerPage
+		}
+		pageStart = page * perPage
+		if pageStart >= len(posts) {
+			return fmt.Sprintf("no posts found on page %d (thread has %d posts)", page, totalThreadPosts), nil
+		}
+		pageEnd := pageStart + perPage
+		if pageEnd > len(posts) {
+			pageEnd = len(posts)
+		}
+		posts = posts[pageStart:pageEnd]
+	}
+
 	// Get channel and team info for context (using the first post's channel)
 	var channelName, teamName string
 	if len(posts) > 0 {
@@ -208,8 +238,12 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	}
 	result.WriteString("\n")
 
-	if args.IncludeThread && len(posts) > 1 {
-		result.WriteString(fmt.Sprintf("Thread with %d posts:\n\n", len(posts)))
+	if args.IncludeThread && totalThreadPosts > 1 {
+		if paginated {
+			result.WriteString(fmt.Sprintf("Thread with %d posts (page %d, showing %d):\n\n", totalThreadPosts, page, len(posts)))
+		} else {
+			result.WriteString(fmt.Sprintf("Thread with %d posts:\n\n", totalThreadPosts))
+		}
 	}
 
 	for i, post := range posts {
@@ -221,10 +255,14 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 			username = user.Username
 		}
 		format.WritePost(&result, format.PostEntry{
-			HeaderLabel: fmt.Sprintf("Post %d", i+1),
+			HeaderLabel: fmt.Sprintf("Post %d", pageStart+i+1),
 			Username:    username,
 			Post:        post,
 		})
+	}
+
+	if paginated && pageStart+len(posts) < totalThreadPosts {
+		result.WriteString(fmt.Sprintf("More posts in this thread — call read_post again with page=%d to retrieve the next page.\n", page+1))
 	}
 
 	return result.String(), nil
