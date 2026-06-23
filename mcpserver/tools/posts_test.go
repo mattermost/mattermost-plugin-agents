@@ -103,6 +103,13 @@ func TestToolReadPostThreadPagination(t *testing.T) {
 			expectError: false,
 			expectMsg:   fmt.Sprintf("no posts found on page 5 (thread has %d posts)", threadSize),
 		},
+		{
+			name:           "negative page clamps to zero",
+			args:           fmt.Sprintf(`{"post_id":%q,"per_page":4,"page":-2}`, rootID),
+			expectHeader:   fmt.Sprintf("Thread with %d posts (page 0, showing 4):", threadSize),
+			expectPostNums: []string{"Post 1", "Post 4"},
+			expectMoreHint: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -135,4 +142,31 @@ func TestToolReadPostThreadPagination(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestToolReadPostThreadPerPageCap verifies per_page is clamped to the 200 max,
+// so a single page never returns more than the cap even when a larger value is
+// requested for an oversized thread.
+func TestToolReadPostThreadPerPageCap(t *testing.T) {
+	rootID := model.NewId()
+	channelID := model.NewId()
+	teamID := model.NewId()
+	userID := model.NewId()
+	const threadSize = 205
+
+	ts := readPostThreadServer(t, rootID, channelID, teamID, userID, threadSize)
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+	mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}
+
+	argsGetter := func(target any) error {
+		return json.Unmarshal([]byte(fmt.Sprintf(`{"post_id":%q,"per_page":500}`, rootID)), target)
+	}
+
+	out, err := provider.toolReadPost(mcpCtx, argsGetter)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, fmt.Sprintf("Thread with %d posts (page 0, showing 200):", threadSize),
+		"per_page above 200 should be clamped to 200 posts per page")
+	assert.Contains(t, out, "More posts in this thread", "a capped first page should hint at more posts")
 }
