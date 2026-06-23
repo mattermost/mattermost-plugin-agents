@@ -29,6 +29,11 @@ function isTransientHealthCheckError(message: string): boolean {
         m.includes('fetch failed') || m.includes('network') || m.includes('socket');
 }
 
+// Upstream HTTP statuses that indicate a transient/overloaded provider rather
+// than a misconfiguration. Retrying these avoids failing CI on temporary
+// upstream blips (e.g. Anthropic 529 "Overloaded" or 500 "Internal server error").
+const RETRYABLE_HTTP_STATUSES = new Set([429, 500, 502, 503, 529]);
+
 async function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -64,6 +69,13 @@ async function checkAnthropicHealth(service: LLMService): Promise<HealthCheckRes
 
             const body = await response.text().catch(() => '');
             lastError = `HTTP ${response.status}: ${body.substring(0, 200)}`;
+            if (attempt < maxAttempts && RETRYABLE_HTTP_STATUSES.has(response.status)) {
+                console.warn(
+                    `API Health Check: Anthropic (${service.defaultModel}) attempt ${attempt}/${maxAttempts} failed (${lastError}); retrying…`,
+                );
+                await sleep(2000 * attempt);
+                continue;
+            }
             return {
                 provider: 'Anthropic',
                 model: service.defaultModel,
@@ -129,6 +141,13 @@ async function checkOpenAIHealth(service: LLMService): Promise<HealthCheckResult
 
             const body = await response.text().catch(() => '');
             lastError = `HTTP ${response.status}: ${body.substring(0, 200)}`;
+            if (attempt < maxAttempts && RETRYABLE_HTTP_STATUSES.has(response.status)) {
+                console.warn(
+                    `API Health Check: OpenAI (${service.defaultModel}) attempt ${attempt}/${maxAttempts} failed (${lastError}); retrying…`,
+                );
+                await sleep(2000 * attempt);
+                continue;
+            }
             return {
                 provider: 'OpenAI',
                 model: service.defaultModel,
