@@ -114,10 +114,20 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	adminClient, err := container.GetAdminClient(ctx)
 	require.NoError(t, err, "Failed to get admin client")
 
-	// Create a personal access token for testing
-	pat, _, err := adminClient.CreateUserAccessToken(ctx, "me", "MCP Integration Test Token")
-	require.NoError(t, err, "Failed to create PAT token")
-	adminToken := pat.Token
+	// Create a personal access token for testing.
+	// SetConfig writes the config, but the running server applies it asynchronously,
+	// so the first attempt can race the propagation and fail with "Personal access
+	// tokens are disabled on this server." Retry until the config takes effect.
+	var adminToken string
+	require.Eventually(t, func() bool {
+		pat, _, patErr := adminClient.CreateUserAccessToken(ctx, "me", "MCP Integration Test Token")
+		if patErr != nil {
+			t.Logf("CreateUserAccessToken not ready yet: %v", patErr)
+			return false
+		}
+		adminToken = pat.Token
+		return true
+	}, 30*time.Second, time.Second, "Failed to create PAT token")
 
 	return &TestSuite{
 		t:          t,
