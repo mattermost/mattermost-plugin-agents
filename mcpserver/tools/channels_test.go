@@ -65,55 +65,74 @@ func TestToolReadChannelPagination(t *testing.T) {
 	userID := model.NewId()
 
 	tests := []struct {
-		name            string
-		args            string
-		numPosts        int
-		expectPage      string
-		expectPerPage   string
-		expectMoreHint  bool
-		expectPageLabel string
+		name          string
+		args          string
+		numPosts      int
+		expectPage    string
+		expectPerPage string
+		expectFound   string // exact "Found N posts (page X)" line, when non-empty
+		expectHint    string // exact next-page hint, when non-empty
+		expectNoHint  bool
+		expectMsg     string // exact full output, for non-listing responses
 	}{
 		{
-			name:            "defaults to page 0 per_page 20",
-			args:            fmt.Sprintf(`{"channel_id":%q}`, channelID),
-			numPosts:        5,
-			expectPage:      "0",
-			expectPerPage:   "20",
-			expectMoreHint:  false,
-			expectPageLabel: "(page 0)",
+			name:          "defaults to page 0 per_page 20",
+			args:          fmt.Sprintf(`{"channel_id":%q}`, channelID),
+			numPosts:      5,
+			expectPage:    "0",
+			expectPerPage: "20",
+			expectFound:   "Found 5 posts (page 0):",
+			expectNoHint:  true,
 		},
 		{
-			name:            "per_page and page are forwarded",
-			args:            fmt.Sprintf(`{"channel_id":%q,"per_page":50,"page":2}`, channelID),
-			numPosts:        10,
-			expectPage:      "2",
-			expectPerPage:   "50",
-			expectMoreHint:  false,
-			expectPageLabel: "(page 2)",
+			name:          "per_page and page are forwarded",
+			args:          fmt.Sprintf(`{"channel_id":%q,"per_page":50,"page":2}`, channelID),
+			numPosts:      10,
+			expectPage:    "2",
+			expectPerPage: "50",
+			expectFound:   "Found 10 posts (page 2):",
+			expectNoHint:  true,
 		},
 		{
-			name:           "legacy limit aliases per_page",
-			args:           fmt.Sprintf(`{"channel_id":%q,"limit":35}`, channelID),
-			numPosts:       5,
-			expectPage:     "0",
-			expectPerPage:  "35",
-			expectMoreHint: false,
+			name:          "legacy limit aliases per_page",
+			args:          fmt.Sprintf(`{"channel_id":%q,"limit":35}`, channelID),
+			numPosts:      5,
+			expectPage:    "0",
+			expectPerPage: "35",
+			expectNoHint:  true,
 		},
 		{
-			name:           "per_page is capped at 200",
-			args:           fmt.Sprintf(`{"channel_id":%q,"per_page":500}`, channelID),
-			numPosts:       5,
-			expectPage:     "0",
-			expectPerPage:  "200",
-			expectMoreHint: false,
+			name:          "per_page is capped at 200",
+			args:          fmt.Sprintf(`{"channel_id":%q,"per_page":500}`, channelID),
+			numPosts:      5,
+			expectPage:    "0",
+			expectPerPage: "200",
+			expectNoHint:  true,
 		},
 		{
-			name:           "full page surfaces a next-page hint",
-			args:           fmt.Sprintf(`{"channel_id":%q,"per_page":5}`, channelID),
-			numPosts:       5,
-			expectPage:     "0",
-			expectPerPage:  "5",
-			expectMoreHint: true,
+			name:          "negative page clamps to zero",
+			args:          fmt.Sprintf(`{"channel_id":%q,"page":-3}`, channelID),
+			numPosts:      5,
+			expectPage:    "0",
+			expectPerPage: "20",
+			expectNoHint:  true,
+		},
+		{
+			name:          "full page surfaces a next-page hint",
+			args:          fmt.Sprintf(`{"channel_id":%q,"per_page":5}`, channelID),
+			numPosts:      5,
+			expectPage:    "0",
+			expectPerPage: "5",
+			expectFound:   "Found 5 posts (page 0):",
+			expectHint:    "More posts available — call read_channel again with page=1 to retrieve the next 5.",
+		},
+		{
+			name:          "empty later page reports the page number",
+			args:          fmt.Sprintf(`{"channel_id":%q,"per_page":5,"page":3}`, channelID),
+			numPosts:      0,
+			expectPage:    "3",
+			expectPerPage: "5",
+			expectMsg:     "no posts found on page 3",
 		},
 	}
 
@@ -134,13 +153,17 @@ func TestToolReadChannelPagination(t *testing.T) {
 			assert.Equal(t, tt.expectPage, captured.Get("page"), "page query param")
 			assert.Equal(t, tt.expectPerPage, captured.Get("per_page"), "per_page query param")
 
-			if tt.expectPageLabel != "" {
-				assert.Contains(t, out, tt.expectPageLabel)
+			if tt.expectMsg != "" {
+				assert.Equal(t, tt.expectMsg, out)
+				return
 			}
-			if tt.expectMoreHint {
-				assert.Contains(t, out, "More posts available")
-				assert.Contains(t, out, fmt.Sprintf("page=%s", "1"))
-			} else {
+			if tt.expectFound != "" {
+				assert.Contains(t, out, tt.expectFound)
+			}
+			if tt.expectHint != "" {
+				assert.Contains(t, out, tt.expectHint)
+			}
+			if tt.expectNoHint {
 				assert.NotContains(t, out, "More posts available")
 			}
 		})
