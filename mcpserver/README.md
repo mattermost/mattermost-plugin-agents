@@ -53,7 +53,7 @@ Create a new post in Mattermost.
   - **File Path Format**: Use relative paths like `document.pdf` or `folder/image.png` (files are accessed from the `mcpserver/data/` directory)
 
 ### `create_draft`
-Create or update a draft message in a channel. The draft is not sent — it is saved privately for the user and appears prefilled in their message input box for that channel (or thread) so they can review, edit, and send it themselves. There is one draft per channel/thread, so calling this again for the same `channel_id` (and `root_id`) overwrites the previous draft.
+Create or update a draft message in a channel. The draft is not sent — it is saved privately for the user and appears prefilled in their message input box for that channel (or thread) so they can review, edit, and send it themselves. This tool is intended only for when the user explicitly asks to save or create a draft in Mattermost; general requests to "draft" or "write" a message usually mean the user wants the message text in the reply, not a saved Mattermost draft. There is one draft per channel/thread, so calling this again for the same `channel_id` (and `root_id`) overwrites the previous draft.
 
 **Parameters:**
 - `channel_id` (required): The ID of the channel to draft the message in
