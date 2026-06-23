@@ -42,6 +42,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		ReasoningEffort:         "medium",
 		ThinkingBudget:          10000,
 		StructuredOutputEnabled: true,
+		MaxToolTurns:            42,
 	}
 }
 
@@ -100,6 +101,39 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, "medium", fetched.ReasoningEffort)
 	assert.Equal(t, 10000, fetched.ThinkingBudget)
 	assert.True(t, fetched.StructuredOutputEnabled)
+	assert.Equal(t, 42, fetched.MaxToolTurns)
+}
+
+// TestAgentMaxToolTurnsDefaultsToThirty verifies that the SQL DEFAULT 30 supplied
+// by migration 000008 lets agents inserted before/around the migration come back
+// with 30 even if the caller never set the column explicitly.
+func TestAgentMaxToolTurnsDefaultsToThirty(t *testing.T) {
+	s := setupTestStore(t)
+	err := s.RunMigrations()
+	require.NoError(t, err)
+
+	// Insert directly without specifying MaxToolTurns to exercise the column default.
+	now := int64(1_700_000_000_000)
+	id := "abcdefghijklmnopqrstuvwxyz"
+	_, err = s.db.Exec(`INSERT INTO Agents_UserAgents
+		(ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
+		 CustomInstructions, ChannelAccessLevel, ChannelIDs,
+		 UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
+		 EnabledTools, AutoEnableNewMCPTools,
+		 CreateAt, UpdateAt, DeleteAt)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		id, "bot-user-id-default", "creator-1", "Default Agent", "default-agent", "svc-1",
+		"", 0, "[]",
+		0, "[]", "[]", "[]",
+		"[]", false,
+		now, now, 0,
+	)
+	require.NoError(t, err)
+
+	fetched, err := s.GetAgent(id)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.Equal(t, 30, fetched.MaxToolTurns, "column default should populate MaxToolTurns at 30")
 }
 
 func TestAgentGetNonexistent(t *testing.T) {
