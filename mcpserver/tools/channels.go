@@ -582,6 +582,9 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 			continue
 		}
 
+		// Strip email before passing to formatter — tool output is readable by all
+		// AI context consumers in the channel; email is PII not needed for agent tasks.
+		user.Email = ""
 		format.WriteUser(&result, format.UserEntry{
 			User: user,
 			Role: format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),

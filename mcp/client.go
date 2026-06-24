@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -234,11 +235,41 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	return client, nil
 }
 
+// requireSafeMCPURL rejects MCP server URLs that could be used for SSRF.
+// Embedded servers (EmbeddedClientKey) are always allowed.
+// External URLs must use HTTPS unless the host is a loopback address
+// (localhost / 127.x / ::1), which is permitted for local dev.
+func requireSafeMCPURL(baseURL string) error {
+	if baseURL == EmbeddedClientKey {
+		return nil
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("invalid MCP server URL: %w", err)
+	}
+	host := u.Hostname()
+	ip := net.ParseIP(host)
+	isLoopback := (ip != nil && ip.IsLoopback()) || host == "localhost"
+	if u.Scheme != "https" && !isLoopback {
+		return fmt.Errorf("MCP server URL must use HTTPS for non-local servers (got scheme %q in %q)", u.Scheme, baseURL)
+	}
+	if ip != nil && !isLoopback {
+		if ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("MCP server URL must not point to a private or link-local address: %q", baseURL)
+		}
+	}
+	return nil
+}
+
 // NewClient creates a new MCP client for the given server and user and connects to the specified MCP server.
 // forceRefresh bypasses the shared tools cache read. Its sole purpose is to close the race where a concurrent
 // lookup repopulates the cache between a manual refresh's invalidation and this reconnect; a plain
 // post-invalidation rediscovery would otherwise cache-miss on its own.
 func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, forceRefresh bool) (*Client, error) {
+	if err := requireSafeMCPURL(serverConfig.BaseURL); err != nil {
+		return nil, fmt.Errorf("MCP server URL validation failed: %w", err)
+	}
+
 	c := &Client{
 		session:      nil,
 		config:       serverConfig,

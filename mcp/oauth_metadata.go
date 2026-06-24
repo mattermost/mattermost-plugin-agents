@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 )
@@ -40,6 +41,10 @@ func discoverProtectedResourceMetadata(ctx context.Context, httpClient *http.Cli
 		if err != nil {
 			return nil, fmt.Errorf("failed to construct metadata URL: %w", err)
 		}
+	}
+
+	if err := requireSafeOAuthURL(metadataURL); err != nil {
+		return nil, fmt.Errorf("protected resource metadata URL rejected: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
@@ -77,6 +82,12 @@ func discoverProtectedResourceMetadata(ctx context.Context, httpClient *http.Cli
 
 // discoverAuthorizationServerMetadata fetches the OAuth 2.0 Authorization Server Metadata (RFC 8414)
 func discoverAuthorizationServerMetadata(ctx context.Context, httpClient *http.Client, authServerIssuer string) (*AuthorizationServerMetadata, error) {
+	// authServerIssuer comes from a remote server's JSON body — validate it before
+	// building any URLs from it to prevent SSRF via a crafted authorization_servers list.
+	if err := requireSafeOAuthURL(authServerIssuer); err != nil {
+		return nil, fmt.Errorf("authorization server issuer URL rejected: %w", err)
+	}
+
 	// Construct the well-known metadata URL according to RFC 8414 Section 3.1
 	// The well-known URI must be inserted between the host and path components
 	metadataURL, err := constructWellKnownURL(authServerIssuer, "oauth-authorization-server")
@@ -121,6 +132,21 @@ func discoverAuthorizationServerMetadata(ctx context.Context, httpClient *http.C
 		return nil, fmt.Errorf("missing required 'token_endpoint' field in authorization server metadata from %s", metadataURL)
 	}
 
+	// Reject SSRF bait: endpoints in the metadata body could be attacker-controlled
+	// (a compromised or malicious OAuth server could return internal IPs).
+	for field, rawEndpoint := range map[string]string{
+		"authorization_endpoint": metadata.AuthorizationEndpoint,
+		"token_endpoint":         metadata.TokenEndpoint,
+		"registration_endpoint":  metadata.RegistrationEndpoint,
+	} {
+		if rawEndpoint == "" {
+			continue
+		}
+		if safeErr := requireSafeOAuthURL(rawEndpoint); safeErr != nil {
+			return nil, fmt.Errorf("authorization server metadata field %q rejected: %w", field, safeErr)
+		}
+	}
+
 	// Validate that the issuer matches the expected value
 	// 2025-03-26 of mcp spec allows mismatches here.
 	/*if metadata.Issuer != authServerIssuer {
@@ -128,6 +154,44 @@ func discoverAuthorizationServerMetadata(ctx context.Context, httpClient *http.C
 	}*/
 
 	return &metadata, nil
+}
+
+// requireSafeOAuthURL rejects URLs that could be used for SSRF via OAuth metadata.
+// Any URL that comes from a remote server's JSON response (authorization_servers,
+// authorization_endpoint, token_endpoint, registration_endpoint) must pass this
+// check before we make a follow-up request to it.
+//
+// Rules:
+//   - loopback / localhost is allowed (local MCP and OAuth servers are a supported
+//     deployment; SSRF to loopback in production is already blocked by Mattermost's
+//     untrusted HTTP client). This mirrors requireSafeMCPURL in client.go.
+//   - any non-local host must use https (rejects plaintext downgrade, file, ftp, etc.)
+//   - any non-local host must not be a private, link-local, or unspecified IP
+func requireSafeOAuthURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid OAuth URL: %w", err)
+	}
+	host := u.Hostname()
+	ip := net.ParseIP(host)
+	isLoopback := (ip != nil && ip.IsLoopback()) || host == "localhost"
+	if isLoopback {
+		return nil
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("OAuth metadata URL must use HTTPS for non-local hosts, got scheme %q in %q", u.Scheme, rawURL)
+	}
+	if ip != nil {
+		switch {
+		case ip.IsPrivate():
+			return fmt.Errorf("OAuth metadata URL must not point to a private address: %q", rawURL)
+		case ip.IsLinkLocalUnicast(), ip.IsLinkLocalMulticast():
+			return fmt.Errorf("OAuth metadata URL must not point to a link-local address: %q", rawURL)
+		case ip.IsUnspecified():
+			return fmt.Errorf("OAuth metadata URL must not point to an unspecified address: %q", rawURL)
+		}
+	}
+	return nil
 }
 
 // constructWellKnownURL constructs a well-known URL according to RFC 8414 Section 3.1
