@@ -129,7 +129,7 @@ If you have unsaved changes and try to leave the agent configuration view by sel
 | **Agent Avatar** | Custom image for the agent |
 | **Service** | Select a configured Service from the dropdown |
 | **Model** | (Optional) Override the service's default model for this agent |
-| **Max tool turns** | Maximum consecutive tool-call/execute rounds per response. Default **30**, range **1–250**. Lower for smaller models that loop on tool calls; raise for agents that chain many MCP tools per turn. |
+| **Max tool turns** | Maximum LLM rounds in the tool loop per response (includes a final synthesis round without calling tools). Default **30**, range **1–250**. Lower for smaller models that loop on tool calls; raise for agents that chain many MCP tools per turn. |
 | **Custom Instructions** | Custom instructions that define the agent's personality and capabilities |
 | **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
 | **Enable Tools** | Enables tool use for integrations and other tool-based capabilities. Disable this only for models or use cases where tool calling shouldn't be available. Some features won't work without tools. |
