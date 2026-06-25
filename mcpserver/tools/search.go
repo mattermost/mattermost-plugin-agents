@@ -42,6 +42,11 @@ type SearchUsersArgs struct {
 	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of results to return (default: 20, max: 100),minimum=1,maximum=100"`
 }
 
+// searchUsersDescription is the MCP tool metadata description for search_users.
+// (The search_posts description is composed at runtime in getSearchTools because it
+// varies with whether semantic search is enabled.)
+const searchUsersDescription = "Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}"
+
 // getSearchTools returns all search-related tools.
 func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	semanticEnabled := p.searchService != nil && p.searchService.Enabled()
@@ -85,7 +90,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 		},
 		{
 			Name:        "search_users",
-			Description: "Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}",
+			Description: searchUsersDescription,
 			Schema:      NewJSONSchemaForAccessMode[SearchUsersArgs](string(p.accessMode)),
 			Resolver:    typed("search_users", p.toolSearchUsers),
 		},

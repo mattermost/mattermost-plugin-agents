@@ -27,12 +27,15 @@ type ReadFileArgs struct {
 	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of characters to return (default 6000, capped at 20000)."`
 }
 
+// readFileDescription is the MCP tool metadata description for read_file.
+const readFileDescription = "Read the text contents of a Mattermost file attachment by its File ID. Large attachments in a conversation are shown to you as metadata (name, type, size, File ID) instead of inline content — call this tool with that File ID to read them. Returns extracted text for documents (PDF, Office) and the raw text for plain-text files. Supports ranged reads via offset and limit to page through large files. Parameters: file_id (required), offset (optional), limit (optional). Example: {\"file_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"offset\": 0, \"limit\": 6000}"
+
 // getFileTools returns the file-related tools.
 func (p *MattermostToolProvider) getFileTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "read_file",
-			Description: "Read the text contents of a Mattermost file attachment by its File ID. Large attachments in a conversation are shown to you as metadata (name, type, size, File ID) instead of inline content — call this tool with that File ID to read them. Returns extracted text for documents (PDF, Office) and the raw text for plain-text files. Supports ranged reads via offset and limit to page through large files. Parameters: file_id (required), offset (optional), limit (optional). Example: {\"file_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"offset\": 0, \"limit\": 6000}",
+			Description: readFileDescription,
 			Schema:      NewJSONSchemaForAccessMode[ReadFileArgs](string(p.accessMode)),
 			Resolver:    typed("read_file", p.toolReadFile),
 		},

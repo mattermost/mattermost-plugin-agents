@@ -40,18 +40,25 @@ type AddUserToTeamArgs struct {
 	TeamID string `json:"team_id" jsonschema:"ID of the team to add user to,minLength=26,maxLength=26"`
 }
 
+// Tool description constants for team-related tools.
+const (
+	getTeamInfoDescription = "Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}"
+
+	getTeamMembersDescription = "Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}"
+)
+
 // getTeamTools returns all team-related tools
 func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "get_team_info",
-			Description: "Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
+			Description: getTeamInfoDescription,
 			Schema:      NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
 			Resolver:    typed("get_team_info", p.toolGetTeamInfo),
 		},
 		{
 			Name:        "get_team_members",
-			Description: "Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}",
+			Description: getTeamMembersDescription,
 			Schema:      NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
 			Resolver:    typed("get_team_members", p.toolGetTeamMembers),
 		},
