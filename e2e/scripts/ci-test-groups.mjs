@@ -37,6 +37,7 @@ const groups = {
         'tests/tool-config/policy-change.spec.ts',
         'tests/tool-config/tab-layout.spec.ts',
         'tests/custom-prompts/custom-prompts.spec.ts',
+        'tests/meeting-summary/summary-persistence.spec.ts',
     ],
     'e2e-shard-2': [
         'tests/system-console/bot-validation.spec.ts',
