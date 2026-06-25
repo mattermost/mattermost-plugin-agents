@@ -178,8 +178,8 @@ func doAutomationRequest(ctx context.Context, client *model.Client4, method, req
 
 // ListAutomationsArgs represents arguments for the list_automations tool.
 type ListAutomationsArgs struct {
-	AutomationID string `json:"automation_id,omitempty" jsonschema:"The ID of a specific automation to retrieve"`
-	ChannelID    string `json:"channel_id,omitempty" jsonschema:"Filter automations by trigger channel ID"`
+	AutomationID string `json:"automation_id,omitempty" jsonschema:"The ID of a specific automation to retrieve,maxLength=26"`
+	ChannelID    string `json:"channel_id,omitempty" jsonschema:"Filter automations by trigger channel ID,maxLength=26"`
 }
 
 // CreateAutomationArgs represents arguments for the create_automation tool.
@@ -192,7 +192,7 @@ type CreateAutomationArgs struct {
 
 // UpdateAutomationArgs represents arguments for the update_automation tool.
 type UpdateAutomationArgs struct {
-	AutomationID string             `json:"automation_id" jsonschema:"The ID of the automation to update,minLength=1"`
+	AutomationID string             `json:"automation_id" jsonschema:"The ID of the automation to update,minLength=26,maxLength=26"`
 	Name         string             `json:"name" jsonschema:"The name of the automation,minLength=1"`
 	Enabled      bool               `json:"enabled" jsonschema:"Whether the automation is enabled"`
 	Trigger      AutomationTrigger  `json:"trigger" jsonschema:"Set exactly one trigger type"`
@@ -201,7 +201,7 @@ type UpdateAutomationArgs struct {
 
 // DeleteAutomationArgs represents arguments for the delete_automation tool.
 type DeleteAutomationArgs struct {
-	AutomationID string `json:"automation_id" jsonschema:"The ID of the automation to delete,minLength=1"`
+	AutomationID string `json:"automation_id" jsonschema:"The ID of the automation to delete,minLength=26,maxLength=26"`
 }
 
 // automationInstructionsAPIResponse matches GET .../automation-instructions on the channel-automation plugin.

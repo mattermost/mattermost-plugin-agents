@@ -49,8 +49,8 @@ type GetChannelMembersArgs struct {
 
 // AddUserToChannelArgs represents arguments for the add_user_to_channel tool
 type AddUserToChannelArgs struct {
-	UserID    string `json:"user_id" jsonschema:"ID of the user to add"`
-	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to add user to"`
+	UserID    string `json:"user_id" jsonschema:"ID of the user to add,minLength=26,maxLength=26"`
+	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to add user to,minLength=26,maxLength=26"`
 }
 
 // GetUserChannelsArgs represents arguments for the get_user_channels tool
