@@ -178,28 +178,17 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	// Paginate the thread in memory when per_page is provided so callers can page
 	// through large threads instead of receiving every reply at once.
 	totalThreadPosts := len(posts)
-	page := args.Page
-	if page < 0 {
-		page = 0
-	}
 	pageStart := 0
 	paginated := args.IncludeThread && args.PerPage > 0
+	paging := newPagination(args.Page, args.PerPage, paginationOptions{
+		MaxPerPage: readPostMaxPerPage,
+	})
 	if paginated {
-		perPage := args.PerPage
-		if perPage > readPostMaxPerPage {
-			perPage = readPostMaxPerPage
-		}
-		totalPages := totalThreadPosts / perPage
-		if totalThreadPosts%perPage != 0 {
-			totalPages++
-		}
-		if page >= totalPages {
-			return fmt.Sprintf("no posts found on page %d (thread has %d posts)", page, totalThreadPosts), nil
-		}
-		pageStart = page * perPage
-		pageEnd := pageStart + perPage
-		if pageEnd > len(posts) {
-			pageEnd = len(posts)
+		pageEnd := 0
+		var ok bool
+		pageStart, pageEnd, ok = paging.SliceBounds(totalThreadPosts)
+		if !ok {
+			return fmt.Sprintf("no posts found on page %d (thread has %d posts)", paging.Page, totalThreadPosts), nil
 		}
 		posts = posts[pageStart:pageEnd]
 	}
@@ -244,7 +233,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 
 	if args.IncludeThread && totalThreadPosts > 1 {
 		if paginated {
-			result.WriteString(fmt.Sprintf("Thread with %d posts (page %d, showing %d):\n\n", totalThreadPosts, page, len(posts)))
+			result.WriteString(fmt.Sprintf("Thread with %d posts (page %d, showing %d):\n\n", totalThreadPosts, paging.Page, len(posts)))
 		} else {
 			result.WriteString(fmt.Sprintf("Thread with %d posts:\n\n", totalThreadPosts))
 		}
@@ -266,7 +255,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	}
 
 	if paginated && pageStart+len(posts) < totalThreadPosts {
-		result.WriteString(fmt.Sprintf("More posts in this thread — call read_post again with page=%d to retrieve the next page.\n", page+1))
+		result.WriteString(fmt.Sprintf("More posts in this thread — call read_post again with page=%d to retrieve the next page.\n", paging.Page+1))
 	}
 
 	return result.String(), nil
