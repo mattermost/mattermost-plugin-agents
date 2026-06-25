@@ -102,8 +102,9 @@ test('meeting summary stays visible in the DM after it is generated', async ({ p
         method: 'POST',
         headers: { Authorization: `Bearer ${userClient.getToken()}` },
     });
-    expect(summarizeResp.status, await summarizeResp.text()).toBe(200);
-    const { postid: dmRootPostId, channelid: dmChannelId } = await summarizeResp.json();
+    const summarizeBody = await summarizeResp.text();
+    expect(summarizeResp.status, summarizeBody).toBe(200);
+    const { postid: dmRootPostId, channelid: dmChannelId } = JSON.parse(summarizeBody);
     expect(dmRootPostId).toBeTruthy();
 
     // 5) Wait for the streamed summary reply to be persisted server-side.
