@@ -23,6 +23,7 @@ import {Annotation} from '../citations/types';
 import {
     Round,
     buildRoundsFromTurns,
+    computeRenderedRounds,
     deriveApprovalStageForPost,
 } from './turn_content_utils';
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
@@ -311,22 +312,14 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         };
     }, [message, toolCalls, reasoningSummary, annotations]);
 
-    const renderedRounds = useMemo(() => {
-        if (regenerating) {
-            // Suppress stablePersisted (still the pre-regen turn) but keep
-            // liveRounds so multi-round regens don't visually empty between rounds.
-            const out: Round[] = [...liveRounds];
-            if (currentRound) {
-                out.push(currentRound);
-            }
-            return out;
-        }
-        const out: Round[] = [...stablePersisted, ...liveRounds];
-        if (generating && currentRound) {
-            out.push(currentRound);
-        }
-        return out;
-    }, [regenerating, stablePersisted, liveRounds, generating, currentRound]);
+    const renderedRounds = useMemo(() => computeRenderedRounds({
+        regenerating,
+        hasConversation: Boolean(conversationId),
+        persistedRounds: stablePersisted,
+        liveRounds,
+        generating,
+        currentRound,
+    }), [regenerating, conversationId, stablePersisted, liveRounds, generating, currentRound]);
 
     const regnerate = () => {
         setMessage('');
