@@ -617,6 +617,21 @@ describe('computeRenderedRounds', () => {
         expect(result).toEqual([completedLive, liveRound]);
     });
 
+    test('keeps multiple completed live rounds in order while regenerating between rounds', () => {
+        const persisted = makeRound('turn_1', 'old answer');
+        const firstRegen = makeRound('live-0', 'first regen round');
+        const secondRegen = makeRound('live-1', 'second regen round');
+        const result = computeRenderedRounds({
+            regenerating: true,
+            hasConversation: true,
+            persistedRounds: [persisted],
+            liveRounds: [firstRegen, secondRegen],
+            generating: false,
+            currentRound: null,
+        });
+        expect(result).toEqual([firstRegen, secondRegen]);
+    });
+
     test('orders persisted rounds before completed live rounds and the current round', () => {
         const persisted = makeRound('turn_1', 'persisted');
         const completedLive = makeRound('live-0', 'completed live round');

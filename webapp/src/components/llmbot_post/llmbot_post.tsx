@@ -439,7 +439,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 />
             )}
             { showPostbackButton &&
-            <PostSummaryHelpMessage>
+            <PostSummaryHelpMessage data-testid='llm-bot-post-summary-help'>
                 <FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>
             </PostSummaryHelpMessage>
             }

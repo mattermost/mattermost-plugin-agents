@@ -135,7 +135,7 @@ test('meeting summary stays visible in the DM after it is generated', async ({ p
 
     // The follow-up prompt renders independently of the summary content, so it
     // is the prompt — not the summary — that confirmed the bug originally.
-    await expect(page.getByText('Would you like to post this summary')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('llm-bot-post-summary-help')).toBeVisible({ timeout: 10000 });
 
     const postText = llmBotHelper.getPostText(summaryPostId);
     await expect(postText).toContainText(SUMMARY_MARKER, { timeout: 10000 });
