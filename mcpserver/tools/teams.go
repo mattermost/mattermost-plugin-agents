@@ -86,9 +86,6 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -238,9 +235,6 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -320,9 +314,6 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -381,9 +372,6 @@ func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, a
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 

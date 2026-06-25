@@ -145,9 +145,6 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 		args.KeywordOffset = 0
 	}
 
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -477,9 +474,6 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 		args.Limit = 100
 	}
 
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 

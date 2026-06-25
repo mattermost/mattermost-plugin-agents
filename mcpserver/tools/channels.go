@@ -128,9 +128,6 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	// Get client and context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -286,9 +283,6 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 	}
 
 	// Get client and context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -319,9 +313,6 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	}
 
 	// Get client and context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -544,9 +535,6 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	}
 
 	// Get client and context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -618,9 +606,6 @@ func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext
 	}
 
 	// Get client and context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -815,9 +800,6 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	}
 
 	// Get client and context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 

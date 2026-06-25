@@ -296,9 +296,6 @@ func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPTo
 	if err := argsGetter(&noArgs); err != nil {
 		return "", fmt.Errorf("failed to get arguments for tool get_automation_instructions: %w", err)
 	}
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	payload, err := p.fetchAutomationInstructions(mcpContext.Ctx, mcpContext.Client)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch automation instructions from Channel Automation plugin (upgrade plugin or check connectivity): %w", err)
@@ -312,9 +309,6 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 		return "", fmt.Errorf("failed to get arguments for tool list_automations: %w", err)
 	}
 
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	ctx := context.Background()
 
 	// If a specific automation ID was requested, fetch just that one.
@@ -374,9 +368,6 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 		return "", fmt.Errorf("name cannot be empty")
 	}
 
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	ctx := context.Background()
 
 	automation := Automation{
@@ -427,9 +418,6 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 		return "", err
 	}
 
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	ctx := context.Background()
 
 	automation := Automation{
@@ -481,9 +469,6 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 		return "", err
 	}
 
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	ctx := context.Background()
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/automations/"+args.AutomationID), "")

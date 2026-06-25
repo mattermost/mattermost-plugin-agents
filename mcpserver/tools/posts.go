@@ -128,9 +128,6 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -257,9 +254,6 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -406,9 +400,6 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter l
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -499,9 +490,6 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		return "", fmt.Errorf("message cannot be empty")
 	}
 
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 

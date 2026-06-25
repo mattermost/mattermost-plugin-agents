@@ -53,9 +53,6 @@ func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 

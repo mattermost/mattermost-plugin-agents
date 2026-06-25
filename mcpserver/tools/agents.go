@@ -49,10 +49,6 @@ func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, args
 		return "", fmt.Errorf("failed to get arguments for tool list_agents: %w", err)
 	}
 
-	if mcpContext == nil || mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
-
 	bots, err := p.fetchAIBots(mcpContext.Client)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch agents: %w", err)

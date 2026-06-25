@@ -486,19 +486,6 @@ func TestAutomationErrorHandling(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not installed or not reachable")
 	})
-
-	t.Run("nil client", func(t *testing.T) {
-		provider := newTestProvider(t, "http://localhost:8065")
-		mcpCtx := &MCPToolContext{Client: nil}
-
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
-
-		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "client not available")
-	})
 }
 
 func TestAutomationPluginInstalled(t *testing.T) {
