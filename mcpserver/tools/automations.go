@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -256,19 +255,19 @@ func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
 Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
 Returns the full JSON for each automation including trigger configuration and action pipeline.`,
 			Schema:   NewJSONSchemaForAccessMode[ListAutomationsArgs](string(p.accessMode)),
-			Resolver: p.toolListAutomations,
+			Resolver: typed("list_automations", p.toolListAutomations),
 		},
 		{
 			Name:        "get_automation_instructions",
 			Description: "Returns detailed documentation for creating and updating channel automations: triggers, actions, template syntax, allowed_tools, and required user-confirmation workflow. Call this before create_automation or update_automation.",
 			Schema:      nil,
-			Resolver:    p.toolGetAutomationInstructions,
+			Resolver:    typed("get_automation_instructions", p.toolGetAutomationInstructions),
 		},
 		{
 			Name:        "create_automation",
 			Description: createAutomationToolDescription,
 			Schema:      NewJSONSchemaForAccessMode[CreateAutomationArgs](string(p.accessMode)),
-			Resolver:    p.toolCreateAutomation,
+			Resolver:    typed("create_automation", p.toolCreateAutomation),
 		},
 		{
 			Name: "update_automation",
@@ -278,24 +277,20 @@ only what needs to change and pass the full updated automation back. Call get_au
 for trigger/action format details.
 IMPORTANT: Show the user what will change and get their confirmation first.`,
 			Schema:   NewJSONSchemaForAccessMode[UpdateAutomationArgs](string(p.accessMode)),
-			Resolver: p.toolUpdateAutomation,
+			Resolver: typed("update_automation", p.toolUpdateAutomation),
 		},
 		{
 			Name:        "delete_automation",
 			Description: "Delete a channel automation by ID. This is permanent and cannot be undone.",
 			Schema:      NewJSONSchemaForAccessMode[DeleteAutomationArgs](string(p.accessMode)),
-			Resolver:    p.toolDeleteAutomation,
+			Resolver:    typed("delete_automation", p.toolDeleteAutomation),
 		},
 	}
 }
 
 // --- Resolvers ---
 
-func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var noArgs struct{}
-	if err := argsGetter(&noArgs); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool get_automation_instructions: %w", err)
-	}
+func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPToolContext, _ struct{}) (string, error) {
 	payload, err := p.fetchAutomationInstructions(mcpContext.Ctx, mcpContext.Client)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch automation instructions from Channel Automation plugin (upgrade plugin or check connectivity): %w", err)
@@ -303,12 +298,7 @@ func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPTo
 	return payload.Instructions, nil
 }
 
-func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args ListAutomationsArgs
-	if err := argsGetter(&args); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool list_automations: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext, args ListAutomationsArgs) (string, error) {
 	ctx := context.Background()
 
 	// If a specific automation ID was requested, fetch just that one.
@@ -358,12 +348,7 @@ func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpConte
 	return formatAutomationJSON(automation)
 }
 
-func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CreateAutomationArgs
-	if err := argsGetter(&args); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool create_automation: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext, args CreateAutomationArgs) (string, error) {
 	if args.Name == "" {
 		return "", fmt.Errorf("name cannot be empty")
 	}
@@ -408,12 +393,7 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 	return fmt.Sprintf("Successfully created automation '%s' (ID: %s).\n\n%s", created.Name, created.ID, jsonStr), nil
 }
 
-func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args UpdateAutomationArgs
-	if err := argsGetter(&args); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool update_automation: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext, args UpdateAutomationArgs) (string, error) {
 	if err := requireID("automation_id", args.AutomationID); err != nil {
 		return "", err
 	}
@@ -459,12 +439,7 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 	return fmt.Sprintf("Successfully updated automation '%s' (ID: %s).\n\n%s", updated.Name, updated.ID, jsonStr), nil
 }
 
-func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args DeleteAutomationArgs
-	if err := argsGetter(&args); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool delete_automation: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext, args DeleteAutomationArgs) (string, error) {
 	if err := requireID("automation_id", args.AutomationID); err != nil {
 		return "", err
 	}

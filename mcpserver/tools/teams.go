@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -48,13 +47,13 @@ func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 			Name:        "get_team_info",
 			Description: "Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
 			Schema:      NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
-			Resolver:    p.toolGetTeamInfo,
+			Resolver:    typed("get_team_info", p.toolGetTeamInfo),
 		},
 		{
 			Name:        "get_team_members",
 			Description: "Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}",
 			Schema:      NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
-			Resolver:    p.toolGetTeamMembers,
+			Resolver:    typed("get_team_members", p.toolGetTeamMembers),
 		},
 	}
 }
@@ -66,24 +65,20 @@ func (p *MattermostToolProvider) getDevTeamTools() []MCPTool {
 			Name:        "create_team",
 			Description: "Create a new team (dev mode only)",
 			Schema:      NewJSONSchemaForAccessMode[CreateTeamArgs](string(p.accessMode)),
-			Resolver:    p.toolCreateTeam,
+			Resolver:    typed("create_team", p.toolCreateTeam),
 		},
 		{
 			Name:        "add_user_to_team",
 			Description: "Add a user to a team (dev mode only)",
 			Schema:      NewJSONSchemaForAccessMode[AddUserToTeamArgs](string(p.accessMode)),
-			Resolver:    p.toolAddUserToTeam,
+			Resolver:    typed("add_user_to_team", p.toolAddUserToTeam),
 		},
 	}
 }
 
 // toolGetTeamInfo implements the get_team_info tool
-func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args GetTeamInfoArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool get_team_info: %w", err)
-	}
+func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, args GetTeamInfoArgs) (string, error) {
+	var err error
 
 	// Get client from context
 	client := mcpContext.Client
@@ -211,13 +206,7 @@ func formatTeamDisambiguation(searchTerm string, teams []*model.Team) string {
 }
 
 // toolGetTeamMembers implements the get_team_members tool
-func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args GetTeamMembersArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool get_team_members: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, args GetTeamMembersArgs) (string, error) {
 	// Validate required fields
 	if err := requireID("team_id", args.TeamID); err != nil {
 		return "", err
@@ -290,13 +279,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 }
 
 // toolCreateTeam implements the create_team tool using the context client
-func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CreateTeamArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool create_team: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args CreateTeamArgs) (string, error) {
 	// Validate required fields
 	if args.Name == "" {
 		return "", fmt.Errorf("name cannot be empty")
@@ -356,13 +339,7 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 }
 
 // toolAddUserToTeam implements the add_user_to_team tool using the context client
-func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args AddUserToTeamArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool add_user_to_team: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, args AddUserToTeamArgs) (string, error) {
 	// Validate required fields
 	if err := requireID("user_id", args.UserID); err != nil {
 		return "", err
@@ -376,7 +353,7 @@ func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, a
 	ctx := mcpContext.Ctx
 
 	// Add user to team
-	_, _, err = client.AddTeamMember(ctx, args.TeamID, args.UserID)
+	_, _, err := client.AddTeamMember(ctx, args.TeamID, args.UserID)
 	if err != nil {
 		return "", fmt.Errorf("error adding user to team: %w", err)
 	}

@@ -45,6 +45,21 @@ type MCPToolContext struct {
 // MCPToolResolver defines the signature for MCP tool resolvers
 type MCPToolResolver func(*MCPToolContext, llm.ToolArgumentGetter) (string, error)
 
+// typed adapts a resolver that accepts an already-decoded argument struct into
+// an MCPToolResolver. It owns argument decoding and the standard "invalid
+// arguments" error, so individual resolvers start at their real logic. The
+// returned resolver is an ordinary MCPToolResolver, so registerDynamicTool and
+// the before-hook (which still sees the raw request arguments) are unchanged.
+func typed[T any](name string, fn func(*MCPToolContext, T) (string, error)) MCPToolResolver {
+	return func(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+		var args T
+		if err := argsGetter(&args); err != nil {
+			return "", fmt.Errorf("failed to get arguments for tool %s: %w", name, err)
+		}
+		return fn(mcpContext, args)
+	}
+}
+
 // MCPTool represents a tool specifically for MCP use with our custom context
 type MCPTool struct {
 	Name        string

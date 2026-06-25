@@ -41,11 +41,8 @@ func TestListAgents(t *testing.T) {
 	t.Run("marks self agent", func(t *testing.T) {
 		provider := newTestProvider(t, ts.URL)
 		mcpCtx := &MCPToolContext{BotUserID: "bot1id12345678901234567", Client: newTestClient(ts.URL)}
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
 
-		result, err := provider.toolListAgents(mcpCtx, argsGetter)
+		result, err := provider.toolListAgents(mcpCtx, ListAgentsArgs{})
 		require.NoError(t, err)
 		assert.Contains(t, result, "This is YOU")
 	})
@@ -53,11 +50,8 @@ func TestListAgents(t *testing.T) {
 	t.Run("unreachable server", func(t *testing.T) {
 		provider := newTestProvider(t, "http://127.0.0.1:1")
 		mcpCtx := &MCPToolContext{Client: newTestClient("http://127.0.0.1:1")}
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
 
-		_, err := provider.toolListAgents(mcpCtx, argsGetter)
+		_, err := provider.toolListAgents(mcpCtx, ListAgentsArgs{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to fetch agents")
 	})

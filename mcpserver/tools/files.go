@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/files"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 // FileContentService reads the text contents of Mattermost file attachments on
@@ -35,18 +34,13 @@ func (p *MattermostToolProvider) getFileTools() []MCPTool {
 			Name:        "read_file",
 			Description: "Read the text contents of a Mattermost file attachment by its File ID. Large attachments in a conversation are shown to you as metadata (name, type, size, File ID) instead of inline content — call this tool with that File ID to read them. Returns extracted text for documents (PDF, Office) and the raw text for plain-text files. Supports ranged reads via offset and limit to page through large files. Parameters: file_id (required), offset (optional), limit (optional). Example: {\"file_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"offset\": 0, \"limit\": 6000}",
 			Schema:      NewJSONSchemaForAccessMode[ReadFileArgs](string(p.accessMode)),
-			Resolver:    p.toolReadFile,
+			Resolver:    typed("read_file", p.toolReadFile),
 		},
 	}
 }
 
 // toolReadFile implements the read_file tool.
-func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args ReadFileArgs
-	if err := argsGetter(&args); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool read_file: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, args ReadFileArgs) (string, error) {
 	if err := requireID("file_id", args.FileID); err != nil {
 		return "", err
 	}

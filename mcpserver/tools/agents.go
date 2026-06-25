@@ -9,7 +9,6 @@ import (
 	"net/http"
 
 	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -37,18 +36,13 @@ func (p *MattermostToolProvider) getAgentTools() []MCPTool {
 			Name:        "list_agents",
 			Description: `List all available AI agents (bots). Returns each agent's ID, display name, and username.`,
 			Schema:      NewJSONSchemaForAccessMode[ListAgentsArgs](string(p.accessMode)),
-			Resolver:    p.toolListAgents,
+			Resolver:    typed("list_agents", p.toolListAgents),
 		},
 	}
 }
 
 // toolListAgents fetches available agents via the plugin's /ai_bots endpoint.
-func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args ListAgentsArgs
-	if err := argsGetter(&args); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool list_agents: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, _ ListAgentsArgs) (string, error) {
 	bots, err := p.fetchAIBots(mcpContext.Client)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch agents: %w", err)

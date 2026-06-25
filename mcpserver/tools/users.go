@@ -6,7 +6,6 @@ package tools
 import (
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -28,19 +27,13 @@ func (p *MattermostToolProvider) getDevUserTools() []MCPTool {
 			Name:        "create_user",
 			Description: "Create a new user account (dev mode only)",
 			Schema:      NewJSONSchemaForAccessMode[CreateUserArgs](string(p.accessMode)),
-			Resolver:    p.toolCreateUser,
+			Resolver:    typed("create_user", p.toolCreateUser),
 		},
 	}
 }
 
 // toolCreateUser implements the create_user tool using the context client
-func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CreateUserArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool create_user: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args CreateUserArgs) (string, error) {
 	// Validate required fields
 	if args.Username == "" {
 		return "", fmt.Errorf("username cannot be empty")

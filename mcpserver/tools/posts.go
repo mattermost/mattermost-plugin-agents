@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -72,25 +71,25 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 			Name:        "read_post",
 			Description: "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}",
 			Schema:      NewJSONSchemaForAccessMode[ReadPostArgs](string(p.accessMode)),
-			Resolver:    p.toolReadPost,
+			Resolver:    typed("read_post", p.toolReadPost),
 		},
 		{
 			Name:        "create_post",
 			Description: createPostDesc,
 			Schema:      NewJSONSchemaForAccessMode[CreatePostArgs](string(p.accessMode)),
-			Resolver:    p.toolCreatePost,
+			Resolver:    typed("create_post", p.toolCreatePost),
 		},
 		{
 			Name:        "dm",
 			Description: dmDesc,
 			Schema:      NewJSONSchemaForAccessMode[DMArgs](string(p.accessMode)),
-			Resolver:    p.toolDM,
+			Resolver:    typed("dm", p.toolDM),
 		},
 		{
 			Name:        "group_message",
 			Description: groupMessageDesc,
 			Schema:      NewJSONSchemaForAccessMode[GroupMessageArgs](string(p.accessMode)),
-			Resolver:    p.toolGroupMessage,
+			Resolver:    typed("group_message", p.toolGroupMessage),
 		},
 	}
 }
@@ -102,19 +101,13 @@ func (p *MattermostToolProvider) getDevPostTools() []MCPTool {
 			Name:        "create_post_as_user",
 			Description: "Create a post as a specific user using username/password login. Use this tool in dev mode for creating realistic multi-user scenarios. Simply provide the username and password of created users.",
 			Schema:      NewJSONSchemaForAccessMode[CreatePostAsUserArgs](string(p.accessMode)),
-			Resolver:    p.toolCreatePostAsUser,
+			Resolver:    typed("create_post_as_user", p.toolCreatePostAsUser),
 		},
 	}
 }
 
 // toolReadPost implements the read_post tool
-func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args ReadPostArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool read_post: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args ReadPostArgs) (string, error) {
 	// Validate post ID
 	if err := requireID("post_id", args.PostID); err != nil {
 		return "", err
@@ -228,13 +221,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 }
 
 // toolCreatePost implements the create_post tool
-func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CreatePostArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool create_post: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args CreatePostArgs) (string, error) {
 	// Validate required fields
 	if err := requireID("channel_id", args.ChannelID); err != nil {
 		return "", err
@@ -325,13 +312,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 }
 
 // toolCreatePostAsUser implements the create_post_as_user tool with custom authentication
-func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CreatePostAsUserArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool create_post_as_user: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext, args CreatePostAsUserArgs) (string, error) {
 	// Validate required fields
 	if args.Username == "" {
 		return "", fmt.Errorf("username cannot be empty")
@@ -387,13 +368,7 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 }
 
 // toolDM implements the dm tool
-func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args DMArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool dm: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs) (string, error) {
 	// Validate required fields
 	if args.Message == "" {
 		return "", fmt.Errorf("message cannot be empty")
@@ -479,13 +454,7 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter l
 }
 
 // toolGroupMessage implements the group_message tool
-func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args GroupMessageArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool group_message: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, args GroupMessageArgs) (string, error) {
 	if args.Message == "" {
 		return "", fmt.Errorf("message cannot be empty")
 	}

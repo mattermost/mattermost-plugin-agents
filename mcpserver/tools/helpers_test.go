@@ -4,12 +4,9 @@
 package tools
 
 import (
-	"encoding/json"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/stretchr/testify/require"
 )
 
 // testLogger is a no-op logger for tests. Errors are surfaced via t.Logf.
@@ -39,13 +36,4 @@ func newTestClient(serverURL string) *model.Client4 {
 	client := model.NewAPIv4Client(serverURL)
 	client.SetToken("test-token")
 	return client
-}
-
-// argsGetterFor returns a ToolArgumentGetter that decodes v (marshaled to JSON)
-// into a resolver's argument struct.
-func argsGetterFor(t *testing.T, v any) llm.ToolArgumentGetter {
-	t.Helper()
-	b, err := json.Marshal(v)
-	require.NoError(t, err)
-	return func(target any) error { return json.Unmarshal(b, target) }
 }

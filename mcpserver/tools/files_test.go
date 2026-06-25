@@ -108,7 +108,7 @@ func TestToolReadFile(t *testing.T) {
 			p := &MattermostToolProvider{fileContentService: tt.service}
 			ctx := &MCPToolContext{Ctx: context.Background(), UserID: model.NewId()}
 
-			result, err := p.toolReadFile(ctx, argsGetterFor(t, ReadFileArgs{FileID: tt.fileID}))
+			result, err := p.toolReadFile(ctx, ReadFileArgs{FileID: tt.fileID})
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -139,7 +139,7 @@ func TestToolReadFilePassesRequestingUser(t *testing.T) {
 	fileID := model.NewId()
 	ctx := &MCPToolContext{Ctx: context.Background(), UserID: userID}
 
-	_, err := p.toolReadFile(ctx, argsGetterFor(t, ReadFileArgs{FileID: fileID, Offset: 12, Limit: 34}))
+	_, err := p.toolReadFile(ctx, ReadFileArgs{FileID: fileID, Offset: 12, Limit: 34})
 	require.NoError(t, err)
 
 	assert.Equal(t, userID, fake.gotUserID)

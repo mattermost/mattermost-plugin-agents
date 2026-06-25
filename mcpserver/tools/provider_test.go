@@ -5,6 +5,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
@@ -45,6 +46,18 @@ func TestCreateMCPToolContextReadsBeforeHookResolver(t *testing.T) {
 	got, err := mcpCtx.BeforeHookResolver("user-1", "search_posts", "beforeHook:secret")
 	require.NoError(t, err)
 	require.Equal(t, "/plugins/com.example.plugin/hooks/before", got)
+}
+
+// TestTypedWrapperDecodeError verifies the typed wrapper owns argument decoding
+// and surfaces the standard "invalid arguments" error for the tool when the
+// argument getter fails, before the underlying resolver runs.
+func TestTypedWrapperDecodeError(t *testing.T) {
+	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
+
+	r := typed("delete_automation", provider.toolDeleteAutomation)
+	_, err := r(&MCPToolContext{}, func(any) error { return fmt.Errorf("bad json") })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get arguments for tool delete_automation")
 }
 
 // TestSchemaArgs is a test struct for schema conversion testing

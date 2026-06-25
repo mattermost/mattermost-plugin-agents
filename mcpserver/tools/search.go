@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -82,13 +81,13 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			Name:        "search_posts",
 			Description: description,
 			Schema:      schema,
-			Resolver:    p.toolCombinedSearch,
+			Resolver:    typed("search_posts", p.toolCombinedSearch),
 		},
 		{
 			Name:        "search_users",
 			Description: "Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}",
 			Schema:      NewJSONSchemaForAccessMode[SearchUsersArgs](string(p.accessMode)),
-			Resolver:    p.toolSearchUsers,
+			Resolver:    typed("search_users", p.toolSearchUsers),
 		},
 	}
 }
@@ -109,12 +108,7 @@ type searchPostResult struct {
 }
 
 // toolCombinedSearch implements the search_posts tool.
-func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CombinedSearchArgs
-	if err := argsGetter(&args); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool search_posts: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, args CombinedSearchArgs) (string, error) {
 	if args.Query == "" {
 		return "", fmt.Errorf("query cannot be empty")
 	}
@@ -456,13 +450,7 @@ func (p *MattermostToolProvider) formatSingleResult(result *strings.Builder, ind
 }
 
 // toolSearchUsers implements the search_users tool.
-func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args SearchUsersArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool search_users: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, args SearchUsersArgs) (string, error) {
 	if args.Term == "" {
 		return "", fmt.Errorf("search term cannot be empty")
 	}
