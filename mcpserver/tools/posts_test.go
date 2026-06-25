@@ -118,7 +118,7 @@ func TestToolReadPostThreadPagination(t *testing.T) {
 			ts := readPostThreadServer(t, rootID, channelID, teamID, userID, threadSize)
 			provider := newTestProvider(t, ts.URL)
 			client := newTestClient(ts.URL)
-			mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}
+			mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context()}
 
 			argsGetter := func(target any) error {
 				return json.Unmarshal([]byte(tt.args), target)
@@ -158,7 +158,7 @@ func TestToolReadPostThreadPerPageCap(t *testing.T) {
 	ts := readPostThreadServer(t, rootID, channelID, teamID, userID, threadSize)
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}
+	mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context()}
 
 	argsGetter := func(target any) error {
 		return json.Unmarshal([]byte(fmt.Sprintf(`{"post_id":%q,"per_page":500}`, rootID)), target)
@@ -182,7 +182,7 @@ func TestToolReadPostThreadPageOverflow(t *testing.T) {
 	ts := readPostThreadServer(t, rootID, channelID, teamID, userID, threadSize)
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}
+	mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context()}
 
 	argsGetter := func(target any) error {
 		return json.Unmarshal([]byte(fmt.Sprintf(`{"post_id":%q,"per_page":4,"page":%d}`, rootID, math.MaxInt64)), target)

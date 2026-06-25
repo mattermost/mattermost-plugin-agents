@@ -6,6 +6,7 @@ package tools
 import (
 	"testing"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -36,6 +37,20 @@ func (l *testLogger) Error(msg string, keyValuePairs ...any) {
 
 func (l *testLogger) Flush() error {
 	return nil
+}
+
+func newTestProvider(t *testing.T, serverURL string) *MattermostToolProvider {
+	t.Helper()
+	return &MattermostToolProvider{
+		logger:      &testLogger{t: t},
+		mmServerURL: serverURL,
+	}
+}
+
+func newTestClient(serverURL string) *model.Client4 {
+	client := model.NewAPIv4Client(serverURL)
+	client.SetToken("test-token")
+	return client
 }
 
 // TestSchemaArgs is a test struct for schema conversion testing
