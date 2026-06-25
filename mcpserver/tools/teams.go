@@ -240,42 +240,15 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 		return "no members found in this team", nil
 	}
 
-	// Get user details for each member, optionally filtering bots
-	var result strings.Builder
-	botsExcluded := 0
-	var written int
-
-	for _, member := range members {
-		user, _, err := client.GetUser(ctx, member.UserId, "")
-		if err != nil {
-			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
-			format.WriteUser(&result, format.UserEntry{User: &model.User{Id: member.UserId, Username: "details unavailable"}})
-			written++
-			continue
+	rendered := make([]renderMember, len(members))
+	for i, member := range members {
+		rendered[i] = renderMember{
+			userID: member.UserId,
+			role:   format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
 		}
-
-		if excludeBots && user.IsBot {
-			botsExcluded++
-			continue
-		}
-
-		format.WriteUser(&result, format.UserEntry{
-			User: user,
-			Role: format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
-		})
-		written++
 	}
 
-	// Build header and footer
-	var header strings.Builder
-	header.WriteString(fmt.Sprintf("Team Members (page %d, showing %d members):\n", args.Page, written))
-
-	var footer string
-	if botsExcluded > 0 {
-		footer = fmt.Sprintf("\n(%d bot account(s) excluded — set exclude_bots=false to include them)\n", botsExcluded)
-	}
-
-	return header.String() + result.String() + footer, nil
+	return p.renderMembers(ctx, client, "Team Members", args.Page, rendered, excludeBots), nil
 }
 
 // toolCreateTeam implements the create_team tool using the context client
