@@ -156,20 +156,6 @@ func newTestAutomationServer(t *testing.T, automations []Automation) *httptest.S
 	return httptest.NewServer(mux)
 }
 
-func newTestProvider(t *testing.T, serverURL string) *MattermostToolProvider {
-	t.Helper()
-	return &MattermostToolProvider{
-		logger:      &testLogger{t: t},
-		mmServerURL: serverURL,
-	}
-}
-
-func newTestClient(serverURL string) *model.Client4 {
-	client := model.NewAPIv4Client(serverURL)
-	client.SetToken("test-token")
-	return client
-}
-
 func TestAutomationListAutomations(t *testing.T) {
 	id1 := model.NewId()
 	id2 := model.NewId()

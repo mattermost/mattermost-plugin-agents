@@ -5,14 +5,12 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/files"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -32,13 +30,6 @@ func (f *fakeFileContentService) GetContent(_ context.Context, userID, fileID st
 	f.gotOffset = offset
 	f.gotLimit = limit
 	return f.content, f.err
-}
-
-func argsGetterFor(t *testing.T, v any) llm.ToolArgumentGetter {
-	t.Helper()
-	b, err := json.Marshal(v)
-	require.NoError(t, err)
-	return func(target any) error { return json.Unmarshal(b, target) }
 }
 
 func TestToolReadFile(t *testing.T) {

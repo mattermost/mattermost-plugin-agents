@@ -26,31 +26,6 @@ func (fakeToolAuthProvider) GetAuthenticatedMattermostClient(context.Context) (*
 	return model.NewAPIv4Client("https://mm.example.com"), nil
 }
 
-// testLogger is a simple no-op logger for testing
-type testLogger struct {
-	t *testing.T
-}
-
-func (l *testLogger) Debug(msg string, keyValuePairs ...any) {
-	// Could use l.t.Log if we wanted to see debug output during tests
-}
-
-func (l *testLogger) Info(msg string, keyValuePairs ...any) {
-	// Could use l.t.Log if we wanted to see info output during tests
-}
-
-func (l *testLogger) Warn(msg string, keyValuePairs ...any) {
-	// Could use l.t.Log if we wanted to see warnings during tests
-}
-
-func (l *testLogger) Error(msg string, keyValuePairs ...any) {
-	l.t.Logf("ERROR: %s %v", msg, keyValuePairs)
-}
-
-func (l *testLogger) Flush() error {
-	return nil
-}
-
 func TestCreateMCPToolContextReadsBeforeHookResolver(t *testing.T) {
 	expectedResolver := auth.BeforeHookResolver(func(_, _, _ string) (string, error) {
 		return "/plugins/com.example.plugin/hooks/before", nil
