@@ -362,75 +362,71 @@ func NewJSONSchemaForAccessMode[T any](accessMode string) *jsonschema.Schema {
 		panic(fmt.Sprintf("failed to create JSON schema from struct: %v", err))
 	}
 
-	// If no properties to filter, return the base schema
-	if baseSchema.Properties == nil {
+	// Identify the properties the current access mode is not allowed to set.
+	excluded := excludedFieldsForAccessMode(reflect.TypeFor[T](), accessMode)
+	if len(excluded) == 0 {
 		return baseSchema
 	}
 
-	// Get the struct type to inspect field tags
-	var zero T
-	structType := reflect.TypeOf(zero)
+	// Shallow-copy the base schema and drop only the excluded properties, so that
+	// everything else the generator produced ($defs, AdditionalProperties, item
+	// schemas, ...) is preserved.
+	filtered := *baseSchema
+	filtered.Properties = make(map[string]*jsonschema.Schema, len(baseSchema.Properties))
+	for name, prop := range baseSchema.Properties {
+		if !excluded[name] {
+			filtered.Properties[name] = prop
+		}
+	}
+	if len(baseSchema.Required) > 0 {
+		required := make([]string, 0, len(baseSchema.Required))
+		for _, name := range baseSchema.Required {
+			if !excluded[name] {
+				required = append(required, name)
+			}
+		}
+		filtered.Required = required
+	}
+	return &filtered
+}
 
-	// If it's a pointer, get the underlying type
-	if structType.Kind() == reflect.Ptr {
-		structType = structType.Elem()
+// excludedFieldsForAccessMode returns the set of JSON field names on struct type
+// t that the given access mode is not allowed to use, per each field's `access:`
+// tag. Returns nil when nothing is restricted.
+func excludedFieldsForAccessMode(t reflect.Type, accessMode string) map[string]bool {
+	for t != nil && t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t == nil || t.Kind() != reflect.Struct {
+		return nil
 	}
 
-	// If it's not a struct, return the base schema
-	if structType.Kind() != reflect.Struct {
-		return baseSchema
-	}
-
-	// Create a new schema with filtered properties
-	filteredSchema := &jsonschema.Schema{
-		Type:        baseSchema.Type,
-		Title:       baseSchema.Title,
-		Description: baseSchema.Description,
-		Properties:  make(map[string]*jsonschema.Schema),
-		Required:    []string{},
-	}
-
-	// Check each field and its access tag
-	for i := 0; i < structType.NumField(); i++ {
-		field := structType.Field(i)
-
-		// Get the JSON field name
-		jsonTag := field.Tag.Get("json")
-		if jsonTag == "" || jsonTag == "-" {
+	var excluded map[string]bool
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		name := jsonFieldName(field)
+		if name == "" {
 			continue
 		}
-
-		// Extract field name (ignore omitempty and other options)
-		jsonFieldName := strings.Split(jsonTag, ",")[0]
-		if jsonFieldName == "" {
-			continue
-		}
-
-		// Check access tag
 		restrictionTag := field.Tag.Get("access")
-
-		// Include field if:
-		// - No restriction tag (available for all access modes)
-		// - Current access mode is in the comma-separated list of allowed modes
-		includeField := restrictionTag == "" || isAccessAllowed(restrictionTag, accessMode)
-
-		if includeField {
-			// Copy the property from base schema if it exists
-			if baseProperty, exists := baseSchema.Properties[jsonFieldName]; exists {
-				filteredSchema.Properties[jsonFieldName] = baseProperty
+		if restrictionTag != "" && !isAccessAllowed(restrictionTag, accessMode) {
+			if excluded == nil {
+				excluded = make(map[string]bool)
 			}
-
-			// Check if field was required in original schema
-			for _, requiredField := range baseSchema.Required {
-				if requiredField == jsonFieldName {
-					filteredSchema.Required = append(filteredSchema.Required, jsonFieldName)
-					break
-				}
-			}
+			excluded[name] = true
 		}
 	}
+	return excluded
+}
 
-	return filteredSchema
+// jsonFieldName returns the JSON object key for a struct field, or "" when the
+// field has no usable json tag (omitted or "-").
+func jsonFieldName(field reflect.StructField) string {
+	jsonTag := field.Tag.Get("json")
+	if jsonTag == "" || jsonTag == "-" {
+		return ""
+	}
+	return strings.Split(jsonTag, ",")[0]
 }
 
 // isAccessAllowed checks if the current access mode is allowed based on the access tag
@@ -484,20 +480,13 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 	for i := 0; i < targetType.NumField(); i++ {
 		field := targetType.Field(i)
 
-		// Get the JSON field name
-		jsonTag := field.Tag.Get("json")
-		if jsonTag == "" || jsonTag == "-" {
-			continue
-		}
-
-		// Extract field name (ignore omitempty and other options)
-		jsonFieldName := strings.Split(jsonTag, ",")[0]
-		if jsonFieldName == "" {
+		name := jsonFieldName(field)
+		if name == "" {
 			continue
 		}
 
 		// Check if this field is present in the incoming data
-		if _, fieldPresent := incomingData[jsonFieldName]; !fieldPresent {
+		if _, fieldPresent := incomingData[name]; !fieldPresent {
 			continue // Field not provided, so no validation needed
 		}
 
@@ -506,7 +495,7 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 
 		// If field has access restrictions and current access mode is not allowed
 		if restrictionTag != "" && !isAccessAllowed(restrictionTag, currentAccessMode) {
-			return fmt.Errorf("field '%s' is not available in %s access mode (requires: %s)", jsonFieldName, currentAccessMode, restrictionTag)
+			return fmt.Errorf("field '%s' is not available in %s access mode (requires: %s)", name, currentAccessMode, restrictionTag)
 		}
 	}
 

@@ -55,7 +55,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	mentionHint := "To find posts mentioning a specific person, query their username only (e.g. `john.smith`); at-mentions in posts use the username, never the display name. Do not combine username and display name (e.g. `john.smith John Smith`) in a single query — that requires all of those tokens to co-occur and will miss most posts."
 
 	if semanticEnabled {
-		schema = llm.NewJSONSchemaFromStruct[CombinedSearchArgs]()
+		schema = NewJSONSchemaForAccessMode[CombinedSearchArgs](string(p.accessMode))
 		description = "Search for posts in Mattermost using both semantic (AI-powered) and keyword search. " +
 			"Semantic search finds posts by meaning and does not require exact term matches. " +
 			"Keyword search treats the query as a literal AND match — every whitespace-separated token must appear in the same post — so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
@@ -67,7 +67,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			"Returns matching posts with content, author, channel, and relevance score for semantic results. " +
 			contextHint
 	} else {
-		schema = llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]()
+		schema = NewJSONSchemaForAccessMode[KeywordOnlySearchArgs](string(p.accessMode))
 		description = "Search for posts in Mattermost using keyword search. " +
 			"Treats the query as a literal AND match — every whitespace-separated token must appear in the same post — so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
@@ -87,7 +87,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 		{
 			Name:        "search_users",
 			Description: "Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}",
-			Schema:      llm.NewJSONSchemaFromStruct[SearchUsersArgs](),
+			Schema:      NewJSONSchemaForAccessMode[SearchUsersArgs](string(p.accessMode)),
 			Resolver:    p.toolSearchUsers,
 		},
 	}

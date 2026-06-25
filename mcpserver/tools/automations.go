@@ -255,7 +255,7 @@ func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
 			Description: `List or get channel automations (trigger-action workflows).
 Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
 Returns the full JSON for each automation including trigger configuration and action pipeline.`,
-			Schema:   llm.NewJSONSchemaFromStruct[ListAutomationsArgs](),
+			Schema:   NewJSONSchemaForAccessMode[ListAutomationsArgs](string(p.accessMode)),
 			Resolver: p.toolListAutomations,
 		},
 		{
@@ -267,7 +267,7 @@ Returns the full JSON for each automation including trigger configuration and ac
 		{
 			Name:        "create_automation",
 			Description: createAutomationToolDescription,
-			Schema:      llm.NewJSONSchemaFromStruct[CreateAutomationArgs](),
+			Schema:      NewJSONSchemaForAccessMode[CreateAutomationArgs](string(p.accessMode)),
 			Resolver:    p.toolCreateAutomation,
 		},
 		{
@@ -277,13 +277,13 @@ omit will be cleared. Always call list_automations first to fetch the current JS
 only what needs to change and pass the full updated automation back. Call get_automation_instructions
 for trigger/action format details.
 IMPORTANT: Show the user what will change and get their confirmation first.`,
-			Schema:   llm.NewJSONSchemaFromStruct[UpdateAutomationArgs](),
+			Schema:   NewJSONSchemaForAccessMode[UpdateAutomationArgs](string(p.accessMode)),
 			Resolver: p.toolUpdateAutomation,
 		},
 		{
 			Name:        "delete_automation",
 			Description: "Delete a channel automation by ID. This is permanent and cannot be undone.",
-			Schema:      llm.NewJSONSchemaFromStruct[DeleteAutomationArgs](),
+			Schema:      NewJSONSchemaForAccessMode[DeleteAutomationArgs](string(p.accessMode)),
 			Resolver:    p.toolDeleteAutomation,
 		},
 	}

@@ -36,7 +36,7 @@ func (p *MattermostToolProvider) getAgentTools() []MCPTool {
 		{
 			Name:        "list_agents",
 			Description: `List all available AI agents (bots). Returns each agent's ID, display name, and username.`,
-			Schema:      llm.NewJSONSchemaFromStruct[ListAgentsArgs](),
+			Schema:      NewJSONSchemaForAccessMode[ListAgentsArgs](string(p.accessMode)),
 			Resolver:    p.toolListAgents,
 		},
 	}
