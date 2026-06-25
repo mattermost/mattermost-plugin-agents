@@ -11,7 +11,6 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/files"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // FileContentService reads the text contents of Mattermost file attachments on
@@ -48,8 +47,8 @@ func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, argsGe
 		return "", fmt.Errorf("failed to get arguments for tool read_file: %w", err)
 	}
 
-	if !model.IsValidId(args.FileID) {
-		return "", fmt.Errorf("file_id must be a valid ID")
+	if err := requireID("file_id", args.FileID); err != nil {
+		return "", err
 	}
 
 	if p.fileContentService == nil {

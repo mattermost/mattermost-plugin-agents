@@ -263,7 +263,7 @@ func TestAutomationListAutomations(t *testing.T) {
 
 		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid automation_id")
+		assert.Contains(t, err.Error(), "automation_id must be a valid ID")
 	})
 }
 
@@ -411,7 +411,7 @@ func TestAutomationUpdate(t *testing.T) {
 
 		_, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid automation_id")
+		assert.Contains(t, err.Error(), "automation_id must be a valid ID")
 	})
 }
 
@@ -457,7 +457,7 @@ func TestAutomationDelete(t *testing.T) {
 
 		_, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid automation_id")
+		assert.Contains(t, err.Error(), "automation_id must be a valid ID")
 	})
 }
 

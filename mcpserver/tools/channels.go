@@ -115,8 +115,8 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	// Validate channel ID
-	if !model.IsValidId(args.ChannelID) {
-		return "", fmt.Errorf("channel_id must be a valid ID")
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
 	}
 
 	// Set defaults and validate
@@ -276,8 +276,8 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 	if args.Type == "" {
 		return "", fmt.Errorf("type cannot be empty")
 	}
-	if !model.IsValidId(args.TeamID) {
-		return "", fmt.Errorf("team_id must be a valid ID")
+	if err := requireID("team_id", args.TeamID); err != nil {
+		return "", err
 	}
 
 	// Validate channel type
@@ -326,8 +326,8 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	ctx := mcpContext.Ctx
 
 	// Validate team ID if provided
-	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return "", fmt.Errorf("team_id must be a valid ID")
+	if err := optionalID("team_id", args.TeamID); err != nil {
+		return "", err
 	}
 
 	var channels []*model.Channel
@@ -338,8 +338,8 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	switch {
 	case args.ChannelID != "":
 		// Validate channel ID format
-		if !model.IsValidId(args.ChannelID) {
-			return "", fmt.Errorf("channel_id must be a valid ID")
+		if err := requireID("channel_id", args.ChannelID); err != nil {
+			return "", err
 		}
 		// Direct ID lookup - fastest method, always returns single result
 		var channel *model.Channel
@@ -528,8 +528,8 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	}
 
 	// Validate required fields
-	if !model.IsValidId(args.ChannelID) {
-		return "", fmt.Errorf("channel_id must be a valid ID")
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
 	}
 
 	// Set defaults and validate
@@ -610,11 +610,11 @@ func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext
 	}
 
 	// Validate required fields
-	if !model.IsValidId(args.UserID) {
-		return "", fmt.Errorf("user_id must be a valid ID")
+	if err := requireID("user_id", args.UserID); err != nil {
+		return "", err
 	}
-	if !model.IsValidId(args.ChannelID) {
-		return "", fmt.Errorf("channel_id must be a valid ID")
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
 	}
 
 	// Get client and context
@@ -793,8 +793,8 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	}
 
 	// Validate team ID if provided
-	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return "", fmt.Errorf("team_id must be a valid ID")
+	if err := optionalID("team_id", args.TeamID); err != nil {
+		return "", err
 	}
 
 	// Set defaults and cap to match schema (consistent with get_channel_members and get_team_members).

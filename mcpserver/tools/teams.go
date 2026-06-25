@@ -96,8 +96,8 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 
 	switch {
 	case args.TeamID != "":
-		if !model.IsValidId(args.TeamID) {
-			return "", fmt.Errorf("team_id must be a valid ID")
+		if err := requireID("team_id", args.TeamID); err != nil {
+			return "", err
 		}
 		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
@@ -222,8 +222,8 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	}
 
 	// Validate required fields
-	if !model.IsValidId(args.TeamID) {
-		return "", fmt.Errorf("team_id must be a valid ID")
+	if err := requireID("team_id", args.TeamID); err != nil {
+		return "", err
 	}
 
 	// Set defaults and validate
@@ -373,11 +373,11 @@ func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, a
 	}
 
 	// Validate required fields
-	if !model.IsValidId(args.UserID) {
-		return "", fmt.Errorf("user_id must be a valid ID")
+	if err := requireID("user_id", args.UserID); err != nil {
+		return "", err
 	}
-	if !model.IsValidId(args.TeamID) {
-		return "", fmt.Errorf("team_id must be a valid ID")
+	if err := requireID("team_id", args.TeamID); err != nil {
+		return "", err
 	}
 
 	// Get client from context

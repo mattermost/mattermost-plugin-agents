@@ -116,8 +116,8 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	}
 
 	// Validate post ID
-	if !model.IsValidId(args.PostID) {
-		return "", fmt.Errorf("post_id must be a valid ID")
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
 	}
 
 	// Set default for include_thread
@@ -239,8 +239,8 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	}
 
 	// Validate required fields
-	if !model.IsValidId(args.ChannelID) {
-		return "", fmt.Errorf("channel_id must be a valid ID")
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
 	}
 	if args.Message == "" {
 		return "", fmt.Errorf("message cannot be empty")
@@ -252,8 +252,8 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "", fmt.Errorf("team_display_name cannot be empty - you must call get_channel_info first")
 	}
 	// Validate root ID if provided (for replies)
-	if args.RootID != "" && !model.IsValidId(args.RootID) {
-		return "", fmt.Errorf("root_id must be a valid ID")
+	if err := optionalID("root_id", args.RootID); err != nil {
+		return "", err
 	}
 
 	// Get client from context
@@ -345,15 +345,15 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	if args.Password == "" {
 		return "", fmt.Errorf("password cannot be empty")
 	}
-	if !model.IsValidId(args.ChannelID) {
-		return "", fmt.Errorf("channel_id must be a valid ID")
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
 	}
 	if args.Message == "" {
 		return "", fmt.Errorf("message cannot be empty")
 	}
 	// Validate root ID if provided (for replies)
-	if args.RootID != "" && !model.IsValidId(args.RootID) {
-		return "", fmt.Errorf("root_id must be a valid ID")
+	if err := optionalID("root_id", args.RootID); err != nil {
+		return "", err
 	}
 
 	// Create a new client and login as the specified user

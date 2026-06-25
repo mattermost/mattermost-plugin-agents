@@ -119,11 +119,11 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 		return "", fmt.Errorf("query cannot be empty")
 	}
 
-	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return "", fmt.Errorf("team_id must be a valid ID")
+	if err := optionalID("team_id", args.TeamID); err != nil {
+		return "", err
 	}
-	if args.ChannelID != "" && !model.IsValidId(args.ChannelID) {
-		return "", fmt.Errorf("channel_id must be a valid ID")
+	if err := optionalID("channel_id", args.ChannelID); err != nil {
+		return "", err
 	}
 
 	if args.SemanticLimit <= 0 {
