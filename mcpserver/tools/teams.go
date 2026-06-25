@@ -99,10 +99,11 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		var msg string
 		team, msg, err = p.resolveTeamByName(mcpContext, args.TeamName)
 		if err != nil {
-			return msg, err
+			return "", err
 		}
 		if msg != "" {
-			// Multiple matches — return disambiguation message (not an error)
+			// No unique match — surface the disambiguation list or the
+			// not-found guidance to the model (not an error).
 			return msg, nil
 		}
 	default:
@@ -132,20 +133,22 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 // 3. Substring display name match from user's teams
 // 4. SearchTeams API as final fallback
 //
-// Returns (team, "", nil) on unique match, ("", disambiguationMsg, nil) on multiple matches,
-// or ("", errorMsg, error) on failure.
+// Returns (team, "", nil) on a unique match; (nil, message, nil) when there is no
+// unique match, where message is either a disambiguation list (multiple matches)
+// or recovery guidance (none found) to relay to the model; or (nil, "", error)
+// when a lookup API call fails.
 func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, name string) (*model.Team, string, error) {
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
 	user, _, userErr := client.GetMe(ctx, "")
 	if userErr != nil {
-		return nil, "failed to get current user", fmt.Errorf("error getting current user: %w", userErr)
+		return nil, "", fmt.Errorf("error getting current user: %w", userErr)
 	}
 
 	teams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
 	if teamsErr != nil {
-		return nil, "failed to fetch user teams", fmt.Errorf("error fetching user teams: %w", teamsErr)
+		return nil, "", fmt.Errorf("error fetching user teams: %w", teamsErr)
 	}
 
 	// 1. Exact display name match (case-insensitive)
@@ -187,12 +190,13 @@ func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, n
 		return nil, formatTeamDisambiguation(name, searchResults), nil
 	}
 
-	// Nothing found — return error with recovery guidance
+	// Nothing found — surface recovery guidance to the model as an informational
+	// result (not an error), so the guidance actually reaches the model.
 	msg := fmt.Sprintf("No team found matching '%s'.", name)
 	msg += "\n\nACTION REQUIRED - Try these alternatives before asking the user:\n"
 	msg += "1. Call get_user_channels to list all channels (includes team info) you have access to\n"
 	msg += "2. Only ask the user for help after trying alternatives above."
-	return nil, msg, fmt.Errorf("no team found matching: %s", name)
+	return nil, msg, nil
 }
 
 // formatTeamDisambiguation builds a message listing multiple team matches for the LLM to choose from.
