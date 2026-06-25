@@ -226,16 +226,10 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
-	// Set defaults and validate
-	if args.Limit == 0 {
-		args.Limit = 50
-	}
-	if args.Limit > 200 {
-		args.Limit = 200
-	}
-	if args.Page < 0 {
-		args.Page = 0
-	}
+	paging := newPagination(args.Page, args.Limit, paginationOptions{
+		DefaultPerPage: 50,
+		MaxPerPage:     200,
+	})
 
 	// Get client from context
 	if mcpContext.Client == nil {
@@ -248,7 +242,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	excludeBots := args.ExcludeBots == nil || *args.ExcludeBots
 
 	// Get team members
-	members, _, err := client.GetTeamMembers(ctx, args.TeamID, args.Page, args.Limit, "")
+	members, _, err := client.GetTeamMembers(ctx, args.TeamID, paging.Page, paging.PerPage, "")
 	if err != nil {
 		return "failed to fetch team members", fmt.Errorf("error fetching team members: %w", err)
 	}
@@ -285,7 +279,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 
 	// Build header and footer
 	var header strings.Builder
-	header.WriteString(fmt.Sprintf("Team Members (page %d, showing %d members):\n", args.Page, written))
+	header.WriteString(fmt.Sprintf("Team Members (page %d, showing %d members):\n", paging.Page, written))
 
 	var footer string
 	if botsExcluded > 0 {

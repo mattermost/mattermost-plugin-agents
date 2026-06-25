@@ -125,22 +125,11 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
-	// Resolve per_page, accepting the deprecated `limit` alias when per_page is unset.
-	perPage := args.PerPage
-	if perPage <= 0 {
-		perPage = args.Limit
-	}
-	if perPage <= 0 {
-		perPage = 20
-	}
-	if perPage > readChannelMaxPerPage {
-		perPage = readChannelMaxPerPage
-	}
-
-	page := args.Page
-	if page < 0 {
-		page = 0
-	}
+	paging := newPagination(args.Page, args.PerPage, paginationOptions{
+		DefaultPerPage:  20,
+		FallbackPerPage: args.Limit,
+		MaxPerPage:      readChannelMaxPerPage,
+	})
 
 	// Get client and context
 	if mcpContext.Client == nil {
@@ -197,7 +186,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	// Get posts from the channel
-	posts, _, err := client.GetPostsForChannel(ctx, args.ChannelID, page, perPage, "", false, false)
+	posts, _, err := client.GetPostsForChannel(ctx, args.ChannelID, paging.Page, paging.PerPage, "", false, false)
 	if err != nil {
 		return "failed to fetch channel posts", fmt.Errorf("error fetching posts: %w", err)
 	}
@@ -212,14 +201,14 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	if len(filteredPosts) == 0 {
-		if page > 0 {
-			return fmt.Sprintf("no posts found on page %d", page), nil
+		if paging.Page > 0 {
+			return fmt.Sprintf("no posts found on page %d", paging.Page), nil
 		}
 		return "no posts found in the specified timeframe", nil
 	}
 
 	// A full page implies more posts may exist on the next page.
-	hasMore := len(fetched) >= perPage
+	hasMore := len(fetched) >= paging.PerPage
 
 	// Sort chronologically (oldest first) for natural reading order
 	sort.Slice(filteredPosts, func(i, j int) bool {
@@ -258,7 +247,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	// Format the response
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channelDisplayName, teamDisplayName))
-	result.WriteString(fmt.Sprintf("Found %d posts (page %d):\n\n", len(filteredPosts), page))
+	result.WriteString(fmt.Sprintf("Found %d posts (page %d):\n\n", len(filteredPosts), paging.Page))
 
 	postIndex := format.BuildPostIndex(filteredPosts)
 	for i, post := range filteredPosts {
@@ -277,7 +266,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	if hasMore {
-		result.WriteString(fmt.Sprintf("More posts available — call read_channel again with page=%d to retrieve the next %d.\n", page+1, perPage))
+		result.WriteString(fmt.Sprintf("More posts available — call read_channel again with page=%d to retrieve the next %d.\n", paging.Page+1, paging.PerPage))
 	}
 
 	return result.String(), nil
@@ -529,16 +518,10 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
-	// Set defaults and validate
-	if args.Limit == 0 {
-		args.Limit = 50
-	}
-	if args.Limit > 200 {
-		args.Limit = 200
-	}
-	if args.Page < 0 {
-		args.Page = 0
-	}
+	paging := newPagination(args.Page, args.Limit, paginationOptions{
+		DefaultPerPage: 50,
+		MaxPerPage:     200,
+	})
 
 	// Get client and context
 	if mcpContext.Client == nil {
@@ -551,7 +534,7 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	excludeBots := args.ExcludeBots == nil || *args.ExcludeBots
 
 	// Get channel members
-	members, _, err := client.GetChannelMembers(ctx, args.ChannelID, args.Page, args.Limit, "")
+	members, _, err := client.GetChannelMembers(ctx, args.ChannelID, paging.Page, paging.PerPage, "")
 	if err != nil {
 		return "failed to fetch channel members", fmt.Errorf("error fetching channel members: %w", err)
 	}
@@ -588,7 +571,7 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 
 	// Build header and footer
 	var header strings.Builder
-	header.WriteString(fmt.Sprintf("Channel Members (page %d, showing %d members):\n", args.Page, written))
+	header.WriteString(fmt.Sprintf("Channel Members (page %d, showing %d members):\n", paging.Page, written))
 
 	var footer string
 	if botsExcluded > 0 {
@@ -794,22 +777,10 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
-	// Set defaults and cap to match schema (consistent with get_channel_members and get_team_members).
-	// Guard against negative values to prevent slice panics from user input.
-	if args.PerPage <= 0 {
-		args.PerPage = 60
-	}
-	if args.PerPage > 200 {
-		args.PerPage = 200
-	}
-	if args.Page < 0 {
-		args.Page = 0
-	}
-
-	maxInt := int(^uint(0) >> 1)
-	if args.Page > maxInt/args.PerPage {
-		return "page value too large", fmt.Errorf("page * per_page overflows int")
-	}
+	paging := newPagination(args.Page, args.PerPage, paginationOptions{
+		DefaultPerPage: 60,
+		MaxPerPage:     200,
+	})
 
 	// Get client and context
 	if mcpContext.Client == nil {
@@ -847,14 +818,9 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	// Store total count before pagination
 	totalCount := len(channels)
 
-	// Apply pagination
-	start := args.Page * args.PerPage
-	end := start + args.PerPage
-	if start >= len(channels) {
-		return fmt.Sprintf("No channels found (page %d, %d total channels).", args.Page, totalCount), nil
-	}
-	if end > len(channels) {
-		end = len(channels)
+	start, end, ok := paging.SliceBounds(len(channels))
+	if !ok {
+		return fmt.Sprintf("No channels found (page %d, %d total channels).", paging.Page, totalCount), nil
 	}
 	hasMore := end < totalCount
 	channels = channels[start:end]
@@ -881,7 +847,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 
 	// Build human-readable response (consistent with get_channel_members, read_channel, etc.)
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("User Channels (page %d, showing %d of %d channels):\n\n", args.Page, len(channels), totalCount))
+	result.WriteString(fmt.Sprintf("User Channels (page %d, showing %d of %d channels):\n\n", paging.Page, len(channels), totalCount))
 
 	for i, channel := range channels {
 		displayName := channel.DisplayName
@@ -915,7 +881,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	}
 
 	if hasMore {
-		result.WriteString(fmt.Sprintf("Page %d of results shown. More channels available — use page=%d to see the next page.\n", args.Page, args.Page+1))
+		result.WriteString(fmt.Sprintf("Page %d of results shown. More channels available — use page=%d to see the next page.\n", paging.Page, paging.Page+1))
 	}
 
 	return result.String(), nil
