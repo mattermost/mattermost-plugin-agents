@@ -232,20 +232,6 @@ func (p *MattermostToolProvider) fetchAutomationInstructions(ctx context.Context
 	return out, nil
 }
 
-// automationToolNames lists all automation tool names for filtering.
-var automationToolNames = map[string]bool{
-	"list_automations":            true,
-	"get_automation_instructions": true,
-	"create_automation":           true,
-	"update_automation":           true,
-	"delete_automation":           true,
-}
-
-// IsAutomationTool returns true if the given tool name is an automation tool.
-func IsAutomationTool(name string) bool {
-	return automationToolNames[name]
-}
-
 // getAutomationTools returns all automation-related tools.
 func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
 	return []MCPTool{
@@ -254,20 +240,23 @@ func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
 			Description: `List or get channel automations (trigger-action workflows).
 Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
 Returns the full JSON for each automation including trigger configuration and action pipeline.`,
-			Schema:   NewJSONSchemaForAccessMode[ListAutomationsArgs](string(p.accessMode)),
-			Resolver: typed("list_automations", p.toolListAutomations),
+			Schema:    NewJSONSchemaForAccessMode[ListAutomationsArgs](string(p.accessMode)),
+			Resolver:  typed("list_automations", p.toolListAutomations),
+			Available: p.isAutomationPluginInstalled,
 		},
 		{
 			Name:        "get_automation_instructions",
 			Description: "Returns detailed documentation for creating and updating channel automations: triggers, actions, template syntax, allowed_tools, and required user-confirmation workflow. Call this before create_automation or update_automation.",
 			Schema:      nil,
 			Resolver:    typed("get_automation_instructions", p.toolGetAutomationInstructions),
+			Available:   p.isAutomationPluginInstalled,
 		},
 		{
 			Name:        "create_automation",
 			Description: createAutomationToolDescription,
 			Schema:      NewJSONSchemaForAccessMode[CreateAutomationArgs](string(p.accessMode)),
 			Resolver:    typed("create_automation", p.toolCreateAutomation),
+			Available:   p.isAutomationPluginInstalled,
 		},
 		{
 			Name: "update_automation",
@@ -276,14 +265,16 @@ omit will be cleared. Always call list_automations first to fetch the current JS
 only what needs to change and pass the full updated automation back. Call get_automation_instructions
 for trigger/action format details.
 IMPORTANT: Show the user what will change and get their confirmation first.`,
-			Schema:   NewJSONSchemaForAccessMode[UpdateAutomationArgs](string(p.accessMode)),
-			Resolver: typed("update_automation", p.toolUpdateAutomation),
+			Schema:    NewJSONSchemaForAccessMode[UpdateAutomationArgs](string(p.accessMode)),
+			Resolver:  typed("update_automation", p.toolUpdateAutomation),
+			Available: p.isAutomationPluginInstalled,
 		},
 		{
 			Name:        "delete_automation",
 			Description: "Delete a channel automation by ID. This is permanent and cannot be undone.",
 			Schema:      NewJSONSchemaForAccessMode[DeleteAutomationArgs](string(p.accessMode)),
 			Resolver:    typed("delete_automation", p.toolDeleteAutomation),
+			Available:   p.isAutomationPluginInstalled,
 		},
 	}
 }

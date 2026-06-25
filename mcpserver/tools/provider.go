@@ -66,6 +66,11 @@ type MCPTool struct {
 	Description string
 	Schema      *jsonschema.Schema
 	Resolver    MCPToolResolver
+
+	// Available, when set, gates the tool's visibility: it is evaluated on each
+	// tools/list request and the tool is hidden when it returns false. Nil means
+	// always available.
+	Available func() bool
 }
 
 type ToolProvider interface {
@@ -125,8 +130,8 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	mcpTools = append(mcpTools, p.getFileTools()...)
 	mcpTools = append(mcpTools, p.getAgentTools()...)
 
-	// Automation tools are always registered; availability is checked dynamically
-	// via middleware on each tools/list request.
+	// Automation tools are always registered; each carries an Available predicate
+	// so they are hidden from tools/list when the automation plugin is absent.
 	mcpTools = append(mcpTools, p.getAutomationTools()...)
 
 	// Add dev tools if dev mode is enabled
@@ -151,44 +156,42 @@ func (p *MattermostToolProvider) ToolNames() []string {
 
 // ProvideTools registers all available MCP tools with the server.
 func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
+	availability := map[string]func() bool{}
 	for _, mcpTool := range p.mcpTools() {
 		p.registerDynamicTool(mcpServer, mcpTool)
-	}
-
-	// Add middleware to dynamically filter automation tools from tools/list
-	// when the channel automation plugin is not installed.
-	mcpServer.AddReceivingMiddleware(p.automationToolFilterMiddleware())
-}
-
-func (p *MattermostToolProvider) stripAutomationFromToolsListResult(result mcp.Result) mcp.Result {
-	listResult, ok := result.(*mcp.ListToolsResult)
-	if !ok {
-		return result
-	}
-	filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
-	for _, tool := range listResult.Tools {
-		if !IsAutomationTool(tool.Name) {
-			filtered = append(filtered, tool)
+		if mcpTool.Available != nil {
+			availability[mcpTool.Name] = mcpTool.Available
 		}
 	}
-	listResult.Tools = filtered
-	return listResult
+
+	// Hide tools whose Available predicate currently returns false on each
+	// tools/list request (e.g. automation tools when the plugin is absent).
+	mcpServer.AddReceivingMiddleware(toolAvailabilityMiddleware(availability))
 }
 
-// automationToolFilterMiddleware returns MCP receiving middleware that filters
-// automation tools from tools/list when the channel automation plugin is not installed.
-func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware {
+// toolAvailabilityMiddleware returns MCP receiving middleware that drops any tool
+// from tools/list whose Available predicate reports it as unavailable.
+func toolAvailabilityMiddleware(availability map[string]func() bool) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			result, err := next(ctx, method, req)
 			if err != nil || method != "tools/list" {
 				return result, err
 			}
-
-			if !p.isAutomationPluginInstalled() {
-				return p.stripAutomationFromToolsListResult(result), nil
+			listResult, ok := result.(*mcp.ListToolsResult)
+			if !ok {
+				return result, nil
 			}
-			return result, nil
+
+			filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
+			for _, tool := range listResult.Tools {
+				if available, gated := availability[tool.Name]; gated && !available() {
+					continue
+				}
+				filtered = append(filtered, tool)
+			}
+			listResult.Tools = filtered
+			return listResult, nil
 		}
 	}
 }
