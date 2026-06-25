@@ -290,7 +290,7 @@ func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPTo
 }
 
 func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext, args ListAutomationsArgs) (string, error) {
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// If a specific automation ID was requested, fetch just that one.
 	if args.AutomationID != "" {
@@ -344,7 +344,7 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 		return "", fmt.Errorf("name cannot be empty")
 	}
 
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	automation := Automation{
 		Name:    args.Name,
@@ -389,7 +389,7 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 		return "", err
 	}
 
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	automation := Automation{
 		ID:      args.AutomationID,
@@ -435,7 +435,7 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 		return "", err
 	}
 
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/automations/"+args.AutomationID), "")
 	if err != nil {

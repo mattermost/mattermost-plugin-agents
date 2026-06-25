@@ -189,7 +189,7 @@ func TestAutomationListAutomations(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("list all", func(t *testing.T) {
 		result, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{})
@@ -255,7 +255,7 @@ func TestAutomationCreate(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("create with message_posted trigger", func(t *testing.T) {
 		args := CreateAutomationArgs{
@@ -330,7 +330,7 @@ func TestAutomationUpdate(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("update success", func(t *testing.T) {
 		args := UpdateAutomationArgs{
@@ -387,7 +387,7 @@ func TestAutomationDelete(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("delete success", func(t *testing.T) {
 		result, err := provider.toolDeleteAutomation(mcpCtx, DeleteAutomationArgs{AutomationID: id})
@@ -424,7 +424,7 @@ func TestAutomationErrorHandling(t *testing.T) {
 
 		provider := newTestProvider(t, ts.URL)
 		client := newTestClient(ts.URL)
-		mcpCtx := &MCPToolContext{Client: client}
+		mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 		_, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{})
 		require.Error(t, err)
@@ -435,7 +435,7 @@ func TestAutomationErrorHandling(t *testing.T) {
 		// Use an unreachable URL
 		provider := newTestProvider(t, "http://127.0.0.1:1")
 		client := newTestClient("http://127.0.0.1:1")
-		mcpCtx := &MCPToolContext{Client: client}
+		mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 		_, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{})
 		require.Error(t, err)
