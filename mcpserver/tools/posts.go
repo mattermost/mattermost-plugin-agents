@@ -279,28 +279,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		FileIds:   fileIDs,
 	}
 
-	// Add AI-generated prop if tracking is enabled
-	if p.trackAIGenerated {
-		var userID string
-
-		// First check if bot user ID was provided via context metadata (from embedded server)
-		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
-			userID = mcpContext.BotUserID
-		} else {
-			// For external servers, fetch the authenticated user's ID
-			if user, _, getMeErr := client.GetMe(ctx, ""); getMeErr == nil && user != nil {
-				userID = user.Id
-			}
-		}
-
-		// Add the prop if we have a valid user ID
-		if userID != "" {
-			if post.Props == nil {
-				post.Props = make(model.StringInterface)
-			}
-			post.Props["ai_generated_by"] = userID
-		}
-	}
+	p.stampAIGenerated(post, mcpContext, "")
 
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
@@ -415,32 +394,12 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		FileIds:   fileIDs,
 	}
 
-	props := make(map[string]interface{})
-
 	// Set from_webhook only when DM'ing yourself (prevents AI auto-response loop)
 	if dmSelf {
-		props["from_webhook"] = "true"
+		post.AddProp("from_webhook", "true")
 	}
 
-	// Add AI-generated prop if tracking is enabled
-	if p.trackAIGenerated {
-		var userID string
-
-		// First check if bot user ID was provided via context metadata (from embedded server)
-		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
-			userID = mcpContext.BotUserID
-		} else {
-			userID = currentUser.Id
-		}
-
-		if userID != "" {
-			props["ai_generated_by"] = userID
-		}
-	}
-
-	if len(props) > 0 {
-		post.SetProps(props)
-	}
+	p.stampAIGenerated(post, mcpContext, currentUser.Id)
 
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
@@ -505,20 +464,7 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		FileIds:   fileIDs,
 	}
 
-	if p.trackAIGenerated {
-		var userID string
-		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
-			userID = mcpContext.BotUserID
-		} else {
-			userID = currentUser.Id
-		}
-		if userID != "" {
-			if post.Props == nil {
-				post.Props = make(model.StringInterface)
-			}
-			post.Props["ai_generated_by"] = userID
-		}
-	}
+	p.stampAIGenerated(post, mcpContext, currentUser.Id)
 
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
@@ -533,4 +479,31 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 
 	return fmt.Sprintf("Successfully sent group message to %s with ID: %s%s",
 		strings.Join(usernames, ", "), createdPost.Id, attachmentMessage), nil
+}
+
+// stampAIGenerated marks a post as AI-generated (the ai_generated_by prop) when
+// AI-content tracking is enabled. It prefers the bot user id supplied via request
+// metadata (embedded servers); otherwise it uses fallbackUserID (the authenticated
+// user the caller already resolved), and as a last resort fetches the current user.
+// It is a no-op when tracking is disabled or no user id can be determined.
+func (p *MattermostToolProvider) stampAIGenerated(post *model.Post, mcpContext *MCPToolContext, fallbackUserID string) {
+	if !p.trackAIGenerated {
+		return
+	}
+
+	var userID string
+	switch {
+	case mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID):
+		userID = mcpContext.BotUserID
+	case fallbackUserID != "":
+		userID = fallbackUserID
+	case mcpContext.Client != nil:
+		if user, _, err := mcpContext.Client.GetMe(mcpContext.Ctx, ""); err == nil && user != nil {
+			userID = user.Id
+		}
+	}
+
+	if userID != "" {
+		post.AddProp("ai_generated_by", userID)
+	}
 }
