@@ -120,27 +120,28 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 }
 
 func (p *MattermostToolProvider) mcpTools() []MCPTool {
-	mcpTools := []MCPTool{}
-
-	// Add regular tools
-	mcpTools = append(mcpTools, p.getPostTools()...)
-	mcpTools = append(mcpTools, p.getChannelTools()...)
-	mcpTools = append(mcpTools, p.getTeamTools()...)
-	mcpTools = append(mcpTools, p.getSearchTools()...)
-	mcpTools = append(mcpTools, p.getFileTools()...)
-	mcpTools = append(mcpTools, p.getAgentTools()...)
-
-	// Automation tools are always registered; each carries an Available predicate
-	// so they are hidden from tools/list when the automation plugin is absent.
-	mcpTools = append(mcpTools, p.getAutomationTools()...)
-
-	// Add dev tools if dev mode is enabled
-	if p.devMode {
-		mcpTools = append(mcpTools, p.getDevUserTools()...)
-		mcpTools = append(mcpTools, p.getDevPostTools()...)
-		mcpTools = append(mcpTools, p.getDevTeamTools()...)
+	// Tool groups in registration order. Automation tools are always included;
+	// each carries an Available predicate so it is hidden from tools/list when the
+	// automation plugin is absent.
+	groups := []func() []MCPTool{
+		p.getPostTools,
+		p.getChannelTools,
+		p.getTeamTools,
+		p.getSearchTools,
+		p.getFileTools,
+		p.getAgentTools,
+		p.getAutomationTools,
 	}
 
+	// Dev tools are only exposed when dev mode is enabled.
+	if p.devMode {
+		groups = append(groups, p.getDevUserTools, p.getDevPostTools, p.getDevTeamTools)
+	}
+
+	var mcpTools []MCPTool
+	for _, group := range groups {
+		mcpTools = append(mcpTools, group()...)
+	}
 	return mcpTools
 }
 
