@@ -45,11 +45,11 @@ func (p *MattermostToolProvider) getFileTools() []MCPTool {
 func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args ReadFileArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool read_file: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool read_file: %w", err)
 	}
 
 	if !model.IsValidId(args.FileID) {
-		return "invalid file_id format", fmt.Errorf("file_id must be a valid ID")
+		return "", fmt.Errorf("file_id must be a valid ID")
 	}
 
 	if p.fileContentService == nil {
@@ -61,7 +61,7 @@ func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, argsGe
 		if errors.Is(err, files.ErrForbidden) {
 			return "you do not have permission to read this file", nil
 		}
-		return "failed to read file", fmt.Errorf("error reading file %s: %w", args.FileID, err)
+		return "", fmt.Errorf("error reading file %s: %w", args.FileID, err)
 	}
 
 	return formatFileContent(content), nil

@@ -45,19 +45,20 @@ func TestToolReadFile(t *testing.T) {
 	validID := model.NewId()
 
 	tests := []struct {
-		name         string
-		fileID       string
-		service      FileContentService
-		wantErr      bool
-		wantResult   string   // exact match when set
-		wantContains []string // substring matches
+		name            string
+		fileID          string
+		service         FileContentService
+		wantErr         bool
+		wantResult      string   // exact match when set
+		wantContains    []string // substring matches
+		wantErrContains string   // substring match against err on error paths
 	}{
 		{
-			name:       "invalid file id",
-			fileID:     "too-short",
-			service:    &fakeFileContentService{},
-			wantErr:    true,
-			wantResult: "invalid file_id format",
+			name:            "invalid file id",
+			fileID:          "too-short",
+			service:         &fakeFileContentService{},
+			wantErr:         true,
+			wantErrContains: "file_id must be a valid ID",
 		},
 		{
 			name:       "service unavailable",
@@ -122,6 +123,9 @@ func TestToolReadFile(t *testing.T) {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
+			}
+			if tt.wantErrContains != "" {
+				assert.Contains(t, err.Error(), tt.wantErrContains)
 			}
 			if tt.wantResult != "" {
 				assert.Equal(t, tt.wantResult, result)

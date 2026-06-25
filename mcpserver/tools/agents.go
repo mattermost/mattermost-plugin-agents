@@ -46,16 +46,16 @@ func (p *MattermostToolProvider) getAgentTools() []MCPTool {
 func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args ListAgentsArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool list_agents: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool list_agents: %w", err)
 	}
 
 	if mcpContext == nil || mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 
 	bots, err := p.fetchAIBots(mcpContext.Client)
 	if err != nil {
-		return "Failed to retrieve agents. The AI plugin is not reachable.", fmt.Errorf("failed to fetch agents: %w", err)
+		return "", fmt.Errorf("failed to fetch agents: %w", err)
 	}
 
 	if len(bots) == 0 {

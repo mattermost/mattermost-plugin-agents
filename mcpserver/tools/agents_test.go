@@ -64,8 +64,8 @@ func TestListAgents(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolListAgents(mcpCtx, argsGetter)
+		_, err := provider.toolListAgents(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "not reachable")
+		assert.Contains(t, err.Error(), "failed to fetch agents")
 	})
 }

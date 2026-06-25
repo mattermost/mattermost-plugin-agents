@@ -111,12 +111,12 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	var args ReadChannelArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool read_channel: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool read_channel: %w", err)
 	}
 
 	// Validate channel ID
 	if !model.IsValidId(args.ChannelID) {
-		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+		return "", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	// Set defaults and validate
@@ -129,7 +129,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -139,7 +139,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	if args.Since != "" {
 		parsedTime, parseErr := time.Parse(time.RFC3339, args.Since)
 		if parseErr != nil {
-			return "invalid since timestamp format", fmt.Errorf("invalid timestamp format: %w", parseErr)
+			return "", fmt.Errorf("invalid timestamp format: %w", parseErr)
 		}
 		since = parsedTime.Unix() * 1000 // Convert to milliseconds
 	}
@@ -147,7 +147,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	// Get channel info for context
 	channel, _, err := client.GetChannel(ctx, args.ChannelID)
 	if err != nil {
-		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
+		return "", fmt.Errorf("error fetching channel: %w", err)
 	}
 
 	// Determine team display name; DMs/Groups have no team
@@ -176,7 +176,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	} else {
 		team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
 		if teamErr != nil {
-			return "failed to fetch team info", fmt.Errorf("error fetching team: %w", teamErr)
+			return "", fmt.Errorf("error fetching team: %w", teamErr)
 		}
 		teamDisplayName = team.DisplayName
 	}
@@ -184,7 +184,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	// Get posts from the channel
 	posts, _, err := client.GetPostsForChannel(ctx, args.ChannelID, 0, args.Limit, "", false, false)
 	if err != nil {
-		return "failed to fetch channel posts", fmt.Errorf("error fetching posts: %w", err)
+		return "", fmt.Errorf("error fetching posts: %w", err)
 	}
 
 	// Filter by since timestamp if provided
@@ -263,31 +263,31 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 	var args CreateChannelArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_channel: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool create_channel: %w", err)
 	}
 
 	// Validate required fields
 	if args.Name == "" {
-		return "name is required", fmt.Errorf("name cannot be empty")
+		return "", fmt.Errorf("name cannot be empty")
 	}
 	if args.DisplayName == "" {
-		return "display_name is required", fmt.Errorf("display_name cannot be empty")
+		return "", fmt.Errorf("display_name cannot be empty")
 	}
 	if args.Type == "" {
-		return "type is required", fmt.Errorf("type cannot be empty")
+		return "", fmt.Errorf("type cannot be empty")
 	}
 	if !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		return "", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Validate channel type
 	if args.Type != "O" && args.Type != "P" {
-		return "type must be 'O' for public or 'P' for private", fmt.Errorf("invalid channel type: %s", args.Type)
+		return "", fmt.Errorf("invalid channel type: %s", args.Type)
 	}
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -304,7 +304,7 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 
 	createdChannel, _, err := client.CreateChannel(ctx, channel)
 	if err != nil {
-		return "failed to create channel", fmt.Errorf("error creating channel: %w", err)
+		return "", fmt.Errorf("error creating channel: %w", err)
 	}
 
 	return fmt.Sprintf("Successfully created channel '%s' with ID: %s", createdChannel.DisplayName, createdChannel.Id), nil
@@ -315,19 +315,19 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	var args GetChannelInfoArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_channel_info: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool get_channel_info: %w", err)
 	}
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
 	// Validate team ID if provided
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		return "", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	var channels []*model.Channel
@@ -339,7 +339,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	case args.ChannelID != "":
 		// Validate channel ID format
 		if !model.IsValidId(args.ChannelID) {
-			return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+			return "", fmt.Errorf("channel_id must be a valid ID")
 		}
 		// Direct ID lookup - fastest method, always returns single result
 		var channel *model.Channel
@@ -351,7 +351,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 				return fmt.Sprintf("No channel found with ID '%s'. The channel may have been deleted or you may not have access to it.", args.ChannelID), nil
 			}
 			// Real error (network, auth, etc.)
-			return "failed to fetch channel", fmt.Errorf("error fetching channel by ID: %w", err)
+			return "", fmt.Errorf("error fetching channel by ID: %w", err)
 		}
 		channels = []*model.Channel{channel}
 	case args.ChannelName != "":
@@ -365,7 +365,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		if len(channels) == 0 {
 			channels, err = p.tryFindChannelByName(ctx, client, args.ChannelName, args.TeamID)
 			if err != nil {
-				return "failed to search for channels", err
+				return "", err
 			}
 		}
 
@@ -373,7 +373,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		if len(channels) == 0 && args.TeamID != "" {
 			channels, err = p.tryFindChannelBySubstring(ctx, client, args.ChannelName, args.TeamID)
 			if err != nil {
-				return "failed to search for channels", err
+				return "", err
 			}
 		}
 
@@ -404,7 +404,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 			return notFoundMsg.String(), nil
 		}
 	default:
-		return "either channel_id or channel_name must be provided", fmt.Errorf("insufficient parameters for channel lookup")
+		return "", fmt.Errorf("insufficient parameters for channel lookup")
 	}
 
 	// If multiple channels found, return all with disambiguation guidance
@@ -524,12 +524,12 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	var args GetChannelMembersArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_channel_members: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool get_channel_members: %w", err)
 	}
 
 	// Validate required fields
 	if !model.IsValidId(args.ChannelID) {
-		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+		return "", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	// Set defaults and validate
@@ -545,7 +545,7 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -556,7 +556,7 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	// Get channel members
 	members, _, err := client.GetChannelMembers(ctx, args.ChannelID, args.Page, args.Limit, "")
 	if err != nil {
-		return "failed to fetch channel members", fmt.Errorf("error fetching channel members: %w", err)
+		return "", fmt.Errorf("error fetching channel members: %w", err)
 	}
 
 	if len(members) == 0 {
@@ -606,20 +606,20 @@ func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext
 	var args AddUserToChannelArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool add_user_to_channel: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool add_user_to_channel: %w", err)
 	}
 
 	// Validate required fields
 	if !model.IsValidId(args.UserID) {
-		return "invalid user_id format", fmt.Errorf("user_id must be a valid ID")
+		return "", fmt.Errorf("user_id must be a valid ID")
 	}
 	if !model.IsValidId(args.ChannelID) {
-		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+		return "", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -627,7 +627,7 @@ func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext
 	// Add user to channel
 	_, _, err = client.AddChannelMember(ctx, args.ChannelID, args.UserID)
 	if err != nil {
-		return "failed to add user to channel", fmt.Errorf("error adding user to channel: %w", err)
+		return "", fmt.Errorf("error adding user to channel: %w", err)
 	}
 
 	// Get user and channel info for confirmation
@@ -789,12 +789,12 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	var args GetUserChannelsArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_user_channels: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool get_user_channels: %w", err)
 	}
 
 	// Validate team ID if provided
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		return "", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Set defaults and cap to match schema (consistent with get_channel_members and get_team_members).
@@ -811,12 +811,12 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 
 	maxInt := int(^uint(0) >> 1)
 	if args.Page > maxInt/args.PerPage {
-		return "page value too large", fmt.Errorf("page * per_page overflows int")
+		return "", fmt.Errorf("page * per_page overflows int")
 	}
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -824,7 +824,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	// Get current user
 	user, _, err := client.GetMe(ctx, "")
 	if err != nil {
-		return "failed to get current user", fmt.Errorf("failed to get current user: %w", err)
+		return "", fmt.Errorf("failed to get current user: %w", err)
 	}
 	// Fetch all channels for the user (including DMs, GMs, and team channels).
 	// NOTE: GetChannelsForUserWithLastDeleteAt does not support server-side pagination,
@@ -832,7 +832,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	// Pass 0 for lastDeleteAt to get all channels without filtering.
 	allChannels, _, err := client.GetChannelsForUserWithLastDeleteAt(ctx, user.Id, 0)
 	if err != nil {
-		return "failed to get channels for user", fmt.Errorf("failed to get channels for user: %w", err)
+		return "", fmt.Errorf("failed to get channels for user: %w", err)
 	}
 
 	// Filter by team if specified

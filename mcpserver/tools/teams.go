@@ -82,12 +82,12 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	var args GetTeamInfoArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_team_info: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool get_team_info: %w", err)
 	}
 
 	// Get client from context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -97,11 +97,11 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	switch {
 	case args.TeamID != "":
 		if !model.IsValidId(args.TeamID) {
-			return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+			return "", fmt.Errorf("team_id must be a valid ID")
 		}
 		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
-			return "team not found by ID", fmt.Errorf("error fetching team by ID: %w", err)
+			return "", fmt.Errorf("error fetching team by ID: %w", err)
 		}
 	case args.TeamName != "":
 		var msg string
@@ -114,7 +114,7 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 			return msg, nil
 		}
 	default:
-		return "either team_id or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
+		return "", fmt.Errorf("insufficient parameters for team lookup")
 	}
 
 	// Get member count
@@ -218,12 +218,12 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	var args GetTeamMembersArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_team_members: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool get_team_members: %w", err)
 	}
 
 	// Validate required fields
 	if !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		return "", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Set defaults and validate
@@ -239,7 +239,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 
 	// Get client from context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -250,7 +250,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	// Get team members
 	members, _, err := client.GetTeamMembers(ctx, args.TeamID, args.Page, args.Limit, "")
 	if err != nil {
-		return "failed to fetch team members", fmt.Errorf("error fetching team members: %w", err)
+		return "", fmt.Errorf("error fetching team members: %w", err)
 	}
 
 	if len(members) == 0 {
@@ -300,28 +300,28 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 	var args CreateTeamArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_team: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool create_team: %w", err)
 	}
 
 	// Validate required fields
 	if args.Name == "" {
-		return "name is required", fmt.Errorf("name cannot be empty")
+		return "", fmt.Errorf("name cannot be empty")
 	}
 	if args.DisplayName == "" {
-		return "display_name is required", fmt.Errorf("display_name cannot be empty")
+		return "", fmt.Errorf("display_name cannot be empty")
 	}
 	if args.Type == "" {
-		return "type is required", fmt.Errorf("type cannot be empty")
+		return "", fmt.Errorf("type cannot be empty")
 	}
 
 	// Validate team type
 	if args.Type != "O" && args.Type != "I" {
-		return "type must be 'O' for open or 'I' for invite only", fmt.Errorf("invalid team type: %s", args.Type)
+		return "", fmt.Errorf("invalid team type: %s", args.Type)
 	}
 
 	// Get client from context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -336,7 +336,7 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 
 	createdTeam, _, err := client.CreateTeam(ctx, team)
 	if err != nil {
-		return "failed to create team", fmt.Errorf("error creating team: %w", err)
+		return "", fmt.Errorf("error creating team: %w", err)
 	}
 
 	var teamIconMessage string
@@ -369,20 +369,20 @@ func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, a
 	var args AddUserToTeamArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool add_user_to_team: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool add_user_to_team: %w", err)
 	}
 
 	// Validate required fields
 	if !model.IsValidId(args.UserID) {
-		return "invalid user_id format", fmt.Errorf("user_id must be a valid ID")
+		return "", fmt.Errorf("user_id must be a valid ID")
 	}
 	if !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		return "", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Get client from context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -390,7 +390,7 @@ func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, a
 	// Add user to team
 	_, _, err = client.AddTeamMember(ctx, args.TeamID, args.UserID)
 	if err != nil {
-		return "failed to add user to team", fmt.Errorf("error adding user to team: %w", err)
+		return "", fmt.Errorf("error adding user to team: %w", err)
 	}
 
 	// Get user and team info for confirmation

@@ -251,9 +251,9 @@ func TestAutomationListAutomations(t *testing.T) {
 			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id":%q}`, missingID)), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "Automation not found")
+		assert.Contains(t, err.Error(), "automation not found")
 	})
 
 	t.Run("get by invalid id", func(t *testing.T) {
@@ -261,9 +261,9 @@ func TestAutomationListAutomations(t *testing.T) {
 			return json.Unmarshal([]byte(`{"automation_id":"bad-id"}`), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "invalid automation_id", result)
+		assert.Contains(t, err.Error(), "invalid automation_id")
 	})
 }
 
@@ -323,9 +323,9 @@ func TestAutomationCreate(t *testing.T) {
 			}`), target)
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "name is required", result)
+		assert.Contains(t, err.Error(), "name cannot be empty")
 	})
 
 	t.Run("create missing trigger", func(t *testing.T) {
@@ -336,9 +336,9 @@ func TestAutomationCreate(t *testing.T) {
 			}`), target)
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "trigger is required")
+		assert.Contains(t, err.Error(), "trigger is required")
 	})
 
 	t.Run("create multiple triggers", func(t *testing.T) {
@@ -349,9 +349,9 @@ func TestAutomationCreate(t *testing.T) {
 			}`), target)
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "exactly one type set")
+		assert.Contains(t, err.Error(), "exactly one type set")
 	})
 }
 
@@ -399,9 +399,9 @@ func TestAutomationUpdate(t *testing.T) {
 			}`, missingID)), target)
 		}
 
-		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "Automation not found")
+		assert.Contains(t, err.Error(), "automation not found")
 	})
 
 	t.Run("update invalid automation_id", func(t *testing.T) {
@@ -409,9 +409,9 @@ func TestAutomationUpdate(t *testing.T) {
 			return json.Unmarshal([]byte(`{"name": "X"}`), target)
 		}
 
-		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "invalid automation_id", result)
+		assert.Contains(t, err.Error(), "invalid automation_id")
 	})
 }
 
@@ -445,9 +445,9 @@ func TestAutomationDelete(t *testing.T) {
 			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id": %q}`, missingID)), target)
 		}
 
-		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "Automation not found")
+		assert.Contains(t, err.Error(), "automation not found")
 	})
 
 	t.Run("delete invalid automation_id", func(t *testing.T) {
@@ -455,9 +455,9 @@ func TestAutomationDelete(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "invalid automation_id", result)
+		assert.Contains(t, err.Error(), "invalid automation_id")
 	})
 }
 
@@ -481,9 +481,9 @@ func TestAutomationErrorHandling(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "permission")
+		assert.Contains(t, err.Error(), "permission")
 	})
 
 	t.Run("connection error", func(t *testing.T) {
@@ -496,9 +496,9 @@ func TestAutomationErrorHandling(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "not installed or not reachable")
+		assert.Contains(t, err.Error(), "not installed or not reachable")
 	})
 
 	t.Run("nil client", func(t *testing.T) {
@@ -509,9 +509,9 @@ func TestAutomationErrorHandling(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "client not available", result)
+		assert.Contains(t, err.Error(), "client not available")
 	})
 }
 
@@ -563,31 +563,31 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 			name:           "400 bad request with body",
 			statusCode:     http.StatusBadRequest,
 			body:           "invalid trigger configuration",
-			expectedResult: "Bad request: invalid trigger configuration",
+			expectedResult: "bad request: invalid trigger configuration",
 		},
 		{
 			name:           "400 bad request empty body falls back to error",
 			statusCode:     http.StatusBadRequest,
 			body:           "",
-			expectedResult: "Bad request: test error",
+			expectedResult: "bad request: test error",
 		},
 		{
 			name:           "401 unauthorized",
 			statusCode:     http.StatusUnauthorized,
 			automationID:   "",
-			expectedResult: "You don't have permission to manage automations for this channel",
+			expectedResult: "you don't have permission to manage automations for this channel",
 		},
 		{
 			name:           "403 forbidden",
 			statusCode:     http.StatusForbidden,
 			automationID:   "",
-			expectedResult: "You don't have permission to manage automations for this channel",
+			expectedResult: "you don't have permission to manage automations for this channel",
 		},
 		{
 			name:           "404 with automation id",
 			statusCode:     http.StatusNotFound,
 			automationID:   "abc123",
-			expectedResult: "Automation not found with ID 'abc123'",
+			expectedResult: `automation not found with ID "abc123"`,
 		},
 		{
 			name:           "404 without automation id",
@@ -599,7 +599,7 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 			name:           "500 server error",
 			statusCode:     http.StatusInternalServerError,
 			automationID:   "",
-			expectedResult: "not installed or not reachable",
+			expectedResult: "automation API returned status 500",
 		},
 	}
 
@@ -616,16 +616,16 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 				Body:       respBody,
 			}
 
-			result, err := handleAutomationHTTPError(resp, fmt.Errorf("test error"), tt.automationID)
+			err := handleAutomationHTTPError(resp, fmt.Errorf("test error"), tt.automationID)
 			require.Error(t, err)
-			assert.Contains(t, result, tt.expectedResult)
+			assert.Contains(t, err.Error(), tt.expectedResult)
 		})
 	}
 
 	t.Run("nil response (connection error)", func(t *testing.T) {
-		result, err := handleAutomationHTTPError(nil, fmt.Errorf("connection refused"), "")
+		err := handleAutomationHTTPError(nil, fmt.Errorf("connection refused"), "")
 		require.Error(t, err)
-		assert.Contains(t, result, "not installed or not reachable")
+		assert.Contains(t, err.Error(), "not installed or not reachable")
 	})
 
 	t.Run("400 with nil error and empty body", func(t *testing.T) {
@@ -633,9 +633,9 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 			StatusCode: http.StatusBadRequest,
 			Body:       http.NoBody,
 		}
-		result, err := handleAutomationHTTPError(resp, nil, "")
+		err := handleAutomationHTTPError(resp, nil, "")
 		require.Error(t, err)
-		assert.Contains(t, result, "Bad request: invalid request")
+		assert.Contains(t, err.Error(), "bad request: invalid request")
 	})
 }
 

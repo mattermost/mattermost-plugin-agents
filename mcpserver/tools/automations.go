@@ -309,18 +309,18 @@ func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPTo
 func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args ListAutomationsArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool list_automations: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool list_automations: %w", err)
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	ctx := context.Background()
 
 	// If a specific automation ID was requested, fetch just that one.
 	if args.AutomationID != "" {
 		if !model.IsValidId(args.AutomationID) {
-			return "invalid automation_id", fmt.Errorf("invalid automation_id")
+			return "", fmt.Errorf("invalid automation_id")
 		}
 		return p.getAutomationByID(ctx, mcpContext, args.AutomationID)
 	}
@@ -333,13 +333,13 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, listURL, "")
 	if err != nil {
-		return handleAutomationHTTPError(resp, err, "")
+		return "", handleAutomationHTTPError(resp, err, "")
 	}
 	defer resp.Body.Close()
 
 	var automations []Automation
 	if err := json.NewDecoder(resp.Body).Decode(&automations); err != nil {
-		return "failed to parse automation list", fmt.Errorf("failed to decode automations response: %w", err)
+		return "", fmt.Errorf("failed to decode automations response: %w", err)
 	}
 
 	if len(automations) == 0 {
@@ -352,13 +352,13 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpContext *MCPToolContext, id string) (string, error) {
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, p.automationAPIURL("/automations/"+id), "")
 	if err != nil {
-		return handleAutomationHTTPError(resp, err, id)
+		return "", handleAutomationHTTPError(resp, err, id)
 	}
 	defer resp.Body.Close()
 
 	var automation Automation
 	if err := json.NewDecoder(resp.Body).Decode(&automation); err != nil {
-		return "failed to parse automation", fmt.Errorf("failed to decode automation response: %w", err)
+		return "", fmt.Errorf("failed to decode automation response: %w", err)
 	}
 
 	return formatAutomationJSON(automation)
@@ -367,15 +367,15 @@ func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpConte
 func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args CreateAutomationArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_automation: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool create_automation: %w", err)
 	}
 
 	if args.Name == "" {
-		return "name is required", fmt.Errorf("name cannot be empty")
+		return "", fmt.Errorf("name cannot be empty")
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	ctx := context.Background()
 
@@ -388,7 +388,7 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 
 	body, err := json.Marshal(automation)
 	if err != nil {
-		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
+		return "", fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPost, p.automationAPIURL("/automations"), string(body))
@@ -401,18 +401,18 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 			"status", statusCode,
 			"error", err.Error(),
 		)
-		return handleAutomationHTTPError(resp, err, "")
+		return "", handleAutomationHTTPError(resp, err, "")
 	}
 	defer resp.Body.Close()
 
 	var created Automation
 	if decodeErr := json.NewDecoder(resp.Body).Decode(&created); decodeErr != nil {
-		return "failed to parse created automation", fmt.Errorf("failed to decode create response: %w", decodeErr)
+		return "", fmt.Errorf("failed to decode create response: %w", decodeErr)
 	}
 
 	jsonStr, err := marshalAutomationJSON(created)
 	if err != nil {
-		return "failed to encode created automation", err
+		return "", err
 	}
 	return fmt.Sprintf("Successfully created automation '%s' (ID: %s).\n\n%s", created.Name, created.ID, jsonStr), nil
 }
@@ -420,15 +420,15 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args UpdateAutomationArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool update_automation: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool update_automation: %w", err)
 	}
 
 	if !model.IsValidId(args.AutomationID) {
-		return "invalid automation_id", fmt.Errorf("invalid automation_id")
+		return "", fmt.Errorf("invalid automation_id")
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	ctx := context.Background()
 
@@ -442,7 +442,7 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 
 	body, err := json.Marshal(automation)
 	if err != nil {
-		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
+		return "", fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPut, p.automationAPIURL("/automations/"+args.AutomationID), string(body))
@@ -455,18 +455,18 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 			"status", statusCode,
 			"error", err.Error(),
 		)
-		return handleAutomationHTTPError(resp, err, args.AutomationID)
+		return "", handleAutomationHTTPError(resp, err, args.AutomationID)
 	}
 	defer resp.Body.Close()
 
 	var updated Automation
 	if decodeErr := json.NewDecoder(resp.Body).Decode(&updated); decodeErr != nil {
-		return "failed to parse updated automation", fmt.Errorf("failed to decode update response: %w", decodeErr)
+		return "", fmt.Errorf("failed to decode update response: %w", decodeErr)
 	}
 
 	jsonStr, err := marshalAutomationJSON(updated)
 	if err != nil {
-		return "failed to encode updated automation", err
+		return "", err
 	}
 	return fmt.Sprintf("Successfully updated automation '%s' (ID: %s).\n\n%s", updated.Name, updated.ID, jsonStr), nil
 }
@@ -474,21 +474,21 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args DeleteAutomationArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool delete_automation: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool delete_automation: %w", err)
 	}
 
 	if !model.IsValidId(args.AutomationID) {
-		return "invalid automation_id", fmt.Errorf("invalid automation_id")
+		return "", fmt.Errorf("invalid automation_id")
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	ctx := context.Background()
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/automations/"+args.AutomationID), "")
 	if err != nil {
-		return handleAutomationHTTPError(resp, err, args.AutomationID)
+		return "", handleAutomationHTTPError(resp, err, args.AutomationID)
 	}
 	defer resp.Body.Close()
 
@@ -515,9 +515,9 @@ func triggerChannelID(t AutomationTrigger) string {
 // The Mattermost client's DoAPIRequestWithHeaders consumes the response body for non-2xx
 // status codes, so resp.Body is typically empty. The original body content is available
 // in the err parameter via AppErrorFromJSON.
-func handleAutomationHTTPError(resp *http.Response, err error, automationID string) (string, error) {
+func handleAutomationHTTPError(resp *http.Response, err error, automationID string) error {
 	if resp == nil {
-		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation plugin request failed: %w", err)
+		return fmt.Errorf("the Channel Automation plugin is not installed or not reachable: %w", err)
 	}
 
 	// Try reading the body, but it's usually empty because the Mattermost client
@@ -537,16 +537,16 @@ func handleAutomationHTTPError(resp *http.Response, err error, automationID stri
 		if detail == "" {
 			detail = "invalid request"
 		}
-		return fmt.Sprintf("Bad request: %s", detail), fmt.Errorf("automation API returned 400: %s", detail)
+		return fmt.Errorf("bad request: %s", detail)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return "You don't have permission to manage automations for this channel.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, detail)
+		return fmt.Errorf("you don't have permission to manage automations for this channel")
 	case http.StatusNotFound:
 		if automationID != "" {
-			return fmt.Sprintf("Automation not found with ID '%s'.", automationID), fmt.Errorf("automation API returned 404 for ID %s", automationID)
+			return fmt.Errorf("automation not found with ID %q", automationID)
 		}
-		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation API returned 404: %s", detail)
+		return fmt.Errorf("the Channel Automation plugin is not installed or not reachable")
 	default:
-		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, detail)
+		return fmt.Errorf("automation API returned status %d: %s", resp.StatusCode, detail)
 	}
 }
 
@@ -581,7 +581,7 @@ func marshalAutomationJSON(a Automation) (string, error) {
 func formatAutomationJSON(a Automation) (string, error) {
 	jsonStr, err := marshalAutomationJSON(a)
 	if err != nil {
-		return "failed to encode automation", err
+		return "", err
 	}
 	return fmt.Sprintf("Automation '%s' (ID: %s):\n\n%s", a.Name, a.ID, jsonStr), nil
 }
@@ -594,7 +594,7 @@ func formatAutomationsJSON(automations []Automation) (string, error) {
 	for i, a := range automations {
 		jsonStr, err := marshalAutomationJSON(a)
 		if err != nil {
-			return "failed to encode automation", err
+			return "", err
 		}
 		result.WriteString(fmt.Sprintf("%d. %s (ID: %s)\n%s\n\n", i+1, a.Name, a.ID, jsonStr))
 	}

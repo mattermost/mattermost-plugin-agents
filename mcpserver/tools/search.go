@@ -112,18 +112,18 @@ type searchPostResult struct {
 func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args CombinedSearchArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool search_posts: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool search_posts: %w", err)
 	}
 
 	if args.Query == "" {
-		return "query is required", fmt.Errorf("query cannot be empty")
+		return "", fmt.Errorf("query cannot be empty")
 	}
 
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		return "", fmt.Errorf("team_id must be a valid ID")
 	}
 	if args.ChannelID != "" && !model.IsValidId(args.ChannelID) {
-		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+		return "", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	if args.SemanticLimit <= 0 {
@@ -146,7 +146,7 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -156,7 +156,7 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 	if semanticEnabled {
 		user, _, err := client.GetMe(ctx, "")
 		if err != nil {
-			return "failed to get user", fmt.Errorf("failed to get current user: %w", err)
+			return "", fmt.Errorf("failed to get current user: %w", err)
 		}
 		userID = user.Id
 	}
@@ -191,9 +191,9 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 
 	if keywordErr != nil && (!semanticEnabled || semanticErr != nil) {
 		if semanticEnabled {
-			return "search failed", fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
+			return "", fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
 		}
-		return "search failed", fmt.Errorf("keyword search failed: %v", keywordErr)
+		return "", fmt.Errorf("keyword search failed: %v", keywordErr)
 	}
 
 	return p.formatCombinedResults(args.Query, semanticResults, keywordResults, semanticEnabled, args.ChannelID)
@@ -463,11 +463,11 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 	var args SearchUsersArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool search_users: %w", err)
+		return "", fmt.Errorf("failed to get arguments for tool search_users: %w", err)
 	}
 
 	if args.Term == "" {
-		return "term is required", fmt.Errorf("search term cannot be empty")
+		return "", fmt.Errorf("search term cannot be empty")
 	}
 
 	if args.Limit <= 0 {
@@ -478,7 +478,7 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return "", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -492,7 +492,7 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 
 	users, _, err := client.SearchUsers(ctx, searchOptions)
 	if err != nil {
-		return "user search failed", fmt.Errorf("error searching users: %w", err)
+		return "", fmt.Errorf("error searching users: %w", err)
 	}
 
 	if len(users) == 0 {
