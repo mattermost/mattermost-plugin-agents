@@ -71,6 +71,12 @@ type ToolCatalogContext struct {
 	// predefined flows. They are selected only from the already-authorized MCP
 	// catalog and are request scoped.
 	PreloadedMCPTools []EnabledMCPTool
+
+	// InteractiveUserPresent indicates the requesting user is interactively
+	// present in Mattermost (DM or human channel mention) and can answer
+	// pending tool approvals. Tools that require a user response (see
+	// Tool.UserInteraction) are only cataloged when this is set.
+	InteractiveUserPresent bool
 }
 
 // ToolRuntimeContext holds request-scoped tool runtime state that should not be

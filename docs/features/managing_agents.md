@@ -67,9 +67,9 @@ By default, regular users do not have `manage_own_agent`. Grant it through your 
 
 ### License
 
-Self-service agent creation is gated by Mattermost's multi-LLM license check (Entry, Enterprise, or Enterprise Advanced).
+The number of self-service agents you can create is gated by Mattermost's multi-LLM license check (Entry, Enterprise, or Enterprise Advanced).
 
-- **Without a multi-LLM license**, the Agents page shows a **Self-Service Agents** upgrade screen with a link to Mattermost pricing instead of the agent list. The plugin enforces a limit of `1` self-service agent at the API level (the `FreeTierAgentLimit` constant in `api/api_agents.go`), but **there is no UI path to create it** — agent creation requires a qualifying license. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
+- **Without a multi-LLM license**, you can create and fully manage a single agent (`FreeTierAgentLimit = 1`, defined in `api/api_agents.go`). The Agents page always shows the agent list; once one agent exists the **Create agent** button is disabled with an upgrade hint. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
 - **With a multi-LLM license**, agent creation is unlimited (subject to permissions).
 
 For the full feature/license matrix, see [License requirements](../admin_guide.md#license-requirements) in the Admin Guide.
@@ -94,6 +94,7 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Agent avatar** | Optional. Upload a custom image. Avatar upload is a second step after the agent record is created or updated; if the avatar upload fails the rest of the save still succeeds. |
 | **AI Service** | Required. Pick a configured service from the dropdown. Services are managed in **System Console > Plugins > Agents** and shared across agents. If the agent references a service that has been deleted, an "Unknown service (deleted)" entry appears in the dropdown until you pick a new one. |
 | **Model** | Optional. Override the service's default model for this agent. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, and Vertex AI services the field becomes a combobox populated by a live model fetch from the provider; for other services it is a free-text field. Leave empty to use the service default. |
+| **Max tool turns** | Maximum number of consecutive tool-call/execute rounds the agent performs in a single response before stopping. Defaults to **30** (allowed range **1–250**). Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn (for example dynamic MCP discovery: search → load → execute). Clearing the field saves the default. |
 | **Custom instructions** | Free-text. Prepended to every request as the agent's system prompt. Use it for tone, role, vocabulary, or workflow guidance. |
 | **Enable Vision** | Available for service types that support image input. Lets the agent process attached images. Requires a vision-capable model. |
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
@@ -133,7 +134,7 @@ The MCPs tab is available only when **Enable Tools** is on (Configuration tab). 
 
 Dynamic tool loading and the auto-grant are separate controls: dynamic loading decides when schemas are shown to the model, while the auto-grant decides which MCP tools the agent is allowed to use.
 
-Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. Dynamic loading helper tools run automatically, but loaded business tools still follow the configured approval policy. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
+Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. MCP discovery and loading helpers run automatically, but MCP tools that are dynamically loaded still follow their configured approval policy. For more on MCP setup, see [Model Context Protocol (MCP)](../admin_guide.md#model-context-protocol-mcp-integration) in the Admin Guide. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
 
 ## Editing an agent
 
@@ -146,9 +147,11 @@ To edit an agent:
 
 The editor uses a full-document `PUT /agents/:id` save, so every visible field on every tab is sent on save. There is no per-field partial update.
 
+API clients can set `mcpDynamicToolLoading` on `POST /agents` and `PUT /agents/:id`; `GET /agents/:id` and agent list responses include the field. Send the desired boolean explicitly on create and update. If omitted from a create or update request body, it is stored as `false`; older persisted bot config that omits the field defaults to `true` when unmarshalled for compatibility.
+
 ### What's editable vs locked
 
-- **Display name**, **avatar**, **service**, **model**, **custom instructions**, **vision**, **tools**, **native tools**, **reasoning**, **structured output**, **channel access**, **user access**, **agent admins**, and the **MCP tool grants** can all be changed at any time.
+- **Display name**, **avatar**, **service**, **model**, **max tool turns**, **custom instructions**, **vision**, **tools**, **native tools**, **reasoning**, **structured output**, **channel access**, **user access**, **agent admins**, and the **MCP tool grants** can all be changed at any time.
 - **Agent username is permanent.** Once the agent is created, the username field is disabled in the editor. The Mattermost bot account is keyed off this username, and changing it would orphan existing `@mentions` and conversation history. To use a different username, create a new agent.
 
 ### Unsaved-changes warning
@@ -250,9 +253,9 @@ Practical consequences:
 
 ## Troubleshooting
 
-### "Self-Service Agents" upgrade screen is shown instead of the agents list
+### "Create agent" is disabled and an upgrade hint is shown
 
-The server does not have a multi-LLM license applied. Apply an Entry, Enterprise, or Enterprise Advanced license in **System Console > About > Edition and License** to unlock the Agents page. There is no UI path to create the single free-tier agent permitted by `FreeTierAgentLimit`; that limit is an API-only safety rail and direct API access would be required to use it (not typical for end users).
+The server is at the free-tier self-service agent limit without a multi-LLM licence. The Agents page still shows the list, but after one self-service agent exists, **Create agent** is disabled. Apply an Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to create additional agents, or delete the existing free-tier agent before creating a replacement.
 
 ### "Create agent" button is hidden
 

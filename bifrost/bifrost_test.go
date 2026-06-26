@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -483,11 +484,13 @@ func TestBuildResponsesReasoning(t *testing.T) {
 func TestGetKeysForProviderVertex(t *testing.T) {
 	saJSON := `{"type":"service_account","project_id":"x"}`
 	acc := &providerAccount{
-		provider:              schemas.Vertex,
-		region:                "us-west1",
-		vertexProjectID:       "my-gcp-project",
-		vertexProjectNumber:   "123456789012",
-		vertexAuthCredentials: saJSON,
+		ProviderSettings: ProviderSettings{
+			Provider:              schemas.Vertex,
+			Region:                "us-west1",
+			VertexProjectID:       "my-gcp-project",
+			VertexProjectNumber:   "123456789012",
+			VertexAuthCredentials: saJSON,
+		},
 	}
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Vertex)
@@ -501,11 +504,13 @@ func TestGetKeysForProviderVertex(t *testing.T) {
 	assert.Equal(t, saJSON, vc.AuthCredentials.Val)
 
 	adc := &providerAccount{
-		provider:              schemas.Vertex,
-		region:                "europe-west1",
-		vertexProjectID:       "adc-project",
-		vertexProjectNumber:   "",
-		vertexAuthCredentials: "",
+		ProviderSettings: ProviderSettings{
+			Provider:              schemas.Vertex,
+			Region:                "europe-west1",
+			VertexProjectID:       "adc-project",
+			VertexProjectNumber:   "",
+			VertexAuthCredentials: "",
+		},
 	}
 	keysADC, err := adc.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.NoError(t, err)
@@ -514,7 +519,11 @@ func TestGetKeysForProviderVertex(t *testing.T) {
 	assert.Equal(t, "adc-project", keysADC[0].VertexKeyConfig.ProjectID.Val)
 	assert.Equal(t, "", keysADC[0].VertexKeyConfig.AuthCredentials.Val)
 
-	other := &providerAccount{provider: schemas.OpenAI}
+	other := &providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+		},
+	}
 	_, err = other.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.Error(t, err)
 }
@@ -1223,6 +1232,936 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 	}
 }
 
+// --- multiProviderAccount tests ---
+
+func TestMultiProviderAccount_SingleProvider(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "openai-key",
+			APIURL:   "https://api.openai.com",
+			OrgID:    "org-123",
+		},
+	})
+
+	providers, err := acc.GetConfiguredProviders()
+	require.NoError(t, err)
+	assert.Equal(t, []schemas.ModelProvider{schemas.OpenAI}, providers)
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.OpenAI)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	assert.Equal(t, "openai-key", keys[0].Value.Val)
+
+	cfg, err := acc.GetConfigForProvider(schemas.OpenAI)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+}
+
+func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "openai-key",
+		},
+	})
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.Anthropic,
+			APIKey:   "anthropic-key",
+		},
+	})
+
+	providers, err := acc.GetConfiguredProviders()
+	require.NoError(t, err)
+	assert.Equal(t, []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic}, providers)
+
+	// Verify each provider returns correct keys
+	openaiKeys, err := acc.GetKeysForProvider(context.Background(), schemas.OpenAI)
+	require.NoError(t, err)
+	require.Len(t, openaiKeys, 1)
+	assert.Equal(t, "openai-key", openaiKeys[0].Value.Val)
+
+	anthropicKeys, err := acc.GetKeysForProvider(context.Background(), schemas.Anthropic)
+	require.NoError(t, err)
+	require.Len(t, anthropicKeys, 1)
+	assert.Equal(t, "anthropic-key", anthropicKeys[0].Value.Val)
+}
+
+func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "openai-key",
+		},
+	})
+
+	_, err := acc.GetKeysForProvider(context.Background(), schemas.Anthropic)
+	assert.Error(t, err)
+
+	_, err = acc.GetConfigForProvider(schemas.Anthropic)
+	assert.Error(t, err)
+}
+
+func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "first-key",
+		},
+	})
+	// Second add with same provider should be silently skipped (first wins)
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "second-key",
+		},
+	})
+
+	providers, err := acc.GetConfiguredProviders()
+	require.NoError(t, err)
+	assert.Len(t, providers, 1)
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.OpenAI)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	assert.Equal(t, "first-key", keys[0].Value.Val)
+}
+
+func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.Azure,
+			APIKey:   "azure-key",
+			APIURL:   "https://myservice.openai.azure.com",
+		},
+	})
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Azure)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.NotNil(t, keys[0].AzureKeyConfig)
+	assert.Equal(t, "https://myservice.openai.azure.com", keys[0].AzureKeyConfig.Endpoint.Val)
+}
+
+func TestMultiProviderAccount_BedrockKeyConfig(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider:           schemas.Bedrock,
+			APIKey:             "bedrock-key",
+			Region:             "us-east-1",
+			AWSAccessKeyID:     "AKIA123",
+			AWSSecretAccessKey: "secret123",
+		},
+	})
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Bedrock)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.NotNil(t, keys[0].BedrockKeyConfig)
+	assert.Equal(t, "AKIA123", keys[0].BedrockKeyConfig.AccessKey.Val)
+	assert.Equal(t, "secret123", keys[0].BedrockKeyConfig.SecretKey.Val)
+	require.NotNil(t, keys[0].BedrockKeyConfig.Region)
+	assert.Equal(t, "us-east-1", keys[0].BedrockKeyConfig.Region.Val)
+}
+
+// --- Fallback request building tests ---
+
+// TestConvertToBifrostRequest_FallbacksAttached verifies both request builders
+// (chat and Responses) attach the configured fallback chain to the outgoing
+// request, and leave it nil when none are configured. Per-entry routing is built
+// by New (covered above) and exercised end to end by the failover tests; here we
+// only pin that whatever chain is configured is wired onto the request at all —
+// a guard against a builder that silently drops fallbacks.
+func TestConvertToBifrostRequest_FallbacksAttached(t *testing.T) {
+	configured := []schemas.Fallback{
+		{Provider: schemas.Anthropic, Model: "claude-sonnet-4-20250514"},
+		{Provider: schemas.Bedrock, Model: "anthropic.claude-3-sonnet-20240229-v1:0"},
+	}
+	tests := []struct {
+		name            string
+		useResponsesAPI bool
+		fallbacks       []schemas.Fallback
+	}{
+		{name: "chat, no fallbacks", useResponsesAPI: false, fallbacks: nil},
+		{name: "chat, with fallbacks", useResponsesAPI: false, fallbacks: configured},
+		{name: "responses, no fallbacks", useResponsesAPI: true, fallbacks: nil},
+		{name: "responses, with fallbacks", useResponsesAPI: true, fallbacks: configured},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:        schemas.OpenAI,
+				defaultModel:    "gpt-4o",
+				useResponsesAPI: tt.useResponsesAPI,
+				fallbacks:       tt.fallbacks,
+			}
+
+			var got []schemas.Fallback
+			if tt.useResponsesAPI {
+				req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, b.GetDefaultConfig())
+				require.NoError(t, err)
+				got = req.Fallbacks
+			} else {
+				got = b.convertToBifrostRequest(llm.CompletionRequest{}, b.GetDefaultConfig()).Fallbacks
+			}
+
+			// The request must carry exactly the configured chain (nil when none).
+			assert.Equal(t, tt.fallbacks, got)
+		})
+	}
+}
+
+// --- NewFromServiceConfig with fallbacks tests ---
+
+func TestNewFromServiceConfig_NoFallbacks(t *testing.T) {
+	svc := llm.ServiceConfig{
+		ID:           "svc-1",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "key",
+		DefaultModel: "gpt-4o",
+	}
+	bot := llm.BotConfig{
+		ID:          "bot-1",
+		Name:        "ai",
+		DisplayName: "AI",
+		ServiceID:   "svc-1",
+	}
+
+	llmInstance, err := NewFromServiceConfig(svc, bot, nil)
+	require.NoError(t, err)
+	require.NotNil(t, llmInstance)
+	defer llmInstance.Shutdown()
+
+	assert.Nil(t, llmInstance.fallbacks)
+	assert.Equal(t, schemas.OpenAI, llmInstance.provider)
+	assert.Equal(t, "gpt-4o", llmInstance.defaultModel)
+}
+
+func TestNewFromServiceConfig_WithFallbackServices(t *testing.T) {
+	primarySvc := llm.ServiceConfig{
+		ID:           "svc-openai",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "openai-key",
+		DefaultModel: "gpt-4o",
+	}
+	fallbackSvc := llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	bot := llm.BotConfig{
+		ID:          "bot-1",
+		Name:        "ai",
+		DisplayName: "AI",
+		ServiceID:   "svc-openai",
+	}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{fallbackSvc})
+	require.NoError(t, err)
+	require.NotNil(t, llmInstance)
+	defer llmInstance.Shutdown()
+
+	require.Len(t, llmInstance.fallbacks, 1)
+	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+}
+
+func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
+	primarySvc := llm.ServiceConfig{
+		ID:           "svc-openai",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "openai-key",
+		DefaultModel: "gpt-4o",
+	}
+	fallbackAnthropicSvc := llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	fallbackLocalSvc := llm.ServiceConfig{
+		ID:           "svc-local",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIURL:       "http://localhost:11434/v1",
+		DefaultModel: "llama3",
+	}
+	bot := llm.BotConfig{
+		ID:          "bot-1",
+		Name:        "ai",
+		DisplayName: "AI",
+		ServiceID:   "svc-openai",
+	}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{fallbackAnthropicSvc, fallbackLocalSvc})
+	require.NoError(t, err)
+	require.NotNil(t, llmInstance)
+	defer llmInstance.Shutdown()
+
+	require.Len(t, llmInstance.fallbacks, 2)
+	// The Anthropic fallback has its own base provider type, so it keeps it.
+	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	// The local OpenAI-compatible fallback maps to the OpenAI provider, which the
+	// primary already occupies. It must therefore be registered under a slot
+	// DISTINCT from the primary's base OpenAI slot so it keeps its own base
+	// URL/key at fallback time (proven end to end by
+	// TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint). We
+	// assert distinctness rather than the internal custom-provider name string.
+	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[1].Provider,
+		"a same-base fallback must not collide on the primary's provider slot")
+	assert.NotEqual(t, llmInstance.fallbacks[0].Provider, llmInstance.fallbacks[1].Provider,
+		"each fallback must occupy a distinct slot")
+	assert.Equal(t, "llama3", llmInstance.fallbacks[1].Model)
+}
+
+// TestNewFromServiceConfig_ErrorsOnUnmappableFallbackInChain pins the contract
+// that a fallback service which cannot be mapped to a Bifrost provider fails
+// bot construction instead of being silently dropped: an admin must find out
+// at setup that the configured fallback won't be there at failover time.
+// ServiceTypeScale is the realistic trigger: it is a valid plugin service type
+// (IsValidService accepts it, so ResolveFallbackChain keeps it in the chain)
+// that the Bifrost adapter's MapServiceTypeToProvider does not support.
+func TestNewFromServiceConfig_ErrorsOnUnmappableFallbackInChain(t *testing.T) {
+	primary := llm.ServiceConfig{
+		ID:           "svc-openai",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "openai-key",
+		DefaultModel: "gpt-4o",
+	}
+	anthropicFallback := llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	unmappableFallback := llm.ServiceConfig{
+		ID:           "svc-scale",
+		Type:         llm.ServiceTypeScale, // valid plugin type, unsupported by the Bifrost adapter
+		APIKey:       "scale-key",
+		APIURL:       "https://scale.example.com",
+		DefaultModel: "scale-model",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "svc-openai"}
+
+	_, err := NewFromServiceConfig(primary, bot,
+		[]llm.ServiceConfig{anthropicFallback, unmappableFallback})
+	require.Error(t, err, "an unmappable fallback must fail bot construction, not be silently dropped")
+	assert.Contains(t, err.Error(), "svc-scale", "the error must name the offending fallback service")
+}
+
+func TestNewFromServiceConfig_BotModelOverrideDoesNotAffectFallback(t *testing.T) {
+	primarySvc := llm.ServiceConfig{
+		ID:           "svc-openai",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "openai-key",
+		DefaultModel: "gpt-4o",
+	}
+	fallbackSvc := llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	bot := llm.BotConfig{
+		ID:          "bot-1",
+		Name:        "ai",
+		DisplayName: "AI",
+		ServiceID:   "svc-openai",
+		Model:       "gpt-4o-mini", // Bot overrides model
+	}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{fallbackSvc})
+	require.NoError(t, err)
+	require.NotNil(t, llmInstance)
+	defer llmInstance.Shutdown()
+
+	// Primary model is overridden by bot config
+	assert.Equal(t, "gpt-4o-mini", llmInstance.defaultModel)
+
+	// Fallback model uses the fallback service's DefaultModel, not the bot override
+	require.Len(t, llmInstance.fallbacks, 1)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+}
+
+// chatCompletionSSE writes a minimal OpenAI-style streaming chat completion
+// response carrying the given content. bifrost.LLM issues streaming requests
+// under the hood even for ChatCompletionNoStream (see TestEnvProxyRouting).
+func chatCompletionSSE(w http.ResponseWriter, content string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	fmt.Fprintf(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":null}]}\n\n", content)
+	fmt.Fprint(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+	fmt.Fprint(w, "data: [DONE]\n\n")
+}
+
+// TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint is the
+// PR's flagship DDIL scenario: a cloud OpenAI-compatible primary that falls back
+// to a local OpenAI-compatible model (e.g. Ollama) when the cloud is unavailable.
+//
+// Both services map to schemas.OpenAI, so the request-level fallback must still
+// reach the local service's OWN base URL and key. This test drives a real
+// request through Bifrost on the chat-completions path: the cloud endpoint
+// fails, and the local endpoint must receive the fallback request and serve it.
+//
+// Using OpenAI-compatible for both keeps the request on /v1/chat/completions so
+// the assertion isolates fallback routing (the collision fix) from the separate
+// question of whether a local model supports the Responses API.
+func TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint(t *testing.T) {
+	var cloudHits, localHits atomic.Int32
+	var cloudAuth, localAuth atomic.Value // string Authorization header per endpoint
+
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cloudHits.Add(1)
+		cloudAuth.Store(r.Header.Get("Authorization"))
+		// Primary provider is unavailable (DDIL): fail every request.
+		http.Error(w, `{"error":{"message":"service unavailable"}}`, http.StatusInternalServerError)
+	}))
+	defer cloudServer.Close()
+
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		localHits.Add(1)
+		localAuth.Store(r.Header.Get("Authorization"))
+		chatCompletionSSE(w, "from-local")
+	}))
+	defer localServer.Close()
+
+	primarySvc := llm.ServiceConfig{
+		ID:                "cloud-openai",
+		Type:              llm.ServiceTypeOpenAICompatible,
+		APIKey:            "cloud-key",
+		APIURL:            cloudServer.URL,
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "local-ollama",
+	}
+	localSvc := llm.ServiceConfig{
+		ID:           "local-ollama",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIKey:       "local-key",
+		APIURL:       localServer.URL,
+		DefaultModel: "llama3",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "cloud-openai"}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{localSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+
+	require.NoError(t, err, "fallback to the local OpenAI-compatible model should succeed")
+	assert.Equal(t, "from-local", result, "response must come from the local fallback model")
+
+	// The failover must happen in order: the cloud primary is attempted (and
+	// fails) before the local fallback serves the response. Asserting cloudHits
+	// guards against a regression where the primary is silently never tried.
+	assert.Positive(t, cloudHits.Load(), "cloud primary should have been attempted before falling back")
+	assert.Positive(t, localHits.Load(), "local fallback endpoint should have received the fallback request")
+
+	// Each service must authenticate with its OWN key on its OWN endpoint. The
+	// fallback is registered as a Bifrost custom provider (it collides on the
+	// OpenAI base slot with the primary); a custom provider that inherited the
+	// primary's credentials — or sent none — would 401 in production. These
+	// assertions pin that the fallback sends "local-key", not "cloud-key".
+	assert.Equal(t, "Bearer cloud-key", cloudAuth.Load(), "primary must use its own API key")
+	assert.Equal(t, "Bearer local-key", localAuth.Load(), "fallback must send its own API key, not the primary's")
+}
+
+// TestNewFromServiceConfig_ResponsesPrimaryDowngradesToChatForLocalFallback
+// covers the full DDIL scenario: a direct-OpenAI primary (which always uses the
+// Responses API) failing over to a local OpenAI-compatible model that only
+// speaks /v1/chat/completions. The request type is fixed by the primary, so the
+// fallback would otherwise receive /v1/responses and fail. Registering the local
+// model as a chat-only custom provider makes Bifrost transparently downgrade the
+// Responses request to chat completions for it.
+func TestNewFromServiceConfig_ResponsesPrimaryDowngradesToChatForLocalFallback(t *testing.T) {
+	var localChatHit, localResponsesHit, cloudHit atomic.Bool
+	var cloudPath atomic.Value // request path the direct-OpenAI primary received
+
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cloudHit.Store(true)
+		cloudPath.Store(r.URL.Path)
+		// Primary is unavailable (DDIL): fail every request.
+		http.Error(w, `{"error":{"message":"service unavailable"}}`, http.StatusInternalServerError)
+	}))
+	defer cloudServer.Close()
+
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/chat/completions"):
+			localChatHit.Store(true)
+			chatCompletionSSE(w, "from-local")
+		case strings.Contains(r.URL.Path, "/responses"):
+			// A real local server (Ollama/vLLM) does not implement this endpoint.
+			localResponsesHit.Store(true)
+			http.Error(w, "not found", http.StatusNotFound)
+		default:
+			http.Error(w, "unexpected path", http.StatusNotFound)
+		}
+	}))
+	defer localServer.Close()
+
+	// Direct OpenAI primary always uses the Responses API.
+	primarySvc := llm.ServiceConfig{
+		ID:                "cloud-openai",
+		Type:              llm.ServiceTypeOpenAI,
+		APIKey:            "cloud-key",
+		APIURL:            cloudServer.URL,
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "local-ollama",
+	}
+	// Local OpenAI-compatible model that only implements /v1/chat/completions.
+	localSvc := llm.ServiceConfig{
+		ID:           "local-ollama",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIURL:       localServer.URL,
+		DefaultModel: "llama3",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "cloud-openai"}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{localSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+
+	require.NoError(t, err, "Responses-API primary should downgrade and succeed against the chat-only local fallback")
+	assert.Equal(t, "from-local", result)
+	assert.True(t, cloudHit.Load(), "cloud primary should have been attempted before falling back")
+	// The primary must start on the Responses API; otherwise no downgrade is
+	// exercised and the local /chat/completions hit below would prove nothing.
+	require.Equal(t, "/v1/responses", cloudPath.Load(), "direct-OpenAI primary must use the Responses API")
+	assert.True(t, localChatHit.Load(), "local model should have been called on /v1/chat/completions (downgraded)")
+	assert.False(t, localResponsesHit.Load(), "local model must not be called on /v1/responses")
+}
+
+// TestNewFromServiceConfig_PrimarySuccessDoesNotInvokeFallback proves the
+// fallback stays dormant on the happy path: when the primary serves a response,
+// the fallback endpoint must never be contacted. A regression that invoked
+// fallbacks unconditionally (rather than only on primary failure) would
+// double-bill, add latency, and could even return the wrong model's output.
+func TestNewFromServiceConfig_PrimarySuccessDoesNotInvokeFallback(t *testing.T) {
+	var primaryHits, fallbackHits atomic.Int32
+
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits.Add(1)
+		chatCompletionSSE(w, "from-primary")
+	}))
+	defer primaryServer.Close()
+
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits.Add(1)
+		chatCompletionSSE(w, "from-fallback")
+	}))
+	defer fallbackServer.Close()
+
+	primarySvc := llm.ServiceConfig{
+		ID:                "cloud-openai",
+		Type:              llm.ServiceTypeOpenAICompatible,
+		APIKey:            "cloud-key",
+		APIURL:            primaryServer.URL,
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "local-ollama",
+	}
+	fallbackSvc := llm.ServiceConfig{
+		ID:           "local-ollama",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIURL:       fallbackServer.URL,
+		DefaultModel: "llama3",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "cloud-openai"}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{fallbackSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "from-primary", result, "a healthy primary must serve the response itself")
+	assert.Positive(t, primaryHits.Load(), "primary should have been called")
+	assert.Zero(t, fallbackHits.Load(), "fallback must not be contacted when the primary succeeds")
+}
+
+// TestNewFromServiceConfig_MultiHopFailoverReachesSecondFallback proves Bifrost
+// walks PAST the first fallback when it also fails — the core DDIL case where a
+// cloud primary AND a regional fallback are both down but a local model is up.
+// The middle hop is an Anthropic service: a different base provider type with a
+// different auth scheme (x-api-key) and request path (/v1/messages). It records
+// its auth header and returns an error, which proves the cross-base fallback was
+// routed to its OWN endpoint with its OWN credentials before traversal continued
+// to the final OpenAI-compatible hop.
+func TestNewFromServiceConfig_MultiHopFailoverReachesSecondFallback(t *testing.T) {
+	var cloudHits, regionalHits, localHits atomic.Int32
+	var regionalAuth atomic.Value            // x-api-key seen by the Anthropic hop
+	var regionalPath, localPath atomic.Value // request paths each hop received
+
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cloudHits.Add(1)
+		http.Error(w, `{"error":{"message":"service unavailable"}}`, http.StatusInternalServerError)
+	}))
+	defer cloudServer.Close()
+
+	regionalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		regionalHits.Add(1)
+		regionalAuth.Store(r.Header.Get("x-api-key"))
+		regionalPath.Store(r.URL.Path)
+		http.Error(w, `{"type":"error","error":{"type":"overloaded_error"}}`, http.StatusServiceUnavailable)
+	}))
+	defer regionalServer.Close()
+
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		localHits.Add(1)
+		localPath.Store(r.URL.Path)
+		chatCompletionSSE(w, "from-local")
+	}))
+	defer localServer.Close()
+
+	primarySvc := llm.ServiceConfig{
+		ID:                "cloud-openai",
+		Type:              llm.ServiceTypeOpenAICompatible,
+		APIKey:            "cloud-key",
+		APIURL:            cloudServer.URL,
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "regional-anthropic",
+	}
+	regionalSvc := llm.ServiceConfig{
+		ID:                "regional-anthropic",
+		Type:              llm.ServiceTypeAnthropic,
+		APIKey:            "anthropic-key",
+		APIURL:            regionalServer.URL,
+		DefaultModel:      "claude-sonnet-4-20250514",
+		FallbackServiceID: "local-ollama",
+	}
+	localSvc := llm.ServiceConfig{
+		ID:           "local-ollama",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIURL:       localServer.URL,
+		DefaultModel: "llama3",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "cloud-openai"}
+
+	// fallbackServices is the chain in resolved order (primary→regional→local).
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{regionalSvc, localSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+
+	require.NoError(t, err, "failover should continue past the failed regional fallback to the local model")
+	assert.Equal(t, "from-local", result, "response must come from the second (local) fallback")
+	assert.Positive(t, cloudHits.Load(), "primary should have been attempted")
+	assert.Positive(t, regionalHits.Load(), "the first fallback should have been attempted before the second")
+	assert.Positive(t, localHits.Load(), "the second fallback should have served the request")
+	assert.Equal(t, "anthropic-key", regionalAuth.Load(), "the cross-base fallback must reach its own endpoint with its own key (x-api-key)")
+	// Each hop must be routed to its provider's own API path, not merely its host.
+	assert.Equal(t, "/v1/messages", regionalPath.Load(), "the Anthropic hop must use the Messages API path")
+	assert.Equal(t, "/v1/chat/completions", localPath.Load(), "the final OpenAI-compatible hop must use the chat completions path")
+}
+
+func TestServiceConfigToFallbackEntry(t *testing.T) {
+	tests := []struct {
+		name             string
+		svc              llm.ServiceConfig
+		expectedProvider schemas.ModelProvider
+		expectedModel    string
+		expectedAPIURL   string
+		expectedChatOnly bool
+		expectError      bool
+	}{
+		{
+			name: "OpenAI service",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "key",
+				DefaultModel: "gpt-4o",
+			},
+			expectedProvider: schemas.OpenAI,
+			expectedModel:    "gpt-4o",
+			// Direct OpenAI always uses the Responses API, so it is not chat-only.
+			expectedChatOnly: false,
+		},
+		{
+			name: "Anthropic service",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeAnthropic,
+				APIKey:       "key",
+				DefaultModel: "claude-sonnet-4-20250514",
+			},
+			expectedProvider: schemas.Anthropic,
+			expectedModel:    "claude-sonnet-4-20250514",
+			// Non-OpenAI base providers handle the Responses API natively; the
+			// chat-only downgrade gate only applies to OpenAI-base endpoints.
+			expectedChatOnly: false,
+		},
+		{
+			name: "Cohere service gets default URL",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeCohere,
+				APIKey:       "key",
+				DefaultModel: "command-r-plus",
+			},
+			expectedProvider: schemas.Cohere,
+			expectedModel:    "command-r-plus",
+			expectedAPIURL:   "https://api.cohere.ai/compatibility/v1",
+			expectedChatOnly: false,
+		},
+		{
+			name: "Mistral service gets default URL",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeMistral,
+				APIKey:       "key",
+				DefaultModel: "mistral-large-latest",
+			},
+			expectedProvider: schemas.Mistral,
+			expectedModel:    "mistral-large-latest",
+			expectedAPIURL:   "https://api.mistral.ai/v1",
+			expectedChatOnly: false,
+		},
+		{
+			name: "OpenAI Compatible normalizes URL and is chat-only",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeOpenAICompatible,
+				APIURL:       "http://localhost:11434/v1",
+				DefaultModel: "llama3",
+			},
+			expectedProvider: schemas.OpenAI,
+			expectedModel:    "llama3",
+			expectedAPIURL:   "http://localhost:11434",
+			// A local OpenAI-compatible endpoint that does not advertise the
+			// Responses API is chat-only, so it must carry the downgrade gate.
+			expectedChatOnly: true,
+		},
+		{
+			name: "OpenAI Compatible with Responses API is not chat-only",
+			svc: llm.ServiceConfig{
+				Type:            llm.ServiceTypeOpenAICompatible,
+				APIURL:          "http://localhost:8000/v1",
+				DefaultModel:    "gpt-oss",
+				UseResponsesAPI: true,
+			},
+			expectedProvider: schemas.OpenAI,
+			expectedModel:    "gpt-oss",
+			expectedAPIURL:   "http://localhost:8000",
+			// It speaks the Responses API, so no downgrade gate is needed.
+			expectedChatOnly: false,
+		},
+		{
+			name: "unsupported service type",
+			svc: llm.ServiceConfig{
+				Type: "unknown-type",
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, err := serviceConfigToFallbackEntry(tt.svc)
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedProvider, entry.Provider)
+			assert.Equal(t, tt.expectedModel, entry.DefaultModel)
+			assert.Equal(t, tt.expectedAPIURL, entry.APIURL)
+			assert.Equal(t, tt.expectedChatOnly, entry.ChatOnly)
+		})
+	}
+}
+
+func TestServiceConfigToFallbackEntry_VertexCredsAndKeyless(t *testing.T) {
+	t.Run("vertex carries project and credentials", func(t *testing.T) {
+		entry, err := serviceConfigToFallbackEntry(llm.ServiceConfig{
+			ID:                    "vertex-svc",
+			Type:                  llm.ServiceTypeVertex,
+			DefaultModel:          "gemini-1.5-pro",
+			Region:                "us-central1",
+			VertexProjectID:       "my-project",
+			VertexProjectNumber:   "12345",
+			VertexAuthCredentials: `{"type":"service_account"}`,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "vertex-svc", entry.ID)
+		assert.Equal(t, schemas.Vertex, entry.Provider)
+		assert.Equal(t, "my-project", entry.VertexProjectID)
+		assert.Equal(t, "12345", entry.VertexProjectNumber)
+		assert.Equal(t, `{"type":"service_account"}`, entry.VertexAuthCredentials)
+	})
+
+	t.Run("keyless when OpenAI-compatible has no API key", func(t *testing.T) {
+		entry, err := serviceConfigToFallbackEntry(llm.ServiceConfig{
+			ID:           "local",
+			Type:         llm.ServiceTypeOpenAICompatible,
+			APIURL:       "http://localhost:11434/v1",
+			DefaultModel: "llama3",
+		})
+		require.NoError(t, err)
+		assert.True(t, entry.IsKeyLess)
+	})
+
+	t.Run("not keyless when an API key is set", func(t *testing.T) {
+		entry, err := serviceConfigToFallbackEntry(llm.ServiceConfig{
+			ID:           "local",
+			Type:         llm.ServiceTypeOpenAICompatible,
+			APIKey:       "secret",
+			APIURL:       "http://localhost:11434/v1",
+			DefaultModel: "llama3",
+		})
+		require.NoError(t, err)
+		assert.False(t, entry.IsKeyLess)
+	})
+}
+
+// TestMultiProviderAccount_CustomProviderKeepsDistinctSlot verifies that a
+// service sharing a base provider type with the primary is registered under a
+// distinct custom-provider name with its own base URL and a CustomProviderConfig
+// — the account-level mechanism that makes same-base fallbacks routable.
+func TestMultiProviderAccount_CustomProviderKeepsDistinctSlot(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIKey:   "cloud",
+			APIURL:   "https://api.openai.com",
+		},
+	})
+	customName := customProviderName(schemas.OpenAI, "local")
+	acc.addProvider(&providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIURL:   "http://localhost:11434",
+		},
+		name:    customName,
+		keyless: true,
+	})
+
+	providers, err := acc.GetConfiguredProviders()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []schemas.ModelProvider{schemas.OpenAI, customName}, providers)
+
+	customCfg, err := acc.GetConfigForProvider(customName)
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost:11434", customCfg.NetworkConfig.BaseURL)
+	require.NotNil(t, customCfg.CustomProviderConfig)
+	assert.Equal(t, schemas.OpenAI, customCfg.CustomProviderConfig.BaseProviderType)
+	assert.True(t, customCfg.CustomProviderConfig.IsKeyLess)
+
+	// The standard primary slot keeps its own URL and is not a custom provider.
+	primaryCfg, err := acc.GetConfigForProvider(schemas.OpenAI)
+	require.NoError(t, err)
+	assert.Equal(t, "https://api.openai.com", primaryCfg.NetworkConfig.BaseURL)
+	assert.Nil(t, primaryCfg.CustomProviderConfig)
+}
+
+// TestNewFromServiceConfig_UnsupportedSameProviderCollisionErrors verifies that
+// a same-type fallback whose provider cannot be a custom-provider base type
+// (e.g. Mistral) fails bot construction rather than being silently misrouted to
+// the primary's endpoint or dropped.
+func TestNewFromServiceConfig_UnsupportedSameProviderCollisionErrors(t *testing.T) {
+	primary := llm.ServiceConfig{
+		ID:           "mistral-1",
+		Type:         llm.ServiceTypeMistral,
+		APIKey:       "key1",
+		DefaultModel: "mistral-large-latest",
+	}
+	fallback := llm.ServiceConfig{
+		ID:           "mistral-2",
+		Type:         llm.ServiceTypeMistral,
+		APIKey:       "key2",
+		DefaultModel: "mistral-small-latest",
+	}
+
+	_, err := NewFromServiceConfig(primary, llm.BotConfig{ServiceID: "mistral-1"}, []llm.ServiceConfig{fallback})
+	require.Error(t, err, "a same-type Mistral fallback cannot be disambiguated and must fail setup")
+	assert.Contains(t, err.Error(), "mistral-2", "the error must name the offending fallback service")
+}
+
+// TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision
+// verifies the full-coverage path: a local OpenAI-compatible fallback that does
+// not use the Responses API is registered under a custom provider name even when
+// it does NOT collide with the primary (here an Anthropic primary). This is what
+// lets Bifrost attach the chat-only gate so a Responses primary can downgrade.
+func TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision(t *testing.T) {
+	primary := llm.ServiceConfig{
+		ID:           "anthropic-1",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	localSvc := llm.ServiceConfig{
+		ID:           "local-ollama",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIURL:       "http://localhost:11434/v1",
+		DefaultModel: "llama3",
+	}
+
+	llmInstance, err := NewFromServiceConfig(primary, llm.BotConfig{ServiceID: "anthropic-1"}, []llm.ServiceConfig{localSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	require.Len(t, llmInstance.fallbacks, 1)
+	// Even though the OpenAI base slot is free (primary is Anthropic), the
+	// chat-only local model must be registered under a slot distinct from the
+	// bare OpenAI provider so the chat-only AllowedRequests gate can be attached
+	// (see TestProviderAccount_ChatOnlyCustomConfig). Assert distinctness, not the
+	// internal custom-provider name string.
+	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[0].Provider,
+		"a chat-only fallback must get its own custom-provider slot to carry the downgrade gate")
+}
+
+// TestProviderAccount_ChatOnlyCustomConfig verifies that a chat-only custom
+// provider declares chat-only AllowedRequests (the gate Bifrost uses to downgrade
+// Responses → chat), while a non-chat-only custom provider leaves it unset.
+func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
+	chatOnly := &providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIURL:   "http://localhost:11434",
+		},
+		name:     customProviderName(schemas.OpenAI, "local"),
+		chatOnly: true,
+	}
+	cfg, err := chatOnly.GetConfigForProvider(chatOnly.registeredName())
+	require.NoError(t, err)
+	require.NotNil(t, cfg.CustomProviderConfig)
+	require.NotNil(t, cfg.CustomProviderConfig.AllowedRequests)
+	assert.True(t, cfg.CustomProviderConfig.AllowedRequests.ChatCompletion)
+	assert.True(t, cfg.CustomProviderConfig.AllowedRequests.ChatCompletionStream)
+	assert.False(t, cfg.CustomProviderConfig.AllowedRequests.Responses)
+	assert.False(t, cfg.CustomProviderConfig.AllowedRequests.ResponsesStream)
+
+	// A custom provider that does support the Responses API leaves AllowedRequests
+	// unset so all operations remain available.
+	responsesCapable := &providerAccount{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.OpenAI,
+			APIURL:   "https://api.example.com",
+		},
+		name: customProviderName(schemas.OpenAI, "other"),
+	}
+	cfg, err = responsesCapable.GetConfigForProvider(responsesCapable.registeredName())
+	require.NoError(t, err)
+	require.NotNil(t, cfg.CustomProviderConfig)
+	assert.Nil(t, cfg.CustomProviderConfig.AllowedRequests)
+}
+
 func TestConvertToBifrostResponsesRequestStructuredOutputStringEnum(t *testing.T) {
 	b := &LLM{
 		provider:        schemas.OpenAI,
@@ -1400,11 +2339,13 @@ func TestEnvProxyRouting(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", proxy.URL)
 
 	llmClient, err := New(Config{
-		Provider:         schemas.OpenAI,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "gpt-4",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.OpenAI,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "gpt-4",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -1485,11 +2426,13 @@ func TestCountTokensReturnsCount(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		Provider:         schemas.Anthropic,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "claude-sonnet-4-5",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Anthropic,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "claude-sonnet-4-5",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -1518,12 +2461,14 @@ func TestCountTokensOmitsMaxOutputTokens(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		Provider:         schemas.OpenAI,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "gpt-5.4",
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.OpenAI,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "gpt-5.4",
+			StreamingTimeout: 10 * time.Second,
+		},
 		OutputTokenLimit: 8192, // produces MaxGeneratedTokens > 0 → MaxOutputTokens in the request
-		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -1558,11 +2503,13 @@ func TestCountTokensOmitsNativeServerTools(t *testing.T) {
 	// the production "Server tools are not supported in the count_tokens
 	// endpoint" error.
 	llmClient, err := New(Config{
-		Provider:           schemas.Anthropic,
-		APIKey:             "test-key",
-		APIURL:             backend.URL,
-		DefaultModel:       "claude-sonnet-4-6",
-		StreamingTimeout:   10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Anthropic,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "claude-sonnet-4-6",
+			StreamingTimeout: 10 * time.Second,
+		},
 		EnabledNativeTools: []string{"web_search"},
 	})
 	require.NoError(t, err)
@@ -1596,11 +2543,13 @@ func TestCountTokensKeepsFunctionTools(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		Provider:         schemas.Anthropic,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "claude-sonnet-4-6",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Anthropic,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "claude-sonnet-4-6",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -1634,11 +2583,13 @@ func TestCountTokensUnsupportedProvider(t *testing.T) {
 	// "unsupported_operation" error synchronously. CountTokens must classify
 	// that as ErrUnsupportedTokenCount without contacting the backend.
 	llmClient, err := New(Config{
-		Provider:         schemas.Mistral,
-		APIKey:           "test-key",
-		APIURL:           backend.URL,
-		DefaultModel:     "mistral-large-latest",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Mistral,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "mistral-large-latest",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -1661,11 +2612,13 @@ func TestCountTokensScrubsAPIKeyFromError(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		Provider:         schemas.Anthropic,
-		APIKey:           secret,
-		APIURL:           backend.URL,
-		DefaultModel:     "claude-sonnet-4-5",
-		StreamingTimeout: 10 * time.Second,
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Anthropic,
+			APIKey:           secret,
+			APIURL:           backend.URL,
+			DefaultModel:     "claude-sonnet-4-5",
+			StreamingTimeout: 10 * time.Second,
+		},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()

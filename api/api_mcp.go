@@ -42,10 +42,30 @@ type UserMCPToolInfo struct {
 // handleGetUserMCPTools returns the user-visible MCP tools grouped by server.
 func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-
-	mcpCfg := a.config.MCP()
-
 	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(c.Request.Context(), userID)
+
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors))
+}
+
+// handleRefreshUserMCPTools forces rediscovery of the current user's MCP tools.
+func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	userID := c.GetHeader("Mattermost-User-Id")
+	tools, mcpErrors, err := a.mcpClientManager.RefreshToolsForUser(c.Request.Context(), userID)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to refresh MCP tools: %w", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors))
+}
+
+func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErrors *mcp.Errors) UserMCPToolsResponse {
+	mcpCfg := a.config.MCP()
 
 	// Group tools by ServerOrigin
 	toolsByOrigin := make(map[string][]llm.Tool, len(tools))
@@ -126,7 +146,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		))
 	}
 
-	c.JSON(http.StatusOK, UserMCPToolsResponse{Servers: servers})
+	return UserMCPToolsResponse{Servers: servers}
 }
 
 func buildUserMCPServerInfo(

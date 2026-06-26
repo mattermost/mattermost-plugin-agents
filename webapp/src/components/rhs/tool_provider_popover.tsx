@@ -3,29 +3,17 @@
 
 import React, {useState, useCallback, useEffect} from 'react';
 import styled from 'styled-components';
-import {FormattedMessage} from 'react-intl';
-import {ChevronDownIcon} from '@mattermost/compass-icons/components';
+import {FormattedMessage, useIntl} from 'react-intl';
+import {ChevronDownIcon, RefreshIcon} from '@mattermost/compass-icons/components';
 
-import {disconnectMCPOAuth, getUserMCPTools, updateUserToolPreferences} from '@/client';
+import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
 import {EnabledMCPTool} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
 import {ToggleSwitch} from '../toggle_switch';
 
-export type UserMCPServerInfo = {
-    name: string;
-    serverOrigin: string;
-    authenticated: boolean;
-    needsOAuth: boolean;
-    authURL?: string;
-    tools: Array<{
-        name: string;
-        description: string;
-        enabled: boolean;
-        policy: string;
-    }>;
-};
+export type {UserMCPServerInfo};
 
 type ToolProviderPopoverProps = {
     disabledServers: string[];
@@ -51,8 +39,10 @@ function filterServersByEnabledTools(
 }
 
 const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
+    const intl = useIntl();
     const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
     const [loading, setLoading] = useState(false);
+    const refreshLabel = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
 
     useEffect(() => {
         if (preloadedServers && preloadedServers.length > 0) {
@@ -62,12 +52,12 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
 
     const servers = filterServersByEnabledTools(allServers, enabledMCPTools, autoEnableNewMCPTools);
 
-    const fetchServers = useCallback(async (opts: {showLoading?: boolean} = {showLoading: true}) => {
+    const fetchServers = useCallback(async (opts: {showLoading?: boolean; forceRefresh?: boolean} = {showLoading: true}) => {
         if (opts.showLoading) {
             setLoading(true);
         }
         try {
-            const response = await getUserMCPTools();
+            const response = opts.forceRefresh ? await refreshUserMCPTools() : await getUserMCPTools();
             setAllServers(response.servers);
         } catch (error) {
             // eslint-disable-next-line no-console
@@ -134,7 +124,26 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
             closeOnClick={false}
         >
             <PopoverHeader>
-                <FormattedMessage defaultMessage='Tool Providers'/>
+                <PopoverHeaderTitle>
+                    <FormattedMessage defaultMessage='Tool Providers'/>
+                </PopoverHeaderTitle>
+                <RefreshToolsButton
+                    type='button'
+                    aria-label={refreshLabel}
+                    title={refreshLabel}
+                    disabled={loading}
+                    onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        fetchServers({showLoading: true, forceRefresh: true});
+                    }}
+                >
+                    <RefreshIcon size={14}/>
+                </RefreshToolsButton>
             </PopoverHeader>
             {loading && servers.length === 0 && (
                 <LoadingRow>
@@ -209,13 +218,43 @@ const ProviderDropdownMenu = styled(DropdownMenu)`
 `;
 
 const PopoverHeader = styled.div`
-    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px 4px 16px;
+`;
+
+const PopoverHeaderTitle = styled.div`
     font-size: 12px;
     font-weight: 600;
     line-height: 16px;
     letter-spacing: 0.48px;
     text-transform: uppercase;
     color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
+const RefreshToolsButton = styled.button`
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+        background: rgba(var(--center-channel-color-rgb), 0.08);
+        color: var(--center-channel-color);
+    }
+
+    &:disabled {
+        cursor: default;
+        opacity: 0.5;
+    }
 `;
 
 const ProviderRow = styled.div`

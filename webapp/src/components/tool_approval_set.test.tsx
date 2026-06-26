@@ -6,7 +6,7 @@ import {render} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import ToolApprovalSet from './tool_approval_set';
-import {ToolCall, ToolCallStatus} from './tool_types';
+import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
 type MockToolCardProps = {
     tool: ToolCall;
@@ -34,14 +34,14 @@ function makeTool(overrides: Partial<ToolCall>): ToolCall {
     };
 }
 
-function renderComponent(toolCalls: ToolCall[]) {
+function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage = 'call') {
     return render(
         <IntlProvider locale='en'>
             <ToolApprovalSet
                 postID='post_1'
                 conversationID='conv_1'
                 toolCalls={toolCalls}
-                approvalStage='call'
+                approvalStage={approvalStage}
                 canApprove={true}
                 canExpand={true}
                 showArguments={true}
@@ -85,5 +85,45 @@ describe('ToolApprovalSet', () => {
 
         expect(getToolCardProps('tool_auto').isAutoApproved).toBe(true);
         expect(getToolCardProps('tool_pending').isAutoApproved).toBe(false);
+    });
+
+    test('hides pending tools that passed the auto-execution policy', () => {
+        renderComponent([
+            makeTool({id: 'tool_marked', would_auto_execute: true}),
+            makeTool({id: 'tool_manual'}),
+        ]);
+
+        expect(mockToolCard.mock.calls.find(([props]) => props.tool.id === 'tool_marked')).toBeUndefined();
+
+        const manualTool = getToolCardProps('tool_manual');
+        expect(manualTool.onApprove).toEqual(expect.any(Function));
+        expect(manualTool.onReject).toEqual(expect.any(Function));
+    });
+
+    test('excludes already-decided results from share decisions', () => {
+        renderComponent([
+            makeTool({id: 'tool_decided', status: ToolCallStatus.Success, decided: true}),
+            makeTool({id: 'tool_undecided', status: ToolCallStatus.Success}),
+        ], 'result');
+
+        const decidedTool = getToolCardProps('tool_decided');
+        expect(decidedTool.onApprove).toBeUndefined();
+        expect(decidedTool.onReject).toBeUndefined();
+
+        const undecidedTool = getToolCardProps('tool_undecided');
+        expect(undecidedTool.onApprove).toEqual(expect.any(Function));
+        expect(undecidedTool.onReject).toEqual(expect.any(Function));
+    });
+
+    test('status bar counts only approval-type decisions, not questions', () => {
+        // The question has no arguments (redacted shape), so it falls back to
+        // the mocked tool card; only the count behavior is under test.
+        const {getByText} = renderComponent([
+            makeTool({id: 'question', user_interaction: 'select'}),
+            makeTool({id: 'tool_a'}),
+            makeTool({id: 'tool_b'}),
+        ]);
+
+        getByText('2 tools need decisions');
     });
 });

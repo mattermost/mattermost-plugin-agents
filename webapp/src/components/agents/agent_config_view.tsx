@@ -43,7 +43,14 @@ export type AgentDraft = {
     reasoningEffort: string;
     thinkingBudget: number;
     structuredOutputEnabled: boolean;
+    maxToolTurns: number;
 }
+
+// DefaultMaxToolTurns mirrors llm.DefaultMaxToolTurns on the backend. Kept
+// here so the create form pre-populates the field even before any service is
+// selected.
+export const DefaultMaxToolTurns = 30;
+export const MaxAllowedMaxToolTurns = 250;
 
 const emptyDraft: AgentDraft = {
     displayName: '',
@@ -67,6 +74,7 @@ const emptyDraft: AgentDraft = {
     reasoningEffort: 'medium',
     thinkingBudget: 0,
     structuredOutputEnabled: false,
+    maxToolTurns: DefaultMaxToolTurns,
 };
 
 function cloneDraft(draft: AgentDraft): AgentDraft {
@@ -112,6 +120,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         structuredOutputEnabled: draft.structuredOutputEnabled,
+        maxToolTurns: draft.maxToolTurns,
     };
 }
 
@@ -142,6 +151,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         structuredOutputEnabled: draft.structuredOutputEnabled,
+        maxToolTurns: draft.maxToolTurns,
     };
 }
 
@@ -168,6 +178,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         reasoningEffort: agent.reasoningEffort || 'medium',
         thinkingBudget: agent.thinkingBudget ?? 0,
         structuredOutputEnabled: agent.structuredOutputEnabled ?? false,
+        maxToolTurns: agent.maxToolTurns && agent.maxToolTurns > 0 ? agent.maxToolTurns : DefaultMaxToolTurns,
     };
 }
 
@@ -259,6 +270,16 @@ const AgentConfigView = (props: Props) => {
         });
     }, []);
 
+    // Server-state reconciliation: applied to both the editable draft and the
+    // baseline used for dirty detection. Used when a child tab (e.g. MCPs) drops
+    // entries that no longer exist server-side. This must not mark the form as
+    // dirty — the user didn't change anything (MM-69185).
+    const reconcileEnabledTools = useCallback((cleaned: EnabledTool[]) => {
+        const next = [...cleaned];
+        setDraft((prev) => ({...prev, enabledTools: next}));
+        setBaselineDraft((prev) => ({...prev, enabledTools: [...next]}));
+    }, []);
+
     const validate = useCallback((): Record<string, string> => {
         const errs: Record<string, string> = {};
         if (!draft.displayName.trim()) {
@@ -271,6 +292,12 @@ const AgentConfigView = (props: Props) => {
         }
         if (!draft.serviceId) {
             errs.serviceId = intl.formatMessage({defaultMessage: 'AI Service is required'});
+        }
+        if (draft.maxToolTurns < 1 || draft.maxToolTurns > MaxAllowedMaxToolTurns) {
+            errs.maxToolTurns = intl.formatMessage(
+                {defaultMessage: 'Max tool turns must be between 1 and {max}'},
+                {max: MaxAllowedMaxToolTurns},
+            );
         }
         return errs;
     }, [draft, intl]);
@@ -398,6 +425,7 @@ const AgentConfigView = (props: Props) => {
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
                             mcpDynamicToolLoading={draft.mcpDynamicToolLoading}
                             onChange={(updates) => updateDraft(updates)}
+                            onReconcileEnabledTools={reconcileEnabledTools}
                         />
                     )}
                 </ViewBody>

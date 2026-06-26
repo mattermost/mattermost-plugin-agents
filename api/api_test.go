@@ -92,7 +92,7 @@ type testLLMContextToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
+func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot, _ *llm.Context) []llm.Tool {
 	return p.tools
 }
 
@@ -119,6 +119,10 @@ type mockMCPClientManager struct {
 	disconnectCalls     []mcpDisconnectCall
 	disconnectErr       error
 	oauthNeededCalls    []mcpDisconnectCall
+	refreshErr          error
+	refreshCalls        []string
+	getContexts         []context.Context
+	refreshContexts     []context.Context
 	ensureSessionErr    error
 
 	registerCalls   []mcp.PluginServerConfig
@@ -185,8 +189,15 @@ func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 	return nil
 }
 
-func (m *mockMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForUser(ctx context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
+	m.getContexts = append(m.getContexts, ctx)
 	return m.tools, m.mcpErrors
+}
+
+func (m *mockMCPClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error) {
+	m.refreshCalls = append(m.refreshCalls, userID)
+	m.refreshContexts = append(m.refreshContexts, ctx)
+	return m.tools, m.mcpErrors, m.refreshErr
 }
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
@@ -331,6 +342,9 @@ func (m *mockConversationStore) GetConversationSummariesForUser(_ string, _, _ i
 // mockAgentStore is a minimal in-memory implementation of AgentStore for testing.
 type mockAgentStore struct {
 	agents map[string]*llm.BotConfig
+
+	// countErr, when set, makes CountActiveAgents fail (to exercise best-effort paths).
+	countErr error
 }
 
 func newMockAgentStore() *mockAgentStore {
@@ -402,6 +416,9 @@ func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig
 }
 
 func (m *mockAgentStore) CountActiveAgents() (int, error) {
+	if m.countErr != nil {
+		return 0, m.countErr
+	}
 	count := 0
 	for _, cfg := range m.agents {
 		if cfg.DeleteAt == 0 {

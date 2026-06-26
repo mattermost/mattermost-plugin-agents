@@ -6,6 +6,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -18,6 +19,13 @@ import (
 )
 
 var ErrOAuthNotConfigured = errors.New("oauth not configured")
+
+func cacheableContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
+}
 
 // ClientManager manages MCP clients for multiple users
 type ClientManager struct {
@@ -144,22 +152,42 @@ func (m *ClientManager) Close() {
 	m.clients = make(map[string]*UserClients)
 }
 
-// createAndStoreUserClient creates a new UserClients instance and stores it in the manager
-func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string) (*UserClients, *Errors) {
+// createAndStoreUserClient creates a new UserClients instance and stores it in the manager.
+// When forceRefresh is true the remote connect bypasses the shared tools cache and any
+// existing cached client is replaced.
+func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string, forceRefresh bool) (*UserClients, *Errors) {
+	// Unless forcing a refresh, reuse an already-cached client so we skip a
+	// redundant remote connect when another goroutine cached one first.
+	if !forceRefresh {
+		m.clientsMu.Lock()
+		if client, exists := m.clients[userID]; exists {
+			m.activity[userID] = time.Now()
+			m.clientsMu.Unlock()
+			return client, client.InitialRemoteConnectErrors()
+		}
+		m.clientsMu.Unlock()
+	}
+
 	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 
 	// Connect outside the manager lock so remote MCP handshakes do not block other users.
-	mcpErrors := userClients.ConnectToRemoteServers(ctx, m.config.Servers)
+	// Cacheable client creation must not inherit request cancellation; a canceled
+	// popover/tab close would otherwise poison initialRemoteConnectErrors until TTL.
+	mcpErrors := userClients.ConnectToRemoteServers(cacheableContext(ctx), m.config.Servers, forceRefresh)
 	userClients.setInitialRemoteConnectErrors(mcpErrors)
 
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
 	// Check again in case another goroutine created the client while we were connecting.
+	// On a forced refresh we intentionally replace (and close) any existing client.
 	if client, exists := m.clients[userID]; exists {
-		userClients.Close()
-		m.activity[userID] = time.Now()
-		return client, client.InitialRemoteConnectErrors()
+		if !forceRefresh {
+			userClients.Close()
+			m.activity[userID] = time.Now()
+			return client, client.InitialRemoteConnectErrors()
+		}
+		client.Close()
 	}
 
 	// Store the client even if some servers failed to connect
@@ -170,7 +198,7 @@ func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID str
 	return userClients, mcpErrors
 }
 
-// getClientForUser gets or creates an MCP client for a specific user
+// getClientForUser gets or creates an MCP client for a specific user.
 func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*UserClients, *Errors) {
 	m.clientsMu.Lock()
 	client, exists := m.clients[userID]
@@ -181,7 +209,7 @@ func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*U
 	}
 	m.clientsMu.Unlock()
 
-	return m.createAndStoreUserClient(ctx, userID)
+	return m.createAndStoreUserClient(ctx, userID, false)
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
@@ -190,8 +218,11 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	userClient, initialErrors := m.getClientForUser(ctx, userID)
 	mcpErrors := cloneMCPErrors(initialErrors)
 
-	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
-	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
+	// Embedded and plugin connects intentionally receive the raw cancelable ctx:
+	// they run per-request and are not cached, so a canceled request should abort
+	// them. Only the remote connect uses cacheableContext(ctx) (in
+	// createAndStoreUserClient) because its result is cached across requests.
+	if m.embeddedClient != nil {
 		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
@@ -214,6 +245,43 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	rawTools := userClient.GetTools(ctx)
 	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
 	return filtered, mcpErrors
+}
+
+// RefreshToolsForUser drops cached user clients and shared server tool lists,
+// pre-warms a fresh user client, then delegates to GetToolsForUser for the
+// embedded/plugin connect + filtering it shares with the normal lookup path.
+func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors, error) {
+	if userID == "" {
+		return nil, nil, errors.New("userID is required")
+	}
+
+	if refreshErr := m.invalidateSharedToolsCacheForRefresh(); refreshErr != nil {
+		m.log.Warn("Failed to invalidate shared MCP tools cache during user refresh; bypassing cache for rediscovery", "userID", userID, "error", refreshErr)
+	}
+	m.InvalidateUserClients(userID)
+	// Pre-warm the user client with a forced remote rediscovery; GetToolsForUser
+	// then reuses this cached client rather than rebuilding it.
+	m.createAndStoreUserClient(ctx, userID, true)
+
+	tools, mcpErrors := m.GetToolsForUser(ctx, userID)
+	return tools, mcpErrors, nil
+}
+
+func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
+	if m.toolsCache == nil {
+		return nil
+	}
+
+	var refreshErr error
+	for _, serverConfig := range m.config.Servers {
+		if !serverConfig.Enabled || serverConfig.BaseURL == "" || !shouldUseSharedToolsCache(serverConfig) {
+			continue
+		}
+		if err := m.toolsCache.InvalidateServer(serverConfig.Name); err != nil {
+			refreshErr = errors.Join(refreshErr, fmt.Errorf("failed to invalidate tools cache for server %s: %w", serverConfig.Name, err))
+		}
+	}
+	return refreshErr
 }
 
 func cloneMCPErrors(src *Errors) *Errors {

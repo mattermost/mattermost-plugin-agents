@@ -54,7 +54,7 @@ func DiscoverRemoteServerTools(
 	toolsCache *ToolsCache,
 ) ([]ToolInfo, error) {
 	// Create and connect to the remote server
-	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, httpClient, toolsCache)
+	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, httpClient, toolsCache, false)
 	if err != nil {
 		return nil, err
 	}
@@ -137,10 +137,6 @@ func DiscoverEmbeddedServerTools(
 	log pluginapi.LogService,
 	pluginAPI *pluginapi.Client,
 ) ([]ToolInfo, error) {
-	if !embeddedServerConfig.Enabled {
-		return nil, fmt.Errorf("embedded server is not enabled")
-	}
-
 	// Create embedded client helper and connect to the embedded server
 	embeddedClient := NewEmbeddedServerClient(embeddedServer, log, pluginAPI)
 

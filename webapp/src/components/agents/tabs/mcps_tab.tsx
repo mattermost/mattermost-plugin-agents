@@ -6,7 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
-import {getUserMCPTools} from '@/client';
+import {getUserMCPTools, type UserMCPServerInfo} from '@/client';
 import {EnabledTool} from '@/types/agents';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
@@ -15,24 +15,6 @@ import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
 
 // Same sentinel as llm.MCPServerToolWildcard ('*' = all tools from that origin).
 const MCPServerToolWildcard = '*';
-
-// Types matching the getUserMCPTools() response shape (from api/api_mcp.go)
-type UserMCPToolInfo = {
-    name: string;
-    description: string;
-    enabled: boolean; // admin-level enabled state
-    policy: string; // "auto_run" | "ask"
-}
-
-type UserMCPServerInfo = {
-    name: string;
-    serverOrigin: string;
-    authenticated: boolean;
-    needsOAuth: boolean;
-    authEmail: string;
-    authURL?: string;
-    tools: UserMCPToolInfo[];
-}
 
 type Props = {
     enabledTools: EnabledTool[];
@@ -43,6 +25,12 @@ type Props = {
         autoEnableNewMCPTools?: boolean;
         mcpDynamicToolLoading?: boolean;
     }) => void;
+
+    // Optional server-state reconciliation callback. Used when removing entries
+    // that no longer exist in the live MCP catalog (orphans). Distinct from
+    // onChange so the parent can update its dirty-tracking baseline alongside
+    // the draft and avoid treating reconciliation as a user edit (MM-69185).
+    onReconcileEnabledTools?: (cleaned: EnabledTool[]) => void;
 }
 
 function serverToolsPanelId(serverOrigin: string): string {
@@ -50,7 +38,7 @@ function serverToolsPanelId(serverOrigin: string): string {
 }
 
 const McpsTab = (props: Props) => {
-    const {enabledTools, autoEnableNewMCPTools, mcpDynamicToolLoading, onChange} = props;
+    const {enabledTools, autoEnableNewMCPTools, mcpDynamicToolLoading, onChange, onReconcileEnabledTools} = props;
     const intl = useIntl();
     const [servers, setServers] = useState<UserMCPServerInfo[]>([]);
     const [loading, setLoading] = useState(true);
@@ -184,7 +172,11 @@ const McpsTab = (props: Props) => {
     useEffect(() => {
         if (!autoEnableNewMCPTools && orphanedTools.length > 0 && servers.length > 0) {
             const cleaned = enabledTools.filter((et) => isEntryAvailable(et));
-            onChange({enabledTools: cleaned});
+            if (onReconcileEnabledTools) {
+                onReconcileEnabledTools(cleaned);
+            } else {
+                onChange({enabledTools: cleaned});
+            }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoEnableNewMCPTools, enabledTools, servers]);
@@ -340,7 +332,7 @@ const McpsTab = (props: Props) => {
                                                     <FormattedMessage defaultMessage='Connected'/>
                                                 </AuthBadge>
                                             )}
-                                            {!server.authenticated && server.authEmail === '' && server.tools.length === 0 && (
+                                            {!server.authenticated && !server.authEmail && server.tools.length === 0 && (
                                                 <NotConnectedBadge>
                                                     <FormattedMessage defaultMessage='Not connected'/>
                                                 </NotConnectedBadge>

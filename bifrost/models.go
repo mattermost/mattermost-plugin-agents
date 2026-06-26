@@ -33,14 +33,16 @@ type FetchModelsConfig struct {
 // FetchModels retrieves the list of available models from a provider using Bifrost.
 func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 	account := &providerAccount{
-		provider:              cfg.Provider,
-		apiKey:                cfg.APIKey,
-		apiURL:                cfg.APIURL,
-		orgID:                 cfg.OrgID,
-		region:                cfg.Region,
-		vertexProjectID:       cfg.VertexProjectID,
-		vertexProjectNumber:   cfg.VertexProjectNumber,
-		vertexAuthCredentials: cfg.VertexAuthCredentials,
+		ProviderSettings: ProviderSettings{
+			Provider:              cfg.Provider,
+			APIKey:                cfg.APIKey,
+			APIURL:                cfg.APIURL,
+			OrgID:                 cfg.OrgID,
+			Region:                cfg.Region,
+			VertexProjectID:       cfg.VertexProjectID,
+			VertexProjectNumber:   cfg.VertexProjectNumber,
+			VertexAuthCredentials: cfg.VertexAuthCredentials,
+		},
 	}
 
 	client, err := newBifrostClient(account, cfg.APIKey)

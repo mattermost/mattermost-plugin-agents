@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -843,6 +844,32 @@ func TestClientManagerInvalidateUserClients(t *testing.T) {
 	}
 }
 
+func TestClientManagerInvalidateSharedToolsCacheForRefresh(t *testing.T) {
+	kvAPI := newMockKVService()
+	cache := NewToolsCache(kvAPI, &mockLogService{})
+	cachedTools := map[string]*gomcp.Tool{
+		"tool": {Name: "tool"},
+	}
+	require.NoError(t, cache.SetTools("shared-server", "shared-server", "https://shared.example.com", cachedTools, time.Now()))
+	require.NoError(t, cache.SetTools("oauth-server", "oauth-server", "https://oauth.example.com", cachedTools, time.Now()))
+
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{Name: "shared-server", BaseURL: "https://shared.example.com", Enabled: true},
+				{Name: "disabled-server", BaseURL: "https://disabled.example.com", Enabled: false},
+				{Name: "oauth-server", BaseURL: "https://oauth.example.com", Enabled: true, ClientID: "client-id"},
+			},
+		},
+		toolsCache: cache,
+	}
+
+	require.NoError(t, manager.invalidateSharedToolsCacheForRefresh())
+
+	require.Empty(t, cache.GetTools("shared-server"))
+	require.NotEmpty(t, cache.GetTools("oauth-server"))
+}
+
 func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	mockAPI.On("LogDebug", "No remote MCP servers provided for user", "userID", "user-1").Return().Maybe()
@@ -855,7 +882,7 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 	}
 
 	before := time.Now()
-	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), "user-1")
+	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), "user-1", false)
 	after := time.Now()
 
 	require.NotNil(t, userClients)
@@ -866,6 +893,15 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 	require.True(t, ok)
 	require.False(t, lastActivity.Before(before))
 	require.False(t, lastActivity.After(after))
+}
+
+func TestCacheableContextIgnoresParentCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+
+	cacheCtx := cacheableContext(ctx)
+	require.NoError(t, cacheCtx.Err())
 }
 
 func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {

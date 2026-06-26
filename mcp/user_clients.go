@@ -60,8 +60,8 @@ func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuth
 	}
 }
 
-// ConnectToRemoteServers initializes connections to remote MCP servers
-func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []ServerConfig) *Errors {
+// ConnectToRemoteServers initializes connections to remote MCP servers.
+func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []ServerConfig, forceRefresh bool) *Errors {
 	if len(servers) == 0 {
 		c.log.Debug("No remote MCP servers provided for user", "userID", c.userID)
 		return nil
@@ -76,7 +76,7 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 			continue
 		}
 
-		if err := c.connectToServer(ctx, serverConfig.Name, serverConfig); err != nil {
+		if err := c.connectToServer(ctx, serverConfig.Name, serverConfig, forceRefresh); err != nil {
 			// Initialize errors struct if needed
 			if mcpErrors == nil {
 				mcpErrors = &Errors{}
@@ -140,8 +140,8 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, se
 }
 
 // connectToServer establishes a connection to a single server
-func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig) error {
-	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache)
+func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig, forceRefresh bool) error {
+	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache, forceRefresh)
 	if err != nil {
 		return err
 	}

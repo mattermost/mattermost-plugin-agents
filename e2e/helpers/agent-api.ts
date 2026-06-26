@@ -36,6 +36,7 @@ export interface CreateAgentRequest {
     reasoningEffort?: string;
     thinkingBudget?: number;
     structuredOutputEnabled?: boolean;
+    maxToolTurns?: number;
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -66,6 +67,7 @@ export interface AgentResponse {
     reasoningEffort: string;
     thinkingBudget: number;
     structuredOutputEnabled: boolean;
+    maxToolTurns?: number;
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
     creatorID?: string;
@@ -103,6 +105,7 @@ export function mergeAgentIntoUpdate(
         reasoningEffort: agent.reasoningEffort,
         thinkingBudget: agent.thinkingBudget,
         structuredOutputEnabled: agent.structuredOutputEnabled,
+        maxToolTurns: agent.maxToolTurns,
     };
     return { ...base, ...overrides };
 }

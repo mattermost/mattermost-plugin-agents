@@ -25,12 +25,31 @@ const MaxToolRounds = limits.MaxToolRounds
 // It calls the LLM, checks for tool calls in the stream, executes
 // approved ones, appends results back to the request, and calls again.
 type ToolRunner struct {
-	llm llm.LanguageModel
+	llm       llm.LanguageModel
+	maxRounds int
 }
 
-// New creates a ToolRunner bound to the given language model.
-func New(lm llm.LanguageModel) *ToolRunner {
-	return &ToolRunner{llm: lm}
+// Option configures a ToolRunner at construction time.
+type Option func(*ToolRunner)
+
+// WithMaxRounds overrides the default maximum number of tool-call rounds.
+// Non-positive values fall back to llm.DefaultMaxToolTurns.
+func WithMaxRounds(n int) Option {
+	return func(r *ToolRunner) {
+		if n > 0 {
+			r.maxRounds = n
+		}
+	}
+}
+
+// New creates a ToolRunner bound to the given language model. Pass
+// WithMaxRounds to override the default per-agent tool-call ceiling.
+func New(lm llm.LanguageModel, opts ...Option) *ToolRunner {
+	r := &ToolRunner{llm: lm, maxRounds: llm.DefaultMaxToolTurns}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // finalAssistantText drops preamble text from a forced synthesis round that
@@ -166,7 +185,7 @@ func (r *ToolRunner) runLoop(
 
 	var synthesisForced bool
 
-	for round := 0; round < MaxToolRounds; round++ {
+	for round := 0; round < r.maxRounds; round++ {
 		// For round > 0, make a new LLM call.
 		if round > 0 {
 			var err error
@@ -267,15 +286,22 @@ func (r *ToolRunner) runLoop(
 
 		// Check shouldExecute for ALL tool calls.
 		allApproved := true
-		for _, tc := range toolCalls {
-			if !shouldExecute(tc) {
+		approved := make([]bool, len(toolCalls))
+		for i, tc := range toolCalls {
+			approved[i] = shouldExecute(tc)
+			if !approved[i] {
 				allApproved = false
-				break
 			}
 		}
 
-		// If NOT all approved, return with unresolved tool calls.
+		// If NOT all approved, return with unresolved tool calls. Calls that
+		// passed the policy are tagged so the UI hides their approval
+		// controls; they execute on resume (HandleToolCall re-checks the
+		// policy) once the user resolves the rest of the batch.
 		if !allApproved {
+			for i := range toolCalls {
+				toolCalls[i].WouldAutoExecute = approved[i]
+			}
 			r.deliverToolTurns(result, onToolTurns)
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
@@ -303,7 +329,7 @@ func (r *ToolRunner) runLoop(
 
 		// Force the last allowed round to be a tools-disabled synthesis so the
 		// caller always gets a final answer when the cap is hit.
-		if round == MaxToolRounds-2 {
+		if round == r.maxRounds-2 {
 			request.Posts = llm.EnsureToolIterationLimitUserMessage(request.Posts)
 			currentOpts = append(currentOpts, llm.WithToolsDisabled())
 			synthesisForced = true

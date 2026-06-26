@@ -358,7 +358,7 @@ func TestNewClientDiscoversPaginatedRemoteTools(t *testing.T) {
 		Name:    "paged",
 		BaseURL: httpServer.URL,
 		Enabled: true,
-	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
@@ -380,7 +380,7 @@ func TestRemoteReconnectRefreshesToolCatalog(t *testing.T) {
 		Name:    "remote",
 		BaseURL: httpServer.URL,
 		Enabled: true,
-	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	require.Len(t, client.Tools(), 1)
@@ -423,7 +423,7 @@ func TestNewClientUsesCacheWithoutPaginationCall(t *testing.T) {
 		Name:    "paged",
 		BaseURL: httpServer.URL,
 		Enabled: true,
-	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
@@ -450,7 +450,7 @@ func TestNewClientDoesNotCachePartialPaginationOnError(t *testing.T) {
 		Name:    "paged",
 		BaseURL: httpServer.URL,
 		Enabled: true,
-	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache, false)
 	require.Error(t, err)
 	require.Nil(t, client)
 	require.Nil(t, cache.GetTools("paged"))
@@ -465,7 +465,7 @@ func TestNewClientErrorsOnEmptyRemoteToolCatalog(t *testing.T) {
 		Name:    "empty",
 		BaseURL: httpServer.URL,
 		Enabled: true,
-	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache)
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache, false)
 	require.Error(t, err)
 	require.Nil(t, client)
 	require.Contains(t, err.Error(), "no tools found")

@@ -7,6 +7,7 @@ import {ChannelWithTeamData} from '@mattermost/types/channels';
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
+import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
 
@@ -18,6 +19,24 @@ const Client4 = new Client4Class();
 
 type MCPToolPolicy = 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
 type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
+export type UserMCPToolInfo = {
+    name: string;
+    description: string;
+    enabled: boolean;
+    policy: MCPToolPolicy;
+};
+export type UserMCPServerInfo = {
+    name: string;
+    serverOrigin: string;
+    authenticated: boolean;
+    needsOAuth: boolean;
+    authEmail?: string;
+    authURL?: string;
+    tools: UserMCPToolInfo[];
+};
+export type UserMCPToolsResponse = {
+    servers: UserMCPServerInfo[];
+};
 
 // Mirrors components/system_console/mcp_servers.tsx MCPToolConfig; duplicated to
 // avoid client.tsx depending on UI components.
@@ -195,12 +214,13 @@ export async function doRegenerate(postid: string) {
     });
 }
 
-export async function doToolCall(postid: string, toolIDs: string[]) {
+export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?: Record<string, ToolAnswer>) {
     const url = `${postRoute(postid)}/tool_call`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
             accepted_tool_ids: toolIDs,
+            tool_answers: toolAnswers,
         }),
     }));
 
@@ -684,10 +704,27 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     });
 }
 
-export async function getUserMCPTools(): Promise<{servers: any[]}> {
+export async function getUserMCPTools(): Promise<UserMCPToolsResponse> {
     const url = `${baseRoute()}/mcp/tools`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function refreshUserMCPTools(): Promise<UserMCPToolsResponse> {
+    const url = `${baseRoute()}/mcp/tools/refresh`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
     }));
 
     if (response.ok) {
@@ -821,14 +858,27 @@ export async function savePluginConfig(config: PluginConfig): Promise<void> {
 
 // --- Agent CRUD ---
 
-export async function getAgents(): Promise<UserAgent[]> {
+export type AgentsListResult = {
+    agents: UserAgent[];
+    activeAgentCount?: number;
+};
+
+export async function getAgents(): Promise<AgentsListResult> {
     const url = `${baseRoute()}/agents`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
 
     if (response.ok) {
-        return response.json();
+        const agents = await response.json() as UserAgent[];
+        const activeCountHeader = response.headers.get('X-Agent-Active-Count');
+        const result: AgentsListResult = {agents};
+
+        // Only trust a strict non-negative integer (rejects e.g. "1foo", "", null).
+        if (activeCountHeader !== null && (/^\d+$/).test(activeCountHeader)) {
+            result.activeAgentCount = Number.parseInt(activeCountHeader, 10);
+        }
+        return result;
     }
 
     throw new ClientError(Client4.url, {

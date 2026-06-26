@@ -62,7 +62,10 @@ func (t *Threads) Analyze(ctx stdcontext.Context, postIDToAnalyze string, contex
 		return nil, fmt.Errorf("failed to get thread data: %w", err)
 	}
 	formattedThread := format.ThreadData(threadData)
-	context.Parameters = map[string]any{"Thread": formattedThread}
+	context.Parameters = map[string]any{
+		"Thread":     formattedThread,
+		"RootPostID": postIDToAnalyze,
+	}
 
 	// Determine system and user prompt template names.
 	systemPromptName, userPromptName := resolvePromptNames(promptName)

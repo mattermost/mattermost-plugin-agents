@@ -174,6 +174,11 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 		return fmt.Errorf("not responding to remote posts: %w", ErrNoResponse)
 	}
 
+	// Don't respond to system messages; their text can mention agents and trigger replies.
+	if post.IsSystemMessage() {
+		return fmt.Errorf("not responding to system messages: %w", ErrNoResponse)
+	}
+
 	// Wrangler posts should be ignored
 	if post.GetProp(WranglerProp) != nil {
 		return fmt.Errorf("not responding to wrangler posts: %w", ErrNoResponse)
@@ -260,6 +265,11 @@ func (c *Conversations) handleMentionViaConversation(
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
 			return botChannelAutoEverywhereKeepTool(c.toolPolicyChecker, tool)
 		}))
+	}
+	// User-interaction tools need someone who can answer them: a human invoker
+	// with channel tool calling enabled. Bot activate_ai flows run unattended.
+	if allowToolsInChannel && !channelToolsAutoRunEverywhereOnly {
+		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextInteractive())
 	}
 	// Build the context once WITH tools so the system prompt can reference
 	// .Tools and .DisabledToolsInfo.
@@ -357,7 +367,7 @@ func (c *Conversations) handleMentionViaConversation(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM())
+	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
 	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
 	autoExec := c.shouldAutoExecuteTool(llmContext, false)
 	result, runErr := runner.Run(ctx, *completionRequest, func(tc llm.ToolCall) bool {
@@ -413,7 +423,7 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
 func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
-	var extraOpts []llm.ContextOption
+	extraOpts := []llm.ContextOption{c.contextBuilder.WithLLMContextInteractive()}
 	if webSearchParams := c.extractWebSearchContext(post); len(webSearchParams) > 0 {
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
@@ -458,7 +468,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 
-	dmStream, err := c.ProcessDMRequest(ctx, convResult.ConversationID, bot.LLM(), llmContext)
+	dmStream, err := c.ProcessDMRequest(ctx, convResult.ConversationID, bot.LLM(), llmContext, bot.GetConfig().EffectiveMaxToolTurns())
 	if err != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to process DM request: %w", err)

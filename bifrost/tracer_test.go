@@ -157,10 +157,10 @@ func TestOTelTracer_ProcessStreamingChunkOnlyReturnsOnFinal(t *testing.T) {
 	tracer := newOTelTracer().(*otelTracer)
 	tracer.CreateStreamAccumulator("trace-3", time.Now())
 
-	intermediate := tracer.ProcessStreamingChunk("trace-3", false, &bschemas.BifrostResponse{}, nil)
+	intermediate := tracer.ProcessStreamingChunk(nil, "trace-3", false, &bschemas.BifrostResponse{}, nil)
 	assert.Nil(t, intermediate, "non-final chunks should not synthesize a result")
 
-	final := tracer.ProcessStreamingChunk("trace-3", true, &bschemas.BifrostResponse{}, nil)
+	final := tracer.ProcessStreamingChunk(nil, "trace-3", true, &bschemas.BifrostResponse{}, nil)
 	require.NotNil(t, final, "final chunk should produce an accumulator result")
 	assert.Equal(t, "completed", final.Status)
 }

@@ -147,13 +147,15 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 	// 4. Tool call blocks
 	for _, tc := range a.toolCalls {
 		blocks = append(blocks, conversation.ContentBlock{
-			Type:         conversation.BlockTypeToolUse,
-			ID:           tc.ID,
-			Name:         tc.Name,
-			ServerOrigin: tc.ServerOrigin,
-			Input:        tc.Arguments,
-			Status:       conversation.StatusToString(tc.Status),
-			Shared:       conversation.BoolPtr(a.isDM),
+			Type:             conversation.BlockTypeToolUse,
+			ID:               tc.ID,
+			Name:             tc.Name,
+			ServerOrigin:     tc.ServerOrigin,
+			Input:            tc.Arguments,
+			Status:           conversation.StatusToString(tc.Status),
+			Shared:           conversation.BoolPtr(a.isDM),
+			UserInteraction:  tc.UserInteraction,
+			WouldAutoExecute: tc.WouldAutoExecute,
 		})
 	}
 
@@ -395,8 +397,9 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 		"control":   "tool_call",
 		"tool_call": string(fullJSON),
 	}, &model.WebsocketBroadcast{
-		ChannelId: post.ChannelId,
-		UserId:    requesterUserID,
+		ChannelId:           post.ChannelId,
+		UserId:              requesterUserID,
+		ReliableClusterSend: true,
 	})
 
 	// Redacted data to the rest of the channel (omit requester to avoid duplicates).
@@ -411,8 +414,9 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 		"control":   "tool_call",
 		"tool_call": string(redactedJSON),
 	}, &model.WebsocketBroadcast{
-		ChannelId: post.ChannelId,
-		OmitUsers: map[string]bool{requesterUserID: true},
+		ChannelId:           post.ChannelId,
+		OmitUsers:           map[string]bool{requesterUserID: true},
+		ReliableClusterSend: true,
 	})
 }
 
@@ -446,10 +450,12 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	redacted := make([]llm.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
 		redacted[i] = llm.ToolCall{
-			ID:           tc.ID,
-			Name:         tc.Name,
-			ServerOrigin: tc.ServerOrigin,
-			Status:       tc.Status,
+			ID:               tc.ID,
+			Name:             tc.Name,
+			ServerOrigin:     tc.ServerOrigin,
+			Status:           tc.Status,
+			UserInteraction:  tc.UserInteraction,
+			WouldAutoExecute: tc.WouldAutoExecute,
 		}
 	}
 	return redacted
@@ -483,7 +489,11 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	)
 	defer span.End()
 
-	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId}
+	// postupdate events stream the full assistant message, tool calls,
+	// reasoning and annotations, which routinely exceed the 49077-byte UDP
+	// limit and are essential to the streaming UX. ReliableClusterSend routes
+	// them over TCP so they are not silently dropped between cluster nodes.
+	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId, ReliableClusterSend: true}
 
 	// Look up any prior anchor; only continuation uses it (to demote at
 	// finalize). First stream and regen find none.

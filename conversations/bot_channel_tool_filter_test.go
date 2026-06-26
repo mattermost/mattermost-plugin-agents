@@ -44,7 +44,7 @@ func (m mapPolicyChecker) GetToolPolicy(serverOrigin, toolName string) (string, 
 
 type channelFollowUpTestToolProvider struct{}
 
-func (p *channelFollowUpTestToolProvider) GetTools(*bots.Bot) []llm.Tool {
+func (p *channelFollowUpTestToolProvider) GetTools(*bots.Bot, *llm.Context) []llm.Tool {
 	return nil
 }
 

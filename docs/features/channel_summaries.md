@@ -53,5 +53,6 @@ Mattermost Agents offers more than one way to summarize channel activity:
 - Choose the agent that best matches your task, such as a general assistant or a more specialized team agent.
 - Ask narrow questions when you want a focused answer, such as decisions, risks, next steps, or customer feedback.
 - Use date ranges to reduce noise in busy channels and focus on a specific period.
+- Channel analysis uses embedded Mattermost tools to read only the current channel and its channel details, even if the selected agent normally has a narrower MCP tool configuration.
 
-Contact your system admin if **Ask Agents about this channel** is not available in your Mattermost workspace.
+Contact your system admin if **Ask Agents about this channel** is not available, or if channel analysis fails with an error about embedded MCP tools. Your admin should verify that embedded MCP is available, authorized, and working.

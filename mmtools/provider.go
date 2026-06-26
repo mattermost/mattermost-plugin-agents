@@ -9,9 +9,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 )
 
-// ToolProvider provides built-in tools for the AI assistant
+// ToolProvider provides built-in tools for the AI assistant. The context is
+// consulted for catalog inputs such as whether the requesting user is
+// interactively present (llm.ToolCatalogContext).
 type ToolProvider interface {
-	GetTools(bot *bots.Bot) []llm.Tool
+	GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.Tool
 }
 
 // MMToolProvider implements ToolProvider with all built-in Mattermost tools
@@ -31,7 +33,11 @@ func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService) *MMTo
 // GetTools returns all available tools. Tool execution is restricted at runtime via
 // WithToolsDisabled() based on context (e.g., DM vs channel). This allows LLMs to be
 // aware of tool capabilities even when they can't be executed in the current context.
-func (p *MMToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
+//
+// The exception is user-interaction tools: advertising them where nobody can
+// answer would strand the conversation, so they are only cataloged when the
+// context says an interactive user is present.
+func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.Tool {
 	builtInTools := []llm.Tool{}
 
 	if p.pluginAPI != nil && p.webSearch != nil && !hasNativeWebSearch(bot) {
@@ -43,6 +49,10 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 		if sourceTool := p.webSearch.SourceTool(bot); sourceTool != nil {
 			builtInTools = append(builtInTools, *sourceTool)
 		}
+	}
+
+	if llmContext != nil && llmContext.ToolCatalog.InteractiveUserPresent {
+		builtInTools = append(builtInTools, NewAskUserQuestionTool())
 	}
 
 	return builtInTools

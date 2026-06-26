@@ -19,7 +19,7 @@ import (
 
 // ToolProvider provides built-in tools for a bot and context
 type ToolProvider interface {
-	GetTools(bot *bots.Bot) []llm.Tool
+	GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.Tool
 }
 
 // MCPToolProvider provides MCP tools for a user
@@ -178,6 +178,17 @@ func (b *Builder) WithLLMContextPreloadedMCPTools(tools []llm.EnabledMCPTool) ll
 	}
 }
 
+// WithLLMContextInteractive marks the requesting user as interactively present
+// and able to answer pending tool approvals. User-interaction tools
+// (llm.Tool.UserInteraction) are only cataloged when this is applied, so it
+// must be configured before default tools are built. Automated invokers
+// (bots, webhooks, bridge API, evals) must never set this.
+func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ToolCatalog.InteractiveUserPresent = true
+	}
+}
+
 // sanitizeUserProfileField strips characters that could be used for prompt injection
 // in user profile fields rendered into the system prompt. It collapses newlines, carriage
 // returns, and tabs to spaces, removes other control characters, and trims the result.
@@ -223,7 +234,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	botCfg := bot.GetConfig()
 
 	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)
-	store.AddTools(b.toolProvider.GetTools(bot))
+	store.AddTools(b.toolProvider.GetTools(bot, c))
 
 	var mcpTools []llm.Tool
 	var mcpErrors *mcp.Errors
