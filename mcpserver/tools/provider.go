@@ -171,7 +171,10 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 }
 
 // toolAvailabilityMiddleware returns MCP receiving middleware that drops any tool
-// from tools/list whose Available predicate reports it as unavailable.
+// from tools/list whose Available predicate reports it as unavailable. Each
+// distinct predicate is evaluated at most once per request, so tools that share
+// a predicate (e.g. all automation tools) trigger a single probe rather than one
+// per tool.
 func toolAvailabilityMiddleware(availability map[string]func() bool) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -184,9 +187,22 @@ func toolAvailabilityMiddleware(availability map[string]func() bool) mcp.Middlew
 				return result, nil
 			}
 
+			// Memoize each distinct predicate (keyed by its code pointer) for the
+			// duration of this filtering pass.
+			cache := map[uintptr]bool{}
+			isAvailable := func(predicate func() bool) bool {
+				key := reflect.ValueOf(predicate).Pointer()
+				if v, cached := cache[key]; cached {
+					return v
+				}
+				v := predicate()
+				cache[key] = v
+				return v
+			}
+
 			filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
 			for _, tool := range listResult.Tools {
-				if available, gated := availability[tool.Name]; gated && !available() {
+				if available, gated := availability[tool.Name]; gated && !isAvailable(available) {
 					continue
 				}
 				filtered = append(filtered, tool)

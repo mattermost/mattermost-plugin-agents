@@ -68,7 +68,7 @@ const (
 
 	getChannelInfoDescription = "Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, member count, and the requesting user's role in the channel (admin, member, guest, or not_member). Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}"
 
-	getChannelMembersDescription = "Get members of a channel with pagination support. Parameters: channel_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and join date. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 25, \"page\": 0}"
+	getChannelMembersDescription = "Get members of a channel with pagination support. Parameters: channel_id (required), limit (1-200, default 50), page (0+, default 0), exclude_bots (optional, default true). Returns user details for each member including username, email, display name, and role. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 25, \"page\": 0}"
 
 	getUserChannelsDescription = "Get channels the current user is a member of, including DMs and GMs. Parameters: team_id (optional, filter by team), page (default 0), per_page (1-200, default 60). Returns channel details with team info and pagination. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"per_page\": 60}"
 )
@@ -313,8 +313,8 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	ctx := mcpContext.Ctx
 
 	// Validate team ID if provided
-	if err := optionalID("team_id", args.TeamID); err != nil {
-		return "", err
+	if validationErr := optionalID("team_id", args.TeamID); validationErr != nil {
+		return "", validationErr
 	}
 
 	var channels []*model.Channel
@@ -325,8 +325,8 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	switch {
 	case args.ChannelID != "":
 		// Validate channel ID format
-		if err := requireID("channel_id", args.ChannelID); err != nil {
-			return "", err
+		if validationErr := requireID("channel_id", args.ChannelID); validationErr != nil {
+			return "", validationErr
 		}
 		// Direct ID lookup - fastest method, always returns single result
 		var channel *model.Channel

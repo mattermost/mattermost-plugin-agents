@@ -14,7 +14,7 @@ import (
 // ReadPostArgs represents arguments for the read_post tool
 type ReadPostArgs struct {
 	PostID        string `json:"post_id" jsonschema:"The ID of the post to read,minLength=26,maxLength=26"`
-	IncludeThread bool   `json:"include_thread,omitempty" jsonschema:"Whether to include the entire thread (default: true)"`
+	IncludeThread *bool  `json:"include_thread,omitempty" jsonschema:"Whether to include the entire thread (default: true). Set false to fetch only the single post."`
 }
 
 // CreatePostArgs represents arguments for the create_post tool
@@ -33,7 +33,7 @@ type CreatePostAsUserArgs struct {
 	Password    string   `json:"password" jsonschema:"Password to login with"`
 	ChannelID   string   `json:"channel_id" jsonschema:"The ID of the channel to post in,minLength=26,maxLength=26"`
 	Message     string   `json:"message" jsonschema:"The message content"`
-	RootID      string   `json:"root_id" jsonschema:"Optional root post ID for replies,maxLength=26"`
+	RootID      string   `json:"root_id,omitempty" jsonschema:"Optional root post ID for replies,maxLength=26"`
 	Props       string   `json:"props" jsonschema:"Optional post properties (JSON string)"`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
 }
@@ -126,12 +126,9 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 		return "", err
 	}
 
-	// Set default for include_thread
-	if !args.IncludeThread {
-		// Since bool defaults to false, we need to check if it was explicitly set
-		// For now, default to true
-		args.IncludeThread = true
-	}
+	// Default include_thread to true when omitted; an explicit false fetches only
+	// the single post.
+	includeThread := args.IncludeThread == nil || *args.IncludeThread
 
 	// Get client from context
 	client := mcpContext.Client
@@ -139,7 +136,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 
 	var posts []*model.Post
 
-	if args.IncludeThread {
+	if includeThread {
 		// Get the thread
 		postList, _, err := client.GetPostThread(ctx, args.PostID, "", false)
 		if err != nil {
@@ -211,7 +208,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 	}
 	result.WriteString("\n")
 
-	if args.IncludeThread && len(posts) > 1 {
+	if includeThread && len(posts) > 1 {
 		result.WriteString(fmt.Sprintf("Thread with %d posts:\n\n", len(posts)))
 	}
 

@@ -44,7 +44,7 @@ type AddUserToTeamArgs struct {
 const (
 	getTeamInfoDescription = "Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}"
 
-	getTeamMembersDescription = "Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}"
+	getTeamMembersDescription = "Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0), exclude_bots (optional, default true). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}"
 )
 
 // getTeamTools returns all team-related tools
@@ -95,8 +95,8 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 
 	switch {
 	case args.TeamID != "":
-		if err := requireID("team_id", args.TeamID); err != nil {
-			return "", err
+		if validationErr := requireID("team_id", args.TeamID); validationErr != nil {
+			return "", validationErr
 		}
 		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
@@ -195,6 +195,9 @@ func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, n
 	}
 	if searchErr == nil && len(searchResults) > 1 {
 		return nil, formatTeamDisambiguation(name, searchResults), nil
+	}
+	if searchErr != nil {
+		return nil, "", fmt.Errorf("error searching teams: %w", searchErr)
 	}
 
 	// Nothing found — surface recovery guidance to the model as an informational
