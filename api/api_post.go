@@ -10,14 +10,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversations"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/mmtools"
-	"github.com/mattermost/mattermost-plugin-agents/react"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
-	"github.com/mattermost/mattermost-plugin-agents/telemetry"
-	"github.com/mattermost/mattermost-plugin-agents/threads"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/react"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/threads"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

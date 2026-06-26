@@ -13,9 +13,9 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	"github.com/mattermost/mattermost-plugin-agents/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/postgres"
+	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/postgres"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -4,7 +4,7 @@
 package main
 
 import (
-	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 )
 
 // configuration captures the plugin's external configuration structure.

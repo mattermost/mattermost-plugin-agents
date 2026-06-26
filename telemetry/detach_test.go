@@ -12,7 +12,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/mattermost/mattermost-plugin-agents/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 )
 
 // TestDetachContext_NoCancelPropagation guards the merge bug where API handlers

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	mcppkg "github.com/mattermost/mattermost-plugin-agents/mcp"
-	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	mcppkg "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"

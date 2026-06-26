@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 const (

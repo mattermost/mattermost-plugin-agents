@@ -16,7 +16,7 @@ import (
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/mattermost/mattermost-plugin-agents/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 )
 
 // Tool represents a function that can be called by the language model during a conversation.

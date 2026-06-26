@@ -10,7 +10,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // FetchModelsConfig holds configuration for fetching models.

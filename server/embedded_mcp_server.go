@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	localmcp "github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
+	localmcp "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"

@@ -12,8 +12,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/files"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/v2/files"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 )
 
 // HTTPFileContentService reads file contents by calling back to the plugin API.

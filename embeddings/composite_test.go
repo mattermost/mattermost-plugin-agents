@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
