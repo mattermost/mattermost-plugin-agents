@@ -537,7 +537,8 @@ func (c *Conversations) streamToolFollowUp(
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
 
-	completionReq, err := c.convService.BuildCompletionRequest(conv, llmContext)
+	// Channel thread posts aren't stored as turns, so rebuild with thread context.
+	completionReq, err := c.buildToolFollowUpRequest(conv, llmContext, isDM)
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
 	}
@@ -571,6 +572,20 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	return nil
+}
+
+// buildToolFollowUpRequest rebuilds the completion request for a tool follow-up.
+// Channel conversations re-fetch the live thread so non-turn thread posts stay in
+// context (matching the initial mention); DMs persist every post as a turn.
+func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmContext *llm.Context, isDM bool) (*llm.CompletionRequest, error) {
+	if !isDM && conv.RootPostID != nil {
+		threadData, err := mmapi.GetThreadData(c.mmClient, *conv.RootPostID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get thread data for tool follow-up: %w", err)
+		}
+		return c.convService.BuildChannelMentionRequest(conv, llmContext, threadData)
+	}
+	return c.convService.BuildCompletionRequest(conv, llmContext)
 }
 
 func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, block conversation.ContentBlock) (string, error) {

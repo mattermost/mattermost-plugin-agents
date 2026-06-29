@@ -345,6 +345,8 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 		mmClient.On("GetPost", "root-id").Return(rootPost, nil).Once()
 		mmClient.On("GetUser", "automation-bot").Return(&model.User{Id: "automation-bot", IsBot: true}, nil).Once()
 		mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+		// Channel follow-ups rebuild thread context via GetThreadData.
+		mmClient.On("GetPostThread", "root-id").Return(&model.PostList{Posts: map[string]*model.Post{}, Order: []string{}}, nil).Once()
 
 		lm := &loadedStateLLM{}
 		streamingService := &loadedStateStreamingService{}
