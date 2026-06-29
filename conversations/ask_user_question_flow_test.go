@@ -338,15 +338,23 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 		rootID := "root-id"
 		conv.RootPostID = &rootID
 
-		rootPost := &model.Post{UserId: "automation-bot"}
+		rootPost := &model.Post{Id: "root-id", UserId: "automation-bot", Message: "automated request"}
 		rootPost.AddProp(ActivateAIProp, true)
+		// A human reply posted to the thread that was never stored as a turn;
+		// the rebuilt request must carry it so the follow-up keeps its context.
+		threadReply := &model.Post{Id: "reply-id", RootId: "root-id", UserId: "human-user", Message: "non-turn thread reply"}
 		mmClient := mocks.NewMockClient(t)
 		mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 		mmClient.On("GetPost", "root-id").Return(rootPost, nil).Once()
-		mmClient.On("GetUser", "automation-bot").Return(&model.User{Id: "automation-bot", IsBot: true}, nil).Once()
+		mmClient.On("GetUser", "automation-bot").Return(&model.User{Id: "automation-bot", IsBot: true}, nil)
+		mmClient.On("GetUser", "human-user").Return(&model.User{Id: "human-user", Username: "human"}, nil)
 		mmClient.On("GetConfig").Maybe().Return(&model.Config{})
-		// Channel follow-ups rebuild thread context via GetThreadData.
-		mmClient.On("GetPostThread", "root-id").Return(&model.PostList{Posts: map[string]*model.Post{}, Order: []string{}}, nil).Once()
+		// Channel follow-ups rebuild thread context via GetThreadData; return a
+		// live thread with a non-turn reply to exercise the thread-aware path.
+		mmClient.On("GetPostThread", "root-id").Return(&model.PostList{
+			Order: []string{"root-id", "reply-id"},
+			Posts: map[string]*model.Post{"root-id": rootPost, "reply-id": threadReply},
+		}, nil).Once()
 
 		lm := &loadedStateLLM{}
 		streamingService := &loadedStateStreamingService{}
@@ -372,6 +380,13 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 		streamingService.waitForStreaming()
 		require.Len(t, lm.requests, 1)
 		assert.False(t, lm.requests[0].Context.ToolCatalog.InteractiveUserPresent)
+
+		var threadContext string
+		for _, p := range lm.requests[0].Posts {
+			threadContext += p.Message + "\n"
+		}
+		assert.Contains(t, threadContext, "non-turn thread reply",
+			"channel follow-up must rebuild live thread context for non-turn posts")
 	})
 }
 

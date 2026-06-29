@@ -579,9 +579,14 @@ func (c *Conversations) streamToolFollowUp(
 // context (matching the initial mention); DMs persist every post as a turn.
 func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmContext *llm.Context, isDM bool) (*llm.CompletionRequest, error) {
 	if !isDM && conv.RootPostID != nil {
+		// Best-effort: if the live thread can't be fetched (deleted root,
+		// permissions, API blip), degrade to turns-only context rather than
+		// failing the resume. BuildChannelMentionRequest does the same on
+		// empty thread data.
 		threadData, err := mmapi.GetThreadData(c.mmClient, *conv.RootPostID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get thread data for tool follow-up: %w", err)
+			c.mmClient.LogWarn("Failed to get thread data for tool follow-up, falling back to turns-only context", "error", err)
+			return c.convService.BuildCompletionRequest(conv, llmContext)
 		}
 		return c.convService.BuildChannelMentionRequest(conv, llmContext, threadData)
 	}
