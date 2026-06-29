@@ -98,7 +98,12 @@ type BridgeServiceInfo struct {
 
 // BridgeToolInfo represents a bridge-eligible tool (MCP or embedded; not built-in).
 type BridgeToolInfo struct {
-	Name        string `json:"name"`
+	// Name is the namespaced runtime tool name (e.g. "mattermost__search_posts").
+	Name string `json:"name"`
+	// BareName is the tool's bare name without the server namespace prefix
+	// (e.g. "search_posts"). Both Name and BareName are accepted in allowed_tools;
+	// prefer Name (namespaced) for new integrations.
+	BareName    string `json:"bare_name,omitempty"`
 	Description string `json:"description"`
 	// ServerOrigin is the MCP server base URL or the embedded client key; never empty.
 	ServerOrigin string `json:"server_origin,omitempty"`

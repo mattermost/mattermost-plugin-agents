@@ -111,14 +111,17 @@ request := bridgeclient.CompletionRequest{
 
 ### Agent tool allowlist
 
-Use tool names exactly as returned by `GetAgentTools` (each entry in `allowed_tools` is a string tool name).
+Each entry in `allowed_tools` is a string tool name. The bridge accepts **both**
+the namespaced runtime name (`server__tool`, e.g. `mattermost__search_posts`) and
+the bare name (`search_posts`). `GetAgentTools` returns both forms per tool
+(`Name` is namespaced, `BareName` is bare). Bare names remain supported for backward compatibility.
 
 ```go
 request := bridgeclient.CompletionRequest{
     Posts: []bridgeclient.Post{
         {Role: "user", Message: "Use the eligible MCP tool"},
     },
-    AllowedTools: []string{"eligible_tool_name"},
+    AllowedTools: []string{"mattermost__search_posts", "read_channel"},
     UserID:       userID, // Required when using AllowedTools
 }
 
@@ -130,6 +133,9 @@ When `AllowedTools` is provided:
 - tool execution is auto-run (no approval flow)
 - tools must come from enabled MCP servers or embedded MCP servers (built-in agent tools are not exposed for bridge allowlists)
 - empty lists and blank tool names are rejected by the bridge API
+- a bare name that exists on more than one MCP server is ambiguous and is
+  rejected; pass the namespaced name (`server__tool`) to target a specific
+  server's tool
 
 ## Permission Checking
 
@@ -226,13 +232,16 @@ if err != nil {
 }
 
 for _, tool := range tools {
-    fmt.Printf("Tool: %s - %s\n", tool.Name, tool.Description)
+    fmt.Printf("Tool: %s (bare: %s) - %s\n", tool.Name, tool.BareName, tool.Description)
 }
 ```
 
 This endpoint returns only tools that are currently eligible for `AllowedTools`.
 Eligible tools come from enabled MCP servers and embedded MCP servers.
 If no eligible tools are available, this returns an empty list.
+
+Each entry exposes both `Name` (namespaced) and `BareName`. Either may be passed
+in `allowed_tools`; validate stored allowlists against either field.
 
 You can optionally pass `userID` to apply user-level permission filtering:
 
