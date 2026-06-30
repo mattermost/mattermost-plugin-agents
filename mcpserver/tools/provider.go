@@ -131,6 +131,8 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 		p.getChannelTools,
 		p.getChannelMemberTools,
 		p.getBookmarkTools,
+		p.getUserTools,
+		p.getStatusTools,
 		p.getTeamTools,
 		p.getSearchTools,
 		p.getFileTools,

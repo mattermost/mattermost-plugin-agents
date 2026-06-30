@@ -411,6 +411,66 @@ func WriteSidebarCategory(w *strings.Builder, entry SidebarCategoryEntry) {
 	w.WriteString("\n")
 }
 
+// StatusEntry holds data for formatting a single user's presence status.
+type StatusEntry struct {
+	HeaderLabel string
+	Status      *model.Status
+	Username    string // resolved, optional
+}
+
+// WriteStatus writes a user's presence status to the builder.
+func WriteStatus(w *strings.Builder, entry StatusEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	s := entry.Status
+	fmt.Fprintf(w, "User ID: %s\n", s.UserId)
+	if entry.Username != "" {
+		fmt.Fprintf(w, "Username: %s\n", entry.Username)
+	}
+	fmt.Fprintf(w, "Status: %s\n", s.Status)
+	if s.Status == model.StatusDnd && s.DNDEndTime > 0 {
+		t := time.Unix(s.DNDEndTime, 0)
+		fmt.Fprintf(w, "Do not disturb until: %s\n", t.UTC().Format(time.RFC3339))
+	}
+	w.WriteString("\n")
+}
+
+// WriteCustomStatus writes a user's custom status (emoji + text + expiry).
+func WriteCustomStatus(w *strings.Builder, userID string, cs *model.CustomStatus) {
+	fmt.Fprintf(w, "Custom status for user %s:\n", userID)
+	if cs == nil || (cs.Emoji == "" && cs.Text == "") {
+		w.WriteString("(none set)\n")
+		return
+	}
+	if cs.Emoji != "" {
+		fmt.Fprintf(w, "Emoji: :%s:\n", cs.Emoji)
+	}
+	if cs.Text != "" {
+		fmt.Fprintf(w, "Text: %s\n", cs.Text)
+	}
+	if !cs.ExpiresAt.IsZero() {
+		fmt.Fprintf(w, "Expires at: %s\n", cs.ExpiresAt.UTC().Format(time.RFC3339))
+	}
+}
+
+// CPAFieldEntry holds data for formatting a single Custom Profile Attribute field.
+type CPAFieldEntry struct {
+	HeaderLabel string
+	Field       *model.PropertyField
+}
+
+// WriteCPAField writes a Custom Profile Attribute field definition to the builder.
+func WriteCPAField(w *strings.Builder, entry CPAFieldEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	fmt.Fprintf(w, "ID: %s\n", entry.Field.ID)
+	fmt.Fprintf(w, "Name: %s\n", entry.Field.Name)
+	fmt.Fprintf(w, "Type: %s\n", entry.Field.Type)
+	w.WriteString("\n")
+}
+
 // BuildPostIndex creates a map from post ID to its 1-based display index.
 // Used to generate "(reply to Post N)" annotations.
 func BuildPostIndex(posts []*model.Post) map[string]int {
