@@ -136,6 +136,9 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 		p.getTeamTools,
 		p.getSearchTools,
 		p.getFileTools,
+		p.getIntegrationTools,
+		p.getGroupTools,
+		p.getRoleTools,
 		p.getAgentTools,
 		p.getAutomationTools,
 	}

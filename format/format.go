@@ -503,6 +503,144 @@ func WriteTeamStats(w *strings.Builder, stats *model.TeamStats) {
 	fmt.Fprintf(w, "Active members: %d\n", stats.ActiveMemberCount)
 }
 
+// BotEntry holds data for formatting a single bot account.
+type BotEntry struct {
+	HeaderLabel string
+	Bot         *model.Bot
+}
+
+// WriteBot writes a bot account's details to the builder.
+func WriteBot(w *strings.Builder, entry BotEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	b := entry.Bot
+	fmt.Fprintf(w, "User ID: %s\n", b.UserId)
+	fmt.Fprintf(w, "Username: %s\n", b.Username)
+	if b.DisplayName != "" {
+		fmt.Fprintf(w, "Display Name: %s\n", b.DisplayName)
+	}
+	if b.Description != "" {
+		fmt.Fprintf(w, "Description: %s\n", b.Description)
+	}
+	fmt.Fprintf(w, "Owner ID: %s\n", b.OwnerId)
+	if b.DeleteAt != 0 {
+		w.WriteString("Disabled: true\n")
+	}
+	w.WriteString("\n")
+}
+
+// GroupEntry holds data for formatting a single group.
+type GroupEntry struct {
+	HeaderLabel string
+	Group       *model.Group
+}
+
+// WriteGroup writes a group's metadata to the builder.
+func WriteGroup(w *strings.Builder, entry GroupEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	g := entry.Group
+	fmt.Fprintf(w, "ID: %s\n", g.Id)
+	if g.Name != nil && *g.Name != "" {
+		fmt.Fprintf(w, "Name: %s\n", *g.Name)
+	}
+	fmt.Fprintf(w, "Display Name: %s\n", g.DisplayName)
+	fmt.Fprintf(w, "Source: %s\n", g.Source)
+	if g.Description != "" {
+		fmt.Fprintf(w, "Description: %s\n", g.Description)
+	}
+	if g.MemberCount != nil {
+		fmt.Fprintf(w, "Member Count: %d\n", *g.MemberCount)
+	}
+	w.WriteString("\n")
+}
+
+// RoleEntry holds data for formatting a single role.
+type RoleEntry struct {
+	Role *model.Role
+}
+
+// WriteRole writes a role definition and its permissions to the builder.
+func WriteRole(w *strings.Builder, entry RoleEntry) {
+	r := entry.Role
+	w.WriteString("Role:\n")
+	fmt.Fprintf(w, "ID: %s\n", r.Id)
+	fmt.Fprintf(w, "Name: %s\n", r.Name)
+	fmt.Fprintf(w, "Display Name: %s\n", r.DisplayName)
+	fmt.Fprintf(w, "Permissions (%d): %s\n", len(r.Permissions), strings.Join(r.Permissions, ", "))
+	w.WriteString("\n")
+}
+
+// IncomingWebhookEntry holds data for formatting an incoming webhook.
+type IncomingWebhookEntry struct {
+	HeaderLabel string
+	Webhook     *model.IncomingWebhook
+}
+
+// WriteIncomingWebhook writes an incoming webhook's details to the builder.
+func WriteIncomingWebhook(w *strings.Builder, entry IncomingWebhookEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	h := entry.Webhook
+	fmt.Fprintf(w, "ID: %s\n", h.Id)
+	fmt.Fprintf(w, "Display Name: %s\n", h.DisplayName)
+	fmt.Fprintf(w, "Channel ID: %s\n", h.ChannelId)
+	fmt.Fprintf(w, "Team ID: %s\n", h.TeamId)
+	if h.Description != "" {
+		fmt.Fprintf(w, "Description: %s\n", h.Description)
+	}
+	w.WriteString("\n")
+}
+
+// OutgoingWebhookEntry holds data for formatting an outgoing webhook.
+type OutgoingWebhookEntry struct {
+	HeaderLabel string
+	Webhook     *model.OutgoingWebhook
+}
+
+// WriteOutgoingWebhook writes an outgoing webhook's details to the builder.
+func WriteOutgoingWebhook(w *strings.Builder, entry OutgoingWebhookEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	h := entry.Webhook
+	fmt.Fprintf(w, "ID: %s\n", h.Id)
+	fmt.Fprintf(w, "Display Name: %s\n", h.DisplayName)
+	fmt.Fprintf(w, "Channel ID: %s\n", h.ChannelId)
+	fmt.Fprintf(w, "Team ID: %s\n", h.TeamId)
+	if len(h.TriggerWords) > 0 {
+		fmt.Fprintf(w, "Trigger words: %s\n", strings.Join(h.TriggerWords, ", "))
+	}
+	if len(h.CallbackURLs) > 0 {
+		fmt.Fprintf(w, "Callback URLs: %s\n", strings.Join(h.CallbackURLs, ", "))
+	}
+	w.WriteString("\n")
+}
+
+// WriteChannelModerations writes a channel's moderation settings to the builder.
+func WriteChannelModerations(w *strings.Builder, moderations []*model.ChannelModeration) {
+	w.WriteString("Channel Moderations:\n")
+	for _, m := range moderations {
+		if m == nil {
+			continue
+		}
+		members := false
+		guests := false
+		if m.Roles != nil {
+			if m.Roles.Members != nil {
+				members = m.Roles.Members.Value
+			}
+			if m.Roles.Guests != nil {
+				guests = m.Roles.Guests.Value
+			}
+		}
+		fmt.Fprintf(w, "- %s: members=%t, guests=%t\n", m.Name, members, guests)
+	}
+}
+
 // BuildPostIndex creates a map from post ID to its 1-based display index.
 // Used to generate "(reply to Post N)" annotations.
 func BuildPostIndex(posts []*model.Post) map[string]int {
