@@ -5,6 +5,8 @@ package llm
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -145,6 +147,44 @@ func TestStructuredOutputFallbackWrapperStreaming(t *testing.T) {
 			expected:                `{"name": "test"}`,
 		},
 		{
+			// Fence markers split across chunk boundaries would defeat naive
+			// per-chunk stripping; only buffering until the end recovers the JSON.
+			name: "schema requested, structured output disabled: strips fencing split across chunk boundaries",
+			streamEvents: []TextStreamEvent{
+				{Type: EventTypeText, Value: "``"},
+				{Type: EventTypeText, Value: "`json\n{\"na"},
+				{Type: EventTypeText, Value: "me\": \"test\"}\n`"},
+				{Type: EventTypeText, Value: "``"},
+				{Type: EventTypeEnd},
+			},
+			structuredOutputEnabled: false,
+			opts:                    []LanguageModelOption{withSchema},
+			expected:                `{"name": "test"}`,
+		},
+		{
+			name: "schema requested, structured output disabled: empty fenced block yields empty text",
+			streamEvents: []TextStreamEvent{
+				{Type: EventTypeText, Value: "```json\n```"},
+				{Type: EventTypeEnd},
+			},
+			structuredOutputEnabled: false,
+			opts:                    []LanguageModelOption{withSchema},
+			expected:                "",
+		},
+		{
+			// Some providers close the stream without an explicit end event; the
+			// buffered (stripped) text must still reach the caller.
+			name: "schema requested, structured output disabled: flushes when stream closes without end event",
+			streamEvents: []TextStreamEvent{
+				{Type: EventTypeText, Value: "```json\n"},
+				{Type: EventTypeText, Value: `{"name": "test"}`},
+				{Type: EventTypeText, Value: "\n```"},
+			},
+			structuredOutputEnabled: false,
+			opts:                    []LanguageModelOption{withSchema},
+			expected:                `{"name": "test"}`,
+		},
+		{
 			name: "schema requested, structured output enabled: untouched",
 			streamEvents: []TextStreamEvent{
 				{Type: EventTypeText, Value: "```json\n{\"name\": \"test\"}\n```"},
@@ -192,4 +232,80 @@ func TestStructuredOutputFallbackWrapperStreaming(t *testing.T) {
 			assert.Equal(t, tt.expected, text)
 		})
 	}
+}
+
+// TestStructuredOutputFallbackWrapperStreamingForwardsEventsAndErrors verifies
+// that, while buffering text for fence stripping, the wrapper still forwards
+// non-text events (reasoning, usage, etc.) and propagates stream errors.
+func TestStructuredOutputFallbackWrapperStreamingForwardsEventsAndErrors(t *testing.T) {
+	withSchema := func(cfg *LanguageModelConfig) {
+		cfg.JSONOutputFormat = NewJSONSchemaFromStruct[struct {
+			Name string `json:"name"`
+		}]()
+	}
+
+	collect := func(t *testing.T, result *TextStreamResult) ([]EventType, string, error) {
+		t.Helper()
+		var types []EventType
+		var text strings.Builder
+		var streamErr error
+		for event := range result.Stream {
+			types = append(types, event.Type)
+			switch event.Type {
+			case EventTypeText:
+				if chunk, ok := event.Value.(string); ok {
+					text.WriteString(chunk)
+				}
+			case EventTypeError:
+				if err, ok := event.Value.(error); ok {
+					streamErr = err
+				}
+			}
+		}
+		return types, text.String(), streamErr
+	}
+
+	t.Run("forwards non-text events and strips final text", func(t *testing.T) {
+		wrapper := NewStructuredOutputFallbackWrapper(
+			&fakeLLMForFallback{streamEvents: []TextStreamEvent{
+				{Type: EventTypeReasoning, Value: "thinking"},
+				{Type: EventTypeText, Value: "```json\n"},
+				{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 1}},
+				{Type: EventTypeText, Value: `{"name": "test"}`},
+				{Type: EventTypeText, Value: "\n```"},
+				{Type: EventTypeEnd},
+			}},
+			false,
+		)
+
+		result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{}, withSchema)
+		require.NoError(t, err)
+
+		types, text, streamErr := collect(t, result)
+		require.NoError(t, streamErr)
+		assert.Equal(t, `{"name": "test"}`, text)
+		assert.Contains(t, types, EventTypeReasoning)
+		assert.Contains(t, types, EventTypeUsage)
+		// The single stripped text event must precede the end event.
+		assert.Equal(t, EventTypeText, types[len(types)-2])
+		assert.Equal(t, EventTypeEnd, types[len(types)-1])
+	})
+
+	t.Run("propagates mid-stream error and drops buffered text", func(t *testing.T) {
+		sentinel := errors.New("provider failure")
+		wrapper := NewStructuredOutputFallbackWrapper(
+			&fakeLLMForFallback{streamEvents: []TextStreamEvent{
+				{Type: EventTypeText, Value: "```json\n{\"name\":"},
+				{Type: EventTypeError, Value: sentinel},
+			}},
+			false,
+		)
+
+		result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{}, withSchema)
+		require.NoError(t, err)
+
+		_, text, streamErr := collect(t, result)
+		require.ErrorIs(t, streamErr, sentinel)
+		assert.Empty(t, text)
+	})
 }

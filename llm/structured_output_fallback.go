@@ -30,7 +30,7 @@ func (w *StructuredOutputFallbackWrapper) ChatCompletion(ctx context.Context, re
 		return result, err
 	}
 
-	if w.structuredOutputEnabled || !hasJSONOutputSchema(opts) || result == nil {
+	if w.structuredOutputEnabled || !hasJSONOutputSchema(opts) {
 		return result, nil
 	}
 
