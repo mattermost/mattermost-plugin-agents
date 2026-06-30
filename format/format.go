@@ -230,6 +230,101 @@ func WriteScheduledPost(w *strings.Builder, entry ScheduledPostEntry) {
 	fmt.Fprintf(w, "Message: %s\n\n", sp.Message)
 }
 
+// WriteReactions writes a post's emoji reactions grouped by emoji, with the
+// reacting usernames, to the builder. usernames maps user IDs to usernames.
+func WriteReactions(w *strings.Builder, postID string, reactions []*model.Reaction, usernames map[string]string) {
+	fmt.Fprintf(w, "Reactions on post %s:\n", postID)
+	if len(reactions) == 0 {
+		w.WriteString("(none)\n")
+		return
+	}
+
+	// Group by emoji name, preserving first-seen order.
+	order := make([]string, 0)
+	byEmoji := make(map[string][]string)
+	for _, r := range reactions {
+		if _, ok := byEmoji[r.EmojiName]; !ok {
+			order = append(order, r.EmojiName)
+		}
+		name := usernames[r.UserId]
+		if name == "" {
+			name = r.UserId
+		}
+		byEmoji[r.EmojiName] = append(byEmoji[r.EmojiName], name)
+	}
+
+	for _, emoji := range order {
+		users := byEmoji[emoji]
+		fmt.Fprintf(w, ":%s: (%d) — %s\n", emoji, len(users), strings.Join(users, ", "))
+	}
+}
+
+// EmojiEntry holds data for formatting a single custom emoji.
+type EmojiEntry struct {
+	HeaderLabel string
+	Emoji       *model.Emoji
+	CreatorName string
+}
+
+// WriteEmoji writes a formatted custom emoji entry to the builder.
+func WriteEmoji(w *strings.Builder, entry EmojiEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	fmt.Fprintf(w, "Name: :%s:\n", entry.Emoji.Name)
+	fmt.Fprintf(w, "ID: %s\n", entry.Emoji.Id)
+	if entry.CreatorName != "" {
+		fmt.Fprintf(w, "Created by: %s\n", entry.CreatorName)
+	}
+	w.WriteString("\n")
+}
+
+// WriteTeamUnread writes a single team's unread counts to the builder.
+func WriteTeamUnread(w *strings.Builder, unread *model.TeamUnread) {
+	fmt.Fprintf(w, "Team %s: %d unread messages, %d mentions, %d unread threads, %d thread mentions\n",
+		unread.TeamId, unread.MsgCount, unread.MentionCount, unread.ThreadCount, unread.ThreadMentionCount)
+}
+
+// WriteChannelUnread writes a channel's unread counts to the builder.
+func WriteChannelUnread(w *strings.Builder, unread *model.ChannelUnread) {
+	w.WriteString("Channel Unread Counts:\n")
+	fmt.Fprintf(w, "Channel ID: %s\n", unread.ChannelId)
+	if unread.TeamId != "" {
+		fmt.Fprintf(w, "Team ID: %s\n", unread.TeamId)
+	}
+	fmt.Fprintf(w, "Unread messages: %d\n", unread.MsgCount)
+	fmt.Fprintf(w, "Mentions: %d\n", unread.MentionCount)
+}
+
+// ThreadSummaryEntry holds data for formatting a single thread from the inbox.
+type ThreadSummaryEntry struct {
+	HeaderLabel string
+	Thread      *model.ThreadResponse
+	Username    string // root post author
+}
+
+// WriteThreadSummary writes a collated-thread summary to the builder.
+func WriteThreadSummary(w *strings.Builder, entry ThreadSummaryEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	tr := entry.Thread
+	fmt.Fprintf(w, "Root Post ID: %s\n", tr.PostId)
+	fmt.Fprintf(w, "Replies: %d (unread: %d, unread mentions: %d)\n", tr.ReplyCount, tr.UnreadReplies, tr.UnreadMentions)
+	if tr.LastReplyAt > 0 {
+		t := time.Unix(tr.LastReplyAt/1000, (tr.LastReplyAt%1000)*int64(time.Millisecond))
+		fmt.Fprintf(w, "Last reply: %s\n", t.UTC().Format(time.RFC3339))
+	}
+	if tr.Post != nil {
+		username := entry.Username
+		if username == "" {
+			username = "Unknown User"
+		}
+		fmt.Fprintf(w, "By %s: %s\n", username, PostBody(tr.Post))
+	}
+	w.WriteString("\n")
+}
+
 // BuildPostIndex creates a map from post ID to its 1-based display index.
 // Used to generate "(reply to Post N)" annotations.
 func BuildPostIndex(posts []*model.Post) map[string]int {
