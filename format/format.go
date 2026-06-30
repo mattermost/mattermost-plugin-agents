@@ -325,6 +325,92 @@ func WriteThreadSummary(w *strings.Builder, entry ThreadSummaryEntry) {
 	w.WriteString("\n")
 }
 
+// WriteChannelStats writes a channel's statistics to the builder.
+func WriteChannelStats(w *strings.Builder, stats *model.ChannelStats) {
+	w.WriteString("Channel Statistics:\n")
+	fmt.Fprintf(w, "Channel ID: %s\n", stats.ChannelId)
+	fmt.Fprintf(w, "Members: %d\n", stats.MemberCount)
+	fmt.Fprintf(w, "Guests: %d\n", stats.GuestCount)
+	fmt.Fprintf(w, "Pinned posts: %d\n", stats.PinnedPostCount)
+	fmt.Fprintf(w, "Files: %d\n", stats.FilesCount)
+}
+
+// ChannelMemberEntry holds data for formatting a single channel membership record.
+type ChannelMemberEntry struct {
+	HeaderLabel string
+	Member      *model.ChannelMember
+	Username    string // resolved, optional
+}
+
+// WriteChannelMember writes a channel membership record (roles, mute, last-viewed).
+func WriteChannelMember(w *strings.Builder, entry ChannelMemberEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	m := entry.Member
+	fmt.Fprintf(w, "Channel ID: %s\n", m.ChannelId)
+	fmt.Fprintf(w, "User ID: %s\n", m.UserId)
+	if entry.Username != "" {
+		fmt.Fprintf(w, "Username: %s\n", entry.Username)
+	}
+	if role := MemberRole(m.SchemeAdmin, m.SchemeGuest, m.SchemeUser); role != "" {
+		fmt.Fprintf(w, "Role: %s\n", role)
+	}
+	muted := m.NotifyProps != nil && m.NotifyProps["mark_unread"] == "mention"
+	fmt.Fprintf(w, "Muted: %t\n", muted)
+	if m.LastViewedAt > 0 {
+		t := time.Unix(m.LastViewedAt/1000, (m.LastViewedAt%1000)*int64(time.Millisecond))
+		fmt.Fprintf(w, "Last viewed: %s\n", t.UTC().Format(time.RFC3339))
+	}
+	w.WriteString("\n")
+}
+
+// BookmarkEntry holds data for formatting a single channel bookmark.
+type BookmarkEntry struct {
+	HeaderLabel string
+	Bookmark    *model.ChannelBookmarkWithFileInfo
+}
+
+// WriteBookmark writes a formatted channel bookmark entry to the builder.
+func WriteBookmark(w *strings.Builder, entry BookmarkEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	b := entry.Bookmark
+	fmt.Fprintf(w, "ID: %s\n", b.Id)
+	fmt.Fprintf(w, "Name: %s\n", b.DisplayName)
+	fmt.Fprintf(w, "Type: %s\n", b.Type)
+	if b.LinkUrl != "" {
+		fmt.Fprintf(w, "Link: %s\n", b.LinkUrl)
+	}
+	if b.FileId != "" {
+		fmt.Fprintf(w, "File ID: %s\n", b.FileId)
+	}
+	if b.Emoji != "" {
+		fmt.Fprintf(w, "Emoji: %s\n", b.Emoji)
+	}
+	w.WriteString("\n")
+}
+
+// SidebarCategoryEntry holds data for formatting a single sidebar category.
+type SidebarCategoryEntry struct {
+	HeaderLabel string
+	Category    *model.SidebarCategoryWithChannels
+}
+
+// WriteSidebarCategory writes a sidebar category and its channel IDs to the builder.
+func WriteSidebarCategory(w *strings.Builder, entry SidebarCategoryEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	c := entry.Category
+	fmt.Fprintf(w, "ID: %s\n", c.Id)
+	fmt.Fprintf(w, "Name: %s\n", c.DisplayName)
+	fmt.Fprintf(w, "Type: %s\n", c.Type)
+	fmt.Fprintf(w, "Channels (%d): %s\n", len(c.Channels), strings.Join(c.Channels, ", "))
+	w.WriteString("\n")
+}
+
 // BuildPostIndex creates a map from post ID to its 1-based display index.
 // Used to generate "(reply to Post N)" annotations.
 func BuildPostIndex(posts []*model.Post) map[string]int {
