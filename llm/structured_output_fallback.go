@@ -3,7 +3,10 @@
 
 package llm
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // StructuredOutputFallbackWrapper wraps a LanguageModel and applies fallback
 // structured output handling when a JSON schema is requested but the upstream
@@ -22,7 +25,57 @@ func NewStructuredOutputFallbackWrapper(llm LanguageModel, structuredOutputEnabl
 }
 
 func (w *StructuredOutputFallbackWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
-	return w.wrapped.ChatCompletion(ctx, request, opts...)
+	result, err := w.wrapped.ChatCompletion(ctx, request, opts...)
+	if err != nil {
+		return result, err
+	}
+
+	if w.structuredOutputEnabled || !hasJSONOutputSchema(opts) || result == nil {
+		return result, nil
+	}
+
+	// Providers without native structured output frequently wrap JSON in
+	// markdown code fences. The fence only resolves once the whole response is
+	// known, so buffer the text chunks and emit the stripped JSON as a single
+	// text event at the end. Non-text events pass through unchanged.
+	return stripFencingFromStream(result), nil
+}
+
+func stripFencingFromStream(source *TextStreamResult) *TextStreamResult {
+	out := make(chan TextStreamEvent)
+
+	go func() {
+		defer close(out)
+
+		var text strings.Builder
+		for event := range source.Stream {
+			switch event.Type {
+			case EventTypeText:
+				if chunk, ok := event.Value.(string); ok {
+					text.WriteString(chunk)
+				}
+			case EventTypeEnd:
+				if cleaned := StripMarkdownCodeFencing(text.String()); cleaned != "" {
+					out <- TextStreamEvent{Type: EventTypeText, Value: cleaned}
+				}
+				out <- event
+				return
+			case EventTypeError:
+				out <- event
+				return
+			default:
+				out <- event
+			}
+		}
+
+		// Source closed without an explicit end/error event: flush whatever
+		// text was buffered so callers still receive the (stripped) response.
+		if cleaned := StripMarkdownCodeFencing(text.String()); cleaned != "" {
+			out <- TextStreamEvent{Type: EventTypeText, Value: cleaned}
+		}
+	}()
+
+	return &TextStreamResult{Stream: out}
 }
 
 func (w *StructuredOutputFallbackWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {

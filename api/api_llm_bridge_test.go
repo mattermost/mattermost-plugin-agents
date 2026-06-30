@@ -482,6 +482,87 @@ func TestBridgeClientAgentCompletionStream(t *testing.T) {
 	}
 }
 
+// TestBridgeClientAgentCompletionStreamStructuredOutput exercises the full
+// streaming bridge path (client → HTTP handler → StructuredOutputFallbackWrapper
+// → provider) for a structured-output request. Providers without native
+// structured output wrap JSON in markdown fences; when the bot has structured
+// output disabled, the stripped JSON must reach the caller so it can be parsed.
+// This is the path Rewrites uses (MM-67336).
+func TestBridgeClientAgentCompletionStreamStructuredOutput(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	// A minimal JSON schema, as a bridge caller (e.g. Rewrites) would send.
+	jsonSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"message": map[string]any{"type": "string"},
+		},
+		"required": []any{"message"},
+	}
+
+	fencedStreamEvents := []llm.TextStreamEvent{
+		{Type: llm.EventTypeText, Value: "```json\n"},
+		{Type: llm.EventTypeText, Value: `{"message":`},
+		{Type: llm.EventTypeText, Value: ` "rewritten text"}`},
+		{Type: llm.EventTypeText, Value: "\n```"},
+		{Type: llm.EventTypeEnd, Value: nil},
+	}
+
+	tests := []struct {
+		name                    string
+		structuredOutputEnabled bool
+		expected                string
+	}{
+		{
+			name:                    "structured output disabled strips fences so JSON parses",
+			structuredOutputEnabled: false,
+			expected:                `{"message": "rewritten text"}`,
+		},
+		{
+			name:                    "structured output enabled leaves provider output untouched",
+			structuredOutputEnabled: true,
+			expected:                "```json\n{\"message\": \"rewritten text\"}\n```",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.setupTestBot(llm.BotConfig{
+				Name:            "testbot",
+				DisplayName:     "Test Bot",
+				UserAccessLevel: llm.UserAccessLevelAll,
+			})
+
+			fakeLLM := NewFakeLLMWithStreamEvents(fencedStreamEvents)
+			for _, bot := range e.bots.GetAllBots() {
+				if bot.GetConfig().Name == "testbot" {
+					bot.SetLLMForTest(llm.NewStructuredOutputFallbackWrapper(fakeLLM, tc.structuredOutputEnabled))
+				}
+			}
+
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			client := e.CreateBridgeClient()
+			result, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
+				Posts:            []bridgeclient.Post{{Role: "user", Message: "Improve this"}},
+				JSONOutputFormat: jsonSchema,
+			})
+			require.NoError(t, err)
+
+			text, err := result.ReadAll()
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, text)
+
+			// The schema must have been forwarded to the provider regardless.
+			require.NotNil(t, fakeLLM.LastConfig.JSONOutputFormat)
+		})
+	}
+}
+
 func TestBridgeClientServiceCompletion(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
