@@ -1,28 +1,59 @@
 # mcpserver/AGENTS.md
 
-Scoped instructions for the `mcpserver/` package. Root rules in `/AGENTS.md` still apply; only deviations and package-specific gotchas live here.
+Scoped instructions for Mattermost MCP server transports and tools. Root rules in `/AGENTS.md` still apply.
+
+## Boundary
+
+- This package owns built-in Mattermost MCP tools, embedded in-memory MCP, plugin HTTP handlers, standalone HTTP, and standalone stdio.
+- MCP client management, OAuth, per-user tool catalogs, and meta-tools live in `mcp/`.
 
 ## Architecture
 
 ### Configuration vs runtime services
 
-- Config structs are declarative — strings, ints, bools only.
-- Never put runtime service instances inside a config struct.
-- Pass runtime services directly as parameters to constructors.
+- Config structs are declarative: strings, ints, bools, slices, maps.
+- Never put runtime service instances inside config structs.
+- Pass runtime services directly to constructors.
 
-### Server types and the search service
+### Server modes
 
-- **`InMemoryServer`** (embedded in the plugin) takes `searchService tools.SemanticSearchService` directly. The plugin passes `*search.Search`, which implements `SemanticSearchService`.
-- **HTTP / Stdio / PluginHandlers** (external servers) build their own `HTTPSemanticSearchService` internally; that service calls back to the plugin's `/api/v1/search/raw` endpoint.
+| Mode | Constructor | Access mode | Search/files |
+| --- | --- | --- | --- |
+| Embedded | `NewInMemoryServer` | remote | Direct service params |
+| Plugin HTTP | `NewPluginMCPHandlers` | remote | Plugin callback HTTP |
+| Standalone HTTP | `NewHTTPServer` | remote | Plugin callback HTTP |
+| Standalone stdio | `NewStdioServer` | local | Plugin callback HTTP |
 
-### Type sharing
+- Embedded mode intentionally uses remote access mode; local file path attachments are only for stdio/dev mode.
+- `PluginMCPHandlers` registers native tools first, then proxy tools from other plugins.
 
-- Do not duplicate types from the `search` package inside `mcpserver/tools`. The `SemanticSearchService` interface uses `search.Options` and `search.RAGResult` directly.
-- HTTP serialization DTOs (e.g., `httpSearchRequest`, `httpSearchResult` in `search_http.go`) are intentionally separate from domain types and stay in their respective files.
-- If you only need a subset of fields, accept the full type and ignore the unused fields rather than introducing a parallel struct.
+### Optional services
+
+- Search uses `tools.SemanticSearchService` with `search.Options` and `search.RAGResult`; do not duplicate search types.
+- File reads use `tools.FileContentService`; embedded mode receives `*files.Service`, external modes use `/api/v1/files/content`.
+- HTTP DTOs stay near their HTTP client/server implementation and remain separate from domain types.
+
+### Tool registration
+
+- Automation tools are registered but filtered from `tools/list` when the Channel Automation plugin is unavailable.
+- Native Mattermost tools win over duplicate proxy tool names in the external MCP endpoint.
+- Before-hooks are embedded-only callbacks resolved through short-lived KV keys.
 
 ## Adding a new optional capability
 
-1. Define the interface in `tools/`, reusing types from their source package.
-2. For embedded servers: add the parameter to `NewInMemoryServer`.
-3. For external servers: add a plugin HTTP endpoint plus an HTTP client implementation that calls it.
+1. Define the interface in `tools/`, reusing source-package types when possible.
+2. Embedded: add the runtime dependency to `NewInMemoryServer`.
+3. External: add a plugin API endpoint plus an HTTP client implementation in `tools/*_http.go`.
+4. Gate tool registration on `service != nil` and `service.Enabled()` when applicable.
+
+## Commands
+
+- Unit/integration tests: `go test -v ./mcpserver/...`
+- Build standalone binary: `make mcp-server`
+- MCP evals: `make mcp-evals`
+
+## Gotchas
+
+- `go test ./mcpserver/...` may use Testcontainers; Docker must be available.
+- External HTTP search advertises capability optimistically; semantic search can still fail at runtime if disabled in the plugin.
+- Keep `mcpserver/README.md` human-facing; this file is the coding-agent source of truth.
