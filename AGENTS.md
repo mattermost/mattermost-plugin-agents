@@ -1,95 +1,111 @@
 # AGENTS.md
 
-> Canonical agent instructions for this repository. Humans should read `README.md` and `docs/`. `CLAUDE.md` and `mcpserver/CLAUDE.md` are thin imports — do not duplicate content there.
+> README for agents. Humans read `README.md` and `docs/`. This file is the canonical, hand-maintained agent guidance — keep it accurate and lean. Package-specific rules live in nested `AGENTS.md` files (see Index); prefer adding guidance next to the code it governs.
+>
+> Every `CLAUDE.md` in this repo is a one-line `@AGENTS.md` import. Edit the sibling `AGENTS.md`; never put content in a `CLAUDE.md`.
 
 ## Project
 
-Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go 1.26 backend + React/TypeScript webapp (Node 24.11).
+Mattermost server plugin (id `mattermost-ai`, module `github.com/mattermost/mattermost-plugin-agents`) that integrates LLM providers. Go 1.26 backend + React/TypeScript webapp (Node 24.11). Postgres-only.
 
 ## Commands
 
-`make help` lists every documented target with a one-line description.
+`make help` lists every documented target.
 
-- Pre-PR aggregate (lint + unit tests + e2e shard coverage + i18n/lockfile drift; **recommended**): `make check`
-- Lint with auto-fix (also re-extracts i18n strings): `make check-style-fix`
-- Lint only: `make check-style`
-- All unit tests: `make test`
-- Single Go test: `go test -v ./<pkg> -run TestName`
-- Build & deploy plugin to a running Mattermost: `make deploy`
-- E2E (self-contained, no env setup needed; slow, defer to CI when possible): `make e2e`
-- Single e2e spec: `cd e2e && npx playwright test tests/path/spec.ts --reporter=list`
-- Prompt evals (non-interactive): `make evals-ci`
-  Provider: `LLM_PROVIDER=openai|anthropic|azure|openaicompatible|all make evals-ci`
-  Model: `ANTHROPIC_MODEL=claude-sonnet-4-5-20250929 make evals-ci`
-- Streaming benchmarks: `go test -bench=. -benchmem ./llm/... ./streaming/...`
+- Pre-PR aggregate (**recommended**): `make check` → `check-style test check-shards check-i18n check-locks check-go-mods` (skips the slow `make e2e`).
+- Lint + type-check: `make check-style`; with auto-fix (also re-extracts webapp i18n): `make check-style-fix`.
+- Unit tests (Go + webapp): `make test`. Single Go test: `go test -v ./<pkg> -run TestName`.
+- Build & deploy to a running Mattermost: `make deploy`.
+- E2E (self-contained, needs Docker; slow, defer to CI): `make e2e`. Single spec: `cd e2e && npx playwright test tests/path/spec.ts --reporter=list`.
+- Prompt evals (non-interactive): `make evals-ci` (see `evals/AGENTS.md`).
+- Streaming benchmarks: `go test -bench=. -benchmem ./llm/... ./streaming/...`.
 
-When `make check` fails, run the underlying targets individually (`make check-style`, `make test`, `make check-shards`, `make check-i18n`, `make check-locks`) to isolate which step broke. CI runs the same drift checks; if i18n or a lockfile is out of sync, those targets regenerate the file in place — review and commit.
+When `make check` fails, run the failing sub-target alone to isolate it. CI splits these across jobs; `check-i18n`/`check-locks` regenerate files in place on drift — review and commit the result.
 
 ## Repository layout
 
 Most Go packages live at the **repo root**, not under `server/`.
 
-- `server/` — plugin entrypoint, lifecycle, configuration adapter.
-- `api/`, `mmapi/` — HTTP handlers; Mattermost API wrappers.
-- `llm/` — LLM provider abstractions and provider implementations.
-- `mcp/`, `mcpserver/` — MCP client; embedded/HTTP/stdio MCP servers and tools.
+- `server/` — plugin entrypoint, lifecycle, service wiring, config migration.
+- `api/`, `mmapi/` — Gin HTTP handlers; Mattermost API + Postgres wrappers.
+- `llm/` — provider-agnostic LLM types, tool catalog, prompt renderer, decorator wrappers. **Provider implementations live in `bifrost/`**, not here.
+- `bifrost/` — the `llm.LanguageModel` gateway implementation (multi-provider, fallback chains).
+- `mcp/`, `mcpserver/` — MCP client; embedded/HTTP/stdio MCP servers and native tools.
 - `format/` — formatting of Mattermost entities for LLM consumption (see Conventions).
-- Other top-level feature packages exist (e.g. `bots/`, `channels/`, `threads/`, `meetings/`, `search/`, `embeddings/`, `streaming/`, `toolrunner/`, `websearch/`, …). Read the package name and skim the package source before assuming purpose — note in particular that both `conversation/` and `conversations/` exist and are not the same.
-- `config/` — plugin configuration types and migration.
-- `webapp/` — React/TypeScript UI bundle (`webapp/src/`).
-- `e2e/` — Playwright + Testcontainers end-to-end tests.
-- `evals/`, `cmd/evalviewer/` — prompt evaluation harness and TUI.
-- `i18n/` — extracted translation strings.
-- `docs/` — user/admin docs.
-- `public/bridgeclient/` — separate Go module published for other plugins.
+- `conversation/` (entity service) and `conversations/` (runtime orchestration) are **different packages** — read each before assuming purpose. Other feature packages include `bots/`, `channels/`, `threads/`, `meetings/`, `search/`, `embeddings/`, `streaming/`, `toolrunner/`, `websearch/`, `indexer/`.
+- `config/`, `store/` — config types/migration; Postgres persistence.
+- `webapp/` — React/TS UI bundle. `e2e/` — Playwright + Testcontainers. `evals/`, `cmd/evalviewer/` — prompt eval harness/TUI.
+- `i18n/` — **hand-curated** server strings (`nicksnyder/go-i18n`); not auto-extracted. Webapp strings in `webapp/src/i18n/en.json` ARE auto-extracted.
+- `public/bridgeclient/` — Go client library for the LLM Bridge API; a subpackage of the root module (importable by path), not a separate module.
+- Nested Go modules (own `go.mod`): `cmd/evalviewer/`, `loadtest/controller/`.
 
 ## Conventions
 
-Linters (golangci-lint, ESLint, gofmt/goimports, header check, editorconfig) already enforce formatting, imports, error checking, license headers, and indentation. The rules below are the ones a linter cannot enforce.
+Linters (golangci-lint, ESLint, gofmt/goimports, license-header check, editorconfig) already enforce formatting, imports, error checking, headers, and indentation. The rules below are what a linter cannot.
 
 - File names: `snake_case.go` / `snake_case.ts(x)`.
-- TypeScript/React: PascalCase components, strict typing, **always styled-components**, never inline `style={{...}}`.
-- New user-facing strings must go through i18n (`make i18n-extract` picks them up).
+- TypeScript/React: PascalCase components, strict typing, styled-components (avoid inline `style={{...}}`). See `webapp/AGENTS.md`.
+- New user-facing strings go through i18n. Never hand-edit `webapp/src/i18n/en.json` (regenerate via `make check-style-fix`); the server `i18n/en.json` is hand-curated.
 - Go tests must be table-driven when there is more than one case.
-- Never introduce a new test/mocking library; prefer to test against real implementations instead.
-- All formatting of Mattermost entities (posts, users, channels, teams, members) for LLM consumption or tool output must go through the `format/` package. Never `fmt.Sprintf` model types inline; add a formatter to `format/` instead.
-- E2E shard maintenance: when adding a new spec that should run in CI, assign it in `e2e/scripts/ci-test-groups.mjs` in the same change. `make check-shards` validates coverage and is part of `make check`. Use the lightest `e2e-shard-*` group and balance by expected runtime, not alphabetically.
-- Test for behavior that could break due to a real bug. Before writing a test ask: "If this test fails, does it indicate a real bug in our code?" In particular, do not assert on implementation details like validation order or which error appears first.
+- Never introduce a new test/mocking library; test against real implementations where possible (existing mockery-generated mocks are fine).
+- All formatting of Mattermost entities (posts, users, channels, teams, members, files) for LLM/tool output goes through `format/`. Never `fmt.Sprintf` model types inline; add a `Write*`/entry to `format/`.
+- E2E: every spec under `e2e/tests/` must be assigned to a shard (`e2e-shard-1`…`e2e-shard-4`) in `e2e/scripts/ci-test-groups.mjs`; `make check-shards` enforces exact coverage. Balance by expected runtime. See `e2e/AGENTS.md`.
+- Test for behavior that could break from a real bug. Don't assert implementation details like validation order or which error appears first.
 
 ## OpenTelemetry tracing
 
-The plugin emits OpenTelemetry traces. Agent-relevant rules:
+Cross-cutting rules only (attribute catalog, span recipe, and span inventory live in `telemetry/AGENTS.md`):
 
-- **Thread `ctx context.Context` as the first parameter** through every entry point → LLM call code path. Don't introduce `context.Background()` shortcuts in production code; the request-scoped context is what makes spans correlate.
-- Existing spans live in `bifrost/` (LLM calls), `llm/tools.go`, `conversations/tool_handling.go`, `mcp/`, `search/`, `websearch/`, and `streaming/`. The `otelgin` middleware adds HTTP spans automatically.
-- To add a span: `ctx, span := telemetry.Tracer().Start(ctx, "span name", trace.WithAttributes(...))`, then `defer span.End()`. Record errors with `span.RecordError(err)` and `span.SetStatus(codes.Error, msg)`. Reuse attribute keys from `telemetry/attributes.go` instead of inventing new ones.
-- When a `*llm.Context` parameter would shadow the `context` package in the same file, import `"context"` as `stdcontext`.
-- Config fields (`TelemetryOutput`, `OpenTelemetryEndpoint`) and local Tempo/Grafana setup live in `docs/admin_guide.md`.
+- **Thread `ctx context.Context` as the first parameter** through every entry point → LLM call path. Don't add `context.Background()` shortcuts in production code (plugin hook entrypoints are the documented exception).
+- When a `*llm.Context` parameter would shadow the `context` package, import `"context"` as `stdcontext`.
+- Reuse attribute keys from `telemetry/attributes.go`; never invent ad-hoc keys.
+- Config (`TelemetryOutput`, `OpenTelemetryEndpoint`) and local Tempo/Grafana setup: `docs/admin_guide.md`.
 
 ## Never do
 
-- Never edit `webapp/dist/`, `server/dist/`, or `dist/` — regenerate with the build commands above.
-- Never hand-edit `webapp/src/i18n/en.json` — `make check-style-fix` re-extracts it from webapp source. Add the user-facing string at the call site instead. (Server-side `i18n/en.json` is hand-curated; mmgotool extraction doesn't apply to this repo's `nicksnyder/go-i18n` setup.)
+- Never edit generated output: `webapp/dist/`, `server/dist/`, `dist/`, `webapp/src/manifest.ts`, `prompts/prompts_vars.go` — regenerate via the build/codegen commands.
+- Never hand-edit `webapp/src/i18n/en.json`.
 - Never push to `master`; open a PR.
 
 ## Gotchas
 
-- If `make install-go-tools` fails to build `mattermost-govet`, the pinned commit is incompatible with the active Go toolchain. The Makefile prints the exact fix: bump `MATTERMOST_GOVET_VERSION` in the Makefile to a newer commit. This is a real problem to fix, not a warning to ignore.
-- `postgres/pgvector_test.go` boots its own pgvector container via `testcontainers-go` (`pgvector/pgvector:pg17`); `go test ./postgres/...` works on a fresh checkout as long as Docker is available. To run against an existing pgvector instance for fast iteration, set `PGVECTOR_TEST_DSN`.
-- Plugin config is migrated to the plugin DB on activation. For automation, read/write `GET`/`PUT /plugins/mattermost-ai/admin/config` rather than patching the Mattermost server config.
-- The embedded MCP server requires `SiteURL` to be set on the Mattermost server, and uses in-memory transport (no HTTP). On tool name collisions across MCP servers, first-registered wins; later duplicates are skipped with a warning.
-- `public/bridgeclient/` is a separately published Go module, not HTTP assets; `HAS_PUBLIC` is intentionally cleared in the Makefile.
+- If `make install-go-tools` fails to build `mattermost-govet`, the pinned commit is incompatible with the active Go toolchain — bump `MATTERMOST_GOVET_VERSION` in the Makefile (the target prints the fix). A real problem to fix, not a warning to ignore.
+- Plugin config migrates to the plugin DB once on activation; afterward read/write via `GET`/`PUT /plugins/mattermost-ai/admin/config`, not the Mattermost `config.json`.
+- Activation requires `SiteURL` (embedded MCP + OAuth callbacks).
 
 ## Pull requests and commits
 
-- Commit subject: one succinct line. Optional Jira prefix (`MM-12345:`) or short scope (`fix:`, `docs:`, `webapp:`) is fine.
-- Do not add `Co-Authored-By` listing the agent.
-- Use the GitHub PR template for the PR body.
+- Commit subject: one succinct line. Optional Jira (`MM-12345:`) or scope (`fix:`, `webapp:`) prefix.
+- Do not add `Co-Authored-By` for the agent.
+- Fill in the GitHub PR template (`#### Summary`, `#### Ticket Link`, `#### Screenshots`, `#### Release Note` — use `NONE` if not needed).
+
+## Index of nested AGENTS.md
+
+Read the matching file before working in that area. Guidance is cumulative — nested files add to, not replace, this one.
+
+- `webapp/AGENTS.md` — React/TS bundle: registry integration, formatjs i18n, redux, tests.
+- `api/AGENTS.md` — Gin routes, auth tiers, agent CRUD.
+- `server/AGENTS.md` — activation/wiring order, migrations, cluster events.
+- `config/AGENTS.md` — `Config`/`Container`, update listeners, legacy migrations.
+- `store/AGENTS.md` — Postgres schema, migrations, turn sequencing.
+- `llm/AGENTS.md` — `LanguageModel` contract, wrapper chain, tool/MCP naming.
+- `bifrost/AGENTS.md` — provider gateway; where "add a provider" actually happens.
+- `streaming/AGENTS.md` — streaming to posts, turn persistence, control events.
+- `telemetry/AGENTS.md` — OTel init, attribute catalog, span recipe + inventory.
+- `prompts/AGENTS.md` — embedded templates + codegen + renderer split.
+- `format/AGENTS.md` — entity formatter pattern.
+- `conversation/AGENTS.md` — conversation entity / content-block model.
+- `conversations/AGENTS.md` — runtime orchestration, tool approval, invoker rules.
+- `mcp/AGENTS.md` — MCP client: connections, namespacing, OAuth, dynamic tools.
+- `mcpserver/AGENTS.md` — MCP server: transports, service injection, native tools.
+- `search/AGENTS.md` — RAG pipeline (search/embeddings/postgres/chunking).
+- `indexer/AGENTS.md` — incremental + reindex jobs, KV/cluster locks.
+- `bots/AGENTS.md` — bot/agent merge, license caps, `EnsureBots`.
+- `e2e/AGENTS.md` — Playwright/Testcontainers, mock layers, sharding.
+- `evals/AGENTS.md` — prompt eval harness, providers, `GOEVALS`.
 
 ## Pointers
 
-Read these only when the trigger applies:
-
-- Working inside `mcpserver/` (config-vs-runtime, search service wiring, adding optional capabilities): `mcpserver/AGENTS.md`.
-- Configuring providers, agents, or the admin UI: `docs/admin_guide.md`.
-- When working on prompt evals or modifying the eval harness: `cmd/evalviewer/README.md`.
+- Providers, agents, admin UI: `docs/admin_guide.md`.
+- Prompt eval CLI/TUI: `cmd/evalviewer/README.md`. Load testing: `docs/load-testing.md`.
+- LLM Bridge client for other plugins: `public/bridgeclient/README.md`.
