@@ -34,8 +34,8 @@ type CreateTeamArgs struct {
 	TeamIcon    string `json:"team_icon,omitempty" access:"local" jsonschema:"File path or URL to set as team icon (supports .jpeg, .jpg, .png, .gif)"`
 }
 
-// AddUserToTeamArgs represents arguments for the add_user_to_team tool (dev mode only)
-type AddUserToTeamArgs struct {
+// AddTeamMemberArgs represents arguments for the add_team_member tool
+type AddTeamMemberArgs struct {
 	UserID string `json:"user_id" jsonschema:"ID of the user to add,minLength=26,maxLength=26"`
 	TeamID string `json:"team_id" jsonschema:"ID of the team to add user to,minLength=26,maxLength=26"`
 }
@@ -62,6 +62,12 @@ func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 			Schema:      NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
 			Resolver:    typed("get_team_members", p.toolGetTeamMembers),
 		},
+		{
+			Name:        "add_team_member",
+			Description: "Add a user to a team (team membership). Parameters: user_id (required), team_id (required). Returns confirmation message.",
+			Schema:      NewJSONSchemaForAccessMode[AddTeamMemberArgs](string(p.accessMode)),
+			Resolver:    typed("add_team_member", p.toolAddTeamMember),
+		},
 	}
 }
 
@@ -73,12 +79,6 @@ func (p *MattermostToolProvider) getDevTeamTools() []MCPTool {
 			Description: "Create a new team (dev mode only)",
 			Schema:      NewJSONSchemaForAccessMode[CreateTeamArgs](string(p.accessMode)),
 			Resolver:    typed("create_team", p.toolCreateTeam),
-		},
-		{
-			Name:        "add_user_to_team",
-			Description: "Add a user to a team (dev mode only)",
-			Schema:      NewJSONSchemaForAccessMode[AddUserToTeamArgs](string(p.accessMode)),
-			Resolver:    typed("add_user_to_team", p.toolAddUserToTeam),
 		},
 	}
 }
@@ -325,8 +325,8 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 	return fmt.Sprintf("Successfully created team '%s' with ID: %s%s", createdTeam.DisplayName, createdTeam.Id, teamIconMessage), nil
 }
 
-// toolAddUserToTeam implements the add_user_to_team tool using the context client
-func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, args AddUserToTeamArgs) (string, error) {
+// toolAddTeamMember implements the add_team_member tool using the context client
+func (p *MattermostToolProvider) toolAddTeamMember(mcpContext *MCPToolContext, args AddTeamMemberArgs) (string, error) {
 	// Validate required fields
 	if err := requireID("user_id", args.UserID); err != nil {
 		return "", err

@@ -81,7 +81,7 @@ describe('stripWirePrefix', () => {
     });
 
     test('leaves embedded MCP tool names unchanged', () => {
-        for (const n of ['add_user_to_channel', 'create_channel', 'create_post', 'dm', 'read_channel']) {
+        for (const n of ['add_channel_member', 'create_channel', 'create_post', 'dm', 'read_channel']) {
             expect(stripWirePrefix(n)).toBe(n);
         }
     });

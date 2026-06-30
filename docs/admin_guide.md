@@ -676,9 +676,10 @@ The built-in Mattermost MCP server provides the following native Mattermost tool
 - **get_team_info**: Retrieve team details by ID or name
 - **search_users**: Find users by username, email, or name
 - **get_channel_members**: List all members of a channel
-- **add_user_to_channel**: Add a user to a channel
+- **add_channel_member**: Add a user to a channel
 - **get_user_channels**: List the channels the current user is a member of
 - **get_team_members**: List all members of a team
+- **add_team_member**: Add a user to a team
 - **list_agents**: List the AI agents (bots) available to the current user, including each agent's ID, display name, and username
 
 When the Channel Automation plugin is installed, the MCP server also exposes the following tools. They proxy requests to that plugin; execution follows the same MCP tool policies as other tools and each user's Mattermost permissions.

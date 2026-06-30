@@ -346,7 +346,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 	})
 
-	t.Run("AddUserToChannelTool", func(t *testing.T) {
+	t.Run("AddChannelMemberTool", func(t *testing.T) {
 		// Create a new user to add to channel
 		newUser := testhelpers.CreateTestUser(t, client, "channelmember", "channelmember@example.com", "testpassword")
 		testhelpers.AddUserToTeam(t, client, testData.Team.Id, newUser.Id)
@@ -357,9 +357,9 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"channel_id": testData.Channel.Id,
 			}
 
-			result, err := executeToolWithMCP(t, suite, "add_user_to_channel", args)
-			require.NoError(t, err, "add_user_to_channel should succeed")
-			assert.NotEmpty(t, result.Content, "add_user_to_channel should return content")
+			result, err := executeToolWithMCP(t, suite, "add_channel_member", args)
+			require.NoError(t, err, "add_channel_member should succeed")
+			assert.NotEmpty(t, result.Content, "add_channel_member should return content")
 
 			// Verify the response mentions success
 			if len(result.Content) > 0 {
@@ -387,8 +387,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"channel_id": "invalid-channel-id",
 			}
 
-			_, err := executeToolWithMCP(t, suite, "add_user_to_channel", args)
-			require.Error(t, err, "add_user_to_channel with invalid channel ID should fail")
+			_, err := executeToolWithMCP(t, suite, "add_channel_member", args)
+			require.Error(t, err, "add_channel_member with invalid channel ID should fail")
 		})
 
 		t.Run("InvalidUserID", func(t *testing.T) {
@@ -397,8 +397,40 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"channel_id": testData.Channel.Id,
 			}
 
-			_, err := executeToolWithMCP(t, suite, "add_user_to_channel", args)
-			require.Error(t, err, "add_user_to_channel with invalid user ID should fail")
+			_, err := executeToolWithMCP(t, suite, "add_channel_member", args)
+			require.Error(t, err, "add_channel_member with invalid user ID should fail")
+		})
+	})
+
+	t.Run("AddTeamMemberTool", func(t *testing.T) {
+		// add_team_member is a production tool (promoted from dev mode).
+		newUser := testhelpers.CreateTestUser(t, client, "teammember", "teammember@example.com", "testpassword")
+
+		t.Run("HappyPath", func(t *testing.T) {
+			args := map[string]interface{}{
+				"user_id": newUser.Id,
+				"team_id": testData.Team.Id,
+			}
+
+			result, err := executeToolWithMCP(t, suite, "add_team_member", args)
+			require.NoError(t, err, "add_team_member should succeed")
+			assert.NotEmpty(t, result.Content, "add_team_member should return content")
+
+			if len(result.Content) > 0 {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
+					assert.Contains(t, textContent.Text, "Successfully added user", "Response should indicate success")
+				}
+			}
+		})
+
+		t.Run("InvalidUserID", func(t *testing.T) {
+			args := map[string]interface{}{
+				"user_id": "invalid-user-id",
+				"team_id": testData.Team.Id,
+			}
+
+			_, err := executeToolWithMCP(t, suite, "add_team_member", args)
+			require.Error(t, err, "add_team_member with invalid user ID should fail")
 		})
 	})
 

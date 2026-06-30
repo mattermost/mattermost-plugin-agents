@@ -20,6 +20,9 @@ type ReadChannelArgs struct {
 	ChannelID string `json:"channel_id" jsonschema:"The ID of the channel to read from,minLength=26,maxLength=26"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"Number of posts to retrieve (default: 20, max: 100),minimum=1,maximum=100"`
 	Since     string `json:"since,omitempty" jsonschema:"Only get posts since this timestamp (ISO 8601 format),format=date-time"`
+	Before    string `json:"before,omitempty" jsonschema:"Return the page of posts immediately before this post ID (history pagination). Mutually exclusive with after/since.,maxLength=26"`
+	After     string `json:"after,omitempty" jsonschema:"Return the page of posts immediately after this post ID (history pagination). Mutually exclusive with before/since.,maxLength=26"`
+	Page      int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 }
 
 // CreateChannelArgs represents arguments for the create_channel tool
@@ -47,8 +50,8 @@ type GetChannelMembersArgs struct {
 	ExcludeBots *bool  `json:"exclude_bots,omitempty" jsonschema:"Exclude bot accounts from results (default: true)"`
 }
 
-// AddUserToChannelArgs represents arguments for the add_user_to_channel tool
-type AddUserToChannelArgs struct {
+// AddChannelMemberArgs represents arguments for the add_channel_member tool
+type AddChannelMemberArgs struct {
 	UserID    string `json:"user_id" jsonschema:"ID of the user to add,minLength=26,maxLength=26"`
 	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to add user to,minLength=26,maxLength=26"`
 }
@@ -62,7 +65,7 @@ type GetUserChannelsArgs struct {
 
 // Tool description constants for channel-related tools.
 const (
-	readChannelDescription = "Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20), since (ISO 8601 timestamp, optional). Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"since\": \"2024-01-01T00:00:00Z\"}"
+	readChannelDescription = "Read recent posts from a Mattermost channel, with history pagination. Parameters: channel_id (required), limit (1-100, default 20), page (default 0), since (ISO 8601 timestamp), before (post ID), after (post ID). Use before/after with a post ID to page through older/newer history; since/before/after are mutually exclusive. Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"before\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\"}"
 
 	createChannelDescription = "Create a new channel in Mattermost. Parameters: name (URL-friendly), display_name (user-visible), type ('O' for public, 'P' for private), team_id (required), purpose (optional), header (optional). Returns created channel details. Example: {\"name\": \"dev-chat\", \"display_name\": \"Development Chat\", \"type\": \"O\", \"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}"
 
@@ -101,10 +104,10 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 			Resolver:    typed("get_channel_members", p.toolGetChannelMembers),
 		},
 		{
-			Name:        "add_user_to_channel",
-			Description: "Add a user to a channel. Parameters: user_id (required), channel_id (required). Returns confirmation message.",
-			Schema:      NewJSONSchemaForAccessMode[AddUserToChannelArgs](string(p.accessMode)),
-			Resolver:    typed("add_user_to_channel", p.toolAddUserToChannel),
+			Name:        "add_channel_member",
+			Description: "Add a user to a channel (channel membership). Parameters: user_id (required), channel_id (required). Returns confirmation message.",
+			Schema:      NewJSONSchemaForAccessMode[AddChannelMemberArgs](string(p.accessMode)),
+			Resolver:    typed("add_channel_member", p.toolAddChannelMember),
 		},
 		{
 			Name:        "get_user_channels",
@@ -131,6 +134,26 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 	if args.Limit > 100 {
 		args.Limit = 100
+	}
+	if args.Page < 0 {
+		args.Page = 0
+	}
+
+	// Validate the optional cursor post IDs and enforce mutual exclusivity.
+	if err := optionalID("before", args.Before); err != nil {
+		return "", err
+	}
+	if err := optionalID("after", args.After); err != nil {
+		return "", err
+	}
+	cursors := 0
+	for _, set := range []bool{args.Before != "", args.After != "", args.Since != ""} {
+		if set {
+			cursors++
+		}
+	}
+	if cursors > 1 {
+		return "", fmt.Errorf("before, after, and since are mutually exclusive — set at most one")
 	}
 
 	// Get client and context
@@ -184,8 +207,17 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		teamDisplayName = team.DisplayName
 	}
 
-	// Get posts from the channel
-	posts, _, err := client.GetPostsForChannel(ctx, args.ChannelID, 0, args.Limit, "", false, false)
+	// Get posts from the channel. before/after page relative to a post ID for
+	// history pagination; otherwise page through the channel from the top.
+	var posts *model.PostList
+	switch {
+	case args.Before != "":
+		posts, _, err = client.GetPostsBefore(ctx, args.ChannelID, args.Before, args.Page, args.Limit, "", false, false)
+	case args.After != "":
+		posts, _, err = client.GetPostsAfter(ctx, args.ChannelID, args.After, args.Page, args.Limit, "", false, false)
+	default:
+		posts, _, err = client.GetPostsForChannel(ctx, args.ChannelID, args.Page, args.Limit, "", false, false)
+	}
 	if err != nil {
 		return "", fmt.Errorf("error fetching posts: %w", err)
 	}
@@ -552,8 +584,8 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	return p.renderMembers(ctx, client, "Channel Members", args.Page, rendered, excludeBots), nil
 }
 
-// toolAddUserToChannel implements the add_user_to_channel tool using the context client
-func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext, args AddUserToChannelArgs) (string, error) {
+// toolAddChannelMember implements the add_channel_member tool using the context client
+func (p *MattermostToolProvider) toolAddChannelMember(mcpContext *MCPToolContext, args AddChannelMemberArgs) (string, error) {
 	// Validate required fields
 	if err := requireID("user_id", args.UserID); err != nil {
 		return "", err
