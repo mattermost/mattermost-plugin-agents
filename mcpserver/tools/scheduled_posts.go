@@ -208,7 +208,7 @@ func (p *MattermostToolProvider) toolDeleteScheduledPost(mcpContext *MCPToolCont
 		return "", fmt.Errorf("error deleting scheduled post: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully cancelled scheduled post %s", args.ScheduledPostID), nil
+	return fmt.Sprintf("Successfully canceled scheduled post %s", args.ScheduledPostID), nil
 }
 
 // toolSetPostReminder implements the set_post_reminder tool.

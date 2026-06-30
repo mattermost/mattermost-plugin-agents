@@ -33,7 +33,7 @@ func TestUserToolsValidation(t *testing.T) {
 			return provider.toolGetUserByEmail(mcpCtx, GetUserByEmailArgs{Email: ""})
 		}, "email cannot be empty"},
 		{"get_users_by_ids empty", func() (string, error) {
-			return provider.toolGetUsersByIds(mcpCtx, GetUsersByIdsArgs{})
+			return provider.toolGetUsersByIDs(mcpCtx, GetUsersByIDsArgs{})
 		}, "cannot be empty"},
 		{"get_users_by_usernames empty", func() (string, error) {
 			return provider.toolGetUsersByUsernames(mcpCtx, GetUsersByUsernamesArgs{})

@@ -29,8 +29,8 @@ type GetUserByEmailArgs struct {
 	Email string `json:"email" jsonschema:"The user's email address,minLength=1"`
 }
 
-// GetUsersByIdsArgs represents arguments for the get_users_by_ids tool.
-type GetUsersByIdsArgs struct {
+// GetUsersByIDsArgs represents arguments for the get_users_by_ids tool.
+type GetUsersByIDsArgs struct {
 	UserIDs []string `json:"user_ids" jsonschema:"The user IDs to fetch"`
 }
 
@@ -64,7 +64,7 @@ const (
 	getUserDescription             = "Get a single user's full profile by ID. Parameters: user_id (required)."
 	getUserByUsernameDescription   = "Get a user's profile by username. Parameters: username (required, without @)."
 	getUserByEmailDescription      = "Get a user's profile by email. Parameters: email (required)."
-	getUsersByIdsDescription       = "Batch-fetch user profiles by a list of IDs. Parameters: user_ids (required list)."
+	getUsersByIDsDescription       = "Batch-fetch user profiles by a list of IDs. Parameters: user_ids (required list)."
 	getUsersByUsernamesDescription = "Batch-fetch user profiles by a list of usernames. Parameters: usernames (required list, without @)."
 	getUserStatsDescription        = "Get the total user count on the server. No parameters."
 	getUserCPAValuesDescription    = "Get a user's Custom Profile Attribute (CPA) values. Parameters: user_id (required)."
@@ -79,7 +79,7 @@ func (p *MattermostToolProvider) getUserTools() []MCPTool {
 		{Name: "get_user", Description: getUserDescription, Schema: NewJSONSchemaForAccessMode[GetUserArgs](string(p.accessMode)), Resolver: typed("get_user", p.toolGetUser)},
 		{Name: "get_user_by_username", Description: getUserByUsernameDescription, Schema: NewJSONSchemaForAccessMode[GetUserByUsernameArgs](string(p.accessMode)), Resolver: typed("get_user_by_username", p.toolGetUserByUsername)},
 		{Name: "get_user_by_email", Description: getUserByEmailDescription, Schema: NewJSONSchemaForAccessMode[GetUserByEmailArgs](string(p.accessMode)), Resolver: typed("get_user_by_email", p.toolGetUserByEmail)},
-		{Name: "get_users_by_ids", Description: getUsersByIdsDescription, Schema: NewJSONSchemaForAccessMode[GetUsersByIdsArgs](string(p.accessMode)), Resolver: typed("get_users_by_ids", p.toolGetUsersByIds)},
+		{Name: "get_users_by_ids", Description: getUsersByIDsDescription, Schema: NewJSONSchemaForAccessMode[GetUsersByIDsArgs](string(p.accessMode)), Resolver: typed("get_users_by_ids", p.toolGetUsersByIDs)},
 		{Name: "get_users_by_usernames", Description: getUsersByUsernamesDescription, Schema: NewJSONSchemaForAccessMode[GetUsersByUsernamesArgs](string(p.accessMode)), Resolver: typed("get_users_by_usernames", p.toolGetUsersByUsernames)},
 		{Name: "get_user_stats", Description: getUserStatsDescription, Schema: NewJSONSchemaForAccessMode[GetUserStatsArgs](string(p.accessMode)), Resolver: typed("get_user_stats", p.toolGetUserStats)},
 		{Name: "get_user_cpa_values", Description: getUserCPAValuesDescription, Schema: NewJSONSchemaForAccessMode[GetUserCPAValuesArgs](string(p.accessMode)), Resolver: typed("get_user_cpa_values", p.toolGetUserCPAValues)},
@@ -134,8 +134,8 @@ func (p *MattermostToolProvider) toolGetUserByEmail(mcpContext *MCPToolContext, 
 	return formatSingleUser(user), nil
 }
 
-// toolGetUsersByIds implements the get_users_by_ids tool.
-func (p *MattermostToolProvider) toolGetUsersByIds(mcpContext *MCPToolContext, args GetUsersByIdsArgs) (string, error) {
+// toolGetUsersByIDs implements the get_users_by_ids tool.
+func (p *MattermostToolProvider) toolGetUsersByIDs(mcpContext *MCPToolContext, args GetUsersByIDsArgs) (string, error) {
 	if len(args.UserIDs) == 0 {
 		return "", fmt.Errorf("user_ids cannot be empty")
 	}

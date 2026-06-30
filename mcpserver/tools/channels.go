@@ -1113,7 +1113,9 @@ func (p *MattermostToolProvider) toolListTeamChannels(mcpContext *MCPToolContext
 		p.logger.Warn("failed to fetch private channels", "error", err)
 	}
 
-	channels := append(public, private...)
+	channels := make([]*model.Channel, 0, len(public)+len(private))
+	channels = append(channels, public...)
+	channels = append(channels, private...)
 	return p.formatChannelList(ctx, client, channels, "team channels"), nil
 }
 

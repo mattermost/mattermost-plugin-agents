@@ -682,6 +682,23 @@ The built-in Mattermost MCP server provides the following native Mattermost tool
 - **add_team_member**: Add a user to a team
 - **list_agents**: List the AI agents (bots) available to the current user, including each agent's ID, display name, and username
 
+The plugin also registers an extended catalog of read and write tools spanning Mattermost's main domains. Because the plugin supports dynamic tool loading, agents discover these on demand via the `search_tools` and `load_tool` meta-tools rather than carrying every schema in context. Write/destructive/permission-sensitive tools are marked with ⚠ and follow each user's Mattermost permissions.
+
+- **Posts & messages**: get_post_info, list_pinned_posts, list_saved_posts, ⚠ update_post, ⚠ delete_post, ⚠ pin_post, ⚠ unpin_post, ⚠ save_post, ⚠ acknowledge_post
+- **Scheduled posts & reminders**: list_scheduled_posts, ⚠ create_scheduled_post, ⚠ update_scheduled_post, ⚠ delete_scheduled_post, ⚠ set_post_reminder
+- **Reactions & emoji**: get_post_reactions, get_bulk_reactions, list_custom_emoji, search_custom_emoji, ⚠ add_reaction, ⚠ remove_reaction
+- **Threads, mentions & unread**: get_threads, get_mentions, get_unread_counts, get_channel_unread, get_posts_around_unread, ⚠ mark_channel_read, ⚠ mark_channels_viewed, ⚠ mark_post_unread, ⚠ set_thread_follow
+- **Channels**: get_channel_stats, get_channel_member_counts, search_channels, list_team_channels, list_archived_channels, ⚠ update_channel, ⚠ archive_channel, ⚠ restore_channel, ⚠ convert_channel_privacy
+- **Channel members & settings**: get_channel_member, get_channel_members_by_ids, get_channel_members_by_status, get_user_channel_memberships, get_users_not_in_channel, search_users_in_channel, list_sidebar_categories, ⚠ add_channel_members, ⚠ remove_channel_member, ⚠ set_channel_mute, ⚠ set_channel_favorite, ⚠ update_channel_notify_props
+- **Channel bookmarks**: list_channel_bookmarks, ⚠ create_channel_bookmark, ⚠ update_channel_bookmark, ⚠ delete_channel_bookmark
+- **Users & profiles**: get_me, get_user, get_user_by_username, get_user_by_email, get_users_by_ids, get_users_by_usernames, get_user_stats, get_user_cpa_values, list_cpa_fields, ⚠ update_user
+- **Status & presence**: get_user_status, get_users_statuses, get_user_custom_status, ⚠ set_status, ⚠ set_dnd
+- **Teams & team members**: get_team_member, get_team_stats, get_user_teams, get_users_in_team, get_users_not_in_team, get_new_users_in_team, get_dm_common_teams, search_teams, search_users_in_team, ⚠ add_team_members, ⚠ remove_team_member, ⚠ update_team, ⚠ invite_users_to_team, ⚠ invite_users_to_team_and_channels
+- **Files & attachments**: get_file_info, get_post_files, get_file_link, search_files, ⚠ upload_file
+- **Integrations**: get_bot, list_bots, list_incoming_webhooks, list_outgoing_webhooks
+- **Groups**: get_group_info, list_groups, get_user_groups, get_channel_groups, get_team_groups, get_users_in_group_channels
+- **Roles & permissions**: get_role, get_channel_moderations, ⚠ update_channel_member_roles, ⚠ update_team_member_roles
+
 When the Channel Automation plugin is installed, the MCP server also exposes the following tools. They proxy requests to that plugin; execution follows the same MCP tool policies as other tools and each user's Mattermost permissions.
 
 - **list_automations**: List channel automations, filter them by channel, or retrieve a specific automation by ID

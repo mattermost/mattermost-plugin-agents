@@ -17,8 +17,8 @@ type GetChannelMemberArgs struct {
 	UserID    string `json:"user_id,omitempty" jsonschema:"The user; omit for your own membership,maxLength=26"`
 }
 
-// GetChannelMembersByIdsArgs represents arguments for the get_channel_members_by_ids tool.
-type GetChannelMembersByIdsArgs struct {
+// GetChannelMembersByIDsArgs represents arguments for the get_channel_members_by_ids tool.
+type GetChannelMembersByIDsArgs struct {
 	ChannelID string   `json:"channel_id" jsonschema:"The channel,minLength=26,maxLength=26"`
 	UserIDs   []string `json:"user_ids" jsonschema:"The user IDs whose membership records to fetch"`
 }
@@ -92,7 +92,7 @@ type UpdateChannelNotifyPropsArgs struct {
 
 const (
 	getChannelMemberDescription          = "Get your (or a given user's) membership in a channel: roles, mute, last-viewed. Parameters: channel_id (required), user_id (optional, defaults to you)."
-	getChannelMembersByIdsDescription    = "Get membership records for a specific set of users in a channel. Parameters: channel_id (required), user_ids (required list)."
+	getChannelMembersByIDsDescription    = "Get membership records for a specific set of users in a channel. Parameters: channel_id (required), user_ids (required list)."
 	getChannelMembersByStatusDescription = "Get a channel's members ordered by presence status (online first). Parameters: channel_id (required), page, per_page, exclude_bots."
 	getUserChannelMembershipsDescription = "Get a user's channel membership records within a team (roles per channel). Parameters: user_id (optional, defaults to you), team_id (required)."
 	getUsersNotInChannelDescription      = "Get team members who are not in a channel (candidates to add). Parameters: team_id (required), channel_id (required), page, per_page."
@@ -109,7 +109,7 @@ const (
 func (p *MattermostToolProvider) getChannelMemberTools() []MCPTool {
 	return []MCPTool{
 		{Name: "get_channel_member", Description: getChannelMemberDescription, Schema: NewJSONSchemaForAccessMode[GetChannelMemberArgs](string(p.accessMode)), Resolver: typed("get_channel_member", p.toolGetChannelMember)},
-		{Name: "get_channel_members_by_ids", Description: getChannelMembersByIdsDescription, Schema: NewJSONSchemaForAccessMode[GetChannelMembersByIdsArgs](string(p.accessMode)), Resolver: typed("get_channel_members_by_ids", p.toolGetChannelMembersByIds)},
+		{Name: "get_channel_members_by_ids", Description: getChannelMembersByIDsDescription, Schema: NewJSONSchemaForAccessMode[GetChannelMembersByIDsArgs](string(p.accessMode)), Resolver: typed("get_channel_members_by_ids", p.toolGetChannelMembersByIDs)},
 		{Name: "get_channel_members_by_status", Description: getChannelMembersByStatusDescription, Schema: NewJSONSchemaForAccessMode[GetChannelMembersByStatusArgs](string(p.accessMode)), Resolver: typed("get_channel_members_by_status", p.toolGetChannelMembersByStatus)},
 		{Name: "get_user_channel_memberships", Description: getUserChannelMembershipsDescription, Schema: NewJSONSchemaForAccessMode[GetUserChannelMembershipsArgs](string(p.accessMode)), Resolver: typed("get_user_channel_memberships", p.toolGetUserChannelMemberships)},
 		{Name: "get_users_not_in_channel", Description: getUsersNotInChannelDescription, Schema: NewJSONSchemaForAccessMode[GetUsersNotInChannelArgs](string(p.accessMode)), Resolver: typed("get_users_not_in_channel", p.toolGetUsersNotInChannel)},
@@ -154,8 +154,8 @@ func (p *MattermostToolProvider) toolGetChannelMember(mcpContext *MCPToolContext
 	return result.String(), nil
 }
 
-// toolGetChannelMembersByIds implements the get_channel_members_by_ids tool.
-func (p *MattermostToolProvider) toolGetChannelMembersByIds(mcpContext *MCPToolContext, args GetChannelMembersByIdsArgs) (string, error) {
+// toolGetChannelMembersByIDs implements the get_channel_members_by_ids tool.
+func (p *MattermostToolProvider) toolGetChannelMembersByIDs(mcpContext *MCPToolContext, args GetChannelMembersByIDsArgs) (string, error) {
 	if err := requireID("channel_id", args.ChannelID); err != nil {
 		return "", err
 	}

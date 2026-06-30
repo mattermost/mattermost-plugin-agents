@@ -29,7 +29,7 @@ func TestChannelMemberToolsValidation(t *testing.T) {
 			return provider.toolGetChannelMember(mcpCtx, GetChannelMemberArgs{ChannelID: "bad"})
 		}, "must be a valid ID"},
 		{"get_channel_members_by_ids empty", func() (string, error) {
-			return provider.toolGetChannelMembersByIds(mcpCtx, GetChannelMembersByIdsArgs{ChannelID: model.NewId()})
+			return provider.toolGetChannelMembersByIDs(mcpCtx, GetChannelMembersByIDsArgs{ChannelID: model.NewId()})
 		}, "cannot be empty"},
 		{"get_channel_members_by_status bad", func() (string, error) {
 			return provider.toolGetChannelMembersByStatus(mcpCtx, GetChannelMembersByStatusArgs{ChannelID: "bad"})
