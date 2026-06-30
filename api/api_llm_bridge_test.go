@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
@@ -558,7 +559,11 @@ func TestBridgeClientAgentCompletionStreamStructuredOutput(t *testing.T) {
 			require.Equal(t, tc.expected, text)
 
 			// The schema must have been forwarded to the provider regardless.
-			require.NotNil(t, fakeLLM.LastConfig.JSONOutputFormat)
+			schemaJSON, err := json.Marshal(jsonSchema)
+			require.NoError(t, err)
+			var expectedSchema jsonschema.Schema
+			require.NoError(t, json.Unmarshal(schemaJSON, &expectedSchema))
+			require.Equal(t, &expectedSchema, fakeLLM.LastConfig.JSONOutputFormat)
 		})
 	}
 }

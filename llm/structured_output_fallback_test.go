@@ -265,47 +265,64 @@ func TestStructuredOutputFallbackWrapperStreamingForwardsEventsAndErrors(t *test
 		return types, text.String(), streamErr
 	}
 
-	t.Run("forwards non-text events and strips final text", func(t *testing.T) {
-		wrapper := NewStructuredOutputFallbackWrapper(
-			&fakeLLMForFallback{streamEvents: []TextStreamEvent{
+	sentinel := errors.New("provider failure")
+
+	tests := []struct {
+		name              string
+		streamEvents      []TextStreamEvent
+		expectedText      string
+		expectedStreamErr error
+		assertEventOrder  func(t *testing.T, types []EventType)
+	}{
+		{
+			name: "forwards non-text events and strips final text",
+			streamEvents: []TextStreamEvent{
 				{Type: EventTypeReasoning, Value: "thinking"},
 				{Type: EventTypeText, Value: "```json\n"},
 				{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 1}},
 				{Type: EventTypeText, Value: `{"name": "test"}`},
 				{Type: EventTypeText, Value: "\n```"},
 				{Type: EventTypeEnd},
-			}},
-			false,
-		)
-
-		result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{}, withSchema)
-		require.NoError(t, err)
-
-		types, text, streamErr := collect(t, result)
-		require.NoError(t, streamErr)
-		assert.Equal(t, `{"name": "test"}`, text)
-		assert.Contains(t, types, EventTypeReasoning)
-		assert.Contains(t, types, EventTypeUsage)
-		// The single stripped text event must precede the end event.
-		assert.Equal(t, EventTypeText, types[len(types)-2])
-		assert.Equal(t, EventTypeEnd, types[len(types)-1])
-	})
-
-	t.Run("propagates mid-stream error and drops buffered text", func(t *testing.T) {
-		sentinel := errors.New("provider failure")
-		wrapper := NewStructuredOutputFallbackWrapper(
-			&fakeLLMForFallback{streamEvents: []TextStreamEvent{
+			},
+			expectedText: `{"name": "test"}`,
+			assertEventOrder: func(t *testing.T, types []EventType) {
+				assert.Contains(t, types, EventTypeReasoning)
+				assert.Contains(t, types, EventTypeUsage)
+				// The single stripped text event must precede the end event.
+				assert.Equal(t, EventTypeText, types[len(types)-2])
+				assert.Equal(t, EventTypeEnd, types[len(types)-1])
+			},
+		},
+		{
+			name: "propagates mid-stream error and drops buffered text",
+			streamEvents: []TextStreamEvent{
 				{Type: EventTypeText, Value: "```json\n{\"name\":"},
 				{Type: EventTypeError, Value: sentinel},
-			}},
-			false,
-		)
+			},
+			expectedStreamErr: sentinel,
+		},
+	}
 
-		result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{}, withSchema)
-		require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrapper := NewStructuredOutputFallbackWrapper(
+				&fakeLLMForFallback{streamEvents: tt.streamEvents},
+				false,
+			)
 
-		_, text, streamErr := collect(t, result)
-		require.ErrorIs(t, streamErr, sentinel)
-		assert.Empty(t, text)
-	})
+			result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{}, withSchema)
+			require.NoError(t, err)
+
+			types, text, streamErr := collect(t, result)
+			if tt.expectedStreamErr != nil {
+				require.ErrorIs(t, streamErr, tt.expectedStreamErr)
+			} else {
+				require.NoError(t, streamErr)
+			}
+			assert.Equal(t, tt.expectedText, text)
+			if tt.assertEventOrder != nil {
+				tt.assertEventOrder(t, types)
+			}
+		})
+	}
 }
