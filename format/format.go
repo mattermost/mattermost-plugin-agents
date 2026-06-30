@@ -471,6 +471,38 @@ func WriteCPAField(w *strings.Builder, entry CPAFieldEntry) {
 	w.WriteString("\n")
 }
 
+// TeamMemberEntry holds data for formatting a single team membership record.
+type TeamMemberEntry struct {
+	HeaderLabel string
+	Member      *model.TeamMember
+	Username    string // resolved, optional
+}
+
+// WriteTeamMember writes a team membership record (roles) to the builder.
+func WriteTeamMember(w *strings.Builder, entry TeamMemberEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	m := entry.Member
+	fmt.Fprintf(w, "Team ID: %s\n", m.TeamId)
+	fmt.Fprintf(w, "User ID: %s\n", m.UserId)
+	if entry.Username != "" {
+		fmt.Fprintf(w, "Username: %s\n", entry.Username)
+	}
+	if role := MemberRole(m.SchemeAdmin, m.SchemeGuest, m.SchemeUser); role != "" {
+		fmt.Fprintf(w, "Role: %s\n", role)
+	}
+	w.WriteString("\n")
+}
+
+// WriteTeamStats writes a team's member statistics to the builder.
+func WriteTeamStats(w *strings.Builder, stats *model.TeamStats) {
+	w.WriteString("Team Statistics:\n")
+	fmt.Fprintf(w, "Team ID: %s\n", stats.TeamId)
+	fmt.Fprintf(w, "Total members: %d\n", stats.TotalMemberCount)
+	fmt.Fprintf(w, "Active members: %d\n", stats.ActiveMemberCount)
+}
+
 // BuildPostIndex creates a map from post ID to its 1-based display index.
 // Used to generate "(reply to Post N)" annotations.
 func BuildPostIndex(posts []*model.Post) map[string]int {
