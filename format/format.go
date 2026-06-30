@@ -172,6 +172,64 @@ func WritePost(w *strings.Builder, entry PostEntry) {
 	fmt.Fprintf(w, "Message: %s\n\n", PostBody(entry.Post))
 }
 
+// PostInfoEntry holds data for formatting a single post's metadata/context.
+type PostInfoEntry struct {
+	PostID   string
+	PostInfo *model.PostInfo
+}
+
+// WritePostInfo writes a post's channel/team context metadata to the builder.
+func WritePostInfo(w *strings.Builder, entry PostInfoEntry) {
+	w.WriteString("Post Information:\n")
+	fmt.Fprintf(w, "Post ID: %s\n", entry.PostID)
+	fmt.Fprintf(w, "Channel ID: %s\n", entry.PostInfo.ChannelId)
+	if entry.PostInfo.ChannelDisplayName != "" {
+		fmt.Fprintf(w, "Channel: %s\n", entry.PostInfo.ChannelDisplayName)
+	}
+	fmt.Fprintf(w, "Channel Type: %s\n", entry.PostInfo.ChannelType)
+	if entry.PostInfo.TeamId != "" {
+		if entry.PostInfo.TeamDisplayName != "" {
+			fmt.Fprintf(w, "Team: %s (ID: %s)\n", entry.PostInfo.TeamDisplayName, entry.PostInfo.TeamId)
+		} else {
+			fmt.Fprintf(w, "Team ID: %s\n", entry.PostInfo.TeamId)
+		}
+	}
+	fmt.Fprintf(w, "You are a member of this channel: %t\n", entry.PostInfo.HasJoinedChannel)
+	fmt.Fprintf(w, "You are a member of this team: %t\n", entry.PostInfo.HasJoinedTeam)
+	w.WriteString("\n")
+}
+
+// ScheduledPostEntry holds data for formatting a single scheduled post.
+type ScheduledPostEntry struct {
+	HeaderLabel   string // e.g. "Scheduled Post 1"; empty to omit
+	ScheduledPost *model.ScheduledPost
+	ChannelName   string // resolved channel display name, optional
+}
+
+// WriteScheduledPost writes a formatted scheduled post entry to the builder.
+func WriteScheduledPost(w *strings.Builder, entry ScheduledPostEntry) {
+	if entry.HeaderLabel != "" {
+		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
+	}
+	sp := entry.ScheduledPost
+	fmt.Fprintf(w, "ID: %s\n", sp.Id)
+	fmt.Fprintf(w, "Channel ID: %s\n", sp.ChannelId)
+	if entry.ChannelName != "" {
+		fmt.Fprintf(w, "Channel: %s\n", entry.ChannelName)
+	}
+	if sp.RootId != "" {
+		fmt.Fprintf(w, "Root ID: %s\n", sp.RootId)
+	}
+	if sp.ScheduledAt > 0 {
+		t := time.Unix(sp.ScheduledAt/1000, (sp.ScheduledAt%1000)*int64(time.Millisecond))
+		fmt.Fprintf(w, "Scheduled for: %s\n", t.UTC().Format(time.RFC3339))
+	}
+	if sp.ErrorCode != "" {
+		fmt.Fprintf(w, "Error: %s\n", sp.ErrorCode)
+	}
+	fmt.Fprintf(w, "Message: %s\n\n", sp.Message)
+}
+
 // BuildPostIndex creates a map from post ID to its 1-based display index.
 // Used to generate "(reply to Post N)" annotations.
 func BuildPostIndex(posts []*model.Post) map[string]int {
