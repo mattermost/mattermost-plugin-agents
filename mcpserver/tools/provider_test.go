@@ -5,6 +5,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
@@ -26,31 +27,6 @@ func (fakeToolAuthProvider) GetAuthenticatedMattermostClient(context.Context) (*
 	return model.NewAPIv4Client("https://mm.example.com"), nil
 }
 
-// testLogger is a simple no-op logger for testing
-type testLogger struct {
-	t *testing.T
-}
-
-func (l *testLogger) Debug(msg string, keyValuePairs ...any) {
-	// Could use l.t.Log if we wanted to see debug output during tests
-}
-
-func (l *testLogger) Info(msg string, keyValuePairs ...any) {
-	// Could use l.t.Log if we wanted to see info output during tests
-}
-
-func (l *testLogger) Warn(msg string, keyValuePairs ...any) {
-	// Could use l.t.Log if we wanted to see warnings during tests
-}
-
-func (l *testLogger) Error(msg string, keyValuePairs ...any) {
-	l.t.Logf("ERROR: %s %v", msg, keyValuePairs)
-}
-
-func (l *testLogger) Flush() error {
-	return nil
-}
-
 func TestCreateMCPToolContextReadsBeforeHookResolver(t *testing.T) {
 	expectedResolver := auth.BeforeHookResolver(func(_, _, _ string) (string, error) {
 		return "/plugins/com.example.plugin/hooks/before", nil
@@ -70,6 +46,18 @@ func TestCreateMCPToolContextReadsBeforeHookResolver(t *testing.T) {
 	got, err := mcpCtx.BeforeHookResolver("user-1", "search_posts", "beforeHook:secret")
 	require.NoError(t, err)
 	require.Equal(t, "/plugins/com.example.plugin/hooks/before", got)
+}
+
+// TestTypedWrapperDecodeError verifies the typed wrapper owns argument decoding
+// and surfaces the standard "invalid arguments" error for the tool when the
+// argument getter fails, before the underlying resolver runs.
+func TestTypedWrapperDecodeError(t *testing.T) {
+	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
+
+	r := typed("delete_automation", provider.toolDeleteAutomation)
+	_, err := r(&MCPToolContext{}, func(any) error { return fmt.Errorf("bad json") })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get arguments for tool delete_automation")
 }
 
 // TestSchemaArgs is a test struct for schema conversion testing
@@ -275,4 +263,95 @@ func TestValidateAccessRestrictions_AttackScenario(t *testing.T) {
 
 	err = validateAccessRestrictions([]byte(cleanRemoteRequest), &target, "remote")
 	require.NoError(t, err, "Remote access mode should allow requests without restricted fields")
+}
+
+// toolNames extracts the names from a slice of *mcp.Tool.
+func toolNames(tools []*mcp.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+// newToolsListHandler returns a fake "next" MethodHandler that responds to any
+// method with a ListToolsResult carrying tools named by the given names.
+func newToolsListHandler(names ...string) mcp.MethodHandler {
+	return func(_ context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		tools := make([]*mcp.Tool, 0, len(names))
+		for _, name := range names {
+			tools = append(tools, &mcp.Tool{Name: name})
+		}
+		return &mcp.ListToolsResult{Tools: tools}, nil
+	}
+}
+
+func alwaysTrue() bool  { return true }
+func alwaysFalse() bool { return false }
+
+func TestToolAvailabilityMiddleware(t *testing.T) {
+	t.Run("drops unavailable tool, keeps the rest", func(t *testing.T) {
+		availability := map[string]func() bool{"b": alwaysFalse}
+		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("a", "b", "c"))
+
+		// req is unread by the middleware; mcp.Request is an interface, so nil compiles.
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"a", "c"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("keeps available tool", func(t *testing.T) {
+		availability := map[string]func() bool{"a": alwaysTrue}
+		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("a"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.Equal(t, []string{"a"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("tools not in the availability map are always kept", func(t *testing.T) {
+		availability := map[string]func() bool{"b": alwaysFalse}
+		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("a", "c"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"a", "c"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("non-tools/list method is passed through untouched", func(t *testing.T) {
+		availability := map[string]func() bool{"b": alwaysFalse}
+		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("a", "b", "c"))
+
+		// A different method: the middleware must NOT filter "b" out.
+		result, err := handler(context.Background(), "tools/call", nil)
+		require.NoError(t, err)
+
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"a", "b", "c"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("shared predicate is evaluated once per call (memoization)", func(t *testing.T) {
+		calls := 0
+		pred := func() bool {
+			calls++
+			return true
+		}
+		availability := map[string]func() bool{"x": pred, "y": pred}
+		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("x", "y"))
+
+		_, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, calls, "the shared predicate must be probed once, not once per tool")
+	})
 }

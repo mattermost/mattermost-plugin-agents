@@ -5,14 +5,12 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/files"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -34,30 +32,24 @@ func (f *fakeFileContentService) GetContent(_ context.Context, userID, fileID st
 	return f.content, f.err
 }
 
-func argsGetterFor(t *testing.T, v any) llm.ToolArgumentGetter {
-	t.Helper()
-	b, err := json.Marshal(v)
-	require.NoError(t, err)
-	return func(target any) error { return json.Unmarshal(b, target) }
-}
-
 func TestToolReadFile(t *testing.T) {
 	validID := model.NewId()
 
 	tests := []struct {
-		name         string
-		fileID       string
-		service      FileContentService
-		wantErr      bool
-		wantResult   string   // exact match when set
-		wantContains []string // substring matches
+		name            string
+		fileID          string
+		service         FileContentService
+		wantErr         bool
+		wantResult      string   // exact match when set
+		wantContains    []string // substring matches
+		wantErrContains string   // substring match against err on error paths
 	}{
 		{
-			name:       "invalid file id",
-			fileID:     "too-short",
-			service:    &fakeFileContentService{},
-			wantErr:    true,
-			wantResult: "invalid file_id format",
+			name:            "invalid file id",
+			fileID:          "too-short",
+			service:         &fakeFileContentService{},
+			wantErr:         true,
+			wantErrContains: "file_id must be a valid ID",
 		},
 		{
 			name:       "service unavailable",
@@ -116,12 +108,15 @@ func TestToolReadFile(t *testing.T) {
 			p := &MattermostToolProvider{fileContentService: tt.service}
 			ctx := &MCPToolContext{Ctx: context.Background(), UserID: model.NewId()}
 
-			result, err := p.toolReadFile(ctx, argsGetterFor(t, ReadFileArgs{FileID: tt.fileID}))
+			result, err := p.toolReadFile(ctx, ReadFileArgs{FileID: tt.fileID})
 
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
+			}
+			if tt.wantErrContains != "" {
+				assert.Contains(t, err.Error(), tt.wantErrContains)
 			}
 			if tt.wantResult != "" {
 				assert.Equal(t, tt.wantResult, result)
@@ -144,7 +139,7 @@ func TestToolReadFilePassesRequestingUser(t *testing.T) {
 	fileID := model.NewId()
 	ctx := &MCPToolContext{Ctx: context.Background(), UserID: userID}
 
-	_, err := p.toolReadFile(ctx, argsGetterFor(t, ReadFileArgs{FileID: fileID, Offset: 12, Limit: 34}))
+	_, err := p.toolReadFile(ctx, ReadFileArgs{FileID: fileID, Offset: 12, Limit: 34})
 	require.NoError(t, err)
 
 	assert.Equal(t, userID, fake.gotUserID)

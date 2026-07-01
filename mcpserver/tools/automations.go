@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -179,8 +178,8 @@ func doAutomationRequest(ctx context.Context, client *model.Client4, method, req
 
 // ListAutomationsArgs represents arguments for the list_automations tool.
 type ListAutomationsArgs struct {
-	AutomationID string `json:"automation_id,omitempty" jsonschema:"The ID of a specific automation to retrieve"`
-	ChannelID    string `json:"channel_id,omitempty" jsonschema:"Filter automations by trigger channel ID"`
+	AutomationID string `json:"automation_id,omitempty" jsonschema:"The ID of a specific automation to retrieve,maxLength=26"`
+	ChannelID    string `json:"channel_id,omitempty" jsonschema:"Filter automations by trigger channel ID,maxLength=26"`
 }
 
 // CreateAutomationArgs represents arguments for the create_automation tool.
@@ -193,7 +192,7 @@ type CreateAutomationArgs struct {
 
 // UpdateAutomationArgs represents arguments for the update_automation tool.
 type UpdateAutomationArgs struct {
-	AutomationID string             `json:"automation_id" jsonschema:"The ID of the automation to update,minLength=1"`
+	AutomationID string             `json:"automation_id" jsonschema:"The ID of the automation to update,minLength=26,maxLength=26"`
 	Name         string             `json:"name" jsonschema:"The name of the automation,minLength=1"`
 	Enabled      bool               `json:"enabled" jsonschema:"Whether the automation is enabled"`
 	Trigger      AutomationTrigger  `json:"trigger" jsonschema:"Set exactly one trigger type"`
@@ -202,7 +201,7 @@ type UpdateAutomationArgs struct {
 
 // DeleteAutomationArgs represents arguments for the delete_automation tool.
 type DeleteAutomationArgs struct {
-	AutomationID string `json:"automation_id" jsonschema:"The ID of the automation to delete,minLength=1"`
+	AutomationID string `json:"automation_id" jsonschema:"The ID of the automation to delete,minLength=26,maxLength=26"`
 }
 
 // automationInstructionsAPIResponse matches GET .../automation-instructions on the channel-automation plugin.
@@ -233,20 +232,6 @@ func (p *MattermostToolProvider) fetchAutomationInstructions(ctx context.Context
 	return out, nil
 }
 
-// automationToolNames lists all automation tool names for filtering.
-var automationToolNames = map[string]bool{
-	"list_automations":            true,
-	"get_automation_instructions": true,
-	"create_automation":           true,
-	"update_automation":           true,
-	"delete_automation":           true,
-}
-
-// IsAutomationTool returns true if the given tool name is an automation tool.
-func IsAutomationTool(name string) bool {
-	return automationToolNames[name]
-}
-
 // getAutomationTools returns all automation-related tools.
 func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
 	return []MCPTool{
@@ -255,20 +240,23 @@ func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
 			Description: `List or get channel automations (trigger-action workflows).
 Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
 Returns the full JSON for each automation including trigger configuration and action pipeline.`,
-			Schema:   llm.NewJSONSchemaFromStruct[ListAutomationsArgs](),
-			Resolver: p.toolListAutomations,
+			Schema:    NewJSONSchemaForAccessMode[ListAutomationsArgs](string(p.accessMode)),
+			Resolver:  typed("list_automations", p.toolListAutomations),
+			Available: p.isAutomationPluginInstalled,
 		},
 		{
 			Name:        "get_automation_instructions",
 			Description: "Returns detailed documentation for creating and updating channel automations: triggers, actions, template syntax, allowed_tools, and required user-confirmation workflow. Call this before create_automation or update_automation.",
 			Schema:      nil,
-			Resolver:    p.toolGetAutomationInstructions,
+			Resolver:    typed("get_automation_instructions", p.toolGetAutomationInstructions),
+			Available:   p.isAutomationPluginInstalled,
 		},
 		{
 			Name:        "create_automation",
 			Description: createAutomationToolDescription,
-			Schema:      llm.NewJSONSchemaFromStruct[CreateAutomationArgs](),
-			Resolver:    p.toolCreateAutomation,
+			Schema:      NewJSONSchemaForAccessMode[CreateAutomationArgs](string(p.accessMode)),
+			Resolver:    typed("create_automation", p.toolCreateAutomation),
+			Available:   p.isAutomationPluginInstalled,
 		},
 		{
 			Name: "update_automation",
@@ -277,28 +265,23 @@ omit will be cleared. Always call list_automations first to fetch the current JS
 only what needs to change and pass the full updated automation back. Call get_automation_instructions
 for trigger/action format details.
 IMPORTANT: Show the user what will change and get their confirmation first.`,
-			Schema:   llm.NewJSONSchemaFromStruct[UpdateAutomationArgs](),
-			Resolver: p.toolUpdateAutomation,
+			Schema:    NewJSONSchemaForAccessMode[UpdateAutomationArgs](string(p.accessMode)),
+			Resolver:  typed("update_automation", p.toolUpdateAutomation),
+			Available: p.isAutomationPluginInstalled,
 		},
 		{
 			Name:        "delete_automation",
 			Description: "Delete a channel automation by ID. This is permanent and cannot be undone.",
-			Schema:      llm.NewJSONSchemaFromStruct[DeleteAutomationArgs](),
-			Resolver:    p.toolDeleteAutomation,
+			Schema:      NewJSONSchemaForAccessMode[DeleteAutomationArgs](string(p.accessMode)),
+			Resolver:    typed("delete_automation", p.toolDeleteAutomation),
+			Available:   p.isAutomationPluginInstalled,
 		},
 	}
 }
 
 // --- Resolvers ---
 
-func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var noArgs struct{}
-	if err := argsGetter(&noArgs); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool get_automation_instructions: %w", err)
-	}
-	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
-	}
+func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPToolContext, _ struct{}) (string, error) {
 	payload, err := p.fetchAutomationInstructions(mcpContext.Ctx, mcpContext.Client)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch automation instructions from Channel Automation plugin (upgrade plugin or check connectivity): %w", err)
@@ -306,21 +289,13 @@ func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPTo
 	return payload.Instructions, nil
 }
 
-func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args ListAutomationsArgs
-	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool list_automations: %w", err)
-	}
-
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
-	ctx := context.Background()
+func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext, args ListAutomationsArgs) (string, error) {
+	ctx := mcpContext.Ctx
 
 	// If a specific automation ID was requested, fetch just that one.
 	if args.AutomationID != "" {
-		if !model.IsValidId(args.AutomationID) {
-			return "invalid automation_id", fmt.Errorf("invalid automation_id")
+		if err := requireID("automation_id", args.AutomationID); err != nil {
+			return "", err
 		}
 		return p.getAutomationByID(ctx, mcpContext, args.AutomationID)
 	}
@@ -333,13 +308,13 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, listURL, "")
 	if err != nil {
-		return handleAutomationHTTPError(resp, err, "")
+		return "", handleAutomationHTTPError(resp, err, "")
 	}
 	defer resp.Body.Close()
 
 	var automations []Automation
 	if err := json.NewDecoder(resp.Body).Decode(&automations); err != nil {
-		return "failed to parse automation list", fmt.Errorf("failed to decode automations response: %w", err)
+		return "", fmt.Errorf("failed to decode automations response: %w", err)
 	}
 
 	if len(automations) == 0 {
@@ -352,32 +327,24 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpContext *MCPToolContext, id string) (string, error) {
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, p.automationAPIURL("/automations/"+id), "")
 	if err != nil {
-		return handleAutomationHTTPError(resp, err, id)
+		return "", handleAutomationHTTPError(resp, err, id)
 	}
 	defer resp.Body.Close()
 
 	var automation Automation
 	if err := json.NewDecoder(resp.Body).Decode(&automation); err != nil {
-		return "failed to parse automation", fmt.Errorf("failed to decode automation response: %w", err)
+		return "", fmt.Errorf("failed to decode automation response: %w", err)
 	}
 
 	return formatAutomationJSON(automation)
 }
 
-func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CreateAutomationArgs
-	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_automation: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext, args CreateAutomationArgs) (string, error) {
 	if args.Name == "" {
-		return "name is required", fmt.Errorf("name cannot be empty")
+		return "", fmt.Errorf("name cannot be empty")
 	}
 
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	automation := Automation{
 		Name:    args.Name,
@@ -388,7 +355,7 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 
 	body, err := json.Marshal(automation)
 	if err != nil {
-		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
+		return "", fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPost, p.automationAPIURL("/automations"), string(body))
@@ -401,36 +368,28 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 			"status", statusCode,
 			"error", err.Error(),
 		)
-		return handleAutomationHTTPError(resp, err, "")
+		return "", handleAutomationHTTPError(resp, err, "")
 	}
 	defer resp.Body.Close()
 
 	var created Automation
 	if decodeErr := json.NewDecoder(resp.Body).Decode(&created); decodeErr != nil {
-		return "failed to parse created automation", fmt.Errorf("failed to decode create response: %w", decodeErr)
+		return "", fmt.Errorf("failed to decode create response: %w", decodeErr)
 	}
 
 	jsonStr, err := marshalAutomationJSON(created)
 	if err != nil {
-		return "failed to encode created automation", err
+		return "", err
 	}
 	return fmt.Sprintf("Successfully created automation '%s' (ID: %s).\n\n%s", created.Name, created.ID, jsonStr), nil
 }
 
-func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args UpdateAutomationArgs
-	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool update_automation: %w", err)
+func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext, args UpdateAutomationArgs) (string, error) {
+	if err := requireID("automation_id", args.AutomationID); err != nil {
+		return "", err
 	}
 
-	if !model.IsValidId(args.AutomationID) {
-		return "invalid automation_id", fmt.Errorf("invalid automation_id")
-	}
-
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	automation := Automation{
 		ID:      args.AutomationID,
@@ -442,7 +401,7 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 
 	body, err := json.Marshal(automation)
 	if err != nil {
-		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
+		return "", fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPut, p.automationAPIURL("/automations/"+args.AutomationID), string(body))
@@ -455,40 +414,32 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 			"status", statusCode,
 			"error", err.Error(),
 		)
-		return handleAutomationHTTPError(resp, err, args.AutomationID)
+		return "", handleAutomationHTTPError(resp, err, args.AutomationID)
 	}
 	defer resp.Body.Close()
 
 	var updated Automation
 	if decodeErr := json.NewDecoder(resp.Body).Decode(&updated); decodeErr != nil {
-		return "failed to parse updated automation", fmt.Errorf("failed to decode update response: %w", decodeErr)
+		return "", fmt.Errorf("failed to decode update response: %w", decodeErr)
 	}
 
 	jsonStr, err := marshalAutomationJSON(updated)
 	if err != nil {
-		return "failed to encode updated automation", err
+		return "", err
 	}
 	return fmt.Sprintf("Successfully updated automation '%s' (ID: %s).\n\n%s", updated.Name, updated.ID, jsonStr), nil
 }
 
-func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args DeleteAutomationArgs
-	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool delete_automation: %w", err)
+func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext, args DeleteAutomationArgs) (string, error) {
+	if err := requireID("automation_id", args.AutomationID); err != nil {
+		return "", err
 	}
 
-	if !model.IsValidId(args.AutomationID) {
-		return "invalid automation_id", fmt.Errorf("invalid automation_id")
-	}
-
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/automations/"+args.AutomationID), "")
 	if err != nil {
-		return handleAutomationHTTPError(resp, err, args.AutomationID)
+		return "", handleAutomationHTTPError(resp, err, args.AutomationID)
 	}
 	defer resp.Body.Close()
 
@@ -515,9 +466,9 @@ func triggerChannelID(t AutomationTrigger) string {
 // The Mattermost client's DoAPIRequestWithHeaders consumes the response body for non-2xx
 // status codes, so resp.Body is typically empty. The original body content is available
 // in the err parameter via AppErrorFromJSON.
-func handleAutomationHTTPError(resp *http.Response, err error, automationID string) (string, error) {
+func handleAutomationHTTPError(resp *http.Response, err error, automationID string) error {
 	if resp == nil {
-		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation plugin request failed: %w", err)
+		return fmt.Errorf("the Channel Automation plugin is not installed or not reachable: %w", err)
 	}
 
 	// Try reading the body, but it's usually empty because the Mattermost client
@@ -537,16 +488,16 @@ func handleAutomationHTTPError(resp *http.Response, err error, automationID stri
 		if detail == "" {
 			detail = "invalid request"
 		}
-		return fmt.Sprintf("Bad request: %s", detail), fmt.Errorf("automation API returned 400: %s", detail)
+		return fmt.Errorf("bad request: %s", detail)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return "You don't have permission to manage automations for this channel.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, detail)
+		return fmt.Errorf("you don't have permission to manage automations for this channel")
 	case http.StatusNotFound:
 		if automationID != "" {
-			return fmt.Sprintf("Automation not found with ID '%s'.", automationID), fmt.Errorf("automation API returned 404 for ID %s", automationID)
+			return fmt.Errorf("automation not found with ID %q", automationID)
 		}
-		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation API returned 404: %s", detail)
+		return fmt.Errorf("the Channel Automation plugin is not installed or not reachable")
 	default:
-		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, detail)
+		return fmt.Errorf("automation API returned status %d: %s", resp.StatusCode, detail)
 	}
 }
 
@@ -581,7 +532,7 @@ func marshalAutomationJSON(a Automation) (string, error) {
 func formatAutomationJSON(a Automation) (string, error) {
 	jsonStr, err := marshalAutomationJSON(a)
 	if err != nil {
-		return "failed to encode automation", err
+		return "", err
 	}
 	return fmt.Sprintf("Automation '%s' (ID: %s):\n\n%s", a.Name, a.ID, jsonStr), nil
 }
@@ -594,7 +545,7 @@ func formatAutomationsJSON(automations []Automation) (string, error) {
 	for i, a := range automations {
 		jsonStr, err := marshalAutomationJSON(a)
 		if err != nil {
-			return "failed to encode automation", err
+			return "", err
 		}
 		result.WriteString(fmt.Sprintf("%d. %s (ID: %s)\n%s\n\n", i+1, a.Name, a.ID, jsonStr))
 	}

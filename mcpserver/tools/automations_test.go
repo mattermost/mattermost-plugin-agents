@@ -156,20 +156,6 @@ func newTestAutomationServer(t *testing.T, automations []Automation) *httptest.S
 	return httptest.NewServer(mux)
 }
 
-func newTestProvider(t *testing.T, serverURL string) *MattermostToolProvider {
-	t.Helper()
-	return &MattermostToolProvider{
-		logger:      &testLogger{t: t},
-		mmServerURL: serverURL,
-	}
-}
-
-func newTestClient(serverURL string) *model.Client4 {
-	client := model.NewAPIv4Client(serverURL)
-	client.SetToken("test-token")
-	return client
-}
-
 func TestAutomationListAutomations(t *testing.T) {
 	id1 := model.NewId()
 	id2 := model.NewId()
@@ -203,14 +189,10 @@ func TestAutomationListAutomations(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("list all", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
-
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		result, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{})
 		require.NoError(t, err)
 		assert.Contains(t, result, "Welcome Bot")
 		assert.Contains(t, result, "Bug Triage")
@@ -221,11 +203,7 @@ func TestAutomationListAutomations(t *testing.T) {
 	})
 
 	t.Run("get by id", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id":%q}`, id1)), target)
-		}
-
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		result, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{AutomationID: id1})
 		require.NoError(t, err)
 		assert.Contains(t, result, "Welcome Bot")
 		assert.NotContains(t, result, "Bug Triage")
@@ -235,11 +213,7 @@ func TestAutomationListAutomations(t *testing.T) {
 	})
 
 	t.Run("filter by channel_id", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, chID2)), target)
-		}
-
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		result, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{ChannelID: chID2})
 		require.NoError(t, err)
 		assert.Contains(t, result, "Bug Triage")
 		assert.NotContains(t, result, "Welcome Bot")
@@ -247,23 +221,15 @@ func TestAutomationListAutomations(t *testing.T) {
 
 	t.Run("get by id not found", func(t *testing.T) {
 		missingID := model.NewId()
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id":%q}`, missingID)), target)
-		}
-
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{AutomationID: missingID})
 		require.Error(t, err)
-		assert.Contains(t, result, "Automation not found")
+		assert.Contains(t, err.Error(), "automation not found")
 	})
 
 	t.Run("get by invalid id", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{"automation_id":"bad-id"}`), target)
-		}
-
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{AutomationID: "bad-id"})
 		require.Error(t, err)
-		assert.Equal(t, "invalid automation_id", result)
+		assert.Contains(t, err.Error(), "automation_id must be a valid ID")
 	})
 }
 
@@ -277,11 +243,7 @@ func TestGetAutomationInstructions(t *testing.T) {
 		Ctx:    context.Background(),
 		Client: client,
 	}
-	argsGetter := func(target any) error {
-		return json.Unmarshal([]byte(`{}`), target)
-	}
-
-	result, err := provider.toolGetAutomationInstructions(mcpCtx, argsGetter)
+	result, err := provider.toolGetAutomationInstructions(mcpCtx, struct{}{})
 	require.NoError(t, err)
 	assert.Contains(t, result, "TRIGGERS:")
 	assert.Contains(t, result, "ACTION SELECTION:")
@@ -293,19 +255,23 @@ func TestAutomationCreate(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("create with message_posted trigger", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"name": "Test Automation",
-				"enabled": true,
-				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "include_thread_replies": true}},
-				"actions": [{"id": "prompt", "ai_prompt": {"prompt": "Hello!", "provider_type": "agent", "provider_id": "bot1", "allowed_tools": ["search_posts"], "guardrails": {"channel_ids": ["abcdefghijklmnopqrstuvwxyz"]}}}]
-			}`), target)
+		args := CreateAutomationArgs{
+			Name:    "Test Automation",
+			Enabled: true,
+			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "abcdefghijklmnopqrstuvwxyz", IncludeThreadReplies: true}},
+			Actions: []AutomationAction{{ID: "prompt", AIPrompt: &AIPromptActionConfig{
+				Prompt:       "Hello!",
+				ProviderType: "agent",
+				ProviderID:   "bot1",
+				AllowedTools: []string{"search_posts"},
+				Guardrails:   &AutomationGuardrails{ChannelIDs: []string{"abcdefghijklmnopqrstuvwxyz"}},
+			}}},
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		result, err := provider.toolCreateAutomation(mcpCtx, args)
 		require.NoError(t, err)
 		assert.Contains(t, result, "Successfully created automation")
 		assert.Contains(t, result, "Test Automation")
@@ -316,42 +282,39 @@ func TestAutomationCreate(t *testing.T) {
 	})
 
 	t.Run("create missing name", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"name": "",
-				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}}
-			}`), target)
+		args := CreateAutomationArgs{
+			Name:    "",
+			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "abcdefghijklmnopqrstuvwxyz"}},
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolCreateAutomation(mcpCtx, args)
 		require.Error(t, err)
-		assert.Equal(t, "name is required", result)
+		assert.Contains(t, err.Error(), "name cannot be empty")
 	})
 
 	t.Run("create missing trigger", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"name": "Test",
-				"trigger": {}
-			}`), target)
+		args := CreateAutomationArgs{
+			Name:    "Test",
+			Trigger: AutomationTrigger{},
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolCreateAutomation(mcpCtx, args)
 		require.Error(t, err)
-		assert.Contains(t, result, "trigger is required")
+		assert.Contains(t, err.Error(), "trigger is required")
 	})
 
 	t.Run("create multiple triggers", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"name": "Test",
-				"trigger": {"message_posted": {"channel_id": "ch1"}, "schedule": {"channel_id": "ch1", "interval": "daily"}}
-			}`), target)
+		args := CreateAutomationArgs{
+			Name: "Test",
+			Trigger: AutomationTrigger{
+				MessagePosted: &MessagePostedConfig{ChannelID: "ch1"},
+				Schedule:      &ScheduleConfig{ChannelID: "ch1", Interval: "daily"},
+			},
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolCreateAutomation(mcpCtx, args)
 		require.Error(t, err)
-		assert.Contains(t, result, "exactly one type set")
+		assert.Contains(t, err.Error(), "exactly one type set")
 	})
 }
 
@@ -367,20 +330,24 @@ func TestAutomationUpdate(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("update success", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(fmt.Sprintf(`{
-				"automation_id": %q,
-				"name": "Updated Name",
-				"enabled": false,
-				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "include_thread_replies": true}},
-				"actions": [{"id": "prompt", "ai_prompt": {"prompt": "Hello!", "provider_type": "agent", "provider_id": "bot1", "allowed_tools": ["search_posts"], "guardrails": {"channel_ids": [%q]}}}]
-			}`, id, chID)), target)
+		args := UpdateAutomationArgs{
+			AutomationID: id,
+			Name:         "Updated Name",
+			Enabled:      false,
+			Trigger:      AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "abcdefghijklmnopqrstuvwxyz", IncludeThreadReplies: true}},
+			Actions: []AutomationAction{{ID: "prompt", AIPrompt: &AIPromptActionConfig{
+				Prompt:       "Hello!",
+				ProviderType: "agent",
+				ProviderID:   "bot1",
+				AllowedTools: []string{"search_posts"},
+				Guardrails:   &AutomationGuardrails{ChannelIDs: []string{chID}},
+			}}},
 		}
 
-		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
+		result, err := provider.toolUpdateAutomation(mcpCtx, args)
 		require.NoError(t, err)
 		assert.Contains(t, result, "Successfully updated automation")
 		assert.Contains(t, result, "Updated Name")
@@ -391,27 +358,21 @@ func TestAutomationUpdate(t *testing.T) {
 
 	t.Run("update not found", func(t *testing.T) {
 		missingID := model.NewId()
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(fmt.Sprintf(`{
-				"automation_id": %q,
-				"name": "X",
-				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}}
-			}`, missingID)), target)
+		args := UpdateAutomationArgs{
+			AutomationID: missingID,
+			Name:         "X",
+			Trigger:      AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "abcdefghijklmnopqrstuvwxyz"}},
 		}
 
-		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolUpdateAutomation(mcpCtx, args)
 		require.Error(t, err)
-		assert.Contains(t, result, "Automation not found")
+		assert.Contains(t, err.Error(), "automation not found")
 	})
 
 	t.Run("update invalid automation_id", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{"name": "X"}`), target)
-		}
-
-		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolUpdateAutomation(mcpCtx, UpdateAutomationArgs{Name: "X"})
 		require.Error(t, err)
-		assert.Equal(t, "invalid automation_id", result)
+		assert.Contains(t, err.Error(), "automation_id must be a valid ID")
 	})
 }
 
@@ -426,14 +387,10 @@ func TestAutomationDelete(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("delete success", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id": %q}`, id)), target)
-		}
-
-		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
+		result, err := provider.toolDeleteAutomation(mcpCtx, DeleteAutomationArgs{AutomationID: id})
 		require.NoError(t, err)
 		assert.Contains(t, result, "Successfully deleted automation")
 		assert.Contains(t, result, id)
@@ -441,23 +398,15 @@ func TestAutomationDelete(t *testing.T) {
 
 	t.Run("delete not found", func(t *testing.T) {
 		missingID := model.NewId()
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id": %q}`, missingID)), target)
-		}
-
-		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolDeleteAutomation(mcpCtx, DeleteAutomationArgs{AutomationID: missingID})
 		require.Error(t, err)
-		assert.Contains(t, result, "Automation not found")
+		assert.Contains(t, err.Error(), "automation not found")
 	})
 
 	t.Run("delete invalid automation_id", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
-
-		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolDeleteAutomation(mcpCtx, DeleteAutomationArgs{})
 		require.Error(t, err)
-		assert.Equal(t, "invalid automation_id", result)
+		assert.Contains(t, err.Error(), "automation_id must be a valid ID")
 	})
 }
 
@@ -475,43 +424,22 @@ func TestAutomationErrorHandling(t *testing.T) {
 
 		provider := newTestProvider(t, ts.URL)
 		client := newTestClient(ts.URL)
-		mcpCtx := &MCPToolContext{Client: client}
+		mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
-
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{})
 		require.Error(t, err)
-		assert.Contains(t, result, "permission")
+		assert.Contains(t, err.Error(), "permission")
 	})
 
 	t.Run("connection error", func(t *testing.T) {
 		// Use an unreachable URL
 		provider := newTestProvider(t, "http://127.0.0.1:1")
 		client := newTestClient("http://127.0.0.1:1")
-		mcpCtx := &MCPToolContext{Client: client}
+		mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
-
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, ListAutomationsArgs{})
 		require.Error(t, err)
-		assert.Contains(t, result, "not installed or not reachable")
-	})
-
-	t.Run("nil client", func(t *testing.T) {
-		provider := newTestProvider(t, "http://localhost:8065")
-		mcpCtx := &MCPToolContext{Client: nil}
-
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
-
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
-		require.Error(t, err)
-		assert.Equal(t, "client not available", result)
+		assert.Contains(t, err.Error(), "not installed or not reachable")
 	})
 }
 
@@ -563,31 +491,31 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 			name:           "400 bad request with body",
 			statusCode:     http.StatusBadRequest,
 			body:           "invalid trigger configuration",
-			expectedResult: "Bad request: invalid trigger configuration",
+			expectedResult: "bad request: invalid trigger configuration",
 		},
 		{
 			name:           "400 bad request empty body falls back to error",
 			statusCode:     http.StatusBadRequest,
 			body:           "",
-			expectedResult: "Bad request: test error",
+			expectedResult: "bad request: test error",
 		},
 		{
 			name:           "401 unauthorized",
 			statusCode:     http.StatusUnauthorized,
 			automationID:   "",
-			expectedResult: "You don't have permission to manage automations for this channel",
+			expectedResult: "you don't have permission to manage automations for this channel",
 		},
 		{
 			name:           "403 forbidden",
 			statusCode:     http.StatusForbidden,
 			automationID:   "",
-			expectedResult: "You don't have permission to manage automations for this channel",
+			expectedResult: "you don't have permission to manage automations for this channel",
 		},
 		{
 			name:           "404 with automation id",
 			statusCode:     http.StatusNotFound,
 			automationID:   "abc123",
-			expectedResult: "Automation not found with ID 'abc123'",
+			expectedResult: `automation not found with ID "abc123"`,
 		},
 		{
 			name:           "404 without automation id",
@@ -599,7 +527,7 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 			name:           "500 server error",
 			statusCode:     http.StatusInternalServerError,
 			automationID:   "",
-			expectedResult: "not installed or not reachable",
+			expectedResult: "automation API returned status 500",
 		},
 	}
 
@@ -616,16 +544,16 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 				Body:       respBody,
 			}
 
-			result, err := handleAutomationHTTPError(resp, fmt.Errorf("test error"), tt.automationID)
+			err := handleAutomationHTTPError(resp, fmt.Errorf("test error"), tt.automationID)
 			require.Error(t, err)
-			assert.Contains(t, result, tt.expectedResult)
+			assert.Contains(t, err.Error(), tt.expectedResult)
 		})
 	}
 
 	t.Run("nil response (connection error)", func(t *testing.T) {
-		result, err := handleAutomationHTTPError(nil, fmt.Errorf("connection refused"), "")
+		err := handleAutomationHTTPError(nil, fmt.Errorf("connection refused"), "")
 		require.Error(t, err)
-		assert.Contains(t, result, "not installed or not reachable")
+		assert.Contains(t, err.Error(), "not installed or not reachable")
 	})
 
 	t.Run("400 with nil error and empty body", func(t *testing.T) {
@@ -633,9 +561,9 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 			StatusCode: http.StatusBadRequest,
 			Body:       http.NoBody,
 		}
-		result, err := handleAutomationHTTPError(resp, nil, "")
+		err := handleAutomationHTTPError(resp, nil, "")
 		require.Error(t, err)
-		assert.Contains(t, result, "Bad request: invalid request")
+		assert.Contains(t, err.Error(), "bad request: invalid request")
 	})
 }
 

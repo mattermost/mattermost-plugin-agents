@@ -8,14 +8,13 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // ReadPostArgs represents arguments for the read_post tool
 type ReadPostArgs struct {
 	PostID        string `json:"post_id" jsonschema:"The ID of the post to read,minLength=26,maxLength=26"`
-	IncludeThread bool   `json:"include_thread,omitempty" jsonschema:"Whether to include the entire thread (default: true)"`
+	IncludeThread *bool  `json:"include_thread,omitempty" jsonschema:"Whether to include the entire thread (default: true). Set false to fetch only the single post."`
 }
 
 // CreatePostArgs represents arguments for the create_post tool
@@ -32,9 +31,9 @@ type CreatePostArgs struct {
 type CreatePostAsUserArgs struct {
 	Username    string   `json:"username" jsonschema:"Username to login as"`
 	Password    string   `json:"password" jsonschema:"Password to login with"`
-	ChannelID   string   `json:"channel_id" jsonschema:"The ID of the channel to post in"`
+	ChannelID   string   `json:"channel_id" jsonschema:"The ID of the channel to post in,minLength=26,maxLength=26"`
 	Message     string   `json:"message" jsonschema:"The message content"`
-	RootID      string   `json:"root_id" jsonschema:"Optional root post ID for replies"`
+	RootID      string   `json:"root_id,omitempty" jsonschema:"Optional root post ID for replies,maxLength=26"`
 	Props       string   `json:"props" jsonschema:"Optional post properties (JSON string)"`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
 }
@@ -53,6 +52,19 @@ type GroupMessageArgs struct {
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
 }
 
+// Tool description constants for post-related tools. The create_post/dm/group_message
+// descriptions are format strings: getPostTools fills the %s with an access-mode-dependent
+// attachments clause.
+const (
+	readPostDescription = "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}"
+
+	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
+
+	dmDescriptionFmt = "Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}"
+
+	groupMessageDescriptionFmt = "Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}"
+)
+
 // getPostTools returns all post-related tools
 func (p *MattermostToolProvider) getPostTools() []MCPTool {
 	// Build descriptions conditionally based on access mode
@@ -61,36 +73,36 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 		attachmentsParam = ", attachments (optional file paths/URLs)"
 	}
 
-	createPostDesc := fmt.Sprintf("Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}", attachmentsParam)
+	createPostDesc := fmt.Sprintf(createPostDescriptionFmt, attachmentsParam)
 
-	dmDesc := fmt.Sprintf("Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}", attachmentsParam)
+	dmDesc := fmt.Sprintf(dmDescriptionFmt, attachmentsParam)
 
-	groupMessageDesc := fmt.Sprintf("Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}", attachmentsParam)
+	groupMessageDesc := fmt.Sprintf(groupMessageDescriptionFmt, attachmentsParam)
 
 	return []MCPTool{
 		{
 			Name:        "read_post",
-			Description: "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}",
+			Description: readPostDescription,
 			Schema:      NewJSONSchemaForAccessMode[ReadPostArgs](string(p.accessMode)),
-			Resolver:    p.toolReadPost,
+			Resolver:    typed("read_post", p.toolReadPost),
 		},
 		{
 			Name:        "create_post",
 			Description: createPostDesc,
 			Schema:      NewJSONSchemaForAccessMode[CreatePostArgs](string(p.accessMode)),
-			Resolver:    p.toolCreatePost,
+			Resolver:    typed("create_post", p.toolCreatePost),
 		},
 		{
 			Name:        "dm",
 			Description: dmDesc,
 			Schema:      NewJSONSchemaForAccessMode[DMArgs](string(p.accessMode)),
-			Resolver:    p.toolDM,
+			Resolver:    typed("dm", p.toolDM),
 		},
 		{
 			Name:        "group_message",
 			Description: groupMessageDesc,
 			Schema:      NewJSONSchemaForAccessMode[GroupMessageArgs](string(p.accessMode)),
-			Resolver:    p.toolGroupMessage,
+			Resolver:    typed("group_message", p.toolGroupMessage),
 		},
 	}
 }
@@ -102,45 +114,33 @@ func (p *MattermostToolProvider) getDevPostTools() []MCPTool {
 			Name:        "create_post_as_user",
 			Description: "Create a post as a specific user using username/password login. Use this tool in dev mode for creating realistic multi-user scenarios. Simply provide the username and password of created users.",
 			Schema:      NewJSONSchemaForAccessMode[CreatePostAsUserArgs](string(p.accessMode)),
-			Resolver:    p.toolCreatePostAsUser,
+			Resolver:    typed("create_post_as_user", p.toolCreatePostAsUser),
 		},
 	}
 }
 
 // toolReadPost implements the read_post tool
-func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args ReadPostArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool read_post: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args ReadPostArgs) (string, error) {
 	// Validate post ID
-	if !model.IsValidId(args.PostID) {
-		return "invalid post_id format", fmt.Errorf("post_id must be a valid ID")
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
 	}
 
-	// Set default for include_thread
-	if !args.IncludeThread {
-		// Since bool defaults to false, we need to check if it was explicitly set
-		// For now, default to true
-		args.IncludeThread = true
-	}
+	// Default include_thread to true when omitted; an explicit false fetches only
+	// the single post.
+	includeThread := args.IncludeThread == nil || *args.IncludeThread
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
 	var posts []*model.Post
 
-	if args.IncludeThread {
+	if includeThread {
 		// Get the thread
 		postList, _, err := client.GetPostThread(ctx, args.PostID, "", false)
 		if err != nil {
-			return "failed to fetch post thread", fmt.Errorf("error fetching post thread: %w", err)
+			return "", fmt.Errorf("error fetching post thread: %w", err)
 		}
 
 		// Convert to slice and sort by creation time
@@ -161,7 +161,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 		// Get just the single post
 		post, _, err := client.GetPost(ctx, args.PostID, "")
 		if err != nil {
-			return "failed to fetch post", fmt.Errorf("error fetching post: %w", err)
+			return "", fmt.Errorf("error fetching post: %w", err)
 		}
 		posts = []*model.Post{post}
 	}
@@ -208,7 +208,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	}
 	result.WriteString("\n")
 
-	if args.IncludeThread && len(posts) > 1 {
+	if includeThread && len(posts) > 1 {
 		result.WriteString(fmt.Sprintf("Thread with %d posts:\n\n", len(posts)))
 	}
 
@@ -231,62 +231,51 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 }
 
 // toolCreatePost implements the create_post tool
-func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CreatePostArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_post: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args CreatePostArgs) (string, error) {
 	// Validate required fields
-	if !model.IsValidId(args.ChannelID) {
-		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
 	}
 	if args.Message == "" {
-		return "message is required", fmt.Errorf("message cannot be empty")
+		return "", fmt.Errorf("message cannot be empty")
 	}
 	if args.ChannelDisplayName == "" {
-		return "channel_display_name is required", fmt.Errorf("channel_display_name cannot be empty - you must call get_channel_info first")
+		return "", fmt.Errorf("channel_display_name cannot be empty - you must call get_channel_info first")
 	}
 	if args.TeamDisplayName == "" {
-		return "team_display_name is required", fmt.Errorf("team_display_name cannot be empty - you must call get_channel_info first")
+		return "", fmt.Errorf("team_display_name cannot be empty - you must call get_channel_info first")
 	}
 	// Validate root ID if provided (for replies)
-	if args.RootID != "" && !model.IsValidId(args.RootID) {
-		return "invalid root_id format", fmt.Errorf("root_id must be a valid ID")
+	if err := optionalID("root_id", args.RootID); err != nil {
+		return "", err
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
 	// Validate that the provided display names match the actual channel and team
 	channel, _, err := client.GetChannel(ctx, args.ChannelID)
 	if err != nil {
-		return "failed to validate channel", fmt.Errorf("error fetching channel for validation: %w", err)
+		return "", fmt.Errorf("error fetching channel for validation: %w", err)
 	}
 
 	// Check if channel display name matches
 	if channel.DisplayName != args.ChannelDisplayName {
-		return fmt.Sprintf("channel_display_name mismatch: provided '%s' but channel ID '%s' has display name '%s'",
-				args.ChannelDisplayName, args.ChannelID, channel.DisplayName),
-			fmt.Errorf("channel display name validation failed")
+		return "", fmt.Errorf("channel_display_name mismatch: provided '%s' but channel ID '%s' has display name '%s'",
+			args.ChannelDisplayName, args.ChannelID, channel.DisplayName)
 	}
 
 	// Get team info to validate team display name
 	team, _, err := client.GetTeam(ctx, channel.TeamId, "")
 	if err != nil {
-		return "failed to validate team", fmt.Errorf("error fetching team for validation: %w", err)
+		return "", fmt.Errorf("error fetching team for validation: %w", err)
 	}
 
 	// Check if team display name matches
 	if team.DisplayName != args.TeamDisplayName {
-		return fmt.Sprintf("team_display_name mismatch: provided '%s' but team ID '%s' has display name '%s'",
-				args.TeamDisplayName, channel.TeamId, team.DisplayName),
-			fmt.Errorf("team display name validation failed")
+		return "", fmt.Errorf("team_display_name mismatch: provided '%s' but team ID '%s' has display name '%s'",
+			args.TeamDisplayName, channel.TeamId, team.DisplayName)
 	}
 
 	// Upload files if specified
@@ -300,32 +289,11 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		FileIds:   fileIDs,
 	}
 
-	// Add AI-generated prop if tracking is enabled
-	if p.trackAIGenerated {
-		var userID string
-
-		// First check if bot user ID was provided via context metadata (from embedded server)
-		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
-			userID = mcpContext.BotUserID
-		} else {
-			// For external servers, fetch the authenticated user's ID
-			if user, _, getMeErr := client.GetMe(ctx, ""); getMeErr == nil && user != nil {
-				userID = user.Id
-			}
-		}
-
-		// Add the prop if we have a valid user ID
-		if userID != "" {
-			if post.Props == nil {
-				post.Props = make(model.StringInterface)
-			}
-			post.Props["ai_generated_by"] = userID
-		}
-	}
+	p.stampAIGenerated(post, mcpContext, "")
 
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
-		return "failed to create post", fmt.Errorf("error creating post: %w", err)
+		return "", fmt.Errorf("error creating post: %w", err)
 	}
 
 	return fmt.Sprintf("Successfully created post in channel '%s' (Team: %s) with ID: %s%s",
@@ -333,29 +301,23 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 }
 
 // toolCreatePostAsUser implements the create_post_as_user tool with custom authentication
-func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CreatePostAsUserArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_post_as_user: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext, args CreatePostAsUserArgs) (string, error) {
 	// Validate required fields
 	if args.Username == "" {
-		return "username is required", fmt.Errorf("username cannot be empty")
+		return "", fmt.Errorf("username cannot be empty")
 	}
 	if args.Password == "" {
-		return "password is required", fmt.Errorf("password cannot be empty")
+		return "", fmt.Errorf("password cannot be empty")
 	}
-	if !model.IsValidId(args.ChannelID) {
-		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
 	}
 	if args.Message == "" {
-		return "message is required", fmt.Errorf("message cannot be empty")
+		return "", fmt.Errorf("message cannot be empty")
 	}
 	// Validate root ID if provided (for replies)
-	if args.RootID != "" && !model.IsValidId(args.RootID) {
-		return "invalid root_id format", fmt.Errorf("root_id must be a valid ID")
+	if err := optionalID("root_id", args.RootID); err != nil {
+		return "", err
 	}
 
 	// Create a new client and login as the specified user
@@ -365,7 +327,7 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	// Login as the specified user
 	user, _, err := userClient.Login(ctx, args.Username, args.Password)
 	if err != nil {
-		return "failed to login as user", fmt.Errorf("login failed for user %s: %w", args.Username, err)
+		return "", fmt.Errorf("login failed for user %s: %w", args.Username, err)
 	}
 
 	// Upload files if specified
@@ -388,36 +350,27 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 
 	createdPost, _, err := userClient.CreatePost(ctx, post)
 	if err != nil {
-		return "failed to create post", fmt.Errorf("error creating post as user %s: %w", args.Username, err)
+		return "", fmt.Errorf("error creating post as user %s: %w", args.Username, err)
 	}
 
 	return fmt.Sprintf("Successfully created post with ID %s as user %s%s", createdPost.Id, user.Username, attachmentMessage), nil
 }
 
 // toolDM implements the dm tool
-func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args DMArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool dm: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs) (string, error) {
 	// Validate required fields
 	if args.Message == "" {
-		return "message is required", fmt.Errorf("message cannot be empty")
+		return "", fmt.Errorf("message cannot be empty")
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
 	// Get current user information
 	currentUser, _, err := client.GetMe(ctx, "")
 	if err != nil {
-		return "failed to get current user", fmt.Errorf("error getting current user: %w", err)
+		return "", fmt.Errorf("error getting current user: %w", err)
 	}
 
 	// Resolve target user
@@ -427,7 +380,7 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter l
 	if username != "" {
 		targetUser, _, err = client.GetUserByUsername(ctx, username, "")
 		if err != nil {
-			return "failed to get target user", fmt.Errorf("error getting user by username %q: %w", username, err)
+			return "", fmt.Errorf("error getting user by username %q: %w", username, err)
 		}
 		dmSelf = targetUser.Id == currentUser.Id
 	} else {
@@ -438,7 +391,7 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter l
 	// Create or get direct channel
 	dmChannel, _, err := client.CreateDirectChannel(ctx, currentUser.Id, targetUser.Id)
 	if err != nil {
-		return "failed to create DM channel", fmt.Errorf("error creating direct channel: %w", err)
+		return "", fmt.Errorf("error creating direct channel: %w", err)
 	}
 
 	// Upload files if specified
@@ -451,36 +404,16 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter l
 		FileIds:   fileIDs,
 	}
 
-	props := make(map[string]interface{})
-
 	// Set from_webhook only when DM'ing yourself (prevents AI auto-response loop)
 	if dmSelf {
-		props["from_webhook"] = "true"
+		post.AddProp("from_webhook", "true")
 	}
 
-	// Add AI-generated prop if tracking is enabled
-	if p.trackAIGenerated {
-		var userID string
-
-		// First check if bot user ID was provided via context metadata (from embedded server)
-		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
-			userID = mcpContext.BotUserID
-		} else {
-			userID = currentUser.Id
-		}
-
-		if userID != "" {
-			props["ai_generated_by"] = userID
-		}
-	}
-
-	if len(props) > 0 {
-		post.SetProps(props)
-	}
+	p.stampAIGenerated(post, mcpContext, currentUser.Id)
 
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
-		return "failed to create DM post", fmt.Errorf("error creating DM post: %w", err)
+		return "", fmt.Errorf("error creating DM post: %w", err)
 	}
 
 	if dmSelf {
@@ -490,26 +423,17 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter l
 }
 
 // toolGroupMessage implements the group_message tool
-func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args GroupMessageArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool group_message: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, args GroupMessageArgs) (string, error) {
 	if args.Message == "" {
-		return "message is required", fmt.Errorf("message cannot be empty")
+		return "", fmt.Errorf("message cannot be empty")
 	}
 
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
 	currentUser, _, err := client.GetMe(ctx, "")
 	if err != nil {
-		return "failed to get current user", fmt.Errorf("error getting current user: %w", err)
+		return "", fmt.Errorf("error getting current user: %w", err)
 	}
 
 	// Resolve all targets into a deduplicated map of userID -> username
@@ -519,7 +443,7 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		uname = strings.TrimPrefix(uname, "@")
 		resolvedUser, _, resolveErr := client.GetUserByUsername(ctx, uname, "")
 		if resolveErr != nil {
-			return fmt.Sprintf("failed to resolve username %q", uname), fmt.Errorf("error getting user by username %q: %w", uname, resolveErr)
+			return "", fmt.Errorf("error getting user by username %q: %w", uname, resolveErr)
 		}
 		if resolvedUser.Id != currentUser.Id {
 			targets[resolvedUser.Id] = resolvedUser.Username
@@ -527,7 +451,7 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 	}
 
 	if len(targets) < 2 {
-		return "group messages require at least 2 other users — for 1:1 DMs use the dm tool instead", fmt.Errorf("need at least 2 target users, got %d", len(targets))
+		return "", fmt.Errorf("group messages require at least 2 other users — for 1:1 DMs use the dm tool instead (got %d)", len(targets))
 	}
 
 	// Build member list: targets + current user
@@ -539,7 +463,7 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 
 	gmChannel, _, err := client.CreateGroupChannel(ctx, memberIDs)
 	if err != nil {
-		return "failed to create group message channel", fmt.Errorf("error creating group channel: %w", err)
+		return "", fmt.Errorf("error creating group channel: %w", err)
 	}
 
 	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
@@ -550,24 +474,11 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		FileIds:   fileIDs,
 	}
 
-	if p.trackAIGenerated {
-		var userID string
-		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
-			userID = mcpContext.BotUserID
-		} else {
-			userID = currentUser.Id
-		}
-		if userID != "" {
-			if post.Props == nil {
-				post.Props = make(model.StringInterface)
-			}
-			post.Props["ai_generated_by"] = userID
-		}
-	}
+	p.stampAIGenerated(post, mcpContext, currentUser.Id)
 
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
-		return "failed to create group message post", fmt.Errorf("error creating group message post: %w", err)
+		return "", fmt.Errorf("error creating group message post: %w", err)
 	}
 
 	// Build username list for success message
@@ -578,4 +489,31 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 
 	return fmt.Sprintf("Successfully sent group message to %s with ID: %s%s",
 		strings.Join(usernames, ", "), createdPost.Id, attachmentMessage), nil
+}
+
+// stampAIGenerated marks a post as AI-generated (the ai_generated_by prop) when
+// AI-content tracking is enabled. It prefers the bot user id supplied via request
+// metadata (embedded servers); otherwise it uses fallbackUserID (the authenticated
+// user the caller already resolved), and as a last resort fetches the current user.
+// It is a no-op when tracking is disabled or no user id can be determined.
+func (p *MattermostToolProvider) stampAIGenerated(post *model.Post, mcpContext *MCPToolContext, fallbackUserID string) {
+	if !p.trackAIGenerated {
+		return
+	}
+
+	var userID string
+	switch {
+	case mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID):
+		userID = mcpContext.BotUserID
+	case fallbackUserID != "":
+		userID = fallbackUserID
+	case mcpContext.Client != nil:
+		if user, _, err := mcpContext.Client.GetMe(mcpContext.Ctx, ""); err == nil && user != nil {
+			userID = user.Id
+		}
+	}
+
+	if userID != "" {
+		post.AddProp("ai_generated_by", userID)
+	}
 }

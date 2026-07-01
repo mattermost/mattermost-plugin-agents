@@ -15,7 +15,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
@@ -222,10 +221,7 @@ func (c *Conversations) ProcessDMRequest(
 		return nil, fmt.Errorf("tool runner failed: %w", err)
 	}
 
-	stream := runResult.Stream
-	if webSearchData := mmtools.ConsumeWebSearchContexts(llmCtx); len(webSearchData) > 0 {
-		stream = mmtools.DecorateStreamWithAnnotations(stream, webSearchData, nil)
-	}
+	stream := decorateStreamWithWebSearchAnnotations(runResult.Stream, llmCtx)
 
 	return &DMStreamResult{Stream: stream}, nil
 }

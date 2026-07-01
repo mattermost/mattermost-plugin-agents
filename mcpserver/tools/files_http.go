@@ -4,16 +4,13 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/files"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
 )
 
 // HTTPFileContentService reads file contents by calling back to the plugin API.
@@ -55,47 +52,21 @@ type httpFileContentResponse struct {
 
 // GetContent reads a ranged slice of a file's text via the plugin's endpoint.
 func (s *HTTPFileContentService) GetContent(ctx context.Context, userID, fileID string, offset, limit int) (files.Content, error) {
-	bodyBytes, err := json.Marshal(httpFileContentRequest{FileID: fileID, Offset: offset, Limit: limit})
+	reqBody := httpFileContentRequest{FileID: fileID, Offset: offset, Limit: limit}
+	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+"/api/v1/files/content", reqBody, userID)
 	if err != nil {
-		return files.Content{}, fmt.Errorf("failed to marshal request: %w", err)
+		return files.Content{}, err
 	}
 
-	url := s.pluginURL + "/api/v1/files/content"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return files.Content{}, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	if token, ok := ctx.Value(auth.AuthTokenContextKey).(string); ok && token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	if ctxUserID, ok := ctx.Value(auth.UserIDContextKey).(string); ok && ctxUserID != "" {
-		req.Header.Set("Mattermost-User-Id", ctxUserID)
-	} else if userID != "" {
-		req.Header.Set("Mattermost-User-Id", userID)
-	}
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return files.Content{}, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return files.Content{}, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode == http.StatusForbidden {
+	if status == http.StatusForbidden {
 		return files.Content{}, files.ErrForbidden
 	}
-	if resp.StatusCode != http.StatusOK {
+	if status != http.StatusOK {
 		var errResp httpFileContentResponse
 		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
 			return files.Content{}, fmt.Errorf("read file failed: %s", errResp.Error)
 		}
-		return files.Content{}, fmt.Errorf("read file failed with status %d: %s", resp.StatusCode, string(respBody))
+		return files.Content{}, fmt.Errorf("read file failed with status %d: %s", status, string(respBody))
 	}
 
 	var out httpFileContentResponse

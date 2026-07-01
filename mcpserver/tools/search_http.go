@@ -4,14 +4,11 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 )
 
@@ -76,50 +73,18 @@ func (s *HTTPSemanticSearchService) Search(ctx context.Context, query string, op
 		Offset:    opts.Offset,
 	}
 
-	bodyBytes, err := json.Marshal(reqBody)
+	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+"/api/v1/search/raw", reqBody, "")
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	// Create HTTP request
-	url := s.pluginURL + "/api/v1/search/raw"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Extract auth token from context and add to request
-	if token, ok := ctx.Value(auth.AuthTokenContextKey).(string); ok && token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	// Extract user ID from context (for session-based auth)
-	if userID, ok := ctx.Value(auth.UserIDContextKey).(string); ok && userID != "" {
-		req.Header.Set("Mattermost-User-Id", userID)
-	}
-
-	// Execute request
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, err
 	}
 
 	// Handle non-200 responses
-	if resp.StatusCode != http.StatusOK {
+	if status != http.StatusOK {
 		var errResp httpSearchResponse
 		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
 			return nil, fmt.Errorf("search failed: %s", errResp.Error)
 		}
-		return nil, fmt.Errorf("search failed with status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("search failed with status %d: %s", status, string(respBody))
 	}
 
 	// Parse successful response

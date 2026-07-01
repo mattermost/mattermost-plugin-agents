@@ -1,0 +1,72 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:"
+      },
+      "response": {
+        "content": "Phase3 Reasoning Display"
+      }
+    },
+    {
+      "match": {
+        "userMessage": "phase3-reasoning-render-001"
+      },
+      "response": {
+        "reasoning": "Reasoning render marker alpha beta gamma delta.",
+        "content": "Reasoning render answer complete."
+      },
+      "chunkSize": 6
+    },
+    {
+      "match": {
+        "userMessage": "phase3-reasoning-toggle-001"
+      },
+      "response": {
+        "reasoning": "Reasoning toggle marker step one two three.",
+        "content": "Reasoning toggle answer final."
+      },
+      "chunkSize": 6
+    },
+    {
+      "match": {
+        "userMessage": "phase3-reasoning-persist-001"
+      },
+      "response": {
+        "reasoning": "Reasoning persist marker stored reasoning text.",
+        "content": "Reasoning persist answer stored."
+      },
+      "chunkSize": 6
+    },
+    {
+      "match": {
+        "userMessage": "phase3-reasoning-complete-001"
+      },
+      "response": {
+        "reasoning": "Reasoning complete marker evaluate angles.",
+        "content": "Reasoning complete answer final."
+      },
+      "chunkSize": 6
+    },
+    {
+      "match": {
+        "userMessage": "phase3-reasoning-multi-first-001"
+      },
+      "response": {
+        "reasoning": "Reasoning multi first marker compare projects.",
+        "content": "Reasoning multi first answer."
+      },
+      "chunkSize": 6
+    },
+    {
+      "match": {
+        "userMessage": "phase3-reasoning-multi-second-001"
+      },
+      "response": {
+        "reasoning": "Reasoning multi second marker evaluate safety.",
+        "content": "Reasoning multi second answer."
+      },
+      "chunkSize": 6
+    }
+  ]
+}
