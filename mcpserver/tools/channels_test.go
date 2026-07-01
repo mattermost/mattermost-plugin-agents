@@ -144,11 +144,10 @@ func TestToolReadChannelPagination(t *testing.T) {
 			client := newTestClient(ts.URL)
 			mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}
 
-			argsGetter := func(target any) error {
-				return json.Unmarshal([]byte(tt.args), target)
-			}
+			var args ReadChannelArgs
+			require.NoError(t, json.Unmarshal([]byte(tt.args), &args))
 
-			out, err := provider.toolReadChannel(mcpCtx, argsGetter)
+			out, err := provider.toolReadChannel(mcpCtx, args)
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.expectPage, captured.Get("page"), "page query param")
@@ -214,11 +213,10 @@ func TestToolReadChannelSinceWithPagination(t *testing.T) {
 
 	// `since` drops the two oldest of a full 5-post page, leaving 3.
 	since := time.Unix(base+2, 0).UTC().Format(time.RFC3339)
-	argsGetter := func(target any) error {
-		return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q,"per_page":%d,"since":%q}`, channelID, perPage, since)), target)
-	}
+	var args ReadChannelArgs
+	require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q,"per_page":%d,"since":%q}`, channelID, perPage, since)), &args))
 
-	out, err := provider.toolReadChannel(mcpCtx, argsGetter)
+	out, err := provider.toolReadChannel(mcpCtx, args)
 	require.NoError(t, err)
 
 	assert.Contains(t, out, "Found 3 posts (page 0):", "since should reduce the displayed count to the matching posts")
@@ -288,11 +286,7 @@ func TestToolGetChannelInfoChannelRole(t *testing.T) {
 			client := newTestClient(ts.URL)
 			mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}
 
-			argsGetter := func(target any) error {
-				return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, channelID)), target)
-			}
-
-			out, err := provider.toolGetChannelInfo(mcpCtx, argsGetter)
+			out, err := provider.toolGetChannelInfo(mcpCtx, GetChannelInfoArgs{ChannelID: channelID})
 			require.NoError(t, err)
 			assert.Contains(t, out, channelID, "expected channel ID in formatted output")
 

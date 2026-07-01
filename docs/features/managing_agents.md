@@ -94,6 +94,7 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Agent avatar** | Optional. Upload a custom image. Avatar upload is a second step after the agent record is created or updated; if the avatar upload fails the rest of the save still succeeds. |
 | **AI Service** | Required. Pick a configured service from the dropdown. Services are managed in **System Console > Plugins > Agents** and shared across agents. If the agent references a service that has been deleted, an "Unknown service (deleted)" entry appears in the dropdown until you pick a new one. |
 | **Model** | Optional. Override the service's default model for this agent. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, and Vertex AI services the field becomes a combobox populated by a live model fetch from the provider; for other services it is a free-text field. Leave empty to use the service default. |
+| **Max tool turns** | Maximum number of consecutive tool-call/execute rounds the agent performs in a single response before stopping. Defaults to **30** (allowed range **1–250**). Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn (for example dynamic MCP discovery: search → load → execute). Clearing the field saves the default. |
 | **Custom instructions** | Free-text. Prepended to every request as the agent's system prompt. Use it for tone, role, vocabulary, or workflow guidance. |
 | **Enable Vision** | Available for service types that support image input. Lets the agent process attached images. Requires a vision-capable model. |
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
@@ -130,7 +131,9 @@ The MCPs tab is available only when **Enable Tools** is on (Configuration tab). 
 - When the auto-grant is off, pick the specific MCP tools to enable. Tools that are no longer present on the server are dropped from the agent's allowlist when you save.
 - For OAuth-backed MCP servers, you can also start the per-user **Connect** flow directly from this tab. Enabling a server that is currently disconnected stores a wildcard grant — once you finish the OAuth flow, the agent gets every tool that server exposes. The tab refreshes automatically when you connect or disconnect (`mcp_connection_updated` websocket event).
 
-Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
+Agents also support an API field, `mcpDynamicToolLoading`, that lets the agent search and load MCP tool schemas as needed instead of presenting every full MCP schema in the prompt. This does not grant additional tools: the MCPs tab allowlist or auto-grant setting still determines which tools the agent may use.
+
+Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. For more on MCP setup, see [Model Context Protocol (MCP)](../admin_guide.md#model-context-protocol-mcp-integration) in the Admin Guide. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
 
 ## Editing an agent
 
@@ -143,9 +146,11 @@ To edit an agent:
 
 The editor uses a full-document `PUT /agents/:id` save, so every visible field on every tab is sent on save. There is no per-field partial update.
 
+API clients can set `mcpDynamicToolLoading` on `POST /agents` and `PUT /agents/:id`; `GET /agents/:id` and agent list responses include the field. Send the desired boolean explicitly on create and update. If omitted from a create or update request body, it is stored as `false`; older persisted bot config that omits the field defaults to `true` when unmarshalled for compatibility.
+
 ### What's editable vs locked
 
-- **Display name**, **avatar**, **service**, **model**, **custom instructions**, **vision**, **tools**, **native tools**, **reasoning**, **structured output**, **channel access**, **user access**, **agent admins**, and the **MCP tool grants** can all be changed at any time.
+- **Display name**, **avatar**, **service**, **model**, **max tool turns**, **custom instructions**, **vision**, **tools**, **native tools**, **reasoning**, **structured output**, **channel access**, **user access**, **agent admins**, and the **MCP tool grants** can all be changed at any time.
 - **Agent username is permanent.** Once the agent is created, the username field is disabled in the editor. The Mattermost bot account is keyed off this username, and changing it would orphan existing `@mentions` and conversation history. To use a different username, create a new agent.
 
 ### Unsaved-changes warning

@@ -90,6 +90,53 @@ test.describe('Agent MCP Tools', () => {
         await expect(page.getByText('Mattermost', {exact: true})).toBeVisible({ timeout: 15000 });
     });
 
+    // MM-69185 regression: visiting the MCPs tab on an agent whose persisted
+    // enabledMCPTools list contains entries that are no longer present in the
+    // live MCP catalog (orphans) used to silently mark the form dirty. Clicking
+    // Cancel then incorrectly raised the "Discard changes?" confirmation modal.
+    test('Cancel on MCPs tab with orphaned saved tools does not prompt to discard (MM-69185)', async ({ page }) => {
+        test.setTimeout(60000);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+
+        const orphanAgent = await agentApi.createTestAgent(token, {
+            displayName: 'Orphan Tool Agent',
+            username: 'orphantoolagent',
+            serviceID: mockServiceId,
+            autoEnableNewMCPTools: false,
+            // The "ghost_tool" name does not exist on the embedded MCP server, so
+            // the live MCP catalog will report it as an orphan when the editor
+            // mounts the MCPs tab.
+            enabledMCPTools: [
+                { server_origin: embeddedMattermostOrigin, tool_name: 'ghost_tool' },
+            ],
+            enabledNativeTools: [],
+        });
+
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+        await agentPage.openAgentActions(orphanAgent.displayName);
+        await agentPage.clickEditAction(orphanAgent.displayName);
+        await agentPage.waitForModal();
+
+        await agentPage.getModalTab('MCPs').click();
+
+        // Wait for the live MCP catalog to render — at this point orphan
+        // reconciliation has run.
+        await expect(page.getByText('Mattermost', { exact: true })).toBeVisible({ timeout: 15000 });
+
+        await agentPage.getModalCancelButton().click();
+
+        // The Cancel must exit immediately without the Discard confirmation modal,
+        // because the user did not make any edits.
+        await expect(agentPage.getDiscardChangesDialog()).not.toBeVisible();
+        await agentPage.waitForModalClosed();
+    });
+
     test('agent with specific enabledMCPTools responds correctly', async ({ page }) => {
         test.setTimeout(90000);
         const agentApi = new AgentAPIHelper(mattermost.url());

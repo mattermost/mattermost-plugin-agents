@@ -1,201 +1,152 @@
 // spec: tests/multiplayer-tool-calling/multiplayer-tool-calling.plan.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
-import fs from 'fs';
-import MattermostContainer from 'helpers/mmcontainer';
-import { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
-import { MattermostPage } from 'helpers/mm';
+import {test, expect, Page} from '@playwright/test';
+
+import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
-    getAPIConfig,
-    getSkipMessage,
-    getAvailableProviders,
-    ProviderBundle,
-} from 'helpers/api-config';
-import { checkAPIHealth } from 'helpers/api-health-check';
-import { attachAPIErrorContext } from 'helpers/log-scanner';
+    buildPostToolSequence,
+    buildRejectAfterFirstToolSequence,
+    buildTitleFixture,
+    EMBEDDED_CREATE_POST_TOOL,
+    mergeFixtureFiles,
+} from 'helpers/aimock-fixtures';
+import MattermostContainer from 'helpers/mmcontainer';
+import {MattermostPage} from 'helpers/mm';
+import {
+    MULTIPLAYER_ASK_TOOL_CONFIGS,
+    RunToolConfigAIMockContainer,
+} from 'helpers/tool-config-container';
+import {adminUsername, adminPassword} from 'helpers/system-console-container';
 
 /**
- * Test Suite: Multiplayer Tool Calling
- *
- * Tests the two-stage tool approval flow in public channels with two users:
- * - Invoker: the user who @mentions the bot (sees full details, can approve/reject)
- * - Onlooker: another channel member (sees redacted tool info only)
- *
- * IMPORTANT: The LLM may make multiple sequential tool calls (e.g. get_channel_info
- * then create_post). Each tool call goes through its own Accept → Share cycle.
- * Tests must loop through ALL rounds until the bot generates its final text response.
- *
- * Bot responses to @mentions happen in a thread — the test must open the thread.
+ * Multiplayer tool calling with deterministic aimock fixtures.
+ * Invoker @mentions the bot; onlooker sees redacted tool info only.
  */
 
 const invokerUsername = 'regularuser';
 const invokerPassword = 'regularuser';
 const onlookerUsername = 'seconduser';
 const onlookerPassword = 'seconduser';
+const botUsername = 'toolbot';
+const createPostToolLabel = 'Create Post';
 
-const config = getAPIConfig();
-const skipMessage = getSkipMessage();
+const multiplayerCustomInstructions = [
+    'You have access to Mattermost tools including create_post and get_channel_info.',
+    'When a user asks you to post a message, call get_channel_info first, then create_post.',
+].join(' ');
 
-// ==================== CONTAINER SETUP ====================
+let mattermost: MattermostContainer;
+let aimock: AIMockContainer;
 
-async function setupToolCallingContainer(provider: ProviderBundle): Promise<MattermostContainer> {
-    let filename = '';
-    fs.readdirSync('../dist/').forEach(file => {
-        if (file.endsWith('.tar.gz')) {
-            filename = '../dist/' + file;
-        }
-    });
+type TownSquareChannel = {
+    id: string;
+    displayName: string;
+    teamDisplayName: string;
+};
 
-    const botConfig = {
-        ...provider.bot,
-        disableTools: false,
-        mcpDynamicToolLoading: false,
-        enabledNativeTools: [],
-        customInstructions: 'You have access to Mattermost tools including create_post and get_channel_info. When a user asks you to post a message or create a post in a channel, you MUST use get_channel_info to find the channel ID first, then use create_post to create the post. Always use your tools when the user asks you to take action. Never refuse to use tools.',
-    };
+async function setupMultiplayerUsers(mattermostInstance: MattermostContainer): Promise<void> {
+    await mattermostInstance.createUser('regularuser@sample.com', invokerUsername, invokerPassword);
+    await mattermostInstance.addUserToTeam(invokerUsername, 'test');
+    await mattermostInstance.createUser('seconduser@sample.com', onlookerUsername, onlookerPassword);
+    await mattermostInstance.addUserToTeam(onlookerUsername, 'test');
 
-    const pluginConfig = {
-        config: {
-            allowPrivateChannels: true,
-            disableFunctionCalls: false,
-            enableUserRestrictions: false,
-            defaultBotName: botConfig.name,
-            enableVectorIndex: true,
-            enableChannelMentionToolCalling: true,
-            mcp: {
-                embeddedServer: { enabled: true },
-                enablePluginServer: true,
-                enabled: true,
-                idleTimeoutMinutes: 30,
-                servers: null,
-            },
-            services: [provider.service],
-            bots: [botConfig],
-        },
-    };
-
-    const mattermost = await new MattermostContainer()
-        .withPlugin(filename, 'mattermost-ai', pluginConfig)
-        .start();
-
-    await mattermost.createUser('regularuser@sample.com', invokerUsername, invokerPassword);
-    await mattermost.addUserToTeam(invokerUsername, 'test');
-    await mattermost.createUser('seconduser@sample.com', onlookerUsername, onlookerPassword);
-    await mattermost.addUserToTeam(onlookerUsername, 'test');
-
-    for (const [uname, pwd] of [[invokerUsername, invokerPassword], [onlookerUsername, onlookerPassword]]) {
-        const client = await mattermost.getClient(uname, pwd);
+    for (const [username, password] of [[invokerUsername, invokerPassword], [onlookerUsername, onlookerPassword], [adminUsername, adminPassword]]) {
+        const client = await mattermostInstance.getClient(username, password);
         const user = await client.getMe();
         await client.savePreferences(user.id, [
-            { user_id: user.id, category: 'tutorial_step', name: user.id, value: '999' },
-            { user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_show', value: 'false' },
-            { user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_open', value: 'false' },
-            { user_id: user.id, category: 'drafts', name: 'drafts_tour_tip_showed', value: JSON.stringify({ drafts_tour_tip_showed: true }) },
-            { user_id: user.id, category: 'crt_thread_pane_step', name: user.id, value: '999' },
+            {user_id: user.id, category: 'tutorial_step', name: user.id, value: '999'},
+            {user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_show', value: 'false'},
+            {user_id: user.id, category: 'onboarding_task_list', name: 'onboarding_task_list_open', value: 'false'},
+            {
+                user_id: user.id,
+                category: 'drafts',
+                name: 'drafts_tour_tip_showed',
+                value: JSON.stringify({drafts_tour_tip_showed: true}),
+            },
+            {user_id: user.id, category: 'crt_thread_pane_step', name: user.id, value: '999'},
         ]);
     }
 
-    const adminClient = await mattermost.getAdminClient();
-    const admin = await adminClient.getMe();
-    await adminClient.savePreferences(admin.id, [
-        { user_id: admin.id, category: 'tutorial_step', name: admin.id, value: '999' },
-        { user_id: admin.id, category: 'onboarding_task_list', name: 'onboarding_task_list_show', value: 'false' },
-        { user_id: admin.id, category: 'onboarding_task_list', name: 'onboarding_task_list_open', value: 'false' },
-        { user_id: admin.id, category: 'drafts', name: 'drafts_tour_tip_showed', value: JSON.stringify({ drafts_tour_tip_showed: true }) },
-        { user_id: admin.id, category: 'crt_thread_pane_step', name: admin.id, value: '999' },
-    ]);
-
-    await adminClient.completeSetup({ organization: 'test', install_plugins: [] });
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    return mattermost;
+    const adminClient = await mattermostInstance.getAdminClient();
+    await adminClient.completeSetup({organization: 'test', install_plugins: []});
 }
 
-// ==================== HELPERS ====================
+async function getTownSquareChannel(mattermostInstance: MattermostContainer): Promise<TownSquareChannel> {
+    const client = await mattermostInstance.getClient(invokerUsername, invokerPassword);
+    const teams = await client.getMyTeams();
+    const team = teams[0];
+    const channels = await client.getMyChannels(team.id);
+    const townSquare = channels.find((channel: {name: string}) => channel.name === 'town-square');
 
-/**
- * Capture the current count of reply indicators on the page.
- * Call this BEFORE sending the bot message so we can detect the NEW reply later.
- */
+    if (!townSquare) {
+        throw new Error('Could not find town-square channel');
+    }
+
+    return {
+        id: townSquare.id,
+        displayName: townSquare.display_name || 'Town Square',
+        teamDisplayName: team.display_name || 'Test',
+    };
+}
+
+function titleFixtures(title: string) {
+    return {fixtures: [buildTitleFixture(title)]};
+}
+
 async function captureReplyCount(page: Page): Promise<number> {
-    return await page.getByText(/\d+ repl/).count().catch(() => 0);
+    return page.getByText(/\d+ repl/).count().catch(() => 0);
 }
 
-/**
- * Wait for the bot to reply in a thread, then open it.
- * Uses count-based detection: compares the current reply indicator count against
- * a baseline captured BEFORE the bot message was sent. This avoids race conditions
- * where the bot replies before the baseline is captured.
- *
- * NOTE: Only use this on the page that SENT the message (the invoker).
- * For onlooker pages where the reply is already visible, use openLatestThread().
- *
- * @param page - The invoker's page
- * @param countBeforeSend - The reply indicator count captured BEFORE mentionBot()
- * @param timeout - How long to wait for the new reply (default 120s)
- */
 async function waitForReplyAndOpenThread(page: Page, countBeforeSend: number, timeout: number = 120000): Promise<void> {
     const replyIndicator = page.getByText(/\d+ repl/);
-
     const startTime = Date.now();
+
     while (Date.now() - startTime < timeout) {
         const currentCount = await replyIndicator.count().catch(() => 0);
         if (currentCount > countBeforeSend) {
-            // A new reply indicator appeared — click the last (most recent) one
             const lastIndicator = replyIndicator.last();
-            const isVisible = await lastIndicator.isVisible().catch(() => false);
-            if (isVisible) {
+            if (await lastIndicator.isVisible().catch(() => false)) {
                 await lastIndicator.click();
-                await page.locator('#rhsContainer').waitFor({ state: 'visible', timeout: 10000 });
+                await page.locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
                 await page.waitForTimeout(1000);
                 return;
             }
         }
         await page.waitForTimeout(1000);
     }
+
     throw new Error('Timeout waiting for bot reply in thread');
 }
 
-/**
- * Open the most recent thread on a page where the reply is already visible.
- * Used for onlooker pages in dual-browser tests — the invoker already triggered
- * the bot response, so the reply indicator is already present on this page.
- */
 async function openLatestThread(page: Page, timeout: number = 30000): Promise<void> {
     const replyIndicator = page.getByText(/\d+ repl/);
-    await expect(replyIndicator.last()).toBeVisible({ timeout });
+    await expect(replyIndicator.last()).toBeVisible({timeout});
     await replyIndicator.last().click();
-    await page.locator('#rhsContainer').waitFor({ state: 'visible', timeout: 10000 });
+    await page.locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
     await page.waitForTimeout(1000);
 }
 
-/**
- * Wait for a specific button to appear in the RHS thread panel.
- * Returns true if found, false if timeout (when throwOnTimeout is false).
- */
 async function waitForButtonInThread(page: Page, buttonName: string, timeout: number = 120000, throwOnTimeout: boolean = true): Promise<boolean> {
     const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
+
     while (Date.now() - startTime < timeout) {
-        const button = rhs.getByRole('button', { name: buttonName, exact: true });
-        const isVisible = await button.first().isVisible().catch(() => false);
-        if (isVisible) {
+        const button = rhs.getByRole('button', {name: buttonName, exact: true});
+        if (await button.first().isVisible().catch(() => false)) {
             await page.waitForTimeout(500);
             return true;
         }
         await page.waitForTimeout(1000);
     }
+
     if (throwOnTimeout) {
         throw new Error(`Timeout waiting for '${buttonName}' button in thread`);
     }
+
     return false;
 }
 
-/**
- * Wait for any approval decision button in the RHS thread panel.
- * Returns the first visible button name, or null on timeout.
- */
 async function waitForAnyButtonInThread(
     page: Page,
     buttonNames: string[],
@@ -204,35 +155,32 @@ async function waitForAnyButtonInThread(
 ): Promise<string | null> {
     const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
+
     while (Date.now() - startTime < timeout) {
         for (const buttonName of buttonNames) {
-            const button = rhs.getByRole('button', { name: buttonName, exact: true });
-            const isVisible = await button.first().isVisible().catch(() => false);
-            if (isVisible) {
+            const button = rhs.getByRole('button', {name: buttonName, exact: true});
+            if (await button.first().isVisible().catch(() => false)) {
                 await page.waitForTimeout(500);
                 return buttonName;
             }
         }
         await page.waitForTimeout(1000);
     }
+
     if (throwOnTimeout) {
         throw new Error(`Timeout waiting for one of buttons in thread: ${buttonNames.join(', ')}`);
     }
+
     return null;
 }
 
-/**
- * Click every currently visible button with the exact accessible name.
- * Re-queries after each click so shrinking DOM lists cannot skip a tool.
- */
 async function clickAllButtonsInThread(page: Page, buttonName: string): Promise<number> {
     const rhs = page.locator('#rhsContainer');
     let clicked = 0;
 
     while (true) {
-        const button = rhs.getByRole('button', { name: buttonName, exact: true }).first();
-        const isVisible = await button.isVisible().catch(() => false);
-        if (!isVisible) {
+        const button = rhs.getByRole('button', {name: buttonName, exact: true}).first();
+        if (!(await button.isVisible().catch(() => false))) {
             return clicked;
         }
 
@@ -242,46 +190,32 @@ async function clickAllButtonsInThread(page: Page, buttonName: string): Promise<
     }
 }
 
-/**
- * Complete one full tool call round: Accept all → Share all.
- * Returns true if a round was completed, false if no Accept button appeared
- * (meaning the LLM is done making tool calls).
- */
 async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'accept-keep-private' | 'reject'): Promise<boolean> {
-    // A round can begin in call stage (Accept/Reject) or directly in result stage
-    // (Share/Keep private) when all tools in that round were auto-approved.
     const firstDecisionButton = await waitForAnyButtonInThread(
         page,
         ['Accept', 'Share', 'Keep private'],
         120000,
         false,
     );
+
     if (!firstDecisionButton) {
-        return false; // No more decisions pending — the LLM is done
+        return false;
     }
 
     if (firstDecisionButton === 'Accept') {
         if (action === 'reject') {
-            // Reject all tool calls in this round
             await clickAllButtonsInThread(page, 'Reject');
             await page.waitForTimeout(2000);
             return true;
         }
 
-        // Accept all tool calls in this round
         await clickAllButtonsInThread(page, 'Accept');
-
-        // Wait for Share/Keep private buttons (result stage)
         await waitForButtonInThread(page, 'Share', 120000);
     }
 
-    // For auto-approved rounds there is no call-stage decision; choose result visibility.
-    // In reject mode, share auto-approved READ results so the LLM can continue to the
-    // next round where non-auto-approved WRITE tools can still be rejected.
     if (action === 'accept-share' || action === 'reject') {
         await clickAllButtonsInThread(page, 'Share');
     } else {
-        // accept-keep-private
         await clickAllButtonsInThread(page, 'Keep private');
     }
 
@@ -289,18 +223,14 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
     return true;
 }
 
-/**
- * Loop through ALL tool call rounds, accepting and sharing each one,
- * until the LLM stops proposing new tool calls.
- */
 async function completeAllToolCallRounds(page: Page, action: 'accept-share' | 'accept-keep-private' | 'reject'): Promise<number> {
     let rounds = 0;
-    const maxRounds = 10; // Safety limit
+    const maxRounds = 3;
 
     while (rounds < maxRounds) {
         const completed = await completeOneToolCallRound(page, action);
         if (!completed) {
-            break; // No more tool calls
+            break;
         }
         rounds++;
     }
@@ -308,284 +238,259 @@ async function completeAllToolCallRounds(page: Page, action: 'accept-share' | 'a
     return rounds;
 }
 
-/**
- * Wait for the tool approval flow to settle after all tool calls.
- * Polls until no Accept/Share/Keep private buttons remain.
- *
- * We intentionally do not wait for the final streaming response to fully
- * complete here. The OpenAI provider can keep the stop button visible for a
- * long time even after the tool execution already succeeded, which makes the
- * approval-flow assertions flaky. The tests below assert the high-signal end
- * states directly (no approval buttons remain and the requested post was
- * created), which is sufficient to verify the happy path.
- */
 async function waitForApprovalFlowToSettle(page: Page, timeout: number = 30000): Promise<void> {
     const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
 
     while (Date.now() - startTime < timeout) {
-        const hasAccept = await rhs.getByRole('button', { name: 'Accept' }).first().isVisible().catch(() => false);
-        const hasShare = await rhs.getByRole('button', { name: 'Share' }).first().isVisible().catch(() => false);
-        const hasKeepPrivate = await rhs.getByRole('button', { name: 'Keep private' }).first().isVisible().catch(() => false);
+        const hasAccept = await rhs.getByRole('button', {name: 'Accept'}).first().isVisible().catch(() => false);
+        const hasReject = await rhs.getByRole('button', {name: 'Reject'}).first().isVisible().catch(() => false);
+        const hasShare = await rhs.getByRole('button', {name: 'Share'}).first().isVisible().catch(() => false);
+        const hasKeepPrivate = await rhs.getByRole('button', {name: 'Keep private'}).first().isVisible().catch(() => false);
 
-        if (!hasAccept && !hasShare && !hasKeepPrivate) {
-            await page.waitForTimeout(2000); // Let final UI settle
+        if (!hasAccept && !hasReject && !hasShare && !hasKeepPrivate) {
+            await page.waitForTimeout(2000);
             return;
         }
         await page.waitForTimeout(1000);
     }
+
     throw new Error('Timeout waiting for tool approval flow to settle');
 }
 
 async function waitForPageReady(page: Page): Promise<void> {
-    await page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
+    await page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', {timeout: 30000});
     await page.waitForTimeout(2000);
 }
 
-async function navigateToChannel(page: Page, mattermost: MattermostContainer, channelName: string = 'off-topic'): Promise<void> {
-    await page.goto(mattermost.url() + `/test/channels/${channelName}`);
+async function navigateToChannel(page: Page, baseUrl: string, channelName: string = 'off-topic'): Promise<void> {
+    await page.goto(`${baseUrl}/test/channels/${channelName}`);
     await waitForPageReady(page);
 }
 
-// ==================== TESTS ====================
+test.describe('Multiplayer Tool Calling (Aimock)', () => {
+    // Serial: one shared Mattermost + aimock sidecar; each test reloads fixtures via setFixtures/restart.
+    // Keep-private runs first so a prior happy-path create_post does not leave Town Square posts that
+    // could confuse later reject-path assertions (reject verifies the post text stays absent).
+    test.describe.configure({mode: 'serial'});
 
-function createProviderTestSuite(provider: ProviderBundle) {
-    test.describe(`Multiplayer Tool Calling - ${provider.name}`, () => {
-        let mattermost: MattermostContainer;
+    let townSquare: TownSquareChannel;
 
-        test.beforeAll(async () => {
-            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
-            if (!config.shouldRunTests) return;
-            await checkAPIHealth(provider.service);
-            mattermost = await setupToolCallingContainer(provider);
+    test.beforeAll(async () => {
+        test.setTimeout(180000);
+        mattermost = await RunToolConfigAIMockContainer({
+            toolConfigs: MULTIPLAYER_ASK_TOOL_CONFIGS,
+            customInstructions: multiplayerCustomInstructions,
+            enableVectorIndex: true,
+            defaultBotName: 'toolbot',
+            botId: 'tool-test-bot',
+            botDisplayName: 'Tool Test Bot',
         });
-
-        test.afterAll(async () => {
-            if (mattermost) {
-                await mattermost.stop();
-            }
-        });
-
-        test.afterEach(async ({}, testInfo) => {
-            await attachAPIErrorContext(testInfo);
-        });
-
-        test('Happy path: Accept and Share all tool calls (invoker + onlooker)', async ({ browser }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(480000);
-
-            const invokerContext = await browser.newContext();
-            const onlookerContext = await browser.newContext();
-            const invokerPage = await invokerContext.newPage();
-            const onlookerPage = await onlookerContext.newPage();
-
-            try {
-                const invokerMM = new MattermostPage(invokerPage);
-                const onlookerMM = new MattermostPage(onlookerPage);
-                const botUsername = provider.bot.name;
-
-                await invokerMM.login(mattermost.url(), invokerUsername, invokerPassword);
-                await onlookerMM.login(mattermost.url(), onlookerUsername, onlookerPassword);
-                await navigateToChannel(invokerPage, mattermost, 'off-topic');
-                await navigateToChannel(onlookerPage, mattermost, 'off-topic');
-
-                // Capture reply count BEFORE sending so we can detect the new reply
-                const replyCountBeforeSend = await captureReplyCount(invokerPage);
-
-                // Trigger tool call
-                await invokerMM.mentionBot(botUsername, 'Post a message saying "Hello from the AI agent - happy path test" in the Town Square channel. Use the create_post tool.');
-
-                // Open thread on invoker page (waits for NEW reply indicator)
-                await waitForReplyAndOpenThread(invokerPage, replyCountBeforeSend);
-                // Open thread on onlooker page (reply already visible via websocket)
-                await openLatestThread(onlookerPage);
-
-                // Before proceeding, wait for the first decision stage (manual or auto-approved).
-                await waitForAnyButtonInThread(invokerPage, ['Accept', 'Share', 'Keep private']);
-
-                // === ONLOOKER ASSERTIONS (first call stage) ===
-                const onlookerRhs = onlookerPage.locator('#rhsContainer');
-                const onlookerBotPost = onlookerRhs.locator('[data-testid="llm-bot-post"]');
-                await expect(onlookerBotPost.last()).toBeVisible({ timeout: 30000 });
-                await expect(onlookerRhs.getByRole('button', { name: 'Accept' })).not.toBeVisible();
-                await expect(onlookerRhs.getByRole('button', { name: 'Reject' })).not.toBeVisible();
-
-                // === COMPLETE ALL TOOL CALL ROUNDS (accept + share each one) ===
-                const rounds = await completeAllToolCallRounds(invokerPage, 'accept-share');
-                expect(rounds).toBeGreaterThanOrEqual(1);
-
-                // Wait for approval UI to settle after the last share.
-                await waitForApprovalFlowToSettle(invokerPage);
-
-                // Onlooker should NOT see approval buttons after completion
-                await onlookerPage.waitForTimeout(3000);
-                await expect(onlookerRhs.getByRole('button', { name: 'Accept' })).not.toBeVisible();
-                await expect(onlookerRhs.getByRole('button', { name: 'Share' })).not.toBeVisible();
-
-                // Verify the post was actually created in town-square
-                await navigateToChannel(invokerPage, mattermost, 'town-square');
-                const createdPost = invokerPage.locator('.post-message__text').getByText('Hello from the AI agent - happy path test').first();
-                await expect(createdPost).toBeVisible({ timeout: 10000 });
-            } finally {
-                await invokerContext.close();
-                await onlookerContext.close();
-            }
-        });
-
-        test('Reject tool calls at call stage', async ({ browser }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(480000);
-
-            const context = await browser.newContext();
-            const page = await context.newPage();
-
-            try {
-                const mmPage = new MattermostPage(page);
-                const botUsername = provider.bot.name;
-
-                await mmPage.login(mattermost.url(), invokerUsername, invokerPassword);
-                await navigateToChannel(page, mattermost, 'off-topic');
-
-                // Capture reply count BEFORE sending so we can detect the new reply
-                const replyCountBeforeSend = await captureReplyCount(page);
-
-                // Trigger tool call
-                await mmPage.mentionBot(botUsername, 'Post a message saying "This should be rejected" in the Town Square channel. Use the create_post tool.');
-
-                // Open the thread
-                await waitForReplyAndOpenThread(page, replyCountBeforeSend);
-
-                // Reject ALL tool call rounds
-                const rounds = await completeAllToolCallRounds(page, 'reject');
-                expect(rounds).toBeGreaterThanOrEqual(1);
-
-                // Wait for the bot to finish (it may produce a text response after rejection)
-                await page.waitForTimeout(5000);
-
-                const rhs = page.locator('#rhsContainer');
-
-                // Should NOT see Share/Keep private buttons
-                await expect(rhs.getByRole('button', { name: 'Share' })).not.toBeVisible();
-                await expect(rhs.getByRole('button', { name: 'Keep private' })).not.toBeVisible();
-
-                // OpenAI can render more than one "Rejected" label in the thread,
-                // so assert on the first status indicator rather than strict text uniqueness.
-                await expect(rhs.getByText('Rejected').first()).toBeVisible({ timeout: 10000 });
-
-                // Verify the post was NOT created in town-square
-                await navigateToChannel(page, mattermost, 'town-square');
-                await expect(page.getByText('This should be rejected')).not.toBeVisible();
-            } finally {
-                await context.close();
-            }
-        });
-
-        test('Accept tool calls then Keep Private', async ({ browser }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(480000);
-
-            const invokerContext = await browser.newContext();
-            const onlookerContext = await browser.newContext();
-            const invokerPage = await invokerContext.newPage();
-            const onlookerPage = await onlookerContext.newPage();
-
-            try {
-                const invokerMM = new MattermostPage(invokerPage);
-                const onlookerMM = new MattermostPage(onlookerPage);
-                const botUsername = provider.bot.name;
-
-                await invokerMM.login(mattermost.url(), invokerUsername, invokerPassword);
-                await onlookerMM.login(mattermost.url(), onlookerUsername, onlookerPassword);
-                await navigateToChannel(invokerPage, mattermost, 'off-topic');
-                await navigateToChannel(onlookerPage, mattermost, 'off-topic');
-
-                // Capture reply count BEFORE sending so we can detect the new reply
-                const replyCountBeforeSend = await captureReplyCount(invokerPage);
-
-                // Trigger tool call
-                await invokerMM.mentionBot(botUsername, 'Post a message saying "This result stays private" in the Town Square channel. Use the create_post tool.');
-
-                // Open thread on invoker page (waits for NEW reply indicator)
-                await waitForReplyAndOpenThread(invokerPage, replyCountBeforeSend);
-                // Open thread on onlooker page (reply already visible via websocket)
-                await openLatestThread(onlookerPage);
-
-                const rhs = invokerPage.locator('#rhsContainer');
-
-                // The LLM will make multiple tool calls: get_channel_info then create_post.
-                // We need to Accept+Share the intermediate calls (so the LLM gets the data
-                // it needs for the next call), but Keep Private the LAST call's result.
-                //
-                // Strategy: Accept+Share rounds until we see create_post being called,
-                // then Accept+Keep Private that final round.
-                let rounds = 0;
-                const maxRounds = 10;
-                while (rounds < maxRounds) {
-                    const firstDecisionButton = await waitForAnyButtonInThread(
-                        invokerPage,
-                        ['Accept', 'Share', 'Keep private'],
-                        120000,
-                        false,
-                    );
-                    if (!firstDecisionButton) {
-                        break;
-                    }
-
-                    if (firstDecisionButton === 'Accept') {
-                        // Accept all tool calls in this round
-                        await clickAllButtonsInThread(invokerPage, 'Accept');
-
-                        // Wait for Share/Keep private
-                        await waitForButtonInThread(invokerPage, 'Share', 120000);
-                    }
-
-                    rounds++;
-
-                    // Peek: does the thread contain text suggesting this is a create_post result?
-                    // If we see "Successfully created post" or similar, this is the final round.
-                    const resultText = rhs.getByText(/created post|post.*created|Successfully/i);
-                    const isCreatePostResult = await resultText.first().isVisible().catch(() => false);
-
-                    if (isCreatePostResult) {
-                        // This is the create_post result — Keep Private
-                        await clickAllButtonsInThread(invokerPage, 'Keep private');
-                        await invokerPage.waitForTimeout(2000);
-                        break;
-                    } else {
-                        // Intermediate round (e.g. get_channel_info) — Share so LLM can continue
-                        await clickAllButtonsInThread(invokerPage, 'Share');
-                        await invokerPage.waitForTimeout(2000);
-                    }
-                }
-                expect(rounds).toBeGreaterThanOrEqual(1);
-
-                // Wait for approval UI to settle after the final keep-private.
-                await waitForApprovalFlowToSettle(invokerPage);
-
-                // Onlooker should NOT see any approval buttons
-                const onlookerRhs = onlookerPage.locator('#rhsContainer');
-                await expect(onlookerRhs.getByRole('button', { name: 'Share' })).not.toBeVisible();
-                await expect(onlookerRhs.getByRole('button', { name: 'Keep private' })).not.toBeVisible();
-                await expect(onlookerRhs.getByRole('button', { name: 'Accept' })).not.toBeVisible();
-
-                // Invoker should still see the bot post in the thread
-                const invokerBotPost = rhs.locator('[data-testid="llm-bot-post"]');
-                await expect(invokerBotPost.last()).toBeVisible();
-
-                // The tool DID execute (it ran after Accept), so the post exists in town-square.
-                // What's "private" is the result sharing — the bot won't use it in its response.
-                await navigateToChannel(invokerPage, mattermost, 'town-square');
-                const privatePost = invokerPage.locator('.post-message__text').getByText('This result stays private');
-                await expect(privatePost).toBeVisible({ timeout: 30000 });
-            } finally {
-                await invokerContext.close();
-                await onlookerContext.close();
-            }
+        await setupMultiplayerUsers(mattermost);
+        townSquare = await getTownSquareChannel(mattermost);
+        aimock = await RunAIMockSidecar(mattermost.network, {
+            fixtures: {fixtures: [buildTitleFixture('Multiplayer bootstrap')]},
         });
     });
-}
 
-const providers = getAvailableProviders();
-providers.forEach(provider => {
-    createProviderTestSuite(provider);
+    test.afterAll(async () => {
+        await aimock?.stop();
+        if (mattermost) {
+            await mattermost.stop();
+        }
+    });
+
+    test('Accept tool calls then Keep Private', async ({browser}) => {
+        test.setTimeout(480000);
+
+        const privatePrompt = `multiplayer keep private ${Date.now()}`;
+        const privatePostText = `This result stays private ${Date.now()}`;
+        const privateFinalText = `PRIVATE_FINAL_${Date.now()}`;
+        const privateInfoCallId = `call_private_info_${Date.now()}`;
+        const privateCreateCallId = `call_private_create_${Date.now()}`;
+
+        await aimock.setFixtures(mergeFixtureFiles(
+            titleFixtures('Multiplayer keep private'),
+            buildPostToolSequence({
+                userPromptMarker: privatePrompt,
+                infoCallId: privateInfoCallId,
+                createCallId: privateCreateCallId,
+                channelId: townSquare.id,
+                channelDisplayName: townSquare.displayName,
+                teamDisplayName: townSquare.teamDisplayName,
+                postText: privatePostText,
+                finalText: privateFinalText,
+            }),
+        ));
+
+        const invokerContext = await browser.newContext();
+        const onlookerContext = await browser.newContext();
+        const invokerPage = await invokerContext.newPage();
+        const onlookerPage = await onlookerContext.newPage();
+
+        try {
+            const invokerMM = new MattermostPage(invokerPage);
+            const onlookerMM = new MattermostPage(onlookerPage);
+            const baseUrl = mattermost.url();
+
+            await invokerMM.login(baseUrl, invokerUsername, invokerPassword);
+            await onlookerMM.login(baseUrl, onlookerUsername, onlookerPassword);
+            await navigateToChannel(invokerPage, baseUrl, 'off-topic');
+            await navigateToChannel(onlookerPage, baseUrl, 'off-topic');
+
+            const replyCountBeforeSend = await captureReplyCount(invokerPage);
+            await invokerMM.mentionBot(botUsername, privatePrompt);
+
+            await waitForReplyAndOpenThread(invokerPage, replyCountBeforeSend);
+            await openLatestThread(onlookerPage);
+
+            const rhs = invokerPage.locator('#rhsContainer');
+            await waitForAnyButtonInThread(invokerPage, ['Accept', 'Share', 'Keep private']);
+
+            expect(await completeOneToolCallRound(invokerPage, 'accept-share')).toBe(true);
+            await expect(rhs.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+            expect(await completeOneToolCallRound(invokerPage, 'accept-keep-private')).toBe(true);
+
+            await waitForApprovalFlowToSettle(invokerPage);
+
+            const onlookerRhs = onlookerPage.locator('#rhsContainer');
+            await expect(onlookerRhs.getByRole('button', {name: 'Share'})).not.toBeVisible();
+            await expect(onlookerRhs.getByRole('button', {name: 'Keep private'})).not.toBeVisible();
+            await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
+            await expect(rhs.locator('[data-testid="llm-bot-post"]').last()).toBeVisible();
+
+            await navigateToChannel(invokerPage, baseUrl, 'town-square');
+            await expect(invokerPage.locator('.post-message__text').getByText(privatePostText).first()).toBeVisible({timeout: 30000});
+        } finally {
+            await invokerContext.close();
+            await onlookerContext.close();
+        }
+    });
+
+    test('Happy path: Accept and Share all tool calls (invoker + onlooker)', async ({browser}) => {
+        test.setTimeout(480000);
+
+        const happyPrompt = `multiplayer happy path ${Date.now()}`;
+        const happyPostText = `Hello from the AI agent - happy path test ${Date.now()}`;
+        const happyFinalText = `HAPPY_FINAL_${Date.now()}`;
+        const happyInfoCallId = `call_happy_info_${Date.now()}`;
+        const happyCreateCallId = `call_happy_create_${Date.now()}`;
+
+        await aimock.setFixtures(mergeFixtureFiles(
+            titleFixtures('Multiplayer happy path'),
+            buildPostToolSequence({
+                userPromptMarker: happyPrompt,
+                infoCallId: happyInfoCallId,
+                createCallId: happyCreateCallId,
+                channelId: townSquare.id,
+                channelDisplayName: townSquare.displayName,
+                teamDisplayName: townSquare.teamDisplayName,
+                postText: happyPostText,
+                finalText: happyFinalText,
+            }),
+        ));
+
+        const invokerContext = await browser.newContext();
+        const onlookerContext = await browser.newContext();
+        const invokerPage = await invokerContext.newPage();
+        const onlookerPage = await onlookerContext.newPage();
+
+        try {
+            const invokerMM = new MattermostPage(invokerPage);
+            const onlookerMM = new MattermostPage(onlookerPage);
+            const baseUrl = mattermost.url();
+
+            await invokerMM.login(baseUrl, invokerUsername, invokerPassword);
+            await onlookerMM.login(baseUrl, onlookerUsername, onlookerPassword);
+            await navigateToChannel(invokerPage, baseUrl, 'off-topic');
+            await navigateToChannel(onlookerPage, baseUrl, 'off-topic');
+
+            const replyCountBeforeSend = await captureReplyCount(invokerPage);
+            await invokerMM.mentionBot(botUsername, happyPrompt);
+
+            await waitForReplyAndOpenThread(invokerPage, replyCountBeforeSend);
+            await openLatestThread(onlookerPage);
+            await waitForAnyButtonInThread(invokerPage, ['Accept', 'Share', 'Keep private']);
+
+            const onlookerRhs = onlookerPage.locator('#rhsContainer');
+            await expect(onlookerRhs.locator('[data-testid="llm-bot-post"]').last()).toBeVisible({timeout: 30000});
+            await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
+            await expect(onlookerRhs.getByRole('button', {name: 'Reject'})).not.toBeVisible();
+
+            const rounds = await completeAllToolCallRounds(invokerPage, 'accept-share');
+            expect(rounds).toBe(2);
+
+            await waitForApprovalFlowToSettle(invokerPage);
+
+            await onlookerPage.waitForTimeout(3000);
+            await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
+            await expect(onlookerRhs.getByRole('button', {name: 'Share'})).not.toBeVisible();
+
+            await navigateToChannel(invokerPage, baseUrl, 'town-square');
+            await expect(invokerPage.locator('.post-message__text').getByText(happyPostText).first()).toBeVisible({timeout: 10000});
+        } finally {
+            await invokerContext.close();
+            await onlookerContext.close();
+        }
+    });
+
+    test('Reject tool calls at call stage', async ({browser}) => {
+        test.setTimeout(480000);
+
+        const rejectPrompt = `multiplayer reject path ${Date.now()}`;
+        const rejectPostText = `This should be rejected ${Date.now()}`;
+        const rejectCreateCallId = `call_reject_create_${Date.now()}`;
+        const rejectFinalText = `REJECT_FINAL_${Date.now()}`;
+
+        await aimock.setFixtures(mergeFixtureFiles(
+            titleFixtures('Multiplayer reject path'),
+            buildRejectAfterFirstToolSequence({
+                userPromptMarker: rejectPrompt,
+                toolCallId: rejectCreateCallId,
+                toolName: EMBEDDED_CREATE_POST_TOOL,
+                toolArguments: {
+                    channel_id: townSquare.id,
+                    channel_display_name: townSquare.displayName,
+                    team_display_name: townSquare.teamDisplayName,
+                    message: rejectPostText,
+                },
+                finalContent: rejectFinalText,
+            }),
+        ));
+
+        const context = await browser.newContext();
+        const page = await context.newPage();
+
+        try {
+            const mmPage = new MattermostPage(page);
+            const baseUrl = mattermost.url();
+
+            await mmPage.login(baseUrl, invokerUsername, invokerPassword);
+            await navigateToChannel(page, baseUrl, 'off-topic');
+
+            const replyCountBeforeSend = await captureReplyCount(page);
+            await mmPage.mentionBot(botUsername, rejectPrompt);
+            await waitForReplyAndOpenThread(page, replyCountBeforeSend);
+
+            await waitForAnyButtonInThread(page, ['Accept', 'Share', 'Keep private']);
+            await clickAllButtonsInThread(page, 'Reject');
+
+            const rhs = page.locator('#rhsContainer');
+            await expect.poll(async () => {
+                const rejectedLabelVisible = await rhs.getByText('Rejected').first().isVisible().catch(() => false);
+                const acceptVisible = await rhs.getByRole('button', {name: 'Accept'}).isVisible().catch(() => false);
+                return rejectedLabelVisible || !acceptVisible;
+            }, {timeout: 30000}).toBe(true);
+
+            await waitForApprovalFlowToSettle(page, 60000);
+            await expect(rhs.getByRole('button', {name: 'Share'})).not.toBeVisible();
+            await expect(rhs.getByRole('button', {name: 'Keep private'})).not.toBeVisible();
+            await expect(rhs.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 30000});
+
+            await navigateToChannel(page, baseUrl, 'town-square');
+            await expect(page.getByText(rejectPostText)).not.toBeVisible();
+        } finally {
+            await context.close();
+        }
+    });
 });

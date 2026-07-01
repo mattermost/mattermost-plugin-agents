@@ -270,6 +270,16 @@ const AgentConfigView = (props: Props) => {
         });
     }, []);
 
+    // Server-state reconciliation: applied to both the editable draft and the
+    // baseline used for dirty detection. Used when a child tab (e.g. MCPs) drops
+    // entries that no longer exist server-side. This must not mark the form as
+    // dirty — the user didn't change anything (MM-69185).
+    const reconcileEnabledTools = useCallback((cleaned: EnabledTool[]) => {
+        const next = [...cleaned];
+        setDraft((prev) => ({...prev, enabledTools: next}));
+        setBaselineDraft((prev) => ({...prev, enabledTools: [...next]}));
+    }, []);
+
     const validate = useCallback((): Record<string, string> => {
         const errs: Record<string, string> = {};
         if (!draft.displayName.trim()) {
@@ -415,6 +425,7 @@ const AgentConfigView = (props: Props) => {
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
                             mcpDynamicToolLoading={draft.mcpDynamicToolLoading}
                             onChange={(updates) => updateDraft(updates)}
+                            onReconcileEnabledTools={reconcileEnabledTools}
                         />
                     )}
                 </ViewBody>

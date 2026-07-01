@@ -1,0 +1,63 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:"
+      },
+      "response": {
+        "content": "Phase3 Streaming Persistence"
+      }
+    },
+    {
+      "match": {
+        "userMessage": "phase3-streaming-cursor-001"
+      },
+      "response": {
+        "content": "Streaming cursor marker part one two three complete."
+      },
+      "chunkSize": 5
+    },
+    {
+      "match": {
+        "userMessage": "phase3-streaming-lifecycle-001"
+      },
+      "response": {
+        "reasoning": "Streaming lifecycle reasoning marker steps.",
+        "content": "Streaming lifecycle answer complete."
+      },
+      "chunkSize": 5
+    },
+    {
+      "match": {
+        "userMessage": "phase3-nav-persistence-001"
+      },
+      "response": {
+        "content": "Navigation persistence marker rhs close reopen."
+      },
+      "chunkSize": 5
+    },
+    {
+      "match": {
+        "userMessage": "phase3-thread-persist-001"
+      },
+      "response": {
+        "content": "Thread view persistence marker reload history."
+      },
+      "chunkSize": 5
+    },
+    {
+      "match": {
+        "userMessage": "phase3-stop-generating-001"
+      },
+      "response": {
+        "content": "Stop generating prefix marker followed by extended TypeScript feature explanation covering types interfaces generics decorators modules namespaces and compiler options for large scale application development."
+      },
+      "chunkSize": 2,
+      "streamingProfile": {
+        "ttft": 300,
+        "tps": 6,
+        "jitter": 0
+      }
+    }
+  ]
+}

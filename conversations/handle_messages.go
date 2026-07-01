@@ -387,10 +387,7 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("tool runner failed: %w", runErr)
 	}
 
-	stream := result.Stream
-	if webSearchData := mmtools.ConsumeWebSearchContexts(llmContext); len(webSearchData) > 0 {
-		stream = mmtools.DecorateStreamWithAnnotations(stream, webSearchData, nil)
-	}
+	stream := decorateStreamWithWebSearchAnnotations(result.Stream, llmContext)
 
 	if streamErr := c.streamResponseToExistingPost(ctx, stream, responsePost, postingUser, channel); streamErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)

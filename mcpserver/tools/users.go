@@ -6,7 +6,6 @@ package tools
 import (
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -28,34 +27,25 @@ func (p *MattermostToolProvider) getDevUserTools() []MCPTool {
 			Name:        "create_user",
 			Description: "Create a new user account (dev mode only)",
 			Schema:      NewJSONSchemaForAccessMode[CreateUserArgs](string(p.accessMode)),
-			Resolver:    p.toolCreateUser,
+			Resolver:    typed("create_user", p.toolCreateUser),
 		},
 	}
 }
 
 // toolCreateUser implements the create_user tool using the context client
-func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CreateUserArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_user: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args CreateUserArgs) (string, error) {
 	// Validate required fields
 	if args.Username == "" {
-		return "username is required", fmt.Errorf("username cannot be empty")
+		return "", fmt.Errorf("username cannot be empty")
 	}
 	if args.Email == "" {
-		return "email is required", fmt.Errorf("email cannot be empty")
+		return "", fmt.Errorf("email cannot be empty")
 	}
 	if args.Password == "" {
-		return "password is required", fmt.Errorf("password cannot be empty")
+		return "", fmt.Errorf("password cannot be empty")
 	}
 
 	// Get client from context
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -71,7 +61,7 @@ func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args
 
 	createdUser, _, err := client.CreateUser(ctx, user)
 	if err != nil {
-		return "failed to create user", fmt.Errorf("error creating user: %w", err)
+		return "", fmt.Errorf("error creating user: %w", err)
 	}
 
 	var profileImageMessage string

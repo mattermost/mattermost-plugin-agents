@@ -6,7 +6,7 @@ import {fireEvent, render, screen, waitFor, waitForElementToBeRemoved} from '@te
 import {IntlProvider} from 'react-intl';
 
 import {createAgent, updateAgent} from '@/client';
-import {ServiceInfo, UserAgent} from '@/types/agents';
+import {EnabledTool, ServiceInfo, UserAgent} from '@/types/agents';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
 
@@ -33,6 +33,11 @@ jest.mock('@/client', () => ({
     createAgent: jest.fn(),
     updateAgent: jest.fn(),
     uploadAgentAvatar: jest.fn(),
+    getUserMCPTools: jest.fn(),
+}));
+
+jest.mock('@/hooks/use_mcp_connection_events', () => ({
+    useMCPConnectionEvents: jest.fn(),
 }));
 
 jest.mock('@/components/system_console/bot', () => ({
@@ -84,16 +89,26 @@ jest.mock('./tabs/mcps_tab', () => ({
     default: ({
         mcpDynamicToolLoading,
         onChange,
+        onReconcileEnabledTools,
     }: {
         mcpDynamicToolLoading: boolean;
         onChange: (updates: Partial<AgentDraft>) => void;
+        onReconcileEnabledTools?: (cleaned: EnabledTool[]) => void;
     }) => (
-        <input
-            aria-label='Dynamic tool loading'
-            type='checkbox'
-            checked={mcpDynamicToolLoading}
-            onChange={(e) => onChange({mcpDynamicToolLoading: e.target.checked})}
-        />
+        <>
+            <input
+                aria-label='Dynamic tool loading'
+                type='checkbox'
+                checked={mcpDynamicToolLoading}
+                onChange={(e) => onChange({mcpDynamicToolLoading: e.target.checked})}
+            />
+            <button
+                type='button'
+                onClick={() => onReconcileEnabledTools?.([])}
+            >
+                {'Reconcile (drop all enabled tools)'}
+            </button>
+        </>
     ),
 }));
 
@@ -185,6 +200,74 @@ describe('AgentConfigView', () => {
 
         expect(onBack).toHaveBeenCalledTimes(1);
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    });
+
+    // Regression test for MM-69185.
+    //
+    // After saving on the MCP tab, navigating back to the same agent's MCP tab and
+    // clicking Cancel must not trigger the "Discard changes" modal when the user
+    // hasn't made any edits — even if the persisted enabledMCPTools list contains
+    // entries that aren't currently visible in the live MCP catalog (e.g. an
+    // MCP server is temporarily disconnected). The MCP tab silently reconciles
+    // those entries via onReconcileEnabledTools; that callback must update both
+    // draft AND baseline so the form does not become dirty.
+    test('reconciling orphaned MCP tools does not mark the form dirty (MM-69185)', () => {
+        const agent: UserAgent = {
+            id: 'agent_1',
+            name: 'existingagent',
+            displayName: 'Existing Agent',
+            customInstructions: '',
+            serviceID: 'svc_1',
+            model: '',
+            enableVision: true,
+            disableTools: false,
+            channelAccessLevel: 0,
+            channelIDs: [],
+            userAccessLevel: 0,
+            userIDs: [],
+            teamIDs: [],
+            enabledNativeTools: ['web_search'],
+
+            // The persisted enabledMCPTools include entries that the live MCP catalog
+            // no longer surfaces (orphans). McpsTab calls onReconcileEnabledTools to
+            // drop them; that path must not mark the form dirty.
+            enabledMCPTools: [
+                {server_origin: 'embedded://mattermost', tool_name: 'read_post'},
+                {server_origin: 'embedded://mattermost', tool_name: 'deleted_tool'},
+            ],
+            autoEnableNewMCPTools: false,
+            mcpDynamicToolLoading: true,
+            reasoningEnabled: true,
+            reasoningEffort: 'medium',
+            thinkingBudget: 0,
+            structuredOutputEnabled: false,
+            maxToolTurns: 30,
+        };
+
+        const onBack = jest.fn();
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={agent}
+                    services={services}
+                    onBack={onBack}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        // Open the MCP tab and trigger reconciliation. The mocked McpsTab exposes
+        // a button that fires onReconcileEnabledTools with an empty list, which
+        // mirrors what the real tab does when every saved tool is orphaned.
+        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByRole('button', {name: /Reconcile/}));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
+
+        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+        expect(onBack).toHaveBeenCalledTimes(1);
     });
 
     test('loads edit mode without treating existing values as dirty', () => {

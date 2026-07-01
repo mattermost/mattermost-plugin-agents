@@ -25,6 +25,12 @@ type Props = {
         autoEnableNewMCPTools?: boolean;
         mcpDynamicToolLoading?: boolean;
     }) => void;
+
+    // Optional server-state reconciliation callback. Used when removing entries
+    // that no longer exist in the live MCP catalog (orphans). Distinct from
+    // onChange so the parent can update its dirty-tracking baseline alongside
+    // the draft and avoid treating reconciliation as a user edit (MM-69185).
+    onReconcileEnabledTools?: (cleaned: EnabledTool[]) => void;
 }
 
 function serverToolsPanelId(serverOrigin: string): string {
@@ -32,7 +38,7 @@ function serverToolsPanelId(serverOrigin: string): string {
 }
 
 const McpsTab = (props: Props) => {
-    const {enabledTools, autoEnableNewMCPTools, mcpDynamicToolLoading, onChange} = props;
+    const {enabledTools, autoEnableNewMCPTools, mcpDynamicToolLoading, onChange, onReconcileEnabledTools} = props;
     const intl = useIntl();
     const [servers, setServers] = useState<UserMCPServerInfo[]>([]);
     const [loading, setLoading] = useState(true);
@@ -166,7 +172,11 @@ const McpsTab = (props: Props) => {
     useEffect(() => {
         if (!autoEnableNewMCPTools && orphanedTools.length > 0 && servers.length > 0) {
             const cleaned = enabledTools.filter((et) => isEntryAvailable(et));
-            onChange({enabledTools: cleaned});
+            if (onReconcileEnabledTools) {
+                onReconcileEnabledTools(cleaned);
+            } else {
+                onChange({enabledTools: cleaned});
+            }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoEnableNewMCPTools, enabledTools, servers]);

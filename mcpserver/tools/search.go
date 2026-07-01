@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -43,6 +42,11 @@ type SearchUsersArgs struct {
 	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of results to return (default: 20, max: 100),minimum=1,maximum=100"`
 }
 
+// searchUsersDescription is the MCP tool metadata description for search_users.
+// (The search_posts description is composed at runtime in getSearchTools because it
+// varies with whether semantic search is enabled.)
+const searchUsersDescription = "Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}"
+
 // getSearchTools returns all search-related tools.
 func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	semanticEnabled := p.searchService != nil && p.searchService.Enabled()
@@ -55,7 +59,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	mentionHint := "To find posts mentioning a specific person, query their username only (e.g. `john.smith`); at-mentions in posts use the username, never the display name. Do not combine username and display name (e.g. `john.smith John Smith`) in a single query — that requires all of those tokens to co-occur and will miss most posts."
 
 	if semanticEnabled {
-		schema = llm.NewJSONSchemaFromStruct[CombinedSearchArgs]()
+		schema = NewJSONSchemaForAccessMode[CombinedSearchArgs](string(p.accessMode))
 		description = "Search for posts in Mattermost using both semantic (AI-powered) and keyword search. " +
 			"Semantic search finds posts by meaning and does not require exact term matches. " +
 			"Keyword search treats the query as a literal AND match — every whitespace-separated token must appear in the same post — so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
@@ -67,7 +71,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			"Returns matching posts with content, author, channel, and relevance score for semantic results. " +
 			contextHint
 	} else {
-		schema = llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]()
+		schema = NewJSONSchemaForAccessMode[KeywordOnlySearchArgs](string(p.accessMode))
 		description = "Search for posts in Mattermost using keyword search. " +
 			"Treats the query as a literal AND match — every whitespace-separated token must appear in the same post — so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
@@ -82,13 +86,13 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			Name:        "search_posts",
 			Description: description,
 			Schema:      schema,
-			Resolver:    p.toolCombinedSearch,
+			Resolver:    typed("search_posts", p.toolCombinedSearch),
 		},
 		{
 			Name:        "search_users",
-			Description: "Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}",
-			Schema:      llm.NewJSONSchemaFromStruct[SearchUsersArgs](),
-			Resolver:    p.toolSearchUsers,
+			Description: searchUsersDescription,
+			Schema:      NewJSONSchemaForAccessMode[SearchUsersArgs](string(p.accessMode)),
+			Resolver:    typed("search_users", p.toolSearchUsers),
 		},
 	}
 }
@@ -109,21 +113,16 @@ type searchPostResult struct {
 }
 
 // toolCombinedSearch implements the search_posts tool.
-func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args CombinedSearchArgs
-	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool search_posts: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, args CombinedSearchArgs) (string, error) {
 	if args.Query == "" {
-		return "query is required", fmt.Errorf("query cannot be empty")
+		return "", fmt.Errorf("query cannot be empty")
 	}
 
-	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+	if err := optionalID("team_id", args.TeamID); err != nil {
+		return "", err
 	}
-	if args.ChannelID != "" && !model.IsValidId(args.ChannelID) {
-		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+	if err := optionalID("channel_id", args.ChannelID); err != nil {
+		return "", err
 	}
 
 	if args.SemanticLimit <= 0 {
@@ -145,9 +144,6 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 		args.KeywordOffset = 0
 	}
 
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -156,7 +152,7 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 	if semanticEnabled {
 		user, _, err := client.GetMe(ctx, "")
 		if err != nil {
-			return "failed to get user", fmt.Errorf("failed to get current user: %w", err)
+			return "", fmt.Errorf("failed to get current user: %w", err)
 		}
 		userID = user.Id
 	}
@@ -191,9 +187,9 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 
 	if keywordErr != nil && (!semanticEnabled || semanticErr != nil) {
 		if semanticEnabled {
-			return "search failed", fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
+			return "", fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
 		}
-		return "search failed", fmt.Errorf("keyword search failed: %v", keywordErr)
+		return "", fmt.Errorf("keyword search failed: %v", keywordErr)
 	}
 
 	return p.formatCombinedResults(args.Query, semanticResults, keywordResults, semanticEnabled, args.ChannelID)
@@ -459,15 +455,9 @@ func (p *MattermostToolProvider) formatSingleResult(result *strings.Builder, ind
 }
 
 // toolSearchUsers implements the search_users tool.
-func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args SearchUsersArgs
-	err := argsGetter(&args)
-	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool search_users: %w", err)
-	}
-
+func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, args SearchUsersArgs) (string, error) {
 	if args.Term == "" {
-		return "term is required", fmt.Errorf("search term cannot be empty")
+		return "", fmt.Errorf("search term cannot be empty")
 	}
 
 	if args.Limit <= 0 {
@@ -477,9 +467,6 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 		args.Limit = 100
 	}
 
-	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
-	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
@@ -492,7 +479,7 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 
 	users, _, err := client.SearchUsers(ctx, searchOptions)
 	if err != nil {
-		return "user search failed", fmt.Errorf("error searching users: %w", err)
+		return "", fmt.Errorf("error searching users: %w", err)
 	}
 
 	if len(users) == 0 {
