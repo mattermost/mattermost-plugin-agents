@@ -10,7 +10,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-agents/toolrunner/limits"
+	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner/limits"
 )
 
 type loadTestMockProfileOverlay struct {

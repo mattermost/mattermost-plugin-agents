@@ -8,22 +8,6 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const e2eRoot = path.resolve(scriptDirectory, '..');
 const testsRoot = path.resolve(e2eRoot, 'tests');
 
-const realAPISpecs = new Set([
-    'tests/channel-analysis/backend-verification/real-api.spec.ts',
-    'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
-    'tests/llmbot-post-component/citations-annotations.spec.ts',
-    'tests/llmbot-post-component/combined-features.spec.ts',
-    'tests/llmbot-post-component/debug-test.spec.ts',
-    'tests/llmbot-post-component/edge-cases.spec.ts',
-    'tests/llmbot-post-component/reasoning-display.spec.ts',
-    'tests/llmbot-post-component/streaming-persistence.spec.ts',
-    'tests/system-console/live-service-full-flow.spec.ts',
-    'tests/tool-config/real-api/ask-policy.spec.ts',
-    'tests/tool-config/real-api/auto-run-policy.spec.ts',
-    'tests/tool-config/real-api/channel-auto-run.spec.ts',
-    'tests/tool-config/real-api/disabled-tool.spec.ts',
-]);
-
 const groups = {
     'e2e-shard-1': [
         'tests/agents/provider-config.spec.ts',
@@ -37,6 +21,9 @@ const groups = {
         'tests/tool-config/policy-change.spec.ts',
         'tests/tool-config/tab-layout.spec.ts',
         'tests/custom-prompts/custom-prompts.spec.ts',
+        'tests/channel-analysis/backend-verification/real-api.spec.ts',
+        'tests/system-console/live-service-full-flow.spec.ts',
+        'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
     ],
     'e2e-shard-2': [
         'tests/system-console/bot-validation.spec.ts',
@@ -52,6 +39,9 @@ const groups = {
         'tests/tool-config/tools-tab-display.spec.ts',
         'tests/tool-config/user-toggle.spec.ts',
         'tests/tool-config/mcp-oauth-auth.spec.ts',
+        'tests/llmbot-post-component/citations-annotations.spec.ts',
+        'tests/llmbot-post-component/combined-features.spec.ts',
+        'tests/llmbot-post-component/debug-test.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',
@@ -69,6 +59,9 @@ const groups = {
         'tests/agents/mcp-tools.spec.ts',
         'tests/tool-config/tool-toggle.spec.ts',
         'tests/tool-config/vetted-seed.spec.ts',
+        'tests/llmbot-post-component/reasoning-display.spec.ts',
+        'tests/llmbot-post-component/streaming-persistence.spec.ts',
+        'tests/llmbot-post-component/edge-cases.spec.ts',
     ],
     'e2e-shard-4': [
         'tests/channel-analysis/response-citations/response-citations.spec.ts',
@@ -88,29 +81,6 @@ const groups = {
         'tests/edge-cases/system-message-no-trigger.spec.ts',
         'tests/tool-config/mock-api/dynamic_mcp_approval.spec.ts',
         'tests/tool-config/mock-api/dynamic_mcp_cross_turn_derivation.spec.ts',
-    ],
-    'llmbot-real-citations': [
-        'tests/llmbot-post-component/citations-annotations.spec.ts',
-        'tests/llmbot-post-component/combined-features.spec.ts',
-    ],
-    'llmbot-real-reasoning': [
-        'tests/llmbot-post-component/reasoning-display.spec.ts',
-        'tests/llmbot-post-component/streaming-persistence.spec.ts',
-        'tests/llmbot-post-component/debug-test.spec.ts',
-    ],
-    'llmbot-real-edge-cases': [
-        'tests/llmbot-post-component/edge-cases.spec.ts',
-    ],
-    'tool-calling-real': [
-        'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
-    ],
-    'channel-analysis-real': [
-        'tests/channel-analysis/backend-verification/real-api.spec.ts',
-    ],
-    'system-console-real': [
-        'tests/system-console/live-service-full-flow.spec.ts',
-    ],
-    'tool-config-real': [
         'tests/tool-config/real-api/ask-policy.spec.ts',
         'tests/tool-config/real-api/auto-run-policy.spec.ts',
         'tests/tool-config/real-api/channel-auto-run.spec.ts',
@@ -145,16 +115,6 @@ function flattenGroupSelection(groupNames) {
     });
 }
 
-function getNonRealAPISpecs() {
-    return walkSpecFiles(testsRoot)
-        .filter((spec) => !realAPISpecs.has(spec))
-        .sort();
-}
-
-function getRealAPISpecs() {
-    return [...realAPISpecs].sort();
-}
-
 function validateUniqueFiles(label, files) {
     const seen = new Set();
     const duplicates = new Set();
@@ -179,45 +139,21 @@ function validateExistingFiles(files) {
 }
 
 function validateCoverage() {
-    const nonRealGroupNames = Object.keys(groups).filter((groupName) => groupName.startsWith('e2e-shard-'));
-    const selectedNonRealSpecs = flattenGroupSelection(nonRealGroupNames).sort();
-    const actualNonRealSpecs = getNonRealAPISpecs();
+    const groupNames = Object.keys(groups);
+    const selectedSpecs = flattenGroupSelection(groupNames).sort();
+    const actualSpecs = walkSpecFiles(testsRoot).sort();
 
-    validateExistingFiles(selectedNonRealSpecs);
-    validateUniqueFiles('Non-real-api e2e shards', selectedNonRealSpecs);
+    validateExistingFiles(selectedSpecs);
+    validateUniqueFiles('E2E shards', selectedSpecs);
 
-    const missingNonRealSpecs = actualNonRealSpecs.filter((spec) => !selectedNonRealSpecs.includes(spec));
-    if (missingNonRealSpecs.length > 0) {
-        throw new Error(`Non-real-api shards are missing specs:\n${missingNonRealSpecs.join('\n')}`);
+    const missingSpecs = actualSpecs.filter((spec) => !selectedSpecs.includes(spec));
+    if (missingSpecs.length > 0) {
+        throw new Error(`E2E shards are missing specs:\n${missingSpecs.join('\n')}`);
     }
 
-    const extraNonRealSpecs = selectedNonRealSpecs.filter((spec) => !actualNonRealSpecs.includes(spec));
-    if (extraNonRealSpecs.length > 0) {
-        throw new Error(`Non-real-api shards include unexpected specs:\n${extraNonRealSpecs.join('\n')}`);
-    }
-
-    const selectedRealSpecs = flattenGroupSelection([
-        'llmbot-real-citations',
-        'llmbot-real-reasoning',
-        'llmbot-real-edge-cases',
-        'tool-calling-real',
-        'channel-analysis-real',
-        'system-console-real',
-        'tool-config-real',
-    ]).sort();
-
-    validateExistingFiles(selectedRealSpecs);
-    validateUniqueFiles('Real-api e2e groups', selectedRealSpecs);
-
-    const actualRealSpecs = getRealAPISpecs();
-    const missingRealSpecs = actualRealSpecs.filter((spec) => !selectedRealSpecs.includes(spec));
-    if (missingRealSpecs.length > 0) {
-        throw new Error(`Real-api groups are missing specs:\n${missingRealSpecs.join('\n')}`);
-    }
-
-    const extraRealSpecs = selectedRealSpecs.filter((spec) => !actualRealSpecs.includes(spec));
-    if (extraRealSpecs.length > 0) {
-        throw new Error(`Real-api groups include unexpected specs:\n${extraRealSpecs.join('\n')}`);
+    const extraSpecs = selectedSpecs.filter((spec) => !actualSpecs.includes(spec));
+    if (extraSpecs.length > 0) {
+        throw new Error(`E2E shards include unexpected specs:\n${extraSpecs.join('\n')}`);
     }
 }
 

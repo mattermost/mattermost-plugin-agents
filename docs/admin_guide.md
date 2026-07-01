@@ -160,11 +160,14 @@ Use this tab to control who can interact with and manage the agent:
 
 #### MCPs tab
 
-Use this tab to control which MCP tools the agent can use. This tab is available only when **Enable Tools** is turned on.
+Use this tab to control how the agent can use MCP tools. This tab is available only when **Enable Tools** is turned on.
 
+- **Dynamic tool loading** is on by default. It exposes MCP discovery and loading helpers first, then loads full MCP tool schemas only when the agent needs them. Turn it off to expose the full MCP tool list to this agent up front.
 - **Automatically enable all MCP tools** gives the agent access to every currently available MCP tool and any MCP tools added later.
 - When **Automatically enable all MCP tools** is off, select the specific MCP tools the agent may use.
 - If a previously selected MCP tool is no longer available, it is removed from the agent configuration when you save.
+
+Dynamic tool loading and automatically enabled MCP tools are separate controls: auto-enable controls which tools the agent is allowed to use, while dynamic loading controls when tool schemas are exposed to the model.
 
 Updating an agent's display name also updates the linked Mattermost bot display name. Deleting an agent deactivates the linked Mattermost bot account.
 
@@ -530,8 +533,8 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
    - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
    - Remote MCP servers, including URL, custom headers, OAuth client settings, and per-server enablement.
 
-3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Plugin-registered MCP servers appear as separate plugin rows in this tab.
-4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
+3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Expand a tool row to add an optional **Retrieval description override** for dynamic tool loading search; this helps the agent find the tool but does not change the tool schema sent after loading. Plugin-registered MCP servers appear as separate plugin rows in this tab.
+4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools, and whether MCP tool schemas are loaded dynamically or exposed up front.
 
 Agent MCP access is filtered by admin tool policy, the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request.
 
@@ -590,7 +593,7 @@ Dynamic loading applies to normal agent conversation turns. Bridge integrations 
 - **Connection Management**: The system automatically manages user connections to MCP servers
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
-- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools
+- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools, and to add optional retrieval description overrides used by dynamic tool loading search
 - **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
 
 ### OAuth-backed MCP servers

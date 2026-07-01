@@ -195,7 +195,10 @@ export class AIPlugin {
     const newChatButton = this.page.getByTestId('new-chat');
     if (await newChatButton.isVisible().catch(() => false)) {
         await newChatButton.click();
+        await expect(newChatButton).not.toBeVisible({ timeout: 10000 });
+        await expect(rhsContainer.locator('[data-testid="llm-bot-post"]')).toHaveCount(0, { timeout: 10000 });
     }
+    await expect(this.rhsPostTextarea).toBeVisible({ timeout: 10000 });
   }
 
   /**

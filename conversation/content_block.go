@@ -6,7 +6,7 @@ package conversation
 import (
 	"encoding/json"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // Block type constants identify the type of content in a ContentBlock.

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // toolCategory classifies tools for summaries and future tuning.

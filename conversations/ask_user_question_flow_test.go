@@ -9,15 +9,15 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/mmtools"
-	"github.com/mattermost/mattermost-plugin-agents/store"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -324,6 +324,7 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 			&model.Post{Id: "root-post-id"},
 			conv,
 			true,
+			nil,
 		)
 		require.NoError(t, err)
 		streamingService.waitForStreaming()
@@ -338,13 +339,23 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 		rootID := "root-id"
 		conv.RootPostID = &rootID
 
-		rootPost := &model.Post{UserId: "automation-bot"}
+		rootPost := &model.Post{Id: "root-id", UserId: "automation-bot", Message: "automated request"}
 		rootPost.AddProp(ActivateAIProp, true)
+		// A human reply posted to the thread that was never stored as a turn;
+		// the rebuilt request must carry it so the follow-up keeps its context.
+		threadReply := &model.Post{Id: "reply-id", RootId: "root-id", UserId: "human-user", Message: "non-turn thread reply"}
 		mmClient := mocks.NewMockClient(t)
 		mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 		mmClient.On("GetPost", "root-id").Return(rootPost, nil).Once()
-		mmClient.On("GetUser", "automation-bot").Return(&model.User{Id: "automation-bot", IsBot: true}, nil).Once()
+		mmClient.On("GetUser", "automation-bot").Return(&model.User{Id: "automation-bot", IsBot: true}, nil)
+		mmClient.On("GetUser", "human-user").Return(&model.User{Id: "human-user", Username: "human"}, nil)
 		mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+		// Channel follow-ups rebuild thread context via GetThreadData; return a
+		// live thread with a non-turn reply to exercise the thread-aware path.
+		mmClient.On("GetPostThread", "root-id").Return(&model.PostList{
+			Order: []string{"root-id", "reply-id"},
+			Posts: map[string]*model.Post{"root-id": rootPost, "reply-id": threadReply},
+		}, nil).Once()
 
 		lm := &loadedStateLLM{}
 		streamingService := &loadedStateStreamingService{}
@@ -365,11 +376,19 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 			&model.Post{Id: "post-id"},
 			conv,
 			false,
+			nil,
 		)
 		require.NoError(t, err)
 		streamingService.waitForStreaming()
 		require.Len(t, lm.requests, 1)
 		assert.False(t, lm.requests[0].Context.ToolCatalog.InteractiveUserPresent)
+
+		var threadContext string
+		for _, p := range lm.requests[0].Posts {
+			threadContext += p.Message + "\n"
+		}
+		assert.Contains(t, threadContext, "non-turn thread reply",
+			"channel follow-up must rebuild live thread context for non-turn posts")
 	})
 }
 

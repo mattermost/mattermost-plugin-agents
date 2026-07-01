@@ -10,16 +10,16 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/mmtools"
-	"github.com/mattermost/mattermost-plugin-agents/store"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
-	"github.com/mattermost/mattermost-plugin-agents/telemetry"
-	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -298,7 +298,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return nil
 	}
 
-	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM)
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, llmContext)
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
@@ -489,7 +489,9 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return fmt.Errorf("unable to get user: %w", err)
 	}
 
-	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, false)
+	// Channel second-stage follow-up rebuilds a fresh llmContext without in-request
+	// WebSearch data; citation decoration is DM-only via HandleToolCall's llmContext.
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, false, nil)
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
@@ -506,6 +508,7 @@ func (c *Conversations) streamToolFollowUp(
 	post *model.Post,
 	conv *store.Conversation,
 	isDM bool,
+	approvalContext *llm.Context,
 ) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
 	defer span.End()
@@ -537,7 +540,8 @@ func (c *Conversations) streamToolFollowUp(
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
 
-	completionReq, err := c.convService.BuildCompletionRequest(conv, llmContext)
+	// Channel thread posts aren't stored as turns, so rebuild with thread context.
+	completionReq, err := c.buildToolFollowUpRequest(conv, llmContext, isDM)
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
 	}
@@ -564,13 +568,34 @@ func (c *Conversations) streamToolFollowUp(
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
 	}
 
+	stream := decorateStreamWithWebSearchAnnotations(runResult.Stream, approvalContext)
+
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
-	if err := c.streamContinuationToExistingPost(ctx, runResult.Stream, post, user, channel); err != nil {
+	if err := c.streamContinuationToExistingPost(ctx, stream, post, user, channel); err != nil {
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}
 
 	return nil
+}
+
+// buildToolFollowUpRequest rebuilds the completion request for a tool follow-up.
+// Channel conversations re-fetch the live thread so non-turn thread posts stay in
+// context (matching the initial mention); DMs persist every post as a turn.
+func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmContext *llm.Context, isDM bool) (*llm.CompletionRequest, error) {
+	if !isDM && conv.RootPostID != nil {
+		// Best-effort: if the live thread can't be fetched (deleted root,
+		// permissions, API blip), degrade to turns-only context rather than
+		// failing the resume. BuildChannelMentionRequest does the same on
+		// empty thread data.
+		threadData, err := mmapi.GetThreadData(c.mmClient, *conv.RootPostID)
+		if err != nil {
+			c.mmClient.LogWarn("Failed to get thread data for tool follow-up, falling back to turns-only context", "error", err)
+			return c.convService.BuildCompletionRequest(conv, llmContext)
+		}
+		return c.convService.BuildChannelMentionRequest(conv, llmContext, threadData)
+	}
+	return c.convService.BuildCompletionRequest(conv, llmContext)
 }
 
 func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, block conversation.ContentBlock) (string, error) {

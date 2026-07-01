@@ -4,10 +4,10 @@
 package mcpserver
 
 import (
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
-	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/types"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

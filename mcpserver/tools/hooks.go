@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/public/mcptool"
+	"github.com/mattermost/mattermost-plugin-agents/v2/public/mcptool"
 )
 
 const hookHTTPTimeout = 30 * time.Second

@@ -1,5 +1,4 @@
 import { Page, Locator, expect } from '@playwright/test';
-import { getAPIErrorContext } from './log-scanner';
 
 /**
  * LLMBotPostHelper - Page object for LLMBot post component interactions
@@ -514,7 +513,7 @@ export class LLMBotPostHelper {
         }
 
         // If we hit max timeout, throw error with API context if available
-        throw new Error(`Timeout waiting for post text to contain: ${text}${getAPIErrorContext()}`);
+        throw new Error(`Timeout waiting for post text to contain: ${text}`);
     }
 
     /**
@@ -529,7 +528,7 @@ export class LLMBotPostHelper {
         try {
             await expect(reasoning).toBeVisible({ timeout: 60000 });
         } catch (err) {
-            throw new Error(`Timeout waiting for reasoning display to appear${getAPIErrorContext()}`);
+            throw new Error('Timeout waiting for reasoning display to appear');
         }
 
         // Then poll until reasoning spinner disappears (reasoning complete)
@@ -577,7 +576,7 @@ export class LLMBotPostHelper {
 
         // If we hit max timeout, throw error with API context if available
         const count = await allCitations.count().catch(() => 0);
-        throw new Error(`Timeout waiting for citation ${index} to appear (found ${count})${getAPIErrorContext()}`);
+        throw new Error(`Timeout waiting for citation ${index} to appear (found ${count})`);
     }
 
     /**
@@ -655,7 +654,7 @@ export class LLMBotPostHelper {
         try {
             await expect(postText).toBeVisible({ timeout: remainingTime });
         } catch (err) {
-            throw new Error(`Timeout waiting for bot post text to appear${getAPIErrorContext()}`);
+            throw new Error('Timeout waiting for bot post text to appear');
         }
 
         // Wait for "Stop Generating" button to disappear (streaming complete)
