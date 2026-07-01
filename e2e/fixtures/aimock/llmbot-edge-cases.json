@@ -1,0 +1,150 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:"
+      },
+      "response": {
+        "content": "Phase3 Edge Cases"
+      }
+    },
+    {
+      "match": {
+        "userMessage": "phase3-empty-reasoning-001"
+      },
+      "response": {
+        "content": "Empty reasoning answer marker four."
+      }
+    },
+    {
+      "match": {
+        "userMessage": "phase3-long-reasoning-001"
+      },
+      "response": {
+        "reasoning": "Long reasoning marker alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega.",
+        "content": "Long reasoning answer marker."
+      },
+      "chunkSize": 8
+    },
+    {
+      "match": {
+        "userMessage": "phase3-rapid-toggle-001"
+      },
+      "response": {
+        "reasoning": "Rapid toggle reasoning marker steps.",
+        "content": "Rapid toggle answer marker."
+      },
+      "chunkSize": 6
+    },
+    {
+      "match": {
+        "userMessage": "phase3-special-chars-001"
+      },
+      "response": {
+        "content": "Special chars marker: <tag> & pipe | `code` **bold** example."
+      },
+      "chunkSize": 5
+    },
+    {
+      "match": {
+        "userMessage": "phase3-concurrent-one-001"
+      },
+      "response": {
+        "content": "Concurrent marker one TypeScript brief."
+      },
+      "chunkSize": 4
+    },
+    {
+      "match": {
+        "userMessage": "phase3-concurrent-two-001"
+      },
+      "response": {
+        "content": "Concurrent marker two JavaScript brief."
+      },
+      "chunkSize": 4
+    },
+    {
+      "match": {
+        "userMessage": "phase3-concurrent-three-001"
+      },
+      "response": {
+        "content": "Concurrent marker three compare brief."
+      },
+      "chunkSize": 4
+    },
+    {
+      "match": {
+        "userMessage": "phase3-empty-post-001"
+      },
+      "response": {
+        "content": ""
+      }
+    },
+    {
+      "match": {
+        "userMessage": "phase3-unicode-001"
+      },
+      "response": {
+        "content": "Unicode marker 🚀 TypeScript 日本語 café résumé."
+      },
+      "chunkSize": 5
+    },
+    {
+      "match": {
+        "userMessage": "phase3-large-reasoning-001"
+      },
+      "response": {
+        "reasoning": "Large post reasoning marker overview structure.",
+        "content": "Large post content marker Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
+      },
+      "chunkSize": 10
+    },
+    {
+      "match": {
+        "userMessage": "phase3-network-error-001"
+      },
+      "response": {
+        "error": {
+          "message": "phase3 forced aimock error",
+          "type": "server_error"
+        },
+        "status": 500
+      }
+    },
+    {
+      "match": {
+        "userMessage": "phase3-network-recovery-001"
+      },
+      "response": {
+        "content": "Network recovery marker TypeScript defined."
+      }
+    },
+    {
+      "match": {
+        "userMessage": "phase3-rapid-msg-one-001"
+      },
+      "response": {
+        "content": "Rapid msg marker one TypeScript."
+      },
+      "chunkSize": 4
+    },
+    {
+      "match": {
+        "userMessage": "phase3-rapid-msg-two-001"
+      },
+      "response": {
+        "content": "Rapid msg marker two JavaScript."
+      },
+      "chunkSize": 4
+    },
+    {
+      "match": {
+        "userMessage": "phase3-rapid-msg-three-001"
+      },
+      "response": {
+        "content": "Rapid msg marker three Python."
+      },
+      "chunkSize": 4
+    }
+  ]
+}

@@ -665,6 +665,7 @@ func TestStreamToolFollowUpRestoresToolFromPriorLoadTurns(t *testing.T) {
 		&model.Post{Id: "root-post-id"},
 		conv,
 		true,
+		nil,
 	)
 	require.NoError(t, err)
 	streamingService.waitForStreaming()

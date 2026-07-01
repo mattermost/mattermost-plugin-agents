@@ -1,31 +1,25 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import fs from 'fs';
-import path from 'path';
-
 import {test, expect, Locator, Page} from '@playwright/test';
 
+import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
+import {buildTextResponse, buildTitleFixture, mergeFixtureFiles, stubAimockModelFetch} from 'helpers/aimock-fixtures';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {SystemConsoleHelper} from 'helpers/system-console';
 import {AgentPageHelper} from 'helpers/agent-page';
 import {AgentAPIHelper} from 'helpers/agent-api';
-import {
-    ProviderBundle,
-    createCustomProvider,
-    getAPIConfig,
-} from 'helpers/api-config';
-import {checkAPIHealth} from 'helpers/api-health-check';
-import {REAL_API_BEFORE_ALL_TIMEOUT_MS} from 'helpers/real-api-container';
-import {attachAPIErrorContext} from 'helpers/log-scanner';
+import RunSystemConsoleContainer, {adminUsername, adminPassword} from 'helpers/system-console-container';
 
-const adminUsername = 'admin';
-const adminPassword = 'admin';
 const regularUsername = 'regularuser';
 const regularPassword = 'regularuser';
 
-type ProviderType = 'anthropic' | 'openai';
+const serviceName = 'Aimock Live Service';
+const botDisplayName = 'Aimock Live Agent';
+const botUsername = 'aimocklive';
+const aimockModel = 'gpt-mock';
+
 type Post = {
     id: string;
     user_id: string;
@@ -34,44 +28,8 @@ type Post = {
     create_at: number;
 };
 
-const knownLLMErrorPatterns = [
-    'llm did not return a result',
-    'an error occurred while accessing the llm',
-    'bifrost error:',
-];
-
-const maxLiveReplyAttempts = 3;
-
-const selectedProviderType = getSelectedProviderType();
-const apiConfig = getAPIConfig();
-const shouldRunProvider = selectedProviderType === 'anthropic' ? apiConfig.hasAnthropicKey : apiConfig.hasOpenAIKey;
-const missingKeyMessage = selectedProviderType === 'anthropic' ?
-    'Skipping live system-console flow: ANTHROPIC_API_KEY is required (or set E2E_LIVE_PROVIDER=openai).' :
-    'Skipping live system-console flow: OPENAI_API_KEY is required (or set E2E_LIVE_PROVIDER=anthropic).';
-
 let mattermost: MattermostContainer;
-let provider: ProviderBundle;
-
-function getSelectedProviderType(): ProviderType {
-    const raw = (process.env.E2E_LIVE_PROVIDER || 'anthropic').trim().toLowerCase();
-    if (raw === 'anthropic' || raw === 'openai') {
-        return raw;
-    }
-
-    throw new Error(`Invalid E2E_LIVE_PROVIDER="${raw}". Expected "anthropic" or "openai".`);
-}
-
-function findPluginFile(): string {
-    const distPath = path.resolve(__dirname, '../../../dist');
-    const files = fs.readdirSync(distPath);
-    const pluginFile = files.find((file) => file.endsWith('.tar.gz'));
-
-    if (!pluginFile) {
-        throw new Error(`No plugin tarball found in ${distPath}. Run "make dist" first.`);
-    }
-
-    return path.join(distPath, pluginFile);
-}
+let aimock: AIMockContainer;
 
 async function setTestPreferences(mattermostInstance: MattermostContainer, username: string, password: string): Promise<void> {
     const userClient = await mattermostInstance.getClient(username, password);
@@ -90,50 +48,20 @@ async function setTestPreferences(mattermostInstance: MattermostContainer, usern
     ]);
 }
 
-async function setupTestUsers(mattermostInstance: MattermostContainer): Promise<void> {
+async function setupRegularUser(mattermostInstance: MattermostContainer): Promise<void> {
     await mattermostInstance.createUser('regularuser@sample.com', regularUsername, regularPassword);
     await mattermostInstance.addUserToTeam(regularUsername, 'test');
-    await setTestPreferences(mattermostInstance, adminUsername, adminPassword);
     await setTestPreferences(mattermostInstance, regularUsername, regularPassword);
 
-    const adminClient = await mattermostInstance.getAdminClient();
+    const adminClient = await mattermostInstance.getClient(adminUsername, adminPassword);
     await adminClient.completeSetup({
         organization: 'test',
         install_plugins: [],
     });
 }
 
-async function installPlugin(mattermostInstance: MattermostContainer): Promise<void> {
-    const pluginPath = findPluginFile();
-    const pluginConfig = {
-        config: {
-            allowPrivateChannels: true,
-            disableFunctionCalls: false,
-            enableUserRestrictions: false,
-            enableVectorIndex: false,
-            services: [],
-            bots: [],
-        },
-    };
-
-    await mattermostInstance.installPlugin(pluginPath, 'mattermost-ai', pluginConfig);
-}
-
 function getPostsArray(postsResponse: {posts?: Record<string, Post>}): Post[] {
     return Object.values(postsResponse.posts || {});
-}
-
-function isKnownErrorResponse(message: string): boolean {
-    const normalized = message.toLowerCase();
-    return knownLLMErrorPatterns.some((pattern) => normalized.includes(pattern));
-}
-
-function modelTokens(value: string): string[] {
-    return value.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3 || /^[0-9]+$/.test(token));
-}
-
-function canonicalModel(value: string): string {
-    return value.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 async function waitForPost(
@@ -162,83 +90,13 @@ async function waitForPost(
     return matchedPost!;
 }
 
-async function requestNonErrorDMReply(
-    mmPage: MattermostPage,
-    regularClient: any,
-    dmChannelID: string,
-    botUserID: string,
-): Promise<Post> {
-    for (let attempt = 1; attempt <= maxLiveReplyAttempts; attempt++) {
-        const dmPrompt = `Live DM verification ${Date.now()} attempt-${attempt}`;
-        const dmStartTime = Date.now();
-        await mmPage.sendChannelMessage(dmPrompt);
-
-        const dmBotReply = await waitForPost(
-            regularClient,
-            dmChannelID,
-            (post) => post.user_id === botUserID &&
-                post.create_at >= dmStartTime &&
-                post.message.trim().length > 0,
-            180000,
-        );
-
-        if (!isKnownErrorResponse(dmBotReply.message)) {
-            return dmBotReply;
-        }
-    }
-
-    throw new Error(`Bot returned known error reply for all ${maxLiveReplyAttempts} DM attempts.`);
-}
-
-async function requestNonErrorMentionReply(
-    page: Page,
-    mmPage: MattermostPage,
-    regularClient: any,
-    channelID: string,
-    botUsername: string,
-    botUserID: string,
-    regularUserID: string,
-): Promise<Post> {
-    for (let attempt = 1; attempt <= maxLiveReplyAttempts; attempt++) {
-        const mentionPrompt = `live mention verification ${Date.now()} attempt-${attempt}`;
-        const mentionStartTime = Date.now();
-        await mmPage.mentionBot(botUsername, mentionPrompt);
-        await expect(page.getByText(`@${botUsername} ${mentionPrompt}`, {exact: true})).toBeVisible();
-
-        const mentionPost = await waitForPost(
-            regularClient,
-            channelID,
-            (post) => post.user_id === regularUserID &&
-                post.create_at >= mentionStartTime &&
-                post.message.includes(mentionPrompt),
-            60000,
-        );
-
-        const mentionBotReply = await waitForPost(
-            regularClient,
-            channelID,
-            (post) => post.user_id === botUserID &&
-                post.create_at >= mentionStartTime &&
-                post.root_id === mentionPost.id &&
-                post.message.trim().length > 0,
-            180000,
-        );
-
-        if (!isKnownErrorResponse(mentionBotReply.message)) {
-            return mentionBotReply;
-        }
-    }
-
-    throw new Error(`Bot returned known error reply for all ${maxLiveReplyAttempts} mention attempts.`);
-}
-
-async function waitForBotUserID(mattermostInstance: MattermostContainer, botUsername: string): Promise<string> {
-    const adminClient = await mattermostInstance.getAdminClient();
+async function waitForBotUserID(mattermostInstance: MattermostContainer, username: string): Promise<string> {
+    const adminClient = await mattermostInstance.getClient(adminUsername, adminPassword);
     let botUserID = '';
 
     await expect.poll(async () => {
         try {
-            const botUser = await adminClient.getUserByUsername(botUsername);
+            const botUser = await adminClient.getUserByUsername(username);
             botUserID = botUser.id;
             return true;
         } catch {
@@ -269,7 +127,6 @@ async function selectModelFromDropdown(
     container: Locator,
     page: Page,
     preferredModel: string,
-    avoidTokens: string[] = [],
 ): Promise<string> {
     const dropdownInput = container.locator('input[id^="react-select-"][id$="-input"]').first();
     await expect(dropdownInput).toBeVisible({timeout: 90000});
@@ -279,29 +136,10 @@ async function selectModelFromDropdown(
     await expect(options.first()).toBeVisible({timeout: 90000});
 
     const optionTexts = (await options.allTextContents()).map((text) => text.trim());
-    const preferredTokens = modelTokens(preferredModel);
-    const canonicalPreferred = canonicalModel(preferredModel);
-    const normalizedAvoidTokens = avoidTokens.map((token) => token.toLowerCase());
+    const preferredIndex = optionTexts.findIndex((text) => text.toLowerCase().includes(preferredModel.toLowerCase()));
+    const selectedIndex = preferredIndex >= 0 ? preferredIndex : 0;
+    const model = optionTexts[selectedIndex] || preferredModel;
 
-    let selectedIndex = 0;
-    let bestScore = Number.NEGATIVE_INFINITY;
-    for (const [index, optionText] of optionTexts.entries()) {
-        const normalizedOption = optionText.toLowerCase();
-        const canonicalOption = canonicalModel(optionText);
-        const optionTokens = modelTokens(optionText);
-        const preferredMatchCount = preferredTokens.filter((token) => optionTokens.includes(token) || normalizedOption.includes(token)).length;
-        const isCanonicalPreferredMatch = canonicalPreferred.length > 0 &&
-            (canonicalOption.includes(canonicalPreferred) || canonicalPreferred.includes(canonicalOption));
-        const hasAvoidedToken = normalizedAvoidTokens.some((token) => normalizedOption.includes(token));
-        const score = (isCanonicalPreferredMatch ? 1000 : 0) + (preferredMatchCount * 10) + (hasAvoidedToken ? -100 : 0);
-
-        if (score > bestScore) {
-            bestScore = score;
-            selectedIndex = index;
-        }
-    }
-
-    const model = optionTexts[selectedIndex] || '';
     expect(model.length).toBeGreaterThan(0);
     await options.nth(selectedIndex).click();
 
@@ -331,119 +169,77 @@ async function ensureLoggedOut(page: Page, baseURL: string): Promise<void> {
     await expect(page.getByText('Log in to your account')).toBeVisible({timeout: 30000});
 }
 
-function isPersistedModelMatch(cardText: string, selectedModel: string): boolean {
-    const normalizedCardText = cardText.toLowerCase();
-    const normalizedSelectedModel = selectedModel.toLowerCase();
-
-    if (normalizedCardText.includes(normalizedSelectedModel)) {
-        return true;
-    }
-
-    const modelTokens = normalizedSelectedModel.split(/[^a-z0-9]+/).filter((token) => token.length >= 3);
-    if (modelTokens.length === 0) {
-        return false;
-    }
-
-    const matchedTokenCount = modelTokens.filter((token) => normalizedCardText.includes(token)).length;
-    return matchedTokenCount >= Math.min(modelTokens.length, 2);
-}
-
-test.describe.serial('System Console Real Live Service Full Flow', () => {
+test.describe.serial('System Console Aimock Live Service Full Flow', () => {
     test.beforeAll(async () => {
-        if (!shouldRunProvider) {
-            return;
-        }
+        test.setTimeout(180000);
 
-        test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
-
-        provider = createCustomProvider(selectedProviderType, {
-            name: selectedProviderType === 'anthropic' ? 'Anthropic Live Service' : 'OpenAI Live Service',
-        }, {
-            name: selectedProviderType === 'anthropic' ? 'anthropiclive' : 'openailive',
-            displayName: selectedProviderType === 'anthropic' ? 'Anthropic Live Agent' : 'OpenAI Live Agent',
-            customInstructions: 'You are a concise and helpful assistant for e2e verification.',
-            enabledNativeTools: [],
-            reasoningEnabled: true,
-            disableTools: false,
+        mattermost = await RunSystemConsoleContainer({
+            services: [],
+            bots: [],
+            enableChannelMentionToolCalling: true,
         });
-
-        await checkAPIHealth(provider.service);
-
-        mattermost = await new MattermostContainer().start();
-        await setupTestUsers(mattermost);
-        await mattermost.grantSelfServiceAgentPermissions();
-        await installPlugin(mattermost);
-    });
-
-    test.afterEach(async ({}, testInfo) => {
-        await attachAPIErrorContext(testInfo);
+        await setupRegularUser(mattermost);
+        aimock = await RunAIMockSidecar(mattermost.network, {
+            fixtures: {fixtures: [buildTitleFixture('System console bootstrap')]},
+        });
     });
 
     test.afterAll(async () => {
+        await aimock?.stop();
         if (mattermost) {
             await mattermost.stop();
         }
     });
 
-    test('should install plugin, configure live service+agent, and validate DM + channel mention', async ({page}) => {
-        test.skip(!shouldRunProvider, missingKeyMessage);
+    test('should install plugin, configure aimock service+agent, and validate DM + channel mention', async ({page}) => {
         test.setTimeout(480000);
+
+        await stubAimockModelFetch(page, [{id: aimockModel, displayName: aimockModel}]);
 
         const systemConsole = new SystemConsoleHelper(page);
         const mmPage = new MattermostPage(page);
         const agentApi = new AgentAPIHelper(mattermost.url());
-        const serviceName = provider.service.name;
-        const botDisplayName = provider.bot.displayName;
-        const botUsername = provider.bot.name;
-        const avoidModelTokens = selectedProviderType === 'anthropic' ? ['haiku'] : [];
-        let selectedServiceModel = '';
-        let selectedBotModel = '';
-        const adminClient = await mattermost.getAdminClient();
+        const adminClient = await mattermost.getClient(adminUsername, adminPassword);
         const adminToken = adminClient.getToken();
 
-        // 1) Login as admin and configure service + bot in System Console.
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
         await systemConsole.navigateToPluginConfig(mattermost.url());
 
-        const hasServiceAlready = await page.getByText(serviceName).first().isVisible().catch(() => false);
-        if (!hasServiceAlready) {
-            await systemConsole.clickAddService();
+        await systemConsole.clickAddService();
 
-            const serviceCard = page.locator('[class*="ServiceContainer"]').last();
-            await expect(serviceCard).toBeVisible();
-            await ensureServiceCardExpanded(serviceCard);
+        const serviceCard = page.locator('[class*="ServiceContainer"]').last();
+        await expect(serviceCard).toBeVisible();
+        await ensureServiceCardExpanded(serviceCard);
 
-            await serviceCard.getByPlaceholder(/service name/i).fill(serviceName);
-            await serviceCard.getByRole('combobox').first().selectOption(provider.service.type);
-            await serviceCard.getByPlaceholder(/api key/i).fill(provider.service.apiKey);
+        await serviceCard.getByPlaceholder(/service name/i).fill(serviceName);
+        await serviceCard.getByRole('combobox').first().selectOption('openaicompatible');
+        await serviceCard.getByPlaceholder(/api key/i).fill('mock');
+        await serviceCard.getByPlaceholder(/api url/i).fill('http://openai:8080');
 
-            if (provider.service.type === 'openaicompatible') {
-                await serviceCard.getByPlaceholder(/api url/i).fill(provider.service.apiURL);
-            }
+        const selectedServiceModel = await selectModelFromDropdown(serviceCard, page, aimockModel);
 
-            selectedServiceModel = await selectModelFromDropdown(serviceCard, page, provider.service.defaultModel, avoidModelTokens);
-
-            // Token-limit inputs are disabled when Bifrost auto-detects the
-            // limit for the selected model; the auto-filled value is used as-is.
-            const inputTokenLimitField = serviceCard.getByPlaceholder(/input token limit/i);
-            if (await inputTokenLimitField.isEnabled()) {
-                await inputTokenLimitField.fill(String(provider.service.tokenLimit));
-            }
-            const outputTokenLimitField = serviceCard.getByPlaceholder(/output token limit/i);
-            if (await outputTokenLimitField.isEnabled()) {
-                await outputTokenLimitField.fill(String(provider.service.outputTokenLimit));
-            }
-
-            const streamingTimeoutInput = serviceCard.getByPlaceholder(/streaming timeout seconds/i);
-            if (await streamingTimeoutInput.isVisible().catch(() => false)) {
-                await streamingTimeoutInput.fill(String(provider.service.streamingTimeoutSeconds || 30));
-            }
-
-            await systemConsole.clickSave();
-            await page.reload();
-            await page.waitForLoadState('domcontentloaded');
-            await systemConsole.navigateToPluginConfig(mattermost.url());
+        const inputTokenLimitField = serviceCard.getByPlaceholder(/input token limit/i);
+        if (await inputTokenLimitField.isEnabled()) {
+            await inputTokenLimitField.fill('16384');
         }
+        const outputTokenLimitField = serviceCard.getByPlaceholder(/output token limit/i);
+        if (await outputTokenLimitField.isEnabled()) {
+            await outputTokenLimitField.fill('4096');
+        }
+
+        const streamingTimeoutInput = serviceCard.getByPlaceholder(/streaming timeout seconds/i);
+        if (await streamingTimeoutInput.isVisible().catch(() => false)) {
+            await streamingTimeoutInput.fill('30');
+        }
+
+        await systemConsole.clickSave();
+        await page.reload();
+        await page.waitForLoadState('domcontentloaded');
+        await systemConsole.navigateToPluginConfig(mattermost.url());
+
+        await expect(page.getByText(serviceName).first()).toBeVisible();
+        const reloadedServiceCard = page.locator('[class*="ServiceContainer"]').filter({hasText: serviceName}).first();
+        await expect(reloadedServiceCard).toContainText(selectedServiceModel);
 
         await systemConsole.waitForBotsPanel();
 
@@ -452,65 +248,52 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         const agentPage = new AgentPageHelper(page);
         await agentPage.getCreateButton().waitFor({state: 'visible', timeout: 15000});
 
-        const hasBotAlready = await page.getByText(botDisplayName).first().isVisible().catch(() => false);
-        if (!hasBotAlready) {
-            await agentPage.getCreateButton().click();
-            await agentPage.waitForModal();
-            await agentPage.fillConfigTab({
-                displayName: botDisplayName,
-                username: botUsername,
-                serviceLabel: serviceName,
-                instructions: provider.bot.customInstructions,
-            });
-            const modelInput = page.locator('input[id^="react-select-"]').first();
-            if (await modelInput.isVisible({timeout: 15000}).catch(() => false)) {
-                selectedBotModel = await selectModelFromDropdown(page.locator('body'), page, provider.service.defaultModel, avoidModelTokens);
-            }
-            await agentPage.getModalSaveButton().click();
-            await agentPage.waitForModalClosed();
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+        await agentPage.fillConfigTab({
+            displayName: botDisplayName,
+            username: botUsername,
+            serviceLabel: serviceName,
+            instructions: 'You are a concise and deterministic assistant for e2e verification.',
+        });
+        const modelInput = page.locator('input[id^="react-select-"]').first();
+        if (await modelInput.isVisible({timeout: 15000}).catch(() => false)) {
+            await selectModelFromDropdown(page.locator('body'), page, aimockModel);
         }
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
 
         await expect(page.getByText(botDisplayName).first()).toBeVisible();
         const createdAgent = (await agentApi.getAgents(adminToken)).find((agent) => agent.name === botUsername);
         expect(createdAgent).toBeTruthy();
 
         await agentApi.updateAgent(adminToken, createdAgent!.id, {
-            enabledNativeTools: provider.bot.enabledNativeTools || [],
+            enabledNativeTools: [],
             autoEnableNewMCPTools: false,
             enabledMCPTools: [],
-            disableTools: provider.bot.disableTools,
+            disableTools: false,
         });
 
-        await systemConsole.navigateToPluginConfig(mattermost.url());
-        await page.waitForLoadState('domcontentloaded');
-
-        await expect(page.getByText(serviceName).first()).toBeVisible();
-        if (selectedServiceModel) {
-            const reloadedServiceCard = page.locator('[class*="ServiceContainer"]').filter({hasText: serviceName}).first();
-            await expect.poll(async () => {
-                const cardText = (await reloadedServiceCard.textContent()) || '';
-                return isPersistedModelMatch(cardText, selectedServiceModel);
-            }).toBe(true);
-        }
-
-        if (selectedBotModel) {
-            await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents`);
-            await page.waitForLoadState('domcontentloaded');
-            await agentPage.openAgentActions(botDisplayName);
-            await agentPage.clickEditAction(botDisplayName);
-            await agentPage.waitForModal();
-            await expect.poll(async () => {
-                const modalRoot = page.getByText('Configuration').first().locator('xpath=ancestor::div[contains(@class, "sc-")][1]');
-                const cardText = (await modalRoot.textContent()) || '';
-                return isPersistedModelMatch(cardText, selectedBotModel);
-            }).toBe(true);
-            await agentPage.getModalCancelButton().click();
-        }
-
-        // 2) Validate bot account exists after saving.
         const botUserID = await waitForBotUserID(mattermost, botUsername);
 
-        // 3) Login as regular user and verify DM flow with live service.
+        const dmPrompt = `aimock dm verification ${Date.now()}`;
+        const dmReplyText = `AIMOCK_DM_OK_${Date.now()}`;
+        const mentionPrompt = `aimock mention verification ${Date.now()}`;
+        const mentionReplyText = `AIMOCK_MENTION_OK_${Date.now()}`;
+
+        await aimock.setFixtures(mergeFixtureFiles(
+            buildTextResponse({
+                userMessage: dmPrompt,
+                content: dmReplyText,
+                title: 'Aimock live DM',
+            }),
+            buildTextResponse({
+                userMessage: mentionPrompt,
+                content: mentionReplyText,
+                title: 'Aimock live mention',
+            }),
+        ));
+
         await ensureLoggedOut(page, mattermost.url());
         await mmPage.login(`${mattermost.url()}/login`, regularUsername, regularPassword);
 
@@ -521,30 +304,46 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         await page.goto(`${mattermost.url()}/test/messages/@${botUsername}`);
         await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
 
-        const dmBotReply = await requestNonErrorDMReply(
-            mmPage,
+        const postTimeSkewMs = 5000;
+        const dmStartTime = Date.now();
+        await mmPage.sendChannelMessage(dmPrompt);
+
+        const dmBotReply = await waitForPost(
             regularClient,
             dmChannel.id,
-            botUserID,
+            (post) => post.user_id === botUserID &&
+                post.create_at >= dmStartTime - postTimeSkewMs &&
+                post.message.includes(dmReplyText),
         );
         expect(dmBotReply.user_id).toBe(botUserID);
-        expect(isKnownErrorResponse(dmBotReply.message)).toBe(false);
+        expect(dmBotReply.message).toContain(dmReplyText);
 
-        // 4) Verify channel mention flow in town-square.
         const townSquareChannelID = await getTownSquareChannelID(regularClient);
         await page.goto(`${mattermost.url()}/test/channels/town-square`);
         await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
 
-        const mentionBotReply = await requestNonErrorMentionReply(
-            page,
-            mmPage,
+        const mentionStartTime = Date.now();
+        await mmPage.mentionBot(botUsername, mentionPrompt);
+        await expect(page.getByText(`@${botUsername} ${mentionPrompt}`, {exact: true})).toBeVisible();
+
+        const mentionPost = await waitForPost(
             regularClient,
             townSquareChannelID,
-            botUsername,
-            botUserID,
-            regularUser.id,
+            (post) => post.user_id === regularUser.id &&
+                post.create_at >= mentionStartTime - postTimeSkewMs &&
+                post.message.includes(mentionPrompt),
+            60000,
+        );
+
+        const mentionBotReply = await waitForPost(
+            regularClient,
+            townSquareChannelID,
+            (post) => post.user_id === botUserID &&
+                post.create_at >= mentionStartTime - postTimeSkewMs &&
+                post.root_id === mentionPost.id &&
+                post.message.includes(mentionReplyText),
         );
         expect(mentionBotReply.user_id).toBe(botUserID);
-        expect(isKnownErrorResponse(mentionBotReply.message)).toBe(false);
+        expect(mentionBotReply.message).toContain(mentionReplyText);
     });
 });

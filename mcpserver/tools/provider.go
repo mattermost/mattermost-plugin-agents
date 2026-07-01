@@ -45,12 +45,32 @@ type MCPToolContext struct {
 // MCPToolResolver defines the signature for MCP tool resolvers
 type MCPToolResolver func(*MCPToolContext, llm.ToolArgumentGetter) (string, error)
 
+// typed adapts a resolver that accepts an already-decoded argument struct into
+// an MCPToolResolver. It owns argument decoding and the standard "invalid
+// arguments" error, so individual resolvers start at their real logic. The
+// returned resolver is an ordinary MCPToolResolver, so registerDynamicTool and
+// the before-hook (which still sees the raw request arguments) are unchanged.
+func typed[T any](name string, fn func(*MCPToolContext, T) (string, error)) MCPToolResolver {
+	return func(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+		var args T
+		if err := argsGetter(&args); err != nil {
+			return "", fmt.Errorf("failed to get arguments for tool %s: %w", name, err)
+		}
+		return fn(mcpContext, args)
+	}
+}
+
 // MCPTool represents a tool specifically for MCP use with our custom context
 type MCPTool struct {
 	Name        string
 	Description string
 	Schema      *jsonschema.Schema
 	Resolver    MCPToolResolver
+
+	// Available, when set, gates the tool's visibility: it is evaluated on each
+	// tools/list request and the tool is hidden when it returns false. Nil means
+	// always available.
+	Available func() bool
 }
 
 type ToolProvider interface {
@@ -100,27 +120,28 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 }
 
 func (p *MattermostToolProvider) mcpTools() []MCPTool {
-	mcpTools := []MCPTool{}
-
-	// Add regular tools
-	mcpTools = append(mcpTools, p.getPostTools()...)
-	mcpTools = append(mcpTools, p.getChannelTools()...)
-	mcpTools = append(mcpTools, p.getTeamTools()...)
-	mcpTools = append(mcpTools, p.getSearchTools()...)
-	mcpTools = append(mcpTools, p.getFileTools()...)
-	mcpTools = append(mcpTools, p.getAgentTools()...)
-
-	// Automation tools are always registered; availability is checked dynamically
-	// via middleware on each tools/list request.
-	mcpTools = append(mcpTools, p.getAutomationTools()...)
-
-	// Add dev tools if dev mode is enabled
-	if p.devMode {
-		mcpTools = append(mcpTools, p.getDevUserTools()...)
-		mcpTools = append(mcpTools, p.getDevPostTools()...)
-		mcpTools = append(mcpTools, p.getDevTeamTools()...)
+	// Tool groups in registration order. Automation tools are always included;
+	// each carries an Available predicate so it is hidden from tools/list when the
+	// automation plugin is absent.
+	groups := []func() []MCPTool{
+		p.getPostTools,
+		p.getChannelTools,
+		p.getTeamTools,
+		p.getSearchTools,
+		p.getFileTools,
+		p.getAgentTools,
+		p.getAutomationTools,
 	}
 
+	// Dev tools are only exposed when dev mode is enabled.
+	if p.devMode {
+		groups = append(groups, p.getDevUserTools, p.getDevPostTools, p.getDevTeamTools)
+	}
+
+	var mcpTools []MCPTool
+	for _, group := range groups {
+		mcpTools = append(mcpTools, group()...)
+	}
 	return mcpTools
 }
 
@@ -136,44 +157,58 @@ func (p *MattermostToolProvider) ToolNames() []string {
 
 // ProvideTools registers all available MCP tools with the server.
 func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
+	availability := map[string]func() bool{}
 	for _, mcpTool := range p.mcpTools() {
 		p.registerDynamicTool(mcpServer, mcpTool)
-	}
-
-	// Add middleware to dynamically filter automation tools from tools/list
-	// when the channel automation plugin is not installed.
-	mcpServer.AddReceivingMiddleware(p.automationToolFilterMiddleware())
-}
-
-func (p *MattermostToolProvider) stripAutomationFromToolsListResult(result mcp.Result) mcp.Result {
-	listResult, ok := result.(*mcp.ListToolsResult)
-	if !ok {
-		return result
-	}
-	filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
-	for _, tool := range listResult.Tools {
-		if !IsAutomationTool(tool.Name) {
-			filtered = append(filtered, tool)
+		if mcpTool.Available != nil {
+			availability[mcpTool.Name] = mcpTool.Available
 		}
 	}
-	listResult.Tools = filtered
-	return listResult
+
+	// Hide tools whose Available predicate currently returns false on each
+	// tools/list request (e.g. automation tools when the plugin is absent).
+	mcpServer.AddReceivingMiddleware(toolAvailabilityMiddleware(availability))
 }
 
-// automationToolFilterMiddleware returns MCP receiving middleware that filters
-// automation tools from tools/list when the channel automation plugin is not installed.
-func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware {
+// toolAvailabilityMiddleware returns MCP receiving middleware that drops any tool
+// from tools/list whose Available predicate reports it as unavailable. Each
+// distinct predicate is evaluated at most once per request, so tools that share
+// a predicate (e.g. all automation tools) trigger a single probe rather than one
+// per tool.
+func toolAvailabilityMiddleware(availability map[string]func() bool) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			result, err := next(ctx, method, req)
 			if err != nil || method != "tools/list" {
 				return result, err
 			}
-
-			if !p.isAutomationPluginInstalled() {
-				return p.stripAutomationFromToolsListResult(result), nil
+			listResult, ok := result.(*mcp.ListToolsResult)
+			if !ok {
+				return result, nil
 			}
-			return result, nil
+
+			// Memoize each distinct predicate (keyed by its code pointer) for the
+			// duration of this filtering pass.
+			cache := map[uintptr]bool{}
+			isAvailable := func(predicate func() bool) bool {
+				key := reflect.ValueOf(predicate).Pointer()
+				if v, cached := cache[key]; cached {
+					return v
+				}
+				v := predicate()
+				cache[key] = v
+				return v
+			}
+
+			filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
+			for _, tool := range listResult.Tools {
+				if available, gated := availability[tool.Name]; gated && !isAvailable(available) {
+					continue
+				}
+				filtered = append(filtered, tool)
+			}
+			listResult.Tools = filtered
+			return listResult, nil
 		}
 	}
 }
@@ -362,75 +397,71 @@ func NewJSONSchemaForAccessMode[T any](accessMode string) *jsonschema.Schema {
 		panic(fmt.Sprintf("failed to create JSON schema from struct: %v", err))
 	}
 
-	// If no properties to filter, return the base schema
-	if baseSchema.Properties == nil {
+	// Identify the properties the current access mode is not allowed to set.
+	excluded := excludedFieldsForAccessMode(reflect.TypeFor[T](), accessMode)
+	if len(excluded) == 0 {
 		return baseSchema
 	}
 
-	// Get the struct type to inspect field tags
-	var zero T
-	structType := reflect.TypeOf(zero)
+	// Shallow-copy the base schema and drop only the excluded properties, so that
+	// everything else the generator produced ($defs, AdditionalProperties, item
+	// schemas, ...) is preserved.
+	filtered := *baseSchema
+	filtered.Properties = make(map[string]*jsonschema.Schema, len(baseSchema.Properties))
+	for name, prop := range baseSchema.Properties {
+		if !excluded[name] {
+			filtered.Properties[name] = prop
+		}
+	}
+	if len(baseSchema.Required) > 0 {
+		required := make([]string, 0, len(baseSchema.Required))
+		for _, name := range baseSchema.Required {
+			if !excluded[name] {
+				required = append(required, name)
+			}
+		}
+		filtered.Required = required
+	}
+	return &filtered
+}
 
-	// If it's a pointer, get the underlying type
-	if structType.Kind() == reflect.Ptr {
-		structType = structType.Elem()
+// excludedFieldsForAccessMode returns the set of JSON field names on struct type
+// t that the given access mode is not allowed to use, per each field's `access:`
+// tag. Returns nil when nothing is restricted.
+func excludedFieldsForAccessMode(t reflect.Type, accessMode string) map[string]bool {
+	for t != nil && t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t == nil || t.Kind() != reflect.Struct {
+		return nil
 	}
 
-	// If it's not a struct, return the base schema
-	if structType.Kind() != reflect.Struct {
-		return baseSchema
-	}
-
-	// Create a new schema with filtered properties
-	filteredSchema := &jsonschema.Schema{
-		Type:        baseSchema.Type,
-		Title:       baseSchema.Title,
-		Description: baseSchema.Description,
-		Properties:  make(map[string]*jsonschema.Schema),
-		Required:    []string{},
-	}
-
-	// Check each field and its access tag
-	for i := 0; i < structType.NumField(); i++ {
-		field := structType.Field(i)
-
-		// Get the JSON field name
-		jsonTag := field.Tag.Get("json")
-		if jsonTag == "" || jsonTag == "-" {
+	var excluded map[string]bool
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		name := jsonFieldName(field)
+		if name == "" {
 			continue
 		}
-
-		// Extract field name (ignore omitempty and other options)
-		jsonFieldName := strings.Split(jsonTag, ",")[0]
-		if jsonFieldName == "" {
-			continue
-		}
-
-		// Check access tag
 		restrictionTag := field.Tag.Get("access")
-
-		// Include field if:
-		// - No restriction tag (available for all access modes)
-		// - Current access mode is in the comma-separated list of allowed modes
-		includeField := restrictionTag == "" || isAccessAllowed(restrictionTag, accessMode)
-
-		if includeField {
-			// Copy the property from base schema if it exists
-			if baseProperty, exists := baseSchema.Properties[jsonFieldName]; exists {
-				filteredSchema.Properties[jsonFieldName] = baseProperty
+		if restrictionTag != "" && !isAccessAllowed(restrictionTag, accessMode) {
+			if excluded == nil {
+				excluded = make(map[string]bool)
 			}
-
-			// Check if field was required in original schema
-			for _, requiredField := range baseSchema.Required {
-				if requiredField == jsonFieldName {
-					filteredSchema.Required = append(filteredSchema.Required, jsonFieldName)
-					break
-				}
-			}
+			excluded[name] = true
 		}
 	}
+	return excluded
+}
 
-	return filteredSchema
+// jsonFieldName returns the JSON object key for a struct field, or "" when the
+// field has no usable json tag (omitted or "-").
+func jsonFieldName(field reflect.StructField) string {
+	jsonTag := field.Tag.Get("json")
+	if jsonTag == "" || jsonTag == "-" {
+		return ""
+	}
+	return strings.Split(jsonTag, ",")[0]
 }
 
 // isAccessAllowed checks if the current access mode is allowed based on the access tag
@@ -484,20 +515,13 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 	for i := 0; i < targetType.NumField(); i++ {
 		field := targetType.Field(i)
 
-		// Get the JSON field name
-		jsonTag := field.Tag.Get("json")
-		if jsonTag == "" || jsonTag == "-" {
-			continue
-		}
-
-		// Extract field name (ignore omitempty and other options)
-		jsonFieldName := strings.Split(jsonTag, ",")[0]
-		if jsonFieldName == "" {
+		name := jsonFieldName(field)
+		if name == "" {
 			continue
 		}
 
 		// Check if this field is present in the incoming data
-		if _, fieldPresent := incomingData[jsonFieldName]; !fieldPresent {
+		if _, fieldPresent := incomingData[name]; !fieldPresent {
 			continue // Field not provided, so no validation needed
 		}
 
@@ -506,7 +530,7 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 
 		// If field has access restrictions and current access mode is not allowed
 		if restrictionTag != "" && !isAccessAllowed(restrictionTag, currentAccessMode) {
-			return fmt.Errorf("field '%s' is not available in %s access mode (requires: %s)", jsonFieldName, currentAccessMode, restrictionTag)
+			return fmt.Errorf("field '%s' is not available in %s access mode (requires: %s)", name, currentAccessMode, restrictionTag)
 		}
 	}
 

@@ -78,11 +78,7 @@ func TestToolGetChannelInfoChannelRole(t *testing.T) {
 			client := newTestClient(ts.URL)
 			mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}
 
-			argsGetter := func(target any) error {
-				return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, channelID)), target)
-			}
-
-			out, err := provider.toolGetChannelInfo(mcpCtx, argsGetter)
+			out, err := provider.toolGetChannelInfo(mcpCtx, GetChannelInfoArgs{ChannelID: channelID})
 			require.NoError(t, err)
 			assert.Contains(t, out, channelID, "expected channel ID in formatted output")
 

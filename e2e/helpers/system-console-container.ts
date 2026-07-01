@@ -17,6 +17,7 @@ export interface SystemConsolePluginConfig {
     defaultBotName?: string;
     allowedUpstreamHostnames?: string;
     allowUnsafeLinks?: boolean;
+    embeddingSearchConfig?: Record<string, unknown>;
     services?: any[];
     bots?: any[];
     mcp?: {
@@ -26,6 +27,7 @@ export interface SystemConsolePluginConfig {
         servers?: MCPServerConfig[] | null;
         embeddedServer?: {
             enabled?: boolean;
+            tool_configs?: Array<{ name?: string; policy?: string; enabled?: boolean }>;
         };
     };
 }
@@ -121,6 +123,10 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
 
     if (config.mcp) {
         pluginConfig.config.mcp = config.mcp;
+    }
+
+    if (config.embeddingSearchConfig) {
+        pluginConfig.config.embeddingSearchConfig = config.embeddingSearchConfig;
     }
 
     const mattermost = await new MattermostContainer()

@@ -1,397 +1,260 @@
-import { test, expect } from '@playwright/test';
-import RunRealAPIContainer, { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
-import MattermostContainer from 'helpers/mmcontainer';
-import { MattermostPage } from 'helpers/mm';
-import { AIPlugin } from 'helpers/ai-plugin';
-import { LLMBotPostHelper } from 'helpers/llmbot-post';
-import {
-    getAPIConfig,
-    getSkipMessage,
-    logAPIConfig,
-    getAvailableProviders,
-    ProviderBundle,
-} from 'helpers/api-config';
-import { attachAPIErrorContext } from 'helpers/log-scanner';
+import { test, expect, Page } from '@playwright/test';
 
-/**
- * Test Suite: Edge Cases
- *
- * Tests edge case scenarios and error handling in LLMBot posts using REAL APIs.
- * Runs once per configured provider (OpenAI and/or Anthropic).
- *
- * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic
- * - OPENAI_API_KEY: To run tests with OpenAI
- *
- * Tests:
- * 1. Empty Reasoning Response
- * 2. Very Long Reasoning Content
- * 3. Rapid Reasoning Toggle
- * 4. Special Characters in Response
- * 5. Concurrent Posts
- * 6. Empty Post Content
- * 7. Unicode Content
- * 8. Large Post with Reasoning
- * 9. Network Error Handling
- * 10. Multiple Rapid Messages
- */
+import { AIMockHarness, RunAIMockHarness, setupAimockTestPage } from 'helpers/aimock-harness';
 
-const username = 'regularuser';
-const password = 'regularuser';
+const PHASE3_EMPTY_REASONING_PROMPT = 'phase3-empty-reasoning-001';
+const PHASE3_EMPTY_REASONING_ANSWER = 'Empty reasoning answer marker four.';
 
-const config = getAPIConfig();
-const skipMessage = getSkipMessage();
+const PHASE3_LONG_REASONING_PROMPT = 'phase3-long-reasoning-001';
+const PHASE3_LONG_REASONING_MARKER = 'Long reasoning marker alpha';
 
-async function setupTestPage(page, mattermost, provider: ProviderBundle) {
-    const mmPage = new MattermostPage(page);
-    const aiPlugin = new AIPlugin(page);
-    const llmBotHelper = new LLMBotPostHelper(page);
+const PHASE3_RAPID_TOGGLE_PROMPT = 'phase3-rapid-toggle-001';
 
-    const botUsername = provider.bot.name;
+const PHASE3_SPECIAL_CHARS_PROMPT = 'phase3-special-chars-001';
+const PHASE3_SPECIAL_CHARS_MARKER = '<tag>';
 
-    return { mmPage, aiPlugin, llmBotHelper, botUsername };
+const PHASE3_CONCURRENT_ONE_PROMPT = 'phase3-concurrent-one-001';
+const PHASE3_CONCURRENT_TWO_PROMPT = 'phase3-concurrent-two-001';
+const PHASE3_CONCURRENT_THREE_PROMPT = 'phase3-concurrent-three-001';
+const PHASE3_CONCURRENT_MARKER_ONE = 'Concurrent marker one';
+const PHASE3_CONCURRENT_MARKER_TWO = 'Concurrent marker two';
+const PHASE3_CONCURRENT_MARKER_THREE = 'Concurrent marker three';
+
+const PHASE3_EMPTY_POST_PROMPT = 'phase3-empty-post-001';
+const PHASE3_EMPTY_POST_FALLBACK = 'Sorry! The LLM did not return a result.';
+
+const PHASE3_UNICODE_PROMPT = 'phase3-unicode-001';
+const PHASE3_UNICODE_MARKER = 'Unicode marker';
+
+const PHASE3_LARGE_REASONING_PROMPT = 'phase3-large-reasoning-001';
+const PHASE3_LARGE_CONTENT_MARKER = 'Large post content marker';
+const PHASE3_LARGE_REASONING_MARKER = 'Large post reasoning marker';
+
+const PHASE3_NETWORK_ERROR_PROMPT = 'phase3-network-error-001';
+const PHASE3_NETWORK_RECOVERY_PROMPT = 'phase3-network-recovery-001';
+const PHASE3_NETWORK_ERROR_MESSAGE = 'Sorry! An error occurred while accessing the LLM';
+const PHASE3_NETWORK_RECOVERY_MARKER = 'Network recovery marker';
+
+const PHASE3_RAPID_MSG_ONE_PROMPT = 'phase3-rapid-msg-one-001';
+const PHASE3_RAPID_MSG_TWO_PROMPT = 'phase3-rapid-msg-two-001';
+const PHASE3_RAPID_MSG_THREE_PROMPT = 'phase3-rapid-msg-three-001';
+const PHASE3_RAPID_MSG_MARKER_ONE = 'Rapid msg marker one';
+const PHASE3_RAPID_MSG_MARKER_TWO = 'Rapid msg marker two';
+const PHASE3_RAPID_MSG_MARKER_THREE = 'Rapid msg marker three';
+
+async function waitForPostTextCount(page: Page, minCount: number, maxTimeout = 120000): Promise<void> {
+    const allPosts = page.locator('[data-testid="posttext"]');
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxTimeout) {
+        const count = await allPosts.count();
+        if (count >= minCount) {
+            await page.waitForTimeout(1000);
+            return;
+        }
+        await page.waitForTimeout(500);
+    }
+
+    const finalCount = await allPosts.count();
+    expect(finalCount).toBeGreaterThanOrEqual(minCount);
 }
 
-function createProviderTestSuite(provider: ProviderBundle) {
-    test.describe(`Edge Cases - ${provider.name}`, () => {
-        test.skip(provider.service.type === 'openaicompatible', 'Skipping OpenAI reasoning tests due to flaky upstream reasoning events.');
-
-        let mattermost: MattermostContainer;
-
-        test.beforeAll(async () => {
-            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
-            if (!config.shouldRunTests) return;
-
-            // Customize provider for edge case tests
-            const customProvider = {
-                ...provider,
-                bot: {
-                    ...provider.bot,
-                    ...(provider.service.type === 'openaicompatible' && {
-                        reasoningEffort: 'high', // High effort to reliably surface reasoning events
-                    }),
-                }
-            };
-
-            mattermost = await RunRealAPIContainer(customProvider);
-        });
-
-        test.afterAll(async () => {
-            if (mattermost) {
-                await mattermost.stop();
-            }
-        });
-
-        test.afterEach(async ({}, testInfo) => {
-            await attachAPIErrorContext(testInfo);
-        });
-
-        test('Empty Reasoning Response', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            const prompt = 'What is 2+2?';
-
-            await aiPlugin.sendMessage(prompt);
-
-            // Wait for streaming to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForStreamingComplete();
-
-            const postText = llmBotHelper.getPostText();
-            await expect(postText).toContainText('4');
-
-            const reasoning = llmBotHelper.getReasoningDisplay();
-            const reasoningVisible = await reasoning.isVisible().catch(() => false);
-
-            if (!reasoningVisible) {
-                console.log('No reasoning for simple response (expected)');
-            }
-        });
-
-        test('Very Long Reasoning Content', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            const isAnthropic = provider.service.type === 'anthropic';
-            const prompt = isAnthropic
-                ? 'Analyze in extreme detail all aspects of TypeScript: history, features, type system, interfaces, generics, decorators, compilation, tooling, ecosystem, and future. Think through each aspect carefully'
-                : 'Think very carefully and thoroughly about all aspects of TypeScript including its history, features, type system, interfaces, generics, decorators, compilation process, tooling ecosystem, and future direction. Consider each aspect in great detail';
-
-            await aiPlugin.sendMessage(prompt);
-
-            // Wait for reasoning to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForReasoning();
-
-            // Wait for streaming to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForStreamingComplete();
-
-            await llmBotHelper.expectReasoningVisible(true);
-            await llmBotHelper.clickReasoningToggle();
-            await llmBotHelper.expectReasoningExpanded(true);
-
-            const reasoningContent = llmBotHelper.getReasoningContent();
-            const content = await reasoningContent.textContent();
-
-            expect(content).toBeTruthy();
-            expect(content.length).toBeGreaterThan(100);
-
-            await llmBotHelper.clickReasoningToggle();
-            await llmBotHelper.expectReasoningExpanded(false);
-        });
-
-        test('Rapid Reasoning Toggle', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            const prompt = 'Analyze TypeScript benefits carefully';
-
-            await aiPlugin.sendMessage(prompt);
-
-            // Wait for reasoning to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForReasoning();
-
-            // Wait for streaming to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForStreamingComplete();
-
-            await llmBotHelper.expectReasoningVisible(true);
-
-            for (let i = 0; i < 5; i++) {
-                await llmBotHelper.clickReasoningToggle();
-                await page.waitForTimeout(100);
-                await llmBotHelper.clickReasoningToggle();
-                await page.waitForTimeout(100);
-            }
-
-            await llmBotHelper.expectReasoningVisible(true);
-        });
-
-        test('Special Characters in Response', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            const prompt = 'Briefly explain TypeScript with 1-2 examples using <>, &, | characters (3-4 sentences)';
-
-            await aiPlugin.sendMessage(prompt);
-
-            // Wait for streaming to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForStreamingComplete();
-
-            const postText = llmBotHelper.getPostText();
-            const content = await postText.textContent();
-            expect(content).toBeTruthy();
-            expect(content.length).toBeGreaterThan(50);
-        });
-
-        test('Concurrent Posts', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(900000); // 15 minutes: allows 5 min per message + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            await aiPlugin.sendMessage('Briefly explain TypeScript (2 sentences)');
-            await page.waitForTimeout(2000);
-
-            await aiPlugin.sendMessage('Briefly explain JavaScript (2 sentences)');
-            await page.waitForTimeout(2000);
-
-            await aiPlugin.sendMessage('Briefly compare both (2 sentences)');
-
-            // Smart poll for all three posts to appear
-            const allPosts = page.locator('[data-testid="posttext"]');
-            const startTime = Date.now();
-            const maxTimeout = 600000; // 10 minutes for all three posts
-
-            while (Date.now() - startTime < maxTimeout) {
-                const count = await allPosts.count();
-                if (count >= 3) {
-                    // All three posts appeared
-                    await page.waitForTimeout(1000);
-                    break;
-                }
-                await page.waitForTimeout(500);
-            }
-
-            // Verify we have at least 3 posts
-            const finalCount = await allPosts.count();
-            expect(finalCount).toBeGreaterThanOrEqual(3);
-
-            await expect(allPosts.first()).toBeVisible();
-            await expect(allPosts.nth(1)).toBeVisible();
-            await expect(allPosts.nth(2)).toBeVisible();
-        });
-
-        test('Empty Post Content', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            const prompt = 'What is the answer to everything?';
-
-            await aiPlugin.sendMessage(prompt);
-
-            // Wait for streaming to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForStreamingComplete();
-
-            const postText = llmBotHelper.getPostText();
-            const content = await postText.textContent();
-            expect(content).toBeTruthy();
-            expect(content.length).toBeGreaterThan(0);
-        });
-
-        test('Unicode Content', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            const prompt = 'Briefly explain TypeScript with emoji examples: 🚀 💡 ⚡ (2-3 sentences)';
-
-            await aiPlugin.sendMessage(prompt);
-
-            // Wait for streaming to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForStreamingComplete();
-
-            const postText = llmBotHelper.getPostText();
-            const content = await postText.textContent();
-            expect(content).toBeTruthy();
-        });
-
-        test('Large Post with Reasoning', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            const isAnthropic = provider.service.type === 'anthropic';
-            const prompt = isAnthropic
-                ? 'Write a comprehensive guide to TypeScript covering all major features in detail. Think through the structure carefully'
-                : 'Think carefully about how to structure a comprehensive guide to TypeScript. Write detailed explanations of all major features';
-
-            await aiPlugin.sendMessage(prompt);
-
-            // Wait for reasoning to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForReasoning();
-
-            // Wait for streaming to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForStreamingComplete();
-
-            const postText = llmBotHelper.getPostText();
-            const content = await postText.textContent();
-            expect(content).toBeTruthy();
-            expect(content.length).toBeGreaterThan(200);
-
-            await llmBotHelper.expectReasoningVisible(true);
-            await llmBotHelper.clickReasoningToggle();
-            await llmBotHelper.expectReasoningExpanded(true);
-        });
-
-        test('Network Error Handling', async ({ page, context }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            const prompt = 'Briefly explain TypeScript in 2 sentences';
-
-            await context.setOffline(true);
-            await aiPlugin.sendMessage(prompt);
-            await page.waitForTimeout(3000);
-
-            await context.setOffline(false);
-            await page.waitForTimeout(3000);
-
-            await aiPlugin.sendMessage('What is TypeScript?');
-
-            // Wait for streaming to complete (smart wait, up to 5 min)
-            await llmBotHelper.waitForStreamingComplete();
-
-            const postText = llmBotHelper.getPostText();
-            await expect(postText).toBeVisible();
-        });
-
-        test('Multiple Rapid Messages', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(900000); // 15 minutes: allows 5 min per message + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            await aiPlugin.openRHS();
-
-            const messages = [
-                'What is TypeScript?',
-                'What is JavaScript?',
-                'What is Python?',
-            ];
-
-            for (const message of messages) {
-                await aiPlugin.sendMessage(message);
-                await page.waitForTimeout(1000);
-            }
-
-            // Smart poll for all three posts to appear
-            const allPosts = page.locator('[data-testid="posttext"]');
-            const startTime = Date.now();
-            const maxTimeout = 600000; // 10 minutes for all three posts
-
-            while (Date.now() - startTime < maxTimeout) {
-                const count = await allPosts.count();
-                if (count >= 3) {
-                    // All three posts appeared
-                    await page.waitForTimeout(1000);
-                    break;
-                }
-                await page.waitForTimeout(500);
-            }
-
-            // Verify we have at least 3 posts
-            const count = await allPosts.count();
-            expect(count).toBeGreaterThanOrEqual(3);
-
-            for (let i = 0; i < Math.min(count, 3); i++) {
-                await expect(allPosts.nth(i)).toBeVisible();
-            }
+async function expectRhsContainsMarkers(page: Page, markers: string[]): Promise<void> {
+    const rhsText = await page.getByTestId('mattermost-ai-rhs').textContent();
+    for (const marker of markers) {
+        expect(rhsText).toContain(marker);
+    }
+}
+
+test.describe('Edge Cases - aimock', () => {
+    test.describe.configure({ mode: 'serial' });
+
+    let harness: AIMockHarness;
+
+    test.beforeAll(async () => {
+        test.setTimeout(180000);
+        harness = await RunAIMockHarness({
+            fixtureFile: 'llmbot-edge-cases.json',
+            bot: {
+                enabledNativeTools: [],
+            },
         });
     });
-}
 
-const providers = getAvailableProviders();
-providers.forEach(provider => {
-    createProviderTestSuite(provider);
+    test.afterAll(async () => {
+        await harness?.stop();
+    });
+
+    test('Empty Reasoning Response', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_EMPTY_REASONING_PROMPT);
+        await llmBotHelper.waitForStreamingComplete();
+        await llmBotHelper.expectPostText(PHASE3_EMPTY_REASONING_ANSWER);
+
+        const reasoning = llmBotHelper.getReasoningDisplay();
+        await expect(reasoning).not.toBeVisible();
+    });
+
+    test('Empty Post Content', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_EMPTY_POST_PROMPT);
+        await llmBotHelper.waitForStreamingComplete();
+        await llmBotHelper.expectPostText(PHASE3_EMPTY_POST_FALLBACK);
+    });
+
+    test('Very Long Reasoning Content', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_LONG_REASONING_PROMPT);
+        await llmBotHelper.waitForReasoning();
+        await llmBotHelper.waitForStreamingComplete();
+
+        await llmBotHelper.expectReasoningVisible(true);
+        await llmBotHelper.clickReasoningToggle();
+        await llmBotHelper.expectReasoningExpanded(true);
+        await llmBotHelper.expectReasoningText(PHASE3_LONG_REASONING_MARKER);
+        await llmBotHelper.clickReasoningToggle();
+        await llmBotHelper.expectReasoningExpanded(false);
+    });
+
+    test('Special Characters in Response', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_SPECIAL_CHARS_PROMPT);
+        await llmBotHelper.waitForStreamingComplete();
+
+        const postText = llmBotHelper.getPostText();
+        const content = await postText.textContent();
+        expect(content).toContain(PHASE3_SPECIAL_CHARS_MARKER);
+        expect(content).toContain('&');
+        expect(content).toContain('|');
+    });
+
+    test('Unicode Content', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_UNICODE_PROMPT);
+        await llmBotHelper.waitForStreamingComplete();
+
+        const postText = llmBotHelper.getPostText();
+        const content = await postText.textContent();
+        expect(content).toContain(PHASE3_UNICODE_MARKER);
+        expect(content).toContain('🚀');
+    });
+
+    test('Concurrent Posts', async ({ page }) => {
+        test.setTimeout(180000);
+
+        const { aiPlugin } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_CONCURRENT_ONE_PROMPT);
+        await page.waitForTimeout(2000);
+        await aiPlugin.sendMessage(PHASE3_CONCURRENT_TWO_PROMPT);
+        await page.waitForTimeout(2000);
+        await aiPlugin.sendMessage(PHASE3_CONCURRENT_THREE_PROMPT);
+
+        await waitForPostTextCount(page, 3);
+
+        const allPosts = page.locator('[data-testid="posttext"]');
+        await expect(allPosts.first()).toBeVisible();
+        await expect(allPosts.nth(1)).toBeVisible();
+        await expect(allPosts.nth(2)).toBeVisible();
+
+        await expectRhsContainsMarkers(page, [
+            PHASE3_CONCURRENT_MARKER_ONE,
+            PHASE3_CONCURRENT_MARKER_TWO,
+            PHASE3_CONCURRENT_MARKER_THREE,
+        ]);
+    });
+
+    test('Large Post with Reasoning', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_LARGE_REASONING_PROMPT);
+        await llmBotHelper.waitForReasoning();
+        await llmBotHelper.waitForStreamingComplete();
+
+        await llmBotHelper.expectPostText(PHASE3_LARGE_CONTENT_MARKER);
+        await llmBotHelper.expectReasoningVisible(true);
+        await llmBotHelper.clickReasoningToggle();
+        await llmBotHelper.expectReasoningExpanded(true);
+        await llmBotHelper.expectReasoningText(PHASE3_LARGE_REASONING_MARKER);
+    });
+
+    test('Network Error Handling', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_NETWORK_ERROR_PROMPT);
+        await llmBotHelper.waitForStreamingComplete();
+        await llmBotHelper.expectPostText(PHASE3_NETWORK_ERROR_MESSAGE);
+
+        await aiPlugin.ensureRhsNewChatTab();
+        await aiPlugin.sendMessage(PHASE3_NETWORK_RECOVERY_PROMPT);
+        await llmBotHelper.waitForStreamingComplete();
+        await llmBotHelper.expectPostText(PHASE3_NETWORK_RECOVERY_MARKER);
+    });
+
+    test('Multiple Rapid Messages', async ({ page }) => {
+        test.setTimeout(180000);
+
+        const { aiPlugin } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_RAPID_MSG_ONE_PROMPT);
+        await page.waitForTimeout(1000);
+        await aiPlugin.sendMessage(PHASE3_RAPID_MSG_TWO_PROMPT);
+        await page.waitForTimeout(1000);
+        await aiPlugin.sendMessage(PHASE3_RAPID_MSG_THREE_PROMPT);
+
+        await waitForPostTextCount(page, 3);
+
+        const allPosts = page.locator('[data-testid="posttext"]');
+        const count = await allPosts.count();
+        expect(count).toBeGreaterThanOrEqual(3);
+
+        for (let i = 0; i < Math.min(count, 3); i++) {
+            await expect(allPosts.nth(i)).toBeVisible();
+        }
+
+        await expectRhsContainsMarkers(page, [
+            PHASE3_RAPID_MSG_MARKER_ONE,
+            PHASE3_RAPID_MSG_MARKER_TWO,
+            PHASE3_RAPID_MSG_MARKER_THREE,
+        ]);
+    });
+
+    test('Rapid Reasoning Toggle', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
+
+        await aiPlugin.sendMessage(PHASE3_RAPID_TOGGLE_PROMPT);
+        await llmBotHelper.waitForReasoning();
+        await llmBotHelper.waitForStreamingComplete();
+        await llmBotHelper.expectReasoningVisible(true);
+
+        for (let i = 0; i < 5; i++) {
+            await llmBotHelper.clickReasoningToggle();
+            await page.waitForTimeout(100);
+            await llmBotHelper.clickReasoningToggle();
+            await page.waitForTimeout(100);
+        }
+
+        await llmBotHelper.expectReasoningVisible(true);
+    });
 });

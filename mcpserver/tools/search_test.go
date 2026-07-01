@@ -68,6 +68,7 @@ func TestGetSearchTools_SchemaReflectsCapabilities(t *testing.T) {
 			provider := &MattermostToolProvider{
 				logger:        &testLogger{t: t},
 				searchService: tc.searchService,
+				accessMode:    AccessModeRemote,
 			}
 
 			tools := provider.getSearchTools()
