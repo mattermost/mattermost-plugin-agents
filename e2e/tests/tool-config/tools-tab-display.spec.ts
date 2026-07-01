@@ -53,7 +53,7 @@ test.describe('Tools Tab Display', () => {
 
         // Verify individual tool rows are now visible
         // Known embedded server tools include read_post, get_channel_info, etc.
-        await expect(page.getByText('read_post')).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
 
         // Verify each tool row has a policy dropdown (select element)
         const policyDropdowns = page.locator('select');
@@ -81,7 +81,7 @@ test.describe('Tools Tab Display', () => {
         await page.waitForTimeout(500);
 
         // Verify read_post (a vetted READ tool) shows the DM-scoped auto-run policy
-        await expect(page.getByText('read_post')).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
         const readPostPolicy = toolConfig.getToolPolicyDropdown('read_post');
         await expect(readPostPolicy).toHaveValue('auto_run_in_dm');
 
