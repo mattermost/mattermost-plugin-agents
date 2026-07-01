@@ -125,15 +125,16 @@ These rules are enforced both for `@mentions` in channels and for direct convers
 
 ### MCPs tab
 
-The MCPs tab is available only when **Enable Tools** is on (Configuration tab). It controls which MCP tools the agent may call.
+The MCPs tab is available only when **Enable Tools** is on (Configuration tab). It controls which MCP tools the agent may call and how MCP tool schemas are exposed to the model.
 
+- **Dynamic tool loading**: enabled by default for new agents and for existing agents that do not yet have this setting. The agent starts with MCP discovery and loading helpers, then loads full MCP tool schemas only when needed. Disable this to use the full MCP tool list for this agent up front. Once a tool is loaded in a conversation, it can be used in later turns in that same conversation without repeating the search/load prelude.
 - **Automatically enable all MCP tools**: the agent has access to every MCP tool available in the server right now and to any MCP tools added later. This is the default for new agents and the setting used by all migrated legacy bots.
 - When the auto-grant is off, pick the specific MCP tools to enable. Tools that are no longer present on the server are dropped from the agent's allowlist when you save.
 - For OAuth-backed MCP servers, you can also start the per-user **Connect** flow directly from this tab. Enabling a server that is currently disconnected stores a wildcard grant — once you finish the OAuth flow, the agent gets every tool that server exposes. The tab refreshes automatically when you connect or disconnect (`mcp_connection_updated` websocket event).
 
-Agents also support an API field, `mcpDynamicToolLoading`, that lets the agent search and load MCP tool schemas as needed instead of presenting every full MCP schema in the prompt. This does not grant additional tools: the MCPs tab allowlist or auto-grant setting still determines which tools the agent may use.
+Dynamic tool loading and the auto-grant are separate controls: dynamic loading decides when schemas are shown to the model, while the auto-grant decides which MCP tools the agent is allowed to use.
 
-Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. For more on MCP setup, see [Model Context Protocol (MCP)](../admin_guide.md#model-context-protocol-mcp-integration) in the Admin Guide. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
+Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. MCP discovery and loading helpers run automatically, but MCP tools that are dynamically loaded still follow their configured approval policy. For more on MCP setup, see [Model Context Protocol (MCP)](../admin_guide.md#model-context-protocol-mcp-integration) in the Admin Guide. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
 
 ## Editing an agent
 
