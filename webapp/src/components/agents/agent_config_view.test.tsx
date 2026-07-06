@@ -47,6 +47,11 @@ jest.mock('@/components/system_console/bot', () => ({
     UserAccessLevel: {
         All: 0,
     },
+    MentionAccessLevel: {
+        Everyone: 0,
+        ChannelAdmins: 1,
+        Disabled: 2,
+    },
 }));
 
 jest.mock('./tabs/config_tab', () => ({
@@ -140,6 +145,7 @@ const savedAgent = {
     userAccessLevel: 0,
     userIDs: [],
     teamIDs: [],
+    mentionAccessLevel: 0,
     enabledNativeTools: ['web_search'],
     enabledMCPTools: [],
     autoEnableNewMCPTools: true,
@@ -226,6 +232,7 @@ describe('AgentConfigView', () => {
             userAccessLevel: 0,
             userIDs: [],
             teamIDs: [],
+            mentionAccessLevel: 0,
             enabledNativeTools: ['web_search'],
 
             // The persisted enabledMCPTools include entries that the live MCP catalog
@@ -291,6 +298,7 @@ describe('AgentConfigView', () => {
                         userAccessLevel: 0,
                         userIDs: [],
                         teamIDs: [],
+                        mentionAccessLevel: 0,
                         enabledNativeTools: ['web_search'],
                         enabledMCPTools: [],
                         autoEnableNewMCPTools: true,
@@ -335,6 +343,7 @@ describe('AgentConfigView', () => {
                         userAccessLevel: 0,
                         userIDs: [],
                         teamIDs: [],
+                        mentionAccessLevel: 0,
                         enabledNativeTools: ['web_search'],
                         enabledMCPTools: [],
                         autoEnableNewMCPTools: true,
@@ -439,6 +448,7 @@ describe('AgentConfigView', () => {
                         userAccessLevel: 0,
                         userIDs: [],
                         teamIDs: [],
+                        mentionAccessLevel: 0,
                         enabledNativeTools: ['web_search'],
                         enabledMCPTools: [],
                         autoEnableNewMCPTools: true,

@@ -100,6 +100,24 @@ const (
 	UserAccessLevelNone
 )
 
+// MentionAccessLevel gates who may trigger a channel-visible response by
+// @mentioning the agent in a channel or thread. It is independent of the
+// UI-button / DM / RHS flows, which post privately to the requesting user and
+// remain governed only by UserAccessLevel and ChannelAccessLevel.
+type MentionAccessLevel int
+
+const (
+	// MentionAccessLevelEveryone is the default (and legacy) behavior: anyone
+	// already allowed by the user/channel access rules may @mention the agent.
+	MentionAccessLevelEveryone MentionAccessLevel = iota
+	// MentionAccessLevelChannelAdmins restricts @mentions to channel admins
+	// (and system admins) of the channel the mention is posted in.
+	MentionAccessLevelChannelAdmins
+	// MentionAccessLevelDisabled turns off channel @mention responses entirely;
+	// the agent is reachable only via the UI actions and direct messages.
+	MentionAccessLevelDisabled
+)
+
 // EnabledMCPTool identifies a single MCP tool on a specific server (config bots and persisted agents).
 type EnabledMCPTool struct {
 	ServerOrigin string `json:"server_origin"`
@@ -128,6 +146,11 @@ type BotConfig struct {
 	UserIDs            []string           `json:"userIDs"`
 	TeamIDs            []string           `json:"teamIDs"`
 	MaxFileSize        int64              `json:"maxFileSize"`
+
+	// MentionAccessLevel gates who may trigger a channel-visible response by
+	// @mentioning this agent. Defaults to MentionAccessLevelEveryone (zero
+	// value) so existing/migrated agents keep their current behavior.
+	MentionAccessLevel MentionAccessLevel `json:"mentionAccessLevel"`
 
 	// EnabledNativeTools contains the list of enabled native tools for this bot.
 	// Supported values by provider:
@@ -222,6 +245,9 @@ func (c *BotConfig) Validate() error {
 	}
 	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelNone {
 		return errors.New("userAccessLevel is out of range")
+	}
+	if c.MentionAccessLevel < MentionAccessLevelEveryone || c.MentionAccessLevel > MentionAccessLevelDisabled {
+		return errors.New("mentionAccessLevel is out of range")
 	}
 	if utf8.RuneCountInString(c.CustomInstructions) > MaxCustomInstructionsRunes {
 		return fmt.Errorf("customInstructions exceeds maximum length of %d characters", MaxCustomInstructionsRunes)

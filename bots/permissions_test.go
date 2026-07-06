@@ -320,6 +320,61 @@ func TestUsageRestrictions(t *testing.T) {
 	}
 }
 
+func TestCheckMentionRestrictions(t *testing.T) {
+	testCases := []struct {
+		name             string
+		level            llm.MentionAccessLevel
+		isChannelAdmin   bool
+		expectAdminCheck bool
+		expectedError    error
+	}{
+		{
+			name:          "Everyone allows any user",
+			level:         llm.MentionAccessLevelEveryone,
+			expectedError: nil,
+		},
+		{
+			name:             "Channel admins allows a channel admin",
+			level:            llm.MentionAccessLevelChannelAdmins,
+			isChannelAdmin:   true,
+			expectAdminCheck: true,
+			expectedError:    nil,
+		},
+		{
+			name:             "Channel admins blocks a non-admin",
+			level:            llm.MentionAccessLevelChannelAdmins,
+			isChannelAdmin:   false,
+			expectAdminCheck: true,
+			expectedError:    ErrUsageRestriction,
+		},
+		{
+			name:          "Disabled blocks everyone",
+			level:         llm.MentionAccessLevelDisabled,
+			expectedError: ErrUsageRestriction,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			if tc.expectAdminCheck {
+				e.mockAPI.On("HasPermissionToChannel", "user1", "channel1", model.PermissionManageChannelRoles).
+					Return(tc.isChannelAdmin).Once()
+			}
+
+			bot := &Bot{cfg: llm.BotConfig{MentionAccessLevel: tc.level}, mmBot: nil}
+			err := e.bots.CheckMentionRestrictions("user1", bot, &model.Channel{Id: "channel1"})
+			if tc.expectedError != nil {
+				require.ErrorIs(t, err, tc.expectedError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
