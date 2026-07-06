@@ -48,7 +48,7 @@ func (m *MMBots) CheckMentionRestrictions(requestingUserID string, bot *Bot, cha
 	case llm.MentionAccessLevelDisabled:
 		return fmt.Errorf("channel mentions disabled for bot: %w", ErrUsageRestriction)
 	}
-	return fmt.Errorf("unknown mention access level")
+	return fmt.Errorf("unknown mention access level %d: %w", bot.GetConfig().MentionAccessLevel, ErrUsageRestriction)
 }
 
 func (m *MMBots) checkUsageRestrictionsForChannel(bot *Bot, channel *model.Channel) error {
