@@ -9,22 +9,12 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 )
 
-// Availability is the single source of truth for the initialized embedding
-// search and whether it may be used for query-time search.
+// Availability keeps indexing and query-time search gates separate.
 //
-// Indexing and querying have different availability rules. When the configured
-// embedding model no longer matches the model the existing index was built
-// with, query-time search must be disabled (results would be wrong), but
-// indexing must remain available — otherwise the admin cannot run the full
-// reindex that is the only way to recover. Gating both on a single nil pointer
-// (the previous behavior) deadlocked recovery: the reindex endpoint returned
-// 500 because search was "not configured", and the reindex was the very thing
-// needed to re-enable it.
-//
-// IndexSearch is therefore available whenever search is initialized, while
-// QuerySearch additionally requires the query predicate to report the model as
-// compatible. Because the predicate is evaluated on each call, query search
-// re-enables automatically once a reindex updates the stored model info.
+// IndexSearch is available whenever search is initialized, so admins can run a
+// full reindex while the configured model is incompatible with the existing
+// index. QuerySearch additionally requires the predicate to report compatible
+// model info, and evaluates that predicate on each call.
 type Availability struct {
 	search       atomic.Pointer[embeddings.EmbeddingSearch]
 	queryAllowed atomic.Pointer[func() bool]

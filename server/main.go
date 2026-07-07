@@ -274,14 +274,12 @@ func (p *Plugin) OnActivate() error {
 		// Continue without search functionality
 	}
 
-	// Create indexer service. It uses IndexSearch, which stays available even
-	// when the configured model is incompatible with the existing index, so a
-	// recovery reindex can always run.
+	// Create indexer service. IndexSearch stays available whenever search is
+	// initialized, so a full reindex can run during model incompatibility.
 	indexerService := indexer.New(searchAvailability.IndexSearch, configGetter, mmClient, bots, dbClient.DB, p.API)
 
 	// Query-time search is only allowed when the configured embedding model is
-	// compatible with the existing index. Evaluated on each call so search
-	// re-enables automatically once a reindex updates the stored model info.
+	// compatible with the existing index.
 	searchAvailability.SetQueryAllowedFunc(func() bool {
 		cfg := p.configuration.EmbeddingSearchConfig()
 		return indexerService.CheckModelCompatibility(cfg.GetProviderType(), cfg.Dimensions, cfg.GetModelName()).Compatible
@@ -295,9 +293,7 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Warn("Failed to check for orphaned reindex job", "error", orphanErr)
 	}
 
-	// Store the initialized search. Query-time use is gated separately by the
-	// compatibility predicate above; an incompatible model no longer disables
-	// indexing, so the recovery reindex can always run.
+	// Store the initialized search; QuerySearch handles compatibility gating.
 	searchAvailability.Set(embeddingsSearch)
 	if embeddingsSearch != nil {
 		lastSearchInitError.Store("") // Clear any previous error
@@ -330,10 +326,8 @@ func (p *Plugin) OnActivate() error {
 			return
 		}
 
-		// Store the reinitialized search. If the configured model no longer
-		// matches the indexed model, query-time search is disabled by the
-		// compatibility predicate, but indexing stays available so an admin can
-		// run the reindex that makes them match again.
+		// Store the reinitialized search. QuerySearch blocks incompatible model
+		// queries while IndexSearch allows reindexing.
 		searchAvailability.Set(newEmbeddingsSearch)
 		lastSearchInitError.Store("")
 		pluginAPI.Log.Info("Embedding search reinitialized on config change")

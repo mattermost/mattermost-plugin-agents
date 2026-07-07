@@ -44,11 +44,8 @@ async function waitForReindexComplete(
 }
 
 test.describe('Reindex after embedding model change', () => {
-    // Regression test for MM-69713: changing the embedding model must not lock
-    // the admin out of the reindex that is required to recover. Previously the
-    // backend disabled the whole search service (indexer included) when the
-    // model became incompatible, so POST /admin/reindex returned 500 and search
-    // stayed disabled permanently.
+    // MM-69713: an embedding model change disables query search until a full
+    // reindex completes, while keeping the admin reindex path available.
     test('admin can start a full reindex after changing the embedding model, which re-enables search', async () => {
         const admin = await mattermost.getAdminClient();
         const token = admin.getToken();
@@ -73,7 +70,7 @@ test.describe('Reindex after embedding model change', () => {
         expect(botsBefore.searchEnabled).toBe(true);
 
         // 2. Change the embedding model (same provider and dimensions, different
-        //    model name) so the configured model no longer matches the index.
+        //    model name) so the configured model is incompatible with the index.
         const config = await configApi.get();
         const embeddingSearchConfig = config.embeddingSearchConfig as Record<string, any>;
         embeddingSearchConfig.embeddingProvider = {
@@ -82,7 +79,7 @@ test.describe('Reindex after embedding model change', () => {
         };
         await configApi.put({ ...config, embeddingSearchConfig });
 
-        // 3. The index now needs a reindex and query search is disabled.
+        // 3. The index needs a reindex and query search is disabled.
         const healthAfterChange = await routes.getJson('admin/reindex/health-check', token) as HealthCheck;
         expect(healthAfterChange.model_needs_reindex).toBe(true);
         expect(healthAfterChange.model_compatible).toBe(false);
@@ -90,14 +87,11 @@ test.describe('Reindex after embedding model change', () => {
         const botsAfterChange = await routes.getJson('ai_bots', token) as AIBots;
         expect(botsAfterChange.searchEnabled).toBe(false);
 
-        // 4. The core assertion: the recovery reindex can still be started.
-        //    Before the fix this returned HTTP 500 ("search functionality is
-        //    not configured"), which postJson surfaces as a thrown error.
+        // 4. A full reindex can be started while query search is disabled.
         await routes.postJson('admin/reindex', token, { clearIndex: true });
         await waitForReindexComplete(routes, token);
 
-        // 5. After the recovery reindex the model matches again and query
-        //    search is re-enabled automatically.
+        // 5. The reindex stores compatible model info and enables query search.
         const healthAfterReindex = await routes.getJson('admin/reindex/health-check', token) as HealthCheck;
         expect(healthAfterReindex.model_compatible).toBe(true);
         expect(healthAfterReindex.model_needs_reindex).toBe(false);

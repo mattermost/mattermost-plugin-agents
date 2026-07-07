@@ -37,8 +37,7 @@ func TestAvailability(t *testing.T) {
 			wantQuery:    true,
 		},
 		{
-			// Core of the fix: an incompatible model must not disable indexing,
-			// otherwise the recovery reindex cannot run.
+			// An incompatible model blocks queries while preserving indexing for reindexing.
 			name:         "incompatible model keeps indexing available but disables querying",
 			initialized:  true,
 			queryAllowed: boolPtr(false),
@@ -81,8 +80,7 @@ func TestAvailability(t *testing.T) {
 	}
 
 	t.Run("query search re-enables when the model becomes compatible again", func(t *testing.T) {
-		// Simulates a reindex updating the stored model info so the predicate
-		// flips from incompatible to compatible without re-setting the search.
+		// The predicate reflects stored model compatibility without resetting search.
 		a := NewAvailability()
 		s := mocks.NewMockEmbeddingSearch(t)
 		a.Set(s)
