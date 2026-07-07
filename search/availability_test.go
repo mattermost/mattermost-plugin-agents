@@ -12,52 +12,79 @@ import (
 )
 
 func TestAvailability(t *testing.T) {
-	newSearch := func(t *testing.T) embeddings.EmbeddingSearch {
-		return mocks.NewMockEmbeddingSearch(t)
+	// boolPtr distinguishes "no predicate installed" (nil) from an installed
+	// predicate returning true/false.
+	boolPtr := func(b bool) *bool { return &b }
+
+	cases := []struct {
+		name         string
+		initialized  bool
+		queryAllowed *bool
+		wantIndex    bool
+		wantQuery    bool
+	}{
+		{
+			name:        "uninitialized disables indexing and querying",
+			initialized: false,
+			wantIndex:   false,
+			wantQuery:   false,
+		},
+		{
+			name:         "initialized without predicate allows both",
+			initialized:  true,
+			queryAllowed: nil,
+			wantIndex:    true,
+			wantQuery:    true,
+		},
+		{
+			// Core of the fix: an incompatible model must not disable indexing,
+			// otherwise the recovery reindex cannot run.
+			name:         "incompatible model keeps indexing available but disables querying",
+			initialized:  true,
+			queryAllowed: boolPtr(false),
+			wantIndex:    true,
+			wantQuery:    false,
+		},
+		{
+			name:         "compatible model allows querying",
+			initialized:  true,
+			queryAllowed: boolPtr(true),
+			wantIndex:    true,
+			wantQuery:    true,
+		},
 	}
 
-	t.Run("uninitialized disables indexing and querying", func(t *testing.T) {
-		a := NewAvailability()
-		require.Nil(t, a.IndexSearch())
-		require.Nil(t, a.QuerySearch())
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewAvailability()
+			var s embeddings.EmbeddingSearch
+			if tc.initialized {
+				s = mocks.NewMockEmbeddingSearch(t)
+				a.Set(s)
+			}
+			if tc.queryAllowed != nil {
+				allowed := *tc.queryAllowed
+				a.SetQueryAllowedFunc(func() bool { return allowed })
+			}
 
-	t.Run("initialized without predicate allows both", func(t *testing.T) {
-		a := NewAvailability()
-		s := newSearch(t)
-		a.Set(s)
-		require.Equal(t, s, a.IndexSearch())
-		require.Equal(t, s, a.QuerySearch())
-	})
-
-	t.Run("incompatible model keeps indexing available but disables querying", func(t *testing.T) {
-		// This is the core of the fix: when the configured model is
-		// incompatible with the existing index, a reindex (which uses
-		// IndexSearch) must still be possible, while query search is disabled.
-		a := NewAvailability()
-		s := newSearch(t)
-		a.Set(s)
-		a.SetQueryAllowedFunc(func() bool { return false })
-
-		require.Equal(t, s, a.IndexSearch(), "indexing must remain available so a reindex can recover")
-		require.Nil(t, a.QuerySearch(), "query search must be disabled while the model is incompatible")
-	})
-
-	t.Run("compatible model allows querying", func(t *testing.T) {
-		a := NewAvailability()
-		s := newSearch(t)
-		a.Set(s)
-		a.SetQueryAllowedFunc(func() bool { return true })
-
-		require.Equal(t, s, a.IndexSearch())
-		require.Equal(t, s, a.QuerySearch())
-	})
+			if tc.wantIndex {
+				require.Equal(t, s, a.IndexSearch())
+			} else {
+				require.Nil(t, a.IndexSearch())
+			}
+			if tc.wantQuery {
+				require.Equal(t, s, a.QuerySearch())
+			} else {
+				require.Nil(t, a.QuerySearch())
+			}
+		})
+	}
 
 	t.Run("query search re-enables when the model becomes compatible again", func(t *testing.T) {
 		// Simulates a reindex updating the stored model info so the predicate
 		// flips from incompatible to compatible without re-setting the search.
 		a := NewAvailability()
-		s := newSearch(t)
+		s := mocks.NewMockEmbeddingSearch(t)
 		a.Set(s)
 
 		compatible := false
@@ -71,6 +98,9 @@ func TestAvailability(t *testing.T) {
 	})
 
 	t.Run("predicate is not consulted when search is uninitialized", func(t *testing.T) {
+		// In production the predicate reads the stored model info from the KV
+		// store; short-circuiting on a nil search avoids that DB access during
+		// early initialization when no search exists yet.
 		a := NewAvailability()
 		a.SetQueryAllowedFunc(func() bool {
 			t.Fatal("predicate must not be called when search is nil")
@@ -81,7 +111,7 @@ func TestAvailability(t *testing.T) {
 
 	t.Run("setting nil disables a previously initialized search", func(t *testing.T) {
 		a := NewAvailability()
-		a.Set(newSearch(t))
+		a.Set(mocks.NewMockEmbeddingSearch(t))
 		a.Set(nil)
 		require.Nil(t, a.IndexSearch())
 		require.Nil(t, a.QuerySearch())
