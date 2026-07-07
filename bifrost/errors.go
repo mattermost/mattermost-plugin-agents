@@ -11,7 +11,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/mattermost/mattermost-plugin-agents/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 )
 
 // bifrostErrorString returns a non-empty description of a bifrost error.

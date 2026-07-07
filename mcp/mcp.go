@@ -23,9 +23,9 @@ import (
 
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mattermost/mattermost-plugin-agents/config"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
@@ -54,7 +54,7 @@ func DiscoverRemoteServerTools(
 	toolsCache *ToolsCache,
 ) ([]ToolInfo, error) {
 	// Create and connect to the remote server
-	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, httpClient, toolsCache)
+	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, httpClient, toolsCache, false)
 	if err != nil {
 		return nil, err
 	}
@@ -137,10 +137,6 @@ func DiscoverEmbeddedServerTools(
 	log pluginapi.LogService,
 	pluginAPI *pluginapi.Client,
 ) ([]ToolInfo, error) {
-	if !embeddedServerConfig.Enabled {
-		return nil, fmt.Errorf("embedded server is not enabled")
-	}
-
 	// Create embedded client helper and connect to the embedded server
 	embeddedClient := NewEmbeddedServerClient(embeddedServer, log, pluginAPI)
 

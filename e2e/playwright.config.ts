@@ -1,5 +1,4 @@
 import { defineConfig, devices } from '@playwright/test';
-import path from 'path';
 
 /**
  * Read environment variables from file.
@@ -10,25 +9,8 @@ import path from 'path';
 /**
  * See https://playwright.dev/docs/test-configuration.
  */
-// Determine which test files to ignore based on environment
-const getTestIgnorePatterns = (): string[] => {
-  const patterns: string[] = [];
-
-  // Exclude real API tests when EXCLUDE_REAL_API_TESTS is set
-  if (process.env.EXCLUDE_REAL_API_TESTS) {
-    patterns.push('**/llmbot-post-component/**');
-    patterns.push('**/backend-verification/real-api.spec.ts');
-    patterns.push('**/tool-config/real-api/**');
-    patterns.push('**/system-console/live-service-full-flow.spec.ts');
-  }
-
-  return patterns;
-};
-
 export default defineConfig({
   testDir: './tests',
-  /* Ignore specific test files based on environment */
-  testIgnore: getTestIgnorePatterns(),
   /* Run tests in files in parallel */
   fullyParallel: false,
 

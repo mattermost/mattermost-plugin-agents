@@ -5,6 +5,7 @@ import React from 'react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
 import {renderHook, act} from '@testing-library/react';
+import {PreferenceType} from '@mattermost/types/preferences';
 
 import {
     resolveActiveBot,
@@ -108,6 +109,26 @@ describe('getSelectedAgentId', () => {
 // getSelectedAgentId/resolveActiveBot exactly as in production.
 const botsKey = `plugins-${manifest.id}`;
 
+type TestEntities = {
+    users: {currentUserId: string};
+    preferences: {myPreferences: Record<string, {value: string}>};
+};
+
+type TestState = {
+    entities: TestEntities;
+} & Record<string, TestEntities | {bots: LLMBot[]}>;
+
+type ReceivedPreferencesAction = {
+    type: 'RECEIVED_PREFERENCES';
+    data: PreferenceType[];
+};
+
+type TestAction = ReceivedPreferencesAction | {type: string};
+
+function isReceivedPreferencesAction(action: TestAction): action is ReceivedPreferencesAction {
+    return action.type === 'RECEIVED_PREFERENCES';
+}
+
 function makeStore(bots: LLMBot[], selectedAgentId = '', currentUserId = 'me') {
     const myPreferences: Record<string, {value: string}> = {};
     if (selectedAgentId) {
@@ -120,8 +141,8 @@ function makeStore(bots: LLMBot[], selectedAgentId = '', currentUserId = 'me') {
             preferences: {myPreferences},
         },
     };
-    return createStore((state: any = initial, action: any) => {
-        if (action.type === 'RECEIVED_PREFERENCES') {
+    return createStore((state: TestState = initial, action: TestAction): TestState => {
+        if (isReceivedPreferencesAction(action)) {
             const next = {...state.entities.preferences.myPreferences};
             for (const p of action.data) {
                 next[`${p.category}--${p.name}`] = {value: p.value};

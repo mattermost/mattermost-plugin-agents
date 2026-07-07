@@ -7,11 +7,11 @@ import (
 	stdcontext "context"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/format"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 )
 
 // AnalyzeResult contains the result of a thread analysis call.
@@ -62,7 +62,10 @@ func (t *Threads) Analyze(ctx stdcontext.Context, postIDToAnalyze string, contex
 		return nil, fmt.Errorf("failed to get thread data: %w", err)
 	}
 	formattedThread := format.ThreadData(threadData)
-	context.Parameters = map[string]any{"Thread": formattedThread}
+	context.Parameters = map[string]any{
+		"Thread":     formattedThread,
+		"RootPostID": postIDToAnalyze,
+	}
 
 	// Determine system and user prompt template names.
 	systemPromptName, userPromptName := resolvePromptNames(promptName)

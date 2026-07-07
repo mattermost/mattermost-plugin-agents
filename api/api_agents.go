@@ -14,10 +14,10 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-agents/bifrost"
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/config"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -80,6 +80,7 @@ type CreateAgentRequest struct {
 	ReasoningEffort         string               `json:"reasoningEffort"`
 	ThinkingBudget          int                  `json:"thinkingBudget"`
 	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
+	MaxToolTurns            int                  `json:"maxToolTurns"`
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid (full document replace, same shape as create).
@@ -106,6 +107,7 @@ type UpdateAgentRequest struct {
 	ReasoningEffort         string               `json:"reasoningEffort"`
 	ThinkingBudget          int                  `json:"thinkingBudget"`
 	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
+	MaxToolTurns            int                  `json:"maxToolTurns"`
 
 	usernameProvided bool
 }
@@ -263,6 +265,7 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 		ReasoningEffort:         req.ReasoningEffort,
 		ThinkingBudget:          req.ThinkingBudget,
 		StructuredOutputEnabled: req.StructuredOutputEnabled,
+		MaxToolTurns:            req.MaxToolTurns,
 	}
 }
 
@@ -289,6 +292,7 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.ReasoningEffort = req.ReasoningEffort
 	cfg.ThinkingBudget = req.ThinkingBudget
 	cfg.StructuredOutputEnabled = req.StructuredOutputEnabled
+	cfg.MaxToolTurns = req.MaxToolTurns
 	return displayNameChanged
 }
 

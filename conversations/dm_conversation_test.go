@@ -11,16 +11,16 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/conversations"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/i18n"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -524,6 +524,7 @@ func TestDMNewConversation_CreatesConversationAndTurns(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil, // llmContext
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -585,6 +586,7 @@ func TestDMContinueConversation_ReadsTurnsNotPosts(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -666,6 +668,7 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		llmCtx,
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -755,6 +758,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		llmCtx,
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -813,6 +817,7 @@ func TestDMUnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		llmCtx,
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -1048,6 +1053,7 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		&llm.Context{Tools: toolStore},
+		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
@@ -1114,6 +1120,7 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 		convResult.ConversationID,
 		env.fakeLLM,
 		nil,
+		0,
 	)
 	require.NoError(t, err)
 

@@ -8,7 +8,7 @@ This guide covers installing, configuring, and managing the Mattermost Agents pl
 
 Before installing the Agents plugin, ensure your environment meets these requirements:
 
-- Mattermost Server v11.8.0+
+- Mattermost Server v11.9.0+
 - PostgreSQL database
 - For semantic search: PostgreSQL with pgvector extension
 - Network access to your chosen LLM provider
@@ -61,7 +61,7 @@ Enable this setting only in trusted or otherwise mitigated environments, such as
 
 ### Service configuration
 
-Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication and model defaults. You can create multiple services for different providers or configurations, and share them across multiple agents.
+Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication, model defaults, and optional fallback behavior. You can create multiple services for different providers or configurations, and share them across multiple agents.
 
 Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 
@@ -71,10 +71,15 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
 | **API Key** | Your provider's API key (requirements vary by provider) |
 | **Default Model** | Default model to use for this service |
+| **Fallback Service** | Optional service to use when this service is unavailable. Defaults to **No fallback**. |
 | **Input Token Limit** | Maximum tokens allowed in input. When provider metadata includes an input limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an input limit, the field stays editable and Mattermost uses the saved manual value. Set this manually for models without provider metadata if you want Mattermost to enforce a request-size limit before sending upstream. A value of `0` means Mattermost does not apply client-side truncation. |
 | **Output Token Limit** | Maximum tokens allowed in output. When provider metadata includes an output limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an output limit, the field stays editable and Mattermost uses the saved manual value. |
 | **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
 | **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) always uses the Responses API, so this control isn't shown for that service type. |
+
+Fallback services are tried per request after the primary service fails, and the primary service is tried again on the next request. Fallback chains are supported, and each fallback uses its own default model, API endpoint, and settings. Invalid fallback chains, such as cycles or missing services, fail setup visibly.
+
+Fallback only changes which configured service handles an LLM request. It doesn't change user permissions, channel scoping, tool execution, or prompt construction. OpenAI-compatible services can be used as local or on-prem keyless fallbacks, including chat-only endpoints when the primary uses the Responses API.
 
 Input and output token limits are detected independently, so one field can be auto-detected while the other remains editable. If you switch back from an auto-detected model to an unknown or custom model, Mattermost restores the previously saved manual values.
 
@@ -124,6 +129,7 @@ If you have unsaved changes and try to leave the agent configuration view by sel
 | **Agent Avatar** | Custom image for the agent |
 | **Service** | Select a configured Service from the dropdown |
 | **Model** | (Optional) Override the service's default model for this agent |
+| **Max tool turns** | Maximum consecutive tool-call/execute rounds per response. Default **30**, range **1–250**. Lower for smaller models that loop on tool calls; raise for agents that chain many MCP tools per turn. |
 | **Custom Instructions** | Custom instructions that define the agent's personality and capabilities |
 | **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
 | **Enable Tools** | Enables tool use for integrations and other tool-based capabilities. Disable this only for models or use cases where tool calling shouldn't be available. Some features won't work without tools. |
@@ -154,11 +160,14 @@ Use this tab to control who can interact with and manage the agent:
 
 #### MCPs tab
 
-Use this tab to control which MCP tools the agent can use. This tab is available only when **Enable Tools** is turned on.
+Use this tab to control how the agent can use MCP tools. This tab is available only when **Enable Tools** is turned on.
 
+- **Dynamic tool loading** is on by default. It exposes MCP discovery and loading helpers first, then loads full MCP tool schemas only when the agent needs them. Turn it off to expose the full MCP tool list to this agent up front.
 - **Automatically enable all MCP tools** gives the agent access to every currently available MCP tool and any MCP tools added later.
 - When **Automatically enable all MCP tools** is off, select the specific MCP tools the agent may use.
 - If a previously selected MCP tool is no longer available, it is removed from the agent configuration when you save.
+
+Dynamic tool loading and automatically enabled MCP tools are separate controls: auto-enable controls which tools the agent is allowed to use, while dynamic loading controls when tool schemas are exposed to the model.
 
 Updating an agent's display name also updates the linked Mattermost bot display name. Deleting an agent deactivates the linked Mattermost bot account.
 
@@ -473,7 +482,8 @@ This separation allows multiple agents to share the same LLM service configurati
         "name": "OpenAI Service",
         "type": "openai",
         "apiKey": "sk-...",
-        "defaultModel": "gpt-4o"
+        "defaultModel": "gpt-4o",
+        "fallbackServiceID": "550e8400-e29b-41d4-a716-446655440001"
       }
     ],
     "defaultBotName": "ai"
@@ -523,8 +533,10 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
    - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
    - Remote MCP servers, including URL, custom headers, OAuth client settings, and per-server enablement.
 
-3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Plugin-registered MCP servers appear as separate plugin rows in this tab.
-4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
+3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Expand a tool row to add an optional **Retrieval description override** for dynamic tool loading search; this helps the agent find the tool but does not change the tool schema sent after loading. Plugin-registered MCP servers appear as separate plugin rows in this tab.
+4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools, and whether MCP tool schemas are loaded dynamically or exposed up front.
+
+Agent MCP access is filtered by admin tool policy, the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request.
 
 The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
 
@@ -564,12 +576,24 @@ The **Automatically enable all MCP tools** option remains the broadest setting. 
 
 Enabling a server or tool for an agent controls what the agent is allowed to use, but it does not bypass tool approval policies. Tool execution still follows the policy configured in the **Tools** tab and each user's Mattermost and provider permissions.
 
+### MCP dynamic tool loading
+
+When an agent's MCP dynamic tool loading setting is enabled, the model doesn't receive every full MCP tool schema at once. Instead, it sees `search_tools` and `load_tool` meta-tools, plus any preloaded or internal tools available for that request.
+
+`search_tools` returns up to 8 candidate tools with names and summaries. `load_tool` loads one tool's full schema by exact name. A business MCP tool must be loaded before it can be executed; attempts to execute an unloaded MCP tool are rejected with guidance to call `load_tool` first.
+
+After a tool is loaded successfully, it remains available for the rest of the conversation. On later turns, loaded tools are restored from retained conversation history when they are still authorized and available.
+
+The `search_tools` and `load_tool` meta-tools run automatically without approval. The loaded business tool still follows its configured approval policy and the user's Mattermost and provider permissions.
+
+Dynamic loading applies to normal agent conversation turns. Bridge integrations and direct tool catalog requests can still request concrete tool schemas directly.
+
 ### Management
 
 - **Connection Management**: The system automatically manages user connections to MCP servers
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
-- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools
+- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools, and to add optional retrieval description overrides used by dynamic tool loading search
 - **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
 
 ### OAuth-backed MCP servers

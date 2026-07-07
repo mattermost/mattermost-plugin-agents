@@ -5,12 +5,13 @@ package conversations
 
 import (
 	stdcontext "context"
+	"errors"
 	"net/http"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -83,6 +84,44 @@ func TestHandleMessages(t *testing.T) {
 		post.AddProp("from_webhook", true)
 		err := e.conversations.handleMessages(ctx, post)
 		require.ErrorIs(t, err, ErrNoResponse)
+	})
+
+	// Cover the MM-67969 header-change case and one other system_* type.
+	systemPostTypes := []string{
+		model.PostTypeHeaderChange,
+		model.PostTypeJoinChannel,
+	}
+	for _, postType := range systemPostTypes {
+		t.Run("don't respond to system message "+postType, func(t *testing.T) {
+			post := &model.Post{
+				UserId:    "userid",
+				ChannelId: "channelid",
+				Type:      postType,
+			}
+			err := e.conversations.handleMessages(ctx, post)
+			require.ErrorIs(t, err, ErrNoResponse)
+		})
+	}
+
+	// Regular and custom non-system posts should still reach channel lookup,
+	// proving the system-message guard stays narrow.
+	t.Run("non-system posts pass the system-message guard", func(t *testing.T) {
+		for _, postType := range []string{"", "custom_llmbot"} {
+			t.Run("type="+postType, func(t *testing.T) {
+				mmClient := mocks.NewMockClient(t)
+				sentinel := errors.New("reached channel lookup")
+				mmClient.EXPECT().GetChannel("channelid").Return(nil, sentinel).Once()
+
+				conv := &Conversations{mmClient: mmClient, bots: e.bots}
+				err := conv.handleMessages(ctx, &model.Post{
+					UserId:    "userid",
+					ChannelId: "channelid",
+					Type:      postType,
+				})
+				require.ErrorIs(t, err, sentinel)
+				require.NotErrorIs(t, err, ErrNoResponse)
+			})
+		}
 	})
 }
 

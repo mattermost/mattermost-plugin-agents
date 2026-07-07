@@ -15,20 +15,20 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversations"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/metrics"
-	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
-	prompttemplates "github.com/mattermost/mattermost-plugin-agents/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
-	"github.com/mattermost/mattermost-plugin-agents/search"
-	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	prompttemplates "github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
+	"github.com/mattermost/mattermost-plugin-agents/v2/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -92,7 +92,7 @@ type testLLMContextToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
+func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot, _ *llm.Context) []llm.Tool {
 	return p.tools
 }
 
@@ -119,6 +119,10 @@ type mockMCPClientManager struct {
 	disconnectCalls     []mcpDisconnectCall
 	disconnectErr       error
 	oauthNeededCalls    []mcpDisconnectCall
+	refreshErr          error
+	refreshCalls        []string
+	getContexts         []context.Context
+	refreshContexts     []context.Context
 	ensureSessionErr    error
 
 	registerCalls   []mcp.PluginServerConfig
@@ -185,8 +189,15 @@ func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 	return nil
 }
 
-func (m *mockMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForUser(ctx context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
+	m.getContexts = append(m.getContexts, ctx)
 	return m.tools, m.mcpErrors
+}
+
+func (m *mockMCPClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error) {
+	m.refreshCalls = append(m.refreshCalls, userID)
+	m.refreshContexts = append(m.refreshContexts, ctx)
+	return m.tools, m.mcpErrors, m.refreshErr
 }
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {

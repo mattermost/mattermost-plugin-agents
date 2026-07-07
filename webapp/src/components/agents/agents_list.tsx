@@ -315,6 +315,28 @@ const Container = styled.div`
     min-height: 0;
     gap: 0;
     overflow-y: auto;
+
+    // Keep the scrollbar hidden until the list is hovered, matching the
+    // overlay-style behaviour users expect from the rest of Mattermost.
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+
+    &::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+        border-radius: 4px;
+        background-color: transparent;
+    }
+
+    &:hover {
+        scrollbar-color: rgba(var(--center-channel-color-rgb), 0.24) transparent;
+    }
+
+    &:hover::-webkit-scrollbar-thumb {
+        background-color: rgba(var(--center-channel-color-rgb), 0.24);
+    }
 `;
 
 const Header = styled.div`

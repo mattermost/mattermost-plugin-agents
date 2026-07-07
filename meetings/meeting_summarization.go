@@ -13,13 +13,13 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/i18n"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
-	"github.com/mattermost/mattermost-plugin-agents/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

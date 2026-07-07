@@ -9,12 +9,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -44,7 +44,7 @@ func (m mapPolicyChecker) GetToolPolicy(serverOrigin, toolName string) (string, 
 
 type channelFollowUpTestToolProvider struct{}
 
-func (p *channelFollowUpTestToolProvider) GetTools(*bots.Bot) []llm.Tool {
+func (p *channelFollowUpTestToolProvider) GetTools(*bots.Bot, *llm.Context) []llm.Tool {
 	return nil
 }
 

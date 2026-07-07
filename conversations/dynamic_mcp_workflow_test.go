@@ -9,9 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
@@ -150,7 +150,7 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 				},
 			}
 
-			streamResult, err := c.ProcessDMRequest(context.Background(), conv.ID, lm, llmContext)
+			streamResult, err := c.ProcessDMRequest(context.Background(), conv.ID, lm, llmContext, 0)
 			require.NoError(t, err)
 
 			text := ""

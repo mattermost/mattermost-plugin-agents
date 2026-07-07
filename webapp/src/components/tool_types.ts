@@ -18,6 +18,17 @@ export type JSONValue =
     | {[key: string]: JSONValue}
     | JSONValue[];
 
+// UserInteractionSelect marks a tool answered by the user picking from a set
+// of options. Mirrors llm.UserInteractionSelect on the server.
+export const UserInteractionSelect = 'select';
+
+// ToolAnswer is a user's answer to a user-interaction tool call. Mirrors
+// mmtools.UserInteractionAnswer on the server.
+export interface ToolAnswer {
+    selected: string[];
+    custom?: string;
+}
+
 export interface ToolCall {
     id: string;
     name: string;
@@ -26,6 +37,20 @@ export interface ToolCall {
     arguments?: JSONValue;
     result?: string;
     status: ToolCallStatus;
+
+    // Non-empty for tools answered by the user instead of executed by the
+    // server (e.g. AskUserQuestion). See UserInteractionSelect.
+    user_interaction?: string;
+
+    // True for a pending call that passed the auto-execution policy but was
+    // paused with its batch. It runs server-side once the user resolves the
+    // rest, so no approval UI should render for it.
+    would_auto_execute?: boolean;
+
+    // True when the matching tool result has already received its terminal
+    // share/keep-private decision (decided_at set server-side). Derived from
+    // the conversation API; absent on live websocket payloads.
+    decided?: boolean;
 }
 
 // ToolApprovalStage mirrors the server-computed approval state for a post.

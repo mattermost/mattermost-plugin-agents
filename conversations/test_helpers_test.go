@@ -11,9 +11,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -253,7 +253,7 @@ type testToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *testToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
+func (p *testToolProvider) GetTools(_ *bots.Bot, _ *llm.Context) []llm.Tool {
 	return p.tools
 }
 

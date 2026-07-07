@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // FakeLLM is a test implementation of llm.LanguageModel that returns configurable responses

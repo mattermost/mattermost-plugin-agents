@@ -7,20 +7,20 @@ import (
 	stdcontext "context"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/i18n"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/mmtools"
-	"github.com/mattermost/mattermost-plugin-agents/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
-	"github.com/mattermost/mattermost-plugin-agents/subtitles"
-	"github.com/mattermost/mattermost-plugin-agents/telemetry"
-	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -182,11 +182,16 @@ type DMStreamResult struct {
 // ProcessDMRequest builds a completion request from the conversation and
 // runs the tool loop, returning the final stream. The conversation must
 // already exist (created via CreateOrGetDMConversation).
+//
+// maxToolTurns bounds the tool-call-execute-recall loop for this bot; pass 0
+// or any non-positive value to use the system default
+// (llm.DefaultMaxToolTurns).
 func (c *Conversations) ProcessDMRequest(
 	ctx stdcontext.Context,
 	convID string,
 	lm llm.LanguageModel,
 	llmCtx *llm.Context,
+	maxToolTurns int,
 ) (*DMStreamResult, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "process dm request")
 	defer span.End()
@@ -207,7 +212,7 @@ func (c *Conversations) ProcessDMRequest(
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
 
-	runner := toolrunner.New(lm)
+	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxToolTurns))
 	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)
@@ -241,6 +246,11 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 		}
 		lookup, ok := llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
 		if !ok {
+			return false
+		}
+		// Interaction tools are answered by the user; auto-executing one
+		// would bypass the question entirely.
+		if lookup.Tool.UserInteraction != "" {
 			return false
 		}
 		policy, enabled := c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)

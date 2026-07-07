@@ -6,8 +6,8 @@ package main
 import (
 	"encoding/json"
 
-	"github.com/mattermost/mattermost-plugin-agents/api"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/api"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )

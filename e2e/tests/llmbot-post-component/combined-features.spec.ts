@@ -1,219 +1,75 @@
-import { test, expect } from '@playwright/test';
-import RunRealAPIContainer, { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
-import MattermostContainer from 'helpers/mmcontainer';
-import { MattermostPage } from 'helpers/mm';
-import { AIPlugin } from 'helpers/ai-plugin';
-import { LLMBotPostHelper } from 'helpers/llmbot-post';
+import { expect } from '@playwright/test';
+
 import {
-    getAPIConfig,
-    getSkipMessage,
-    getAvailableProviders,
-    ProviderBundle,
-} from 'helpers/api-config';
-import { attachAPIErrorContext } from 'helpers/log-scanner';
+    approvePendingWebSearchTool,
+    describeAIMockCitationCase,
+    sendMessageWithWebSearchApproval,
+} from 'helpers/aimock-citation-harness';
+import {
+    buildLLMBotCombinedFeaturesFixtures,
+    COMBINED_REASONING_TEXT,
+    REASONING_CITATIONS_PROMPT,
+    REGENERATE_CITATIONS_PROMPT,
+} from '../../fixtures/aimock/llmbot-combined-features';
 
 /**
- * Test Suite: Combined Features
- *
- * Tests multiple features working together in LLMBot posts using REAL APIs.
- * Runs once per configured provider (OpenAI and/or Anthropic).
- *
- * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic
- * - OPENAI_API_KEY: To run tests with OpenAI
- *
- * Tests:
- * 1. Reasoning and Citations Together
- * 2. Regenerate Functionality
+ * Test Suite: Combined Features (deterministic aimock + WebSearch tool fallback)
  */
 
-const username = 'regularuser';
-const password = 'regularuser';
+const EXPECTED_CITATION_COUNT = 1;
+const COMBINED_FIXTURES = buildLLMBotCombinedFeaturesFixtures();
 
-const config = getAPIConfig();
-const skipMessage = getSkipMessage();
+describeAIMockCitationCase({
+    title: 'Reasoning and Citations Together',
+    fixtures: COMBINED_FIXTURES,
+    reasoningEnabled: true,
+    timeoutMs: 180000,
+    run: async ({ page, aiPlugin, llmBotHelper }) => {
+        await sendMessageWithWebSearchApproval(page, aiPlugin, REASONING_CITATIONS_PROMPT);
+        await llmBotHelper.waitForReasoning(undefined, 35000);
+        await llmBotHelper.waitForStreamingComplete();
 
-async function setupTestPage(page, mattermost, provider: ProviderBundle) {
-    const mmPage = new MattermostPage(page);
-    const aiPlugin = new AIPlugin(page);
-    const llmBotHelper = new LLMBotPostHelper(page);
+        await llmBotHelper.expectReasoningVisible(true);
+        await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
+        await llmBotHelper.expectCitationCount(EXPECTED_CITATION_COUNT);
 
-    const botUsername = provider.bot.name;
+        await llmBotHelper.clickReasoningToggle();
+        await llmBotHelper.expectReasoningExpanded(true);
+        await expect(llmBotHelper.getReasoningContent()).toContainText(COMBINED_REASONING_TEXT);
 
-    return { mmPage, aiPlugin, llmBotHelper, botUsername };
-}
+        await llmBotHelper.getCitationWrapper(1).scrollIntoViewIfNeeded();
+        await llmBotHelper.hoverCitation(1);
+        await expect(llmBotHelper.getCitationTooltip()).toBeVisible({ timeout: 5000 });
+        await expect(llmBotHelper.getCitationTooltip()).toContainText('typescriptlang.org');
+    },
+});
 
-function createProviderTestSuite(provider: ProviderBundle) {
-    test.describe(`Combined Features - ${provider.name}`, () => {
-        test.skip(provider.service.type === 'openaicompatible', 'Skipping OpenAI reasoning tests due to flaky upstream reasoning events.');
+describeAIMockCitationCase({
+    title: 'Regenerate Functionality with Reasoning and Citations',
+    fixtures: COMBINED_FIXTURES,
+    reasoningEnabled: true,
+    timeoutMs: 240000,
+    run: async ({ page, aiPlugin, llmBotHelper }) => {
+        await sendMessageWithWebSearchApproval(page, aiPlugin, REGENERATE_CITATIONS_PROMPT);
+        await llmBotHelper.waitForReasoning();
+        await llmBotHelper.waitForStreamingComplete();
 
-        let mattermost: MattermostContainer;
+        await llmBotHelper.expectReasoningVisible(true);
+        await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
+        await expect(llmBotHelper.getPostText()).toBeVisible();
+        await llmBotHelper.expectCitationCount(EXPECTED_CITATION_COUNT);
 
-        test.beforeAll(async () => {
-            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
-            if (!config.shouldRunTests) return;
+        await llmBotHelper.getLLMBotPost().hover();
+        await expect(llmBotHelper.getRegenerateButton()).toBeVisible();
+        await llmBotHelper.regenerateResponse();
+        await approvePendingWebSearchTool(page);
 
-            // Customize configuration based on provider
-            const isAnthropic = provider.service.type === 'anthropic';
-            const customProvider = {
-                ...provider,
-                service: {
-                    ...provider.service,
-                    tokenLimit: 8192,
-                    outputTokenLimit: 8192,
-                    ...(provider.service.type === 'openaicompatible' && {
-                        useResponsesAPI: true,
-                    })
-                },
-                bot: {
-                    ...provider.bot,
-                    ...(isAnthropic && {
-                        thinkingBudget: 1024,
-                    }),
-                    ...(provider.service.type === 'openaicompatible' && {
-                        reasoningEffort: 'high',
-                    }),
-                }
-            };
+        await llmBotHelper.waitForReasoning();
+        await llmBotHelper.waitForStreamingComplete();
 
-            mattermost = await RunRealAPIContainer(customProvider);
-        });
-
-        test.afterAll(async () => {
-            if (mattermost) {
-                await mattermost.stop();
-            }
-        });
-
-        test.afterEach(async ({}, testInfo) => {
-            await attachAPIErrorContext(testInfo);
-        });
-
-        test('Reasoning and Citations Together', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(150000);
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            // Navigate to DM with bot (required for web_search native tool)
-            await mmPage.createAndNavigateToDMWithBot(mattermost, username, password, botUsername);
-
-            await aiPlugin.openRHS();
-
-            const isAnthropic = provider.service.type === 'anthropic';
-            const prompt = isAnthropic
-                ? 'Search the web for TypeScript docs and briefly analyze 2-3 key features with citations (1 paragraph)'
-                : 'Use web search to find TypeScript docs and briefly list 2-3 benefits with citations (1 paragraph)';
-
-            await aiPlugin.sendMessage(prompt);
-
-            await llmBotHelper.waitForReasoning(undefined, 35000);
-            // Wait for streaming to complete (smart wait, 5min safety timeout)
-            await llmBotHelper.waitForStreamingComplete();
-
-            await llmBotHelper.expectReasoningVisible(true);
-            await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
-
-            const citations = llmBotHelper.getAllCitationIcons();
-            const citationCount = await citations.count();
-
-            // Web search in DM context MUST produce citations
-            expect(citationCount).toBeGreaterThan(0);
-            await expect(citations.first()).toBeVisible();
-
-            await llmBotHelper.clickReasoningToggle();
-            await llmBotHelper.expectReasoningExpanded(true);
-
-            // Wait for scroll animation to complete after expanding reasoning
-            await page.waitForTimeout(1000);
-
-            // Scroll citation back into view and hover
-            const citationWrapper = llmBotHelper.getCitationWrapper(1);
-            await citationWrapper.scrollIntoViewIfNeeded();
-            await page.waitForTimeout(500);
-
-            await llmBotHelper.hoverCitation(1);
-            await page.waitForTimeout(1500);
-            const tooltip = llmBotHelper.getCitationTooltip();
-            await expect(tooltip).toBeVisible({ timeout: 5000 });
-        });
-
-        test('Regenerate Functionality with Reasoning and Citations', async ({ page }) => {
-            test.skip(!config.shouldRunTests, skipMessage);
-            test.setTimeout(720000); // 12 minutes: allows 5 min per operation + buffer
-
-            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
-            await mmPage.login(mattermost.url(), username, password);
-
-            // Navigate to DM with bot (required for web_search native tool)
-            await mmPage.createAndNavigateToDMWithBot(mattermost, username, password, botUsername);
-
-            await aiPlugin.openRHS();
-
-            const isAnthropic = provider.service.type === 'anthropic';
-            const prompt = isAnthropic
-                ? 'Search the web for TypeScript benefits and briefly analyze 2-3 key points with citations (1 paragraph)'
-                : 'Use web search to find TypeScript benefits and briefly explain 2-3 points with citations (1 paragraph)';
-
-            await aiPlugin.sendMessage(prompt);
-
-            // Wait for reasoning and streaming to complete on first response (up to 5 min each)
-            await llmBotHelper.waitForReasoning(); // Uses default 300s timeout
-            await llmBotHelper.waitForStreamingComplete(); // Uses default 300s timeout
-
-            // Verify first response has reasoning
-            await llmBotHelper.expectReasoningVisible(true);
-            await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
-
-            // Verify first response has content
-            const postTextBefore = llmBotHelper.getPostText();
-            await expect(postTextBefore).toBeVisible();
-            const contentBefore = await postTextBefore.textContent();
-            expect(contentBefore).toBeTruthy();
-
-            // Check for citations in first response
-            const citationsBefore = llmBotHelper.getAllCitationIcons();
-            const citationCountBefore = await citationsBefore.count();
-            expect(citationCountBefore).toBeGreaterThan(0);
-
-            // Hover over post to show regenerate button
-            const llmBotPost = llmBotHelper.getLLMBotPost();
-            await llmBotPost.hover();
-            await page.waitForTimeout(500);
-
-            const regenerateButton = llmBotHelper.getRegenerateButton();
-            const isVisible = await regenerateButton.isVisible().catch(() => false);
-
-            if (isVisible) {
-                await llmBotHelper.regenerateResponse();
-
-                // Wait for reasoning and streaming to complete on regenerated response (up to 5 min each)
-                await llmBotHelper.waitForReasoning(); // Uses default 300s timeout
-                await llmBotHelper.waitForStreamingComplete(); // Uses default 300s timeout
-
-                // Verify regenerated response ALSO has reasoning
-                await llmBotHelper.expectReasoningVisible(true);
-                await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
-
-                // Verify regenerated response has content
-                const postTextAfter = llmBotHelper.getPostText();
-                await expect(postTextAfter).toBeVisible();
-                const contentAfter = await postTextAfter.textContent();
-                expect(contentAfter).toBeTruthy();
-
-                // Verify regenerated response ALSO has citations
-                const citationsAfter = llmBotHelper.getAllCitationIcons();
-                const citationCountAfter = await citationsAfter.count();
-                expect(citationCountAfter).toBeGreaterThan(0);
-            } else {
-                console.log('Regenerate button not visible, skipping regeneration test');
-            }
-        });
-    });
-}
-
-const providers = getAvailableProviders();
-providers.forEach(provider => {
-    createProviderTestSuite(provider);
+        await llmBotHelper.expectReasoningVisible(true);
+        await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
+        await expect(llmBotHelper.getPostText()).toBeVisible();
+        await llmBotHelper.expectCitationCount(EXPECTED_CITATION_COUNT);
+    },
 });

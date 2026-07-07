@@ -58,6 +58,7 @@ After the schema migrations run, the plugin performs a one-time migration of leg
     - `CreatorID` left empty (migrated agents do not have a creator).
     - `AdminUserIDs` cleared. Migrated agents are managed by system admins.
     - `AutoEnableNewMCPTools = true` so migrated agents preserve the v1.x behavior of having access to every MCP tool, including ones added later.
+    - `MCPDynamicToolLoading = true` when the legacy bot did not explicitly store a value, so MCP tool schemas are loaded dynamically by default. Disable **Dynamic tool loading** on the agent's **MCPs** tab to expose the full MCP tool list up front.
 5. The plugin clears `config.bots` from stored configuration to prevent duplicate bot registration on subsequent restarts.
 6. The plugin sets `legacy_config_bots_migrated = true`.
 

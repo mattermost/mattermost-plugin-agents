@@ -7,7 +7,7 @@ package mocks
 import (
 	"context"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	mock "github.com/stretchr/testify/mock"
 )
 

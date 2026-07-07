@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +68,7 @@ func TestGetSearchTools_SchemaReflectsCapabilities(t *testing.T) {
 			provider := &MattermostToolProvider{
 				logger:        &testLogger{t: t},
 				searchService: tc.searchService,
+				accessMode:    AccessModeRemote,
 			}
 
 			tools := provider.getSearchTools()

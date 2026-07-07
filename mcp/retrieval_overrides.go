@@ -3,7 +3,7 @@
 
 package mcp
 
-import "github.com/mattermost/mattermost-plugin-agents/llm"
+import "github.com/mattermost/mattermost-plugin-agents/v2/llm"
 
 type ToolRetrievalOverride struct {
 	Summary string

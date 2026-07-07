@@ -6,9 +6,9 @@ package conversations
 import (
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -113,6 +113,21 @@ func TestShouldAutoExecuteToolMetaToolDoesNotAuthorizeBusinessTool(t *testing.T)
 	c := &Conversations{toolPolicyChecker: nil}
 
 	assert.False(t, c.shouldAutoExecuteTool(nil, true)(llm.ToolCall{Name: "jira__get_issue"}))
+}
+
+// TestShouldAutoExecuteTool_UserInteractionNeverAutoExecutes pins the contract
+// that tools answered by the user (e.g. AskUserQuestion) never auto-execute,
+// even if a policy claims auto_run — auto-running one would skip the question.
+func TestShouldAutoExecuteTool_UserInteractionNeverAutoExecutes(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: "AskUserQuestion", UserInteraction: llm.UserInteractionSelect}})
+
+	for _, isDM := range []bool{true, false} {
+		got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: "AskUserQuestion"})
+		assert.False(t, got, "isDM=%v", isDM)
+	}
 }
 
 type countingPolicyChecker struct {

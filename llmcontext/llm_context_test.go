@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -21,7 +21,7 @@ import (
 
 type emptyToolProvider struct{}
 
-func (p *emptyToolProvider) GetTools(*bots.Bot) []llm.Tool {
+func (p *emptyToolProvider) GetTools(*bots.Bot, *llm.Context) []llm.Tool {
 	return nil
 }
 
@@ -29,7 +29,7 @@ type staticToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *staticToolProvider) GetTools(*bots.Bot) []llm.Tool {
+func (p *staticToolProvider) GetTools(*bots.Bot, *llm.Context) []llm.Tool {
 	return p.tools
 }
 

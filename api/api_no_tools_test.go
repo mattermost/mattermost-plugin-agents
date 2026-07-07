@@ -13,15 +13,15 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/assert"
@@ -30,7 +30,7 @@ import (
 
 type noToolsTestToolProvider struct{}
 
-func (p *noToolsTestToolProvider) GetTools(*bots.Bot) []llm.Tool {
+func (p *noToolsTestToolProvider) GetTools(*bots.Bot, *llm.Context) []llm.Tool {
 	return nil
 }
 

@@ -53,7 +53,7 @@ Linters (golangci-lint, ESLint, gofmt/goimports, header check, editorconfig) alr
 - Go tests must be table-driven when there is more than one case.
 - Never introduce a new test/mocking library; prefer to test against real implementations instead.
 - All formatting of Mattermost entities (posts, users, channels, teams, members) for LLM consumption or tool output must go through the `format/` package. Never `fmt.Sprintf` model types inline; add a formatter to `format/` instead.
-- E2E shard maintenance: when adding a new spec that should run in CI, assign it in `e2e/scripts/ci-test-groups.mjs` in the same change. `make check-shards` validates coverage and is part of `make check`. Mock/non-real-api tests go in the lightest `e2e-shard-*` group; provider-backed tests go in the matching `*-real*` group; balance by expected runtime, not alphabetically.
+- E2E shard maintenance: when adding a new spec that should run in CI, assign it in `e2e/scripts/ci-test-groups.mjs` in the same change. `make check-shards` validates coverage and is part of `make check`. Use the lightest `e2e-shard-*` group and balance by expected runtime, not alphabetically.
 - Test for behavior that could break due to a real bug. Before writing a test ask: "If this test fails, does it indicate a real bug in our code?" In particular, do not assert on implementation details like validation order or which error appears first.
 
 ## OpenTelemetry tracing

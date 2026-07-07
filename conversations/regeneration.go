@@ -8,15 +8,15 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
-	"github.com/mattermost/mattermost-plugin-agents/subtitles"
-	"github.com/mattermost/mattermost-plugin-agents/telemetry"
-	"github.com/mattermost/mattermost-plugin-agents/threads"
-	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/threads"
+	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -249,9 +249,12 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("failed to get conversation for regen: %w", err)
 	}
 
+	// Regeneration is triggered by the requester clicking the regen control,
+	// so the user is interactively present.
 	llmContext := c.buildConversationContextWithTools(
 		ctx, bot, user, channel,
 		"Failed to load user tool preferences on regen, proceeding without filtering",
+		c.contextBuilder.WithLLMContextInteractive(),
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
@@ -291,7 +294,7 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM())
+	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
 	runResult, runErr := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {

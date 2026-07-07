@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/format"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

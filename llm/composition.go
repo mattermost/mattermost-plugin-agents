@@ -8,7 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/mattermost/mattermost-plugin-agents/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 )
 
 // CompositionSource labels where a piece of an LLM request came from. Used to

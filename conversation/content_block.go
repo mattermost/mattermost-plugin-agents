@@ -6,7 +6,7 @@ package conversation
 import (
 	"encoding/json"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // Block type constants identify the type of content in a ContentBlock.
@@ -49,6 +49,14 @@ type ContentBlock struct {
 	MCPBareName  string          `json:"mcp_bare_name,omitempty"`
 	Status       string          `json:"status,omitempty"`
 	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
+
+	// UserInteraction is the persisted form of llm.Tool.UserInteraction.
+	UserInteraction string `json:"user_interaction,omitempty"`
+
+	// WouldAutoExecute marks a pending tool_use block that passed the
+	// auto-execution policy but was paused with the rest of its batch.
+	// Display-only (see llm.ToolCall.WouldAutoExecute).
+	WouldAutoExecute bool `json:"would_auto_execute,omitempty"`
 
 	// DecidedAt (tool_result blocks) records when the share/keep-private
 	// decision was made — either by the user clicking Share or Keep Private
