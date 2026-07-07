@@ -118,9 +118,9 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			wantCount: 8,
 		},
 		{
-			name:      "Mattermost seeds 10 read tools",
+			name:      "Mattermost seeds 70 read tools",
 			baseURL:   EmbeddedClientKey,
-			wantCount: 10,
+			wantCount: 70,
 		},
 		{
 			name:    "unknown host returns nil",
@@ -203,7 +203,18 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 		requireToolConfig(t, configs, "search_posts", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "search_users", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "read_file", ToolPolicyAutoRunInDM, true)
+		// New read-only tools added to the catalog also auto-run in DMs.
+		requireToolConfig(t, configs, "get_post_info", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "get_user", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "get_channel_member", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "search_files", ToolPolicyAutoRunInDM, true)
+		// Write tools are never seeded.
 		requireNoToolConfig(t, configs, "create_post")
+		requireNoToolConfig(t, configs, "update_user")
+		// Credential-exposing reads stay at the runtime default (policy="ask").
+		requireNoToolConfig(t, configs, "get_file_link")
+		requireNoToolConfig(t, configs, "list_incoming_webhooks")
+		requireNoToolConfig(t, configs, "list_outgoing_webhooks")
 	})
 }
 
