@@ -62,7 +62,7 @@ test.describe('Reindex after embedding model change', () => {
         await userClient.createPost({
             channel_id: channel.id,
             message: 'The Q4 budget report shows a 15% increase in marketing spend',
-        } as any);
+        });
 
         // 1. Initial full reindex. This records the model the index was built
         //    with (mock provider, no model name, 512 dimensions).

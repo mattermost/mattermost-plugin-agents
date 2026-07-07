@@ -116,4 +116,15 @@ func TestAvailability(t *testing.T) {
 		require.Nil(t, a.IndexSearch())
 		require.Nil(t, a.QuerySearch())
 	})
+
+	t.Run("clearing predicate re-enables querying after model incompatibility", func(t *testing.T) {
+		a := NewAvailability()
+		s := mocks.NewMockEmbeddingSearch(t)
+		a.Set(s)
+		a.SetQueryAllowedFunc(func() bool { return false })
+		require.Nil(t, a.QuerySearch())
+
+		a.SetQueryAllowedFunc(nil)
+		require.Equal(t, s, a.QuerySearch())
+	})
 }
