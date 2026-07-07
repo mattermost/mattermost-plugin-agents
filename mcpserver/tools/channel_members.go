@@ -268,6 +268,9 @@ func (p *MattermostToolProvider) toolSearchUsersInChannel(mcpContext *MCPToolCon
 	if err := optionalID("team_id", args.TeamID); err != nil {
 		return "", err
 	}
+	if args.NotIn && args.TeamID == "" {
+		return "", fmt.Errorf("team_id is required when not_in is true")
+	}
 
 	search := &model.UserSearch{Term: args.Term, Limit: 100}
 	if args.NotIn {

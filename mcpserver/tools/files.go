@@ -237,11 +237,11 @@ func (p *MattermostToolProvider) toolUploadFile(mcpContext *MCPToolContext, args
 	if err := requireID("channel_id", args.ChannelID); err != nil {
 		return "", err
 	}
-	if args.Path == "" {
-		return "", fmt.Errorf("path cannot be empty")
-	}
 	if mcpContext.AccessMode != AccessModeLocal {
 		return "file uploads from a path or URL are only supported in local access mode", nil
+	}
+	if args.Path == "" {
+		return "", fmt.Errorf("path cannot be empty")
 	}
 
 	fileIDs, err := uploadFilesForLocal(mcpContext.Ctx, mcpContext.Client, args.ChannelID, []string{args.Path}, mcpContext.AccessMode)

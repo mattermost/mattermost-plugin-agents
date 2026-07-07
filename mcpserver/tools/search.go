@@ -127,14 +127,20 @@ func (p *MattermostToolProvider) applySearchModifiers(ctx context.Context, clien
 
 	if in := strings.TrimSpace(args.In); in != "" {
 		channelName := in
+		resolved := true
 		if model.IsValidId(in) {
 			if channel, _, err := client.GetChannel(ctx, in); err == nil {
 				channelName = channel.Name
 			} else {
+				// A raw ID never matches the in: name filter, so skip the
+				// modifier rather than silently returning zero results.
 				p.logger.Warn("failed to resolve in: channel ID for search modifier", "channel_id", in, "error", err)
+				resolved = false
 			}
 		}
-		modifiers = append(modifiers, "in:"+channelName)
+		if resolved {
+			modifiers = append(modifiers, "in:"+channelName)
+		}
 	}
 
 	if before := strings.TrimSpace(args.Before); before != "" {

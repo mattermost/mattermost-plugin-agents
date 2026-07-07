@@ -18,8 +18,10 @@ import (
 func TestFileExtraToolsValidation(t *testing.T) {
 	provider := newTestProvider(t, "https://mm.example.com")
 	client := newTestClient("https://mm.example.com")
-	// Remote access mode to verify upload_file gating.
 	mcpCtx := &MCPToolContext{Client: client, Ctx: t.Context(), AccessMode: AccessModeRemote}
+	// Local access mode: upload_file passes the access-mode gate, so downstream
+	// validation (e.g. empty path) is exercised.
+	localCtx := &MCPToolContext{Client: client, Ctx: t.Context(), AccessMode: AccessModeLocal}
 
 	tests := []struct {
 		name    string
@@ -33,7 +35,7 @@ func TestFileExtraToolsValidation(t *testing.T) {
 			return provider.toolSearchFiles(mcpCtx, SearchFilesArgs{Terms: "", TeamID: model.NewId()})
 		}, "terms cannot be empty"},
 		{"upload_file empty path", func() (string, error) {
-			return provider.toolUploadFile(mcpCtx, UploadFileArgs{ChannelID: model.NewId(), Path: ""})
+			return provider.toolUploadFile(localCtx, UploadFileArgs{ChannelID: model.NewId(), Path: ""})
 		}, "path cannot be empty"},
 	}
 

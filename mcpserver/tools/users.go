@@ -5,6 +5,7 @@ package tools
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -188,10 +189,16 @@ func (p *MattermostToolProvider) toolGetUserCPAValues(mcpContext *MCPToolContext
 	if len(values) == 0 {
 		return "no custom profile attribute (CPA) values set for this user", nil
 	}
+	fieldIDs := make([]string, 0, len(values))
+	for fieldID := range values {
+		fieldIDs = append(fieldIDs, fieldID)
+	}
+	sort.Strings(fieldIDs)
+
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Custom Profile Attribute (CPA) values for user %s:\n", args.UserID))
-	for fieldID, raw := range values {
-		result.WriteString(fmt.Sprintf("%s: %s\n", fieldID, string(raw)))
+	for _, fieldID := range fieldIDs {
+		result.WriteString(fmt.Sprintf("%s: %s\n", fieldID, string(values[fieldID])))
 	}
 	return result.String(), nil
 }

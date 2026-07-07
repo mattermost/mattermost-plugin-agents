@@ -18,7 +18,9 @@ type GetGroupInfoArgs struct {
 
 // ListGroupsArgs represents arguments for the list_groups tool.
 type ListGroupsArgs struct {
-	Query string `json:"query,omitempty" jsonschema:"Optional search term to filter groups by name"`
+	Query   string `json:"query,omitempty" jsonschema:"Optional search term to filter groups by name"`
+	Page    int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	PerPage int    `json:"per_page,omitempty" jsonschema:"Groups per page (default: 60, max: 200),minimum=1,maximum=200"`
 }
 
 // GetUserGroupsArgs represents arguments for the get_user_groups tool.
@@ -29,11 +31,15 @@ type GetUserGroupsArgs struct {
 // GetChannelGroupsArgs represents arguments for the get_channel_groups tool.
 type GetChannelGroupsArgs struct {
 	ChannelID string `json:"channel_id" jsonschema:"The channel,minLength=26,maxLength=26"`
+	Page      int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	PerPage   int    `json:"per_page,omitempty" jsonschema:"Groups per page (default: 60, max: 200),minimum=1,maximum=200"`
 }
 
 // GetTeamGroupsArgs represents arguments for the get_team_groups tool.
 type GetTeamGroupsArgs struct {
-	TeamID string `json:"team_id" jsonschema:"The team,minLength=26,maxLength=26"`
+	TeamID  string `json:"team_id" jsonschema:"The team,minLength=26,maxLength=26"`
+	Page    int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	PerPage int    `json:"per_page,omitempty" jsonschema:"Groups per page (default: 60, max: 200),minimum=1,maximum=200"`
 }
 
 // GetUsersInGroupChannelsArgs represents arguments for the get_users_in_group_channels tool.
@@ -43,10 +49,10 @@ type GetUsersInGroupChannelsArgs struct {
 
 const (
 	getGroupInfoDescription            = "Get a group's metadata. Parameters: group_id (required)."
-	listGroupsDescription              = "List or search custom and LDAP-synced groups. Parameters: query (optional search term)."
+	listGroupsDescription              = "List or search custom and LDAP-synced groups. Parameters: query (optional search term), page, per_page."
 	getUserGroupsDescription           = "Get the groups a user belongs to. Parameters: user_id (optional, defaults to you)."
-	getChannelGroupsDescription        = "Get the groups synced to a channel. Parameters: channel_id (required)."
-	getTeamGroupsDescription           = "Get the groups synced to a team. Parameters: team_id (required)."
+	getChannelGroupsDescription        = "Get the groups synced to a channel. Parameters: channel_id (required), page, per_page."
+	getTeamGroupsDescription           = "Get the groups synced to a team. Parameters: team_id (required), page, per_page."
 	getUsersInGroupChannelsDescription = "Get the members of given group-message (GM) channels. Parameters: channel_ids (required list)."
 )
 
@@ -78,7 +84,8 @@ func (p *MattermostToolProvider) toolGetGroupInfo(mcpContext *MCPToolContext, ar
 
 // toolListGroups implements the list_groups tool.
 func (p *MattermostToolProvider) toolListGroups(mcpContext *MCPToolContext, args ListGroupsArgs) (string, error) {
-	opts := model.GroupSearchOpts{Q: args.Query}
+	page, perPage := normalizePage(args.Page, args.PerPage, 60, 200)
+	opts := model.GroupSearchOpts{Q: args.Query, PageOpts: &model.PageOpts{Page: page, PerPage: perPage}}
 	groups, _, err := mcpContext.Client.GetGroups(mcpContext.Ctx, opts)
 	if err != nil {
 		return "", fmt.Errorf("error fetching groups: %w", err)
@@ -111,7 +118,8 @@ func (p *MattermostToolProvider) toolGetChannelGroups(mcpContext *MCPToolContext
 	if err := requireID("channel_id", args.ChannelID); err != nil {
 		return "", err
 	}
-	groups, _, _, err := mcpContext.Client.GetGroupsByChannel(mcpContext.Ctx, args.ChannelID, model.GroupSearchOpts{})
+	page, perPage := normalizePage(args.Page, args.PerPage, 60, 200)
+	groups, _, _, err := mcpContext.Client.GetGroupsByChannel(mcpContext.Ctx, args.ChannelID, model.GroupSearchOpts{PageOpts: &model.PageOpts{Page: page, PerPage: perPage}})
 	if err != nil {
 		return "", fmt.Errorf("error fetching channel groups: %w", err)
 	}
@@ -123,7 +131,8 @@ func (p *MattermostToolProvider) toolGetTeamGroups(mcpContext *MCPToolContext, a
 	if err := requireID("team_id", args.TeamID); err != nil {
 		return "", err
 	}
-	groups, _, _, err := mcpContext.Client.GetGroupsByTeam(mcpContext.Ctx, args.TeamID, model.GroupSearchOpts{})
+	page, perPage := normalizePage(args.Page, args.PerPage, 60, 200)
+	groups, _, _, err := mcpContext.Client.GetGroupsByTeam(mcpContext.Ctx, args.TeamID, model.GroupSearchOpts{PageOpts: &model.PageOpts{Page: page, PerPage: perPage}})
 	if err != nil {
 		return "", fmt.Errorf("error fetching team groups: %w", err)
 	}

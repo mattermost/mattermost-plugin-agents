@@ -681,10 +681,13 @@ func (p *MattermostToolProvider) toolAddTeamMembers(mcpContext *MCPToolContext, 
 		}
 	}
 
-	if _, _, err := mcpContext.Client.AddTeamMembers(mcpContext.Ctx, args.TeamID, args.UserIDs); err != nil {
+	// Use the graceful path so one invalid or already-a-member user does not
+	// abort the whole batch; per-user outcomes are surfaced to the caller.
+	members, _, err := mcpContext.Client.AddTeamMembersGracefully(mcpContext.Ctx, args.TeamID, args.UserIDs)
+	if err != nil {
 		return "", fmt.Errorf("error adding team members: %w", err)
 	}
-	return fmt.Sprintf("Successfully added %d user(s) to team %s", len(args.UserIDs), args.TeamID), nil
+	return formatTeamMemberAddResults(args.TeamID, members), nil
 }
 
 // toolRemoveTeamMember implements the remove_team_member tool.
@@ -772,6 +775,23 @@ func formatTeamList(teams []*model.Team) string {
 	for _, team := range teams {
 		format.WriteTeam(&result, format.TeamEntry{Team: team, MemberCount: -1})
 		result.WriteString("\n")
+	}
+	return result.String()
+}
+
+// formatTeamMemberAddResults summarizes the per-user outcomes of a graceful bulk add.
+func formatTeamMemberAddResults(teamID string, members []*model.TeamMemberWithError) string {
+	if len(members) == 0 {
+		return fmt.Sprintf("no users added to team %s", teamID)
+	}
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Add team member results for team %s (%d):\n", teamID, len(members)))
+	for _, member := range members {
+		if member.Error != nil {
+			result.WriteString(fmt.Sprintf("- %s: failed (%s)\n", member.UserId, member.Error.Message))
+		} else {
+			result.WriteString(fmt.Sprintf("- %s: added\n", member.UserId))
+		}
 	}
 	return result.String()
 }

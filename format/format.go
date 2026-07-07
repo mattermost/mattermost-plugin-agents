@@ -356,7 +356,7 @@ func WriteChannelMember(w *strings.Builder, entry ChannelMemberEntry) {
 	if role := MemberRole(m.SchemeAdmin, m.SchemeGuest, m.SchemeUser); role != "" {
 		fmt.Fprintf(w, "Role: %s\n", role)
 	}
-	muted := m.NotifyProps != nil && m.NotifyProps["mark_unread"] == "mention"
+	muted := m.NotifyProps != nil && m.NotifyProps[model.MarkUnreadNotifyProp] == model.ChannelMarkUnreadMention
 	fmt.Fprintf(w, "Muted: %t\n", muted)
 	if m.LastViewedAt > 0 {
 		t := time.Unix(m.LastViewedAt/1000, (m.LastViewedAt%1000)*int64(time.Millisecond))

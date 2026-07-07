@@ -26,12 +26,13 @@ type CreateScheduledPostArgs struct {
 }
 
 // UpdateScheduledPostArgs represents arguments for the update_scheduled_post tool.
+// root_id is intentionally absent: the server restores it from the existing
+// record (RestoreNonUpdatableFields), so a scheduled post's thread cannot change.
 type UpdateScheduledPostArgs struct {
 	ScheduledPostID string `json:"scheduled_post_id" jsonschema:"The ID of the pending scheduled post,minLength=26,maxLength=26"`
 	ChannelID       string `json:"channel_id" jsonschema:"The ID of the channel the scheduled post belongs to,minLength=26,maxLength=26"`
 	Message         string `json:"message,omitempty" jsonschema:"New message content (optional)"`
 	ScheduledAt     string `json:"scheduled_at,omitempty" jsonschema:"New send time (ISO 8601 / RFC3339 timestamp, optional),format=date-time"`
-	RootID          string `json:"root_id,omitempty" jsonschema:"Optional root post ID,maxLength=26"`
 }
 
 // DeleteScheduledPostArgs represents arguments for the delete_scheduled_post tool.
@@ -48,7 +49,7 @@ type SetPostReminderArgs struct {
 const (
 	listScheduledPostsDescription  = "List your pending scheduled posts for a team. Parameters: team_id (required). Returns each scheduled post's channel, send time, and message."
 	createScheduledPostDescription = "Schedule a message to send to a channel (or thread) at a future time. Parameters: channel_id (required), message (required), scheduled_at (required, future ISO 8601 timestamp), root_id (optional). Returns the scheduled post ID."
-	updateScheduledPostDescription = "Change a pending scheduled post's text or send time. Parameters: scheduled_post_id (required), channel_id (required), message (optional), scheduled_at (optional), root_id (optional)."
+	updateScheduledPostDescription = "Change a pending scheduled post's text or send time. Parameters: scheduled_post_id (required), channel_id (required), message (optional), scheduled_at (optional). Unspecified fields keep their current values."
 	deleteScheduledPostDescription = "Cancel a pending scheduled post. Parameters: scheduled_post_id (required)."
 	setPostReminderDescription     = "Set yourself a reminder about a post at a given time. Parameters: post_id (required), remind_at (required, future ISO 8601 timestamp)."
 )
@@ -165,24 +166,25 @@ func (p *MattermostToolProvider) toolUpdateScheduledPost(mcpContext *MCPToolCont
 	if err := requireID("channel_id", args.ChannelID); err != nil {
 		return "", err
 	}
-	if err := optionalID("root_id", args.RootID); err != nil {
-		return "", err
-	}
 	if args.Message == "" && args.ScheduledAt == "" {
 		return "", fmt.Errorf("provide message and/or scheduled_at to update")
 	}
 
-	scheduledPost := &model.ScheduledPost{
-		Draft: model.Draft{
-			ChannelId: args.ChannelID,
-			Message:   args.Message,
-			RootId:    args.RootID,
-		},
+	// UpdateScheduledPost validates and replaces the whole record server-side, so
+	// start from the existing scheduled post and override only the fields the
+	// caller supplied. Otherwise omitted fields would fail validation (an empty
+	// message or zero scheduled_at is rejected) or silently drop files/priority.
+	scheduledPost, err := p.findScheduledPost(mcpContext, args.ChannelID, args.ScheduledPostID)
+	if err != nil {
+		return "", err
 	}
-	scheduledPost.Id = args.ScheduledPostID
 
+	if args.Message != "" {
+		scheduledPost.Message = args.Message
+	}
 	if args.ScheduledAt != "" {
-		scheduledAt, err := parseTimeMillis(args.ScheduledAt)
+		var scheduledAt int64
+		scheduledAt, err = parseTimeMillis(args.ScheduledAt)
 		if err != nil {
 			return "", err
 		}
@@ -196,6 +198,50 @@ func (p *MattermostToolProvider) toolUpdateScheduledPost(mcpContext *MCPToolCont
 	}
 
 	return fmt.Sprintf("Successfully updated scheduled post %s", updated.Id), nil
+}
+
+// findScheduledPost locates a pending scheduled post by ID. There is no
+// get-by-ID endpoint, so it derives the team from the channel and scans the
+// user's scheduled posts, requesting direct-channel posts too.
+func (p *MattermostToolProvider) findScheduledPost(mcpContext *MCPToolContext, channelID, scheduledPostID string) (*model.ScheduledPost, error) {
+	channel, _, err := mcpContext.Client.GetChannel(mcpContext.Ctx, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching channel for scheduled post: %w", err)
+	}
+
+	// The scheduled-posts endpoint requires a non-empty team ID. DM/GM channels
+	// have no team, so fall back to any team the user is on; their scheduled
+	// posts are returned under the "directChannels" key when requested.
+	teamID := channel.TeamId
+	if teamID == "" {
+		var userID string
+		userID, err = p.resolveUserID(mcpContext)
+		if err != nil {
+			return nil, err
+		}
+		var teams []*model.Team
+		teams, _, err = mcpContext.Client.GetTeamsForUser(mcpContext.Ctx, userID, "")
+		if err != nil {
+			return nil, fmt.Errorf("error resolving a team for scheduled post lookup: %w", err)
+		}
+		if len(teams) == 0 {
+			return nil, fmt.Errorf("scheduled post %s not found (user is not on any team)", scheduledPostID)
+		}
+		teamID = teams[0].Id
+	}
+
+	byChannel, _, err := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, teamID, true)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching scheduled posts: %w", err)
+	}
+	for _, posts := range byChannel {
+		for _, sp := range posts {
+			if sp.Id == scheduledPostID {
+				return sp, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("scheduled post %s not found in channel %s", scheduledPostID, channelID)
 }
 
 // toolDeleteScheduledPost implements the delete_scheduled_post tool.
