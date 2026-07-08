@@ -23,6 +23,7 @@ import {Annotation} from '../citations/types';
 import {
     Round,
     buildRoundsFromTurns,
+    computeRenderedRounds,
     deriveApprovalStageForPost,
 } from './turn_content_utils';
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
@@ -312,22 +313,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         };
     }, [message, toolCalls, reasoningSummary, annotations]);
 
-    const renderedRounds = useMemo(() => {
-        if (regenerating) {
-            // Suppress stablePersisted (still the pre-regen turn) but keep
-            // liveRounds so multi-round regens don't visually empty between rounds.
-            const out: Round[] = [...liveRounds];
-            if (currentRound) {
-                out.push(currentRound);
-            }
-            return out;
-        }
-        const out: Round[] = [...stablePersisted, ...liveRounds];
-        if (currentRound && (generating || pendingRefetch || stablePersisted.length === 0)) {
-            out.push(currentRound);
-        }
-        return out;
-    }, [regenerating, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
+    const renderedRounds = useMemo(() => computeRenderedRounds({
+        regenerating,
+        hasConversation: Boolean(conversationId),
+        persistedRounds: stablePersisted,
+        liveRounds,
+        generating,
+        pendingRefetch,
+        currentRound,
+    }), [regenerating, conversationId, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
 
     const regnerate = () => {
         setMessage('');
@@ -447,7 +441,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 />
             )}
             { showPostbackButton &&
-            <PostSummaryHelpMessage>
+            <PostSummaryHelpMessage data-testid='llm-bot-post-summary-help'>
                 <FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>
             </PostSummaryHelpMessage>
             }
