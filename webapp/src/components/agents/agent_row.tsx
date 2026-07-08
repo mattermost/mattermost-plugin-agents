@@ -17,13 +17,14 @@ import {UserAgent, ServiceInfo} from '@/types/agents';
 type Props = {
     agent: UserAgent;
     services: ServiceInfo[];
+    servicesLoaded: boolean;
     canManage: boolean;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, canManage, onEdit, onDelete} = props;
+    const {agent, services, servicesLoaded, canManage, onEdit, onDelete} = props;
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
@@ -32,7 +33,11 @@ const AgentRow = (props: Props) => {
     const autoEnableNewMCPTools = agent.autoEnableNewMCPTools ?? false;
     const toolCount = autoEnableNewMCPTools ? 0 : (agent.enabledMCPTools?.length ?? 0);
     const service = services.find((s) => s.id === agent.serviceID);
-    const serviceUnavailable = agent.serviceID && !service;
+
+    // Only flag a missing service when the services list was actually loaded.
+    // Users without agent-management permission never fetch services, so an
+    // empty list here means "unknown", not "unavailable".
+    const serviceUnavailable = servicesLoaded && agent.serviceID && !service;
 
     let mcpBadge: React.ReactNode = null;
     if (autoEnableNewMCPTools) {
