@@ -16,6 +16,7 @@ import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} fro
 import NoServicesPage from './no_services_page';
 import BotsMovedNotice from './bots_moved_notice';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
+import ChannelJoinSummaryPanel from './channel_join_summary/channel_join_summary_panel';
 import MCPServers from './mcp_servers';
 import {PluginConfig} from './plugin_config_types';
 import WebSearchPanel from './web_search/web_search_panel';
@@ -126,6 +127,12 @@ const defaultConfig: Config = {
             chunkOverlap: 200,
             chunkingStrategy: 'sentences',
         },
+    },
+    channelJoinSummary: {
+        enabled: false,
+        bot: '',
+        lookbackDays: 7,
+        minPosts: 3,
     },
     mcp: {
         enabled: true,
@@ -401,6 +408,13 @@ const Config = (props: Props) => {
                 value={{...defaultConfig.embeddingSearchConfig, ...(value.embeddingSearchConfig || {})}}
                 onChange={(config) => {
                     updateConfig({embeddingSearchConfig: config});
+                }}
+            />
+            <ChannelJoinSummaryPanel
+                value={{...defaultConfig.channelJoinSummary, ...(value.channelJoinSummary || {})}}
+                bots={runtimeBots}
+                onChange={(config) => {
+                    updateConfig({channelJoinSummary: config});
                 }}
             />
             <WebSearchPanel
