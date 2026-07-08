@@ -184,6 +184,33 @@ describe('AgentsList create-button gating', () => {
     });
 });
 
+describe('AgentsList services loading', () => {
+    test('does not request services for users without agent-management permission', async () => {
+        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+        mockUserHasSystemPermission.mockReturnValue(false);
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
+
+        renderList();
+
+        await screen.findByText('Agent a1');
+        expect(mockGetServices).not.toHaveBeenCalled();
+        expect(screen.queryByText('Failed to load AI services. Using the last loaded list.')).toBeNull();
+    });
+
+    test('warns when a permitted user cannot load services', async () => {
+        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+
+        // beforeEach grants manage_own_agent, so /services is requested.
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
+        mockGetServices.mockRejectedValue(new Error('forbidden'));
+
+        renderList();
+
+        await screen.findByText('Failed to load AI services. Using the last loaded list.');
+        expect(mockGetServices).toHaveBeenCalled();
+    });
+});
+
 describe('AgentsList delete quota refresh', () => {
     async function deleteLastVisibleAgent() {
         fireEvent.click(screen.getByRole('button', {name: 'Delete Agent a1'}));
