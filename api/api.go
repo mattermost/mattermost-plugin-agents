@@ -509,6 +509,7 @@ type AIBotInfo struct {
 	UserIDs               []string               `json:"userIDs"`
 	EnabledMCPTools       []llm.EnabledMCPTool   `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools bool                   `json:"autoEnableNewMCPTools"`
+	IsDefault             bool                   `json:"isDefault,omitempty"`
 }
 
 type AIBotsResponse struct {
@@ -540,6 +541,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			dmChannelID = botDMChannel.Id
 		}
 
+		isDefault := bot.GetMMBot().Username == defaultBotName
 		bots = append(bots, AIBotInfo{
 			ID:                    bot.GetMMBot().UserId,
 			DisplayName:           bot.GetMMBot().DisplayName,
@@ -552,8 +554,9 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			UserIDs:               bot.GetConfig().UserIDs,
 			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
 			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
+			IsDefault:             isDefault,
 		})
-		if bot.GetMMBot().Username == defaultBotName {
+		if isDefault {
 			last := len(bots) - 1
 			bots[0], bots[last] = bots[last], bots[0]
 		}

@@ -1,6 +1,7 @@
 bin/
 dist/
 mcpserver/bin/
+*.test
 webapp/src/manifest.ts
 server/manifest.go
 evals.jsonl

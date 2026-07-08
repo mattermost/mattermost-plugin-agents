@@ -43,7 +43,7 @@ import '@/hooks/use_conversation_context';
 import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_connection_events';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
-import {useBotlist} from './bots';
+import {useBotlist, resolveActiveBot, getSelectedAgentId} from './bots';
 import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
@@ -312,11 +312,10 @@ export default class Plugin {
                 suggestionsComponent: () => null,
                 hintsComponent: SearchHints,
                 action: async (searchTerms: string) => {
-                    // Get the active bot from the state
+                    // Resolve the active bot from the shared selected-agent preference.
                     const state = store.getState() as any;
                     const bots = state['plugins-' + manifest.id]?.bots || [];
-                    const activeBotUsername = localStorage.getItem('defaultBot') || '';
-                    const activeBot = bots.find((bot: any) => bot.username === activeBotUsername);
+                    const activeBot = resolveActiveBot(bots, getSelectedAgentId(state));
 
                     const result = await doRunSearch(
                         searchTerms,
