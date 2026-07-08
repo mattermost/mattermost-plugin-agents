@@ -119,6 +119,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
             setMessage(props.post.message);
+            setPrecontent(false);
         }
     }, [props.post.message]);
 
@@ -322,11 +323,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             return out;
         }
         const out: Round[] = [...stablePersisted, ...liveRounds];
-        if (generating && currentRound) {
+        if (currentRound && (generating || pendingRefetch || stablePersisted.length === 0)) {
             out.push(currentRound);
         }
         return out;
-    }, [regenerating, stablePersisted, liveRounds, generating, currentRound]);
+    }, [regenerating, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
 
     const regnerate = () => {
         setMessage('');
