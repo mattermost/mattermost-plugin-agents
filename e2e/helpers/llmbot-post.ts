@@ -521,12 +521,12 @@ export class LLMBotPostHelper {
      * Returns early when reasoning spinner disappears, with high timeout as safety net
      * @param postId - Optional post ID to scope the wait
      * @param maxTimeout - Maximum wait time in ms (default: 5 minutes)
+     * @param appearanceTimeout - Max wait for reasoning UI to appear (default: 2 minutes)
      */
-    async waitForReasoning(postId?: string, maxTimeout: number = 300000): Promise<void> {
-        // First wait for reasoning display to appear (shorter timeout for initial appearance)
+    async waitForReasoning(postId?: string, maxTimeout: number = 300000, appearanceTimeout: number = 120000): Promise<void> {
         const reasoning = this.getReasoningDisplay(postId);
         try {
-            await expect(reasoning).toBeVisible({ timeout: 60000 });
+            await expect(reasoning).toBeVisible({ timeout: appearanceTimeout });
         } catch (err) {
             throw new Error('Timeout waiting for reasoning display to appear');
         }

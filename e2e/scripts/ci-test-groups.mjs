@@ -21,6 +21,7 @@ const groups = {
         'tests/tool-config/policy-change.spec.ts',
         'tests/tool-config/tab-layout.spec.ts',
         'tests/custom-prompts/custom-prompts.spec.ts',
+        'tests/meeting-summary/summary-persistence.spec.ts',
         'tests/channel-analysis/backend-verification/real-api.spec.ts',
         'tests/system-console/live-service-full-flow.spec.ts',
         'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',

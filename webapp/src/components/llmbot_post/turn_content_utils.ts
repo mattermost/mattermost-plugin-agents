@@ -242,6 +242,42 @@ export interface Round {
     annotations: Annotation[];
 }
 
+/**
+ * Assemble the rounds to render for a post from its persisted rounds, the
+ * rounds completed live during the current stream, and the in-progress round.
+ *
+ * Legacy posts (e.g. meeting summaries) have no conversation entity, so their
+ * content never lands in `persistedRounds` — it lives only in the live round.
+ * For those posts the live round must stay rendered after streaming ends;
+ * otherwise the summary vanishes the moment `generating` flips to false.
+ */
+export function computeRenderedRounds(params: {
+    regenerating: boolean;
+    hasConversation: boolean;
+    persistedRounds: Round[];
+    liveRounds: Round[];
+    generating: boolean;
+    currentRound: Round | null;
+}): Round[] {
+    const {regenerating, hasConversation, persistedRounds, liveRounds, generating, currentRound} = params;
+
+    if (regenerating) {
+        // Suppress persistedRounds (still the pre-regen turn) but keep
+        // liveRounds so multi-round regens don't visually empty between rounds.
+        const out: Round[] = [...liveRounds];
+        if (currentRound) {
+            out.push(currentRound);
+        }
+        return out;
+    }
+
+    const out: Round[] = [...persistedRounds, ...liveRounds];
+    if ((generating || !hasConversation) && currentRound) {
+        out.push(currentRound);
+    }
+    return out;
+}
+
 export function buildRoundsFromTurns(
     conversation: ConversationResponse,
     postId: string,
