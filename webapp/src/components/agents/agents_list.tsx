@@ -37,10 +37,8 @@ const AgentsList = () => {
         userHasSystemPermission(state, currentUserId, 'manage_system'));
     const userCanCreateAgent = hasManageOwnAgent || hasManageSystem;
 
-    // Mirrors api.canConfigureAgentServices: the /services endpoint is only
-    // authorized for users who can manage agents. Users without these permissions
-    // browse the list read-only and must not trigger a 403 that would otherwise
-    // surface as a spurious "service unavailable" state for every agent.
+    // Mirrors api.canConfigureAgentServices. Users without these permissions
+    // browse read-only; requesting /services would 403 and wrongly flag every agent.
     const canViewServices = hasManageOwnAgent || hasManageOthersAgent || hasManageSystem;
     const multiLLMLicensed = useIsMultiLLMLicensed();
 

@@ -34,9 +34,8 @@ const AgentRow = (props: Props) => {
     const toolCount = autoEnableNewMCPTools ? 0 : (agent.enabledMCPTools?.length ?? 0);
     const service = services.find((s) => s.id === agent.serviceID);
 
-    // Only flag a missing service when the services list was actually loaded.
-    // Users without agent-management permission never fetch services, so an
-    // empty list here means "unknown", not "unavailable".
+    // Only flag a missing service once the list has loaded; users without
+    // agent-management permission never fetch it, so empty means unknown.
     const serviceUnavailable = servicesLoaded && agent.serviceID && !service;
 
     let mcpBadge: React.ReactNode = null;
