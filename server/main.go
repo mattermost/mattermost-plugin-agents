@@ -23,6 +23,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/v2/joinsummary"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -56,6 +57,7 @@ type Plugin struct {
 	apiService           *api.API
 	bots                 *bots.MMBots
 	indexerService       *indexer.Indexer
+	joinSummaryService   *joinsummary.Service
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
 	streamingService     streaming.Service
@@ -282,6 +284,11 @@ func (p *Plugin) OnActivate() error {
 
 	// Create indexer service with getter function
 	indexerService := indexer.New(getSearch, configGetter, mmClient, bots, dbClient.DB, p.API)
+
+	// Create channel-join summary service (ephemeral catch-up on join)
+	joinSummaryService := joinsummary.New(mmClient, bots, func() config.ChannelJoinSummaryConfig {
+		return p.configuration.ChannelJoinSummary()
+	})
 
 	// Mark any orphaned reindex jobs as failed (any node, staleness-based).
 	// Handles wedge cases where the plugin/server crashed while a job was
@@ -518,6 +525,7 @@ func (p *Plugin) OnActivate() error {
 	p.apiService = apiService
 	p.bots = bots
 	p.indexerService = indexerService
+	p.joinSummaryService = joinSummaryService
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
 	p.streamingService = streamingService
@@ -599,6 +607,17 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 	}
 
 	p.conversationsService.MessageHasBeenPosted(c, post)
+}
+
+// UserHasJoinedChannel offers the joining user an ephemeral catch-up summary of
+// the channel's recent activity. Delivery is best-effort and only the joining
+// user sees it; the actual LLM work runs asynchronously so the join is never
+// blocked.
+func (p *Plugin) UserHasJoinedChannel(c *plugin.Context, channelMember *model.ChannelMember, actor *model.User) {
+	if p.joinSummaryService == nil {
+		return
+	}
+	p.joinSummaryService.HandleUserJoinedChannel(channelMember, actor)
 }
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {

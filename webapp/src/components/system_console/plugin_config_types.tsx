@@ -2,6 +2,7 @@
 // See LICENSE.txt for license information.
 
 import {LLMBotConfig} from './bot';
+import {ChannelJoinSummaryConfig} from './channel_join_summary/channel_join_summary_panel';
 import {EmbeddingSearchConfig} from './embedding_search/types';
 import {MCPConfig} from './mcp_servers';
 import {LLMService} from './service';
@@ -22,6 +23,7 @@ export type PluginConfig = {
     enableChannelMentionToolCalling: boolean,
     allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
+    channelJoinSummary: ChannelJoinSummaryConfig,
     mcp: MCPConfig,
     webSearch: WebSearchSettings,
 }
