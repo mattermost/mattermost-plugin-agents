@@ -1,0 +1,10 @@
+{{- if .ChannelContext.CustomInstructions}}
+
+The following instructions were configured by administrators for this channel. Apply them to responses in this channel:
+{{.ChannelContext.CustomInstructions}}
+{{- end}}
+{{- if and .ChannelContext.KnowledgeFiles .Tools (not .DisabledToolsInfo) (.Tools.GetTool "read_file")}}
+
+The following channel knowledge-base files are available. Read only the files relevant to the request by calling read_file with the listed File ID. For large files, continue with the next offset only when needed.
+{{.ChannelContext.KnowledgeFiles}}
+{{- end}}

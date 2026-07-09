@@ -74,6 +74,8 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 			c.DisabledToolsInfo = []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}}
 		},
 		func(c *llm.Context) { c.CustomInstructions = "Be concise." },
+		func(c *llm.Context) { c.ChannelContext.CustomInstructions = "Use channel terminology." },
+		func(c *llm.Context) { c.ChannelContext.KnowledgeFiles = "Name: glossary.pdf\nFile ID: file-id" },
 		func(c *llm.Context) {
 			if c.RequestingUser != nil {
 				c.RequestingUser.FirstName = "Pat"
@@ -126,6 +128,51 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestStandardPersonalityRendersChannelContext(t *testing.T) {
+	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+
+	readFileStore := llm.NewToolStore()
+	readFileStore.AddTools([]llm.Tool{{
+		Name:        "read_file",
+		Description: "Read a file",
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			return "", nil
+		},
+	}})
+	baseContext := llm.Context{
+		Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
+		ServerName:  "server",
+		BotName:     "agent",
+		BotUsername: "agent",
+		BotModel:    "model-x",
+		Tools:       readFileStore,
+		ChannelContext: llm.ChannelContext{
+			CustomInstructions: "Use the channel's release terminology.",
+			KnowledgeFiles:     "Name: release-guide.pdf\nFile ID: file-id",
+		},
+	}
+
+	output, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, &baseContext)
+	require.NoError(t, err)
+	assert.Contains(t, output, "Use the channel's release terminology.")
+	assert.Contains(t, output, "channel knowledge-base files")
+	assert.Contains(t, output, "release-guide.pdf")
+
+	baseContext.DisabledToolsInfo = []llm.ToolInfo{{Name: "read_file", Description: "Read a file"}}
+	output, err = promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, &baseContext)
+	require.NoError(t, err)
+	assert.Contains(t, output, "Use the channel's release terminology.")
+	assert.NotContains(t, output, "release-guide.pdf")
+
+	baseContext.DisabledToolsInfo = nil
+	baseContext.Tools = llm.NewNoTools()
+	output, err = promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, &baseContext)
+	require.NoError(t, err)
+	assert.Contains(t, output, "Use the channel's release terminology.")
+	assert.NotContains(t, output, "release-guide.pdf")
 }
 
 func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiAndVertexOnly(t *testing.T) {

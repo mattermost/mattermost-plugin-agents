@@ -36,12 +36,18 @@ type ConfigProvider interface {
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
 }
 
+// ChannelContextProvider supplies channel-admin context for agent prompts.
+type ChannelContextProvider interface {
+	GetPromptContext(channelID string) (llm.ChannelContext, error)
+}
+
 // Builder builds contexts for LLM requests
 type Builder struct {
 	pluginAPI       *pluginapi.Client
 	toolProvider    ToolProvider
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
+	channelContext  ChannelContextProvider
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
 }
@@ -63,6 +69,11 @@ func NewLLMContextBuilder(
 
 func (b *Builder) SetMCPDynamicToolTelemetry(telemetry llm.MCPDynamicToolTelemetry) {
 	b.mcpDynamicToolTelemetry = telemetry
+}
+
+// SetChannelContextProvider configures per-channel prompt context.
+func (b *Builder) SetChannelContextProvider(provider ChannelContextProvider) {
+	b.channelContext = provider
 }
 
 // BuildLLMContextUserRequest is a helper function to collect the required context for a user request.
@@ -98,6 +109,25 @@ func (b *Builder) WithLLMContextChannel(channel *model.Channel) llm.ContextOptio
 	return func(c *llm.Context) {
 		c.Channel = channel
 		if channel == nil || (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) {
+			return
+		}
+
+		if b.channelContext != nil {
+			channelContext, err := b.channelContext.GetPromptContext(channel.Id)
+			if err != nil {
+				b.pluginAPI.Log.Warn("Unable to load channel context", "error", err, "channel_id", channel.Id)
+			} else {
+				c.ChannelContext = channelContext
+				if channelContext.KnowledgeFiles != "" {
+					c.ToolCatalog.PreloadedMCPTools = mergePreloadedMCPTools(
+						c.ToolCatalog.PreloadedMCPTools,
+						[]llm.EnabledMCPTool{{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_file"}},
+					)
+				}
+			}
+		}
+
+		if channel.TeamId == "" {
 			return
 		}
 
@@ -174,8 +204,26 @@ func (b *Builder) WithLLMContextMCPToolFilter(keep func(llm.Tool) bool) llm.Cont
 // authorized MCP catalog and must be configured before default tools are built.
 func (b *Builder) WithLLMContextPreloadedMCPTools(tools []llm.EnabledMCPTool) llm.ContextOption {
 	return func(c *llm.Context) {
-		c.ToolCatalog.PreloadedMCPTools = slices.Clone(tools)
+		c.ToolCatalog.PreloadedMCPTools = mergePreloadedMCPTools(c.ToolCatalog.PreloadedMCPTools, tools)
 	}
+}
+
+func mergePreloadedMCPTools(existing, additions []llm.EnabledMCPTool) []llm.EnabledMCPTool {
+	merged := slices.Clone(existing)
+	seen := make(map[string]struct{}, len(existing)+len(additions))
+	for _, tool := range existing {
+		key := llm.NormalizeMCPServerOrigin(tool.ServerOrigin) + "\x00" + tool.ToolName
+		seen[key] = struct{}{}
+	}
+	for _, tool := range additions {
+		key := llm.NormalizeMCPServerOrigin(tool.ServerOrigin) + "\x00" + tool.ToolName
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, tool)
+	}
+	return merged
 }
 
 // WithLLMContextInteractive marks the requesting user as interactively present

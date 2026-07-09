@@ -6,6 +6,7 @@ package llmcontext
 import (
 	stdcontext "context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -82,6 +83,17 @@ func (p *contextTestConfigProvider) GetServiceByID(string) (llm.ServiceConfig, b
 	return llm.ServiceConfig{}, false
 }
 
+type staticChannelContextProvider struct {
+	channelContext llm.ChannelContext
+	err            error
+	calls          []string
+}
+
+func (p *staticChannelContextProvider) GetPromptContext(channelID string) (llm.ChannelContext, error) {
+	p.calls = append(p.calls, channelID)
+	return p.channelContext, p.err
+}
+
 func newTestBot() *bots.Bot {
 	return newTestBotWithConfig(llm.BotConfig{ID: "bot-id", Name: "matty", DisplayName: "Matty"})
 }
@@ -108,6 +120,7 @@ func newTestBuilder(t *testing.T, toolProvider ToolProvider, mcpProvider MCPTool
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
+	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	return NewLLMContextBuilder(
@@ -262,6 +275,46 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 
 	require.Equal(t, 0, mcpProvider.calls)
 	require.Empty(t, context.Tools.GetTools())
+}
+
+func TestWithLLMContextChannelLoadsChannelContextAndMergesPreloads(t *testing.T) {
+	builder := newTestBuilder(t, &emptyToolProvider{}, nil)
+	provider := &staticChannelContextProvider{channelContext: llm.ChannelContext{
+		CustomInstructions: "Use the release glossary.",
+		KnowledgeFiles:     "Name: release.pdf",
+	}}
+	builder.SetChannelContextProvider(provider)
+	channel := &model.Channel{Id: model.NewId(), Type: model.ChannelTypeOpen}
+
+	context := builder.BuildLLMContextUserRequest(
+		newTestBot(),
+		testUser(),
+		channel,
+		builder.WithLLMContextPreloadedMCPTools([]llm.EnabledMCPTool{{
+			ServerOrigin: mcp.EmbeddedClientKey,
+			ToolName:     "read_channel",
+		}}),
+	)
+
+	assert.Equal(t, provider.channelContext, context.ChannelContext)
+	assert.Equal(t, []string{channel.Id}, provider.calls)
+	assert.Equal(t, []llm.EnabledMCPTool{
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_file"},
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
+	}, context.ToolCatalog.PreloadedMCPTools)
+}
+
+func TestWithLLMContextChannelContextFailureIsNonFatal(t *testing.T) {
+	builder := newTestBuilder(t, &emptyToolProvider{}, nil)
+	provider := &staticChannelContextProvider{err: errors.New("database unavailable")}
+	builder.SetChannelContextProvider(provider)
+	channel := &model.Channel{Id: model.NewId(), Type: model.ChannelTypeOpen}
+
+	context := builder.BuildLLMContextUserRequest(newTestBot(), testUser(), channel)
+
+	assert.Empty(t, context.ChannelContext)
+	assert.Equal(t, []string{channel.Id}, provider.calls)
+	assert.Empty(t, context.ToolCatalog.PreloadedMCPTools)
 }
 
 func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) {

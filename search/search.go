@@ -58,6 +58,10 @@ type Options struct {
 	UserID    string
 }
 
+type ChannelContextProvider interface {
+	GetPromptContext(channelID string) (llm.ChannelContext, error)
+}
+
 // SearchResultsProp is the post prop key used to attach search results JSON to the response post.
 const SearchResultsProp = "search_results"
 
@@ -68,6 +72,7 @@ type Search struct {
 	streamingService    streaming.Service
 	licenseChecker      *enterprise.LicenseChecker
 	conversationService *conversation.Service
+	channelContext      ChannelContextProvider
 }
 
 func New(
@@ -92,6 +97,11 @@ func New(
 // break circular initialisation order in the plugin wiring.
 func (s *Search) SetConversationService(svc *conversation.Service) {
 	s.conversationService = svc
+}
+
+// SetChannelContextProvider configures channel-specific prompt context.
+func (s *Search) SetChannelContextProvider(provider ChannelContextProvider) {
+	s.channelContext = provider
 }
 
 // Enabled returns true if the search service is enabled and functional
@@ -204,6 +214,14 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 	promptCtx.RequestingUser = &model.User{Id: userID}
 	if channelID != "" {
 		promptCtx.Channel = &model.Channel{Id: channelID}
+		if s.channelContext != nil {
+			channelContext, err := s.channelContext.GetPromptContext(channelID)
+			if err != nil {
+				s.mmclient.LogWarn("Failed to load channel context for search", "error", err, "channelID", channelID)
+			} else {
+				promptCtx.ChannelContext = channelContext
+			}
+		}
 	}
 	if s.mmclient != nil {
 		if cfg := s.mmclient.GetConfig(); cfg != nil && cfg.ServiceSettings.SiteURL != nil {

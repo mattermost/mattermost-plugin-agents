@@ -80,7 +80,7 @@ CRITICAL: Do NOT attempt to invoke, simulate, or produce any tool call output fo
 {{- if .CustomInstructions}}
 {{.CustomInstructions}}
 {{- end}}
-
+{{- template "channel_context.tmpl" . -}}
 {{- if .RequestingUser}}
 The following is information about the user. {{.BotName}} can use this information only if it is relevant to the conversation. Don't mention it unless it is necessary.
 The user making the request username is '{{.RequestingUser.Username}}'.

@@ -322,6 +322,7 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 		nil, // conversation service wired in a later step
 	)
+	searchService.SetChannelContextProvider(channelContextService)
 
 	// Register update listener for embedding search config changes
 	p.configuration.RegisterUpdateListener(func() {
@@ -421,6 +422,7 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		&p.configuration,
 	)
+	contextBuilder.SetChannelContextProvider(channelContextService)
 	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
 
 	conversationsService := conversations.New(
