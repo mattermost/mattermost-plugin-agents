@@ -371,9 +371,10 @@ export function buildChatCompletionMockRule(
 
 const titlePrompt = 'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:';
 
-export function buildTitleMockRule(title: string, userMessage: string): any {
+export function buildTitleMockRule(title: string, userMessage: string, botPrefix?: string): any {
     return buildChatCompletionMockRule(buildTextResponse(title), {
         bodyContains: `${titlePrompt}\\n${userMessage}`,
+        botPrefix,
         times: 1,
     });
 }

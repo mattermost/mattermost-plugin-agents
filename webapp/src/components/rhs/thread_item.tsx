@@ -58,6 +58,7 @@ const Footer = styled.div`
 `;
 
 type Props = {
+    conversationId: string;
     postTitle: string;
     turnCount: number;
     lastActivityDate: number;
@@ -70,7 +71,10 @@ const DefaultTitle = 'Conversation with Agents';
 export default function ThreadItem(props: Props) {
     const turnText = props.turnCount === 1 ? '1 message' : `${props.turnCount} messages`;
     return (
-        <ThreadItemContainer onClick={props.onClick}>
+        <ThreadItemContainer
+            data-testid={`rhs-thread-${props.conversationId}`}
+            onClick={props.onClick}
+        >
             <Title>
                 <TitleText>{props.postTitle || DefaultTitle}</TitleText>
                 <LastActivityDate>
