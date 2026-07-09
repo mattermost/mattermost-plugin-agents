@@ -65,11 +65,11 @@ type MattermostClient interface {
 
 // ValidationError reports an invalid channel-context update.
 type ValidationError struct {
-	message string
+	Message string
 }
 
 func (e *ValidationError) Error() string {
-	return e.message
+	return e.Message
 }
 
 // IsValidationError reports whether err is safe to return as a bad request.
@@ -79,7 +79,7 @@ func IsValidationError(err error) bool {
 }
 
 func invalid(format string, args ...any) error {
-	return &ValidationError{message: fmt.Sprintf(format, args...)}
+	return &ValidationError{Message: fmt.Sprintf(format, args...)}
 }
 
 // Service validates, stores, and resolves channel context.

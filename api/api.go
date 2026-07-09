@@ -164,6 +164,7 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+	channelContextService ChannelContextService
 
 	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
 	// is the only supported entry point for tests.
@@ -205,6 +206,7 @@ func New(
 	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
+	channelContextService ChannelContextService,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -238,6 +240,7 @@ func New(
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
+		channelContextService: channelContextService,
 	}
 }
 
@@ -332,6 +335,11 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// checking the requesting user's channel permission. Used by the MCP server
 	// for external read_file callbacks.
 	router.POST("/files/content", a.handleRawFileContent)
+
+	channelContextRouter := router.Group("/channel/:channelid/context")
+	channelContextRouter.Use(a.channelContextAuthorizationRequired)
+	channelContextRouter.GET("", a.handleGetChannelContext)
+	channelContextRouter.PUT("", a.handleSaveChannelContext)
 
 	// Custom prompts routes — available to all authenticated users
 	promptsRouter := router.Group("/custom-prompts")

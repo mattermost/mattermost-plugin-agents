@@ -615,6 +615,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockConvStore,
 		nil,
 		nil,
+		nil,
 	)
 
 	return &TestEnvironment{

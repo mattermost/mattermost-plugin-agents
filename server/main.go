@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -119,6 +120,7 @@ func (p *Plugin) OnActivate() error {
 	}(); migrateErr != nil {
 		return fmt.Errorf("failed to run database migrations: %w", migrateErr)
 	}
+	channelContextService := channelcontext.New(p.store, mmClient)
 
 	i18nBundle := i18n.Init()
 
@@ -505,6 +507,7 @@ func (p *Plugin) OnActivate() error {
 		p.store,
 		getSearchInitError,
 		customPromptsStore,
+		channelContextService,
 	)
 
 	apiService.SetConversationService(convService)
