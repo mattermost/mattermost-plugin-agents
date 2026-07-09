@@ -19,6 +19,12 @@ type ToolInfo struct {
 	ServerOrigin string
 }
 
+// ChannelContext contains channel-admin context added to agent prompts.
+type ChannelContext struct {
+	CustomInstructions string
+	KnowledgeFiles     string
+}
+
 // Context represents the per-turn data necessary to build the context of the LLM.
 // For consumers none of the fields can be assumed to be present.
 type Context struct {
@@ -29,9 +35,10 @@ type Context struct {
 	SiteURL     string
 
 	// Location
-	Team    *model.Team
-	Channel *model.Channel
-	Thread  []Post // Normalized posts that already have been formatted. nil if not in a thread or a root post
+	Team           *model.Team
+	Channel        *model.Channel
+	Thread         []Post // Normalized posts that already have been formatted. nil if not in a thread or a root post
+	ChannelContext ChannelContext
 
 	// User that is making the request
 	RequestingUser *model.User
