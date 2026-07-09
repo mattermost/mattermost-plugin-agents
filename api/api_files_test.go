@@ -64,6 +64,7 @@ func TestHandleRawFileContent(t *testing.T) {
 					Id: fileID, ChannelId: channelID, Name: "notes.txt", MimeType: "text/plain", Content: "hello world",
 				}, nil)
 				m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
+				m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannelContent).Return(true)
 			},
 			request:    RawFileContentRequest{FileID: fileID},
 			wantStatus: http.StatusOK,
