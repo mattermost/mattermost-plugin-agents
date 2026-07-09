@@ -76,6 +76,7 @@ const groups = {
         'tests/system-console/bot-management-ui.spec.ts',
         'tests/semantic-search/search-entry-points.spec.ts',
         'tests/agents-tour/no-bots.spec.ts',
+        'tests/interactive-questions/ask-user-question.spec.ts',
         'tests/channel-summarization/basic-summarization.spec.ts',
         'tests/seed.spec.ts',
         'tests/tool-config/mock-api/tool-call-policies.spec.ts',

@@ -264,17 +264,25 @@ export function buildToolCallResponse(toolCallId: string, toolName: string, args
  */
 export function buildChatCompletionMockRule(
     sseBody: string,
-    opts?: { bodyContains?: string; botPrefix?: string; times?: number },
+    opts?: { bodyContains?: string; bodyMatches?: string; botPrefix?: string; times?: number },
 ): any {
     const prefix = opts?.botPrefix ? `/${opts.botPrefix}` : '';
     const req: Record<string, unknown> = {
         method: 'POST',
         path: `${prefix}/v1/chat/completions`,
     };
+    if (opts?.bodyContains && opts.bodyMatches) {
+        throw new Error('Specify only one chat completion body matcher');
+    }
     if (opts?.bodyContains) {
         req.body = {
             matcher: 'ShouldContainSubstring',
             value: opts.bodyContains,
+        };
+    } else if (opts?.bodyMatches) {
+        req.body = {
+            matcher: 'ShouldMatch',
+            value: opts.bodyMatches,
         };
     }
     return normalizeChatCompletionMockPath({
@@ -289,6 +297,15 @@ export function buildChatCompletionMockRule(
             },
             body: sseBody,
         },
+    });
+}
+
+const titlePrompt = 'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:';
+
+export function buildTitleMockRule(title: string, userMessage: string): any {
+    return buildChatCompletionMockRule(buildTextResponse(title), {
+        bodyContains: `${titlePrompt}\\n${userMessage}`,
+        times: 1,
     });
 }
 
