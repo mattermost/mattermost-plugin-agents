@@ -36,6 +36,7 @@ const groups = {
         'tests/bot-configuration/reasoning-config.spec.ts',
         'tests/action-item-extraction/error-handling.spec.ts',
         'tests/multiple-bot-conversations/bot-switching.spec.ts',
+        'tests/rhs-core/context-usage.spec.ts',
         'tests/agents-tour/display-conditions.spec.ts',
         'tests/tool-config/tools-tab-display.spec.ts',
         'tests/tool-config/user-toggle.spec.ts',
