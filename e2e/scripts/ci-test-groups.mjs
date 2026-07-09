@@ -88,6 +88,7 @@ const groups = {
         'tests/tool-config/real-api/auto-run-policy.spec.ts',
         'tests/tool-config/real-api/channel-auto-run.spec.ts',
         'tests/tool-config/real-api/disabled-tool.spec.ts',
+        'tests/agent-mention-reminder/loop-in.spec.ts',
     ],
 };
 
