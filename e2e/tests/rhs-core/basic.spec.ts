@@ -4,7 +4,8 @@ import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
-import { resetSelectedAgentPreference } from 'helpers/agent_preferences';
+import { AgentPageHelper } from 'helpers/agent-page';
+import { expectSelectedAgentPreference, resetSelectedAgentPreference } from 'helpers/agent_preferences';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
 
 // Test configuration
@@ -87,6 +88,56 @@ test.describe('RHS Bot Interactions', () => {
     await aiPlugin.sendMessage('Hello!');
     await expect(page.getByRole('button', { name: 'second', exact: true })).toBeVisible();
     await aiPlugin.waitForBotResponse(responseTestText);
+  });
+
+  test('Manage opens the Agents product page and browser back returns to the channel', async ({ page }) => {
+    const { aiPlugin } = await setupTestPage(page);
+    const agentPage = new AgentPageHelper(page);
+    const userClient = await mattermost.getClient(username, password);
+    const user = await userClient.getMe();
+    const secondBot = await userClient.getUserByUsername('second');
+    const channelURL = new URL(page.url());
+
+    await aiPlugin.openRHS();
+    await aiPlugin.ensureRhsNewChatTab();
+
+    const rhs = aiPlugin.getRhsContainer();
+    const selector = rhs.getByTestId('bot-selector-rhs');
+    await expect(rhs.getByTestId('rhs-new-tab-create-post')).toBeVisible({ timeout: 30000 });
+    await expect(selector).toHaveAttribute('title', 'Mock Bot');
+    await selector.click();
+
+    const menu = page.getByTestId('dropdownmenu').filter({ hasText: 'Choose an Agent' });
+    await expect(menu.getByText('Choose an Agent', { exact: true })).toBeVisible();
+    await menu.getByRole('button', { name: 'Second Bot', exact: true }).click();
+    await expect(menu).not.toBeVisible();
+    await expect(selector).toHaveAttribute('title', 'Second Bot');
+    await expectSelectedAgentPreference(userClient, user.id, secondBot.id);
+
+    await selector.click();
+    await expect(menu.getByText('Choose an Agent', { exact: true })).toBeVisible();
+    const manageButton = menu.getByRole('button', { name: 'Manage', exact: true });
+    await expect(manageButton).toBeVisible();
+    await manageButton.click();
+
+    await expect(page).toHaveURL(`${mattermost.url()}/plug/mattermost-ai/agents`);
+    await agentPage.waitForAgentsLoaded();
+    await expect(agentPage.getAgentRowByName('Second Bot')).toBeVisible();
+
+    await page.goBack();
+    await expect(page).toHaveURL((url) => (
+      url.origin === channelURL.origin &&
+      url.pathname === channelURL.pathname &&
+      url.search === channelURL.search
+    ));
+    await expect(page.getByTestId('channel_view')).toBeVisible();
+
+    await aiPlugin.openRHS();
+    await aiPlugin.ensureRhsNewChatTab();
+    const restoredSelector = aiPlugin.getRhsContainer().getByTestId('bot-selector-rhs');
+    await expect(restoredSelector).toHaveAttribute('title', 'Second Bot');
+    await expect(restoredSelector).toContainText('Second Bot');
+    await expectSelectedAgentPreference(userClient, user.id, secondBot.id);
   });
 });
 

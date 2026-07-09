@@ -3,13 +3,12 @@
 
 import {expect, test} from '@playwright/test';
 import type {Page} from '@playwright/test';
-import type {Client4} from '@mattermost/client';
 
 import {AIPlugin} from 'helpers/ai-plugin';
 import {
+    expectSelectedAgentPreference,
     resetSelectedAgentPreference,
-    SELECTED_AGENT_PREFERENCE_CATEGORY,
-    SELECTED_AGENT_PREFERENCE_NAME,
+    selectedAgentPreference,
 } from 'helpers/agent_preferences';
 import {MattermostPage} from 'helpers/mm';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -113,25 +112,6 @@ async function selectAgent(page: Page, aiPlugin: AIPlugin, displayName: string):
     await expect(menu).not.toBeVisible();
     await expect(selector).toHaveAttribute('title', displayName);
     await expect(selector).toContainText(displayName);
-}
-
-async function selectedAgentPreference(client: Client4, userID: string): Promise<string> {
-    const preferences = await client.getUserPreferences(userID);
-    return preferences.find((preference) => (
-        preference.category === SELECTED_AGENT_PREFERENCE_CATEGORY &&
-        preference.name === SELECTED_AGENT_PREFERENCE_NAME
-    ))?.value ?? '';
-}
-
-async function expectSelectedAgentPreference(client: Client4, userID: string, agentID: string): Promise<void> {
-    await expect.poll(
-        () => selectedAgentPreference(client, userID),
-        {
-            message: `selected agent preference did not persist as ${agentID}`,
-            timeout: 30000,
-            intervals: [250, 500, 1000],
-        },
-    ).toBe(agentID);
 }
 
 async function expectProviderJourney(userMessage: string, expectedPath: RegExp): Promise<void> {
