@@ -3,6 +3,7 @@
 
 import {Client4 as Client4Class, ClientError} from '@mattermost/client';
 import {ChannelWithTeamData} from '@mattermost/types/channels';
+import type {FileInfo} from '@mattermost/types/files';
 import {PreferenceType} from '@mattermost/types/preferences';
 
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
@@ -11,6 +12,7 @@ import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import type {ChannelContextState, ChannelContextUpdate, ChannelKnowledgeFile} from '@/types/channel_settings';
 
 import manifest from './manifest';
 
@@ -69,6 +71,10 @@ function channelRoute(channelid: string): string {
 
 function agentRoute(agentId: string): string {
     return `${baseRoute()}/agents/${agentId}`;
+}
+
+function channelContextRoute(channelId: string): string {
+    return `${channelRoute(channelId)}/context`;
 }
 
 // readAgentErrorMessage extracts the server-provided error message from an
@@ -149,6 +155,62 @@ export async function doChannelAnalysis(channelId: string, analysisType: string,
         status_code: response.status,
         url,
     });
+}
+
+async function readChannelContextError(response: Response): Promise<string> {
+    try {
+        const body = await response.json() as {error?: unknown};
+        return typeof body.error === 'string' ? body.error : '';
+    } catch {
+        return '';
+    }
+}
+
+export async function getChannelContext(channelId: string): Promise<ChannelContextState> {
+    const url = channelContextRoute(channelId);
+    const response = await fetch(url, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readChannelContextError(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function saveChannelContext(channelId: string, update: ChannelContextUpdate): Promise<ChannelContextState> {
+    const url = channelContextRoute(channelId);
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(update),
+    }));
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readChannelContextError(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function uploadChannelKnowledgeFiles(channelId: string, files: File[]): Promise<ChannelKnowledgeFile[]> {
+    const formData = new FormData();
+    formData.append('channel_id', channelId);
+    for (const file of files) {
+        formData.append('files', file, file.name);
+    }
+
+    const response = await Client4.uploadFile(formData);
+    return response.file_infos.map((fileInfo: FileInfo) => ({
+        id: fileInfo.id,
+        name: fileInfo.name,
+        mimeType: fileInfo.mime_type,
+        size: fileInfo.size,
+    }));
 }
 
 export async function doTranscribe(postid: string, fileID: string) {

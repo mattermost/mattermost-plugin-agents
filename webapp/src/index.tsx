@@ -49,6 +49,8 @@ import AgentsTour from './components/tutorial/agents_tour';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {isEnterpriseLicensedOrDevelopment} from './license';
+import ChannelContextSettings from './components/channel_settings/channel_context_settings';
+import {canManageChannelContext} from './utils/permissions';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -248,6 +250,15 @@ export default class Plugin {
 
         registry.registerAdminConsoleCustomSetting('Config', Config);
         const agentsProductLabel = getAgentsProductLabel(store);
+
+        if (registry.registerChannelSettingsTab) {
+            registry.registerChannelSettingsTab({
+                uiName: agentsProductLabel,
+                icon: 'icon-robot-happy',
+                shouldRender: canManageChannelContext,
+                component: ChannelContextSettings,
+            });
+        }
 
         if (rhs) {
             registry.registerChannelHeaderButtonAction(<ChannelHeaderIcon/>, () => {
