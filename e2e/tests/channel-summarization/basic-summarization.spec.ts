@@ -233,17 +233,17 @@ test.describe('Channel composer slash commands', () => {
         ]);
 
         await openAIMock.addMocks([
-            buildChatCompletionMockRule(buildTextResponse(filterTrapText), {
-                bodyContains: outsidePeriodMarker,
-                botPrefix: 'second',
-                times: 1,
-            }),
             buildChatCompletionMockRule(buildTextResponse(summaryText), {
                 bodyMatches: mainRequestPattern(
                     'Summarize the following posts from a Mattermost channel.',
                     recentMarker,
                     threeDayMarker,
                 ),
+                botPrefix: 'second',
+                times: 1,
+            }),
+            buildChatCompletionMockRule(buildTextResponse(filterTrapText), {
+                bodyContains: outsidePeriodMarker,
                 botPrefix: 'second',
                 times: 1,
             }),
@@ -298,16 +298,16 @@ test.describe('Channel composer slash commands', () => {
         await waitForIndexedPost(routes, userClient, decoyChannel.id, query, decoyPost.id);
 
         await openAIMock.addMocks([
-            buildChatCompletionMockRule(buildTextResponse(trapAnswer), {
-                bodyContains: decoySecret,
-                times: 1,
-            }),
             buildChatCompletionMockRule(buildTextResponse(answerText), {
                 bodyMatches: mainRequestPattern(
                     'answering questions based on message history',
                     projectCode,
                     intendedSecret,
                 ),
+                times: 1,
+            }),
+            buildChatCompletionMockRule(buildTextResponse(trapAnswer), {
+                bodyContains: decoySecret,
                 times: 1,
             }),
         ]);
