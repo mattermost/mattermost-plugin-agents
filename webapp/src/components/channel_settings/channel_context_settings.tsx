@@ -56,6 +56,14 @@ function formatFileSize(size: number): string {
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function instructionLength(value: string): number {
+    return Array.from(value).length;
+}
+
+function truncateInstructions(value: string): string {
+    return Array.from(value).slice(0, MAX_CHANNEL_INSTRUCTIONS).join('');
+}
+
 function FileIcon({file}: {file: ChannelKnowledgeFile}) {
     const extension = fileExtension(file);
     if (extension === 'PDF') {
@@ -80,6 +88,7 @@ const ChannelContextSettings = ({channel, setUnsaved, registerHandlers}: Channel
     const intl = useIntl();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const channelIDRef = useRef(channel.id);
+    const uploadGenerationRef = useRef(0);
     channelIDRef.current = channel.id;
 
     const [baseline, setBaseline] = useState<ChannelContextState | null>(null);
@@ -104,6 +113,8 @@ const ChannelContextSettings = ({channel, setUnsaved, registerHandlers}: Channel
 
     useEffect(() => {
         let active = true;
+        uploadGenerationRef.current++;
+        setUploading(false);
         setLoading(true);
         setBaseline(null);
         setDraft(EMPTY_STATE);
@@ -130,6 +141,7 @@ const ChannelContextSettings = ({channel, setUnsaved, registerHandlers}: Channel
 
         return () => {
             active = false;
+            uploadGenerationRef.current++;
         };
     }, [channel.id, intl]);
 
@@ -147,10 +159,14 @@ const ChannelContextSettings = ({channel, setUnsaved, registerHandlers}: Channel
 
         setActionError('');
         try {
+            const saveChannelID = channel.id;
             const saved = await saveChannelContext(channel.id, {
                 customInstructions: draft.customInstructions,
                 fileIDs: draft.files.map((file) => file.id),
             });
+            if (channelIDRef.current !== saveChannelID) {
+                return;
+            }
             setBaseline(cloneState(saved));
             setDraft(cloneState(saved));
         } catch (error: unknown) {
@@ -163,6 +179,8 @@ const ChannelContextSettings = ({channel, setUnsaved, registerHandlers}: Channel
     }, [baseline, channel.id, draft, intl, loadError, uploading]);
 
     const reset = useCallback(() => {
+        uploadGenerationRef.current++;
+        setUploading(false);
         if (baseline !== null) {
             setDraft(cloneState(baseline));
         }
@@ -197,11 +215,12 @@ const ChannelContextSettings = ({channel, setUnsaved, registerHandlers}: Channel
         }
 
         const uploadChannelID = channel.id;
+        const uploadGeneration = ++uploadGenerationRef.current;
         setActionError('');
         setUploading(true);
         try {
             const uploaded = await uploadChannelKnowledgeFiles(uploadChannelID, selectedFiles);
-            if (channelIDRef.current !== uploadChannelID) {
+            if (channelIDRef.current !== uploadChannelID || uploadGenerationRef.current !== uploadGeneration) {
                 return;
             }
             setDraft((current) => {
@@ -217,7 +236,7 @@ const ChannelContextSettings = ({channel, setUnsaved, registerHandlers}: Channel
                 intl.formatMessage({defaultMessage: 'Could not upload knowledge files.'}),
             ));
         } finally {
-            if (channelIDRef.current === uploadChannelID) {
+            if (channelIDRef.current === uploadChannelID && uploadGenerationRef.current === uploadGeneration) {
                 setUploading(false);
             }
         }
@@ -256,16 +275,15 @@ const ChannelContextSettings = ({channel, setUnsaved, registerHandlers}: Channel
                 <Instructions
                     id='agents-channel-custom-instructions'
                     value={draft.customInstructions}
-                    maxLength={MAX_CHANNEL_INSTRUCTIONS}
                     rows={8}
                     placeholder={intl.formatMessage({defaultMessage: 'Add channel-specific context or instructions…'})}
                     onChange={(event) => setDraft((current) => ({
                         ...current,
-                        customInstructions: event.target.value,
+                        customInstructions: truncateInstructions(event.target.value),
                     }))}
                 />
                 <CharacterCount>
-                    {draft.customInstructions.length.toLocaleString()}{'/'}
+                    {instructionLength(draft.customInstructions).toLocaleString()}{'/'}
                     {MAX_CHANNEL_INSTRUCTIONS.toLocaleString()}
                 </CharacterCount>
             </FieldGroup>

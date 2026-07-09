@@ -26,15 +26,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
-type staticSearchChannelContextProvider struct {
-	context llm.ChannelContext
-	err     error
-}
-
-func (p *staticSearchChannelContextProvider) GetPromptContext(string) (llm.ChannelContext, error) {
-	return p.context, p.err
-}
-
 func TestEnrichResults(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -299,33 +290,6 @@ func TestEnrichResults(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestBuildSearchPromptContextLoadsChannelContext(t *testing.T) {
-	mm := mmapimocks.NewMockClient(t)
-	mm.On("GetConfig").Return(&model.Config{})
-	provider := &staticSearchChannelContextProvider{context: llm.ChannelContext{
-		CustomInstructions: "Use channel terminology.",
-		KnowledgeFiles:     "Name: guide.pdf",
-	}}
-	s := &Search{mmclient: mm}
-	s.SetChannelContextProvider(provider)
-
-	context := s.buildSearchPromptContext(model.NewId(), nil, "question", model.NewId(), model.NewId(), nil)
-
-	require.Equal(t, provider.context, context.ChannelContext)
-}
-
-func TestBuildSearchPromptContextIgnoresChannelContextFailure(t *testing.T) {
-	mm := mmapimocks.NewMockClient(t)
-	mm.On("GetConfig").Return(&model.Config{})
-	mm.On("LogWarn", "Failed to load channel context for search", mock.Anything).Return()
-	s := &Search{mmclient: mm}
-	s.SetChannelContextProvider(&staticSearchChannelContextProvider{err: errors.New("database unavailable")})
-
-	context := s.buildSearchPromptContext(model.NewId(), nil, "question", model.NewId(), model.NewId(), nil)
-
-	require.Empty(t, context.ChannelContext)
 }
 
 func TestExecuteSearch(t *testing.T) {

@@ -189,6 +189,30 @@ func TestSaveEmptyChannelContextDeletesRecord(t *testing.T) {
 	assert.Empty(t, state.Files)
 }
 
+func TestSavePreservesExistingFileUploadedByAnotherManager(t *testing.T) {
+	channelID := model.NewId()
+	fileID := model.NewId()
+	store := &fakeStore{record: &Record{ChannelID: channelID, FileIDs: []string{fileID}}}
+	mm := &fakeMMClient{files: map[string]*model.FileInfo{
+		fileID: {
+			Id: fileID, ChannelId: channelID, CreatorId: model.NewId(),
+			Name: "shared.pdf", MimeType: "application/pdf",
+		},
+	}}
+
+	state, err := New(store, mm).Save(channelID, model.NewId(), Update{
+		CustomInstructions: "Updated by another manager.",
+		FileIDs:            []string{fileID},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, store.saved)
+	assert.Equal(t, []string{fileID}, store.saved.FileIDs)
+	assert.Equal(t, []KnowledgeFile{{
+		ID: fileID, Name: "shared.pdf", MimeType: "application/pdf",
+	}}, state.Files)
+}
+
 func TestGetAndPromptContextSkipUnavailableFiles(t *testing.T) {
 	channelID := model.NewId()
 	validID := model.NewId()

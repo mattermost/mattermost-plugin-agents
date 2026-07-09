@@ -74,7 +74,10 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 	}
 
 	// The plugin API is admin-level, so permission must be checked explicitly.
-	if fileInfo.ChannelId == "" || !s.mm.HasPermissionToChannel(userID, fileInfo.ChannelId, model.PermissionReadChannel) {
+	if fileInfo.DeleteAt != 0 ||
+		fileInfo.ChannelId == "" ||
+		!s.mm.HasPermissionToChannel(userID, fileInfo.ChannelId, model.PermissionReadChannel) ||
+		!s.mm.HasPermissionToChannel(userID, fileInfo.ChannelId, model.PermissionReadChannelContent) {
 		return Content{}, ErrForbidden
 	}
 

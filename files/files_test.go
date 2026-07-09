@@ -40,6 +40,16 @@ func TestGetContent(t *testing.T) {
 			expectErr: nil, // non-nil generic error; checked below
 		},
 		{
+			name:   "deleted file is forbidden",
+			fileID: fileID,
+			setup: func(m *mocks.MockClient) {
+				m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
+					Id: fileID, ChannelId: channelID, DeleteAt: 1,
+				}, nil)
+			},
+			expectErr: ErrForbidden,
+		},
+		{
 			name:   "missing channel is forbidden without a permission check",
 			fileID: fileID,
 			setup: func(m *mocks.MockClient) {
@@ -264,6 +274,7 @@ func TestGetContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := mocks.NewMockClient(t)
+			m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannelContent).Return(true).Maybe()
 			tt.setup(m)
 			svc := New(m)
 
@@ -280,4 +291,20 @@ func TestGetContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetContentRequiresChannelContentPermission(t *testing.T) {
+	userID := model.NewId()
+	channelID := model.NewId()
+	fileID := model.NewId()
+	m := mocks.NewMockClient(t)
+	m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
+		Id: fileID, ChannelId: channelID, Name: "report.pdf", MimeType: "application/pdf",
+	}, nil)
+	m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
+	m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannelContent).Return(false)
+
+	_, err := New(m).GetContent(context.Background(), userID, fileID, 0, 0)
+
+	require.ErrorIs(t, err, ErrForbidden)
 }

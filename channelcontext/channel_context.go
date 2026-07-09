@@ -130,14 +130,25 @@ func (s *Service) Save(channelID, userID string, update Update) (State, error) {
 		return State{}, invalid("fileIDs cannot contain more than %d files", MaxKnowledgeFiles)
 	}
 
+	existingRecord, err := s.store.GetChannelContext(channelID)
+	if err != nil {
+		return State{}, fmt.Errorf("failed to load channel context: %w", err)
+	}
+	existingFileIDs := make(map[string]struct{})
+	if existingRecord != nil {
+		for _, fileID := range existingRecord.FileIDs {
+			existingFileIDs[fileID] = struct{}{}
+		}
+	}
+
 	files := make([]KnowledgeFile, 0, len(fileIDs))
 	for _, fileID := range fileIDs {
 		if !model.IsValidId(fileID) {
 			return State{}, invalid("invalid file id %q", fileID)
 		}
 
-		info, err := s.mm.GetFileInfo(fileID)
-		if err != nil || info == nil {
+		info, fileErr := s.mm.GetFileInfo(fileID)
+		if fileErr != nil || info == nil {
 			return State{}, invalid("file %q could not be found", fileID)
 		}
 		if info.DeleteAt != 0 {
@@ -146,7 +157,8 @@ func (s *Service) Save(channelID, userID string, update Update) (State, error) {
 		if info.ChannelId != channelID {
 			return State{}, invalid("file %q does not belong to this channel", fileID)
 		}
-		if info.PostId == "" && info.CreatorId != userID {
+		_, alreadyConfigured := existingFileIDs[fileID]
+		if info.PostId == "" && info.CreatorId != userID && !alreadyConfigured {
 			return State{}, invalid("file %q is not available to this user", fileID)
 		}
 		if !isSupportedKnowledgeFile(info) {

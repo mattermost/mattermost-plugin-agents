@@ -7,7 +7,7 @@ import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import type {Channel} from '@mattermost/types/channels';
 
 import {getChannelContext, saveChannelContext, uploadChannelKnowledgeFiles} from '@/client';
-import type {ChannelSettingsTabHandlers} from '@/types/channel_settings';
+import {MAX_CHANNEL_INSTRUCTIONS, type ChannelSettingsTabHandlers} from '@/types/channel_settings';
 
 import ChannelContextSettings from './channel_context_settings';
 
@@ -111,6 +111,17 @@ describe('ChannelContextSettings', () => {
         await waitFor(() => expect(setUnsaved).toHaveBeenLastCalledWith(false));
     });
 
+    test('counts and limits instructions by Unicode code points', async () => {
+        mockGetChannelContext.mockResolvedValue({customInstructions: '', files: []});
+        renderSettings();
+        const textarea = await screen.findByLabelText('Custom instructions') as HTMLTextAreaElement;
+
+        fireEvent.change(textarea, {target: {value: '😀'.repeat(MAX_CHANNEL_INSTRUCTIONS + 1)}});
+
+        expect(Array.from(textarea.value)).toHaveLength(MAX_CHANNEL_INSTRUCTIONS);
+        expect(screen.getByText('16,384/16,384')).not.toBeNull();
+    });
+
     test('uploads, removes, and resets knowledge files', async () => {
         mockGetChannelContext.mockResolvedValue({
             customInstructions: '',
@@ -162,5 +173,28 @@ describe('ChannelContextSettings', () => {
 
         expect(screen.getByDisplayValue('Keep this edit')).not.toBeNull();
         expect(screen.getByRole('alert').textContent).toContain('save failed');
+    });
+
+    test('ignores an upload that finishes after reset', async () => {
+        mockGetChannelContext.mockResolvedValue({customInstructions: '', files: []});
+        let resolveUpload: ((files: Awaited<ReturnType<typeof uploadChannelKnowledgeFiles>>) => void) | undefined;
+        mockUploadChannelKnowledgeFiles.mockImplementation(() => new Promise((resolve) => {
+            resolveUpload = resolve;
+        }));
+        const {getHandlers, setUnsaved} = renderSettings();
+        await screen.findByLabelText('Custom instructions');
+
+        const input = screen.getByLabelText('Upload knowledge base files');
+        fireEvent.change(input, {target: {files: [new File(['late'], 'late.txt', {type: 'text/plain'})]}});
+        await waitFor(() => expect(setUnsaved).toHaveBeenLastCalledWith(true));
+        act(() => getHandlers()?.reset());
+
+        await act(async () => {
+            resolveUpload?.([{id: 'late-file', name: 'late.txt', mimeType: 'text/plain', size: 4}]);
+            await Promise.resolve();
+        });
+
+        expect(screen.queryByText('late.txt')).toBeNull();
+        await waitFor(() => expect(setUnsaved).toHaveBeenLastCalledWith(false));
     });
 });

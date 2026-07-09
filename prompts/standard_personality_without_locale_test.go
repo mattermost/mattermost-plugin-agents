@@ -136,8 +136,9 @@ func TestStandardPersonalityRendersChannelContext(t *testing.T) {
 
 	readFileStore := llm.NewToolStore()
 	readFileStore.AddTools([]llm.Tool{{
-		Name:        "read_file",
-		Description: "Read a file",
+		Name:         "read_file",
+		Description:  "Read a file",
+		ServerOrigin: "embedded://mattermost",
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			return "", nil
 		},
@@ -161,17 +162,35 @@ func TestStandardPersonalityRendersChannelContext(t *testing.T) {
 	assert.Contains(t, output, "channel knowledge-base files")
 	assert.Contains(t, output, "release-guide.pdf")
 
-	baseContext.DisabledToolsInfo = []llm.ToolInfo{{Name: "read_file", Description: "Read a file"}}
+	baseContext.DisabledToolsInfo = []llm.ToolInfo{{
+		Name: "read_file", Description: "Read a file", ServerOrigin: "embedded://mattermost",
+	}}
 	output, err = promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, &baseContext)
 	require.NoError(t, err)
 	assert.Contains(t, output, "Use the channel's release terminology.")
 	assert.NotContains(t, output, "release-guide.pdf")
+
+	baseContext.DisabledToolsInfo = []llm.ToolInfo{{
+		Name: "other_tool", Description: "Unavailable elsewhere", ServerOrigin: "https://mcp.example.com",
+	}}
+	output, err = promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, &baseContext)
+	require.NoError(t, err)
+	assert.Contains(t, output, "release-guide.pdf")
 
 	baseContext.DisabledToolsInfo = nil
 	baseContext.Tools = llm.NewNoTools()
 	output, err = promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, &baseContext)
 	require.NoError(t, err)
 	assert.Contains(t, output, "Use the channel's release terminology.")
+	assert.NotContains(t, output, "release-guide.pdf")
+
+	externalReadFileStore := llm.NewToolStore()
+	externalReadFileStore.AddTools([]llm.Tool{{
+		Name: "read_file", Description: "External file reader", ServerOrigin: "https://mcp.example.com",
+	}})
+	baseContext.Tools = externalReadFileStore
+	output, err = promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, &baseContext)
+	require.NoError(t, err)
 	assert.NotContains(t, output, "release-guide.pdf")
 }
 

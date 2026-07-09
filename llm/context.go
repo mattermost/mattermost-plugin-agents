@@ -226,6 +226,27 @@ func (t *ToolRuntimeContext) ShouldRecordMCPDynamicSearchLoadCallSuccess(name st
 	return true
 }
 
+// CanUseTool reports whether a tool is available and not disabled for this request.
+func (c *Context) CanUseTool(name, serverOrigin string) bool {
+	if c == nil || c.Tools == nil {
+		return false
+	}
+	if _, ok := c.Tools.LookupTool(name, serverOrigin); !ok {
+		return false
+	}
+
+	normalizedOrigin := NormalizeMCPServerOrigin(serverOrigin)
+	for _, disabled := range c.DisabledToolsInfo {
+		if NormalizeMCPServerOrigin(disabled.ServerOrigin) != normalizedOrigin {
+			continue
+		}
+		if MCPToolNameMatches(disabled.Name, name) {
+			return false
+		}
+	}
+	return true
+}
+
 func (c Context) String() string {
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Time: %v\nServerName: %v\nCompanyName: %v", c.Time, c.ServerName, c.CompanyName))
