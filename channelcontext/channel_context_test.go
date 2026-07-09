@@ -14,12 +14,14 @@ import (
 )
 
 type fakeStore struct {
-	record    *Record
-	getErr    error
-	saveErr   error
-	deleteErr error
-	saved     *Record
-	deleted   string
+	record        *Record
+	getErr        error
+	saveErr       error
+	deleteErr     error
+	saved         *Record
+	deleted       string
+	saveVersion   int64
+	deleteVersion int64
 }
 
 func (s *fakeStore) GetChannelContext(string) (*Record, error) {
@@ -31,21 +33,23 @@ func (s *fakeStore) GetChannelContext(string) (*Record, error) {
 	return &clone, nil
 }
 
-func (s *fakeStore) SaveChannelContext(record *Record) error {
+func (s *fakeStore) SaveChannelContext(record *Record, expectedUpdateAt int64) error {
 	if s.saveErr != nil {
 		return s.saveErr
 	}
 	clone := *record
 	clone.FileIDs = append([]string(nil), record.FileIDs...)
 	s.saved = &clone
+	s.saveVersion = expectedUpdateAt
 	return nil
 }
 
-func (s *fakeStore) DeleteChannelContext(channelID string) error {
+func (s *fakeStore) DeleteChannelContext(channelID string, expectedUpdateAt int64) error {
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
 	s.deleted = channelID
+	s.deleteVersion = expectedUpdateAt
 	return nil
 }
 
@@ -192,7 +196,7 @@ func TestSaveEmptyChannelContextDeletesRecord(t *testing.T) {
 func TestSavePreservesExistingFileUploadedByAnotherManager(t *testing.T) {
 	channelID := model.NewId()
 	fileID := model.NewId()
-	store := &fakeStore{record: &Record{ChannelID: channelID, FileIDs: []string{fileID}}}
+	store := &fakeStore{record: &Record{ChannelID: channelID, FileIDs: []string{fileID}, UpdateAt: 42}}
 	mm := &fakeMMClient{files: map[string]*model.FileInfo{
 		fileID: {
 			Id: fileID, ChannelId: channelID, CreatorId: model.NewId(),
@@ -203,11 +207,13 @@ func TestSavePreservesExistingFileUploadedByAnotherManager(t *testing.T) {
 	state, err := New(store, mm).Save(channelID, model.NewId(), Update{
 		CustomInstructions: "Updated by another manager.",
 		FileIDs:            []string{fileID},
+		Version:            42,
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, store.saved)
 	assert.Equal(t, []string{fileID}, store.saved.FileIDs)
+	assert.Equal(t, int64(42), store.saveVersion)
 	assert.Equal(t, []KnowledgeFile{{
 		ID: fileID, Name: "shared.pdf", MimeType: "application/pdf",
 	}}, state.Files)
@@ -249,6 +255,22 @@ func TestGetAndPromptContextSkipUnavailableFiles(t *testing.T) {
 	assert.Contains(t, promptContext.KnowledgeFiles, validID)
 	assert.NotContains(t, promptContext.KnowledgeFiles, "SECRET EXTRACTED TEXT")
 	assert.Equal(t, 2, mm.warnings)
+}
+
+func TestSaveRejectsStaleVersion(t *testing.T) {
+	channelID := model.NewId()
+	store := &fakeStore{record: &Record{
+		ChannelID: channelID,
+		UpdateAt:  2,
+	}}
+
+	_, err := New(store, &fakeMMClient{}).Save(channelID, model.NewId(), Update{
+		CustomInstructions: "stale edit",
+		Version:            1,
+	})
+
+	require.ErrorIs(t, err, ErrConflict)
+	assert.Nil(t, store.saved)
 }
 
 func TestChannelContextStoreErrors(t *testing.T) {

@@ -77,6 +77,7 @@ describe('ChannelContextSettings', () => {
         mockGetChannelContext.mockResolvedValue({
             customInstructions: 'Use the release glossary.',
             files: [{id: 'file-1', name: 'Release_Guide.pdf', mimeType: 'application/pdf', size: 2048}],
+            version: 7,
         });
         const {setUnsaved, getHandlers} = renderSettings();
 
@@ -89,10 +90,11 @@ describe('ChannelContextSettings', () => {
     });
 
     test('saves edited instructions through the registered host handler', async () => {
-        mockGetChannelContext.mockResolvedValue({customInstructions: '', files: []});
+        mockGetChannelContext.mockResolvedValue({customInstructions: '', files: [], version: 7});
         mockSaveChannelContext.mockResolvedValue({
             customInstructions: 'Prefer concise answers.',
             files: [],
+            version: 8,
         });
         const {setUnsaved, getHandlers} = renderSettings();
 
@@ -107,12 +109,13 @@ describe('ChannelContextSettings', () => {
         expect(mockSaveChannelContext).toHaveBeenCalledWith('channel-1', {
             customInstructions: 'Prefer concise answers.',
             fileIDs: [],
+            version: 7,
         });
         await waitFor(() => expect(setUnsaved).toHaveBeenLastCalledWith(false));
     });
 
     test('counts and limits instructions by Unicode code points', async () => {
-        mockGetChannelContext.mockResolvedValue({customInstructions: '', files: []});
+        mockGetChannelContext.mockResolvedValue({customInstructions: '', files: [], version: 0});
         renderSettings();
         const textarea = await screen.findByLabelText('Custom instructions') as HTMLTextAreaElement;
 
@@ -126,6 +129,7 @@ describe('ChannelContextSettings', () => {
         mockGetChannelContext.mockResolvedValue({
             customInstructions: '',
             files: [{id: 'file-1', name: 'existing.txt', mimeType: 'text/plain', size: 10}],
+            version: 7,
         });
         mockUploadChannelKnowledgeFiles.mockResolvedValue([
             {id: 'file-2', name: 'budget.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 30720},
@@ -161,7 +165,7 @@ describe('ChannelContextSettings', () => {
         expect(firstRender.getHandlers()).not.toBeNull();
         firstRender.unmount();
 
-        mockGetChannelContext.mockResolvedValueOnce({customInstructions: '', files: []});
+        mockGetChannelContext.mockResolvedValueOnce({customInstructions: '', files: [], version: 0});
         mockSaveChannelContext.mockRejectedValueOnce(new Error('save failed'));
         const secondRender = renderSettings();
         const textarea = await screen.findByLabelText('Custom instructions');
@@ -176,7 +180,7 @@ describe('ChannelContextSettings', () => {
     });
 
     test('ignores an upload that finishes after reset', async () => {
-        mockGetChannelContext.mockResolvedValue({customInstructions: '', files: []});
+        mockGetChannelContext.mockResolvedValue({customInstructions: '', files: [], version: 0});
         let resolveUpload: ((files: Awaited<ReturnType<typeof uploadChannelKnowledgeFiles>>) => void) | undefined;
         mockUploadChannelKnowledgeFiles.mockImplementation(() => new Promise((resolve) => {
             resolveUpload = resolve;

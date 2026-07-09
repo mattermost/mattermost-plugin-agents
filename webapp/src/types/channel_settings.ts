@@ -19,11 +19,13 @@ export type ChannelKnowledgeFile = {
 export type ChannelContextState = {
     customInstructions: string;
     files: ChannelKnowledgeFile[];
+    version: number;
 };
 
 export type ChannelContextUpdate = {
     customInstructions: string;
     fileIDs: string[];
+    version: number;
 };
 
 export type ChannelSettingsTabHandlers = {

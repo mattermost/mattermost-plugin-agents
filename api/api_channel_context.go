@@ -4,6 +4,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -90,6 +91,10 @@ func (a *API) handleSaveChannelContext(c *gin.Context) {
 }
 
 func (a *API) writeChannelContextError(c *gin.Context, err error) {
+	if errors.Is(err, channelcontext.ErrConflict) {
+		c.AbortWithStatusJSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
 	if channelcontext.IsValidationError(err) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

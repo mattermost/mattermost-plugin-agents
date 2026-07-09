@@ -54,8 +54,8 @@ func (s *Store) GetChannelContext(channelID string) (*channelcontext.Record, err
 	}, nil
 }
 
-// SaveChannelContext inserts or replaces a channel context.
-func (s *Store) SaveChannelContext(record *channelcontext.Record) error {
+// SaveChannelContext inserts or replaces a channel context at the expected version.
+func (s *Store) SaveChannelContext(record *channelcontext.Record, expectedUpdateAt int64) error {
 	fileIDs := record.FileIDs
 	if fileIDs == nil {
 		fileIDs = []string{}
@@ -66,20 +66,36 @@ func (s *Store) SaveChannelContext(record *channelcontext.Record) error {
 	}
 
 	now := model.GetMillis()
-	err = s.db.QueryRowx(`
-		INSERT INTO Agents_ChannelContexts (
-			ChannelID, CustomInstructions, FileIDs, CreateAt, UpdateAt
-		) VALUES ($1, $2, $3::jsonb, $4, $4)
-		ON CONFLICT (ChannelID) DO UPDATE SET
-			CustomInstructions = EXCLUDED.CustomInstructions,
-			FileIDs = EXCLUDED.FileIDs,
-			UpdateAt = GREATEST(Agents_ChannelContexts.UpdateAt + 1, EXCLUDED.UpdateAt)
-		RETURNING CreateAt, UpdateAt`,
-		record.ChannelID,
-		record.CustomInstructions,
-		string(fileIDsJSON),
-		now,
-	).Scan(&record.CreateAt, &record.UpdateAt)
+	if expectedUpdateAt == 0 {
+		err = s.db.QueryRowx(`
+			INSERT INTO Agents_ChannelContexts (
+				ChannelID, CustomInstructions, FileIDs, CreateAt, UpdateAt
+			) VALUES ($1, $2, $3::jsonb, $4, $4)
+			ON CONFLICT (ChannelID) DO NOTHING
+			RETURNING CreateAt, UpdateAt`,
+			record.ChannelID,
+			record.CustomInstructions,
+			string(fileIDsJSON),
+			now,
+		).Scan(&record.CreateAt, &record.UpdateAt)
+	} else {
+		err = s.db.QueryRowx(`
+			UPDATE Agents_ChannelContexts SET
+				CustomInstructions = $1,
+				FileIDs = $2::jsonb,
+				UpdateAt = GREATEST(UpdateAt + 1, $3)
+			WHERE ChannelID = $4 AND UpdateAt = $5
+			RETURNING CreateAt, UpdateAt`,
+			record.CustomInstructions,
+			string(fileIDsJSON),
+			now,
+			record.ChannelID,
+			expectedUpdateAt,
+		).Scan(&record.CreateAt, &record.UpdateAt)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return channelcontext.ErrConflict
+	}
 	if err != nil {
 		return fmt.Errorf("failed to save channel context %q: %w", record.ChannelID, err)
 	}
@@ -87,9 +103,25 @@ func (s *Store) SaveChannelContext(record *channelcontext.Record) error {
 	return nil
 }
 
-// DeleteChannelContext permanently deletes a channel context.
-func (s *Store) DeleteChannelContext(channelID string) error {
-	if _, err := s.db.Exec(`DELETE FROM Agents_ChannelContexts WHERE ChannelID = $1`, channelID); err != nil {
+// DeleteChannelContext permanently deletes a channel context at the expected version.
+func (s *Store) DeleteChannelContext(channelID string, expectedUpdateAt int64) error {
+	var deletedChannelID string
+	err := s.db.QueryRowx(
+		`DELETE FROM Agents_ChannelContexts WHERE ChannelID = $1 AND UpdateAt = $2 RETURNING ChannelID`,
+		channelID,
+		expectedUpdateAt,
+	).Scan(&deletedChannelID)
+	if errors.Is(err, sql.ErrNoRows) {
+		var exists bool
+		if existsErr := s.db.Get(&exists, `SELECT EXISTS(SELECT 1 FROM Agents_ChannelContexts WHERE ChannelID = $1)`, channelID); existsErr != nil {
+			return fmt.Errorf("failed to check channel context %q after delete: %w", channelID, existsErr)
+		}
+		if exists {
+			return channelcontext.ErrConflict
+		}
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("failed to delete channel context %q: %w", channelID, err)
 	}
 	return nil

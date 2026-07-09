@@ -25,7 +25,7 @@ func TestChannelContextStoreLifecycle(t *testing.T) {
 		ChannelID:          channelID,
 		CustomInstructions: "Use the release glossary.",
 	}
-	require.NoError(t, s.SaveChannelContext(record))
+	require.NoError(t, s.SaveChannelContext(record, 0))
 	assert.Positive(t, record.CreateAt)
 	assert.Equal(t, record.CreateAt, record.UpdateAt)
 
@@ -41,7 +41,7 @@ func TestChannelContextStoreLifecycle(t *testing.T) {
 	secondFileID := model.NewId()
 	loaded.CustomInstructions = "Prefer the latest release notes."
 	loaded.FileIDs = []string{secondFileID, firstFileID}
-	require.NoError(t, s.SaveChannelContext(loaded))
+	require.NoError(t, s.SaveChannelContext(loaded, updateAt))
 
 	assert.Equal(t, createAt, loaded.CreateAt)
 	assert.Greater(t, loaded.UpdateAt, updateAt)
@@ -56,11 +56,27 @@ func TestChannelContextStoreLifecycle(t *testing.T) {
 	require.NoError(t, s.db.Get(&count, `SELECT COUNT(*) FROM Agents_ChannelContexts WHERE ChannelID = $1`, channelID))
 	assert.Equal(t, 1, count)
 
-	require.NoError(t, s.DeleteChannelContext(channelID))
-	require.NoError(t, s.DeleteChannelContext(channelID))
+	require.NoError(t, s.DeleteChannelContext(channelID, updated.UpdateAt))
+	require.NoError(t, s.DeleteChannelContext(channelID, 0))
 	deleted, err := s.GetChannelContext(channelID)
 	require.NoError(t, err)
 	assert.Nil(t, deleted)
+}
+
+func TestChannelContextStoreRejectsStaleVersion(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	record := &channelcontext.Record{ChannelID: model.NewId(), CustomInstructions: "initial"}
+	require.NoError(t, s.SaveChannelContext(record, 0))
+
+	staleVersion := record.UpdateAt
+	firstUpdate := &channelcontext.Record{ChannelID: record.ChannelID, CustomInstructions: "first update"}
+	require.NoError(t, s.SaveChannelContext(firstUpdate, staleVersion))
+
+	staleUpdate := &channelcontext.Record{ChannelID: record.ChannelID, CustomInstructions: "stale update"}
+	require.ErrorIs(t, s.SaveChannelContext(staleUpdate, staleVersion), channelcontext.ErrConflict)
+	require.ErrorIs(t, s.DeleteChannelContext(record.ChannelID, staleVersion), channelcontext.ErrConflict)
 }
 
 func TestGetChannelContextRejectsNonArrayFileIDs(t *testing.T) {

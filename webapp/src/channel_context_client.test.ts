@@ -44,6 +44,7 @@ describe('channel context client', () => {
         const state = {
             customInstructions: 'Use the glossary.',
             files: [{id: 'file-1', name: 'guide.pdf', mimeType: 'application/pdf', size: 20}],
+            version: 7,
         };
         const fetchMock = global.fetch as jest.MockedFunction<typeof fetch>;
         fetchMock.mockResolvedValueOnce({
@@ -59,6 +60,7 @@ describe('channel context client', () => {
         await expect(saveChannelContext('channel-1', {
             customInstructions: state.customInstructions,
             fileIDs: ['file-1'],
+            version: state.version,
         })).resolves.toEqual(state);
 
         expect(fetchMock).toHaveBeenNthCalledWith(
@@ -74,6 +76,7 @@ describe('channel context client', () => {
                 body: JSON.stringify({
                     customInstructions: state.customInstructions,
                     fileIDs: ['file-1'],
+                    version: state.version,
                 }),
             }),
         );

@@ -159,6 +159,11 @@ func TestSaveChannelContext(t *testing.T) {
 			wantStatus: http.StatusBadRequest, wantSave: true, wantError: "unsupported file",
 		},
 		{
+			name: "conflict", body: mustJSON(t, update),
+			serviceErr: channelcontext.ErrConflict,
+			wantStatus: http.StatusConflict, wantSave: true, wantError: "reload and try again",
+		},
+		{
 			name: "storage error", body: mustJSON(t, update),
 			serviceErr: errors.New("database credentials leaked"),
 			wantStatus: http.StatusInternalServerError, wantSave: true, wantError: "failed to manage channel context",

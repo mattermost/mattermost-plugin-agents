@@ -25,7 +25,7 @@ import {
 } from '@/types/channel_settings';
 
 const ACCEPTED_FILE_TYPES = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.csv,.rtf';
-const EMPTY_STATE: ChannelContextState = {customInstructions: '', files: []};
+const EMPTY_STATE: ChannelContextState = {customInstructions: '', files: [], version: 0};
 
 function cloneState(state: ChannelContextState): ChannelContextState {
     return {...state, files: [...state.files]};
@@ -163,6 +163,7 @@ const ChannelContextSettings = ({channel, setUnsaved, registerHandlers}: Channel
             const saved = await saveChannelContext(channel.id, {
                 customInstructions: draft.customInstructions,
                 fileIDs: draft.files.map((file) => file.id),
+                version: baseline.version,
             });
             if (channelIDRef.current !== saveChannelID) {
                 return;

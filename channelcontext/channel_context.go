@@ -21,6 +21,9 @@ const (
 	MaxKnowledgeFiles          = 10
 )
 
+// ErrConflict means the channel context changed since it was loaded.
+var ErrConflict = errors.New("channel context changed; reload and try again")
+
 // Record is the database representation of one channel's context.
 type Record struct {
 	ChannelID          string
@@ -34,6 +37,7 @@ type Record struct {
 type Update struct {
 	CustomInstructions string   `json:"customInstructions"`
 	FileIDs            []string `json:"fileIDs"`
+	Version            int64    `json:"version"`
 }
 
 // KnowledgeFile is safe file metadata returned to the webapp.
@@ -48,13 +52,14 @@ type KnowledgeFile struct {
 type State struct {
 	CustomInstructions string          `json:"customInstructions"`
 	Files              []KnowledgeFile `json:"files"`
+	Version            int64           `json:"version"`
 }
 
 // Store persists channel-context records.
 type Store interface {
 	GetChannelContext(channelID string) (*Record, error)
-	SaveChannelContext(record *Record) error
-	DeleteChannelContext(channelID string) error
+	SaveChannelContext(record *Record, expectedUpdateAt int64) error
+	DeleteChannelContext(channelID string, expectedUpdateAt int64) error
 }
 
 // MattermostClient provides the file operations needed by the service.
@@ -110,6 +115,7 @@ func (s *Service) Get(channelID string) (State, error) {
 	return State{
 		CustomInstructions: record.CustomInstructions,
 		Files:              s.resolveFiles(record, true),
+		Version:            record.UpdateAt,
 	}, nil
 }
 
@@ -139,6 +145,13 @@ func (s *Service) Save(channelID, userID string, update Update) (State, error) {
 		for _, fileID := range existingRecord.FileIDs {
 			existingFileIDs[fileID] = struct{}{}
 		}
+	}
+	actualVersion := int64(0)
+	if existingRecord != nil {
+		actualVersion = existingRecord.UpdateAt
+	}
+	if update.Version != actualVersion {
+		return State{}, ErrConflict
 	}
 
 	files := make([]KnowledgeFile, 0, len(fileIDs))
@@ -174,19 +187,20 @@ func (s *Service) Save(channelID, userID string, update Update) (State, error) {
 		FileIDs:            fileIDs,
 	}
 	if strings.TrimSpace(record.CustomInstructions) == "" && len(record.FileIDs) == 0 {
-		if err := s.store.DeleteChannelContext(channelID); err != nil {
+		if err := s.store.DeleteChannelContext(channelID, update.Version); err != nil {
 			return State{}, fmt.Errorf("failed to delete channel context: %w", err)
 		}
 		return State{Files: []KnowledgeFile{}}, nil
 	}
 
-	if err := s.store.SaveChannelContext(record); err != nil {
+	if err := s.store.SaveChannelContext(record, update.Version); err != nil {
 		return State{}, fmt.Errorf("failed to save channel context: %w", err)
 	}
 
 	return State{
 		CustomInstructions: record.CustomInstructions,
 		Files:              files,
+		Version:            record.UpdateAt,
 	}, nil
 }
 
