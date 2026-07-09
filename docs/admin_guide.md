@@ -8,7 +8,7 @@ This guide covers installing, configuring, and managing the Mattermost Agents pl
 
 Before installing the Agents plugin, ensure your environment meets these requirements:
 
-- Mattermost Server v11.9.0+
+- Mattermost Server v11.10.0+
 - PostgreSQL database
 - For semantic search: PostgreSQL with pgvector extension
 - Network access to your chosen LLM provider
@@ -178,6 +178,17 @@ Legacy bots previously stored in plugin configuration are migrated on startup in
 Text input in the custom instructions field is included in the prompt for every request. Use this to give your agents extra context or instructions. 
 
 For example, you could list your organization's specific acronyms so the agent knows your vernacular and users can ask for definitions. Or you could give it specialized instructions like adopting a specific personality or following a certain workflow. By customizing the instructions for each individual agent, you can create a more tailored AI experience for your specific needs.
+
+### Channel-specific context
+
+Channel managers can open **Channel Settings > Agents** in a public or private channel to configure instructions and knowledge files that apply to new agent conversations in that channel, including threads.
+
+- **Custom instructions** add up to 16,384 characters of channel-specific terminology, background, or response guidance.
+- **Knowledge base files** support up to 10 PDF, Word, Excel, PowerPoint, or text documents.
+
+Agents receive compact file metadata rather than the full extracted document text. When the agent and channel tool policy allow the embedded `read_file` tool, the agent reads only relevant portions on demand. Disabling tools or `read_file` prevents knowledge-file browsing but does not disable custom instructions.
+
+Changes apply to new conversations. Existing conversations retain the system prompt captured when they began.
 
 ### Built-in web search configuration
 
