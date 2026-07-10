@@ -7,6 +7,46 @@ import MattermostContainer from './mmcontainer';
  * Uses mock configurations (no real API keys)
  */
 
+export type SystemConsoleTelemetryOutput = 'off' | 'logs' | 'otlp' | '';
+
+export interface SystemConsoleWebSearchConfig {
+    enabled: boolean;
+    provider: 'google' | 'brave';
+    google: {
+        apiKey: string;
+        searchEngineId: string;
+        resultLimit: number;
+        apiURL: string;
+    };
+    brave: {
+        apiKey: string;
+        resultLimit: number;
+        apiURL: string;
+        pollTimeout?: number;
+        pollInterval?: number;
+    };
+    domainDenylist: string[] | null;
+}
+
+export interface SystemConsoleEmbeddingSearchConfig {
+    type: string;
+    vectorStore: {
+        type: string;
+        parameters: Record<string, unknown> | null;
+    };
+    embeddingProvider: {
+        type: string;
+        parameters: Record<string, unknown> | null;
+    };
+    parameters: Record<string, unknown> | null;
+    dimensions: number;
+    chunkingOptions: {
+        chunkSize: number;
+        chunkOverlap: number;
+        chunkingStrategy: 'sentences' | 'paragraphs' | 'fixed';
+    };
+}
+
 export interface SystemConsolePluginConfig {
     allowPrivateChannels?: boolean;
     disableFunctionCalls?: boolean;
@@ -14,10 +54,14 @@ export interface SystemConsolePluginConfig {
     enableVectorIndex?: boolean;
     enableTokenUsageLogging?: boolean;
     enableChannelMentionToolCalling?: boolean;
+    allowNativeWebSearchInChannels?: boolean;
+    telemetryOutput?: SystemConsoleTelemetryOutput;
+    openTelemetryEndpoint?: string;
     defaultBotName?: string;
     allowedUpstreamHostnames?: string;
     allowUnsafeLinks?: boolean;
-    embeddingSearchConfig?: Record<string, unknown>;
+    embeddingSearchConfig?: SystemConsoleEmbeddingSearchConfig;
+    webSearch?: SystemConsoleWebSearchConfig;
     services?: any[];
     bots?: any[];
     mcp?: {
@@ -125,8 +169,24 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
         pluginConfig.config.mcp = config.mcp;
     }
 
-    if (config.embeddingSearchConfig) {
+    if (config.embeddingSearchConfig !== undefined) {
         pluginConfig.config.embeddingSearchConfig = config.embeddingSearchConfig;
+    }
+
+    if (config.webSearch !== undefined) {
+        pluginConfig.config.webSearch = config.webSearch;
+    }
+
+    if (config.allowNativeWebSearchInChannels !== undefined) {
+        pluginConfig.config.allowNativeWebSearchInChannels = config.allowNativeWebSearchInChannels;
+    }
+
+    if (config.telemetryOutput !== undefined) {
+        pluginConfig.config.telemetryOutput = config.telemetryOutput;
+    }
+
+    if (config.openTelemetryEndpoint !== undefined) {
+        pluginConfig.config.openTelemetryEndpoint = config.openTelemetryEndpoint;
     }
 
     const mattermost = await new MattermostContainer()

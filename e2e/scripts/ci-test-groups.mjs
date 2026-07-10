@@ -28,6 +28,7 @@ const groups = {
     ],
     'e2e-shard-2': [
         'tests/system-console/bot-validation.spec.ts',
+        'tests/system-console/search-and-observability.spec.ts',
         'tests/channel-analysis/quick-actions/quick-actions.spec.ts',
         'tests/system-console/initial-state-navigation.spec.ts',
         'tests/advanced-error-scenarios/network-errors.spec.ts',
