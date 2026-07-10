@@ -95,6 +95,7 @@ const groups = {
         'tests/llmbot-post-component/reasoning-display.spec.ts',
         'tests/tool-config/mock-api/tool-call-policies.spec.ts',
         'tests/agent-mention-reminder/loop-in.spec.ts',
+        'tests/login-helper/channel-view-recovery.spec.ts',
     ],
 };
 

@@ -32,15 +32,19 @@ export class MattermostPage {
     }
 
     /**
-     * @param options.channelViewTimeoutMs - Max wait after submit for channel URL + channel_view (CI can be slow late in a shard).
+     * @param options.channelViewTimeoutMs - Max wait after submit for channel URL + channel_view.
+     * @param options.enableChannelViewReloadRecovery - Reload once/twice if the channel URL is reached
+     *   but channel_view never hydrates (a load-contention flake). Opt-in so global first-render
+     *   regressions still fail loudly.
      */
     async login(
         url: string,
         username: string,
         password: string,
-        options?: { channelViewTimeoutMs?: number },
+        options?: { channelViewTimeoutMs?: number; enableChannelViewReloadRecovery?: boolean },
     ) {
         const channelTimeout = options?.channelViewTimeoutMs ?? 60000;
+        const enableReloadRecovery = options?.enableChannelViewReloadRecovery ?? false;
         await this.page.addInitScript(() => { localStorage.setItem('__landingPageSeen__', 'true'); });
 
         // Polyfill crypto.randomUUID for insecure contexts (e.g., Docker test environments
@@ -82,10 +86,94 @@ export class MattermostPage {
         await this.page.getByPlaceholder("Email or Username").fill(username);
         await this.page.getByTestId('saveSetting').click();
 
-        // Wait for navigation to complete and channel view to be visible
-        // Using a more generous timeout and proper wait strategy for parallel test runs
-        await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: channelTimeout });
-        await this.page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: channelTimeout });
+        // One deadline covers both post-submit phases (URL redirect + channel_view hydration).
+        const deadline = Date.now() + channelTimeout;
+        await this.confirmLoginNavigation(deadline);
+        await this.waitForChannelView(deadline, enableReloadRecovery);
+    }
+
+    /** Positive milliseconds left before `deadline` (never zero/negative for a Playwright timeout). */
+    private remainingMs(deadline: number): number {
+        return Math.max(1, deadline - Date.now());
+    }
+
+    private async isOnLoginPage(): Promise<boolean> {
+        return this.page.getByText('Log in to your account').isVisible().catch(() => false);
+    }
+
+    /** Wait for the post-login redirect; a stall while still on the login form is a clear auth failure. */
+    private async confirmLoginNavigation(deadline: number): Promise<void> {
+        try {
+            await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: this.remainingMs(deadline) });
+        } catch (error) {
+            if (await this.isOnLoginPage()) {
+                const loginError = await this.page
+                    .locator('.login-body-card-content, .AlertBanner, [class*="error"]')
+                    .first()
+                    .textContent()
+                    .catch(() => null);
+                throw new Error(
+                    `Login did not navigate to a channel; still on the login page (auth failure). ` +
+                    `URL: ${this.page.url()}${loginError ? `; page text: ${loginError.trim()}` : ''}`,
+                );
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Wait for channel_view once the channel URL is reached. Without recovery this is a single wait
+     * so first-render regressions fail. With recovery, reload up to twice within the deadline to ride
+     * out a load-induced hydration stall, always throwing a descriptive error rather than passing silently.
+     */
+    private async waitForChannelView(deadline: number, enableReloadRecovery: boolean): Promise<void> {
+        const channelView = this.page.getByTestId('channel_view');
+        if (!enableReloadRecovery) {
+            await channelView.waitFor({ state: 'visible', timeout: this.remainingMs(deadline) });
+            return;
+        }
+
+        const maxAttempts = 3; // initial attempt + up to two reload-driven recoveries
+        // Track view-wait and reload failures separately so neither cause masks the other.
+        let lastViewError: Error | null = null;
+        let lastReloadError: Error | null = null;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            if (Date.now() >= deadline) {
+                break;
+            }
+            const attemptTimeout = Math.max(1, Math.floor(this.remainingMs(deadline) / (maxAttempts - attempt)));
+            try {
+                await channelView.waitFor({ state: 'visible', timeout: attemptTimeout });
+                return;
+            } catch (error) {
+                lastViewError = error as Error;
+            }
+            if (attempt >= maxAttempts - 1 || Date.now() >= deadline) {
+                break;
+            }
+            try {
+                await this.page.reload({ waitUntil: 'domcontentloaded', timeout: this.remainingMs(deadline) });
+            } catch (reloadError) {
+                lastReloadError = reloadError as Error;
+            }
+            if (await this.isOnLoginPage()) {
+                throw new Error(
+                    `Session was lost during post-login recovery (reload returned the login page). ` +
+                    `URL: ${this.page.url()}. ${this.recoveryErrorSuffix(lastViewError, lastReloadError)}`,
+                );
+            }
+        }
+
+        throw new Error(
+            `channel_view never became visible before the login deadline. ` +
+            `Last URL: ${this.page.url()}. ${this.recoveryErrorSuffix(lastViewError, lastReloadError)}`,
+        );
+    }
+
+    /** Report the last channel_view wait error and the last reload error without one overwriting the other. */
+    private recoveryErrorSuffix(viewError: Error | null, reloadError: Error | null): string {
+        return `Last channel_view wait error: ${viewError?.message ?? 'none'}. ` +
+            `Last reload error: ${reloadError?.message ?? 'none'}.`;
     }
 
     async sendChannelMessage(message: string) {

@@ -127,7 +127,12 @@ export function describeAIMockCitationCase(options: {
             const aiPlugin = new AIPlugin(page);
             const llmBotHelper = new LLMBotPostHelper(page);
 
-            await mmPage.login(stack.mattermost.url(), 'regularuser', 'regularuser');
+            // Citation suites boot a fresh container per case; keep the larger ceiling and opt into
+            // channel_view reload recovery to absorb the load-induced hydration stall seen late in shards.
+            await mmPage.login(stack.mattermost.url(), 'regularuser', 'regularuser', {
+                channelViewTimeoutMs: 90000,
+                enableChannelViewReloadRecovery: true,
+            });
             await mmPage.createAndNavigateToDMWithBot(
                 stack.mattermost,
                 'regularuser',
