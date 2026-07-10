@@ -24,6 +24,8 @@ const botUsername = 'mock';
 const providerPath = /^\/(?:v1\/)?chat\/completions$/;
 const terminalError = 'Sorry! An error occurred while accessing the LLM. See server logs for details.';
 const titlePrompt = 'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:';
+// Bifrost configures MaxRetries=2, for one initial request plus two retries.
+const expectedRetryAttempts = 3;
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
@@ -64,8 +66,7 @@ type ProviderJourney = {
 };
 
 type ProviderJourneyExpectation = {
-    exactMainRequests?: number;
-    minimumMainRequests?: number;
+    exactMainRequests: number;
     expectsTitle: boolean;
 };
 
@@ -257,9 +258,7 @@ async function expectProviderJourney(
             !isTitleRequest(request.body, prompt)
         ));
 
-        const mainCountMatches = expectation.exactMainRequests === undefined ?
-            mainRequests.length >= (expectation.minimumMainRequests ?? 1) :
-            mainRequests.length === expectation.exactMainRequests;
+        const mainCountMatches = mainRequests.length === expectation.exactMainRequests;
         const titleCountMatches = titleRequests.length === (expectation.expectsTitle ? 1 : 0);
         return mainCountMatches && titleCountMatches && unmatchedRequests.length === 0;
     }, {
@@ -269,11 +268,7 @@ async function expectProviderJourney(
     }).toBe(true);
 
     expect(unmatchedRequests).toHaveLength(0);
-    if (expectation.exactMainRequests !== undefined) {
-        expect(mainRequests).toHaveLength(expectation.exactMainRequests);
-    } else {
-        expect(mainRequests.length).toBeGreaterThanOrEqual(expectation.minimumMainRequests ?? 1);
-    }
+    expect(mainRequests).toHaveLength(expectation.exactMainRequests);
     expect(titleRequests).toHaveLength(expectation.expectsTitle ? 1 : 0);
     expect([...mainRequests, ...titleRequests].every((request) => providerPath.test(request.path))).toBe(true);
 
@@ -531,7 +526,7 @@ test.describe('Advanced Error Scenarios - Network Errors', () => {
         await expectTerminalUI(harness.aiPlugin, providerMessage);
 
         await expectProviderJourney(prompt, {
-            minimumMainRequests: 2,
+            exactMainRequests: expectedRetryAttempts,
             expectsTitle: true,
         });
         const {thread} = await expectPersistedConversation(
@@ -578,7 +573,7 @@ test.describe('Advanced Error Scenarios - Network Errors', () => {
         await expectSuccessfulUI(harness.aiPlugin, response, [retryMessage, terminalError]);
 
         await expectProviderJourney(prompt, {
-            minimumMainRequests: 3,
+            exactMainRequests: expectedRetryAttempts,
             expectsTitle: true,
         });
         const {thread} = await expectPersistedConversation(
@@ -620,7 +615,7 @@ test.describe('Advanced Error Scenarios - Network Errors', () => {
         await harness.aiPlugin.sendMessage(failurePrompt);
         await expectTerminalUI(harness.aiPlugin, providerFailure);
         await expectProviderJourney(failurePrompt, {
-            minimumMainRequests: 2,
+            exactMainRequests: expectedRetryAttempts,
             expectsTitle: true,
         });
 

@@ -27,6 +27,7 @@ type CompositionSource = 'system' | 'history' | 'tool_defs' | 'tool_results' | '
 
 type CompositionComponent = {
     source: CompositionSource;
+    proportion: number;
     tokens: number;
 };
 
@@ -111,20 +112,58 @@ function utilizationPercent(composition: Composition): number {
     return Math.round((composition.total / inputTokenLimit) * 100);
 }
 
+function formatTokens(tokens: number): string {
+    if (tokens >= 1_000_000) {
+        return `${(tokens / 1_000_000).toFixed(1)}M`;
+    }
+    if (tokens >= 10_000) {
+        return `${Math.round(tokens / 1000)}k`;
+    }
+    if (tokens >= 1000) {
+        return `${(tokens / 1000).toFixed(1)}k`;
+    }
+    return String(tokens);
+}
+
 async function expectIndicatorSemantics(indicator: Locator, composition: Composition): Promise<void> {
     const percent = utilizationPercent(composition);
     await expect(indicator).toBeVisible({timeout: 30000});
     await expect(indicator).toHaveText(`${percent}%`);
 }
 
+async function expectCompositionSource(
+    popover: Locator,
+    composition: Composition,
+    source: CompositionSource,
+    label: string,
+): Promise<void> {
+    const component = composition.components?.find((candidate) => candidate.source === source);
+    if (!component) {
+        throw new Error(`context composition did not include required ${source} component`);
+    }
+
+    const row = popover.getByText(label, {exact: true}).locator('xpath=../..');
+    const renderedValue = `${formatTokens(component.tokens)} (${Math.round(component.proportion * 100)}%)`;
+    await expect(row.getByText(renderedValue, {exact: true})).toBeVisible();
+}
+
 async function expectPopoverSemantics(
     popover: Locator,
     composition: Composition,
 ): Promise<void> {
+    if (!composition.input_token_limit) {
+        throw new Error('context composition did not include an input token limit');
+    }
+
     await expect(popover).toBeVisible();
     await expect(popover.getByText('Context window', {exact: true})).toBeVisible();
-    await expect(popover.getByText('System prompt', {exact: true})).toBeVisible();
-    await expect(popover.getByText('Conversation history', {exact: true})).toBeVisible();
+    await expect(popover.getByText(
+        `${formatTokens(composition.total)} of ${formatTokens(composition.input_token_limit)} tokens used ` +
+        `(${utilizationPercent(composition)}%)`,
+        {exact: true},
+    )).toBeVisible();
+    await expectCompositionSource(popover, composition, 'system', 'System prompt');
+    await expectCompositionSource(popover, composition, 'history', 'Conversation history');
 
     const estimatedNote = popover.getByText(
         'Total is estimated; the provider does not report exact counts for this model.',
@@ -171,15 +210,17 @@ test.describe('RHS context-window usage', () => {
         const followUpResponse = `Updated context response ${marker}`;
 
         await openAIMock.addMocks([
-            buildTitleMockRule(title, initialMessage),
-            buildChatCompletionMockRule(buildTextResponse(followUpResponse), {
-                bodyContains: `${marker}_FOLLOW_UP`,
-                times: 1,
-            }),
+            // Smocker gives the last matching rule priority. Register the broad initial
+            // response first, the follow-up response second, and the title rule last.
             buildChatCompletionMockRule(buildTextResponse(initialResponse), {
                 bodyContains: marker,
                 times: 1,
             }),
+            buildChatCompletionMockRule(buildTextResponse(followUpResponse), {
+                bodyContains: `${marker}_FOLLOW_UP`,
+                times: 1,
+            }),
+            buildTitleMockRule(title, initialMessage),
         ]);
 
         const userClient = await mattermost.getClient(username, password);

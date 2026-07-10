@@ -96,6 +96,14 @@ test.describe('Agent MCP Tools', () => {
         const agentApi = new AgentAPIHelper(mattermost.url());
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
+        const marker = Date.now().toString(36);
+        const prompt = `Verify empty MCP availability ${marker}`;
+        const response = `Empty MCP availability confirmed ${marker}`;
+        const trapResponse = `Unexpected MCP tool exposure ${marker}`;
+        const title = `Empty MCP availability ${marker}`;
+        const titleRequest =
+            'Write a short title for the following request. Include only the title and nothing else, no quotations. ' +
+            `Request:\n${prompt}`;
 
         const noToolsAgent = await agentApi.createTestAgent(token, {
             displayName: 'No Tools Agent',
@@ -103,17 +111,25 @@ test.describe('Agent MCP Tools', () => {
             serviceID: mockServiceId,
             autoEnableNewMCPTools: false,
             enabledMCPTools: [],
+            mcpDynamicToolLoading: false,
             enabledNativeTools: [],
         });
 
-        // Prove enabledMCPTools=[] reaches the LLM without read_post in the completion payload: first rule
-        // would match if "read_post" were sent; second rule is the catch-all success response.
+        // Smocker gives the last matching rule priority. Register the main success first,
+        // the forbidden-tool trap second, and the title-specific rule last.
         await openAIMock.addMocks([
+            buildChatCompletionMockRule(buildTextResponse(response), {
+                bodyContains: prompt,
+                times: 1,
+            }),
             buildChatCompletionMockRule(
-                buildTextResponse('WRONG: read_post in completion request when enabledMCPTools is empty'),
-                { bodyContains: 'read_post' },
+                buildTextResponse(trapResponse),
+                {
+                    bodyContains: 'mattermost__read_post',
+                    times: 1,
+                },
             ),
-            buildChatCompletionMockRule(buildTextResponse('I have no tools available.')),
+            buildTitleMockRule(title, prompt),
         ]);
 
         const mmPage = new MattermostPage(page);
@@ -124,8 +140,29 @@ test.describe('Agent MCP Tools', () => {
 
         await aiPlugin.openRHS();
         await aiPlugin.switchBotWhenListed(noToolsAgent.displayName);
-        await aiPlugin.sendMessage('Hello');
-        await aiPlugin.waitForBotResponse('I have no tools available.');
+        await aiPlugin.sendMessage(prompt);
+        await aiPlugin.waitForBotResponse(response);
+
+        let mainProviderRequests: OpenAIChatCompletionRequest[] = [];
+        let titleProviderRequests: OpenAIChatCompletionRequest[] = [];
+        await expect.poll(async () => {
+            const providerRequests = (await openAIMock.getHistory()).flatMap((entry) => (
+                isChatCompletionRequest(entry.request.body) ? [entry.request.body] : []
+            ));
+            mainProviderRequests = providerRequests.filter((request) => hasExactUserMessage(request, prompt));
+            titleProviderRequests = providerRequests.filter((request) => hasExactUserMessage(request, titleRequest));
+            return [mainProviderRequests.length, titleProviderRequests.length];
+        }, {
+            message: 'provider did not receive exactly one main request and one title request',
+            timeout: 15000,
+        }).toEqual([1, 1]);
+
+        expect(mainProviderRequests).toHaveLength(1);
+        const exposedToolNames = providerToolNames(mainProviderRequests[0]);
+        expect(exposedToolNames.filter((name) => name.startsWith('mattermost__'))).toEqual([]);
+        expect(exposedToolNames).not.toContain('search_tools');
+        expect(exposedToolNames).not.toContain('load_tool');
+        await expect(aiPlugin.getRhsContainer().getByText(trapResponse, {exact: true})).toHaveCount(0);
     });
 
     test('MCPs tab shows embedded server and tool affordances in config view', async ({ page }) => {

@@ -11,7 +11,7 @@ jest.mock('@/mm_webapp', () => ({
 }));
 
 describe('ThreadItem', () => {
-    test('scopes a history entry by conversation ID', () => {
+    test('renders conversation details and handles selection', () => {
         const onClick = jest.fn();
 
         render(
