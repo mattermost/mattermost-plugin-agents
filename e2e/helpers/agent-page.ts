@@ -145,6 +145,14 @@ export class AgentPageHelper {
         return this.page.getByPlaceholder('Agent username');
     }
 
+    getAvatarInput(): Locator {
+        return this.getLabeledSection('Bot avatar').locator('input[type="file"]');
+    }
+
+    getAvatarImage(): Locator {
+        return this.getLabeledSection('Bot avatar').locator('img');
+    }
+
     getAIServiceSelect(): Locator {
         return this.getExactLabel('AI Service').locator('xpath=following-sibling::*[1]//select[1]');
     }
@@ -184,6 +192,10 @@ export class AgentPageHelper {
 
     getThinkingBudgetInput(): Locator {
         return this.getExactLabel('Thinking Budget (tokens)').locator('xpath=following-sibling::input[1]');
+    }
+
+    getMaxToolTurnsInput(): Locator {
+        return this.getLabeledSection('Max tool turns').locator('input');
     }
 
     getStructuredOutputNote(): Locator {

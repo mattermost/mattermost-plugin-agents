@@ -5,7 +5,7 @@ import React from 'react';
 import {fireEvent, render, screen, waitFor, waitForElementToBeRemoved} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {createAgent, updateAgent} from '@/client';
+import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
 import {EnabledTool, ServiceInfo, UserAgent} from '@/types/agents';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
@@ -51,7 +51,12 @@ jest.mock('@/components/system_console/bot', () => ({
 
 jest.mock('./tabs/config_tab', () => ({
     __esModule: true,
-    default: ({draft, onChange, errors = {}}: {draft: AgentDraft; onChange: (updates: Partial<AgentDraft>) => void; errors?: Record<string, string>}) => (
+    default: ({draft, onChange, onAvatarChange, errors = {}}: {
+        draft: AgentDraft;
+        onChange: (updates: Partial<AgentDraft>) => void;
+        onAvatarChange: (file: File) => void;
+        errors?: Record<string, string>;
+    }) => (
         <>
             <input
                 aria-label='Display Name'
@@ -74,6 +79,12 @@ jest.mock('./tabs/config_tab', () => ({
                 onClick={() => onChange({serviceId: 'svc_1'})}
             >
                 {'Select service'}
+            </button>
+            <button
+                type='button'
+                onClick={() => onAvatarChange(new File(['avatar'], 'avatar.png', {type: 'image/png'}))}
+            >
+                {'Select avatar'}
             </button>
         </>
     ),
@@ -125,6 +136,7 @@ const services: ServiceInfo[] = [
 
 const mockCreateAgent = createAgent as jest.MockedFunction<typeof createAgent>;
 const mockUpdateAgent = updateAgent as jest.MockedFunction<typeof updateAgent>;
+const mockUploadAgentAvatar = uploadAgentAvatar as jest.MockedFunction<typeof uploadAgentAvatar>;
 
 const savedAgent = {
     id: 'agent_1',
@@ -418,6 +430,37 @@ describe('AgentConfigView', () => {
         expect(mockUpdateAgent).toHaveBeenCalledWith('agent_legacy', expect.objectContaining({
             mcpDynamicToolLoading: true,
         }));
+    });
+
+    test('continues the saved flow when avatar upload fails after a successful update', async () => {
+        const avatarError = new Error('avatar upload failed');
+        const onSaved = jest.fn();
+        mockUpdateAgent.mockResolvedValue(savedAgent);
+        mockUploadAgentAvatar.mockRejectedValueOnce(avatarError);
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={savedAgent}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={onSaved}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Select avatar'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(mockUploadAgentAvatar).toHaveBeenCalledWith(
+            savedAgent.id,
+            expect.any(File),
+        ));
+        await waitFor(() => expect(onSaved).toHaveBeenCalledWith(savedAgent));
+        expect(screen.queryByText(avatarError.message)).toBeNull();
+        expect(screen.queryByText('Failed to save agent. Please try again.')).toBeNull();
     });
 
     test('blocks saving when maxToolTurns exceeds the hard cap', () => {
