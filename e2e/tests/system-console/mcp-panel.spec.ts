@@ -1,3 +1,6 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
 // spec: system-console-mcp-panel.plan.md - MCP Panel
 // seed: e2e/tests/seed.spec.ts
 
@@ -87,7 +90,7 @@ test.describe.serial('MCP Panel', () => {
         }
     });
 
-    test('should display the MCP OAuth callback URL with a copy button', async ({page, context}) => {
+    test('should display the MCP OAuth callback URL with a copy button', async ({page, context, browserName}) => {
         test.setTimeout(60000);
         let mattermost: MattermostContainer | undefined;
         let openAIMock: OpenAIMockContainer | undefined;
@@ -99,31 +102,79 @@ test.describe.serial('MCP Panel', () => {
             const mmPage = new MattermostPage(page);
             const systemConsole = new SystemConsoleHelper(page);
 
+            const originURL = new URL(mattermost.url());
+            const origin = originURL.origin;
+            const isTrustworthyOrigin = originURL.protocol === 'https:' ||
+                ['localhost', '127.0.0.1', '::1'].includes(originURL.hostname);
+            const useMemoryClipboard = browserName !== 'chromium' || !isTrustworthyOrigin;
+            if (!useMemoryClipboard) {
+                await context.grantPermissions(['clipboard-read', 'clipboard-write'], {origin});
+            }
+
+            await page.addInitScript(({useMemoryClipboard}) => {
+                if (!useMemoryClipboard) {
+                    return;
+                }
+
+                const boundary = {value: '', writeCount: 0};
+                Object.defineProperty(window, '__e2eClipboardBoundary', {
+                    configurable: true,
+                    value: boundary,
+                });
+                Object.defineProperty(navigator, 'clipboard', {
+                    configurable: true,
+                    value: {
+                        writeText: async (value: string) => {
+                            boundary.value = value;
+                            boundary.writeCount += 1;
+                        },
+                        readText: async () => boundary.value,
+                    },
+                });
+            }, {useMemoryClipboard});
+
             await mmPage.login(mattermost.url(), adminUsername, adminPassword);
             await systemConsole.navigateToPluginConfig(mattermost.url());
+            await page.bringToFront();
 
-            const callbackField = page.getByLabel(/MCP OAuth Callback URL/i);
-            const callbackRow = callbackField.locator('xpath=..');
+            const mcpPanel = systemConsole.getPanel('Model Context Protocol (MCP)');
+            const callbackField = mcpPanel.getByLabel(/MCP OAuth Callback URL/i);
             await callbackField.scrollIntoViewIfNeeded();
 
             // The URL must be the SiteURL the server reports plus the plugin OAuth callback path.
-            await expect(callbackField).toHaveValue(/\/plugins\/mattermost-ai\/oauth\/callback$/);
+            const expectedValue = `${mattermost.url()}/plugins/mattermost-ai/oauth/callback`;
+            await expect(callbackField).toHaveValue(expectedValue);
             await expect(callbackField).toHaveAttribute('readonly');
 
-            const copyButton = callbackRow.getByRole('button', {name: /copy to clipboard/i});
+            const copyButton = mcpPanel.getByRole('button', {name: /copy to clipboard/i});
             await expect(copyButton).toBeVisible();
 
-            // Grant clipboard permissions so navigator.clipboard.writeText succeeds.
-            await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-
-            const expectedValue = await callbackField.inputValue();
+            await callbackField.focus();
+            if (!useMemoryClipboard) {
+                const clipboardSentinel = 'e2e-clipboard-sentinel-before-production-copy';
+                expect(clipboardSentinel === expectedValue).toBe(false);
+                await page.evaluate((value) => navigator.clipboard.writeText(value), clipboardSentinel);
+                expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(clipboardSentinel);
+            }
             await copyButton.click();
 
             // Button label flips to the confirmation state.
-            await expect(callbackRow.getByRole('button', {name: /^copied$/i})).toBeVisible();
+            await expect(mcpPanel.getByRole('button', {name: /^copied$/i})).toBeVisible();
 
             const clipboardValue = await page.evaluate(() => navigator.clipboard.readText());
             expect(clipboardValue).toBe(expectedValue);
+
+            const memoryBoundary = await page.evaluate(() => {
+                const testWindow = window as Window & {
+                    __e2eClipboardBoundary?: {value: string; writeCount: number};
+                };
+                return testWindow.__e2eClipboardBoundary ?? null;
+            });
+            expect(memoryBoundary === null).toBe(!useMemoryClipboard);
+            if (memoryBoundary) {
+                expect(memoryBoundary.writeCount).toBe(1);
+                expect(memoryBoundary.value).toBe(expectedValue);
+            }
         } finally {
             if (openAIMock) {
                 await openAIMock.stop();
