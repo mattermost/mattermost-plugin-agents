@@ -46,6 +46,10 @@ jobs:
             group: e2e-shard-3
           - name: shard-4
             group: e2e-shard-4
+          - name: shard-5
+            group: e2e-shard-5
+          - name: shard-6
+            group: e2e-shard-6
     name: e2e-${{ matrix.shard.name }}
     env:
       MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermostdevelopment/mattermost-enterprise-edition:release-11.9' }}
