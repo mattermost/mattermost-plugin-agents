@@ -273,9 +273,38 @@ export class AgentPageHelper {
         return this.page.getByPlaceholder('Search servers and tools...');
     }
 
-    getToolToggles(): Locator {
-        // Tool toggles are custom button elements styled as switches
-        return this.page.locator('button[class*="Toggle"]');
+    getMCPDynamicToolLoadingCheckbox(): Locator {
+        return this.page.getByRole('checkbox', {name: /^Dynamic tool loading(?:\s|$)/});
+    }
+
+    getMCPAutoEnableAllCheckbox(): Locator {
+        return this.page.getByRole('checkbox', {name: /^Automatically enable all MCP tools(?:\s|$)/});
+    }
+
+    getMCPServerHeader(serverName: string): Locator {
+        return this.page.getByRole('button', {
+            name: new RegExp(
+                `^${this.escapeRegExp(serverName)}, .*Press to expand or collapse tools\\.$`,
+            ),
+        });
+    }
+
+    getMCPServerToolsRegion(serverName: string): Locator {
+        return this.page.getByRole('region', {name: serverName, exact: true});
+    }
+
+    getMCPServerAllToolsToggle(serverName: string): Locator {
+        return this.page.getByRole('button', {
+            name: new RegExp(`^(Enable|Disable) all tools for ${this.escapeRegExp(serverName)}$`),
+        });
+    }
+
+    getMCPToolToggle(serverName: string, toolName: string): Locator {
+        return this.page.getByRole('button', {
+            name: new RegExp(
+                `^(Enable|Disable) tool ${this.escapeRegExp(toolName)} on ${this.escapeRegExp(serverName)}$`,
+            ),
+        });
     }
 
     // --- Convenience Methods ---
