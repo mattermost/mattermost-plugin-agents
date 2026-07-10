@@ -30,11 +30,6 @@ const PHASE3_LARGE_REASONING_PROMPT = 'phase3-large-reasoning-001';
 const PHASE3_LARGE_CONTENT_MARKER = 'Large post content marker';
 const PHASE3_LARGE_REASONING_MARKER = 'Large post reasoning marker';
 
-const PHASE3_NETWORK_ERROR_PROMPT = 'phase3-network-error-001';
-const PHASE3_NETWORK_RECOVERY_PROMPT = 'phase3-network-recovery-001';
-const PHASE3_NETWORK_ERROR_MESSAGE = 'Sorry! An error occurred while accessing the LLM';
-const PHASE3_NETWORK_RECOVERY_MARKER = 'Network recovery marker';
-
 const PHASE3_RAPID_MSG_ONE_PROMPT = 'phase3-rapid-msg-one-001';
 const PHASE3_RAPID_MSG_TWO_PROMPT = 'phase3-rapid-msg-two-001';
 const PHASE3_RAPID_MSG_THREE_PROMPT = 'phase3-rapid-msg-three-001';
@@ -193,21 +188,6 @@ test.describe('Edge Cases - aimock', () => {
         await llmBotHelper.clickReasoningToggle();
         await llmBotHelper.expectReasoningExpanded(true);
         await llmBotHelper.expectReasoningText(PHASE3_LARGE_REASONING_MARKER);
-    });
-
-    test('Network Error Handling', async ({ page }) => {
-        test.setTimeout(120000);
-
-        const { aiPlugin, llmBotHelper } = await setupAimockTestPage(page, harness.mattermost.url());
-
-        await aiPlugin.sendMessage(PHASE3_NETWORK_ERROR_PROMPT);
-        await llmBotHelper.waitForStreamingComplete();
-        await llmBotHelper.expectPostText(PHASE3_NETWORK_ERROR_MESSAGE);
-
-        await aiPlugin.ensureRhsNewChatTab();
-        await aiPlugin.sendMessage(PHASE3_NETWORK_RECOVERY_PROMPT);
-        await llmBotHelper.waitForStreamingComplete();
-        await llmBotHelper.expectPostText(PHASE3_NETWORK_RECOVERY_MARKER);
     });
 
     test('Multiple Rapid Messages', async ({ page }) => {

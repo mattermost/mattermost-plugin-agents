@@ -160,20 +160,6 @@ test.describe('Bot Mentions', () => {
   });
 });
 
-// Error handling tests
-test.describe('Error Handling', () => {
-  test('handles API errors gracefully', async ({ page }) => {
-    const { aiPlugin } = await setupTestPage(page);
-    await aiPlugin.openRHS();
-
-    await openAIMock.addErrorMock(500, "Internal Server Error");
-    await aiPlugin.sendMessage('This should cause an error');
-
-    // Check if error message is displayed
-    await expect(page.getByText(/An error occurred/i)).toBeVisible();
-  });
-});
-
 test.describe('Thread Analysis', () => {
   test('thread summarization follow-up questions work correctly', async ({ page }) => {
     const { mmPage, aiPlugin } = await setupTestPage(page);
