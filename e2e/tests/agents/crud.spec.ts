@@ -1,7 +1,10 @@
-import { test, expect } from '@playwright/test';
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import {test, expect} from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
-import { MattermostPage } from 'helpers/mm';
-import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
+import {MattermostPage} from 'helpers/mm';
+import {OpenAIMockContainer, RunOpenAIMocks, responseTest} from 'helpers/openai-mock';
 import {
     RunAgentContainer,
     agentAdminUsername, agentAdminPassword,
@@ -9,18 +12,19 @@ import {
     agentUnprivilegedUsername, agentUnprivilegedPassword,
     mockServiceId,
 } from 'helpers/agent-container';
-import { AgentAPIHelper } from 'helpers/agent-api';
-import { AgentPageHelper } from 'helpers/agent-page';
+import {AgentAPIHelper} from 'helpers/agent-api';
+import {AgentPageHelper} from 'helpers/agent-page';
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe('Agent CRUD', () => {
     test.beforeAll(async () => {
+        test.setTimeout(180000);
         mattermost = await RunAgentContainer();
         openAIMock = await RunOpenAIMocks(mattermost.network);
         await openAIMock.addCompletionMock(responseTest);
-    }, { timeout: 180000 });
+    });
 
     test.afterAll(async () => {
         await openAIMock?.stop();
@@ -266,17 +270,62 @@ test.describe('Agent CRUD', () => {
         await expect(agentPage.getAgentRowByName(`Visible To Regular ${suffix}`)).toBeVisible({ timeout: 10000 });
     });
 
-    test('denies create in UI when user lacks manage_own_agent permission', async ({ page }) => {
+    test('shows an accessible read-only list when user lacks manage_own_agent permission', async ({page}) => {
         test.setTimeout(60000);
-        await mattermost.revokeManageOwnAgentFromSystemUser();
+        const suffix = Date.now().toString(36);
+        const displayName = `Read Only Agent ${suffix}`;
+        const username = `readonlyagent${suffix}`;
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const created = await agentApi.createTestAgent(adminClient.getToken(), {
+            displayName,
+            username,
+            serviceID: mockServiceId,
+            userAccessLevel: 0,
+        });
+
         try {
+            await mattermost.revokeManageOwnAgentFromSystemUser();
             const mmPage = new MattermostPage(page);
             const agentPage = new AgentPageHelper(page);
 
             await mmPage.login(mattermost.url(), agentUnprivilegedUsername, agentUnprivilegedPassword);
+            const agentRequestPaths: string[] = [];
+            page.on('request', (request) => {
+                const url = new URL(request.url());
+                if (request.method() === 'GET' && (
+                    url.pathname === '/plugins/mattermost-ai/agents' ||
+                    url.pathname === '/plugins/mattermost-ai/services'
+                )) {
+                    agentRequestPaths.push(url.pathname);
+                }
+            });
+            const listResponsePromise = page.waitForResponse((response) => {
+                const url = new URL(response.url());
+                return response.request().method() === 'GET' &&
+                    url.pathname === '/plugins/mattermost-ai/agents';
+            });
             await agentPage.navigateToAgents(mattermost.url());
+            const listResponse = await listResponsePromise;
 
+            expect(listResponse.status()).toBe(200);
+            expect(agentRequestPaths).toContain('/plugins/mattermost-ai/agents');
+            expect(agentRequestPaths).not.toContain('/plugins/mattermost-ai/services');
+
+            const targetRow = agentPage.getAgentRow(created.id);
+            await expect(targetRow).toBeVisible({timeout: 15000});
+            await expect(targetRow.getByText(displayName, {exact: true})).toBeVisible();
+            await expect(targetRow.getByText(`@${username}`, {exact: true})).toBeVisible();
             await expect(agentPage.getCreateButton()).not.toBeVisible({ timeout: 15000 });
+            await expect(targetRow.getByText('Service unavailable', {exact: true})).toHaveCount(0);
+            await expect(targetRow).not.toHaveAttribute('role', 'button');
+            await expect(targetRow).not.toHaveAttribute('aria-label', `Edit agent ${displayName}`);
+            await expect(targetRow.getByRole('button', {name: 'Agent actions', exact: true})).toHaveCount(0);
+
+            await targetRow.click();
+            await expect(agentPage.getBackButton()).toHaveCount(0);
+            await targetRow.press('Enter');
+            await expect(agentPage.getBackButton()).toHaveCount(0);
         } finally {
             await mattermost.grantSelfServiceAgentPermissions();
         }

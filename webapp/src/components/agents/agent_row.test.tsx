@@ -46,6 +46,21 @@ const availableService: ServiceInfo = {
 
 const noop = () => { /* no-op */ };
 
+test('exposes a stable agent row test ID', () => {
+    render(
+        <AgentRow
+            agent={makeAgent()}
+            services={[availableService]}
+            servicesLoaded={true}
+            canManage={false}
+            onEdit={noop}
+            onDelete={noop}
+        />,
+    );
+
+    expect(screen.getByTestId('agent-row-a1')).not.toBeNull();
+});
+
 describe('AgentRow "Service unavailable" badge', () => {
     const cases: Array<{
         name: string;

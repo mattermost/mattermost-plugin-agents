@@ -1,3 +1,6 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
 import { Page, Locator, expect } from '@playwright/test';
 import type { Client4 } from '@mattermost/client';
 import type { Post } from '@mattermost/types/posts';
@@ -167,17 +170,26 @@ export class MattermostPage {
         channelId: string,
         botUserId: string,
         sinceMs: number,
-        options?: { timeoutMs?: number },
-    ): Promise<void> {
+        options?: { timeoutMs?: number; expectedMessage?: string },
+    ): Promise<Post> {
         const timeout = options?.timeoutMs ?? 45000;
         const skewMs = 5000;
+        let matchingPost: Post | undefined;
 
         await expect.poll(async () => {
             const posts = await fetchPostsForChannel(client, channelId);
-            return posts.filter(
-                (p) => p.user_id === botUserId && p.create_at >= sinceMs - skewMs,
-            ).length;
-        }, { timeout, intervals: [500, 1000, 2000] }).toBeGreaterThan(0);
+            matchingPost = posts.find(
+                (p) => p.user_id === botUserId &&
+                    p.create_at >= sinceMs - skewMs &&
+                    (options?.expectedMessage === undefined || p.message === options.expectedMessage),
+            );
+            return Boolean(matchingPost);
+        }, { timeout, intervals: [500, 1000, 2000] }).toBe(true);
+
+        if (!matchingPost) {
+            throw new Error('Expected a matching bot DM reply after successful polling');
+        }
+        return matchingPost;
     }
 
     async sendMessageAsUser(mattermost: any, username: string, password: string, message: string, channelId?: string) {

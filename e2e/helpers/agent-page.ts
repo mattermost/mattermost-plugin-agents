@@ -1,4 +1,9 @@
-import { Page, Locator, expect } from '@playwright/test';
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import {Page, Locator, expect} from '@playwright/test';
+
+type AccessLevel = 0 | 1 | 2 | 3;
 
 /**
  * AgentPageHelper — Page object for the agent listing page and config view.
@@ -18,7 +23,7 @@ export class AgentPageHelper {
     private getExactLabel(label: string): Locator {
         return this.page.locator('label').filter({
             hasText: new RegExp(`^${this.escapeRegExp(label)}$`),
-        }).first();
+        });
     }
 
     private getLabeledSection(label: string): Locator {
@@ -59,6 +64,10 @@ export class AgentPageHelper {
 
     getYourAgentsTab(): Locator {
         return this.page.getByText('Your agents');
+    }
+
+    getAgentRow(agentId: string): Locator {
+        return this.page.getByTestId(`agent-row-${agentId}`);
     }
 
     getAgentRowByName(displayName: string): Locator {
@@ -179,6 +188,48 @@ export class AgentPageHelper {
 
     getStructuredOutputNote(): Locator {
         return this.page.getByText('Extended thinking is turned off while structured output is enabled', {exact: false});
+    }
+
+    // --- Access Tab ---
+
+    getChannelAccessSection(): Locator {
+        return this.getLabeledSection('Channel access');
+    }
+
+    getChannelAccessRadios(): Locator {
+        return this.getChannelAccessSection().locator('input[type="radio"]');
+    }
+
+    getChannelAccessRadio(level: AccessLevel): Locator {
+        return this.getChannelAccessSection().locator(`input[type="radio"][value="${level}"]`);
+    }
+
+    getChannelAccessSelect(): Locator {
+        return this.getChannelAccessSection().getByRole('combobox');
+    }
+
+    getUserAccessSection(): Locator {
+        return this.getLabeledSection('User access');
+    }
+
+    getUserAccessRadios(): Locator {
+        return this.getUserAccessSection().locator('input[type="radio"]');
+    }
+
+    getUserAccessRadio(level: AccessLevel): Locator {
+        return this.getUserAccessSection().locator(`input[type="radio"][value="${level}"]`);
+    }
+
+    getUserAccessSelect(): Locator {
+        return this.getUserAccessSection().getByRole('combobox');
+    }
+
+    getAgentAdminsSection(): Locator {
+        return this.getLabeledSection('Agent admins');
+    }
+
+    getAgentAdminsSelect(): Locator {
+        return this.getAgentAdminsSection().getByRole('combobox');
     }
 
     // --- Delete Dialog ---

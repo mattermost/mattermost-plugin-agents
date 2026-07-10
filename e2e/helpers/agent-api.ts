@@ -1,3 +1,6 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
 import { mattermostAIPluginRoutes, PluginRoutesApi } from './plugin-http';
 
 // EnabledTool matches llm.EnabledMCPTool on the backend.
@@ -7,6 +10,20 @@ export interface EnabledTool {
     server_origin: string;
     tool_name: string;
 }
+
+export const ChannelAccessLevel = {
+    All: 0,
+    Allow: 1,
+    Block: 2,
+    None: 3,
+} as const;
+
+export const UserAccessLevel = {
+    All: 0,
+    Allow: 1,
+    Block: 2,
+    None: 3,
+} as const;
 
 // CreateAgentRequest matches api.CreateAgentRequest in Go.
 //
@@ -28,6 +45,7 @@ export interface CreateAgentRequest {
     adminUserIDs?: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading: boolean;
     enabledNativeTools?: string[];
     model?: string;
     enableVision?: boolean;
@@ -56,13 +74,14 @@ export interface AgentResponse {
     enableVision: boolean;
     disableTools: boolean;
     channelAccessLevel: number;
-    channelIDs: string[];
+    channelIDs: string[] | null;
     userAccessLevel: number;
-    userIDs: string[];
-    teamIDs: string[];
-    enabledNativeTools: string[];
-    enabledMCPTools?: EnabledTool[];
+    userIDs: string[] | null;
+    teamIDs: string[] | null;
+    enabledNativeTools: string[] | null;
+    enabledMCPTools: EnabledTool[] | null;
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
@@ -90,14 +109,15 @@ export function mergeAgentIntoUpdate(
         serviceID: agent.serviceID,
         customInstructions: agent.customInstructions,
         channelAccessLevel: agent.channelAccessLevel,
-        channelIDs: agent.channelIDs,
+        channelIDs: agent.channelIDs ?? [],
         userAccessLevel: agent.userAccessLevel,
-        userIDs: agent.userIDs,
-        teamIDs: agent.teamIDs,
+        userIDs: agent.userIDs ?? [],
+        teamIDs: agent.teamIDs ?? [],
         adminUserIDs: agent.adminUserIDs ?? [],
         enabledMCPTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools,
-        enabledNativeTools: agent.enabledNativeTools,
+        mcpDynamicToolLoading: agent.mcpDynamicToolLoading,
+        enabledNativeTools: agent.enabledNativeTools ?? [],
         model: agent.model,
         enableVision: agent.enableVision,
         disableTools: agent.disableTools,
@@ -162,8 +182,8 @@ export class AgentAPIHelper {
 
     /**
      * Create an agent with auto-generated unique username. By default the agent
-     * auto-enables every MCP tool so tests that don't care about MCP policy still
-     * behave like pre-allowlist bots.
+     * auto-enables every MCP tool and uses dynamic tool loading so tests that do
+     * not care about MCP policy match the product defaults.
      */
     async createTestAgent(
         token: string,
@@ -175,6 +195,7 @@ export class AgentAPIHelper {
             username: `testagent${uniqueSuffix}`,
             serviceID: 'mock-service',
             autoEnableNewMCPTools: true,
+            mcpDynamicToolLoading: true,
             ...overrides,
         };
         return this.createAgent(token, req);
