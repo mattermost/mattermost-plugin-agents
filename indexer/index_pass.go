@@ -211,7 +211,7 @@ func (s *Indexer) storeBatchWithRetry(ctx context.Context, search embeddings.Emb
 			"error", err.Error())
 		var jitter time.Duration
 		if half := int64(delay / 2); half > 0 {
-			jitter = time.Duration(rand.Int64N(half))
+			jitter = time.Duration(rand.Int64N(half)) // #nosec G404 -- backoff jitter does not need cryptographic randomness.
 		}
 		select {
 		case <-ctx.Done():
