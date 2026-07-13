@@ -23,7 +23,6 @@ function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
 
 describe('originKind', () => {
     test.each([
-        [undefined, 'builtin'],
         ['', 'builtin'],
         ['embedded://mattermost', 'embedded'],
         ['plugin://com.example.plugin', 'plugin'],
@@ -31,6 +30,10 @@ describe('originKind', () => {
         ['http://localhost:9000/mcp', 'external'],
     ] as const)('classifies %s as %s', (origin, expected) => {
         expect(originKind(origin)).toBe(expected);
+    });
+
+    test('classifies an absent origin as builtin', () => {
+        expect(originKind()).toBe('builtin');
     });
 
     test('EmbeddedServerOrigin constant matches the server key', () => {
