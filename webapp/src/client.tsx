@@ -459,6 +459,13 @@ export async function getProfilesByIds(userIds: string[]) {
     return Client4.getProfilesByIds(userIds);
 }
 
+export async function getProfilesByUsernames(usernames: string[]) {
+    if (usernames.length === 0) {
+        return [];
+    }
+    return Client4.getProfilesByUsernames(usernames);
+}
+
 export async function searchAllChannels(term: string): Promise<ChannelWithTeamData[]> {
     return Client4.searchAllChannels(term, {
 

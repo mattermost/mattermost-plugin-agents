@@ -8,9 +8,8 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {doToolCall, doToolResult} from '@/client';
 import {invalidateConversation} from '@/hooks/use_conversation';
 
-import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus, UserInteractionSelect} from './tool_types';
-import ToolCard from './tool_card';
-import QuestionCard, {parseQuestionArgs} from './question_card';
+import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+import {renderToolCall} from './tool_renderers/registry';
 
 // Styled components
 const ToolCallsContainer = styled.div`
@@ -311,43 +310,31 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     return null;
                 }
 
-                if (tool.user_interaction === UserInteractionSelect) {
-                    // Redacted calls (non-requesters) have no arguments to
-                    // render; fall through to the generic tool card.
-                    const question = parseQuestionArgs(tool.arguments);
-                    if (question) {
-                        return (
-                            <QuestionCard
-                                key={tool.id}
-                                tool={tool}
-                                question={question}
-                                isProcessing={isDecisionCall && isSubmitting}
-                                localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
-                                canAnswer={isDecisionCall && isCallStage}
-                                onAnswer={isDecisionCall ? (selections, custom) => handleQuestionAnswer(tool.id, selections, custom) : undefined} // eslint-disable-line no-undefined
-                                onSkip={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
-                            />
-                        );
-                    }
-                }
-
+                // The renderer registry routes each call to its rich card (or
+                // QuestionCard), falling back to the generic ToolCard. Redacted
+                // calls (non-requesters) have no arguments, so every rich/
+                // question parser returns null and the generic card renders.
                 return (
-                    <ToolCard
-                        key={tool.id}
-                        postID={props.postID}
-                        tool={tool}
-                        isCollapsed={isToolCollapsed(tool)}
-                        isProcessing={isDecisionCall && isSubmitting}
-                        localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
-                        onToggleCollapse={() => toggleCollapse(tool.id)}
-                        onApprove={isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined} // eslint-disable-line no-undefined
-                        onReject={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
-                        canExpand={props.canExpand}
-                        showArguments={props.showArguments}
-                        showResults={props.showResults}
-                        approvalStage={props.approvalStage}
-                        isAutoApproved={tool.status === ToolCallStatus.AutoApproved}
-                    />
+                    <React.Fragment key={tool.id}>
+                        {renderToolCall({
+                            postID: props.postID,
+                            tool,
+                            isCollapsed: isToolCollapsed(tool),
+                            isProcessing: isDecisionCall && isSubmitting,
+                            localDecision: isDecisionCall ? toolDecisions[tool.id] : undefined, // eslint-disable-line no-undefined
+                            onToggleCollapse: () => toggleCollapse(tool.id),
+                            onApprove: isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined, // eslint-disable-line no-undefined
+                            onReject: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
+                            canExpand: props.canExpand,
+                            showArguments: props.showArguments,
+                            showResults: props.showResults,
+                            approvalStage: props.approvalStage,
+                            isAutoApproved: tool.status === ToolCallStatus.AutoApproved,
+                            canAnswer: isDecisionCall && isCallStage,
+                            onAnswer: isDecisionCall ? (selections, custom) => handleQuestionAnswer(tool.id, selections, custom) : undefined, // eslint-disable-line no-undefined
+                            onSkip: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
+                        })}
+                    </React.Fragment>
                 );
             })}
 

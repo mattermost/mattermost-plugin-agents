@@ -8,20 +8,22 @@ import {IntlProvider} from 'react-intl';
 import ToolApprovalSet from './tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
-type MockToolCardProps = {
+type MockRenderContext = {
     tool: ToolCall;
     onApprove?: () => void;
     onReject?: () => void;
     isAutoApproved?: boolean;
 };
 
-const mockToolCard = jest.fn<null, [MockToolCardProps]>(() => null);
+// Mock the renderer registry so these tests focus on ToolApprovalSet's
+// decision logic (which tool gets which callbacks) rather than card rendering,
+// and so the real cards' external deps (react-bootstrap, etc.) aren't loaded.
+// Registry routing itself is covered by registry.test.tsx.
+const mockRenderToolCall = jest.fn<null, [MockRenderContext]>(() => null);
 
-jest.mock('./tool_card', () => ({
+jest.mock('./tool_renderers/registry', () => ({
     __esModule: true,
-    default: (props: MockToolCardProps) => {
-        return mockToolCard(props);
-    },
+    renderToolCall: (ctx: MockRenderContext) => mockRenderToolCall(ctx),
 }));
 
 function makeTool(overrides: Partial<ToolCall>): ToolCall {
@@ -51,14 +53,14 @@ function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage
     );
 }
 
-function getToolCardProps(toolID: string): MockToolCardProps {
-    const match = mockToolCard.mock.calls.find(([props]) => props.tool.id === toolID);
+function getToolCardProps(toolID: string): MockRenderContext {
+    const match = mockRenderToolCall.mock.calls.find(([ctx]) => ctx.tool.id === toolID);
     expect(match).toBeDefined();
-    return match![0] as MockToolCardProps;
+    return match![0] as MockRenderContext;
 }
 
 beforeEach(() => {
-    mockToolCard.mockClear();
+    mockRenderToolCall.mockClear();
 });
 
 describe('ToolApprovalSet', () => {
@@ -93,7 +95,7 @@ describe('ToolApprovalSet', () => {
             makeTool({id: 'tool_manual'}),
         ]);
 
-        expect(mockToolCard.mock.calls.find(([props]) => props.tool.id === 'tool_marked')).toBeUndefined();
+        expect(mockRenderToolCall.mock.calls.find(([ctx]) => ctx.tool.id === 'tool_marked')).toBeUndefined();
 
         const manualTool = getToolCardProps('tool_manual');
         expect(manualTool.onApprove).toEqual(expect.any(Function));
