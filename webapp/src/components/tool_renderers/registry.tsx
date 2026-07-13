@@ -17,14 +17,23 @@ import QuestionCard, {parseQuestionArgs} from '../question_card';
 
 import {RichCardProps} from './rich_card_parts';
 import {
-    CreatePostCard, parseCreatePost,
-    DmCard, parseDm,
-    GroupMessageCard, parseGroupMessage,
-    SearchPostsCard, parseSearchPosts,
-    SearchUsersCard, parseSearchUsers,
-    ReadPostCard, parseReadPost,
-    GetChannelInfoCard, parseGetChannelInfo,
+    CreatePostCard,
+    DmCard,
+    GroupMessageCard,
+    SearchPostsCard,
+    SearchUsersCard,
+    ReadPostCard,
+    GetChannelInfoCard,
 } from './rich_cards';
+import {
+    parseCreatePost,
+    parseDm,
+    parseGroupMessage,
+    parseSearchPosts,
+    parseSearchUsers,
+    parseReadPost,
+    parseGetChannelInfo,
+} from './rich_card_parsers';
 
 // Everything tool_approval_set knows about a single tool call. Registry entries
 // pull the subset they need (rich cards need the ToolCard-style props; the
