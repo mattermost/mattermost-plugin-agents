@@ -13,7 +13,7 @@ import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
 import {IntItem} from '../number_items';
 
-import {EmbeddingSearchConfig} from './types';
+import {EmbeddingSearchConfig, REINDEX_DEFAULTS} from './types';
 import {OpenAIProviderConfig, OpenAICompatibleProviderConfig} from './provider_configs';
 import {ChunkingOptionsConfig} from './chunking_options';
 import {ReindexSection} from './reindex_section';
@@ -124,8 +124,8 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     chunkOverlap: 200,
                                     chunkingStrategy: 'sentences',
                                 },
-                                reindexWorkers: 4,
-                                reindexBatchSize: 200,
+                                reindexWorkers: REINDEX_DEFAULTS.workers,
+                                reindexBatchSize: REINDEX_DEFAULTS.batchSize,
                             });
                         } else {
                             onChange({
@@ -221,21 +221,21 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
 
                         <IntItem
                             label={intl.formatMessage({defaultMessage: 'Reindex Worker Count'})}
-                            placeholder='4'
-                            value={value.reindexWorkers ?? 4}
+                            placeholder={REINDEX_DEFAULTS.workers.toString()}
+                            value={value.reindexWorkers ?? REINDEX_DEFAULTS.workers}
                             onChange={(reindexWorkers) => onChange({...value, reindexWorkers})}
                             min={1}
-                            max={32}
+                            max={REINDEX_DEFAULTS.maxWorkers}
                             helptext={intl.formatMessage({defaultMessage: 'Number of concurrent workers used during bulk reindexing. Higher values speed up reindexing but increase load on the embedding provider and database. Lower this if you hit provider rate limits frequently.'})}
                         />
 
                         <IntItem
                             label={intl.formatMessage({defaultMessage: 'Reindex Batch Size'})}
-                            placeholder='200'
-                            value={value.reindexBatchSize ?? 200}
+                            placeholder={REINDEX_DEFAULTS.batchSize.toString()}
+                            value={value.reindexBatchSize ?? REINDEX_DEFAULTS.batchSize}
                             onChange={(reindexBatchSize) => onChange({...value, reindexBatchSize})}
                             min={1}
-                            max={1000}
+                            max={REINDEX_DEFAULTS.maxBatchSize}
                             helptext={intl.formatMessage({defaultMessage: 'Number of posts fetched and embedded per batch during bulk reindexing.'})}
                         />
                     </>

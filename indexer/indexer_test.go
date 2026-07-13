@@ -9,10 +9,9 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	"sync/atomic"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"

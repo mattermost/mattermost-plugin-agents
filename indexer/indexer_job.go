@@ -106,9 +106,10 @@ type ModelCompatibility struct {
 	StoredModelName    string `json:"stored_model_name,omitempty"`
 }
 
-// reindexFetchQuery pages posts by keyset up to the job's cutoff timestamp,
-// preventing a race gap with posts created during reindexing.
-const reindexFetchQuery = `SELECT
+// Keyset pagination of indexable posts, bounded above by a cutoff timestamp
+// to prevent a race gap with posts created during reindexing.
+const (
+	postFetchBase = `SELECT
 		Posts.Id as id,
 		Posts.Message as message,
 		Posts.Props as props,
@@ -124,34 +125,29 @@ const reindexFetchQuery = `SELECT
 		AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
 		AND Posts.Type = ''
 		AND (Posts.CreateAt, Posts.Id) > ($1, $2)
-		AND Posts.CreateAt <= $3
+		AND Posts.CreateAt <= $3`
+
+	postFetchTail = `
 	ORDER BY Posts.CreateAt ASC, Posts.Id ASC
 	LIMIT $4`
 
-// catchUpFetchQuery is reindexFetchQuery restricted to posts not yet indexed,
-// so the catch-up pass skips posts the live hook has already stored.
-const catchUpFetchQuery = `SELECT
-		Posts.Id as id,
-		Posts.Message as message,
-		Posts.Props as props,
-		Posts.UserId as userid,
-		Posts.ChannelId as channelid,
-		Posts.CreateAt as createat,
-		Channels.TeamId as teamid,
-		Channels.Name as channelname,
-		Channels.Type as channeltype
-	FROM Posts
-	LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
-	WHERE Posts.DeleteAt = 0
-		AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
-		AND Posts.Type = ''
-		AND (Posts.CreateAt, Posts.Id) > ($1, $2)
-		AND Posts.CreateAt <= $3
+	reindexFetchQuery = postFetchBase + postFetchTail
+
+	// The catch-up pass skips posts the live hook has already indexed.
+	catchUpFetchQuery = postFetchBase + `
 		AND NOT EXISTS (
 			SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id
-		)
-	ORDER BY Posts.CreateAt ASC, Posts.Id ASC
-	LIMIT $4`
+		)` + postFetchTail
+)
+
+// postFetcher builds a fetchFunc paging the given query up to cutoff.
+func (s *Indexer) postFetcher(ctx context.Context, query string, cutoff int64) fetchFunc {
+	return func(cursor Cursor, limit int) ([]PostRecord, error) {
+		var posts []PostRecord
+		err := s.db.SelectContext(ctx, &posts, query, cursor.LastCreateAt, cursor.LastID, cutoff, limit)
+		return posts, err
+	}
+}
 
 // runReindexJob runs the reindexing process
 func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
@@ -198,13 +194,8 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 	// Load cursor for resumable operation
 	cursor := s.loadCursor()
 
-	mainFetch := func(cursor Cursor, limit int) ([]PostRecord, error) {
-		var posts []PostRecord
-		err := s.db.SelectContext(ctx, &posts, reindexFetchQuery, cursor.LastCreateAt, cursor.LastID, jobStatus.CutoffAt, limit)
-		return posts, err
-	}
-
-	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor, jobStatus.ProcessedRows)
+	mainFetch := s.postFetcher(ctx, reindexFetchQuery, jobStatus.CutoffAt)
+	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor)
 	if errors.Is(err, errCancelRequested) {
 		s.acknowledgeCancel(jobStatus)
 		return
@@ -348,9 +339,9 @@ func (s *Indexer) getLastIndexedTimestamp() int64 {
 // The cancel-survival guard closes a race in which the admin's
 // CancelJob CAS lands before this worker's KVGet: without it, the
 // worker would read cancel_requested and then CAS back to running,
-// silently erasing the cancel. Propagating cancel_requested onto the
-// worker's local status makes the next loop iteration observe the
-// cancel and exit.
+// silently erasing the cancel. The dropped write leaves the KV row
+// as cancel_requested for the pass fetcher's next cancel poll to
+// observe.
 func (s *Indexer) saveJobStatus(status *JobStatus) {
 	if status.JobID == "" {
 		if err := s.pluginAPI.KVSet(ReindexJobKey, status); err != nil {
@@ -405,15 +396,7 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	// Posts created after this point will be picked up by the incremental indexer.
 	catchUpCutoff := time.Now().UnixMilli()
 
-	// Skip posts the live hook has already indexed so catch-up doesn't redo them.
-	catchUpFetch := func(cursor Cursor, limit int) ([]PostRecord, error) {
-		var posts []PostRecord
-		err := s.db.SelectContext(ctx, &posts, catchUpFetchQuery, cursor.LastCreateAt, cursor.LastID, catchUpCutoff, limit)
-		return posts, err
-	}
-
+	catchUpFetch := s.postFetcher(ctx, catchUpFetchQuery, catchUpCutoff)
 	startCursor := Cursor{LastCreateAt: jobStatus.CutoffAt, LastID: ""}
-	startProcessed := jobStatus.ProcessedRows
-	processed, watermark, err := s.runIndexPass(ctx, jobStatus, search, catchUpFetch, startCursor, startProcessed)
-	return processed - startProcessed, watermark, err
+	return s.runIndexPass(ctx, jobStatus, search, catchUpFetch, startCursor)
 }

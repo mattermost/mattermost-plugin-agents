@@ -165,7 +165,7 @@ func TestRunIndexPassWatermark(t *testing.T) {
 		jobStatus := &JobStatus{JobID: "watermark-test", Status: JobStatusRunning}
 		processed, watermark, err := idx.runIndexPass(
 			context.Background(), jobStatus, mockSearch,
-			batchedFetch([][]PostRecord{b0, b1}), Cursor{}, 0)
+			batchedFetch([][]PostRecord{b0, b1}), Cursor{})
 
 		require.NoError(t, err)
 		assert.Equal(t, int64(20), processed, "all posts from both batches should be counted")
@@ -197,13 +197,14 @@ func TestRunIndexPassWatermark(t *testing.T) {
 			})
 
 		startCursor := Cursor{LastCreateAt: 42, LastID: "start"}
-		jobStatus := &JobStatus{JobID: "watermark-fail-test", Status: JobStatusRunning}
+		jobStatus := &JobStatus{JobID: "watermark-fail-test", Status: JobStatusRunning, ProcessedRows: 5}
 		processed, watermark, err := idx.runIndexPass(
 			context.Background(), jobStatus, mockSearch,
-			batchedFetch([][]PostRecord{b0, b1}), startCursor, 5)
+			batchedFetch([][]PostRecord{b0, b1}), startCursor)
 
 		require.Error(t, err)
-		assert.Equal(t, int64(5), processed, "no batch at or after the failure may count toward the checkpoint")
+		assert.Equal(t, int64(0), processed, "no batch at or after the failure may count toward the checkpoint")
+		assert.Equal(t, int64(5), jobStatus.ProcessedRows, "resumed base count must be preserved")
 		assert.Equal(t, startCursor, watermark, "watermark must not advance past the failed batch")
 	})
 
@@ -225,7 +226,7 @@ func TestRunIndexPassWatermark(t *testing.T) {
 		jobStatus := &JobStatus{JobID: "cancel-test", Status: JobStatusRunning}
 		processed, watermark, err := idx.runIndexPass(
 			context.Background(), jobStatus, mockSearch,
-			batchedFetch([][]PostRecord{makeTestPosts("b0", 5, 1000)}), Cursor{}, 0)
+			batchedFetch([][]PostRecord{makeTestPosts("b0", 5, 1000)}), Cursor{})
 
 		require.ErrorIs(t, err, errCancelRequested)
 		assert.Equal(t, int64(0), processed)
@@ -260,7 +261,7 @@ func TestRunIndexPassWatermark(t *testing.T) {
 		jobStatus := &JobStatus{JobID: "checkpoint-test", Status: JobStatusRunning}
 		processed, _, err := idx.runIndexPass(
 			context.Background(), jobStatus, mockSearch,
-			batchedFetch(batches), Cursor{}, 0)
+			batchedFetch(batches), Cursor{})
 
 		require.NoError(t, err)
 		assert.Equal(t, int64(600), processed)

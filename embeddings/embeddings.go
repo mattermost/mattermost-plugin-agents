@@ -104,7 +104,9 @@ type EmbeddingProvider interface {
 	// CreateEmbedding generates embedding for the given text
 	CreateEmbedding(ctx context.Context, text string) ([]float32, error)
 
-	// BatchCreateEmbeddings generates embeddings for multiple texts
+	// BatchCreateEmbeddings generates embeddings for any number of texts;
+	// implementations are responsible for splitting the batch to respect
+	// their provider's per-request limits
 	BatchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error)
 
 	// Dimensions returns the dimensionality of the embeddings

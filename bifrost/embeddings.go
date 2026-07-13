@@ -14,6 +14,14 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
+// Per-request limits for embedding APIs. OpenAI and Azure OpenAI cap a single
+// embeddings request at 2,048 inputs and 300,000 tokens summed across inputs;
+// stay conservatively below both, estimating tokens at ~4 characters each.
+const (
+	maxEmbeddingRequestInputs = 1024
+	maxEmbeddingRequestChars  = 1_000_000 // ~250k tokens
+)
+
 // EmbeddingProvider implements the embeddings.EmbeddingProvider interface using Bifrost.
 type EmbeddingProvider struct {
 	client     *bifrostcore.Bifrost
@@ -91,8 +99,23 @@ func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([
 	return float64SliceToFloat32(embResp.EmbeddingArray), nil
 }
 
-// BatchCreateEmbeddings generates embeddings for multiple texts.
+// BatchCreateEmbeddings generates embeddings for any number of texts,
+// transparently splitting into multiple requests to stay within the
+// provider's per-request limits.
 func (p *EmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
+	result := make([][]float32, 0, len(texts))
+	for _, batch := range splitEmbeddingBatches(texts) {
+		batchResult, err := p.batchCreateEmbeddings(ctx, batch)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, batchResult...)
+	}
+	return result, nil
+}
+
+// batchCreateEmbeddings issues a single embeddings request.
+func (p *EmbeddingProvider) batchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
 	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 
 	req := &schemas.BifrostEmbeddingRequest{
@@ -127,6 +150,27 @@ func (p *EmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []s
 	}
 
 	return result, nil
+}
+
+// splitEmbeddingBatches partitions texts into consecutive sub-batches that
+// each respect the per-request input-count and size limits. A single text
+// larger than the size limit still gets its own batch.
+func splitEmbeddingBatches(texts []string) [][]string {
+	var batches [][]string
+	start := 0
+	chars := 0
+	for i, text := range texts {
+		if i > start && (i-start >= maxEmbeddingRequestInputs || chars+len(text) > maxEmbeddingRequestChars) {
+			batches = append(batches, texts[start:i])
+			start = i
+			chars = 0
+		}
+		chars += len(text)
+	}
+	if start < len(texts) {
+		batches = append(batches, texts[start:])
+	}
+	return batches
 }
 
 // float64SliceToFloat32 narrows an embedding array; bifrost v1.5+ returns

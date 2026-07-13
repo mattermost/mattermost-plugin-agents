@@ -25,17 +25,16 @@ const (
 
 // batchWork is one fetched batch dispatched to a worker.
 type batchWork struct {
-	seq    int64
-	posts  []PostRecord
-	cursor Cursor // keyset position after this batch
+	posts []PostRecord
+	errCh chan error // buffered(1); receives the batch's store result
 }
 
-// batchDone reports a processed batch back to the watermark tracker.
-type batchDone struct {
-	seq    int64
-	cursor Cursor
+// batchHandle is the committer's view of a dispatched batch, queued in fetch
+// order so results are committed in that same order.
+type batchHandle struct {
+	cursor Cursor // keyset position after this batch
 	count  int64
-	err    error
+	errCh  chan error
 }
 
 // fetchFunc returns the next batch of posts after the given cursor.
@@ -52,14 +51,16 @@ func (s *Indexer) reindexSettings() (workers, batchSize int) {
 }
 
 // runIndexPass streams post batches through a pool of workers that filter,
-// embed, and store them concurrently. The persisted checkpoint (cursor +
-// processed count) only ever advances across a contiguous prefix of completed
-// batches, so a resume after failure can never skip a batch that was still in
-// flight. Batches committed ahead of the watermark may be re-processed on
-// resume, which Store makes idempotent.
+// embed, and store them concurrently, while committing results strictly in
+// fetch order: the committer waits on each batch's result before counting the
+// next, so the persisted checkpoint (cursor + processed count) is always a
+// contiguous prefix of completed batches and a resume after failure can never
+// skip a batch that was still in flight. Batches stored ahead of a failed one
+// may be re-processed on resume, which Store makes idempotent.
 //
-// Returns the processed count and watermark cursor (both reflecting only the
-// contiguous completed prefix) and the first error encountered, which is
+// The pass starts from startCursor with jobStatus.ProcessedRows as the
+// processed-count base. It returns the number of posts committed by this
+// pass, the final watermark cursor, and the first error encountered, which is
 // errCancelRequested when the admin canceled the job.
 func (s *Indexer) runIndexPass(
 	ctx context.Context,
@@ -67,7 +68,6 @@ func (s *Indexer) runIndexPass(
 	search embeddings.EmbeddingSearch,
 	fetch fetchFunc,
 	startCursor Cursor,
-	startProcessed int64,
 ) (int64, Cursor, error) {
 	workers, batchSize := s.reindexSettings()
 
@@ -75,23 +75,25 @@ func (s *Indexer) runIndexPass(
 	defer cancelPass()
 
 	workCh := make(chan batchWork)
-	doneCh := make(chan batchDone)
-	fetchErrCh := make(chan error, 1)
+	orderedCh := make(chan batchHandle, workers)
 
 	// Fetcher: sequential keyset pagination; also polls for cancel requests.
-	// On cancel, dispatching stops but in-flight batches complete and count.
+	// On cancel it stops dispatching, but already-dispatched batches complete
+	// and count. fetchErr is published before orderedCh closes, so the
+	// committer may read it once its range over orderedCh finishes.
+	var fetchErr error
 	go func() {
+		defer close(orderedCh)
 		defer close(workCh)
 		cursor := startCursor
-		var seq int64
 		for {
 			if canceled, err := s.isCancelRequested(jobStatus.JobID); err == nil && canceled {
-				fetchErrCh <- errCancelRequested
+				fetchErr = errCancelRequested
 				return
 			}
 			posts, err := fetch(cursor, batchSize)
 			if err != nil {
-				fetchErrCh <- fmt.Errorf("failed to fetch posts: %w", err)
+				fetchErr = fmt.Errorf("failed to fetch posts: %w", err)
 				return
 			}
 			if len(posts) == 0 {
@@ -99,12 +101,21 @@ func (s *Indexer) runIndexPass(
 			}
 			last := posts[len(posts)-1]
 			cursor = Cursor{LastCreateAt: last.CreateAt, LastID: last.ID}
+
+			handle := batchHandle{cursor: cursor, count: int64(len(posts)), errCh: make(chan error, 1)}
 			select {
-			case workCh <- batchWork{seq: seq, posts: posts, cursor: cursor}:
+			case orderedCh <- handle:
 			case <-ctx.Done():
 				return
 			}
-			seq++
+			select {
+			case workCh <- batchWork{posts: posts, errCh: handle.errCh}:
+			case <-ctx.Done():
+				// The handle is already queued; resolve it so the committer
+				// can never block on a batch that was never dispatched.
+				handle.errCh <- ctx.Err()
+				return
+			}
 		}
 	}()
 
@@ -114,51 +125,29 @@ func (s *Indexer) runIndexPass(
 		go func() {
 			defer wg.Done()
 			for work := range workCh {
-				err := s.storeBatchWithRetry(ctx, search, work.posts)
-				select {
-				case doneCh <- batchDone{seq: work.seq, cursor: work.cursor, count: int64(len(work.posts)), err: err}:
-				case <-ctx.Done():
-					return
-				}
+				work.errCh <- s.storeBatchWithRetry(ctx, search, work.posts)
 			}
 		}()
 	}
-	go func() {
-		wg.Wait()
-		close(doneCh)
-	}()
 
-	// Watermark tracker: the checkpoint advances over the contiguous prefix
-	// of completed batches; out-of-order completions wait in pending.
-	pending := make(map[int64]batchDone)
-	var nextSeq int64
+	// Committer: consume handles in fetch order, advancing the watermark one
+	// contiguous batch at a time.
+	startProcessed := jobStatus.ProcessedRows
 	processed := startProcessed
 	lastSaved := startProcessed
 	lastHeartbeatSave := time.Now()
 	watermark := startCursor
 	var firstErr error
 
-	for done := range doneCh {
-		if done.err != nil {
-			if firstErr == nil {
-				firstErr = done.err
-				cancelPass() // stop the fetcher and abort in-flight workers
-			}
-			continue
+	for handle := range orderedCh {
+		if err := <-handle.errCh; err != nil {
+			firstErr = err
+			cancelPass() // stop the fetcher and abort in-flight workers
+			break
 		}
 
-		pending[done.seq] = done
-		for {
-			d, ok := pending[nextSeq]
-			if !ok {
-				break
-			}
-			delete(pending, nextSeq)
-			processed += d.count
-			watermark = d.cursor
-			nextSeq++
-		}
-
+		processed += handle.count
+		watermark = handle.cursor
 		jobStatus.ProcessedRows = processed
 		jobStatus.LastUpdatedAt = time.Now()
 
@@ -176,17 +165,18 @@ func (s *Indexer) runIndexPass(
 		}
 	}
 
-	select {
-	case err := <-fetchErrCh:
-		if firstErr == nil {
-			firstErr = err
-		}
-	default:
+	cancelPass()
+	wg.Wait()
+
+	if firstErr == nil {
+		// orderedCh is closed, so the fetcher has exited and fetchErr is safe
+		// to read.
+		firstErr = fetchErr
 	}
 
 	jobStatus.ProcessedRows = processed
 	jobStatus.LastUpdatedAt = time.Now()
-	return processed, watermark, firstErr
+	return processed - startProcessed, watermark, firstErr
 }
 
 // storeBatchWithRetry filters a batch into documents and stores them,

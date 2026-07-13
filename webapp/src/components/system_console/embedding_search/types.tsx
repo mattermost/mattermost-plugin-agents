@@ -6,6 +6,15 @@ export interface UpstreamConfig {
     parameters: Record<string, unknown> | null; // server sends nil json.RawMessage as JSON null
 }
 
+// Mirror the server's reindex throughput defaults and bounds
+// (embeddings.DefaultReindexWorkers etc. in embeddings/embeddings.go).
+export const REINDEX_DEFAULTS = {
+    workers: 4,
+    maxWorkers: 32,
+    batchSize: 200,
+    maxBatchSize: 1000,
+} as const;
+
 export interface ChunkingOptions {
     chunkSize: number;
     chunkOverlap: number;
