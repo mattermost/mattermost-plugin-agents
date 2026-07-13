@@ -133,37 +133,44 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 		return fmt.Errorf("failed to delete existing chunks: %w", err)
 	}
 
-	for i, doc := range docs {
-		id := doc.PostID
-		if doc.IsChunk {
-			id = fmt.Sprintf("%s_chunk_%d", doc.PostID, doc.ChunkIndex)
-		}
-		_, err := tx.NamedExecContext(ctx, `
-			INSERT INTO llm_posts_embeddings (
-				id, post_id, team_id, channel_id, user_id, content, embedding, created_at,
-				is_chunk, chunk_index, total_chunks
-			)
-			VALUES (
-				:id, :post_id, :team_id, :channel_id, :user_id, :content, :embedding, :created_at,
-				:is_chunk, :chunk_index, :total_chunks
-			)
-			ON CONFLICT (id) DO NOTHING`,
-			map[string]interface{}{
-				"id":           id,
-				"post_id":      doc.PostID,
-				"team_id":      doc.TeamID,
-				"channel_id":   doc.ChannelID,
-				"user_id":      doc.UserID,
-				"content":      doc.Content,
-				"embedding":    pgvector.NewVector(embeddings[i]),
-				"created_at":   doc.CreateAt,
-				"is_chunk":     doc.IsChunk,
-				"chunk_index":  sqlNullInt(doc.IsChunk, doc.ChunkIndex),
-				"total_chunks": sqlNullInt(doc.IsChunk, doc.TotalChunks),
-			},
+	// Multi-row inserts, capped so 11 params/row stays well under the
+	// 65,535 Postgres placeholder limit.
+	const insertBatchRows = 500
+	for start := 0; start < len(docs); start += insertBatchRows {
+		end := min(start+insertBatchRows, len(docs))
+		insert := sq.Insert("llm_posts_embeddings").Columns(
+			"id", "post_id", "team_id", "channel_id", "user_id", "content", "embedding", "created_at",
+			"is_chunk", "chunk_index", "total_chunks",
 		)
+		for i := start; i < end; i++ {
+			doc := docs[i]
+			id := doc.PostID
+			if doc.IsChunk {
+				id = fmt.Sprintf("%s_chunk_%d", doc.PostID, doc.ChunkIndex)
+			}
+			insert = insert.Values(
+				id,
+				doc.PostID,
+				doc.TeamID,
+				doc.ChannelID,
+				doc.UserID,
+				doc.Content,
+				pgvector.NewVector(embeddings[i]),
+				doc.CreateAt,
+				doc.IsChunk,
+				sqlNullInt(doc.IsChunk, doc.ChunkIndex),
+				sqlNullInt(doc.IsChunk, doc.TotalChunks),
+			)
+		}
+		insertQuery, insertArgs, err := insert.
+			Suffix("ON CONFLICT (id) DO NOTHING").
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
 		if err != nil {
-			return fmt.Errorf("failed to insert vector: %w", err)
+			return fmt.Errorf("failed to build insert query: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, insertQuery, insertArgs...); err != nil {
+			return fmt.Errorf("failed to insert vectors: %w", err)
 		}
 	}
 
