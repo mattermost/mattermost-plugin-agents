@@ -285,6 +285,15 @@ Configure chunking options based on your needs:
 | **Chunk Size** | 512-1024 tokens | Varies by strategy |
 | **Chunk Overlap** | 20-50 tokens | For better context continuity |
 
+Bulk reindexing throughput can be tuned for large datasets:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Reindex Worker Count** | 4 | Concurrent embedding/storage workers during bulk reindexing. Raise for faster reindexing if your embedding provider rate limits allow (limits are respected automatically via retry with backoff); lower to reduce database and provider load. |
+| **Reindex Batch Size** | 200 | Posts fetched and embedded per batch. Larger batches amortize request overhead; requests are split automatically to stay within provider per-request limits. |
+
+The defaults stay comfortably within OpenAI Tier 1 rate limits. On Azure OpenAI, throughput is capped by your deployment's tokens-per-minute quota — raise it to benefit from higher worker counts.
+
 Run the initial indexing process after configuration.
 
 ### Permission configuration

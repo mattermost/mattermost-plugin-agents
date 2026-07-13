@@ -19,6 +19,8 @@ export interface EmbeddingSearchConfig {
     parameters: Record<string, unknown> | null; // server sends nil json.RawMessage as JSON null
     dimensions: number;
     chunkingOptions?: ChunkingOptions;
+    reindexWorkers?: number;
+    reindexBatchSize?: number;
 }
 
 // Match the server's JobStatus struct field names

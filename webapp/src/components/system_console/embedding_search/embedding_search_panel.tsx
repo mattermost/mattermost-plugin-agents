@@ -124,6 +124,8 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     chunkOverlap: 200,
                                     chunkingStrategy: 'sentences',
                                 },
+                                reindexWorkers: 4,
+                                reindexBatchSize: 200,
                             });
                         } else {
                             onChange({
@@ -215,6 +217,26 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                         <ChunkingOptionsConfig
                             value={value}
                             onChange={onChange}
+                        />
+
+                        <IntItem
+                            label={intl.formatMessage({defaultMessage: 'Reindex Worker Count'})}
+                            placeholder='4'
+                            value={value.reindexWorkers ?? 4}
+                            onChange={(reindexWorkers) => onChange({...value, reindexWorkers})}
+                            min={1}
+                            max={32}
+                            helptext={intl.formatMessage({defaultMessage: 'Number of concurrent workers used during bulk reindexing. Higher values speed up reindexing but increase load on the embedding provider and database. Lower this if you hit provider rate limits frequently.'})}
+                        />
+
+                        <IntItem
+                            label={intl.formatMessage({defaultMessage: 'Reindex Batch Size'})}
+                            placeholder='200'
+                            value={value.reindexBatchSize ?? 200}
+                            onChange={(reindexBatchSize) => onChange({...value, reindexBatchSize})}
+                            min={1}
+                            max={1000}
+                            helptext={intl.formatMessage({defaultMessage: 'Number of posts fetched and embedded per batch during bulk reindexing.'})}
                         />
                     </>
                 )}

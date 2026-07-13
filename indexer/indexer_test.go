@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"sync/atomic"
+
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -560,141 +562,6 @@ func TestModelInfoOperations(t *testing.T) {
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		err := indexer.SaveModelInfo(info)
 		require.NoError(t, err)
-	})
-}
-
-func TestProcessBatch(t *testing.T) {
-	makePosts := func(n int) []PostRecord {
-		posts := make([]PostRecord, n)
-		for i := range posts {
-			posts[i] = PostRecord{
-				ID:          fmt.Sprintf("post%d", i),
-				Message:     fmt.Sprintf("message %d", i),
-				UserID:      "user1",
-				ChannelID:   "channel1",
-				ChannelType: string(model.ChannelTypeOpen),
-				TeamID:      "team1",
-				ChannelName: "town-square",
-			}
-		}
-		return posts
-	}
-
-	t.Run("store error propagates directly", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		mockSearch.On("Store", mock.Anything, mock.Anything).Return(errors.New("provider error")).Once()
-
-		bp := &batchProcessor{
-			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
-			jobStatus:         &JobStatus{Status: JobStatusRunning},
-			search:            mockSearch,
-			lastHeartbeatSave: time.Now(),
-		}
-
-		err := bp.processBatch(context.Background(), makePosts(1))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "provider error")
-		mockSearch.AssertNumberOfCalls(t, "Store", 1)
-	})
-
-	t.Run("saves heartbeat when time threshold exceeded", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil)
-		mockClient.On("KVSet", ReindexJobKey, mock.Anything).Return(nil)
-
-		bp := &batchProcessor{
-			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
-			jobStatus:         &JobStatus{Status: JobStatusRunning},
-			search:            mockSearch,
-			lastHeartbeatSave: time.Now().Add(-3 * time.Minute), // 3 minutes ago — exceeds 2-minute threshold
-		}
-
-		// Process a small batch (well under 500-post threshold)
-		err := bp.processBatch(context.Background(), makePosts(5))
-		require.NoError(t, err)
-
-		// saveJobStatus should have been called due to time threshold
-		mockClient.AssertCalled(t, "KVSet", ReindexJobKey, mock.Anything)
-		// lastHeartbeatSave should have been reset
-		assert.WithinDuration(t, time.Now(), bp.lastHeartbeatSave, 5*time.Second)
-	})
-
-	t.Run("does not save heartbeat when neither threshold met", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil)
-
-		bp := &batchProcessor{
-			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
-			jobStatus:         &JobStatus{Status: JobStatusRunning},
-			search:            mockSearch,
-			lastHeartbeatSave: time.Now(), // just now — well within 2-minute threshold
-		}
-
-		// Process a small batch (under 500-post threshold)
-		err := bp.processBatch(context.Background(), makePosts(5))
-		require.NoError(t, err)
-
-		// saveJobStatus should NOT have been called
-		mockClient.AssertNotCalled(t, "KVSet", ReindexJobKey, mock.Anything)
-	})
-
-	t.Run("saves checkpoint when count threshold met", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil)
-		mockClient.On("KVSet", ReindexJobKey, mock.Anything).Return(nil)
-
-		bp := &batchProcessor{
-			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
-			jobStatus:         &JobStatus{Status: JobStatusRunning},
-			search:            mockSearch,
-			processedCount:    495,
-			lastSavedCount:    0,
-			lastHeartbeatSave: time.Now(), // recent — time threshold NOT met
-		}
-
-		// This pushes processedCount to 500, meeting the count threshold
-		err := bp.processBatch(context.Background(), makePosts(5))
-		require.NoError(t, err)
-
-		// saveJobStatus should have been called due to count threshold
-		mockClient.AssertCalled(t, "KVSet", ReindexJobKey, mock.Anything)
-		assert.Equal(t, int64(500), bp.lastSavedCount)
-	})
-
-	t.Run("accumulates progress across batches and triggers checkpoint", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil)
-		mockClient.On("KVSet", ReindexJobKey, mock.Anything).Return(nil)
-
-		jobStatus := &JobStatus{Status: JobStatusRunning}
-		bp := &batchProcessor{
-			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
-			jobStatus:         jobStatus,
-			search:            mockSearch,
-			lastHeartbeatSave: time.Now(),
-		}
-
-		// Process 5 batches of 100 posts each (total 500), which should trigger the count checkpoint
-		for i := 0; i < 5; i++ {
-			err := bp.processBatch(context.Background(), makePosts(100))
-			require.NoError(t, err)
-		}
-
-		assert.Equal(t, int64(500), bp.processedCount)
-		assert.Equal(t, int64(500), jobStatus.ProcessedRows)
-		assert.Equal(t, int64(500), bp.lastSavedCount)
-		// KVSet should have been called exactly once — when count hit 500
-		mockClient.AssertNumberOfCalls(t, "KVSet", 1)
 	})
 }
 
@@ -1515,13 +1382,18 @@ func TestStartReindexJob(t *testing.T) {
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(mmapi.ErrKVNotFound).Once()
 
+		// Guarded because the mock matcher re-runs on the background job's
+		// own CAS calls, concurrently with the test goroutine's asserts.
+		var savedMu sync.Mutex
 		var savedStatus *JobStatus
 		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v interface{}) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
 			}
+			savedMu.Lock()
 			savedStatus = &status
+			savedMu.Unlock()
 			return status.Status == JobStatusRunning &&
 				!status.StartedAt.IsZero() &&
 				status.CutoffAt > 0 &&
@@ -1549,7 +1421,9 @@ func TestStartReindexJob(t *testing.T) {
 		assert.NotZero(t, status.CutoffAt)
 		assert.NotEmpty(t, status.NodeID)
 		assert.NotEmpty(t, status.JobID)
+		savedMu.Lock()
 		assert.NotNil(t, savedStatus)
+		savedMu.Unlock()
 
 		// Give the background goroutine a moment to start
 		time.Sleep(50 * time.Millisecond)
@@ -1804,14 +1678,18 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(mmapi.ErrKVNotFound)
 
-		// Capture the saved job status to verify CutoffAt
+		// Capture the saved job status to verify CutoffAt. Guarded because
+		// the matcher re-runs on the background job's own CAS calls.
+		var savedMu sync.Mutex
 		var savedStatus JobStatus
 		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v interface{}) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
 			}
+			savedMu.Lock()
 			savedStatus = status
+			savedMu.Unlock()
 			return status.Status == JobStatusRunning
 		})).Return(true, nil).Once()
 
@@ -1835,9 +1713,11 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		assert.Equal(t, JobStatusRunning, status.Status)
 
 		// CutoffAt must be set (non-zero) and within the time window of the call
+		savedMu.Lock()
 		assert.NotZero(t, savedStatus.CutoffAt, "CutoffAt should be set")
 		assert.GreaterOrEqual(t, savedStatus.CutoffAt, beforeCall, "CutoffAt should be >= time before call")
 		assert.LessOrEqual(t, savedStatus.CutoffAt, afterCall, "CutoffAt should be <= time after call")
+		savedMu.Unlock()
 
 		// Also verify the returned status
 		assert.NotZero(t, status.CutoffAt, "returned status.CutoffAt should be set")
@@ -2182,7 +2062,7 @@ func TestBatchProcessing(t *testing.T) {
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
 		mockBots := &bots.MMBots{}
 
-		// Add posts that will require multiple batches (defaultBatchSize = 100)
+		// Add posts that will require multiple batches (configured batch size = 100)
 		now := model.GetMillis()
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
@@ -2195,11 +2075,11 @@ func TestBatchProcessing(t *testing.T) {
 
 		mockSearch.On("Clear", mock.Anything).Return(nil)
 
-		// Track store calls to verify batch processing
-		storeCallCount := 0
+		// Track store calls to verify batch processing (atomic: concurrent workers)
+		var storeCallCount int32
 		mockSearch.On("Store", mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
-				storeCallCount++
+				atomic.AddInt32(&storeCallCount, 1)
 			}).
 			Return(nil).Maybe()
 
@@ -2209,7 +2089,7 @@ func TestBatchProcessing(t *testing.T) {
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
 
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, testConfigGetter(4, 100), mockClient, mockBots, db, nil)
 
 		jobStatus := &JobStatus{
 			Status:    JobStatusRunning,
@@ -2224,7 +2104,7 @@ func TestBatchProcessing(t *testing.T) {
 		}
 
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
-		assert.GreaterOrEqual(t, storeCallCount, 3) // Should have at least 3 batches (250/100)
+		assert.GreaterOrEqual(t, atomic.LoadInt32(&storeCallCount), int32(3)) // Should have at least 3 batches (250/100)
 		assert.Equal(t, int64(250), jobStatus.ProcessedRows)
 	})
 }
@@ -2690,14 +2570,11 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		mockSearch.On("Clear", mock.Anything).Return(nil)
 
 		// First batch succeeds, second batch fails (after all retries)
-		batchCount := 0
+		var batchCount int32
 		mockSearch.On("Store", mock.Anything, mock.Anything).
-			Run(func(args mock.Arguments) {
-				batchCount++
-			}).
 			Return(func(ctx context.Context, docs []embeddings.PostDocument) error {
 				// First batch succeeds, all subsequent calls fail
-				if batchCount > 1 {
+				if atomic.AddInt32(&batchCount, 1) > 1 {
 					return errors.New("simulated storage failure")
 				}
 				return nil
@@ -2717,7 +2594,10 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
 
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+		// Single worker keeps batch ordering deterministic; single attempt
+		// avoids retry backoff sleeps.
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, testConfigGetter(1, 100), mockClient, mockBots, db, nil)
+		indexer.storeRetryAttempts = 1
 
 		jobStatus := &JobStatus{
 			Status:    JobStatusRunning,
@@ -2728,7 +2608,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		indexer.runReindexJob(jobStatus, true)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
-		assert.Contains(t, jobStatus.Error, "Failed to store documents")
+		assert.Contains(t, jobStatus.Error, "Failed to index posts")
 
 		// Cursor should have been saved for resume - pointing to where first batch ended
 		assert.NotNil(t, savedCursor, "Cursor should be saved on failure")
@@ -3079,6 +2959,7 @@ func TestCatchUpFailureHandling(t *testing.T) {
 		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+		indexer.storeRetryAttempts = 1 // avoid retry backoff sleeps
 
 		jobStatus := &JobStatus{
 			Status:    JobStatusRunning,
@@ -3824,6 +3705,8 @@ func TestStartReindexJob_FreshInstall_AuthenticUpstreamContract(t *testing.T) {
 	// with an empty OldValue. The matchers simulate real KV CAS
 	// semantics so the test fails fast against the broken wrapper; the
 	// capture is what pins the invariant in case those semantics drift.
+	// Guarded because the background job goroutine also hits this mock.
+	var casMu sync.Mutex
 	var reindexCASOldValues [][]byte
 	pluginTestAPI.On("KVSetWithOptions",
 		ReindexJobKey,
@@ -3832,7 +3715,9 @@ func TestStartReindexJob_FreshInstall_AuthenticUpstreamContract(t *testing.T) {
 	).Run(func(args mock.Arguments) {
 		opts := args.Get(2).(model.PluginKVSetOptions)
 		if opts.Atomic {
+			casMu.Lock()
 			reindexCASOldValues = append(reindexCASOldValues, opts.OldValue)
+			casMu.Unlock()
 		}
 	}).Return(func(_ string, _ []byte, opts model.PluginKVSetOptions) (bool, *model.AppError) {
 		if opts.Atomic && len(opts.OldValue) > 0 {
@@ -3874,10 +3759,12 @@ func TestStartReindexJob_FreshInstall_AuthenticUpstreamContract(t *testing.T) {
 	assert.Equal(t, JobStatusRunning, status.Status)
 	assert.False(t, status.StartedAt.IsZero())
 
+	casMu.Lock()
 	require.NotEmpty(t, reindexCASOldValues, "expected at least one atomic CAS against ReindexJobKey")
 	require.Empty(t, reindexCASOldValues[0],
 		"fresh-install CAS must use empty OldValue; non-empty means the wrapper "+
 			"masked a missing key as present-but-zero")
+	casMu.Unlock()
 
 	time.Sleep(50 * time.Millisecond) // let background goroutine settle
 }

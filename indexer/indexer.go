@@ -26,6 +26,10 @@ type Indexer struct {
 	bots         *bots.MMBots
 	db           *sqlx.DB
 	clusterMutex cluster.MutexPluginAPI
+
+	// Store retry policy; overridable in tests to avoid long backoff sleeps.
+	storeRetryAttempts  int
+	storeRetryBaseDelay time.Duration
 }
 
 func New(
@@ -37,12 +41,14 @@ func New(
 	clusterMutex cluster.MutexPluginAPI,
 ) *Indexer {
 	return &Indexer{
-		getSearch:    getSearch,
-		configGetter: configGetter,
-		pluginAPI:    pluginAPI,
-		bots:         bots,
-		db:           db,
-		clusterMutex: clusterMutex,
+		getSearch:           getSearch,
+		configGetter:        configGetter,
+		pluginAPI:           pluginAPI,
+		bots:                bots,
+		db:                  db,
+		clusterMutex:        clusterMutex,
+		storeRetryAttempts:  defaultStoreRetryAttempts,
+		storeRetryBaseDelay: defaultStoreRetryBaseDelay,
 	}
 }
 

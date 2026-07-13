@@ -6,6 +6,7 @@ package indexer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,8 +22,6 @@ const (
 	JobStatusCompleted       = "completed"
 	JobStatusFailed          = "failed"
 	JobStatusCanceled        = "canceled"
-
-	defaultBatchSize = 100
 
 	// KV store keys
 	ReindexJobKey         = "reindex_job_status"
@@ -97,46 +96,6 @@ type HealthCheckResult struct {
 	StoredModelName    string `json:"stored_model_name,omitempty"`
 }
 
-// batchProcessor provides shared batch processing logic for reindex and catch-up passes
-type batchProcessor struct {
-	indexer           *Indexer
-	jobStatus         *JobStatus
-	search            embeddings.EmbeddingSearch
-	processedCount    int64
-	lastSavedCount    int64
-	lastHeartbeatSave time.Time
-}
-
-// processBatch processes a batch of posts: filters, stores, updates progress and heartbeat
-func (bp *batchProcessor) processBatch(ctx context.Context, posts []PostRecord) error {
-	// Filter and create documents
-	docs := bp.indexer.filterAndCreateDocs(posts)
-
-	// Store documents
-	if len(docs) > 0 {
-		if err := bp.search.Store(ctx, docs); err != nil {
-			return err
-		}
-	}
-
-	// Update progress
-	bp.processedCount += int64(len(posts))
-	bp.jobStatus.ProcessedRows = bp.processedCount
-
-	// Update heartbeat
-	bp.jobStatus.LastUpdatedAt = time.Now()
-
-	// Save checkpoint every 500 posts or every 2 minutes (whichever comes first)
-	// to prevent false stale detection with slow embedding providers
-	if bp.processedCount >= bp.lastSavedCount+500 || time.Since(bp.lastHeartbeatSave) > 2*time.Minute {
-		bp.indexer.saveJobStatus(bp.jobStatus)
-		bp.lastSavedCount = bp.processedCount
-		bp.lastHeartbeatSave = time.Now()
-	}
-
-	return nil
-}
-
 // ModelCompatibility represents the result of checking model compatibility
 type ModelCompatibility struct {
 	Compatible         bool   `json:"compatible"`
@@ -147,8 +106,55 @@ type ModelCompatibility struct {
 	StoredModelName    string `json:"stored_model_name,omitempty"`
 }
 
+// reindexFetchQuery pages posts by keyset up to the job's cutoff timestamp,
+// preventing a race gap with posts created during reindexing.
+const reindexFetchQuery = `SELECT
+		Posts.Id as id,
+		Posts.Message as message,
+		Posts.Props as props,
+		Posts.UserId as userid,
+		Posts.ChannelId as channelid,
+		Posts.CreateAt as createat,
+		Channels.TeamId as teamid,
+		Channels.Name as channelname,
+		Channels.Type as channeltype
+	FROM Posts
+	LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
+	WHERE Posts.DeleteAt = 0
+		AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
+		AND Posts.Type = ''
+		AND (Posts.CreateAt, Posts.Id) > ($1, $2)
+		AND Posts.CreateAt <= $3
+	ORDER BY Posts.CreateAt ASC, Posts.Id ASC
+	LIMIT $4`
+
+// catchUpFetchQuery is reindexFetchQuery restricted to posts not yet indexed,
+// so the catch-up pass skips posts the live hook has already stored.
+const catchUpFetchQuery = `SELECT
+		Posts.Id as id,
+		Posts.Message as message,
+		Posts.Props as props,
+		Posts.UserId as userid,
+		Posts.ChannelId as channelid,
+		Posts.CreateAt as createat,
+		Channels.TeamId as teamid,
+		Channels.Name as channelname,
+		Channels.Type as channeltype
+	FROM Posts
+	LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
+	WHERE Posts.DeleteAt = 0
+		AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
+		AND Posts.Type = ''
+		AND (Posts.CreateAt, Posts.Id) > ($1, $2)
+		AND Posts.CreateAt <= $3
+		AND NOT EXISTS (
+			SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id
+		)
+	ORDER BY Posts.CreateAt ASC, Posts.Id ASC
+	LIMIT $4`
+
 // runReindexJob runs the reindexing process
-func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolint:gocognit
+func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.pluginAPI.LogError("Reindex job panicked", "panic", r)
@@ -192,103 +198,28 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 	// Load cursor for resumable operation
 	cursor := s.loadCursor()
 
-	var posts []PostRecord
-	lastCreateAt := cursor.LastCreateAt
-	lastID := cursor.LastID
-	processedCount := jobStatus.ProcessedRows // Resume from previous count if resuming
-	lastSavedCount := processedCount
-	lastHeartbeatSave := time.Now()
+	mainFetch := func(cursor Cursor, limit int) ([]PostRecord, error) {
+		var posts []PostRecord
+		err := s.db.SelectContext(ctx, &posts, reindexFetchQuery, cursor.LastCreateAt, cursor.LastID, jobStatus.CutoffAt, limit)
+		return posts, err
+	}
 
-	for {
-		// JobID-scoped cancel check: a stale read for a different run is
-		// silently ignored.
-		var currentStatus JobStatus
-		if err := s.pluginAPI.KVGet(ReindexJobKey, &currentStatus); err == nil {
-			if currentStatus.JobID == jobStatus.JobID && currentStatus.Status == JobStatusCancelRequested {
-				canceledStatus := currentStatus
-				canceledStatus.Status = JobStatusCanceled
-				canceledStatus.CompletedAt = time.Now()
-				if ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, currentStatus, canceledStatus); casErr != nil {
-					s.pluginAPI.LogError("Failed to record reindex cancellation", "error", casErr)
-				} else if ok {
-					jobStatus.Status = JobStatusCanceled
-					jobStatus.CompletedAt = canceledStatus.CompletedAt
-				}
-				s.pluginAPI.LogWarn("Reindex job was canceled")
-				return
-			}
-		}
-
-		// Run a batch of indexing
-		// Use cutoff timestamp to prevent race gap with posts created during reindexing
-		query := `SELECT
-			Posts.Id as id,
-			Posts.Message as message,
-			Posts.Props as props,
-			Posts.UserId as userid,
-			Posts.ChannelId as channelid,
-			Posts.CreateAt as createat,
-			Channels.TeamId as teamid,
-			Channels.Name as channelname,
-			Channels.Type as channeltype
-		FROM Posts
-		LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
-		WHERE Posts.DeleteAt = 0
-			AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
-			AND Posts.Type = ''
-			AND (Posts.CreateAt, Posts.Id) > ($1, $2)
-			AND Posts.CreateAt <= $3
-		ORDER BY Posts.CreateAt ASC, Posts.Id ASC
-		LIMIT $4`
-
-		err := s.db.Select(&posts, query, lastCreateAt, lastID, jobStatus.CutoffAt, defaultBatchSize)
-		if err != nil {
-			s.handleJobError(jobStatus, fmt.Sprintf("Failed to fetch posts: %s", err), lastCreateAt, lastID)
-			return
-		}
-
-		if len(posts) == 0 {
-			break
-		}
-
-		// Process batch and index posts
-		docs := s.filterAndCreateDocs(posts)
-
-		// Store the batch
-		if len(docs) > 0 {
-			if err := search.Store(ctx, docs); err != nil {
-				s.handleJobError(jobStatus, fmt.Sprintf("Failed to store documents: %s", err), lastCreateAt, lastID)
-				return
-			}
-		}
-
-		// Update progress
-		processedCount += int64(len(posts))
-		jobStatus.ProcessedRows = processedCount
-
-		// Update cursors for next batch
-		lastPost := posts[len(posts)-1]
-		lastCreateAt = lastPost.CreateAt
-		lastID = lastPost.ID
-
-		// Update heartbeat timestamp every batch
-		jobStatus.LastUpdatedAt = time.Now()
-
-		// Save cursor and progress every 500 additional processed records or every 2 minutes
-		// to prevent false stale detection with slow embedding providers
-		if processedCount >= lastSavedCount+500 || time.Since(lastHeartbeatSave) > 2*time.Minute {
-			s.saveCursor(Cursor{LastCreateAt: lastCreateAt, LastID: lastID})
-			s.saveJobStatus(jobStatus)
-			s.pluginAPI.LogWarn("Reindexing progress",
-				"processed", processedCount,
-				"estimated_total", jobStatus.TotalRows)
-			lastSavedCount = processedCount
-			lastHeartbeatSave = time.Now()
-		}
+	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor, jobStatus.ProcessedRows)
+	if errors.Is(err, errCancelRequested) {
+		s.acknowledgeCancel(jobStatus)
+		return
+	}
+	if err != nil {
+		s.handleJobError(jobStatus, fmt.Sprintf("Failed to index posts: %s", err), watermark.LastCreateAt, watermark.LastID)
+		return
 	}
 
 	// Run catch-up pass to index posts created during the main reindex
 	catchUpCount, catchUpCursor, catchUpErr := s.runCatchUpPass(ctx, jobStatus, search)
+	if errors.Is(catchUpErr, errCancelRequested) {
+		s.acknowledgeCancel(jobStatus)
+		return
+	}
 	if catchUpErr != nil {
 		s.handleJobError(jobStatus, fmt.Sprintf("Catch-up pass failed: %s", catchUpErr), catchUpCursor.LastCreateAt, catchUpCursor.LastID)
 		return
@@ -317,7 +248,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 		}
 	}
 
-	s.pluginAPI.LogWarn("Reindexing completed", "processed_posts", processedCount)
+	s.pluginAPI.LogWarn("Reindexing completed", "processed_posts", jobStatus.ProcessedRows)
 }
 
 // filterAndCreateDocs filters posts and creates PostDocuments
@@ -464,7 +395,7 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 }
 
 // runCatchUpPass indexes posts created after the cutoff timestamp during the main reindex.
-// Returns the number of posts processed, the cursor position at time of return, and any error.
+// Returns the number of posts processed, the watermark cursor at time of return, and any error.
 func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, search embeddings.EmbeddingSearch) (int64, Cursor, error) {
 	if jobStatus.CutoffAt == 0 {
 		return 0, Cursor{}, nil
@@ -474,66 +405,15 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	// Posts created after this point will be picked up by the incremental indexer.
 	catchUpCutoff := time.Now().UnixMilli()
 
-	bp := &batchProcessor{
-		indexer:           s,
-		jobStatus:         jobStatus,
-		search:            search,
-		processedCount:    jobStatus.ProcessedRows,
-		lastSavedCount:    jobStatus.ProcessedRows,
-		lastHeartbeatSave: time.Now(),
+	// Skip posts the live hook has already indexed so catch-up doesn't redo them.
+	catchUpFetch := func(cursor Cursor, limit int) ([]PostRecord, error) {
+		var posts []PostRecord
+		err := s.db.SelectContext(ctx, &posts, catchUpFetchQuery, cursor.LastCreateAt, cursor.LastID, catchUpCutoff, limit)
+		return posts, err
 	}
 
-	var posts []PostRecord
-	var catchUpCount int64
-	lastCreateAt := jobStatus.CutoffAt
-	lastID := ""
-
-	for {
-		// Skip posts the live hook has already indexed so catch-up doesn't redo them.
-		query := `SELECT
-			Posts.Id as id,
-			Posts.Message as message,
-			Posts.Props as props,
-			Posts.UserId as userid,
-			Posts.ChannelId as channelid,
-			Posts.CreateAt as createat,
-			Channels.TeamId as teamid,
-			Channels.Name as channelname,
-			Channels.Type as channeltype
-		FROM Posts
-		LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
-		WHERE Posts.DeleteAt = 0
-			AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
-			AND Posts.Type = ''
-			AND (Posts.CreateAt, Posts.Id) > ($1, $2)
-			AND Posts.CreateAt <= $3
-			AND NOT EXISTS (
-				SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id
-			)
-		ORDER BY Posts.CreateAt ASC, Posts.Id ASC
-		LIMIT $4`
-
-		err := s.db.SelectContext(ctx, &posts, query, lastCreateAt, lastID, catchUpCutoff, defaultBatchSize)
-		if err != nil {
-			return catchUpCount, Cursor{LastCreateAt: lastCreateAt, LastID: lastID}, fmt.Errorf("failed to fetch catch-up posts: %w", err)
-		}
-
-		if len(posts) == 0 {
-			break
-		}
-
-		// Process batch (filters, stores, updates heartbeat and saves progress)
-		if err := bp.processBatch(ctx, posts); err != nil {
-			return catchUpCount, Cursor{LastCreateAt: lastCreateAt, LastID: lastID}, fmt.Errorf("failed to store catch-up documents: %w", err)
-		}
-
-		catchUpCount += int64(len(posts))
-
-		// Update cursor for next batch
-		lastPost := posts[len(posts)-1]
-		lastCreateAt = lastPost.CreateAt
-		lastID = lastPost.ID
-	}
-
-	return catchUpCount, Cursor{LastCreateAt: lastCreateAt, LastID: lastID}, nil
+	startCursor := Cursor{LastCreateAt: jobStatus.CutoffAt, LastID: ""}
+	startProcessed := jobStatus.ProcessedRows
+	processed, watermark, err := s.runIndexPass(ctx, jobStatus, search, catchUpFetch, startCursor, startProcessed)
+	return processed - startProcessed, watermark, err
 }

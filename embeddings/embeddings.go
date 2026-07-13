@@ -117,6 +117,16 @@ type UpstreamConfig struct {
 	Parameters json.RawMessage `json:"parameters"`
 }
 
+// Reindex throughput defaults and bounds. Workers are concurrent embedding
+// pipelines; batch size is posts fetched/embedded per request. Defaults sit
+// comfortably inside OpenAI Tier 1 rate limits.
+const (
+	DefaultReindexWorkers   = 4
+	MaxReindexWorkers       = 32
+	DefaultReindexBatchSize = 200
+	MaxReindexBatchSize     = 1000
+)
+
 // ServiceConfig holds configuration for the embedding search service
 type EmbeddingSearchConfig struct {
 	Type              string           `json:"type"`
@@ -125,6 +135,26 @@ type EmbeddingSearchConfig struct {
 	Parameters        json.RawMessage  `json:"parameters"`
 	Dimensions        int              `json:"dimensions"`
 	ChunkingOptions   chunking.Options `json:"chunkingOptions"`
+	ReindexWorkers    int              `json:"reindexWorkers,omitempty"`
+	ReindexBatchSize  int              `json:"reindexBatchSize,omitempty"`
+}
+
+// GetReindexWorkers returns the configured reindex worker count, clamped to
+// valid bounds, with unset (<=0) falling back to the default.
+func (c *EmbeddingSearchConfig) GetReindexWorkers() int {
+	if c.ReindexWorkers <= 0 {
+		return DefaultReindexWorkers
+	}
+	return min(c.ReindexWorkers, MaxReindexWorkers)
+}
+
+// GetReindexBatchSize returns the configured reindex batch size, clamped to
+// valid bounds, with unset (<=0) falling back to the default.
+func (c *EmbeddingSearchConfig) GetReindexBatchSize() int {
+	if c.ReindexBatchSize <= 0 {
+		return DefaultReindexBatchSize
+	}
+	return min(c.ReindexBatchSize, MaxReindexBatchSize)
 }
 
 // GetProviderType returns the embedding provider type

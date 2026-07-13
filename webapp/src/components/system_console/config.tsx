@@ -126,6 +126,8 @@ const defaultConfig: Config = {
             chunkOverlap: 200,
             chunkingStrategy: 'sentences',
         },
+        reindexWorkers: 4,
+        reindexBatchSize: 200,
     },
     mcp: {
         enabled: true,
