@@ -148,6 +148,17 @@ export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']
         Object.keys(argumentsValue).length === 0;
 }
 
+// hasInspectableArguments reports whether the arguments are a non-empty JSON
+// object worth offering a "View raw" toggle for. Null/empty-object/non-object
+// args have nothing (or nothing extra) to inspect. Used by the card shell to
+// decide whether to render the raw-inspection affordance.
+export function hasInspectableArguments(argumentsValue: ToolCall['arguments']): boolean {
+    return argumentsValue != null &&
+        typeof argumentsValue === 'object' &&
+        !Array.isArray(argumentsValue) &&
+        Object.keys(argumentsValue).length > 0;
+}
+
 function isPrimitive(value: JSONValue): value is string | number | boolean | null {
     return value === null || typeof value !== 'object';
 }
@@ -214,20 +225,33 @@ const FieldValue: React.FC<FieldValueProps> = ({value, clamped}) => {
     return <InlineJson $clamped={clamped}>{JSON.stringify(value, null, 2)}</InlineJson>;
 };
 
+// ToolArgumentsRaw renders the exact pretty-printed JSON payload. Hosted by the
+// card shell's "View raw" affordance so both the generic field list and the
+// rich cards expose the identical raw view.
+export const ToolArgumentsRaw: React.FC<{arguments: ToolCall['arguments']}> = ({arguments: args}) => {
+    if (args == null) {
+        return null;
+    }
+    return (
+        <Container>
+            <RawJson>{JSON.stringify(args, null, 2)}</RawJson>
+        </Container>
+    );
+};
+
 interface ToolArgumentsProps {
     arguments: ToolCall['arguments'];
 }
 
 /**
  * Renders a tool call's arguments as a labeled, readable field list, with a
- * card-level "Show more" (expands all clamped values) and a required "View raw"
- * toggle that reveals the exact pretty-printed JSON payload — the approval
- * surface must always let the user inspect what they are approving. All values
- * render as plain text via styled-components; never through formatText/markdown.
+ * card-level "Show more" that expands all clamped long values at once. All
+ * values render as plain text via styled-components; never through
+ * formatText/markdown. The "View raw" affordance lives on the shared card shell
+ * (ToolCardShell) so rich cards inherit it too.
  */
 const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
     const [expanded, setExpanded] = useState(false);
-    const [showRaw, setShowRaw] = useState(false);
 
     // Object entries in insertion order — identical on the live and persisted
     // paths (both JSON.parse the same bytes), so the layout doesn't shift when
@@ -262,32 +286,32 @@ const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
         );
     }
 
-    const rawJSON = JSON.stringify(args, null, 2);
-
     // Top-level arrays/primitives are not the normal tool-args shape (always a
     // JSON object). Fall back to the raw block so nothing is misrepresented.
-    const canRenderFields = entries.length > 0;
+    if (entries.length === 0) {
+        return (
+            <Container>
+                <RawJson>{JSON.stringify(args, null, 2)}</RawJson>
+            </Container>
+        );
+    }
 
     return (
         <Container>
-            {showRaw || !canRenderFields ? (
-                <RawJson>{rawJSON}</RawJson>
-            ) : (
-                <FieldList>
-                    {entries.map(([key, value]) => (
-                        <Field key={key}>
-                            <FieldLabel>{prettifyKey(key)}</FieldLabel>
-                            <FieldValue
-                                value={value}
-                                clamped={!expanded && isLongValue(value)}
-                            />
-                        </Field>
-                    ))}
-                </FieldList>
-            )}
+            <FieldList>
+                {entries.map(([key, value]) => (
+                    <Field key={key}>
+                        <FieldLabel>{prettifyKey(key)}</FieldLabel>
+                        <FieldValue
+                            value={value}
+                            clamped={!expanded && isLongValue(value)}
+                        />
+                    </Field>
+                ))}
+            </FieldList>
 
-            <ToggleRow>
-                {!showRaw && canRenderFields && hasClampable && (
+            {hasClampable && (
+                <ToggleRow>
                     <ToggleButton
                         type='button'
                         onClick={() => setExpanded((prev) => !prev)}
@@ -304,26 +328,8 @@ const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
                             />
                         )}
                     </ToggleButton>
-                )}
-                {canRenderFields && (
-                    <ToggleButton
-                        type='button'
-                        onClick={() => setShowRaw((prev) => !prev)}
-                    >
-                        {showRaw ? (
-                            <FormattedMessage
-                                id='ai.tool_call.hide_raw'
-                                defaultMessage='Hide raw'
-                            />
-                        ) : (
-                            <FormattedMessage
-                                id='ai.tool_call.view_raw'
-                                defaultMessage='View raw'
-                            />
-                        )}
-                    </ToggleButton>
-                )}
-            </ToggleRow>
+                </ToggleRow>
+            )}
         </Container>
     );
 };

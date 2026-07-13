@@ -2,10 +2,10 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen, fireEvent, within} from '@testing-library/react';
+import {render, screen, fireEvent} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import ToolArguments from './tool_arguments';
+import ToolArguments, {ToolArgumentsRaw, hasInspectableArguments, isEmptyToolArgumentsObject} from './tool_arguments';
 import {JSONValue} from './tool_types';
 
 function renderArgs(args: JSONValue | null | undefined) {
@@ -79,32 +79,11 @@ describe('ToolArguments', () => {
         expect(text.indexOf('Alpha')).toBeLessThan(text.indexOf('Gamma'));
     });
 
-    describe('view raw toggle', () => {
-        test('swaps the field list for the exact JSON payload and back', () => {
-            const {container} = renderArgs({channel_id: 'c1', message: 'hello'});
-
-            // Field list initially: prettified label shown, no raw <pre>.
-            expect(screen.getByText('Channel Id')).not.toBeNull();
-            expect(container.querySelector('pre')).toBeNull();
-
-            fireEvent.click(screen.getByText('View raw'));
-
-            const pre = container.querySelector('pre');
-            expect(pre).not.toBeNull();
-            expect(pre?.textContent).toBe(JSON.stringify({channel_id: 'c1', message: 'hello'}, null, 2));
-
-            // The prettified label is gone while raw is shown.
-            expect(screen.queryByText('Channel Id')).toBeNull();
-
-            fireEvent.click(screen.getByText('Hide raw'));
-            expect(screen.getByText('Channel Id')).not.toBeNull();
-            expect(container.querySelector('pre')).toBeNull();
-        });
-
-        test('is present whenever there are renderable fields', () => {
-            renderArgs({q: 'short'});
-            expect(screen.getByText('View raw')).not.toBeNull();
-        });
+    // The "View raw" toggle lives on the card shell (ToolCardShell), not on
+    // ToolArguments itself — see tool_card_shell.test.tsx.
+    test('does not render its own View raw toggle (hosted by the shell)', () => {
+        renderArgs({q: 'short'});
+        expect(screen.queryByText('View raw')).toBeNull();
     });
 
     describe('show more toggle', () => {
@@ -139,14 +118,44 @@ describe('ToolArguments', () => {
         const pre = container.querySelector('pre');
         expect(pre).not.toBeNull();
         expect(pre?.textContent).toBe(JSON.stringify(['a', 'b'], null, 2));
-        expect(screen.queryByText('View raw')).toBeNull();
+    });
+});
+
+describe('ToolArgumentsRaw', () => {
+    test('renders the exact pretty-printed JSON payload', () => {
+        const args = {channel_id: 'c1', nested: {a: 1, b: [2, 3]}, flag: false};
+        const {container} = render(
+            <IntlProvider locale='en'>
+                <ToolArgumentsRaw arguments={args}/>
+            </IntlProvider>,
+        );
+        const pre = container.querySelector('pre');
+        expect(pre).not.toBeNull();
+        expect(pre?.textContent).toBe(JSON.stringify(args, null, 2));
     });
 
-    test('view raw payload matches the arguments exactly (approval inspectability)', () => {
-        const args = {channel_id: 'c1', nested: {a: 1, b: [2, 3]}, flag: false};
-        const {container} = renderArgs(args);
-        fireEvent.click(screen.getByText('View raw'));
-        const pre = within(container).getByText((_content, node) => node?.tagName === 'PRE');
-        expect(pre.textContent).toBe(JSON.stringify(args, null, 2));
+    test('renders nothing for null arguments', () => {
+        const {container} = render(
+            <IntlProvider locale='en'>
+                <ToolArgumentsRaw arguments={null as unknown as JSONValue}/>
+            </IntlProvider>,
+        );
+        expect(container.textContent).toBe('');
+    });
+});
+
+describe('argument predicates', () => {
+    test('isEmptyToolArgumentsObject', () => {
+        expect(isEmptyToolArgumentsObject({})).toBe(true);
+        expect(isEmptyToolArgumentsObject({a: 1})).toBe(false);
+        expect(isEmptyToolArgumentsObject(null as unknown as JSONValue)).toBe(false);
+        expect(isEmptyToolArgumentsObject([] as unknown as JSONValue)).toBe(false);
+    });
+
+    test('hasInspectableArguments is true only for a non-empty object', () => {
+        expect(hasInspectableArguments({a: 1})).toBe(true);
+        expect(hasInspectableArguments({})).toBe(false);
+        expect(hasInspectableArguments(null as unknown as JSONValue)).toBe(false);
+        expect(hasInspectableArguments(['a'] as unknown as JSONValue)).toBe(false);
     });
 });
