@@ -134,6 +134,74 @@ func TestUserClientsGetToolsEmbeddedToolNamesUseMattermostSlug(t *testing.T) {
 	requireToolNames(t, tools, "mattermost__search_users")
 }
 
+func TestUserClientsGetToolsMapsAndSanitizesTitleAndAnnotations(t *testing.T) {
+	destructive := true
+	userClients := &UserClients{
+		userID: "user-id",
+		clients: map[string]*Client{
+			"jira": {
+				config: ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+				tools: map[string]*gomcp.Tool{
+					// Hostile bidi-override (U+202E) in title/description/
+					// annotations.title must be escaped at capture. Top-level
+					// title takes precedence over annotations.title.
+					"create_issue": {
+						Name:        "create_issue",
+						Description: "Create\u202ean issue",
+						Title:       "Create\u202eIssue",
+						Annotations: &gomcp.ToolAnnotations{
+							Title:           "Annotation\u202eTitle",
+							ReadOnlyHint:    true,
+							DestructiveHint: &destructive,
+						},
+					},
+					// No top-level title: effective title falls back to
+					// annotations.title (also sanitized).
+					"read_issue": {
+						Name:        "read_issue",
+						Description: "Read an issue",
+						Annotations: &gomcp.ToolAnnotations{
+							Title: "Read Issue",
+						},
+					},
+					// No title and no annotations: Title stays empty; webapp
+					// prettifies the bare name.
+					"plain": {
+						Name:        "plain",
+						Description: "Plain tool",
+					},
+				},
+			},
+		},
+	}
+
+	tools := userClients.GetTools(context.Background())
+	byName := make(map[string]llm.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+
+	create, ok := byName["jira__create_issue"]
+	require.True(t, ok)
+	require.Equal(t, "Create[U+202E]Issue", create.Title)
+	require.Equal(t, "Create[U+202E]an issue", create.Description)
+	require.NotNil(t, create.Annotations)
+	require.Equal(t, "Annotation[U+202E]Title", create.Annotations.Title)
+	require.True(t, create.Annotations.ReadOnlyHint)
+	require.NotNil(t, create.Annotations.DestructiveHint)
+	require.True(t, *create.Annotations.DestructiveHint)
+
+	read, ok := byName["jira__read_issue"]
+	require.True(t, ok)
+	require.Equal(t, "Read Issue", read.Title, "effective title should fall back to annotations.title")
+	require.NotNil(t, read.Annotations)
+
+	plain, ok := byName["jira__plain"]
+	require.True(t, ok)
+	require.Empty(t, plain.Title)
+	require.Nil(t, plain.Annotations)
+}
+
 func TestUserClientsGetToolsDeterministicSlugCollision(t *testing.T) {
 	userClients := &UserClients{
 		userID: "user-id",

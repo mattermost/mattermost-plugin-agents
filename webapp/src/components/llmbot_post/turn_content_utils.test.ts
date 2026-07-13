@@ -123,6 +123,57 @@ describe('extractToolCallsForPost', () => {
         });
     });
 
+    test('maps server_origin, mcp_bare_name, title, and description from the block', () => {
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {
+                    type: 'tool_use',
+                    id: 'tc_1',
+                    name: 'mattermost__create_post',
+                    server_origin: 'embedded://mattermost',
+                    mcp_bare_name: 'create_post',
+                    title: 'Create Post',
+                    description: 'Create a new post in Mattermost.',
+                    input: {channel_id: 'c1'},
+                    status: 'pending',
+                    shared: true,
+                },
+            ],
+        });
+        const conv = makeConversation([assistantTurn]);
+        const result = extractToolCallsForPost(conv, 'post_1');
+
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+            id: 'tc_1',
+            name: 'mattermost__create_post',
+            server_origin: 'embedded://mattermost',
+            mcp_bare_name: 'create_post',
+            title: 'Create Post',
+            description: 'Create a new post in Mattermost.',
+        });
+    });
+
+    test('leaves new identity fields undefined when the block omits them (legacy data)', () => {
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {type: 'tool_use', id: 'tc_1', name: 'search', input: {q: 'x'}, status: 'pending'},
+            ],
+        });
+        const conv = makeConversation([assistantTurn]);
+        const result = extractToolCallsForPost(conv, 'post_1');
+
+        expect(result).toHaveLength(1);
+        expect(result[0].title).toBeUndefined();
+        expect(result[0].server_origin).toBeUndefined();
+        expect(result[0].mcp_bare_name).toBeUndefined();
+        expect(result[0].description).toBe('');
+    });
+
     test('maps interaction, auto-execution, and decided fields onto ToolCall', () => {
         const assistantTurn = makeTurn({
             post_id: 'post_1',
