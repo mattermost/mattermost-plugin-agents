@@ -13,7 +13,7 @@ import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
-import {stripWirePrefix} from '@/utils/tool_names';
+import {toolDisplayName} from '@/utils/tool_identity';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
@@ -62,6 +62,12 @@ const ToolName = styled.span`
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
     flex-grow: 1;
+
+    // MCP-supplied titles can be arbitrarily long; keep the header on one line.
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 `;
 
 const ToolCallArguments = styled.div`
@@ -361,13 +367,10 @@ const ToolCard: React.FC<ToolCardProps> = ({
     const isResultApprovalStage = approvalStage === 'result';
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
 
-    // Tool-call cards lack server context, so strip the pluginmcp prefix
-    // heuristically before title-casing the display name.
-    const displayName = stripWirePrefix(tool.name).
-        replace(/_/g, ' ').
-        split(' ').
-        map((word) => word.charAt(0).toUpperCase() + word.slice(1)).
-        join(' ');
+    // Prefer the MCP-supplied title (resolved + sanitized server-side); fall
+    // back to the prettified bare name, matching pre-title behavior so built-in
+    // and embedded display names are unchanged. Long titles ellipsize (ToolName).
+    const displayName = toolDisplayName(tool);
 
     const siteURL = useSelector<GlobalState, string | undefined>((state) => state.entities.general.config.SiteURL);
     const team = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);

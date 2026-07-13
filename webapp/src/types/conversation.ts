@@ -62,10 +62,17 @@ export interface ContentBlock {
     name?: string;
     server_origin?: string;
     input?: Record<string, unknown> | null;
+    mcp_bare_name?: string;
     status?: ToolCallStatus;
     shared?: boolean;
     user_interaction?: string;
     would_auto_execute?: boolean;
+
+    // Resolved human-readable tool display name and description supplied by an
+    // MCP server (see llm.ToolCall). title participates in display-name
+    // resolution; description is plumbing-only (not rendered yet).
+    title?: string;
+    description?: string;
 
     // ToolResult fields
     tool_use_id?: string;

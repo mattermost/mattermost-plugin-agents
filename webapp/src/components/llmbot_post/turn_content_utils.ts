@@ -98,7 +98,14 @@ function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, Cont
     return {
         id: block.id ?? '',
         name: block.name ?? '',
-        description: '',
+
+        // server_origin, mcp_bare_name, title, and description are mapped so a
+        // persisted round carries the same tool identity/metadata the live
+        // websocket event did (renderer registry + display name depend on it).
+        description: block.description ?? '',
+        title: block.title ?? undefined, // eslint-disable-line no-undefined
+        server_origin: block.server_origin ?? undefined, // eslint-disable-line no-undefined
+        mcp_bare_name: block.mcp_bare_name ?? undefined, // eslint-disable-line no-undefined
         arguments: (block.input as ToolCall['arguments']) ?? undefined, // eslint-disable-line no-undefined
         result: resultBlock?.content ?? undefined, // eslint-disable-line no-undefined
         status: statusStringToEnum(block.status),
