@@ -10,6 +10,14 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 )
 
+// Per-request limits for embedding APIs. OpenAI and Azure OpenAI cap a single
+// embeddings request at 2,048 inputs and 300,000 tokens summed across inputs;
+// stay conservatively below both, estimating tokens at ~4 characters each.
+const (
+	maxEmbeddingRequestInputs = 1024
+	maxEmbeddingRequestChars  = 1_000_000 // ~250k tokens
+)
+
 // CompositeSearch implements EmbeddingSearch using separate vector store and embedding provider
 type CompositeSearch struct {
 	store    VectorStore
@@ -54,10 +62,15 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 		texts[i] = doc.Content
 	}
 
-	// Generate embeddings for all chunks
-	embeddings, err := c.provider.BatchCreateEmbeddings(ctx, texts)
-	if err != nil {
-		return err
+	// Generate embeddings for all chunks, splitting into multiple requests
+	// when the batch would exceed provider per-request limits
+	embeddings := make([][]float32, 0, len(texts))
+	for _, batch := range splitEmbeddingBatches(texts) {
+		batchEmbeddings, err := c.provider.BatchCreateEmbeddings(ctx, batch)
+		if err != nil {
+			return err
+		}
+		embeddings = append(embeddings, batchEmbeddings...)
 	}
 
 	// Validate embedding count matches document count
@@ -67,6 +80,27 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 
 	// Store the chunks and their embeddings
 	return c.store.Store(ctx, chunkedDocs, embeddings)
+}
+
+// splitEmbeddingBatches partitions texts into consecutive sub-batches that
+// each respect the per-request input-count and size limits. A single text
+// larger than the size limit still gets its own batch.
+func splitEmbeddingBatches(texts []string) [][]string {
+	var batches [][]string
+	start := 0
+	chars := 0
+	for i, text := range texts {
+		if i > start && (i-start >= maxEmbeddingRequestInputs || chars+len(text) > maxEmbeddingRequestChars) {
+			batches = append(batches, texts[start:i])
+			start = i
+			chars = 0
+		}
+		chars += len(text)
+	}
+	if start < len(texts) {
+		batches = append(batches, texts[start:])
+	}
+	return batches
 }
 
 // Search performs a semantic search and merges results from chunks of the same document

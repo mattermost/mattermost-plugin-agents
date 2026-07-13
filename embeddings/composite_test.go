@@ -6,6 +6,7 @@ package embeddings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
@@ -294,6 +295,106 @@ func TestCompositeSearch_Store(t *testing.T) {
 				tt.verify(t, store, provider)
 			}
 		})
+	}
+}
+
+func TestSplitEmbeddingBatches(t *testing.T) {
+	repeat := func(s string, n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = s
+		}
+		return out
+	}
+
+	tests := []struct {
+		name        string
+		texts       []string
+		wantBatches []int // expected size of each batch
+	}{
+		{
+			name:        "empty input yields no batches",
+			texts:       nil,
+			wantBatches: nil,
+		},
+		{
+			name:        "small input stays in one batch",
+			texts:       []string{"a", "b", "c"},
+			wantBatches: []int{3},
+		},
+		{
+			name:        "splits on input count limit",
+			texts:       repeat("x", maxEmbeddingRequestInputs+1),
+			wantBatches: []int{maxEmbeddingRequestInputs, 1},
+		},
+		{
+			name: "splits on size limit",
+			// 3 texts of just over half the size limit each: no two fit together
+			texts:       repeat(string(make([]byte, maxEmbeddingRequestChars/2+1)), 3),
+			wantBatches: []int{1, 1, 1},
+		},
+		{
+			name:        "single oversized text still gets a batch",
+			texts:       []string{string(make([]byte, maxEmbeddingRequestChars+1))},
+			wantBatches: []int{1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batches := splitEmbeddingBatches(tt.texts)
+
+			var sizes []int
+			total := 0
+			for _, b := range batches {
+				sizes = append(sizes, len(b))
+				total += len(b)
+			}
+			assert.Equal(t, tt.wantBatches, sizes)
+			assert.Equal(t, len(tt.texts), total, "no text may be dropped or duplicated")
+		})
+	}
+}
+
+func TestCompositeSearch_StoreSplitsLargeBatches(t *testing.T) {
+	// Force multiple embedding requests by exceeding the input-count limit,
+	// and verify results are reassembled in order.
+	docs := make([]PostDocument, maxEmbeddingRequestInputs+10)
+	for i := range docs {
+		docs[i] = PostDocument{PostID: fmt.Sprintf("post%d", i), Content: fmt.Sprintf("content %d", i)}
+	}
+
+	store := &stubVectorStore{}
+	provider := &stubEmbeddingProvider{
+		batchCreateEmbeddingsFunc: func(ctx context.Context, texts []string) ([][]float32, error) {
+			embeddings := make([][]float32, len(texts))
+			for i := range texts {
+				embeddings[i] = []float32{float32(len(texts[i])), 0, 0}
+			}
+			return embeddings, nil
+		},
+	}
+
+	cs := NewCompositeSearch(store, provider, chunking.Options{
+		ChunkSize:        1000,
+		ChunkOverlap:     200,
+		ChunkingStrategy: "sentences",
+	})
+
+	err := cs.Store(context.Background(), docs)
+	require.NoError(t, err)
+
+	require.Len(t, provider.batchCreateEmbeddingsCalls, 2, "should split into two embedding requests")
+	assert.Len(t, provider.batchCreateEmbeddingsCalls[0], maxEmbeddingRequestInputs)
+	assert.Len(t, provider.batchCreateEmbeddingsCalls[1], 10)
+
+	require.Len(t, store.storeCalls, 1)
+	assert.Len(t, store.storeCalls[0].docs, len(docs))
+	assert.Len(t, store.storeCalls[0].embeddings, len(docs))
+	// Embeddings must line up with their documents across the request split.
+	for i, doc := range store.storeCalls[0].docs {
+		assert.Equal(t, float32(len(doc.Content)), store.storeCalls[0].embeddings[i][0],
+			"embedding %d does not correspond to its document", i)
 	}
 }
 
