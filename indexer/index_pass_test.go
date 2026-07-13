@@ -234,6 +234,57 @@ func TestRunIndexPassWatermark(t *testing.T) {
 		mockSearch.AssertNotCalled(t, "Store", mock.Anything, mock.Anything)
 	})
 
+	t.Run("terminates when context is canceled with a queued undispatched batch", func(t *testing.T) {
+		// With one worker busy on b0, the fetcher queues b1's handle but
+		// cannot dispatch it. Canceling the context must resolve that
+		// handle, or the committer would block on it forever — if the
+		// fetcher's ctx.Done resolution branch were removed, this test
+		// would hang rather than fail an assertion.
+		idx, _ := newPassTestIndexer(t, 1, 100)
+
+		b0 := makeTestPosts("b0", 10, 1000)
+		b1 := makeTestPosts("b1", 10, 2000)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// The worker stays busy on b0 until released, which happens only
+		// after cancellation — so the fetcher cannot dispatch b1 and must
+		// take the ctx.Done branch.
+		b0Started := make(chan struct{})
+		b0Release := make(chan struct{})
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockSearch.On("Store", mock.Anything, mock.Anything).
+			Return(func(storeCtx context.Context, docs []embeddings.PostDocument) error {
+				if docs[0].PostID[:2] == "b0" {
+					close(b0Started)
+					<-b0Release
+				}
+				return nil
+			}).Maybe()
+
+		go func() {
+			<-b0Started
+			// Give the fetcher time to queue b1's handle and block on dispatch.
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+			time.Sleep(50 * time.Millisecond)
+			close(b0Release)
+		}()
+
+		jobStatus := &JobStatus{JobID: "undispatched-test", Status: JobStatusRunning}
+		processed, watermark, err := idx.runIndexPass(
+			ctx, jobStatus, mockSearch,
+			batchedFetch([][]PostRecord{b0, b1}), Cursor{})
+
+		// b0 completes successfully (its store returns nil after release);
+		// b1 was never dispatched, so it surfaces the cancellation instead
+		// of being counted.
+		assert.Equal(t, int64(10), processed)
+		assert.Equal(t, b0[len(b0)-1].ID, watermark.LastID)
+		require.ErrorIs(t, err, context.Canceled)
+	})
+
 	t.Run("checkpoint saved after 500 contiguous posts", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()

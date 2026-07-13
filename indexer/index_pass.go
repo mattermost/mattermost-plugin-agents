@@ -75,6 +75,8 @@ func (s *Indexer) runIndexPass(
 	defer cancelPass()
 
 	workCh := make(chan batchWork)
+	// Capacity = workers keeps all workers dispatchable while the committer
+	// waits on the oldest batch; a smaller buffer would serialize dispatch.
 	orderedCh := make(chan batchHandle, workers)
 
 	// Fetcher: sequential keyset pagination; also polls for cancel requests.
