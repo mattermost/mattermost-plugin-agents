@@ -16,6 +16,7 @@ import manifest from '@/manifest';
 import {toolDisplayName} from '@/utils/tool_identity';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+import ToolArguments from './tool_arguments';
 
 import LoadingSpinner from './assets/loading_spinner';
 import IconCheckCircle from './assets/icon_check_circle';
@@ -68,16 +69,6 @@ const ToolName = styled.span`
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-`;
-
-const ToolCallArguments = styled.div`
-    margin: 0;
-    padding-left: 24px;
-
-    // Style code blocks rendered by Mattermost
-    pre {
-        margin: 0;
-    }
 `;
 
 const StatusContainer = styled.div`
@@ -333,13 +324,6 @@ interface ToolCardProps {
     isAutoApproved?: boolean;
 }
 
-export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']): boolean {
-    return argumentsValue != null &&
-        typeof argumentsValue === 'object' &&
-        !Array.isArray(argumentsValue) &&
-        Object.keys(argumentsValue).length === 0;
-}
-
 const ToolCard: React.FC<ToolCardProps> = ({
     postID,
     tool,
@@ -395,25 +379,6 @@ const ToolCard: React.FC<ToolCardProps> = ({
         inlinelatex: false,
         postId: postID,
     }), [postID]);
-
-    const renderedArguments = useMemo(() => {
-        if (!showArguments || tool.arguments == null) {
-            return null;
-        }
-
-        let content = JSON.stringify(tool.arguments, null, 2);
-        if (isEmptyToolArgumentsObject(tool.arguments)) {
-            content = formatMessage({
-                id: 'ai.tool_call.no_parameters_required',
-                defaultMessage: 'No parameters required',
-            });
-        }
-        const argumentsMarkdown = `\`\`\`json\n${content}\n\`\`\``;
-        return messageHtmlToComponent(
-            formatText(argumentsMarkdown, markdownOptions),
-            messageHtmlToComponentOptions,
-        );
-    }, [showArguments, tool.arguments, formatMessage, formatText, markdownOptions, messageHtmlToComponent, messageHtmlToComponentOptions]);
 
     const hasLocalDecision = localDecision != null;
 
@@ -570,7 +535,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
 
             {!isCollapsed && (
                 <>
-                    {renderedArguments && <ToolCallArguments>{renderedArguments}</ToolCallArguments>}
+                    {showArguments && <ToolArguments arguments={tool.arguments}/>}
 
                     {showResults && (isSuccess || isError) && renderedResult && (
                         <>

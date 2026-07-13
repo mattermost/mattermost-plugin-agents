@@ -91,4 +91,20 @@ describe('ToolCard argument rendering', () => {
         expect(formatTextMock).not.toHaveBeenCalled();
         expect(messageHtmlToComponentMock).not.toHaveBeenCalled();
     });
+
+    test('renders a readable field list for non-empty arguments (not a JSON blob)', () => {
+        renderComponent(makeTool({arguments: {channel_id: 'c1', message: 'hi'}}));
+
+        // Prettified field labels and plain-text values from ToolArguments.
+        expect(screen.getByText('Channel Id')).not.toBeNull();
+        expect(screen.getByText('c1')).not.toBeNull();
+        expect(screen.getByText('Message')).not.toBeNull();
+        expect(screen.getByText('hi')).not.toBeNull();
+
+        // The arguments are not routed through the markdown pipeline.
+        expect(formatTextMock).not.toHaveBeenCalled();
+
+        // The required raw-inspection affordance is present.
+        expect(screen.getByText('View raw')).not.toBeNull();
+    });
 });
