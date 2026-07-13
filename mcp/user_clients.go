@@ -246,13 +246,31 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 			}
 			seenTools[runtimeToolName] = serverID
 
-			tools = append(tools, llm.Tool{
+			// Title and Description are MCP-server-supplied strings rendered as
+			// plain text in the webapp; sanitize non-printable/bidi Unicode at
+			// this single capture point for embedded/plugin/external metadata.
+			llmTool := llm.Tool{
 				Name:         runtimeToolName,
-				Description:  tool.Description,
+				Description:  llm.SanitizeNonPrintableChars(tool.Description),
+				Title:        llm.SanitizeNonPrintableChars(tool.Title),
 				Schema:       tool.InputSchema,
 				Resolver:     c.createToolResolver(client, toolName),
 				ServerOrigin: client.config.BaseURL,
-			})
+			}
+			if tool.Annotations != nil {
+				llmTool.Annotations = &llm.ToolAnnotations{
+					Title:           llm.SanitizeNonPrintableChars(tool.Annotations.Title),
+					ReadOnlyHint:    tool.Annotations.ReadOnlyHint,
+					DestructiveHint: tool.Annotations.DestructiveHint,
+				}
+				// Display-name precedence per the MCP spec: title >
+				// annotations.title. Resolve the effective title once here so
+				// downstream (wire ToolCall, webapp) carries a single value.
+				if llmTool.Title == "" {
+					llmTool.Title = llmTool.Annotations.Title
+				}
+			}
+			tools = append(tools, llmTool)
 		}
 	}
 

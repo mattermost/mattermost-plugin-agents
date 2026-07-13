@@ -50,6 +50,18 @@ type ContentBlock struct {
 	Status       string          `json:"status,omitempty"`
 	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
 
+	// Title is the resolved human-readable tool display name (see
+	// llm.ToolCall.Title). Persisted so a reloaded conversation renders the
+	// same tool name that the live websocket event showed. Left visible to
+	// non-requesters (name-equivalent).
+	Title string `json:"title,omitempty"`
+
+	// Description is the tool description (see llm.ToolCall.Description).
+	// Plumbing-only in this pass — persisted for live/persisted parity and
+	// future display, but not rendered anywhere yet. Left visible to
+	// non-requesters (name-equivalent).
+	Description string `json:"description,omitempty"`
+
 	// UserInteraction is the persisted form of llm.Tool.UserInteraction.
 	UserInteraction string `json:"user_interaction,omitempty"`
 
@@ -105,10 +117,13 @@ func Int64Ptr(v int64) *int64 { return &v }
 
 // FilterForNonRequester returns a new slice of content blocks with private
 // tool data redacted. Tool use blocks with shared != true have their Input
-// field set to nil. Tool result blocks with shared != true have their Content
-// field set to empty string. All other block types pass through unchanged.
-// The original slice and its elements are never mutated.
-// Returns nil if the input is nil.
+// and MCPBareName fields cleared. Tool result blocks with shared != true have
+// their Content field set to empty string. Name, Title, ServerOrigin, and
+// Description are intentionally left visible to non-requesters (they are
+// tool-identity metadata, not user/model data — mirroring redactToolCalls on
+// the live path so the two paths render identically). All other block types
+// pass through unchanged. The original slice and its elements are never
+// mutated. Returns nil if the input is nil.
 func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil
@@ -133,10 +148,13 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 }
 
 // SanitizeForDisplay returns a new slice of content blocks with LLM-generated
-// string fields sanitized against Unicode bidi/spoofing attacks. Tool use
-// blocks have their Input field sanitized, and tool result blocks have their
-// Content field sanitized. The original slice is never mutated.
-// Returns nil if the input is nil.
+// and MCP-server-supplied string fields sanitized against Unicode bidi/spoofing
+// attacks. Tool use blocks have their Input, Title, and Description fields
+// sanitized, and tool result blocks have their Content field sanitized. The
+// Title/Description sanitization is defense in depth: MCP metadata is already
+// sanitized at capture (mcp/user_clients.go GetTools), but old persisted turns
+// predate that and this path also covers any non-MCP writer. The original slice
+// is never mutated. Returns nil if the input is nil.
 func SanitizeForDisplay(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil
@@ -149,6 +167,12 @@ func SanitizeForDisplay(blocks []ContentBlock) []ContentBlock {
 		case BlockTypeToolUse:
 			if len(block.Input) > 0 {
 				result[i].Input = json.RawMessage(llm.SanitizeNonPrintableChars(string(block.Input)))
+			}
+			if block.Title != "" {
+				result[i].Title = llm.SanitizeNonPrintableChars(block.Title)
+			}
+			if block.Description != "" {
+				result[i].Description = llm.SanitizeNonPrintableChars(block.Description)
 			}
 		case BlockTypeToolResult:
 			if block.Content != "" {

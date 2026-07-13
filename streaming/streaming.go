@@ -152,10 +152,13 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 			Name:             tc.Name,
 			ServerOrigin:     tc.ServerOrigin,
 			Input:            tc.Arguments,
+			MCPBareName:      tc.MCPBareName,
 			Status:           conversation.StatusToString(tc.Status),
 			Shared:           conversation.BoolPtr(a.isDM),
 			UserInteraction:  tc.UserInteraction,
 			WouldAutoExecute: tc.WouldAutoExecute,
+			Title:            tc.Title,
+			Description:      tc.Description,
 		})
 	}
 
@@ -444,14 +447,23 @@ func isResolvedToolCallsEvent(toolCalls []llm.ToolCall) bool {
 	return true
 }
 
-// redactToolCalls returns a copy of the tool calls with Arguments and Result
-// cleared so that non-requesters see tool names and status but not payloads.
+// redactToolCalls returns a copy of the tool calls with Arguments, Result, and
+// MCPBareName cleared so that non-requesters see tool identity (name, title,
+// description, origin) and status but not payloads. Title and Description are
+// kept deliberately: they are tool-identity metadata (name-equivalent), and
+// dropping them here — while the persisted path (FilterForNonRequester) keeps
+// them — would make a call render differently live vs. after reload for
+// non-requesters. This construction clears fields by omission, so any new
+// llm.ToolCall field defaults to redacted; the tool-call parity test enforces
+// that this matches the persisted redaction policy.
 func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	redacted := make([]llm.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
 		redacted[i] = llm.ToolCall{
 			ID:               tc.ID,
 			Name:             tc.Name,
+			Title:            tc.Title,
+			Description:      tc.Description,
 			ServerOrigin:     tc.ServerOrigin,
 			Status:           tc.Status,
 			UserInteraction:  tc.UserInteraction,
