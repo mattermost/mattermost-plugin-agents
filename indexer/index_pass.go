@@ -34,8 +34,9 @@ type batch struct {
 	result chan error
 }
 
-// fetchFunc returns the next batch of posts after the given cursor.
-type fetchFunc func(cursor Cursor, limit int) ([]PostRecord, error)
+// fetchFunc returns the next batch of posts after the given cursor. It must
+// honor ctx so an aborting pass can interrupt an in-flight query.
+type fetchFunc func(ctx context.Context, cursor Cursor, limit int) ([]PostRecord, error)
 
 // reindexSettings resolves worker count and batch size from plugin config,
 // falling back to defaults when unconfigured.
@@ -103,7 +104,7 @@ func (s *Indexer) runIndexPass(
 				fetchErr = errCancelRequested
 				return
 			}
-			posts, err := fetch(cursor, batchSize)
+			posts, err := fetch(ctx, cursor, batchSize)
 			if err != nil {
 				fetchErr = fmt.Errorf("failed to fetch posts: %w", err)
 				return
@@ -137,37 +138,63 @@ func (s *Indexer) runIndexPass(
 		go func() {
 			defer wg.Done()
 			for b := range workCh {
-				b.result <- s.safeStoreBatch(ctx, search, b.posts)
+				if err := s.safeStoreBatch(ctx, search, b.posts); err != nil {
+					b.result <- err
+					// Exit so this worker cannot store any batch after a
+					// failed one: with a single worker this guarantees
+					// nothing is ever stored ahead of the watermark, which
+					// the catch-up pass's NOT EXISTS filter relies on.
+					return
+				}
+				b.result <- nil
 			}
 		}()
 	}
 
 	// Committer: consume batches in fetch order, advancing the watermark one
-	// contiguous batch at a time. While waiting on a slow oldest batch (e.g.
-	// retry backoff), the heartbeat ticker keeps stale-job detection at bay
-	// and keeps cancellation responsive even if the whole pipeline is stuck.
+	// contiguous batch at a time. While waiting — for the next batch or for a
+	// slow oldest batch (e.g. retry backoff) — the heartbeat ticker keeps
+	// stale-job detection at bay and cancellation responsive even if the
+	// whole pipeline is stuck.
 	heartbeat := time.NewTicker(s.heartbeatInterval)
 	defer heartbeat.Stop()
 
 	startProcessed := jobStatus.ProcessedRows
 	processed := startProcessed
 	lastSaved := startProcessed
-	lastHeartbeatSave := time.Now()
+	lastCheckpoint := time.Now()
 	watermark := startCursor
 	var firstErr error
 
 committing:
-	for b := range orderedCh {
+	for {
+		var b *batch
+	awaitBatch:
+		for {
+			select {
+			case next, ok := <-orderedCh:
+				if !ok {
+					break committing
+				}
+				b = next
+				break awaitBatch
+			case <-heartbeat.C:
+				if s.heartbeatTick(jobStatus) {
+					firstErr = errCancelRequested
+					cancelPass()
+					break committing
+				}
+			}
+		}
+
 		var err error
-		for waiting := true; waiting; {
+	awaitResult:
+		for {
 			select {
 			case err = <-b.result:
-				waiting = false
+				break awaitResult
 			case <-heartbeat.C:
-				jobStatus.LastUpdatedAt = time.Now()
-				s.saveJobStatus(jobStatus)
-				lastHeartbeatSave = time.Now()
-				if canceled, cancelErr := s.isCancelRequested(jobStatus.JobID); cancelErr == nil && canceled {
+				if s.heartbeatTick(jobStatus) {
 					firstErr = errCancelRequested
 					cancelPass()
 					break committing
@@ -186,16 +213,15 @@ committing:
 		jobStatus.LastUpdatedAt = time.Now()
 
 		// Save checkpoint every 500 posts or every 2 minutes (whichever
-		// comes first) to prevent false stale detection with slow
-		// embedding providers.
-		if processed >= lastSaved+500 || time.Since(lastHeartbeatSave) > 2*time.Minute {
+		// comes first) so a resume never has to redo much work.
+		if processed >= lastSaved+500 || time.Since(lastCheckpoint) > 2*time.Minute {
 			s.saveCursor(watermark)
 			s.saveJobStatus(jobStatus)
 			s.pluginAPI.LogWarn("Reindexing progress",
 				"processed", processed,
 				"estimated_total", jobStatus.TotalRows)
 			lastSaved = processed
-			lastHeartbeatSave = time.Now()
+			lastCheckpoint = time.Now()
 		}
 	}
 
@@ -216,6 +242,15 @@ committing:
 	jobStatus.ProcessedRows = processed
 	jobStatus.LastUpdatedAt = time.Now()
 	return processed - startProcessed, watermark, firstErr
+}
+
+// heartbeatTick refreshes the job's heartbeat so stale-job detection sees
+// forward progress, and reports whether the admin requested cancellation.
+func (s *Indexer) heartbeatTick(jobStatus *JobStatus) (cancelRequested bool) {
+	jobStatus.LastUpdatedAt = time.Now()
+	s.saveJobStatus(jobStatus)
+	canceled, err := s.isCancelRequested(jobStatus.JobID)
+	return err == nil && canceled
 }
 
 // safeStoreBatch guards a worker against panics in filtering, embedding, or

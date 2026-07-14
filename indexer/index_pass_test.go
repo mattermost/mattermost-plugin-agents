@@ -54,7 +54,7 @@ func makeTestPosts(prefix string, n int, createAtBase int64) []PostRecord {
 // ignoring the cursor (the pass runner drives strictly forward).
 func batchedFetch(batches [][]PostRecord) fetchFunc {
 	idx := 0
-	return func(cursor Cursor, limit int) ([]PostRecord, error) {
+	return func(ctx context.Context, cursor Cursor, limit int) ([]PostRecord, error) {
 		if idx >= len(batches) {
 			return nil, nil
 		}
@@ -141,6 +141,75 @@ func TestStoreBatchWithRetry(t *testing.T) {
 	}
 }
 
+func TestFinishJob(t *testing.T) {
+	tests := []struct {
+		name          string
+		currentStatus string
+		currentJobID  string
+		wantCompleted bool
+		wantWritten   string // expected terminal status CASed to KV; "" = no write
+	}{
+		{
+			name:          "running resolves to completed",
+			currentStatus: JobStatusRunning,
+			currentJobID:  "job-1",
+			wantCompleted: true,
+			wantWritten:   JobStatusCompleted,
+		},
+		{
+			name:          "late cancel_requested wins over completion",
+			currentStatus: JobStatusCancelRequested,
+			currentJobID:  "job-1",
+			wantCompleted: false,
+			wantWritten:   JobStatusCanceled,
+		},
+		{
+			name:          "superseded run writes nothing",
+			currentStatus: JobStatusRunning,
+			currentJobID:  "successor-job",
+			wantCompleted: false,
+			wantWritten:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := mocks.NewMockClient(t)
+			mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+				Run(func(args mock.Arguments) {
+					status := args.Get(1).(*JobStatus)
+					status.JobID = tt.currentJobID
+					status.Status = tt.currentStatus
+				}).
+				Return(nil)
+
+			var written *JobStatus
+			mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.AnythingOfType("indexer.JobStatus")).
+				Run(func(args mock.Arguments) {
+					status := args.Get(2).(JobStatus)
+					written = &status
+				}).
+				Return(true, nil).Maybe()
+			mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+			idx := New(nil, nil, mockClient, &bots.MMBots{}, nil, nil)
+			jobStatus := &JobStatus{JobID: "job-1", Status: JobStatusRunning, ProcessedRows: 7}
+
+			completed := idx.finishJob(jobStatus)
+
+			assert.Equal(t, tt.wantCompleted, completed)
+			if tt.wantWritten == "" {
+				assert.Nil(t, written, "superseded worker must not write a terminal state")
+			} else {
+				require.NotNil(t, written)
+				assert.Equal(t, tt.wantWritten, written.Status)
+				assert.Equal(t, tt.wantWritten, jobStatus.Status, "local status must mirror the persisted terminal state")
+				assert.False(t, written.CompletedAt.IsZero())
+			}
+		})
+	}
+}
+
 func TestRunIndexPassWatermark(t *testing.T) {
 	twoWorkers := passOptions{workers: 2, batchSize: 100}
 
@@ -210,6 +279,35 @@ func TestRunIndexPassWatermark(t *testing.T) {
 		assert.Equal(t, startCursor, watermark, "watermark must not advance past the failed batch")
 	})
 
+	t.Run("single worker never stores past a failed batch", func(t *testing.T) {
+		// The catch-up pass relies on this: its NOT EXISTS filter would
+		// permanently skip (and undercount) any post stored ahead of the
+		// failure watermark, so a worker must stop after its first error.
+		idx, _ := newPassTestIndexer(t)
+		idx.storeRetryAttempts = 1 // fail fast, no retries
+
+		var stored []string
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockSearch.On("Store", mock.Anything, mock.Anything).
+			Return(func(ctx context.Context, docs []embeddings.PostDocument) error {
+				stored = append(stored, docs[0].PostID)
+				return errors.New("store failure")
+			})
+
+		jobStatus := &JobStatus{JobID: "no-store-past-failure-test", Status: JobStatusRunning}
+		processed, _, err := idx.runIndexPass(
+			context.Background(), jobStatus, mockSearch,
+			batchedFetch([][]PostRecord{
+				makeTestPosts("b0", 5, 1000),
+				makeTestPosts("b1", 5, 2000),
+			}), Cursor{}, passOptions{workers: 1, batchSize: 100})
+
+		require.Error(t, err)
+		assert.Equal(t, int64(0), processed)
+		require.Len(t, stored, 1, "no store attempt may happen after a failed batch")
+		assert.Contains(t, stored[0], "b0")
+	})
+
 	t.Run("worker panic fails the pass instead of crashing", func(t *testing.T) {
 		idx, _ := newPassTestIndexer(t)
 
@@ -233,7 +331,7 @@ func TestRunIndexPassWatermark(t *testing.T) {
 		idx, _ := newPassTestIndexer(t)
 
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-		panickyFetch := func(cursor Cursor, limit int) ([]PostRecord, error) {
+		panickyFetch := func(ctx context.Context, cursor Cursor, limit int) ([]PostRecord, error) {
 			panic("fetch exploded")
 		}
 
@@ -312,7 +410,7 @@ func TestRunIndexPassWatermark(t *testing.T) {
 
 		// Endless supply of batches: the fetcher blocks dispatching the
 		// second one, so its own cancel poll never runs again.
-		fetch := func(cursor Cursor, limit int) ([]PostRecord, error) {
+		fetch := func(ctx context.Context, cursor Cursor, limit int) ([]PostRecord, error) {
 			return makeTestPosts("slow", 5, 1000), nil
 		}
 

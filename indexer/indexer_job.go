@@ -141,8 +141,8 @@ const (
 )
 
 // postFetcher builds a fetchFunc paging the given query up to cutoff.
-func (s *Indexer) postFetcher(ctx context.Context, query string, cutoff int64) fetchFunc {
-	return func(cursor Cursor, limit int) ([]PostRecord, error) {
+func (s *Indexer) postFetcher(query string, cutoff int64) fetchFunc {
+	return func(ctx context.Context, cursor Cursor, limit int) ([]PostRecord, error) {
 		var posts []PostRecord
 		err := s.db.SelectContext(ctx, &posts, query, cursor.LastCreateAt, cursor.LastID, cutoff, limit)
 		return posts, err
@@ -195,7 +195,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 	cursor := s.loadCursor()
 
 	workers, batchSize := s.reindexSettings()
-	mainFetch := s.postFetcher(ctx, reindexFetchQuery, jobStatus.CutoffAt)
+	mainFetch := s.postFetcher(reindexFetchQuery, jobStatus.CutoffAt)
 	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor, passOptions{workers: workers, batchSize: batchSize})
 	if errors.Is(err, errCancelRequested) {
 		s.acknowledgeCancel(jobStatus)
@@ -220,10 +220,11 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 		s.pluginAPI.LogWarn("Catch-up pass completed", "catch_up_posts", catchUpCount)
 	}
 
-	// Completed successfully
-	jobStatus.Status = JobStatusCompleted
-	jobStatus.CompletedAt = time.Now()
-	s.saveJobStatus(jobStatus)
+	// Resolve the terminal state; a cancel that raced with completion wins,
+	// in which case the cursor and model info are left for a resume.
+	if !s.finishJob(jobStatus) {
+		return
+	}
 
 	// Clear the cursor on successful completion
 	_ = s.pluginAPI.KVDelete(IndexerCursorKey)
@@ -365,20 +366,10 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 		return
 	}
 
-	if err == nil && current.JobID == status.JobID && current.Status == JobStatusCancelRequested {
-		switch status.Status {
-		case JobStatusRunning:
-			// Drop the heartbeat; the fetcher's next cancel poll observes
-			// the pending cancel on the KV row.
-			status.Status = JobStatusCancelRequested
-			return
-		case JobStatusCompleted:
-			// All work finished, but the admin's cancel landed after the
-			// final poll; honor the protocol by landing in the terminal
-			// canceled state rather than overwriting the cancel.
-			status.Status = JobStatusCanceled
-			status.CompletedAt = time.Now()
-		}
+	if err == nil && current.JobID == status.JobID &&
+		current.Status == JobStatusCancelRequested && status.Status == JobStatusRunning {
+		status.Status = JobStatusCancelRequested
+		return
 	}
 
 	var oldValue interface{}
@@ -394,6 +385,71 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 		s.pluginAPI.LogWarn("Reindex job status write lost a CAS race; will retry on next iteration",
 			"worker_job_id", status.JobID)
 	}
+}
+
+// finishJob resolves a finished worker's terminal state: running -> completed
+// normally, but a cancel that landed after the worker's last poll wins and
+// lands in canceled instead. CAS races (e.g. with a concurrent CancelJob) are
+// retried until a terminal state is persisted or the run is superseded.
+// Returns true only when completion won, so the caller runs completion side
+// effects (cursor cleanup, model info) exclusively for a real completion.
+func (s *Indexer) finishJob(jobStatus *JobStatus) bool {
+	// Without a JobID there is no CAS protocol to arbitrate; mirror
+	// saveJobStatus's unconditional-set fallback.
+	if jobStatus.JobID == "" {
+		jobStatus.Status = JobStatusCompleted
+		jobStatus.CompletedAt = time.Now()
+		s.saveJobStatus(jobStatus)
+		return true
+	}
+
+	const maxAttempts = 5
+	for range maxAttempts {
+		var current JobStatus
+		err := s.pluginAPI.KVGet(ReindexJobKey, &current)
+		if err != nil && !mmapi.IsKVNotFound(err) {
+			s.pluginAPI.LogError("Failed to read job status before completion", "error", err)
+			return false
+		}
+		if err == nil && current.JobID != "" && current.JobID != jobStatus.JobID {
+			s.pluginAPI.LogWarn("Reindex worker superseded by a newer run, dropping completion",
+				"worker_job_id", jobStatus.JobID,
+				"current_job_id", current.JobID)
+			return false
+		}
+
+		newStatus := *jobStatus
+		completed := err != nil || current.Status != JobStatusCancelRequested
+		if completed {
+			newStatus.Status = JobStatusCompleted
+		} else {
+			newStatus.Status = JobStatusCanceled
+		}
+		newStatus.CompletedAt = time.Now()
+
+		var oldValue interface{}
+		if err == nil {
+			oldValue = current
+		}
+		ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newStatus)
+		if casErr != nil {
+			s.pluginAPI.LogError("Failed to save terminal job status", "error", casErr)
+			return false
+		}
+		if ok {
+			jobStatus.Status = newStatus.Status
+			jobStatus.CompletedAt = newStatus.CompletedAt
+			if !completed {
+				s.pluginAPI.LogWarn("Reindex job was canceled at completion")
+			}
+			return completed
+		}
+		// Lost a CAS race (e.g. an admin cancel landed between the read and
+		// the write); re-read and resolve again.
+	}
+	s.pluginAPI.LogError("Failed to persist terminal reindex job status after retries",
+		"job_id", jobStatus.JobID)
+	return false
 }
 
 // runCatchUpPass indexes posts created after the cutoff timestamp during the main reindex.
@@ -412,7 +468,7 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	// a failed run had stored past its checkpoint. Catch-up covers only the
 	// reindex window, so main-pass concurrency isn't needed here.
 	_, batchSize := s.reindexSettings()
-	catchUpFetch := s.postFetcher(ctx, catchUpFetchQuery, catchUpCutoff)
+	catchUpFetch := s.postFetcher(catchUpFetchQuery, catchUpCutoff)
 	startCursor := Cursor{LastCreateAt: jobStatus.CutoffAt, LastID: ""}
 	return s.runIndexPass(ctx, jobStatus, search, catchUpFetch, startCursor, passOptions{workers: 1, batchSize: batchSize})
 }
