@@ -1,0 +1,427 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+)
+
+// recordingPolicyIndex records Add/Remove calls for route tests.
+type recordingPolicyIndex struct {
+	added   []string
+	removed []string
+}
+
+func (r *recordingPolicyIndex) Has(_, _ string) (bool, error) { return false, nil }
+func (r *recordingPolicyIndex) Add(resourceType, resourceID string) error {
+	r.added = append(r.added, resourceType+"/"+resourceID)
+	return nil
+}
+func (r *recordingPolicyIndex) Remove(resourceType, resourceID string) error {
+	r.removed = append(r.removed, resourceType+"/"+resourceID)
+	return nil
+}
+
+// unavailableDecisionClient makes IsAvailable report false.
+type unavailableDecisionClient struct{}
+
+func (unavailableDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (accesscontrol.Outcome, error) {
+	return accesscontrol.OutcomeUnavailable, nil
+}
+
+// setupAccessControlTestEnvironment builds an API whose accessChecker proxies
+// PAP calls to e.mockAPI and records index updates.
+func setupAccessControlTestEnvironment(t *testing.T) (*TestEnvironment, *recordingPolicyIndex) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+	index := &recordingPolicyIndex{}
+	e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, index, nil)
+	return e, index
+}
+
+func TestAgentPolicyRouteAuthMatrix(t *testing.T) {
+	creatorID := model.NewId()
+	agentAdminID := model.NewId()
+	othersManagerID := model.NewId()
+	unrelatedID := model.NewId()
+	agentID := model.NewId()
+	missingAgentID := model.NewId()
+
+	storedPolicy := &model.AccessControlPolicy{ID: agentID, Type: accesscontrol.ResourceTypeAgent}
+
+	tests := []struct {
+		name       string
+		userID     string
+		agentID    string
+		wantStatus int
+	}{
+		{name: "creator can read", userID: creatorID, agentID: agentID, wantStatus: http.StatusOK},
+		{name: "agent admin can read", userID: agentAdminID, agentID: agentID, wantStatus: http.StatusOK},
+		{name: "manage-others-agent can read", userID: othersManagerID, agentID: agentID, wantStatus: http.StatusOK},
+		{name: "unrelated user is forbidden", userID: unrelatedID, agentID: agentID, wantStatus: http.StatusForbidden},
+		{name: "unauthenticated is unauthorized", userID: "", agentID: agentID, wantStatus: http.StatusUnauthorized},
+		{name: "missing agent is not found", userID: creatorID, agentID: missingAgentID, wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, _ := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.agentStore.agents[agentID] = &llm.BotConfig{
+				ID: agentID, Name: "policyagent", DisplayName: "Policy Agent",
+				ServiceID: "svc-1", CreatorID: creatorID, AdminUserIDs: []string{agentAdminID},
+			}
+
+			e.mockAPI.On("HasPermissionTo", othersManagerID, model.PermissionManageOthersAgent).Return(true).Maybe()
+			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+			e.mockAPI.On("GetAccessControlPolicy", agentID).Return(storedPolicy, nil).Maybe()
+
+			recorder := doRequest(e.api, http.MethodGet, "/agents/"+tt.agentID+"/access_policy", nil, tt.userID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+
+			if tt.wantStatus == http.StatusOK {
+				var policy model.AccessControlPolicy
+				require.NoError(t, json.NewDecoder(recorder.Body).Decode(&policy))
+				assert.Equal(t, agentID, policy.ID)
+			}
+		})
+	}
+}
+
+func TestAgentPolicyPutOverwritesIdentityAndUpdatesIndex(t *testing.T) {
+	creatorID := model.NewId()
+	agentID := model.NewId()
+
+	e, index := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.agentStore.agents[agentID] = &llm.BotConfig{
+		ID: agentID, Name: "policyagent", DisplayName: "Policy Agent",
+		ServiceID: "svc-1", CreatorID: creatorID,
+	}
+
+	var savedPolicy *model.AccessControlPolicy
+	e.mockAPI.On("SaveAccessControlPolicy", creatorID, mock.AnythingOfType("*model.AccessControlPolicy")).
+		Run(func(args mock.Arguments) {
+			savedPolicy = args.Get(1).(*model.AccessControlPolicy)
+		}).
+		Return(&model.AccessControlPolicy{ID: agentID}, nil).Once()
+
+	// Spoofed identity fields must be replaced by route-derived values.
+	body := map[string]any{
+		"id":      "spoofed-id",
+		"type":    "channel",
+		"version": "v99",
+		"active":  false,
+		"rules":   []map[string]any{{"actions": []string{"use"}, "expression": `user.attributes.department == "eng"`}},
+	}
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/"+agentID+"/access_policy", body, creatorID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	require.NotNil(t, savedPolicy)
+	assert.Equal(t, agentID, savedPolicy.ID)
+	assert.Equal(t, accesscontrol.ResourceTypeAgent, savedPolicy.Type)
+	assert.Equal(t, model.AccessControlPolicyVersionV0_5, savedPolicy.Version)
+	assert.True(t, savedPolicy.Active)
+	assert.Equal(t, "Policy Agent", savedPolicy.Name, "empty name defaults to the agent display name")
+
+	assert.Equal(t, []string{accesscontrol.ResourceTypeAgent + "/" + agentID}, index.added)
+}
+
+func TestAgentPolicyDeleteUpdatesIndex(t *testing.T) {
+	creatorID := model.NewId()
+	agentID := model.NewId()
+
+	e, index := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.agentStore.agents[agentID] = &llm.BotConfig{
+		ID: agentID, Name: "policyagent", DisplayName: "Policy Agent",
+		ServiceID: "svc-1", CreatorID: creatorID,
+	}
+
+	e.mockAPI.On("DeleteAccessControlPolicy", creatorID, accesscontrol.ResourceTypeAgent, agentID).Return(nil).Once()
+
+	recorder := doRequest(e.api, http.MethodDelete, "/agents/"+agentID+"/access_policy", nil, creatorID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	assert.Equal(t, []string{accesscontrol.ResourceTypeAgent + "/" + agentID}, index.removed)
+}
+
+func TestServiceAndMCPPolicyRouteAuthMatrix(t *testing.T) {
+	adminID := model.NewId()
+	nonAdminID := model.NewId()
+	serviceID := model.NewId()
+	serverID := model.NewId()
+	unknownID := model.NewId()
+
+	seedConfig := func(e *TestEnvironment) {
+		e.api.configStore = &mockConfigStore{
+			cfg: &config.Config{
+				Services: []llm.ServiceConfig{{ID: serviceID, Name: "Svc", Type: "openai"}},
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{{ID: serverID, Name: "Ext", Enabled: true, BaseURL: "https://mcp.example.com"}},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		userID     string
+		path       string
+		wantStatus int
+	}{
+		{name: "admin reads service policy", userID: adminID, path: "/admin/services/" + serviceID + "/access_policy", wantStatus: http.StatusOK},
+		{name: "non-admin forbidden on service policy", userID: nonAdminID, path: "/admin/services/" + serviceID + "/access_policy", wantStatus: http.StatusForbidden},
+		{name: "unknown service is not found", userID: adminID, path: "/admin/services/" + unknownID + "/access_policy", wantStatus: http.StatusNotFound},
+		{name: "admin reads mcp policy", userID: adminID, path: "/admin/mcp/" + serverID + "/access_policy", wantStatus: http.StatusOK},
+		{name: "non-admin forbidden on mcp policy", userID: nonAdminID, path: "/admin/mcp/" + serverID + "/access_policy", wantStatus: http.StatusForbidden},
+		{name: "unknown mcp server is not found", userID: adminID, path: "/admin/mcp/" + unknownID + "/access_policy", wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, _ := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+			seedConfig(e)
+
+			e.mockAPI.On("HasPermissionTo", adminID, model.PermissionManageSystem).Return(true).Maybe()
+			e.mockAPI.On("HasPermissionTo", nonAdminID, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("GetAccessControlPolicy", mock.AnythingOfType("string")).
+				Return(&model.AccessControlPolicy{ID: serviceID}, nil).Maybe()
+
+			recorder := doRequest(e.api, http.MethodGet, tt.path, nil, tt.userID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+		})
+	}
+}
+
+func TestCELRouteAuthMatrix(t *testing.T) {
+	managerID := model.NewId()   // has ManageOwnAgent
+	agentAdminID := model.NewId() // manages one agent via AdminUserIDs only
+	plainID := model.NewId()
+	agentID := model.NewId()
+
+	body := map[string]any{
+		"resource_type": accesscontrol.ResourceTypeAgent,
+		"expression":    `user.attributes.department == "eng"`,
+	}
+
+	tests := []struct {
+		name       string
+		userID     string
+		query      string
+		wantStatus int
+	}{
+		{name: "agent manager allowed", userID: managerID, wantStatus: http.StatusOK},
+		{name: "per-agent admin with agent_id allowed", userID: agentAdminID, query: "?agent_id=" + agentID, wantStatus: http.StatusOK},
+		{name: "per-agent admin without agent_id forbidden", userID: agentAdminID, wantStatus: http.StatusForbidden},
+		{name: "plain user forbidden", userID: plainID, wantStatus: http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, _ := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.agentStore.agents[agentID] = &llm.BotConfig{
+				ID: agentID, Name: "celagent", DisplayName: "CEL Agent",
+				ServiceID: "svc-1", CreatorID: model.NewId(), AdminUserIDs: []string{agentAdminID},
+			}
+
+			e.mockAPI.On("HasPermissionTo", managerID, model.PermissionManageOwnAgent).Return(true).Maybe()
+			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOwnAgent).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("CheckAccessControlExpression", tt.userID, accesscontrol.ResourceTypeAgent, mock.AnythingOfType("string")).
+				Return([]model.CELExpressionError{}, nil).Maybe()
+
+			recorder := doRequest(e.api, http.MethodPost, "/access_control/cel/check"+tt.query, body, tt.userID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+		})
+	}
+}
+
+func TestCELCheckRejectsForeignResourceType(t *testing.T) {
+	userID := model.NewId()
+
+	e, _ := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true).Maybe()
+
+	body := map[string]any{
+		"resource_type": "channel", // core type, not plugin-addressable here
+		"expression":    "true",
+	}
+	recorder := doRequest(e.api, http.MethodPost, "/access_control/cel/check", body, userID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
+// perIDDecisionClient denies specific resource IDs; everything else is no_policy.
+type perIDDecisionClient struct {
+	denied map[string]bool
+}
+
+func (c perIDDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, resourceID, _ string) (accesscontrol.Outcome, error) {
+	if c.denied[resourceID] {
+		return accesscontrol.OutcomeDeny, nil
+	}
+	return accesscontrol.OutcomeNoPolicy, nil
+}
+
+// seedServiceConfig registers a service with a valid stable ID so ABAC
+// evaluation actually runs (invalid IDs short-circuit to no_policy).
+func seedServiceConfig(e *TestEnvironment, serviceID string) {
+	e.api.configStore = &mockConfigStore{
+		cfg: &config.Config{
+			Services: []llm.ServiceConfig{{ID: serviceID, Name: "Gated Service", Type: "openai"}},
+		},
+	}
+}
+
+func TestCreateAgentDeniedServiceReturns403(t *testing.T) {
+	serviceID := model.NewId()
+	userID := model.NewId()
+
+	e, _ := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+	seedServiceConfig(e, serviceID)
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := createAgentBody(map[string]any{"serviceID": serviceID})
+	recorder := doRequest(e.api, http.MethodPost, "/agents", body, userID)
+	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
+
+	var errResp agentErrorResponse
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&errResp))
+	assert.Contains(t, errResp.Error, "service")
+}
+
+func TestCreateAgentAttributeBasedWhileUnavailableReturns400(t *testing.T) {
+	serviceID := model.NewId()
+	userID := model.NewId()
+
+	e, _ := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+	seedServiceConfig(e, serviceID)
+	e.api.accessChecker = accesscontrol.New(unavailableDecisionClient{}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := createAgentBody(map[string]any{
+		"serviceID":       serviceID,
+		"userAccessLevel": int(llm.UserAccessLevelAttributeBased),
+	})
+	recorder := doRequest(e.api, http.MethodPost, "/agents", body, userID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
+func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
+	serviceID := model.NewId()
+	userID := model.NewId()
+	agentID := model.NewId()
+
+	e, _ := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+	seedServiceConfig(e, serviceID)
+	// The service is denied to the editor, but it is a pre-existing
+	// assignment: unrelated edits must not be blocked.
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	stored := &llm.BotConfig{
+		ID: agentID, CreatorID: userID, BotUserID: "bot-1",
+		DisplayName: "Original", Name: "original", ServiceID: serviceID,
+	}
+	e.agentStore.agents[agentID] = stored
+
+	body := updateAgentBodyFromStored(stored, map[string]any{"displayName": "Renamed"})
+	recorder := doRequest(e.api, http.MethodPut, "/agents/"+agentID, body, userID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+}
+
+func TestListAgentsFiltersPolicyDeniedAgents(t *testing.T) {
+	userID := model.NewId()
+	deniedAgentID := model.NewId()
+	allowedAgentID := model.NewId()
+
+	e, _ := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{deniedAgentID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	creatorID := model.NewId() // not the requesting user: no admin bypass
+	e.agentStore.agents[deniedAgentID] = &llm.BotConfig{
+		ID: deniedAgentID, Name: "denied", DisplayName: "Denied", ServiceID: "svc-1", CreatorID: creatorID,
+	}
+	e.agentStore.agents[allowedAgentID] = &llm.BotConfig{
+		ID: allowedAgentID, Name: "allowed", DisplayName: "Allowed", ServiceID: "svc-1", CreatorID: creatorID,
+	}
+
+	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, userID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var agents []llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agents))
+	require.Len(t, agents, 1)
+	assert.Equal(t, allowedAgentID, agents[0].ID)
+}
+
+func TestABACStatusRoute(t *testing.T) {
+	tests := []struct {
+		name          string
+		client        accesscontrol.DecisionClient
+		wantAvailable bool
+	}{
+		{name: "available", client: accesscontrol.PassthroughClient{}, wantAvailable: true},
+		{name: "unavailable", client: unavailableDecisionClient{}, wantAvailable: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, _ := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.api.accessChecker = accesscontrol.New(tt.client, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+
+			recorder := doRequest(e.api, http.MethodGet, "/access_control/status", nil, model.NewId())
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+			var status ABACStatusResponse
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&status))
+			assert.Equal(t, tt.wantAvailable, status.Available)
+		})
+	}
+}

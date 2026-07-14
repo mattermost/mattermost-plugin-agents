@@ -138,7 +138,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "User access level cannot be greater than UserAccessLevelNone (3)",
+			name: "User access level accepts UserAccessLevelAttributeBased (4)",
 			fields: fields{
 				ID:                 "xxx",
 				Name:               "xxx",
@@ -146,7 +146,20 @@ func TestBotConfig_IsValid(t *testing.T) {
 				CustomInstructions: "",
 				ServiceID:          "service-id",
 				ChannelAccessLevel: ChannelAccessLevelAll,
-				UserAccessLevel:    UserAccessLevelNone + 1, // bad
+				UserAccessLevel:    UserAccessLevelAttributeBased,
+			},
+			want: true,
+		},
+		{
+			name: "User access level cannot be greater than UserAccessLevelAttributeBased (4)",
+			fields: fields{
+				ID:                 "xxx",
+				Name:               "xxx",
+				DisplayName:        "xxx",
+				CustomInstructions: "",
+				ServiceID:          "service-id",
+				ChannelAccessLevel: ChannelAccessLevelAll,
+				UserAccessLevel:    UserAccessLevelAttributeBased + 1, // bad
 			},
 			want: false,
 		},
@@ -668,6 +681,23 @@ func TestBotConfigMCPDynamicToolLoadingDefaulting(t *testing.T) {
 	raw, err := json.Marshal(BotConfig{MCPDynamicToolLoading: false})
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"mcpDynamicToolLoading":false`)
+}
+
+func TestBotConfig_JSONRoundTrip_AttributeBasedUserAccessLevel(t *testing.T) {
+	cfg := BotConfig{
+		ID:              "agent-1",
+		Name:            "agent",
+		DisplayName:     "Agent",
+		ServiceID:       "svc-1",
+		UserAccessLevel: UserAccessLevelAttributeBased,
+	}
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"userAccessLevel":4`)
+
+	var decoded BotConfig
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Equal(t, UserAccessLevelAttributeBased, decoded.UserAccessLevel)
 }
 
 func TestServiceConfig_JSONRoundTrip_FallbackServiceID(t *testing.T) {

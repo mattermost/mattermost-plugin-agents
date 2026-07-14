@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -379,6 +380,112 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 				require.NoError(t, errDirect)
 				require.NoError(t, errConfig)
 				require.NoError(t, errBot)
+			}
+		})
+	}
+}
+
+// abacStubClient answers decision calls per resource type; unlisted types
+// evaluate as no_policy (legacy behavior).
+type abacStubClient struct {
+	perType map[string]accesscontrol.Outcome
+}
+
+func (s abacStubClient) EvaluateAccessRequest(_ context.Context, _, resourceType, _, _ string) (accesscontrol.Outcome, error) {
+	if outcome, ok := s.perType[resourceType]; ok {
+		return outcome, nil
+	}
+	return accesscontrol.OutcomeNoPolicy, nil
+}
+
+func setupABACTestEnvironment(t *testing.T, perType map[string]accesscontrol.Outcome) *TestEnvironment {
+	t.Helper()
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	checker := accesscontrol.New(abacStubClient{perType: perType}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, checker, &http.Client{}, nil)
+	return &TestEnvironment{bots: mmBots, client: client, mockAPI: mockAPI}
+}
+
+// TestCheckUsageRestrictionsForUserConfigComposite exercises the composite
+// agent+service ABAC gate layered over the legacy UserAccessLevel check.
+func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
+	userID := model.NewId()
+	agentID := model.NewId()
+	serviceID := model.NewId()
+
+	tests := []struct {
+		name       string
+		perType    map[string]accesscontrol.Outcome
+		cfg        llm.BotConfig
+		wantDenied bool
+	}{
+		{
+			name:    "agent policy deny masks legacy allow",
+			perType: map[string]accesscontrol.Outcome{accesscontrol.ResourceTypeAgent: accesscontrol.OutcomeDeny},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			wantDenied: true,
+		},
+		{
+			name:    "service deny after agent allow",
+			perType: map[string]accesscontrol.Outcome{
+				accesscontrol.ResourceTypeAgent:   accesscontrol.OutcomeAllow,
+				accesscontrol.ResourceTypeService: accesscontrol.OutcomeDeny,
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			wantDenied: true,
+		},
+		{
+			name:    "agent and service allow",
+			perType: map[string]accesscontrol.Outcome{
+				accesscontrol.ResourceTypeAgent:   accesscontrol.OutcomeAllow,
+				accesscontrol.ResourceTypeService: accesscontrol.OutcomeAllow,
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+		},
+		{
+			name:    "attribute-based agent ignores legacy user lists",
+			perType: map[string]accesscontrol.Outcome{accesscontrol.ResourceTypeAgent: accesscontrol.OutcomeAllow},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAttributeBased,
+				UserIDs:         []string{"someone-else"}, // would deny under Allow mode
+			},
+		},
+		{
+			name:    "attribute-based agent denied by policy",
+			perType: map[string]accesscontrol.Outcome{accesscontrol.ResourceTypeAgent: accesscontrol.OutcomeDeny},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAttributeBased,
+			},
+			wantDenied: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupABACTestEnvironment(t, tc.perType)
+			defer e.Cleanup(t)
+
+			err := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), tc.cfg, userID)
+			if tc.wantDenied {
+				// ABAC denials satisfy both sentinels so existing callers keep
+				// branching on ErrUsageRestriction while new code can detect
+				// policy denials specifically.
+				require.ErrorIs(t, err, ErrUsageRestriction)
+				require.ErrorIs(t, err, accesscontrol.ErrAccessDenied)
+			} else {
+				require.NoError(t, err)
 			}
 		})
 	}
