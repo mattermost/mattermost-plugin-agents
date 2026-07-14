@@ -221,13 +221,13 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 
 	// Reply in a thread that did not @mention an agent: when the previous post
 	// was authored by an agent, nudge the user with an ephemeral reminder.
-	c.maybeNotifyAgentMentionNeeded(post, channel)
+	c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
 
 	return nil
 }
 
 func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) error {
-	if err := c.bots.CheckUsageRestrictions(postingUser.Id, bot, channel); err != nil {
+	if err := c.bots.CheckUsageRestrictions(ctx, postingUser.Id, bot, channel); err != nil {
 		return err
 	}
 
@@ -411,7 +411,7 @@ func (c *Conversations) handleMentionViaConversation(
 }
 
 func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
-	if err := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); err != nil {
+	if err := c.bots.CheckUsageRestrictionsForUser(ctx, bot, postingUser.Id); err != nil {
 		return err
 	}
 

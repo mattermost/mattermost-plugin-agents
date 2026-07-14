@@ -4,11 +4,13 @@
 package bots
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
 	"errors"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -16,8 +18,8 @@ import (
 
 var ErrUsageRestriction = errors.New("usage restriction")
 
-func (m *MMBots) CheckUsageRestrictions(requestingUserID string, bot *Bot, channel *model.Channel) error {
-	if err := m.CheckUsageRestrictionsForUser(bot, requestingUserID); err != nil {
+func (m *MMBots) CheckUsageRestrictions(ctx context.Context, requestingUserID string, bot *Bot, channel *model.Channel) error {
+	if err := m.CheckUsageRestrictionsForUser(ctx, bot, requestingUserID); err != nil {
 		return err
 	}
 
@@ -101,19 +103,42 @@ func UsageRestrictionsForUserConfig(client *pluginapi.Client, cfg llm.BotConfig,
 		return nil
 	case llm.UserAccessLevelNone:
 		return fmt.Errorf("user usage block for bot: %w", ErrUsageRestriction)
+	case llm.UserAccessLevelAttributeBased:
+		// Attribute-based agents are gated exclusively by the ABAC decision
+		// table (Checker.CanUseAgent), which never invokes this legacy check
+		// for that mode. This case exists so any stale direct caller — and the
+		// "unknown user assistance level" fallthrough — cannot misfire.
+		return nil
 	}
 	return fmt.Errorf("unknown user assistance level")
 }
 
-// CheckUsageRestrictionsForUserConfig returns nil if userID is allowed by cfg's
-// UserAccessLevel / UserIDs / TeamIDs, otherwise an error wrapping ErrUsageRestriction.
-// This is the shared source of truth for user-scope access checks; both config-bot
-// Bot-based callers (CheckUsageRestrictionsForUser) and DB-agent BotConfig-based
-// callers (api.canUserAccessAgent) use it.
-func (m *MMBots) CheckUsageRestrictionsForUserConfig(cfg llm.BotConfig, requestingUserID string) error {
-	return UsageRestrictionsForUserConfig(m.pluginAPI, cfg, requestingUserID)
+// CheckUsageRestrictionsForUserConfig is the composite per-request user gate:
+// it runs the ABAC agent decision (with the legacy UserAccessLevel switch as
+// the legacyCheck closure), then the ABAC service decision for cfg.ServiceID.
+// Every user-attributable completion entry point funnels through here, so
+// agent and service `use` policies are evaluated on every completion.
+func (m *MMBots) CheckUsageRestrictionsForUserConfig(ctx context.Context, cfg llm.BotConfig, requestingUserID string) error {
+	legacy := func() error { return UsageRestrictionsForUserConfig(m.pluginAPI, cfg, requestingUserID) }
+	if err := m.accessChecker.CanUseAgent(ctx, requestingUserID, &cfg, legacy); err != nil {
+		return wrapDeny(err)
+	}
+	if err := m.accessChecker.CanUseService(ctx, requestingUserID, cfg.ServiceID); err != nil {
+		return wrapDeny(err)
+	}
+	return nil
 }
 
-func (m *MMBots) CheckUsageRestrictionsForUser(bot *Bot, requestingUserID string) error {
-	return m.CheckUsageRestrictionsForUserConfig(bot.GetConfig(), requestingUserID)
+// wrapDeny makes ABAC denials satisfy the ErrUsageRestriction sentinel that
+// existing callers branch on; legacy errors already wrap it and infra errors
+// pass through unchanged.
+func wrapDeny(err error) error {
+	if errors.Is(err, accesscontrol.ErrAccessDenied) && !errors.Is(err, ErrUsageRestriction) {
+		return fmt.Errorf("%w: %w", ErrUsageRestriction, err)
+	}
+	return err
+}
+
+func (m *MMBots) CheckUsageRestrictionsForUser(ctx context.Context, bot *Bot, requestingUserID string) error {
+	return m.CheckUsageRestrictionsForUserConfig(ctx, bot.GetConfig(), requestingUserID)
 }

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/assets"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -53,6 +54,7 @@ type MMBots struct {
 	licenseChecker         *enterprise.LicenseChecker
 	config                 Config
 	agentStore             AgentStore
+	accessChecker          *accesscontrol.Checker
 	llmUpstreamHTTPClient  *http.Client
 	tokenUsageSinks        *llm.TokenUsageSinks
 	metrics                llm.MetricsObserver
@@ -73,7 +75,9 @@ type MMBots struct {
 	forceRefresh bool
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
+// New builds the bot registry. accessChecker must be non-nil; tests wanting
+// pure-legacy behavior pass an accesscontrol.New with the PassthroughClient.
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, accessChecker *accesscontrol.Checker, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
 	var pluginTokenLogger llm.TokenUsagePluginLogger
 	if pluginAPI != nil {
 		pluginTokenLogger = &pluginAPI.Log
@@ -85,6 +89,7 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 		licenseChecker:         licenseChecker,
 		config:                 config,
 		agentStore:             agentStore,
+		accessChecker:          accessChecker,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
 		tokenUsageSinks:        llm.NewTokenUsageSinks(pluginTokenLogger),
 		metrics:                metrics,

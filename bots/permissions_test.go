@@ -4,6 +4,7 @@
 package bots
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -26,7 +27,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	client := pluginapi.NewClient(mockAPI, nil)
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	mmBots := New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
+	mmBots := New(mockAPI, client, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 
 	e := &TestEnvironment{
 		bots:    mmBots,
@@ -310,7 +311,7 @@ func TestUsageRestrictions(t *testing.T) {
 				e.mockAPI.On("GetTeamMember", "team2", "user1").Return(nil, &model.AppError{Message: "not found", StatusCode: http.StatusNotFound}).Maybe()
 			}
 
-			err := e.bots.CheckUsageRestrictions(tc.requestingUser, tc.bot, tc.channel)
+			err := e.bots.CheckUsageRestrictions(context.Background(), tc.requestingUser, tc.bot, tc.channel)
 			if tc.expectedError != nil {
 				require.ErrorIs(t, err, tc.expectedError)
 			} else {
@@ -368,8 +369,8 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			errDirect := UsageRestrictionsForUserConfig(e.client, tc.cfg, tc.user)
-			errConfig := e.bots.CheckUsageRestrictionsForUserConfig(tc.cfg, tc.user)
-			errBot := e.bots.CheckUsageRestrictionsForUser(&Bot{cfg: tc.cfg}, tc.user)
+			errConfig := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), tc.cfg, tc.user)
+			errBot := e.bots.CheckUsageRestrictionsForUser(context.Background(), &Bot{cfg: tc.cfg}, tc.user)
 			if tc.wantErr {
 				require.ErrorIs(t, errDirect, ErrUsageRestriction)
 				require.ErrorIs(t, errConfig, ErrUsageRestriction)

@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -44,7 +45,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(c.Request.Context(), userID)
 
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors))
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(c.Request.Context(), userID, tools, mcpErrors))
 }
 
 // handleRefreshUserMCPTools forces rediscovery of the current user's MCP tools.
@@ -61,11 +62,12 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors))
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(c.Request.Context(), userID, tools, mcpErrors))
 }
 
-func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErrors *mcp.Errors) UserMCPToolsResponse {
+func (a *API) buildUserMCPToolsResponse(ctx context.Context, userID string, tools []llm.Tool, mcpErrors *mcp.Errors) UserMCPToolsResponse {
 	mcpCfg := a.config.MCP()
+	idByOrigin := mcpCfg.ServerIDByOrigin()
 
 	// Group tools by ServerOrigin
 	toolsByOrigin := make(map[string][]llm.Tool, len(tools))
@@ -87,6 +89,15 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 		serverConfig := &mcpCfg.Servers[i]
 		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
 			continue
+		}
+
+		// Silently skip server rows the user fails the ABAC check for —
+		// tool lists are filtered inside GetToolsForUser, but connection/
+		// OAuth status rows are emitted even for tool-less servers.
+		if serverID, gated := idByOrigin[serverConfig.BaseURL]; gated && a.accessChecker != nil {
+			if a.accessChecker.CanUseMCPServer(ctx, userID, serverID) != nil {
+				continue
+			}
 		}
 
 		servers = append(servers, buildUserMCPServerInfo(

@@ -11,11 +11,18 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+// newPassthroughAccessChecker builds an ABAC checker that always reports
+// no_policy, so tests exercise pure legacy permission behavior.
+func newPassthroughAccessChecker() *accesscontrol.Checker {
+	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+}
 
 type fakeMMClient struct {
 	users                map[string]*model.User

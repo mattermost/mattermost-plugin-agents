@@ -5,6 +5,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -403,7 +404,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 
 	accessible := make([]*llm.BotConfig, 0, len(agents))
 	for _, cfg := range agents {
-		if a.canUserAccessAgent(cfg, userID) {
+		if a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
 			accessible = append(accessible, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
 		}
 	}
@@ -438,7 +439,7 @@ func (a *API) handleGetAgent(c *gin.Context) {
 		return
 	}
 
-	if !a.canUserAccessAgent(cfg, userID) {
+	if !a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -706,8 +707,13 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	c.JSON(http.StatusOK, models)
 }
 
-// canUserAccessAgent reports whether userID may view or use the agent (admin, then usage restrictions).
-func (a *API) canUserAccessAgent(cfg *llm.BotConfig, userID string) bool {
+// canUserAccessAgent reports whether userID may view or use the agent (admin,
+// then the ABAC agent decision with the legacy usage restrictions as the
+// legacy fallback). Deliberately agent-policy-only — no service check: this
+// gates viewing an agent's card in the management UI, where per-agent admins
+// must still see agents whose service is currently denied to them. The
+// runtime composite gate remains authoritative for actual use.
+func (a *API) canUserAccessAgent(ctx context.Context, cfg *llm.BotConfig, userID string) bool {
 	if cfg == nil || a.pluginAPI == nil {
 		return false
 	}
@@ -715,7 +721,8 @@ func (a *API) canUserAccessAgent(cfg *llm.BotConfig, userID string) bool {
 		return true
 	}
 	// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
-	return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) == nil
+	legacy := func() error { return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) }
+	return a.accessChecker.CanUseAgent(ctx, userID, cfg, legacy) == nil
 }
 
 // sanitizeAgentForUser returns cfg unchanged for users who can manage the agent

@@ -192,6 +192,7 @@ func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	t.Cleanup(m.Close)
 
@@ -229,7 +230,7 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	m.RegisterPluginServer(PluginServerConfig{
@@ -274,7 +275,7 @@ func TestClientManager_ReInitInsertsConfigOnlyEntries(t *testing.T) {
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	require.Empty(t, m.ListPluginServers(), "precondition: empty registry")
@@ -305,7 +306,7 @@ func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	live := PluginServerConfig{
@@ -347,7 +348,7 @@ func TestClientManager_IsPluginRegistered(t *testing.T) {
 			Enabled:  true,
 		}},
 	}
-	m := NewClientManager(cfg, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(cfg, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	require.False(t, m.IsPluginRegistered("com.example.orphan"),
@@ -388,7 +389,7 @@ func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing
 		},
 	}
 
-	m := NewClientManager(cfg, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(cfg, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	got := m.ListPluginServers()
@@ -406,7 +407,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 	t.Cleanup(m.Close)
 
 	cfg := PluginServerConfig{
@@ -436,7 +437,7 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 	t.Cleanup(m.Close)
 
 	cfg := PluginServerConfig{
@@ -487,7 +488,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 			setupTestLogger(pluginTestAPI)
 			client := pluginapi.NewClient(pluginTestAPI, nil)
 
-			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 			t.Cleanup(m.Close)
 
 			m.RegisterPluginServer(PluginServerConfig{
@@ -532,7 +533,7 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{
 		PluginID: "com.example.mcp",
@@ -577,7 +578,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 		},
 	}
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 	t.Cleanup(m.Close)
 
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.a", Name: "A", Path: "/mcp", Enabled: true})

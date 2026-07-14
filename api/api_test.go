@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
@@ -511,10 +512,16 @@ func (t *testPluginAPI) PluginHTTP(req *http.Request) *http.Response {
 	return recorder.Result()
 }
 
+// newPassthroughAccessChecker builds an ABAC checker that always reports
+// no_policy, so tests exercise pure legacy permission behavior.
+func newPassthroughAccessChecker() *accesscontrol.Checker {
+	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+}
+
 // createTestBots creates a test MMBots instance for testing
 func createTestBots(mockAPI *plugintest.API, client *pluginapi.Client) *bots.MMBots {
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	testBots := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
+	testBots := bots.New(mockAPI, client, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	return testBots
 }
 
@@ -615,6 +622,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockConvStore,
 		nil,
 		nil,
+		newPassthroughAccessChecker(),
 	)
 
 	return &TestEnvironment{

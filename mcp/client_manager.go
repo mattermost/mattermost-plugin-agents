@@ -20,6 +20,13 @@ import (
 
 var ErrOAuthNotConfigured = errors.New("oauth not configured")
 
+// ServerAccessChecker gates per-user visibility of external MCP servers by
+// stable ID (satisfied by *accesscontrol.Checker). Kept as a local interface
+// so mcp stays testable against a stub without new libraries.
+type ServerAccessChecker interface {
+	CanUseMCPServer(ctx context.Context, userID, serverID string) error
+}
+
 func cacheableContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()
@@ -52,11 +59,15 @@ type ClientManager struct {
 	// sourcePluginAPI is the agents-plugin mmapi.Client; used by
 	// PluginHTTPRoundTripper to dispatch to source plugins.
 	sourcePluginAPI mmapi.Client
+
+	// accessChecker filters external servers per user (nil = no filtering).
+	accessChecker ServerAccessChecker
 }
 
 // NewClientManager creates a new MCP client manager. embeddedServer may be nil.
 // sourcePluginAPI routes PluginHTTP to source plugins; may be nil.
-func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client, sourcePluginAPI mmapi.Client) *ClientManager {
+// accessChecker filters external servers per user; nil disables filtering.
+func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client, sourcePluginAPI mmapi.Client, accessChecker ServerAccessChecker) *ClientManager {
 	manager := &ClientManager{
 		log:              log,
 		pluginAPI:        pluginAPI,
@@ -66,6 +77,7 @@ func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *plugin
 		pluginServers:    make(map[string]PluginServerConfig),
 		pluginRegistered: make(map[string]bool),
 		sourcePluginAPI:  sourcePluginAPI,
+		accessChecker:    accessChecker,
 	}
 	manager.ReInit(config, embeddedServer)
 	return manager
@@ -244,7 +256,46 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 
 	rawTools := userClient.GetTools(ctx)
 	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
+	filtered = m.filterToolsByUserAccess(ctx, userID, filtered)
 	return filtered, mcpErrors
+}
+
+// filterToolsByUserAccess silently drops tools from external servers the user
+// fails the ABAC check for (contract §9.4). One decision call per distinct
+// origin. Origins without a stable ID (embedded, plugin servers) pass through
+// untouched. Filtering is silent by design: Debug log only, no mcpErrors
+// entries, no chat banners.
+func (m *ClientManager) filterToolsByUserAccess(ctx context.Context, userID string, tools []llm.Tool) []llm.Tool {
+	if m.accessChecker == nil || len(tools) == 0 {
+		return tools
+	}
+
+	idByOrigin := m.config.ServerIDByOrigin()
+	if len(idByOrigin) == 0 {
+		return tools
+	}
+
+	allowedByOrigin := make(map[string]bool, len(idByOrigin))
+	filtered := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		serverID, gated := idByOrigin[tool.ServerOrigin]
+		if !gated {
+			filtered = append(filtered, tool)
+			continue
+		}
+		allowed, evaluated := allowedByOrigin[tool.ServerOrigin]
+		if !evaluated {
+			allowed = m.accessChecker.CanUseMCPServer(ctx, userID, serverID) == nil
+			allowedByOrigin[tool.ServerOrigin] = allowed
+			if !allowed {
+				m.log.Debug("Dropping MCP server tools for user by access policy", "userID", userID, "serverID", serverID)
+			}
+		}
+		if allowed {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
 }
 
 // RefreshToolsForUser drops cached user clients and shared server tool lists,

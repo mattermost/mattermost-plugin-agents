@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -169,6 +170,7 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+	accessChecker         *accesscontrol.Checker
 
 	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
 	// is the only supported entry point for tests.
@@ -210,6 +212,7 @@ func New(
 	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
+	accessChecker *accesscontrol.Checker,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -243,6 +246,7 @@ func New(
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
+		accessChecker:         accessChecker,
 	}
 }
 
@@ -524,7 +528,7 @@ type AIBotsResponse struct {
 }
 
 // getAIBotsForUser returns all AI bots available to a user
-func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
+func (a *API) getAIBotsForUser(ctx context.Context, userID string) ([]AIBotInfo, error) {
 	allBots := a.bots.GetAllBots()
 
 	// Get the info from all the bots.
@@ -533,7 +537,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 	defaultBotName := a.config.GetDefaultBotName()
 	for _, bot := range allBots {
 		// Don't return bots the user is excluded from using.
-		if a.bots.CheckUsageRestrictionsForUser(bot, userID) != nil {
+		if a.bots.CheckUsageRestrictionsForUser(ctx, bot, userID) != nil {
 			continue
 		}
 
@@ -572,7 +576,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 
 func (a *API) handleGetAIBots(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	bots, err := a.getAIBotsForUser(userID)
+	bots, err := a.getAIBotsForUser(c.Request.Context(), userID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return

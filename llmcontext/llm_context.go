@@ -291,6 +291,14 @@ func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.T
 	if c == nil {
 		return
 	}
+	if len(mcpTools) == 0 {
+		// No authorized MCP catalog remains (policy denial or nothing
+		// configured — indistinguishable to the LLM): omit search_tools/
+		// load_tool entirely rather than exposing meta-tools over an empty
+		// registry.
+		c.ObserveMCPDynamicToolEvent("catalog_empty", "meta_tools_omitted")
+		return
+	}
 	registry := mcp.NewToolRegistry(mcpTools, registryOpts...)
 
 	b.preloadMCPTools(store, mcpTools, c.ToolCatalog.PreloadedMCPTools)

@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -216,7 +217,17 @@ func (p *Plugin) OnActivate() error {
 		}
 	}
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
+	// ABAC checker: PDP decisions over plugin.API, fail-closed policy index in
+	// the Agents_System KV. Built before bots.New so the composite usage gate
+	// always has a checker.
+	abacMutex, err := cluster.NewMutex(p.API, accesscontrol.PolicyIndexMutexKey)
+	if err != nil {
+		return fmt.Errorf("failed to create ABAC policy index mutex: %w", err)
+	}
+	policyIndex := accesscontrol.NewKVPolicyIndex(p.store, abacMutex, &pluginAPI.Log)
+	accessChecker := accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, policyIndex, &pluginAPI.Log)
+
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, accessChecker, llmUpstreamHTTPClient, metricsService)
 
 	// migrateAndRefresh runs the one-time legacy bot migration, then forces
 	// a bot refresh only if the migration actually created new agents.
@@ -420,7 +431,10 @@ func (p *Plugin) OnActivate() error {
 		}
 		return mcp.ServerConfig{}, false
 	}
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient)
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient, accessChecker)
+	// The MCP manager is built after the checker, so the origin→ID resolver
+	// used by write-time agent validation is installed here.
+	accessChecker.SetMCPServerIDResolver(mcpClientManager.MCPServerIDByOrigin)
 	p.configuration.RegisterUpdateListener(func() {
 		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
 		if embeddedErr != nil {
@@ -522,6 +536,7 @@ func (p *Plugin) OnActivate() error {
 		p.store,
 		getSearchInitError,
 		customPromptsStore,
+		accessChecker,
 	)
 
 	apiService.SetConversationService(convService)
