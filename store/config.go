@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -42,11 +43,6 @@ func (s *Store) GetConfig() (*config.Config, error) {
 // The previous active config is deactivated and a new active row is inserted.
 // All prior configs are preserved with Active = false.
 func (s *Store) SaveConfig(cfg config.Config) error {
-	configBytes, err := json.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
 	tx, err := s.db.Beginx()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -63,13 +59,32 @@ func (s *Store) SaveConfig(cfg config.Config) error {
 		return fmt.Errorf("failed to lock config save transaction: %w", err)
 	}
 
-	// Deactivate current active config (at most one row, indexed on Active)
-	if _, err = tx.Exec("UPDATE Agents_ConfigHistory SET Active = false WHERE Active = true"); err != nil {
-		return fmt.Errorf("failed to deactivate current config: %w", err)
+	if err = insertActiveConfigTx(tx, cfg); err != nil {
+		return err
 	}
 
-	// Insert new active config
-	if _, err = tx.Exec(
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit config save: %w", err)
+	}
+
+	return nil
+}
+
+// insertActiveConfigTx is the single transactional primitive for writing a
+// new active config-history row: it deactivates the current active row and
+// inserts cfg as the new active one. Used by SaveConfig and the ABAC ID
+// migration.
+func insertActiveConfigTx(tx *sqlx.Tx, cfg config.Config) error {
+	configBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	// Deactivate current active config (at most one row, indexed on Active)
+	if _, err := tx.Exec("UPDATE Agents_ConfigHistory SET Active = false WHERE Active = true"); err != nil {
+		return fmt.Errorf("failed to deactivate current config: %w", err)
+	}
+	if _, err := tx.Exec(
 		"INSERT INTO Agents_ConfigHistory (ID, Config, CreateAt, Active) VALUES ($1, $2, $3, $4)",
 		model.NewId(),
 		string(configBytes),
@@ -78,11 +93,6 @@ func (s *Store) SaveConfig(cfg config.Config) error {
 	); err != nil {
 		return fmt.Errorf("failed to insert new config: %w", err)
 	}
-
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit config save: %w", err)
-	}
-
 	return nil
 }
 

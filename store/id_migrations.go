@@ -27,38 +27,55 @@ func isLegacyUUID(s string) bool {
 	return len(s) == 36 && uuid.Validate(s) == nil
 }
 
-// ServiceIDMigrationReport summarizes what MigrateServiceIDs did so the
-// caller (server layer) can log it; the store has no logger.
-type ServiceIDMigrationReport struct {
-	Migrated            bool
-	ServicesRemapped    int
-	AgentRowsUpdated    int64
-	DanglingServiceRefs []string
+// ABACIDMigrationReport summarizes what MigrateABACIDs did so the caller
+// (server layer) can log it; the store has no logger.
+type ABACIDMigrationReport struct {
+	// Migrated is true when a new active config row was written.
+	Migrated bool
+	// ServicesRemapped counts service entries whose ID was rewritten,
+	// including each occurrence of a duplicated legacy ID.
+	ServicesRemapped     int
+	AgentRowsUpdated     int64
+	MCPServerIDsAssigned int
+	DanglingServiceRefs  []string
 }
 
-// MigrateServiceIDs rewrites legacy UUID service IDs in the active config
-// (ServiceConfig.ID, ServiceConfig.FallbackServiceID, BotConfig.ServiceID)
-// and in Agents_UserAgents.ServiceID to model.NewId() values, atomically in
-// one transaction. It is idempotent: a marker in Agents_System short-circuits
-// re-runs, and the rewrite itself is content-based (only IDs that are UUIDs
-// are touched), so a crash between the config write and the marker write is
-// recovered safely. Dangling UUID references (no matching service) are left
-// unchanged and reported.
-func (s *Store) MigrateServiceIDs() (ServiceIDMigrationReport, error) {
-	report := ServiceIDMigrationReport{}
+// MigrateABACIDs runs both one-time ABAC ID migrations in a single
+// transaction that writes at most one new active config row and sets both
+// Agents_System markers atomically:
+//
+//   - service IDs: legacy UUID service IDs in the active config
+//     (ServiceConfig.ID, ServiceConfig.FallbackServiceID, BotConfig.ServiceID)
+//     and in Agents_UserAgents.ServiceID are rewritten to model.NewId() values.
+//     When duplicate legacy IDs exist, every occurrence gets its own unique new
+//     ID, but references remap to the FIRST occurrence's new ID, mirroring
+//     GetServiceByID first-match semantics. Dangling UUID references (no
+//     matching service) are left unchanged and reported.
+//   - MCP server IDs: every external MCP server entry with no ID gets a
+//     stable model.NewId().
+//
+// Idempotent: markers short-circuit re-runs per migration, and the rewrite is
+// content-based (only UUID service IDs / empty MCP IDs are touched), so a
+// crash between the config write and the marker write is recovered safely.
+func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
+	report := ABACIDMigrationReport{}
 
 	// Fast path; the authoritative re-check happens inside the tx under the lock.
-	done, err := s.GetSystemValue(serviceIDMigrationKey)
+	serviceDone, err := s.GetSystemValue(serviceIDMigrationKey)
 	if err != nil {
 		return report, err
 	}
-	if done == "1" {
+	mcpDone, err := s.GetSystemValue(mcpServerIDMigrationKey)
+	if err != nil {
+		return report, err
+	}
+	if serviceDone == "1" && mcpDone == "1" {
 		return report, nil
 	}
 
 	tx, err := s.db.Beginx()
 	if err != nil {
-		return report, fmt.Errorf("failed to begin service ID migration transaction: %w", err)
+		return report, fmt.Errorf("failed to begin ABAC ID migration transaction: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -69,14 +86,18 @@ func (s *Store) MigrateServiceIDs() (ServiceIDMigrationReport, error) {
 	// Same advisory lock as SaveConfig: serializes against concurrent admin
 	// saves and concurrent migration attempts from other nodes/goroutines.
 	if _, err = tx.Exec("SELECT pg_advisory_xact_lock($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
-		return report, fmt.Errorf("failed to lock service ID migration transaction: %w", err)
+		return report, fmt.Errorf("failed to lock ABAC ID migration transaction: %w", err)
 	}
 
-	done, err = getSystemValueTx(tx, serviceIDMigrationKey)
+	serviceDone, err = getSystemValueTx(tx, serviceIDMigrationKey)
 	if err != nil {
 		return report, err
 	}
-	if done == "1" {
+	mcpDone, err = getSystemValueTx(tx, mcpServerIDMigrationKey)
+	if err != nil {
+		return report, err
+	}
+	if serviceDone == "1" && mcpDone == "1" {
 		// Another node/goroutine finished between the fast path and the lock.
 		_ = tx.Rollback()
 		return report, nil
@@ -86,36 +107,72 @@ func (s *Store) MigrateServiceIDs() (ServiceIDMigrationReport, error) {
 	if err != nil {
 		return report, err
 	}
-	if !found {
-		// Fresh install: nothing to remap.
+
+	configChanged := false
+	if found && serviceDone != "1" {
+		if err = migrateServiceIDsTx(tx, cfg, &report); err != nil {
+			return report, err
+		}
+		configChanged = configChanged || report.ServicesRemapped > 0
+	}
+	if found && mcpDone != "1" {
+		for i := range cfg.MCP.Servers {
+			if cfg.MCP.Servers[i].ID == "" {
+				cfg.MCP.Servers[i].ID = model.NewId()
+				report.MCPServerIDsAssigned++
+			}
+		}
+		configChanged = configChanged || report.MCPServerIDsAssigned > 0
+	}
+
+	if configChanged {
+		if err = insertActiveConfigTx(tx, *cfg); err != nil {
+			return report, err
+		}
+	}
+	if serviceDone != "1" {
 		if err = setSystemValueTx(tx, serviceIDMigrationKey, "1"); err != nil {
 			return report, err
 		}
-		if err = tx.Commit(); err != nil {
-			return report, fmt.Errorf("failed to commit service ID migration: %w", err)
+	}
+	if mcpDone != "1" {
+		if err = setSystemValueTx(tx, mcpServerIDMigrationKey, "1"); err != nil {
+			return report, err
 		}
-		return report, nil
+	}
+	if err = tx.Commit(); err != nil {
+		return report, fmt.Errorf("failed to commit ABAC ID migration: %w", err)
 	}
 
+	report.Migrated = configChanged
+	return report, nil
+}
+
+// migrateServiceIDsTx rewrites legacy UUID service IDs in cfg (in place) and
+// in Agents_UserAgents rows, recording what it did in report. It does not
+// write the config row; the caller commits everything in one transaction.
+func migrateServiceIDsTx(tx *sqlx.Tx, cfg *config.Config, report *ABACIDMigrationReport) error {
+	// Reference remapping keeps the FIRST occurrence's new ID when the same
+	// legacy UUID appears on multiple services, mirroring GetServiceByID
+	// first-match behavior; each occurrence still gets its own unique new ID.
 	idMap := make(map[string]string)
 	for i := range cfg.Services {
-		if isLegacyUUID(cfg.Services[i].ID) {
-			newID := model.NewId()
-			idMap[cfg.Services[i].ID] = newID
-			cfg.Services[i].ID = newID
+		oldID := cfg.Services[i].ID
+		if !isLegacyUUID(oldID) {
+			continue
 		}
+		newID := model.NewId()
+		if _, seen := idMap[oldID]; !seen {
+			idMap[oldID] = newID
+		}
+		cfg.Services[i].ID = newID
+		report.ServicesRemapped++
 	}
 
 	if len(idMap) == 0 {
 		// Content-based no-op (also covers re-run after a crash between the
 		// config write and the marker write).
-		if err = setSystemValueTx(tx, serviceIDMigrationKey, "1"); err != nil {
-			return report, err
-		}
-		if err = tx.Commit(); err != nil {
-			return report, fmt.Errorf("failed to commit service ID migration: %w", err)
-		}
-		return report, nil
+		return nil
 	}
 
 	for i := range cfg.Services {
@@ -144,22 +201,16 @@ func (s *Store) MigrateServiceIDs() (ServiceIDMigrationReport, error) {
 		}
 	}
 
-	if err = insertActiveConfigTx(tx, *cfg); err != nil {
-		return report, err
-	}
-
 	// Update every agent row, including soft-deleted ones. UpdateAt is
 	// deliberately not bumped: this is a data migration, not a user edit.
 	for oldID, newID := range idMap {
-		var res sql.Result
-		res, err = tx.Exec("UPDATE Agents_UserAgents SET ServiceID = $1 WHERE ServiceID = $2", newID, oldID)
+		res, err := tx.Exec("UPDATE Agents_UserAgents SET ServiceID = $1 WHERE ServiceID = $2", newID, oldID)
 		if err != nil {
-			return report, fmt.Errorf("failed to update agent service IDs: %w", err)
+			return fmt.Errorf("failed to update agent service IDs: %w", err)
 		}
-		var rows int64
-		rows, err = res.RowsAffected()
+		rows, err := res.RowsAffected()
 		if err != nil {
-			return report, fmt.Errorf("failed to count updated agent rows: %w", err)
+			return fmt.Errorf("failed to count updated agent rows: %w", err)
 		}
 		report.AgentRowsUpdated += rows
 	}
@@ -167,8 +218,8 @@ func (s *Store) MigrateServiceIDs() (ServiceIDMigrationReport, error) {
 	// Any agent row still holding a UUID references a service that no longer
 	// exists in the active config; report it, leave it unchanged.
 	var remaining []string
-	if err = tx.Select(&remaining, "SELECT DISTINCT ServiceID FROM Agents_UserAgents WHERE LENGTH(ServiceID) = 36"); err != nil {
-		return report, fmt.Errorf("failed to check for dangling agent service IDs: %w", err)
+	if err := tx.Select(&remaining, "SELECT DISTINCT ServiceID FROM Agents_UserAgents WHERE LENGTH(ServiceID) = 36"); err != nil {
+		return fmt.Errorf("failed to check for dangling agent service IDs: %w", err)
 	}
 	for _, sid := range remaining {
 		if isLegacyUUID(sid) {
@@ -176,92 +227,7 @@ func (s *Store) MigrateServiceIDs() (ServiceIDMigrationReport, error) {
 				fmt.Sprintf("agent rows reference unknown service %q", sid))
 		}
 	}
-
-	if err = setSystemValueTx(tx, serviceIDMigrationKey, "1"); err != nil {
-		return report, err
-	}
-	if err = tx.Commit(); err != nil {
-		return report, fmt.Errorf("failed to commit service ID migration: %w", err)
-	}
-
-	report.Migrated = true
-	report.ServicesRemapped = len(idMap)
-	return report, nil
-}
-
-// MigrateMCPServerIDs assigns a stable model.NewId() to every external MCP
-// server entry in the active config that has no ID yet, writing one new
-// active config-history row. Idempotent via marker + content check, same
-// tx/lock pattern as MigrateServiceIDs. Returns whether a config write happened.
-func (s *Store) MigrateMCPServerIDs() (bool, error) {
-	done, err := s.GetSystemValue(mcpServerIDMigrationKey)
-	if err != nil {
-		return false, err
-	}
-	if done == "1" {
-		return false, nil
-	}
-
-	tx, err := s.db.Beginx()
-	if err != nil {
-		return false, fmt.Errorf("failed to begin MCP server ID migration transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	if _, err = tx.Exec("SELECT pg_advisory_xact_lock($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
-		return false, fmt.Errorf("failed to lock MCP server ID migration transaction: %w", err)
-	}
-
-	done, err = getSystemValueTx(tx, mcpServerIDMigrationKey)
-	if err != nil {
-		return false, err
-	}
-	if done == "1" {
-		// Another node/goroutine finished between the fast path and the lock.
-		_ = tx.Rollback()
-		return false, nil
-	}
-
-	cfg, found, err := getActiveConfigTx(tx)
-	if err != nil {
-		return false, err
-	}
-
-	assigned := 0
-	if found {
-		for i := range cfg.MCP.Servers {
-			if cfg.MCP.Servers[i].ID == "" {
-				cfg.MCP.Servers[i].ID = model.NewId()
-				assigned++
-			}
-		}
-	}
-
-	if !found || assigned == 0 {
-		if err = setSystemValueTx(tx, mcpServerIDMigrationKey, "1"); err != nil {
-			return false, err
-		}
-		if err = tx.Commit(); err != nil {
-			return false, fmt.Errorf("failed to commit MCP server ID migration: %w", err)
-		}
-		return false, nil
-	}
-
-	if err = insertActiveConfigTx(tx, *cfg); err != nil {
-		return false, err
-	}
-	if err = setSystemValueTx(tx, mcpServerIDMigrationKey, "1"); err != nil {
-		return false, err
-	}
-	if err = tx.Commit(); err != nil {
-		return false, fmt.Errorf("failed to commit MCP server ID migration: %w", err)
-	}
-
-	return true, nil
+	return nil
 }
 
 // getSystemValueTx reads an Agents_System value on the transaction.
@@ -307,27 +273,4 @@ func getActiveConfigTx(tx *sqlx.Tx) (*config.Config, bool, error) {
 		return nil, false, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 	return &cfg, true, nil
-}
-
-// insertActiveConfigTx deactivates the current active config row and inserts
-// cfg as the new active row, on the transaction. Same statements as SaveConfig.
-func insertActiveConfigTx(tx *sqlx.Tx, cfg config.Config) error {
-	configBytes, err := json.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	if _, err := tx.Exec("UPDATE Agents_ConfigHistory SET Active = false WHERE Active = true"); err != nil {
-		return fmt.Errorf("failed to deactivate current config: %w", err)
-	}
-	if _, err := tx.Exec(
-		"INSERT INTO Agents_ConfigHistory (ID, Config, CreateAt, Active) VALUES ($1, $2, $3, $4)",
-		model.NewId(),
-		string(configBytes),
-		model.GetMillis(),
-		true,
-	); err != nil {
-		return fmt.Errorf("failed to insert new config: %w", err)
-	}
-	return nil
 }

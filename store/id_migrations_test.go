@@ -57,6 +57,13 @@ func configHistoryCount(t *testing.T, s *Store) int {
 	return count
 }
 
+func requireMarker(t *testing.T, s *Store, key string) {
+	t.Helper()
+	marker, err := s.GetSystemValue(key)
+	require.NoError(t, err)
+	assert.Equal(t, "1", marker, "marker %q must be set", key)
+}
+
 type agentServiceRow struct {
 	ServiceID string `db:"serviceid"`
 	UpdateAt  int64  `db:"updateat"`
@@ -69,11 +76,11 @@ func getAgentServiceRow(t *testing.T, s *Store, id string) agentServiceRow {
 	return row
 }
 
-func TestMigrateServiceIDs(t *testing.T) {
+func TestMigrateABACIDs(t *testing.T) {
 	tests := []struct {
 		name     string
 		seed     func(t *testing.T, s *Store)
-		validate func(t *testing.T, s *Store, report ServiceIDMigrationReport)
+		validate func(t *testing.T, s *Store, report ABACIDMigrationReport)
 	}{
 		{
 			name: "all legacy UUIDs remapped",
@@ -87,7 +94,7 @@ func TestMigrateServiceIDs(t *testing.T) {
 				seedAgentRow(t, s, "agent1", testUUIDA, 100, 0)
 				seedAgentRow(t, s, "agent2", testUUIDB, 200, 0)
 			},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
 				assert.True(t, report.Migrated)
 				assert.Equal(t, 2, report.ServicesRemapped)
 				assert.Equal(t, int64(2), report.AgentRowsUpdated)
@@ -114,7 +121,7 @@ func TestMigrateServiceIDs(t *testing.T) {
 					},
 				}, true)
 			},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
 				assert.True(t, report.Migrated)
 				assert.Equal(t, 1, report.ServicesRemapped)
 
@@ -140,7 +147,7 @@ func TestMigrateServiceIDs(t *testing.T) {
 					},
 				}, true)
 			},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
 				assert.True(t, report.Migrated)
 				assert.Equal(t, 3, report.ServicesRemapped)
 				assert.Empty(t, report.DanglingServiceRefs)
@@ -171,7 +178,7 @@ func TestMigrateServiceIDs(t *testing.T) {
 					},
 				}, true)
 			},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
 				assert.True(t, report.Migrated)
 
 				cfg, err := s.GetConfig()
@@ -179,6 +186,44 @@ func TestMigrateServiceIDs(t *testing.T) {
 				require.Len(t, cfg.Bots, 1)
 				assert.Equal(t, cfg.Services[0].ID, cfg.Bots[0].ServiceID)
 				assert.True(t, model.IsValidId(cfg.Bots[0].ServiceID))
+			},
+		},
+		{
+			name: "duplicate legacy IDs: unique new IDs, references keep first occurrence",
+			seed: func(t *testing.T, s *Store) {
+				seedConfigRow(t, s, config.Config{
+					Services: []llm.ServiceConfig{
+						{ID: testUUIDA, Name: "first"},
+						{ID: testUUIDA, Name: "second"},
+						{ID: testUUIDB, Name: "other", FallbackServiceID: testUUIDA},
+					},
+					Bots: []llm.BotConfig{
+						{ID: "bot1", Name: "ai", ServiceID: testUUIDA},
+					},
+				}, true)
+				seedAgentRow(t, s, "agent1", testUUIDA, 100, 0)
+			},
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.True(t, report.Migrated)
+				assert.Equal(t, 3, report.ServicesRemapped, "every occurrence counts, including duplicates")
+				assert.Empty(t, report.DanglingServiceRefs)
+
+				cfg, err := s.GetConfig()
+				require.NoError(t, err)
+				byName := map[string]llm.ServiceConfig{}
+				for _, svc := range cfg.Services {
+					assert.True(t, model.IsValidId(svc.ID))
+					byName[svc.Name] = svc
+				}
+				assert.NotEqual(t, byName["first"].ID, byName["second"].ID,
+					"duplicated services must each get their own unique new ID")
+
+				// GetServiceByID first-match semantics: all references follow
+				// the FIRST occurrence's new ID.
+				firstID := byName["first"].ID
+				assert.Equal(t, firstID, byName["other"].FallbackServiceID)
+				assert.Equal(t, firstID, cfg.Bots[0].ServiceID)
+				assert.Equal(t, firstID, getAgentServiceRow(t, s, "agent1").ServiceID)
 			},
 		},
 		{
@@ -192,7 +237,7 @@ func TestMigrateServiceIDs(t *testing.T) {
 				seedAgentRow(t, s, "active-agent", testUUIDA, 111, 0)
 				seedAgentRow(t, s, "deleted-agent", testUUIDA, 222, 999)
 			},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
 				assert.True(t, report.Migrated)
 				assert.Equal(t, int64(2), report.AgentRowsUpdated)
 
@@ -222,7 +267,7 @@ func TestMigrateServiceIDs(t *testing.T) {
 				}, true)
 				seedAgentRow(t, s, "dangling-agent", testUUIDDangling, 100, 0)
 			},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
 				assert.True(t, report.Migrated)
 				assert.Equal(t, 1, report.ServicesRemapped)
 				assert.Equal(t, int64(0), report.AgentRowsUpdated)
@@ -236,195 +281,7 @@ func TestMigrateServiceIDs(t *testing.T) {
 			},
 		},
 		{
-			name: "idempotency second run is a no-op",
-			seed: func(t *testing.T, s *Store) {
-				seedConfigRow(t, s, config.Config{
-					Services: []llm.ServiceConfig{
-						{ID: testUUIDA, Name: "A"},
-					},
-				}, true)
-				report, err := s.MigrateServiceIDs()
-				require.NoError(t, err)
-				require.True(t, report.Migrated)
-			},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
-				assert.False(t, report.Migrated)
-				assert.Zero(t, report.ServicesRemapped)
-				assert.Equal(t, 2, configHistoryCount(t, s), "second run must not write another config row")
-			},
-		},
-		{
-			name: "content-based no-op sets marker without config write",
-			seed: func(t *testing.T, s *Store) {
-				seedConfigRow(t, s, config.Config{
-					Services: []llm.ServiceConfig{
-						{ID: model.NewId(), Name: "modern"},
-					},
-				}, true)
-			},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
-				assert.False(t, report.Migrated)
-				assert.Equal(t, 1, configHistoryCount(t, s))
-
-				marker, err := s.GetSystemValue(serviceIDMigrationKey)
-				require.NoError(t, err)
-				assert.Equal(t, "1", marker)
-			},
-		},
-		{
-			name: "no active config sets marker without error",
-			seed: func(t *testing.T, s *Store) {},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
-				assert.False(t, report.Migrated)
-				assert.Zero(t, configHistoryCount(t, s))
-
-				marker, err := s.GetSystemValue(serviceIDMigrationKey)
-				require.NoError(t, err)
-				assert.Equal(t, "1", marker)
-			},
-		},
-		{
-			name: "inactive history rows unchanged",
-			seed: func(t *testing.T, s *Store) {
-				seedConfigRow(t, s, config.Config{
-					Services: []llm.ServiceConfig{
-						{ID: testUUIDB, Name: "old-snapshot"},
-					},
-				}, false)
-				seedConfigRow(t, s, config.Config{
-					Services: []llm.ServiceConfig{
-						{ID: testUUIDA, Name: "A"},
-					},
-				}, true)
-			},
-			validate: func(t *testing.T, s *Store, report ServiceIDMigrationReport) {
-				assert.True(t, report.Migrated)
-
-				var inactiveConfigs []string
-				require.NoError(t, s.db.Select(&inactiveConfigs, "SELECT Config FROM Agents_ConfigHistory WHERE Active = false ORDER BY CreateAt"))
-				// The pre-seeded inactive row plus the row deactivated by the migration.
-				require.Len(t, inactiveConfigs, 2)
-				assert.Contains(t, inactiveConfigs[0], testUUIDB, "pre-existing inactive row must keep its UUIDs")
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := setupTestStore(t)
-			require.NoError(t, s.RunMigrations())
-
-			tt.seed(t, s)
-
-			report, err := s.MigrateServiceIDs()
-			require.NoError(t, err)
-
-			tt.validate(t, s, report)
-		})
-	}
-}
-
-func TestMigrateServiceIDsAtomicRollback(t *testing.T) {
-	tests := []struct {
-		name    string
-		corrupt func(t *testing.T, s *Store)
-	}{
-		{
-			name: "agent table missing rolls back config write and marker",
-			corrupt: func(t *testing.T, s *Store) {
-				_, err := s.db.Exec("DROP TABLE Agents_UserAgents")
-				require.NoError(t, err)
-			},
-		},
-		{
-			name: "corrupt active config JSON fails without writes",
-			corrupt: func(t *testing.T, s *Store) {
-				_, err := s.db.Exec("UPDATE Agents_ConfigHistory SET Config = 'not-json' WHERE Active = true")
-				require.NoError(t, err)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := setupTestStore(t)
-			require.NoError(t, s.RunMigrations())
-			seedConfigRow(t, s, config.Config{
-				Services: []llm.ServiceConfig{
-					{ID: testUUIDA, Name: "A"},
-				},
-			}, true)
-			seedAgentRow(t, s, "agent1", testUUIDA, 100, 0)
-
-			tt.corrupt(t, s)
-
-			_, err := s.MigrateServiceIDs()
-			require.Error(t, err)
-
-			marker, markerErr := s.GetSystemValue(serviceIDMigrationKey)
-			require.NoError(t, markerErr)
-			assert.Empty(t, marker, "marker must not be set on failure")
-
-			assert.Equal(t, 1, configHistoryCount(t, s), "no new config row on failure")
-
-			var activeConfig string
-			require.NoError(t, s.db.Get(&activeConfig, "SELECT Config FROM Agents_ConfigHistory WHERE Active = true"))
-			if activeConfig != "not-json" {
-				assert.Contains(t, activeConfig, testUUIDA, "active config must keep its UUIDs on rollback")
-			}
-		})
-	}
-}
-
-func TestMigrateServiceIDsConcurrentIdempotent(t *testing.T) {
-	s := setupTestStore(t)
-	require.NoError(t, s.RunMigrations())
-	seedConfigRow(t, s, config.Config{
-		Services: []llm.ServiceConfig{
-			{ID: testUUIDA, Name: "A"},
-			{ID: testUUIDB, Name: "B"},
-		},
-	}, true)
-	seedAgentRow(t, s, "agent1", testUUIDA, 100, 0)
-
-	const goroutines = 8
-	reports := make([]ServiceIDMigrationReport, goroutines)
-	errs := make([]error, goroutines)
-
-	var wg sync.WaitGroup
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			reports[idx], errs[idx] = s.MigrateServiceIDs()
-		}(i)
-	}
-	wg.Wait()
-
-	migratedCount := 0
-	for i := 0; i < goroutines; i++ {
-		require.NoError(t, errs[i])
-		if reports[i].Migrated {
-			migratedCount++
-		}
-	}
-	assert.Equal(t, 1, migratedCount, "exactly one goroutine must perform the migration")
-	assert.Equal(t, 2, configHistoryCount(t, s), "exactly one new config row")
-
-	marker, err := s.GetSystemValue(serviceIDMigrationKey)
-	require.NoError(t, err)
-	assert.Equal(t, "1", marker)
-}
-
-func TestMigrateMCPServerIDs(t *testing.T) {
-	tests := []struct {
-		name     string
-		seed     func(t *testing.T, s *Store)
-		expected bool
-		validate func(t *testing.T, s *Store)
-	}{
-		{
-			name: "assigns IDs only to servers without one and preserves all other fields",
+			name: "MCP servers get IDs only when missing, other fields preserved",
 			seed: func(t *testing.T, s *Store) {
 				seedConfigRow(t, s, config.Config{
 					MCP: config.MCPConfig{
@@ -454,8 +311,10 @@ func TestMigrateMCPServerIDs(t *testing.T) {
 					},
 				}, true)
 			},
-			expected: true,
-			validate: func(t *testing.T, s *Store) {
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.True(t, report.Migrated)
+				assert.Equal(t, 1, report.MCPServerIDsAssigned)
+
 				cfg, err := s.GetConfig()
 				require.NoError(t, err)
 				require.Len(t, cfg.MCP.Servers, 2)
@@ -478,28 +337,92 @@ func TestMigrateMCPServerIDs(t *testing.T) {
 			},
 		},
 		{
-			name: "idempotent second run",
+			name: "service and MCP migrations commit as one config row",
 			seed: func(t *testing.T, s *Store) {
 				seedConfigRow(t, s, config.Config{
+					Services: []llm.ServiceConfig{
+						{ID: testUUIDA, Name: "A"},
+					},
 					MCP: config.MCPConfig{
 						Servers: []config.MCPServerConfig{
 							{Name: "srv", BaseURL: "https://one.example.com"},
 						},
 					},
 				}, true)
-				migrated, err := s.MigrateMCPServerIDs()
-				require.NoError(t, err)
-				require.True(t, migrated)
 			},
-			expected: false,
-			validate: func(t *testing.T, s *Store) {
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.True(t, report.Migrated)
+				assert.Equal(t, 1, report.ServicesRemapped)
+				assert.Equal(t, 1, report.MCPServerIDsAssigned)
+				assert.Equal(t, 2, configHistoryCount(t, s),
+					"both migrations must write exactly one new config row together")
+
+				cfg, err := s.GetConfig()
+				require.NoError(t, err)
+				assert.True(t, model.IsValidId(cfg.Services[0].ID))
+				assert.True(t, model.IsValidId(cfg.MCP.Servers[0].ID))
+				requireMarker(t, s, serviceIDMigrationKey)
+				requireMarker(t, s, mcpServerIDMigrationKey)
+			},
+		},
+		{
+			name: "idempotency second run is a no-op",
+			seed: func(t *testing.T, s *Store) {
+				seedConfigRow(t, s, config.Config{
+					Services: []llm.ServiceConfig{
+						{ID: testUUIDA, Name: "A"},
+					},
+					MCP: config.MCPConfig{
+						Servers: []config.MCPServerConfig{
+							{Name: "srv", BaseURL: "https://one.example.com"},
+						},
+					},
+				}, true)
+				report, err := s.MigrateABACIDs()
+				require.NoError(t, err)
+				require.True(t, report.Migrated)
+			},
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.False(t, report.Migrated)
+				assert.Zero(t, report.ServicesRemapped)
+				assert.Zero(t, report.MCPServerIDsAssigned)
 				assert.Equal(t, 2, configHistoryCount(t, s), "second run must not write another config row")
 			},
 		},
 		{
-			name: "content no-op when all servers already have IDs",
+			name: "partial markers: only the unfinished migration runs",
+			seed: func(t *testing.T, s *Store) {
+				require.NoError(t, s.SetSystemValue(serviceIDMigrationKey, "1"))
+				seedConfigRow(t, s, config.Config{
+					Services: []llm.ServiceConfig{
+						{ID: testUUIDA, Name: "A"},
+					},
+					MCP: config.MCPConfig{
+						Servers: []config.MCPServerConfig{
+							{Name: "srv", BaseURL: "https://one.example.com"},
+						},
+					},
+				}, true)
+			},
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.True(t, report.Migrated)
+				assert.Zero(t, report.ServicesRemapped, "service migration already marked done")
+				assert.Equal(t, 1, report.MCPServerIDsAssigned)
+
+				cfg, err := s.GetConfig()
+				require.NoError(t, err)
+				assert.Equal(t, testUUIDA, cfg.Services[0].ID, "service IDs untouched when marker already set")
+				assert.True(t, model.IsValidId(cfg.MCP.Servers[0].ID))
+				requireMarker(t, s, mcpServerIDMigrationKey)
+			},
+		},
+		{
+			name: "content-based no-op sets markers without config write",
 			seed: func(t *testing.T, s *Store) {
 				seedConfigRow(t, s, config.Config{
+					Services: []llm.ServiceConfig{
+						{ID: model.NewId(), Name: "modern"},
+					},
 					MCP: config.MCPConfig{
 						Servers: []config.MCPServerConfig{
 							{ID: model.NewId(), Name: "srv", BaseURL: "https://one.example.com"},
@@ -507,23 +430,45 @@ func TestMigrateMCPServerIDs(t *testing.T) {
 					},
 				}, true)
 			},
-			expected: false,
-			validate: func(t *testing.T, s *Store) {
-				assert.Equal(t, 1, configHistoryCount(t, s), "no config write on content no-op")
-				marker, err := s.GetSystemValue(mcpServerIDMigrationKey)
-				require.NoError(t, err)
-				assert.Equal(t, "1", marker)
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.False(t, report.Migrated)
+				assert.Equal(t, 1, configHistoryCount(t, s))
+				requireMarker(t, s, serviceIDMigrationKey)
+				requireMarker(t, s, mcpServerIDMigrationKey)
 			},
 		},
 		{
-			name:     "no active config sets marker without error",
-			seed:     func(t *testing.T, s *Store) {},
-			expected: false,
-			validate: func(t *testing.T, s *Store) {
+			name: "no active config sets markers without error",
+			seed: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.False(t, report.Migrated)
 				assert.Zero(t, configHistoryCount(t, s))
-				marker, err := s.GetSystemValue(mcpServerIDMigrationKey)
-				require.NoError(t, err)
-				assert.Equal(t, "1", marker)
+				requireMarker(t, s, serviceIDMigrationKey)
+				requireMarker(t, s, mcpServerIDMigrationKey)
+			},
+		},
+		{
+			name: "inactive history rows unchanged",
+			seed: func(t *testing.T, s *Store) {
+				seedConfigRow(t, s, config.Config{
+					Services: []llm.ServiceConfig{
+						{ID: testUUIDB, Name: "old-snapshot"},
+					},
+				}, false)
+				seedConfigRow(t, s, config.Config{
+					Services: []llm.ServiceConfig{
+						{ID: testUUIDA, Name: "A"},
+					},
+				}, true)
+			},
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.True(t, report.Migrated)
+
+				var inactiveConfigs []string
+				require.NoError(t, s.db.Select(&inactiveConfigs, "SELECT Config FROM Agents_ConfigHistory WHERE Active = false ORDER BY CreateAt"))
+				// The pre-seeded inactive row plus the row deactivated by the migration.
+				require.Len(t, inactiveConfigs, 2)
+				assert.Contains(t, inactiveConfigs[0], testUUIDB, "pre-existing inactive row must keep its UUIDs")
 			},
 		},
 	}
@@ -535,11 +480,114 @@ func TestMigrateMCPServerIDs(t *testing.T) {
 
 			tt.seed(t, s)
 
-			migrated, err := s.MigrateMCPServerIDs()
+			report, err := s.MigrateABACIDs()
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, migrated)
 
-			tt.validate(t, s)
+			tt.validate(t, s, report)
 		})
 	}
 }
+
+func TestMigrateABACIDsAtomicRollback(t *testing.T) {
+	tests := []struct {
+		name    string
+		corrupt func(t *testing.T, s *Store)
+	}{
+		{
+			name: "agent table missing rolls back config write and markers",
+			corrupt: func(t *testing.T, s *Store) {
+				_, err := s.db.Exec("DROP TABLE Agents_UserAgents")
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "corrupt active config JSON fails without writes",
+			corrupt: func(t *testing.T, s *Store) {
+				_, err := s.db.Exec("UPDATE Agents_ConfigHistory SET Config = 'not-json' WHERE Active = true")
+				require.NoError(t, err)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+			require.NoError(t, s.RunMigrations())
+			seedConfigRow(t, s, config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: testUUIDA, Name: "A"},
+				},
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{Name: "srv", BaseURL: "https://one.example.com"},
+					},
+				},
+			}, true)
+			seedAgentRow(t, s, "agent1", testUUIDA, 100, 0)
+
+			tt.corrupt(t, s)
+
+			_, err := s.MigrateABACIDs()
+			require.Error(t, err)
+
+			for _, key := range []string{serviceIDMigrationKey, mcpServerIDMigrationKey} {
+				marker, markerErr := s.GetSystemValue(key)
+				require.NoError(t, markerErr)
+				assert.Empty(t, marker, "marker %q must not be set on failure", key)
+			}
+
+			assert.Equal(t, 1, configHistoryCount(t, s), "no new config row on failure")
+
+			var activeConfig string
+			require.NoError(t, s.db.Get(&activeConfig, "SELECT Config FROM Agents_ConfigHistory WHERE Active = true"))
+			if activeConfig != "not-json" {
+				assert.Contains(t, activeConfig, testUUIDA, "active config must keep its UUIDs on rollback")
+			}
+		})
+	}
+}
+
+func TestMigrateABACIDsConcurrentIdempotent(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+	seedConfigRow(t, s, config.Config{
+		Services: []llm.ServiceConfig{
+			{ID: testUUIDA, Name: "A"},
+			{ID: testUUIDB, Name: "B"},
+		},
+		MCP: config.MCPConfig{
+			Servers: []config.MCPServerConfig{
+				{Name: "srv", BaseURL: "https://one.example.com"},
+			},
+		},
+	}, true)
+	seedAgentRow(t, s, "agent1", testUUIDA, 100, 0)
+
+	const goroutines = 8
+	reports := make([]ABACIDMigrationReport, goroutines)
+	errs := make([]error, goroutines)
+
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			reports[idx], errs[idx] = s.MigrateABACIDs()
+		}(i)
+	}
+	wg.Wait()
+
+	migratedCount := 0
+	for i := 0; i < goroutines; i++ {
+		require.NoError(t, errs[i])
+		if reports[i].Migrated {
+			migratedCount++
+		}
+	}
+	assert.Equal(t, 1, migratedCount, "exactly one goroutine must perform the migration")
+	assert.Equal(t, 2, configHistoryCount(t, s), "exactly one new config row")
+
+	requireMarker(t, s, serviceIDMigrationKey)
+	requireMarker(t, s, mcpServerIDMigrationKey)
+}
+

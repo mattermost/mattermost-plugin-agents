@@ -15,8 +15,8 @@ import (
 
 // runABACIDMigrations runs the one-time ABAC identity migrations: legacy UUID
 // service IDs are rewritten to model.NewId() values, and external MCP servers
-// get stable IDs assigned. Both are idempotent store-level migrations guarded
-// by one cluster mutex. Returns whether either migration wrote to the DB.
+// get stable IDs assigned. Both run in a single idempotent store transaction,
+// guarded by one cluster mutex. Returns whether the migration wrote to the DB.
 func runABACIDMigrations(api plugin.API, pluginAPI *pluginapi.Client, st *store.Store, cfg *config.Container) (bool, error) {
 	mtx, err := cluster.NewMutex(api, "ai_abac_id_migration")
 	if err != nil {
@@ -25,18 +25,12 @@ func runABACIDMigrations(api plugin.API, pluginAPI *pluginapi.Client, st *store.
 	mtx.Lock()
 	defer mtx.Unlock()
 
-	report, err := st.MigrateServiceIDs()
+	report, err := st.MigrateABACIDs()
 	if err != nil {
-		return false, fmt.Errorf("failed to migrate service IDs: %w", err)
+		return false, fmt.Errorf("failed to migrate ABAC IDs: %w", err)
 	}
 
-	mcpMigrated, err := st.MigrateMCPServerIDs()
-	if err != nil {
-		return false, fmt.Errorf("failed to migrate MCP server IDs: %w", err)
-	}
-
-	migrated := report.Migrated || mcpMigrated
-	if migrated {
+	if report.Migrated {
 		reloaded, reloadErr := st.GetConfig()
 		if reloadErr != nil {
 			return false, fmt.Errorf("failed to reload config after ID migrations: %w", reloadErr)
@@ -49,12 +43,12 @@ func runABACIDMigrations(api plugin.API, pluginAPI *pluginapi.Client, st *store.
 		pluginAPI.Log.Info("ABAC ID migrations applied",
 			"services_remapped", report.ServicesRemapped,
 			"agent_rows_updated", report.AgentRowsUpdated,
-			"mcp_ids_assigned", mcpMigrated,
+			"mcp_ids_assigned", report.MCPServerIDsAssigned,
 		)
 	}
 	for _, ref := range report.DanglingServiceRefs {
 		pluginAPI.Log.Warn("Dangling service reference left unchanged by service ID migration", "reference", ref)
 	}
 
-	return migrated, nil
+	return report.Migrated, nil
 }
