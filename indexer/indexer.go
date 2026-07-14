@@ -72,11 +72,22 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 	// While a deferred index build is running, plain CREATE INDEX blocks
 	// writes; skipping avoids piling up blocked hook goroutines. The
 	// catch-up pass after the build picks these posts up via NOT EXISTS.
-	// During the dropped phase (bulk load) writes stay enabled — inserts
-	// without the ANN index are cheap and correct.
+	// During the dropped phase (bulk load) and the repairing phase (index
+	// valid again) writes stay enabled — they are cheap and correct.
+	// Unexpected KV errors fail closed (skip the write): a skipped post is
+	// detectable and repairable (catch-up, health check), while a pile-up of
+	// hook goroutines on blocked writes during a build is not. This gate is
+	// best-effort across nodes: the KV read may lag on a replica for a few
+	// seconds after a phase transition; strict fencing is only needed for
+	// the index DDL, which is CAS-fenced instead.
 	if s.pluginAPI != nil {
 		var state VectorIndexState
-		if err := s.pluginAPI.KVGet(VectorIndexStateKey, &state); err == nil && state.Phase == VectorIndexPhaseBuilding {
+		if err := s.pluginAPI.KVGet(VectorIndexStateKey, &state); err != nil {
+			if !mmapi.IsKVNotFound(err) {
+				s.pluginAPI.LogError("Failed to read vector index state; skipping live post indexing", "post_id", post.Id, "error", err)
+				return nil
+			}
+		} else if state.Phase == VectorIndexPhaseBuilding {
 			s.pluginAPI.LogDebug("Skipping live post indexing while the vector index is being rebuilt", "post_id", post.Id)
 			return nil
 		}
@@ -221,7 +232,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	// resolution failure means the phase state could not be read or claimed,
 	// so the run cannot know whether the index is present — fail the job
 	// cleanly instead of silently running in maintain mode.
-	deferRebuild, adoptedState, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
+	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
 	if deferErr != nil {
 		failedStatus := newJobStatus
 		failedStatus.Status = JobStatusFailed
@@ -236,7 +247,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
 	// Start the reindexing job in background
-	go s.runReindexJob(&newJobStatus, clearIndex, deferRebuild, adoptedState)
+	go s.runReindexJob(&newJobStatus, clearIndex, deferRun)
 
 	return returnStatus, nil
 }
@@ -409,7 +420,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	returnStatus := newJobStatus
 	// Start catch-up job (reuses runReindexJob with clearIndex=false).
 	// Catch-up jobs never defer the index: they only sweep a small tail.
-	go s.runReindexJob(&newJobStatus, false, false, false)
+	go s.runReindexJob(&newJobStatus, false, nil)
 
 	return returnStatus, nil
 }

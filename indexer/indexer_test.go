@@ -1881,7 +1881,7 @@ func TestRunReindexJob(t *testing.T) {
 		}
 
 		// Run the job directly
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		// If job failed, print the error for debugging
 		if jobStatus.Status == JobStatusFailed {
@@ -1905,7 +1905,7 @@ func TestRunReindexJob(t *testing.T) {
 			StartedAt: time.Now(),
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Search not configured")
@@ -1923,7 +1923,7 @@ func TestRunReindexJob(t *testing.T) {
 			StartedAt: time.Now(),
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Search not configured")
@@ -1971,7 +1971,7 @@ func TestRunReindexJob(t *testing.T) {
 			CutoffAt:  now + 100,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		assert.Equal(t, JobStatusCanceled, jobStatus.Status,
 			"worker must transition cancel_requested -> canceled")
@@ -1991,7 +1991,7 @@ func TestRunReindexJob(t *testing.T) {
 			StartedAt: time.Now(),
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Failed to clear search index")
@@ -2046,7 +2046,7 @@ func TestJobProgressAndHeartbeat(t *testing.T) {
 			CutoffAt:  now + 700,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		if jobStatus.Status == JobStatusFailed {
 			t.Logf("Job failed with error: %s", jobStatus.Error)
@@ -2103,7 +2103,7 @@ func TestBatchProcessing(t *testing.T) {
 			CutoffAt:  now + 500,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		if jobStatus.Status == JobStatusFailed {
 			t.Logf("Job failed with error: %s", jobStatus.Error)
@@ -2163,7 +2163,7 @@ func TestCutoffTimestampHandling(t *testing.T) {
 			CutoffAt:  cutoffTime,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		if jobStatus.Status == JobStatusFailed {
 			t.Logf("Job failed with error: %s", jobStatus.Error)
@@ -2483,7 +2483,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		}
 
 		// Run with clearIndex=false to resume from checkpoint
-		indexer.runReindexJob(jobStatus, false, false, false)
+		indexer.runReindexJob(jobStatus, false, nil)
 
 		if jobStatus.Status == JobStatusFailed {
 			t.Logf("Job failed with error: %s", jobStatus.Error)
@@ -2551,7 +2551,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		}
 
 		// Run with clearIndex=false but no cursor - should start from beginning
-		indexer.runReindexJob(jobStatus, false, false, false)
+		indexer.runReindexJob(jobStatus, false, nil)
 
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
 		assert.Equal(t, 5, len(indexedPosts), "Should index all posts when no cursor exists")
@@ -2615,7 +2615,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 			CutoffAt:  now + 200000,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Failed to index posts")
@@ -2867,7 +2867,7 @@ func TestCatchUpPassHeartbeat(t *testing.T) {
 			LastUpdatedAt: initialTime,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
 		// LastUpdatedAt should have been updated during catch-up
@@ -2926,7 +2926,7 @@ func TestCatchUpPassHeartbeat(t *testing.T) {
 			CutoffAt:  cutoffTime,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
 		// Should have saved progress at least once during catch-up (after 500 posts)
@@ -2977,7 +2977,7 @@ func TestCatchUpFailureHandling(t *testing.T) {
 			CutoffAt:  cutoffTime,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		// Job should be failed, not completed
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
@@ -3321,7 +3321,7 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 			CutoffAt:  now + 100,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		storedMu.Lock()
 		defer storedMu.Unlock()
@@ -3390,7 +3390,7 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 			CutoffAt:  now + 100,
 		}
 
-		indexer.runReindexJob(jobStatus, true, false, false)
+		indexer.runReindexJob(jobStatus, true, nil)
 
 		assert.Equal(t, JobStatusCanceled, jobStatus.Status,
 			"worker must transition cancel_requested -> canceled, not just exit non-completed")

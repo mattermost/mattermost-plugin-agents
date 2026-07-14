@@ -22,31 +22,62 @@ const (
 	VectorIndexPhaseDropped = "dropped"
 	// VectorIndexPhaseBuilding: the post-load index build is running.
 	VectorIndexPhaseBuilding = "building"
+	// VectorIndexPhaseRepairing: the index is valid again, but posts edited
+	// while live indexing was gated (the building phase) still carry stale
+	// embeddings and are pending re-indexing. Search works in this phase;
+	// slightly stale rows are the maintain-mode norm.
+	VectorIndexPhaseRepairing = "repairing"
 )
 
-// deleteStateRetries bounds the success-path retries when clearing the phase
-// state; a persistent failure keeps search gated so it must surface.
-const deleteStateRetries = 3
+// clearStateRetries bounds retries of the state-clearing CAS on transient KV
+// errors; a persistent failure keeps the marker in place so it must surface.
+const clearStateRetries = 3
 
 // VectorIndexState is the durable record of a deferred reindex owning the
 // ANN index lifecycle. The Postgres catalog is authoritative on conflict.
 type VectorIndexState struct {
 	JobID string `json:"job_id"` // owning job
-	Phase string `json:"phase"`  // VectorIndexPhaseDropped or VectorIndexPhaseBuilding
+	Phase string `json:"phase"`  // VectorIndexPhase* value
 	// BuildStartedAt (Unix millis) records when the first build attempt began
 	// (live indexing is gated from that point). It is preserved across failed
-	// attempts and ownership handoffs so the post-build repair of posts
-	// edited while gated covers the whole window.
+	// attempts and resume adoptions so the repair of posts edited while gated
+	// covers the whole window; a fresh full reindex resets it (everything is
+	// re-embedded anyway).
 	BuildStartedAt int64 `json:"build_started_at,omitempty"`
 }
 
+// deferredRun carries a run's ownership of the vector index lifecycle. state
+// is the exact value last written by a successful CAS — that CAS is the
+// ownership proof (KV reads may hit a lagging replica in HA, CAS goes to
+// master), so the state is threaded forward in memory and never re-read for
+// ownership checks.
+type deferredRun struct {
+	state VectorIndexState
+	// adopted reports the claim was inherited from a previous run, so the
+	// index may already be genuinely dropped before this run touches it.
+	adopted bool
+}
+
+// deferredIndexGated reports whether a phase makes the ANN index unusable:
+// dropped and building gate search and the constructor index creation.
+// repairing does not — the index is valid, only some rows are stale. Unknown
+// phases gate conservatively.
+func deferredIndexGated(phase string) bool {
+	return phase != "" && phase != VectorIndexPhaseRepairing
+}
+
 // DeferredIndexRebuildActive reports whether a deferred reindex currently
-// owns the ANN index lifecycle (the index is dropped or being rebuilt). Used
-// by InitEmbeddingsSearch callers to skip constructor index creation, and by
-// search gating. Unexpected KV errors fail closed (treated as active): a
-// wrongly-skipped constructor index creation is repaired by reconciliation,
-// whereas a wrongly-run one can synchronously rebuild a huge index that was
-// dropped on purpose.
+// has the ANN index dropped or being rebuilt. Used by InitEmbeddingsSearch
+// callers to skip constructor index creation, and by search gating.
+// Unexpected KV errors fail closed (treated as active): a wrongly-skipped
+// constructor index creation is repaired by reconciliation, whereas a
+// wrongly-run one can synchronously rebuild a huge index that was dropped on
+// purpose.
+//
+// This gate is best-effort across nodes: the KV read may hit a lagging
+// replica for a few seconds after a phase transition. That window is
+// accepted — the strict fencing that matters (who may run index DDL) is
+// enforced with compare-and-set through the master, not with this read.
 func DeferredIndexRebuildActive(client mmapi.Client) bool {
 	if client == nil {
 		return false
@@ -59,7 +90,7 @@ func DeferredIndexRebuildActive(client mmapi.Client) bool {
 		client.LogError("Failed to read vector index state; treating a deferred rebuild as active", "error", err)
 		return true
 	}
-	return state.Phase != ""
+	return deferredIndexGated(state.Phase)
 }
 
 // bulkIndexerFor resolves the bulk index control from a search snapshot,
@@ -106,160 +137,152 @@ func (s *Indexer) casVectorIndexState(old, updated *VectorIndexState) (bool, err
 	return s.pluginAPI.KVCompareAndSet(VectorIndexStateKey, oldValue, newValue)
 }
 
-// deleteOwnedVectorIndexState clears the phase state if (and only if) jobID
-// still owns it, retrying transient failures. Returns an error when the
-// state could not be cleared while owned — search stays gated in that case,
-// so the caller must surface it.
-func (s *Indexer) deleteOwnedVectorIndexState(jobID string) error {
+// clearVectorIndexState CAS-deletes the given owned state, retrying transient
+// KV errors. A CAS conflict means ownership was lost to another run — the
+// state is left alone and an error is returned so the caller surfaces it.
+func (s *Indexer) clearVectorIndexState(state VectorIndexState) error {
 	var lastErr error
-	for attempt := 0; attempt < deleteStateRetries; attempt++ {
-		state, err := s.loadVectorIndexState()
+	for attempt := 0; attempt < clearStateRetries; attempt++ {
+		ok, err := s.casVectorIndexState(&state, nil)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		if state == nil {
-			return nil
+		if !ok {
+			return fmt.Errorf("vector index state is no longer owned by this run")
 		}
-		if state.JobID != jobID {
-			s.pluginAPI.LogWarn("Vector index state is owned by another run; skipping clear",
-				"job_id", jobID, "owner_job_id", state.JobID)
-			return nil
-		}
-		ok, casErr := s.casVectorIndexState(state, nil)
-		if casErr != nil {
-			lastErr = casErr
-			continue
-		}
-		if ok {
-			return nil
-		}
-		// Lost a CAS race; re-read and re-check ownership.
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("compare-and-delete kept losing races")
+		return nil
 	}
 	return fmt.Errorf("failed to clear vector index state: %w", lastErr)
 }
 
-// ownsVectorIndexState returns the current state when jobID owns it, or nil
-// (with a log) when the state is absent or owned by another run.
-func (s *Indexer) ownsVectorIndexState(jobID string) *VectorIndexState {
-	state, err := s.loadVectorIndexState()
-	if err != nil {
-		s.pluginAPI.LogError("Failed to read vector index state for ownership check", "error", err)
-		return nil
-	}
-	if state == nil {
-		return nil
-	}
-	if state.JobID != jobID {
-		s.pluginAPI.LogWarn("Vector index state is owned by another run",
-			"job_id", jobID, "owner_job_id", state.JobID)
-		return nil
-	}
-	return state
-}
-
-// resolveDeferredRebuild decides whether this run defers the ANN index
-// rebuild and persists/updates the phase state accordingly. Any leftover
-// state is adopted regardless of the configured strategy or fresh/resume
-// mode — the invariant is that every full or resumed reindex rebuilds a
-// dropped index, even if the admin switched the strategy back to maintain
-// after a deferred run crashed. Without leftover state, fresh full reindexes
-// consult the configured strategy. Called under the job-start cluster mutex,
-// before the background job runs.
+// resolveDeferredRebuild decides whether this run participates in the
+// deferred index lifecycle and claims/adopts the durable phase state
+// accordingly. Any leftover state is handled — the invariant is that every
+// full or resumed reindex either rebuilds a dropped index or completes a
+// pending repair, even if the admin changed the strategy since. Without
+// leftover state, fresh full reindexes consult the configured strategy.
+// Called under the job-start cluster mutex, before the background job runs.
 //
-// Returns deferRebuild (run in defer mode), adopted (the claimed state was
-// left over from a previous run, i.e. the index may already be genuinely
-// dropped), and a non-nil error when the state could not be read or an
-// adoption write failed — the caller must fail the job rather than silently
-// running in maintain mode with the index possibly missing.
-func (s *Indexer) resolveDeferredRebuild(clearIndex bool, jobID string) (deferRebuild bool, adopted bool, err error) {
+// Returns nil when the run proceeds in plain maintain mode. A non-nil error
+// means the state could not be read or a claim/adoption CAS did not apply —
+// the caller must fail the job rather than silently running in maintain mode
+// with the lifecycle in an unknown state.
+func (s *Indexer) resolveDeferredRebuild(clearIndex bool, jobID string) (*deferredRun, error) {
 	state, err := s.loadVectorIndexState()
 	if err != nil {
-		return false, false, fmt.Errorf("failed to read vector index state: %w", err)
+		return nil, fmt.Errorf("failed to read vector index state: %w", err)
+	}
+
+	if state != nil && clearIndex && state.Phase == VectorIndexPhaseRepairing {
+		// A fresh full reindex re-embeds everything, so a pending repair is
+		// moot: clear it and start clean per the configured strategy.
+		ok, casErr := s.casVectorIndexState(state, nil)
+		if casErr != nil {
+			return nil, fmt.Errorf("failed to clear leftover vector index repair state: %w", casErr)
+		}
+		if !ok {
+			return nil, fmt.Errorf("vector index state changed while clearing leftover repair state")
+		}
+		state = nil
 	}
 
 	if state != nil {
-		// Leftover state: a previous deferred run left the index dropped (or
-		// its build unfinished). This run must rebuild it.
+		if state.Phase == VectorIndexPhaseRepairing {
+			// Resume: the index is intact, only the edited-posts repair (and
+			// the rest of the run) is outstanding. Adopt the marker; the run
+			// must NOT drop the index in this mode.
+			newState := VectorIndexState{JobID: jobID, Phase: VectorIndexPhaseRepairing, BuildStartedAt: state.BuildStartedAt}
+			ok, casErr := s.casVectorIndexState(state, &newState)
+			if casErr != nil {
+				return nil, fmt.Errorf("failed to take ownership of vector index repair state: %w", casErr)
+			}
+			if !ok {
+				return nil, fmt.Errorf("vector index state changed while taking ownership")
+			}
+			return &deferredRun{state: newState, adopted: true}, nil
+		}
+
+		// Leftover dropped/building state: a previous deferred run left the
+		// index dropped (or its build unfinished). This run must rebuild it.
 		if bulkIndexerFor(s.getSearch()) == nil {
 			s.pluginAPI.LogError("Vector index was dropped by a previous reindex but the current vector store does not support rebuilding it; semantic search stays disabled",
 				"previous_job_id", state.JobID)
-			return false, false, nil
+			return nil, nil
 		}
 		newState := VectorIndexState{JobID: jobID, Phase: VectorIndexPhaseDropped, BuildStartedAt: state.BuildStartedAt}
+		if clearIndex {
+			// A fresh full reindex re-embeds everything up to its cutoff, so
+			// the gated-edits window restarts with the new build.
+			newState.BuildStartedAt = 0
+		}
 		ok, casErr := s.casVectorIndexState(state, &newState)
 		if casErr != nil {
-			return false, false, fmt.Errorf("failed to take ownership of vector index state: %w", casErr)
+			return nil, fmt.Errorf("failed to take ownership of vector index state: %w", casErr)
 		}
 		if !ok {
-			return false, false, fmt.Errorf("vector index state changed while taking ownership")
+			return nil, fmt.Errorf("vector index state changed while taking ownership")
 		}
-		return true, true, nil
+		return &deferredRun{state: newState, adopted: true}, nil
 	}
 
 	if !clearIndex {
 		// Resume or catch-up without leftover state: nothing to defer.
-		return false, false, nil
+		return nil, nil
 	}
 
 	if s.configGetter == nil {
-		return false, false, nil
+		return nil, nil
 	}
 	cfg := s.configGetter()
 	if cfg.EffectiveReindexIndexStrategy() != embeddings.ReindexIndexStrategyDefer {
-		return false, false, nil
+		return nil, nil
 	}
 	if bulkIndexerFor(s.getSearch()) == nil {
 		s.pluginAPI.LogWarn("Reindex index strategy is 'defer' but the vector store does not support it; maintaining the index during reindex")
-		return false, false, nil
+		return nil, nil
 	}
 	// Persist the state BEFORE the index is dropped so a crash in between
-	// leaves a record; reconciliation clears it if the index still exists.
-	// The index is untouched at this point, so a claim failure can safely
-	// fall back to maintain mode.
-	ok, casErr := s.casVectorIndexState(nil, &VectorIndexState{JobID: jobID, Phase: VectorIndexPhaseDropped})
-	if casErr != nil || !ok {
-		s.pluginAPI.LogError("Failed to persist vector index state; maintaining the index during reindex", "error", casErr)
-		return false, false, nil
+	// leaves a record; reconciliation clears it if the index still exists. A
+	// failed or conflicting claim fails the job start — falling back to
+	// maintain mode silently would leave the lifecycle in an unknown state.
+	claim := VectorIndexState{JobID: jobID, Phase: VectorIndexPhaseDropped}
+	ok, casErr := s.casVectorIndexState(nil, &claim)
+	if casErr != nil {
+		return nil, fmt.Errorf("failed to persist vector index state: %w", casErr)
 	}
-	return true, false, nil
+	if !ok {
+		return nil, fmt.Errorf("vector index state was claimed concurrently")
+	}
+	return &deferredRun{state: claim, adopted: false}, nil
 }
 
 // finalizeDeferredIndex transitions the phase to building, rebuilds the ANN
-// index, and clears the phase state on success. The build can run for hours,
-// so the DDL runs in a goroutine while this method keeps the job heartbeat
-// ticking — otherwise stale-job detection would reclaim the job and start a
-// second reindex mid-build. Cancellation cannot interrupt in-flight DDL; a
-// pending cancel is acknowledged by the caller after the build finishes.
+// index, and transitions to repairing on success (the pending-repair marker
+// for posts edited while gated; it is cleared only after the repair pass).
+// The build can run for hours, so the DDL runs in a goroutine while this
+// method keeps the job heartbeat ticking — otherwise stale-job detection
+// would reclaim the job and start a second reindex mid-build. Cancellation
+// cannot interrupt in-flight DDL; a pending cancel is acknowledged by the
+// caller after the build finishes.
 //
-// Returns the Unix-millis timestamp from which live indexing was gated (for
-// the edited-posts repair) and an error. The building transition is fenced
-// on ownership and MUST succeed before the DDL runs: the IndexPost gate only
-// engages on the building phase, and running a blocking CREATE INDEX without
-// the gate would pile up hook goroutines on blocked writes for hours.
-func (s *Indexer) finalizeDeferredIndex(ctx context.Context, jobStatus *JobStatus, bulk embeddings.BulkIndexer) (int64, error) {
-	state := s.ownsVectorIndexState(jobStatus.JobID)
-	if state == nil {
-		return 0, fmt.Errorf("vector index state is no longer owned by this run; skipping index build")
-	}
-
-	buildingState := VectorIndexState{
-		JobID:          jobStatus.JobID,
-		Phase:          VectorIndexPhaseBuilding,
-		BuildStartedAt: state.BuildStartedAt,
-	}
+// owned is the state as last written by this run's CAS; the dropped→building
+// CAS below both fences ownership and engages the IndexPost gate, and it
+// MUST succeed before the DDL runs — a blocking CREATE INDEX without the
+// gate would pile up hook goroutines on blocked writes for hours. Returns
+// the updated in-memory state alongside any error.
+func (s *Indexer) finalizeDeferredIndex(ctx context.Context, jobStatus *JobStatus, bulk embeddings.BulkIndexer, owned VectorIndexState) (VectorIndexState, error) {
+	buildingState := owned
+	buildingState.Phase = VectorIndexPhaseBuilding
 	if buildingState.BuildStartedAt == 0 {
 		buildingState.BuildStartedAt = time.Now().UnixMilli()
 	}
-	ok, casErr := s.casVectorIndexState(state, &buildingState)
+	ok, casErr := s.casVectorIndexState(&owned, &buildingState)
 	if casErr != nil {
-		return 0, fmt.Errorf("failed to record vector index building phase: %w", casErr)
+		return owned, fmt.Errorf("failed to record vector index building phase: %w", casErr)
 	}
 	if !ok {
-		return 0, fmt.Errorf("vector index state changed while entering the building phase")
+		return owned, fmt.Errorf("vector index state is no longer owned by this run; skipping index build")
 	}
 
 	// A small TOCTOU window remains between the ownership CAS above and the
@@ -292,15 +315,28 @@ func (s *Indexer) finalizeDeferredIndex(ctx context.Context, jobStatus *JobStatu
 				droppedState.Phase = VectorIndexPhaseDropped
 				if reverted, revertErr := s.casVectorIndexState(&buildingState, &droppedState); revertErr != nil || !reverted {
 					s.pluginAPI.LogError("Failed to revert vector index state after failed build", "error", revertErr)
+					return buildingState, err
 				}
-				return buildingState.BuildStartedAt, err
+				return droppedState, err
 			}
-			if delErr := s.deleteOwnedVectorIndexState(jobStatus.JobID); delErr != nil {
-				// The index is built but search stays gated until the state
-				// clears; surface the failure instead of silently completing.
-				return buildingState.BuildStartedAt, fmt.Errorf("vector index was rebuilt but its state could not be cleared; semantic search stays disabled: %w", delErr)
+			// The index is valid again, but edits made during the build are
+			// still stale: record the pending repair durably so it can never
+			// be silently skipped (a resume adopts it).
+			repairingState := buildingState
+			repairingState.Phase = VectorIndexPhaseRepairing
+			var lastErr error
+			for attempt := 0; attempt < clearStateRetries; attempt++ {
+				applied, transErr := s.casVectorIndexState(&buildingState, &repairingState)
+				if transErr != nil {
+					lastErr = transErr
+					continue
+				}
+				if !applied {
+					return buildingState, fmt.Errorf("vector index state is no longer owned by this run after the build")
+				}
+				return repairingState, nil
 			}
-			return buildingState.BuildStartedAt, nil
+			return buildingState, fmt.Errorf("vector index was rebuilt but the repair phase could not be recorded: %w", lastErr)
 		case <-heartbeat.C:
 			// Keep the job fresh; a cancel request is intentionally not
 			// acted on here since the DDL cannot be interrupted.
@@ -309,15 +345,32 @@ func (s *Indexer) finalizeDeferredIndex(ctx context.Context, jobStatus *JobStatu
 	}
 }
 
+// pendingRepairNote is appended to terminal job errors when the run ends
+// with the repairing marker still in place.
+const pendingRepairNote = "Posts edited during the index rebuild are pending repair; resume the job or run a reindex to re-index them"
+
+// appendPendingRepairNote joins the pending-repair note onto an existing
+// error message (or stands alone when there is none).
+func appendPendingRepairNote(errMsg string) string {
+	if errMsg == "" {
+		return pendingRepairNote
+	}
+	return errMsg + "; " + pendingRepairNote
+}
+
 // restoreDeferredIndex attempts to rebuild the ANN index on a failure or
-// cancel exit path, before the terminal status is recorded. It returns the
-// (possibly augmented) error message; when the rebuild itself fails the
-// phase state stays in place (reverted to dropped) so the condition stays
-// visible and a resume can fix it.
-func (s *Indexer) restoreDeferredIndex(ctx context.Context, jobStatus *JobStatus, bulk embeddings.BulkIndexer, errMsg string) string {
-	_, rebuildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk)
+// cancel exit path, before the terminal status is recorded. On a successful
+// rebuild the state transitions to repairing (not deleted): the edits gated
+// during the build are still pending, and the marker must survive so a
+// resume repairs them and the health check shows the condition. It returns
+// the (possibly augmented) error message; when the rebuild itself fails the
+// phase state stays in place (reverted to dropped) so a resume can fix it.
+func (s *Indexer) restoreDeferredIndex(ctx context.Context, jobStatus *JobStatus, bulk embeddings.BulkIndexer, owned VectorIndexState, errMsg string) string {
+	_, rebuildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk, owned)
 	if rebuildErr == nil {
-		return errMsg
+		s.pluginAPI.LogWarn("Vector index was rebuilt on the exit path; edits from the build window are pending repair",
+			"job_id", jobStatus.JobID)
+		return appendPendingRepairNote(errMsg)
 	}
 	s.pluginAPI.LogError("Failed to rebuild vector index while terminating reindex job", "error", rebuildErr)
 	if errMsg == "" {
@@ -329,15 +382,15 @@ func (s *Indexer) restoreDeferredIndex(ctx context.Context, jobStatus *JobStatus
 // abandonUndroppedClaim clears a claimed phase state on an exit path where
 // the ANN index was never actually dropped by this run. Adopted states are
 // left in place instead: they were inherited from a previous run, so the
-// index may genuinely be missing and clearing the state would ungate search
-// against a missing index.
-func (s *Indexer) abandonUndroppedClaim(jobID string, adopted bool) {
-	if adopted {
-		s.pluginAPI.LogError("Reindex job is exiting before rebuilding an inherited dropped vector index; semantic search stays disabled until a reindex rebuilds it",
-			"job_id", jobID)
+// index may genuinely be missing (or a repair may be pending) and clearing
+// the state would lose that marker.
+func (s *Indexer) abandonUndroppedClaim(run *deferredRun) {
+	if run.adopted {
+		s.pluginAPI.LogError("Reindex job is exiting before completing an inherited vector index lifecycle; the state marker is kept",
+			"job_id", run.state.JobID, "phase", run.state.Phase)
 		return
 	}
-	if err := s.deleteOwnedVectorIndexState(jobID); err != nil {
+	if err := s.clearVectorIndexState(run.state); err != nil {
 		s.pluginAPI.LogError("Failed to clear vector index state on early exit", "error", err)
 	}
 }
@@ -347,11 +400,13 @@ func (s *Indexer) abandonUndroppedClaim(jobID string, adopted bool) {
 // FIRST: between claiming the state and dropping the index there is a window
 // where the catalog still shows a valid index, and clearing a live job's
 // claim there would let the constructor rebuild the index under the job or
-// ungate search mid-drop. Only leftovers without a live owner use catalog
-// evidence. If the index is genuinely missing and no live job owns the
-// state, the index is NOT rebuilt here — a build can take hours and must not
-// run inside activation. Search stays gated until an admin starts or resumes
-// a reindex, which rebuilds it.
+// ungate search mid-drop. A leftover repairing state is always kept — it is
+// the pending-repair marker and the index is SUPPOSED to exist in that
+// phase, so catalog evidence must not clear it. Only ownerless
+// dropped/building leftovers use catalog evidence. If the index is genuinely
+// missing and no live job owns the state, the index is NOT rebuilt here — a
+// build can take hours and must not run inside activation. Search stays
+// gated until an admin starts or resumes a reindex, which rebuilds it.
 func (s *Indexer) ReconcileVectorIndexState(ctx context.Context) error {
 	state, err := s.loadVectorIndexState()
 	if err != nil {
@@ -364,7 +419,13 @@ func (s *Indexer) ReconcileVectorIndexState(ctx context.Context) error {
 	var jobStatus JobStatus
 	jobErr := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
 	if jobErr == nil && jobStatus.JobID == state.JobID && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
-		// The owning job is still running; it will rebuild the index.
+		// The owning job is still running; it will finish the lifecycle.
+		return nil
+	}
+
+	if state.Phase == VectorIndexPhaseRepairing {
+		s.pluginAPI.LogWarn("Vector index repair is pending from a previous reindex; resume the job or run a reindex to re-index posts edited during the rebuild",
+			"job_id", state.JobID)
 		return nil
 	}
 
