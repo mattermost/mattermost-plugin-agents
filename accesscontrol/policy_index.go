@@ -7,11 +7,15 @@ package accesscontrol
 // resource (contract §9.3); consulted only on unavailable/error outcomes.
 // WS-D provides the Agents_System-backed implementation.
 type PolicyIndex interface {
-	Has(resourceType, resourceID string) bool
+	// Has reports whether a policy was ever saved for the resource. A non-nil
+	// error means the index could not be read; the Checker MUST fail closed
+	// (treat the resource as policy-gated and deny) — a persistence failure
+	// must never silently downgrade an unavailable/error outcome to allow.
+	Has(resourceType, resourceID string) (bool, error)
 }
 
 // EmptyPolicyIndex reports no policies; used until WS-D wires the real index.
 type EmptyPolicyIndex struct{}
 
-// Has always reports false.
-func (EmptyPolicyIndex) Has(_, _ string) bool { return false }
+// Has always reports false with no error.
+func (EmptyPolicyIndex) Has(_, _ string) (bool, error) { return false, nil }

@@ -101,7 +101,9 @@ func TestEmptyPolicyIndexHas(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.False(t, EmptyPolicyIndex{}.Has(tt.resourceType, tt.resourceID))
+			has, err := EmptyPolicyIndex{}.Has(tt.resourceType, tt.resourceID)
+			assert.NoError(t, err)
+			assert.False(t, has)
 		})
 	}
 }

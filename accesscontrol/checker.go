@@ -18,6 +18,11 @@ var ErrAccessDenied = errors.New("access denied by policy")
 // external MCP servers. In WS-C all methods are legacy passthrough (the
 // no_policy rows of the contract §9.2 decision tables); WS-D fills in the
 // decision-table evaluation without changing the method signatures.
+//
+// When WS-D consults the PolicyIndex on unavailable/error outcomes, an index
+// read error fails closed: the resource is treated as policy-gated and the
+// request is denied. Only a successful Has(...) == false may fall back to
+// legacy behavior.
 type Checker struct {
 	client DecisionClient
 	index  PolicyIndex
