@@ -291,6 +291,38 @@ Run the initial indexing process after configuration.
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
 
+### Attribute-based access control (ABAC)
+
+Attribute-based access control lets you restrict who can use agents, LLM services, and MCP servers with policies written against user attributes (for example `user.attributes.department == "engineering"`), instead of maintaining explicit user or team lists.
+
+**Prerequisites:**
+
+- A Mattermost server (v11.10.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable.
+- User attributes (custom profile attributes) configured on the server, since policies are written against them.
+
+**Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
+
+- **Agents** — set the agent's user access to **Attribute-based (access policy)** in the agent's Access tab, then author the policy there. In this mode the agent's allow/block user and team lists are ignored; the policy is the only user-access gate. Agent creators and agent admins can author with the simplified (table) editor; system admins additionally get the advanced (CEL) editor.
+- **LLM services** — authored by system admins in **System Console > Plugins > Agents** on the service panel (advanced editor). A service policy restricts every agent backed by that service, on top of any per-agent restrictions.
+- **MCP servers** — authored by system admins on the MCP server panel (advanced editor). Users denied by an MCP server policy silently lose that server's tools; there is no notification in chat, the tools simply don't appear.
+
+**Allow and deny semantics.** For each request the plugin evaluates the applicable policies and applies these rules:
+
+- No policy exists for a resource → the legacy checks (user/team lists for agents; nothing for services/MCP servers) apply unchanged. Installing the plugin or upgrading changes nothing until you author a policy.
+- A policy exists → the policy decides: matching users are allowed, non-matching users are denied.
+- The ABAC engine is unavailable (for example the license lapsed or the feature was disabled) → resources that have (or ever had) a policy, and agents in attribute-based mode, **fail closed**: users are denied rather than falling back to unrestricted access. Resources that never had a policy are unaffected.
+
+**Policy staleness note.** The plugin remembers which resources have had policies (the policy index) so it can fail closed during outages. Deleting an agent removes its policy best-effort; deleting a service or MCP server from the configuration does not delete its policy. If you recreate a resource with the same ID, the old policy applies again. Remove the policy first (via the resource's policy editor) if that is not what you want.
+
+**Authoring permissions:**
+
+| Route | Who |
+|-------|-----|
+| Agent policy (read/write/delete) | Agent creator, agent admins, and users with the manage-others'-agents permission |
+| Service policy (read/write/delete) | System admins only |
+| MCP server policy (read/write/delete) | System admins only |
+| CEL helper endpoints (validation, autocomplete, test) | Anyone who can manage some agent (their own or as agent admin); system admins |
+
 ## Management tasks
 
 ### Plugin metrics
