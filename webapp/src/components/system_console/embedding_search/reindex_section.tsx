@@ -478,6 +478,20 @@ export const ReindexSection = ({
                                         </HealthCheckValue>
                                     </HealthCheckRow>
                                 )}
+                                {healthCheckResult.vector_index_state && (
+                                    <HealthCheckRow>
+                                        <HealthCheckLabel>
+                                            <FormattedMessage defaultMessage='Vector Index'/>
+                                        </HealthCheckLabel>
+                                        <HealthCheckValue>
+                                            {healthCheckResult.vector_index_state.phase === 'building' ? (
+                                                <FormattedMessage defaultMessage='Rebuilding — search unavailable'/>
+                                            ) : (
+                                                <FormattedMessage defaultMessage='Dropped for bulk load — search unavailable'/>
+                                            )}
+                                        </HealthCheckValue>
+                                    </HealthCheckRow>
+                                )}
                                 {healthCheckResult.error && (
                                     <ErrorHelpText>
                                         {healthCheckResult.error}

@@ -303,10 +303,10 @@ For large installations (tens of millions of posts), set **Reindex Index Strateg
 
 Notes on running a deferred reindex:
 
-- **Semantic search is unavailable** from the moment the reindex starts until the final index build completes. Search requests return an error (HTTP 503 on the API) during this window. Live posts continue to be indexed while the bulk load runs; while the final index build itself runs, new posts are skipped and swept up by the automatic catch-up pass afterwards.
+- **Semantic search is unavailable** from the moment the reindex starts until the final index build completes. Search requests return an error (HTTP 503 on the API) during this window. Live posts continue to be indexed while the bulk load runs; while the final index build itself runs, live post indexing (new posts and edits) is paused and repaired automatically afterwards — edits made during the build are re-embedded and new posts are swept up by the catch-up pass. Post deletions and retention cleanup that arrive during the final build briefly block until the build finishes.
 - **Tune the index build on the database side** — the plugin intentionally does not override server settings. Raising `maintenance_work_mem` (e.g. to several GB) speeds up the HNSW build significantly, and pgvector 0.6+ can parallelize the build with `max_parallel_maintenance_workers`.
-- **Crash recovery**: the index lifecycle state is durable. If the plugin or server restarts mid-reindex, the health check (**Check Index Health**) reports the vector index state, and search stays disabled until the index is rebuilt. Resume the reindex job (or start a new full reindex) to rebuild the index; the plugin never rebuilds it implicitly during activation because the build can take hours.
-- The strategy only applies to full reindexes. Catch-up jobs and live post indexing always maintain the index normally.
+- **Crash recovery**: the index lifecycle state is durable. If the plugin or server restarts mid-reindex, the health check (**Check Index Health**) reports the vector index state, and search stays disabled until the index is rebuilt. Resume the reindex job (or start a new full reindex) to rebuild the index; the plugin never rebuilds it implicitly during activation because the build can take hours. Any full or resumed reindex rebuilds a dropped index, even if the strategy setting has since been changed back to `maintain`.
+- The strategy only applies to full reindexes. Catch-up jobs never drop the index. Live post indexing maintains the index normally except during the final build, as described above.
 
 ### Permission configuration
 

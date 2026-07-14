@@ -39,7 +39,7 @@ export interface EmbeddingSearchConfig {
     chunkingOptions?: ChunkingOptions;
     reindexWorkers?: number;
     reindexBatchSize?: number;
-    reindexIndexStrategy?: string;
+    reindexIndexStrategy?: ReindexIndexStrategy;
 }
 
 // Match the server's JobStatus struct field names
@@ -84,5 +84,6 @@ export interface HealthCheckResultType {
     vector_index_state?: {
         job_id: string;
         phase: string; // 'dropped' | 'building'
+        build_started_at?: number;
     };
 }

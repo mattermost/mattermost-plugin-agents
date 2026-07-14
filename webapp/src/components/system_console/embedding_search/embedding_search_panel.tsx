@@ -13,7 +13,7 @@ import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
 import {IntItem} from '../number_items';
 
-import {EmbeddingSearchConfig, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY} from './types';
+import {EmbeddingSearchConfig, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, ReindexIndexStrategy} from './types';
 import {OpenAIProviderConfig, OpenAICompatibleProviderConfig} from './provider_configs';
 import {ChunkingOptionsConfig} from './chunking_options';
 import {ReindexSection} from './reindex_section';
@@ -39,7 +39,7 @@ const normalizeReindexValue = (value: number | undefined, fallback: number, max:
 
 // Mirror the server's EffectiveReindexIndexStrategy: anything other than
 // 'defer' (including absent/unknown values) normalizes to 'maintain'.
-const normalizeReindexIndexStrategy = (value: string | undefined): string => {
+const normalizeReindexIndexStrategy = (value: string | undefined): ReindexIndexStrategy => {
     if (value === REINDEX_INDEX_STRATEGY.defer) {
         return REINDEX_INDEX_STRATEGY.defer;
     }
@@ -262,7 +262,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                         <SelectionItem
                             label={intl.formatMessage({defaultMessage: 'Reindex Index Strategy'})}
                             value={normalizeReindexIndexStrategy(value.reindexIndexStrategy)}
-                            onChange={(e) => onChange({...value, reindexIndexStrategy: e.target.value})}
+                            onChange={(e) => onChange({...value, reindexIndexStrategy: normalizeReindexIndexStrategy(e.target.value)})}
                             helptext={intl.formatMessage({defaultMessage: 'Controls how the vector index is handled during a full reindex. Dropping and rebuilding the index after the bulk load is much faster for large databases, but semantic search is unavailable until the rebuild completes.'})}
                         >
                             <SelectionItemOption value={REINDEX_INDEX_STRATEGY.maintain}>
