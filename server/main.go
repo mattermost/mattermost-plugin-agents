@@ -199,6 +199,23 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
+	// ABAC ID migrations must run after the config.json->DB migration and the
+	// config load above, and before bots.New/EnsureBots and the legacy config
+	// bot migration, so migrated bots copy already-remapped service IDs into
+	// Agents_UserAgents. Publishing happens only after the migration committed.
+	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store, &p.configuration)
+	if err != nil {
+		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
+	}
+	if idsMigrated {
+		if pubErr := p.PublishConfigUpdate(); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish config update after ID migration", "error", pubErr.Error())
+		}
+		if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish agent update after ID migration", "error", pubErr.Error())
+		}
+	}
+
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
 
 	// migrateAndRefresh runs the one-time legacy bot migration, then forces
