@@ -9,6 +9,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
@@ -53,6 +54,15 @@ const vectorIndexName = "llm_posts_embeddings_embedding_idx"
 // FinalizeBulkIndex so both always build the identical index.
 const createVectorIndexQuery = "CREATE INDEX IF NOT EXISTS " + vectorIndexName +
 	" ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops)"
+
+// expectedVectorIndexDefSuffix is what pg_get_indexdef must end with for the
+// index to count as the ANN index: the hnsw access method on the plain
+// embedding column with the L2 opclass and no predicate. Anything else with
+// the right name (a B-tree, a vector_cosine_ops HNSW, a partial or
+// expression index) would silently break `<->` L2 queries and must be
+// replaced. pg_get_indexdef output is canonical, so a plain suffix match is
+// an exact comparison of everything after "CREATE INDEX name ON table".
+const expectedVectorIndexDefSuffix = "USING hnsw (embedding vector_l2_ops)"
 
 type PGVector struct {
 	db *sqlx.DB
@@ -398,8 +408,9 @@ func (pv *PGVector) PrepareBulkIndex(ctx context.Context) error {
 // FinalizeBulkIndex (re)builds the ANN index with the same DDL as the
 // constructor and verifies the result is valid. A leftover index with the
 // target name but the wrong definition — invalid (e.g. from an interrupted
-// build) or not an HNSW index (e.g. a same-named B-tree) — is dropped first
-// so CREATE INDEX IF NOT EXISTS can't silently keep it.
+// build) or not exactly the expected HNSW L2 index (e.g. a same-named
+// B-tree or a vector_cosine_ops HNSW) — is dropped first so CREATE INDEX IF
+// NOT EXISTS can't silently keep it.
 //
 // Everything runs on a single pinned connection: the session
 // statement_timeout is disabled for the (potentially hours-long) build, and
@@ -428,7 +439,7 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to check vector index state: %w", err)
 	}
-	if status.exists && (!status.valid || !status.hnsw) {
+	if status.exists && (!status.valid || !status.definitionOK) {
 		if _, dropErr := conn.ExecContext(ctx, "DROP INDEX IF EXISTS "+vectorIndexName); dropErr != nil {
 			return fmt.Errorf("failed to drop invalid vector index: %w", dropErr)
 		}
@@ -442,45 +453,48 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to verify vector index after build: %w", err)
 	}
-	if !status.exists || !status.valid || !status.hnsw {
+	if !status.exists || !status.valid || !status.definitionOK {
 		return fmt.Errorf("vector index %s is missing or invalid after build", vectorIndexName)
 	}
 	return nil
 }
 
-// VectorIndexExists reports whether a valid HNSW ANN index currently exists.
+// VectorIndexExists reports whether a valid ANN index with the expected
+// definition currently exists.
 func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
 	status, err := vectorIndexStatus(ctx, pv.db)
 	if err != nil {
 		return false, err
 	}
-	return status.exists && status.valid && status.hnsw, nil
+	return status.exists && status.valid && status.definitionOK, nil
 }
 
 type indexStatus struct {
 	exists bool
 	valid  bool
-	hnsw   bool
+	// definitionOK reports the index definition matches the expected ANN
+	// index exactly (hnsw, embedding column, vector_l2_ops, no predicate).
+	definitionOK bool
 }
 
 // vectorIndexStatus queries the catalog for the ANN index, constrained to
 // the target table in the current schema so a same-named index elsewhere
-// can't match, and reports validity plus whether it actually uses the HNSW
-// access method (a same-named valid B-tree must not count as the ANN index).
-// The queryer parameter lets FinalizeBulkIndex run this on its pinned
-// connection instead of the pool.
+// can't match, and reports validity plus whether the normalized definition
+// (pg_get_indexdef) matches the expected one exactly — a same-named valid
+// B-tree, cosine-opclass, partial, or expression index must not count as
+// the ANN index. The queryer parameter lets FinalizeBulkIndex run this on
+// its pinned connection instead of the pool.
 func vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext) (indexStatus, error) {
 	rows := []struct {
-		Valid bool `db:"indisvalid"`
-		HNSW  bool `db:"is_hnsw"`
+		Valid    bool   `db:"indisvalid"`
+		IndexDef string `db:"indexdef"`
 	}{}
 	err := sqlx.SelectContext(ctx, q, &rows, `
-		SELECT i.indisvalid, am.amname = 'hnsw' AS is_hnsw
+		SELECT i.indisvalid, pg_get_indexdef(i.indexrelid) AS indexdef
 		FROM pg_index i
 		JOIN pg_class c ON c.oid = i.indexrelid
 		JOIN pg_class t ON t.oid = i.indrelid
 		JOIN pg_namespace n ON n.oid = c.relnamespace
-		JOIN pg_am am ON am.oid = c.relam
 		WHERE c.relname = $1
 		  AND t.relname = 'llm_posts_embeddings'
 		  AND n.nspname = current_schema()`, vectorIndexName)
@@ -490,7 +504,11 @@ func vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext) (indexStatus,
 	if len(rows) == 0 {
 		return indexStatus{}, nil
 	}
-	return indexStatus{exists: true, valid: rows[0].Valid, hnsw: rows[0].HNSW}, nil
+	return indexStatus{
+		exists:       true,
+		valid:        rows[0].Valid,
+		definitionOK: strings.HasSuffix(rows[0].IndexDef, expectedVectorIndexDefSuffix),
+	}, nil
 }
 
 // DeleteOrphaned removes embeddings whose posts no longer exist or are soft-deleted past retention.

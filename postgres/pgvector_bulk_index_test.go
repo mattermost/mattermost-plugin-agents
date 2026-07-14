@@ -236,6 +236,37 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, indexExists)
 	})
+
+	t.Run("replaces a same-named valid HNSW index with the wrong opclass", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		require.NoError(t, pgVector.PrepareBulkIndex(ctx))
+
+		// A valid HNSW index with the cosine opclass: an access-method-only
+		// check would accept it, silently breaking `<->` L2 queries.
+		_, err = db.Exec("CREATE INDEX " + vectorIndexName + " ON llm_posts_embeddings USING hnsw (embedding vector_cosine_ops)")
+		require.NoError(t, err)
+
+		indexExists, err := pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, indexExists, "a cosine-opclass index must not count as the ANN index")
+
+		require.NoError(t, pgVector.FinalizeBulkIndex(ctx))
+
+		var indexdef string
+		err = db.Get(&indexdef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName)
+		require.NoError(t, err)
+		assert.Contains(t, indexdef, "vector_l2_ops", "the cosine index must be replaced by the L2 index")
+
+		indexExists, err = pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.True(t, indexExists)
+	})
 }
 
 func TestNewPGVectorSkipVectorIndex(t *testing.T) {
