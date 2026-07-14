@@ -247,8 +247,10 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebu
 	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor, passOptions{workers: workers, batchSize: batchSize})
 	if errors.Is(err, errCancelRequested) {
 		if deferPending {
-			// Restore the index before the cancel terminalizes the job.
-			s.restoreDeferredIndex(ctx, jobStatus, bulk, "")
+			// Restore the index before the cancel terminalizes the job. A
+			// rebuild failure must surface on the canceled status, not just
+			// in the server log.
+			jobStatus.Error = s.restoreDeferredIndex(ctx, jobStatus, bulk, jobStatus.Error)
 			deferPending = false
 		}
 		s.acknowledgeCancel(jobStatus)
@@ -271,8 +273,9 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebu
 	// scans from the original cutoff with NOT EXISTS.
 	if deferPending {
 		if buildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk); buildErr != nil {
-			// The phase state stays in place so the condition is visible
-			// via the health check; a resume rebuilds the index at the end.
+			// The phase state stays in place (reverted to dropped) so the
+			// condition is visible via the health check; a resume rebuilds
+			// the index at the end.
 			deferPending = false
 			s.handleJobError(jobStatus, fmt.Sprintf("Failed to rebuild vector index: %s", buildErr), watermark.LastCreateAt, watermark.LastID)
 			return

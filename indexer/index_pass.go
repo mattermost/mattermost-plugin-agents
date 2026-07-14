@@ -309,7 +309,9 @@ func (s *Indexer) isCancelRequested(jobID string) (bool, error) {
 }
 
 // acknowledgeCancel CASes cancel_requested -> canceled for this run and
-// mirrors the terminal state onto the worker's local status.
+// mirrors the terminal state onto the worker's local status. A worker-side
+// error (e.g. a failed vector index rebuild on the cancel exit path) is
+// carried onto the terminal row so it is visible beyond the server log.
 func (s *Indexer) acknowledgeCancel(jobStatus *JobStatus) {
 	var currentStatus JobStatus
 	if err := s.pluginAPI.KVGet(ReindexJobKey, &currentStatus); err != nil {
@@ -324,6 +326,9 @@ func (s *Indexer) acknowledgeCancel(jobStatus *JobStatus) {
 	canceledStatus.Status = JobStatusCanceled
 	canceledStatus.CompletedAt = time.Now()
 	canceledStatus.ProcessedRows = jobStatus.ProcessedRows
+	if jobStatus.Error != "" {
+		canceledStatus.Error = jobStatus.Error
+	}
 	if ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, currentStatus, canceledStatus); casErr != nil {
 		s.pluginAPI.LogError("Failed to record reindex cancellation", "error", casErr)
 	} else if ok {

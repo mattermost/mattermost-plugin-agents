@@ -231,7 +231,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		assert.True(t, tracker.wasDeleted(), "vector index state must be cleared after a successful build")
 	})
 
-	t.Run("finalize failure fails the job and retains the phase state", func(t *testing.T) {
+	t.Run("finalize failure fails the job and reverts the phase to dropped", func(t *testing.T) {
 		db := testDB(t)
 		defer cleanupDB(t, db)
 
@@ -262,9 +262,11 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		assert.Equal(t, JobStatusFailed, jobStatus.Status, "a failed index build must never complete the job")
 		assert.Contains(t, jobStatus.Error, "Failed to rebuild vector index")
 		assert.False(t, tracker.wasDeleted(), "phase state must stay in place when the build fails")
+		// Nothing is building anymore: the phase reverts to dropped with
+		// the owning job preserved so a resume can take ownership cleanly.
 		states := tracker.savedStates()
 		require.NotEmpty(t, states)
-		assert.Equal(t, VectorIndexPhaseBuilding, states[len(states)-1].Phase)
+		assert.Equal(t, VectorIndexState{JobID: "job-finalize-fail", Phase: VectorIndexPhaseDropped}, states[len(states)-1])
 	})
 
 	t.Run("main pass failure attempts finalize before recording failed", func(t *testing.T) {
@@ -302,6 +304,45 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		require.NotEqual(t, -1, finalizeIdx, "finalize must be attempted on main-pass failure; calls: %v", rec.snapshot())
 		assert.Less(t, rec.firstIndex("store:main"), finalizeIdx)
 		assert.True(t, tracker.wasDeleted(), "state must be cleared after a successful restore rebuild")
+	})
+
+	t.Run("main pass failure with failed rebuild surfaces both errors", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post1', $1, 0, 'Message', '', 'channel1')", now-10000)
+		require.NoError(t, err)
+
+		rec := &callRecorder{}
+		bulk := &fakeBulkIndexer{rec: rec, finalizeErr: errors.New("out of shared memory")}
+		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: now, storeErr: errors.New("store blew up")}
+
+		tracker := &vectorStateTracker{}
+		mockClient := mocks.NewMockClient(t)
+		mockVectorStateOps(mockClient, tracker)
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
+		idx.storeRetryAttempts = 1 // fail fast instead of exponential backoff
+
+		jobStatus := newDeferJobStatus("job-mainpass-rebuild-fail", now-5000)
+		idx.runReindexJob(jobStatus, true, true)
+
+		assert.Equal(t, JobStatusFailed, jobStatus.Status)
+		assert.Contains(t, jobStatus.Error, "Failed to index posts")
+		assert.Contains(t, jobStatus.Error, "additionally failed to rebuild vector index")
+		assert.Contains(t, jobStatus.Error, "out of shared memory")
+		assert.False(t, tracker.wasDeleted(), "phase state must stay in place when the restore rebuild fails")
+		states := tracker.savedStates()
+		require.NotEmpty(t, states)
+		assert.Equal(t, VectorIndexState{JobID: "job-mainpass-rebuild-fail", Phase: VectorIndexPhaseDropped}, states[len(states)-1])
 	})
 
 	t.Run("cancel during the main pass rebuilds the index before acknowledging", func(t *testing.T) {
@@ -347,6 +388,66 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		require.NotEqual(t, -1, rec.firstIndex("finalize"),
 			"the index must be rebuilt before the cancel terminalizes; calls: %v", rec.snapshot())
 		assert.True(t, tracker.wasDeleted(), "state must be cleared after the cancel-path rebuild")
+	})
+
+	t.Run("cancel with a failed rebuild records the rebuild error on the canceled status", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post1', $1, 0, 'Message', '', 'channel1')", now-10000)
+		require.NoError(t, err)
+
+		rec := &callRecorder{}
+		bulk := &fakeBulkIndexer{rec: rec, finalizeErr: errors.New("out of shared memory")}
+		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: now}
+
+		jobID := "job-cancel-rebuild-fail"
+		tracker := &vectorStateTracker{}
+		mockClient := mocks.NewMockClient(t)
+		mockVectorStateOps(mockClient, tracker)
+		// Cancel is already requested when the pass polls the job row.
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.JobID = jobID
+				status.Status = JobStatusCancelRequested
+			}).
+			Return(nil)
+		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
+			Return(mmapi.ErrKVNotFound)
+		var terminal JobStatus
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.AnythingOfType("indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				terminal = args.Get(2).(JobStatus)
+			}).
+			Return(true, nil)
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogWarn", mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
+
+		jobStatus := newDeferJobStatus(jobID, now-5000)
+		idx.runReindexJob(jobStatus, true, true)
+
+		assert.Equal(t, JobStatusCanceled, jobStatus.Status)
+		assert.Contains(t, jobStatus.Error, "Failed to rebuild vector index")
+		assert.Contains(t, jobStatus.Error, "out of shared memory")
+		// The persisted terminal row must carry the rebuild failure, not
+		// just the server log.
+		assert.Equal(t, JobStatusCanceled, terminal.Status)
+		assert.Contains(t, terminal.Error, "Failed to rebuild vector index")
+		assert.Contains(t, terminal.Error, "out of shared memory")
+		// The failed rebuild reverts the phase to dropped with the owning
+		// job preserved so a resume can take ownership cleanly.
+		assert.False(t, tracker.wasDeleted(), "phase state must stay in place when the rebuild fails")
+		states := tracker.savedStates()
+		require.NotEmpty(t, states)
+		assert.Equal(t, VectorIndexState{JobID: jobID, Phase: VectorIndexPhaseDropped}, states[len(states)-1])
 	})
 
 	t.Run("panic attempts finalize and fails the job", func(t *testing.T) {

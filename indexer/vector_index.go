@@ -162,6 +162,12 @@ func (s *Indexer) finalizeDeferredIndex(ctx context.Context, jobStatus *JobStatu
 		select {
 		case err := <-done:
 			if err != nil {
+				// Nothing is building anymore: revert to dropped (keeping
+				// the owning job) so health checks and reconciliation
+				// reflect reality and a resume can take ownership cleanly.
+				if saveErr := s.saveVectorIndexState(VectorIndexState{JobID: jobStatus.JobID, Phase: VectorIndexPhaseDropped}); saveErr != nil {
+					s.pluginAPI.LogError("Failed to revert vector index state after failed build", "error", saveErr)
+				}
 				return err
 			}
 			s.deleteVectorIndexState()
@@ -177,8 +183,8 @@ func (s *Indexer) finalizeDeferredIndex(ctx context.Context, jobStatus *JobStatu
 // restoreDeferredIndex attempts to rebuild the ANN index on a failure or
 // cancel exit path, before the terminal status is recorded. It returns the
 // (possibly augmented) error message; when the rebuild itself fails the
-// phase state is left in place so the condition stays visible and a resume
-// can fix it.
+// phase state stays in place (reverted to dropped) so the condition stays
+// visible and a resume can fix it.
 func (s *Indexer) restoreDeferredIndex(ctx context.Context, jobStatus *JobStatus, bulk embeddings.BulkIndexer, errMsg string) string {
 	rebuildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk)
 	if rebuildErr == nil {
