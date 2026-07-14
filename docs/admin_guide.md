@@ -478,18 +478,20 @@ This separation allows multiple agents to share the same LLM service configurati
   "config": {
     "services": [
       {
-        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "id": "k3g8sdb1ntbibnyt8u5jmqhc7w",
         "name": "OpenAI Service",
         "type": "openai",
         "apiKey": "sk-...",
         "defaultModel": "gpt-4o",
-        "fallbackServiceID": "550e8400-e29b-41d4-a716-446655440001"
+        "fallbackServiceID": "z9d4meq7jtrx5nch1u8kwsoa3e"
       }
     ],
     "defaultBotName": "ai"
   }
 }
 ```
+
+Service IDs are Mattermost-style 26-character IDs. Configurations created before this format was adopted used UUIDs; those are rewritten once on upgrade, so external automation that hard-coded UUID service IDs must re-read `GET /plugins/mattermost-ai/admin/config` to pick up the new IDs.
 
 **Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
 
