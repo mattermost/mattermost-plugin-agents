@@ -58,6 +58,10 @@ export interface JobStatusType {
     is_stale?: boolean;
 }
 
+// Mirror the server's vector index phases
+// (indexer.VectorIndexPhase* in indexer/vector_index.go).
+export type VectorIndexPhase = 'dropped' | 'building' | 'repairing';
+
 export interface StatusMessageType {
     success?: boolean;
     message?: string;
@@ -80,10 +84,11 @@ export interface HealthCheckResultType {
     stored_model_name?: string;
 
     // Set while a deferred reindex owns the vector index lifecycle
-    // (index dropped or being rebuilt); search is unavailable meanwhile.
+    // (index dropped, being rebuilt, or edited posts pending repair).
+    // Search is unavailable during 'dropped' and 'building' only.
     vector_index_state?: {
         job_id: string;
-        phase: string; // 'dropped' | 'building'
+        phase: VectorIndexPhase;
         build_started_at?: number;
     };
 }

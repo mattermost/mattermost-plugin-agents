@@ -195,6 +195,22 @@ const StaleActions = styled.div`
     gap: 8px;
 `;
 
+// The server may send phases a newer plugin version introduced; anything
+// unrecognized gets explicit fallback text instead of being misrendered as
+// one of the known states.
+const renderVectorIndexPhase = (phase: string) => {
+    switch (phase) {
+    case 'dropped':
+        return <FormattedMessage defaultMessage='Dropped for bulk load — search unavailable'/>;
+    case 'building':
+        return <FormattedMessage defaultMessage='Rebuilding — search unavailable'/>;
+    case 'repairing':
+        return <FormattedMessage defaultMessage='Re-indexing posts edited during rebuild'/>;
+    default:
+        return <FormattedMessage defaultMessage='Unknown state'/>;
+    }
+};
+
 interface ReindexSectionProps {
     jobStatus: JobStatusType | null;
     statusMessage: StatusMessageType;
@@ -484,11 +500,7 @@ export const ReindexSection = ({
                                             <FormattedMessage defaultMessage='Vector Index'/>
                                         </HealthCheckLabel>
                                         <HealthCheckValue>
-                                            {healthCheckResult.vector_index_state.phase === 'building' ? (
-                                                <FormattedMessage defaultMessage='Rebuilding — search unavailable'/>
-                                            ) : (
-                                                <FormattedMessage defaultMessage='Dropped for bulk load — search unavailable'/>
-                                            )}
+                                            {renderVectorIndexPhase(healthCheckResult.vector_index_state.phase)}
                                         </HealthCheckValue>
                                     </HealthCheckRow>
                                 )}
