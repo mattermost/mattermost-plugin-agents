@@ -753,6 +753,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -787,6 +788,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -821,6 +823,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -864,6 +867,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -906,6 +910,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -1281,6 +1286,7 @@ func TestIndexPost_WithSearchError(t *testing.T) {
 		}
 
 		mockSearch.On("Store", mock.Anything, mock.Anything).Return(errors.New("storage error"))
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound)
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, nil, nil)
 		err := indexer.IndexPost(ctx, post, channel)
@@ -1874,7 +1880,7 @@ func TestRunReindexJob(t *testing.T) {
 		}
 
 		// Run the job directly
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		// If job failed, print the error for debugging
 		if jobStatus.Status == JobStatusFailed {
@@ -1898,7 +1904,7 @@ func TestRunReindexJob(t *testing.T) {
 			StartedAt: time.Now(),
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Search not configured")
@@ -1916,7 +1922,7 @@ func TestRunReindexJob(t *testing.T) {
 			StartedAt: time.Now(),
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Search not configured")
@@ -1964,7 +1970,7 @@ func TestRunReindexJob(t *testing.T) {
 			CutoffAt:  now + 100,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		assert.Equal(t, JobStatusCanceled, jobStatus.Status,
 			"worker must transition cancel_requested -> canceled")
@@ -1984,7 +1990,7 @@ func TestRunReindexJob(t *testing.T) {
 			StartedAt: time.Now(),
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Failed to clear search index")
@@ -2039,7 +2045,7 @@ func TestJobProgressAndHeartbeat(t *testing.T) {
 			CutoffAt:  now + 700,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		if jobStatus.Status == JobStatusFailed {
 			t.Logf("Job failed with error: %s", jobStatus.Error)
@@ -2096,7 +2102,7 @@ func TestBatchProcessing(t *testing.T) {
 			CutoffAt:  now + 500,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		if jobStatus.Status == JobStatusFailed {
 			t.Logf("Job failed with error: %s", jobStatus.Error)
@@ -2156,7 +2162,7 @@ func TestCutoffTimestampHandling(t *testing.T) {
 			CutoffAt:  cutoffTime,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		if jobStatus.Status == JobStatusFailed {
 			t.Logf("Job failed with error: %s", jobStatus.Error)
@@ -2265,6 +2271,7 @@ func TestCheckIndexHealth_ExcludesBotDMChannels(t *testing.T) {
 		}
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -2324,6 +2331,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		}
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -2359,6 +2367,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 
 		// nil bots
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -2395,6 +2404,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		}
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -2472,7 +2482,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		}
 
 		// Run with clearIndex=false to resume from checkpoint
-		indexer.runReindexJob(jobStatus, false)
+		indexer.runReindexJob(jobStatus, false, false)
 
 		if jobStatus.Status == JobStatusFailed {
 			t.Logf("Job failed with error: %s", jobStatus.Error)
@@ -2540,7 +2550,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		}
 
 		// Run with clearIndex=false but no cursor - should start from beginning
-		indexer.runReindexJob(jobStatus, false)
+		indexer.runReindexJob(jobStatus, false, false)
 
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
 		assert.Equal(t, 5, len(indexedPosts), "Should index all posts when no cursor exists")
@@ -2604,7 +2614,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 			CutoffAt:  now + 200000,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Failed to index posts")
@@ -2856,7 +2866,7 @@ func TestCatchUpPassHeartbeat(t *testing.T) {
 			LastUpdatedAt: initialTime,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
 		// LastUpdatedAt should have been updated during catch-up
@@ -2915,7 +2925,7 @@ func TestCatchUpPassHeartbeat(t *testing.T) {
 			CutoffAt:  cutoffTime,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
 		// Should have saved progress at least once during catch-up (after 500 posts)
@@ -2966,7 +2976,7 @@ func TestCatchUpFailureHandling(t *testing.T) {
 			CutoffAt:  cutoffTime,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		// Job should be failed, not completed
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
@@ -3310,7 +3320,7 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 			CutoffAt:  now + 100,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		storedMu.Lock()
 		defer storedMu.Unlock()
@@ -3379,7 +3389,7 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 			CutoffAt:  now + 100,
 		}
 
-		indexer.runReindexJob(jobStatus, true)
+		indexer.runReindexJob(jobStatus, true, false)
 
 		assert.Equal(t, JobStatusCanceled, jobStatus.Status,
 			"worker must transition cancel_requested -> canceled, not just exit non-completed")

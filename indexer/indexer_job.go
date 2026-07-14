@@ -94,6 +94,10 @@ type HealthCheckResult struct {
 	StoredProviderType string `json:"stored_provider_type,omitempty"`
 	StoredDimensions   int    `json:"stored_dimensions,omitempty"`
 	StoredModelName    string `json:"stored_model_name,omitempty"`
+
+	// VectorIndexState is set while a deferred reindex owns the ANN index
+	// lifecycle (index dropped or being rebuilt).
+	VectorIndexState *VectorIndexState `json:"vector_index_state,omitempty"`
 }
 
 // ModelCompatibility represents the result of checking model compatibility
@@ -149,13 +153,25 @@ func (s *Indexer) postFetcher(query string, cutoff int64) fetchFunc {
 	}
 }
 
-// runReindexJob runs the reindexing process
-func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
+// runReindexJob runs the reindexing process. When deferRebuild is true, the
+// ANN index was claimed for an index-after-load run: it is dropped before
+// the bulk load and rebuilt once afterwards, and it must be restored on
+// EVERY terminal transition (success, failure, cancel, panic).
+func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebuild bool) {
+	// Shared with the panic-recovery defer so the index is restored even
+	// when the job dies mid-flight.
+	var bulk embeddings.BulkIndexer
+	deferPending := false
+
 	defer func() {
 		if r := recover(); r != nil {
 			s.pluginAPI.LogError("Reindex job panicked", "panic", r)
+			errMsg := fmt.Sprintf("Job panicked: %v", r)
+			if deferPending && bulk != nil {
+				errMsg = s.restoreDeferredIndex(context.Background(), jobStatus, bulk, errMsg)
+			}
 			jobStatus.Status = JobStatusFailed
-			jobStatus.Error = fmt.Sprintf("Job panicked: %v", r)
+			jobStatus.Error = errMsg
 			jobStatus.CompletedAt = time.Now()
 			s.saveJobStatus(jobStatus)
 		}
@@ -180,11 +196,43 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 
 	ctx := context.Background()
 
+	if deferRebuild {
+		bulk = bulkIndexerFor(search)
+		if bulk == nil {
+			// The search snapshot lost bulk index support between job start
+			// and now (e.g. a concurrent config change). The index has not
+			// been dropped yet, so the claimed state can be safely cleared.
+			s.pluginAPI.LogWarn("Vector store no longer supports deferred indexing; maintaining the index during reindex")
+			s.deleteVectorIndexState()
+			deferRebuild = false
+		}
+	}
+
+	if deferRebuild {
+		deferPending = true
+		// Drop the ANN index before the bulk load. On a resume this also
+		// clears a leftover invalid index from an interrupted build.
+		if err := bulk.PrepareBulkIndex(ctx); err != nil {
+			errMsg := s.restoreDeferredIndex(ctx, jobStatus, bulk, fmt.Sprintf("Failed to drop vector index: %s", err))
+			deferPending = false
+			jobStatus.Status = JobStatusFailed
+			jobStatus.Error = errMsg
+			jobStatus.CompletedAt = time.Now()
+			s.saveJobStatus(jobStatus)
+			return
+		}
+	}
+
 	// Only clear the index if explicitly requested (full reindex)
 	if clearIndex {
 		if err := search.Clear(ctx); err != nil {
+			errMsg := fmt.Sprintf("Failed to clear search index: %s", err)
+			if deferPending {
+				errMsg = s.restoreDeferredIndex(ctx, jobStatus, bulk, errMsg)
+				deferPending = false
+			}
 			jobStatus.Status = JobStatusFailed
-			jobStatus.Error = fmt.Sprintf("Failed to clear search index: %s", err)
+			jobStatus.Error = errMsg
 			jobStatus.CompletedAt = time.Now()
 			s.saveJobStatus(jobStatus)
 			return
@@ -198,12 +246,44 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 	mainFetch := s.postFetcher(reindexFetchQuery, jobStatus.CutoffAt)
 	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor, passOptions{workers: workers, batchSize: batchSize})
 	if errors.Is(err, errCancelRequested) {
+		if deferPending {
+			// Restore the index before the cancel terminalizes the job.
+			s.restoreDeferredIndex(ctx, jobStatus, bulk, "")
+			deferPending = false
+		}
 		s.acknowledgeCancel(jobStatus)
 		return
 	}
 	if err != nil {
-		s.handleJobError(jobStatus, fmt.Sprintf("Failed to index posts: %s", err), watermark.LastCreateAt, watermark.LastID)
+		errMsg := fmt.Sprintf("Failed to index posts: %s", err)
+		if deferPending {
+			errMsg = s.restoreDeferredIndex(ctx, jobStatus, bulk, errMsg)
+			deferPending = false
+		}
+		s.handleJobError(jobStatus, errMsg, watermark.LastCreateAt, watermark.LastID)
 		return
+	}
+
+	// Build the index BEFORE the catch-up pass on purpose: live-post
+	// indexing is gated while the build runs (writes would block on plain
+	// CREATE INDEX), and the catch-up pass afterwards sweeps everything
+	// missed during both the main pass and the build window because it
+	// scans from the original cutoff with NOT EXISTS.
+	if deferPending {
+		if buildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk); buildErr != nil {
+			// The phase state stays in place so the condition is visible
+			// via the health check; a resume rebuilds the index at the end.
+			deferPending = false
+			s.handleJobError(jobStatus, fmt.Sprintf("Failed to rebuild vector index: %s", buildErr), watermark.LastCreateAt, watermark.LastID)
+			return
+		}
+		deferPending = false
+		// A cancel requested during the build could not interrupt the DDL;
+		// acknowledge it now that the index is present again.
+		if canceled, cancelErr := s.isCancelRequested(jobStatus.JobID); cancelErr == nil && canceled {
+			s.acknowledgeCancel(jobStatus)
+			return
+		}
 	}
 
 	// Run catch-up pass to index posts created during the main reindex

@@ -69,6 +69,19 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 		return nil // Search not configured
 	}
 
+	// While a deferred index build is running, plain CREATE INDEX blocks
+	// writes; skipping avoids piling up blocked hook goroutines. The
+	// catch-up pass after the build picks these posts up via NOT EXISTS.
+	// During the dropped phase (bulk load) writes stay enabled — inserts
+	// without the ANN index are cheap and correct.
+	if s.pluginAPI != nil {
+		var state VectorIndexState
+		if err := s.pluginAPI.KVGet(VectorIndexStateKey, &state); err == nil && state.Phase == VectorIndexPhaseBuilding {
+			s.pluginAPI.LogDebug("Skipping live post indexing while the vector index is being rebuilt", "post_id", post.Id)
+			return nil
+		}
+	}
+
 	// Create document
 	doc := embeddings.PostDocument{
 		PostID:    post.Id,
@@ -203,10 +216,14 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		}
 	}
 
+	// Decide whether this run defers the ANN index rebuild (index-after-load)
+	// and record ownership of the index lifecycle before the job starts.
+	deferRebuild := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
+
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
 	// Start the reindexing job in background
-	go s.runReindexJob(&newJobStatus, clearIndex)
+	go s.runReindexJob(&newJobStatus, clearIndex, deferRebuild)
 
 	return returnStatus, nil
 }
@@ -377,8 +394,9 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
-	// Start catch-up job (reuses runReindexJob with clearIndex=false)
-	go s.runReindexJob(&newJobStatus, false)
+	// Start catch-up job (reuses runReindexJob with clearIndex=false).
+	// Catch-up jobs never defer the index: they only sweep a small tail.
+	go s.runReindexJob(&newJobStatus, false, false)
 
 	return returnStatus, nil
 }
@@ -391,6 +409,12 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 
 	result := HealthCheckResult{
 		CheckedAt: time.Now(),
+	}
+
+	// Surface a deferred reindex owning the index lifecycle so admins can
+	// see why search is unavailable.
+	if state, stateErr := s.loadVectorIndexState(); stateErr == nil && state != nil {
+		result.VectorIndexState = state
 	}
 
 	// Get bot user IDs to exclude from count (matching shouldIndexPost behavior)
