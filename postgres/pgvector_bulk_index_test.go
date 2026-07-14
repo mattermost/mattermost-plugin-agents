@@ -204,6 +204,38 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, indexdef, "hnsw")
 	})
+
+	t.Run("replaces a same-named VALID index with the wrong definition", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		require.NoError(t, pgVector.PrepareBulkIndex(ctx))
+
+		// A valid B-tree occupying the target name: CREATE INDEX IF NOT
+		// EXISTS alone would silently keep it and report success.
+		_, err = db.Exec("CREATE INDEX " + vectorIndexName + " ON llm_posts_embeddings(post_id)")
+		require.NoError(t, err)
+
+		// The wrong-definition index must not count as the ANN index.
+		indexExists, err := pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, indexExists)
+
+		require.NoError(t, pgVector.FinalizeBulkIndex(ctx))
+
+		var indexdef string
+		err = db.Get(&indexdef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName)
+		require.NoError(t, err)
+		assert.Contains(t, indexdef, "hnsw", "the B-tree occupying the name must be replaced by the HNSW index")
+
+		indexExists, err = pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.True(t, indexExists)
+	})
 }
 
 func TestNewPGVectorSkipVectorIndex(t *testing.T) {
