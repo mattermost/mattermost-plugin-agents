@@ -3,15 +3,20 @@
 
 package accesscontrol
 
-import "context"
+import (
+	"context"
 
-// Plugin-local resource type / action names (contract §1.1); replaced by
-// model.AccessControlPolicyTypePlugin* constants after the server/public bump.
+	"github.com/mattermost/mattermost/server/public/model"
+)
+
+// Plugin-local names for the server-registered resource types / action
+// (contract §1.1). Sourced from model so a server-side rename is a compile
+// error here rather than a silent policy mismatch.
 const (
-	ResourceTypeAgent   = "mattermost-ai.agent"
-	ResourceTypeService = "mattermost-ai.service"
-	ResourceTypeMCP     = "mattermost-ai.mcp"
-	ActionUse           = "use"
+	ResourceTypeAgent   = model.AccessControlPolicyTypePluginAgent
+	ResourceTypeService = model.AccessControlPolicyTypePluginService
+	ResourceTypeMCP     = model.AccessControlPolicyTypePluginMCP
+	ActionUse           = model.AccessControlPolicyActionUse
 )
 
 // DecisionClient abstracts the PDP call (plugin.API.EvaluateAccessControl in
