@@ -694,6 +694,98 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		require.NotNil(t, tracker.currentState())
 	})
 
+	// A claim converted from a leftover repairing marker sits over a VALID
+	// index (repairing implies a completed build). Early pre-DDL exits must
+	// restore the marker — keeping the bogus dropped claim would gate search
+	// forever over a working index.
+	t.Run("early exit with a repairing-converted claim restores the repair marker", func(t *testing.T) {
+		deferCfg := func() embeddings.EmbeddingSearchConfig {
+			return embeddings.EmbeddingSearchConfig{ReindexIndexStrategy: embeddings.ReindexIndexStrategyDefer}
+		}
+
+		resolveConvertedRun := func(t *testing.T, mockClient *mocks.MockClient, jobID string) *deferredRun {
+			t.Helper()
+			rec := &callRecorder{}
+			bulkSearch := &fakeDeferSearch{rec: rec, bulk: &fakeBulkIndexer{rec: rec}}
+			resolver := New(func() embeddings.EmbeddingSearch { return bulkSearch }, deferCfg, mockClient, &bots.MMBots{}, nil, nil)
+			deferRun, err := resolver.resolveDeferredRebuild(true, jobID)
+			require.NoError(t, err)
+			require.NotNil(t, deferRun)
+			require.NotNil(t, deferRun.convertedFrom, "the converted claim must carry the pre-conversion marker")
+			return deferRun
+		}
+
+		assertMarkerRestored := func(t *testing.T, tracker *vectorStateTracker, jobID string) {
+			t.Helper()
+			assert.False(t, tracker.wasDeleted(), "the repair marker must not be deleted")
+			current := tracker.currentState()
+			require.NotNil(t, current, "the repair marker must survive the early exit")
+			assert.Equal(t, jobID, current.JobID, "the restored marker keeps this run's JobID")
+			assert.Equal(t, VectorIndexPhaseRepairing, current.Phase)
+			assert.Equal(t, int64(12345), current.BuildStartedAt, "the original BuildStartedAt must be restored")
+			assert.False(t, deferredIndexGated(current.Phase), "search must not be gated over a valid index")
+		}
+
+		t.Run("search not configured fails the job and restores the marker", func(t *testing.T) {
+			tracker := &vectorStateTracker{}
+			tracker.seed(VectorIndexState{JobID: "old-job", Phase: VectorIndexPhaseRepairing, BuildStartedAt: 12345})
+			mockClient := mocks.NewMockClient(t)
+			mockVectorStateOps(mockClient, tracker)
+			mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+			mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+			mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+			mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+			mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+			deferRun := resolveConvertedRun(t, mockClient, "job-converted-nosearch")
+
+			// The search snapshot is gone by the time the job body runs
+			// (e.g. a concurrent config change disabled embedding search).
+			idx := New(func() embeddings.EmbeddingSearch { return nil }, deferCfg, mockClient, &bots.MMBots{}, nil, nil)
+			jobStatus := newDeferJobStatus("job-converted-nosearch", model.GetMillis())
+			idx.runReindexJob(jobStatus, true, deferRun)
+
+			require.Equal(t, JobStatusFailed, jobStatus.Status)
+			assert.Contains(t, jobStatus.Error, "Search not configured")
+			assertMarkerRestored(t, tracker, "job-converted-nosearch")
+		})
+
+		t.Run("bulk support lost falls back to maintain mode and restores the marker", func(t *testing.T) {
+			db := testDB(t)
+			defer cleanupDB(t, db)
+
+			now := model.GetMillis()
+			_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+			require.NoError(t, err)
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post1', $1, 0, 'Message', '', 'channel1')", now-10000)
+			require.NoError(t, err)
+
+			tracker := &vectorStateTracker{}
+			tracker.seed(VectorIndexState{JobID: "old-job", Phase: VectorIndexPhaseRepairing, BuildStartedAt: 12345})
+			mockClient := mocks.NewMockClient(t)
+			mockVectorStateOps(mockClient, tracker)
+			mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+			mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+			mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+			mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+			mockClient.On("LogWarn", mock.Anything).Return().Maybe()
+			mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+			mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+			deferRun := resolveConvertedRun(t, mockClient, "job-converted-nobulk")
+
+			rec := &callRecorder{}
+			nonBulkSearch := &fakeDeferSearch{rec: rec, bulk: nil, mainCutoff: now}
+			idx := New(func() embeddings.EmbeddingSearch { return nonBulkSearch }, deferCfg, mockClient, &bots.MMBots{}, db, nil)
+			jobStatus := newDeferJobStatus("job-converted-nobulk", now-5000)
+			idx.runReindexJob(jobStatus, true, deferRun)
+
+			require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+			assert.Equal(t, -1, rec.firstIndex("prepare"), "the valid index must not be dropped")
+			assertMarkerRestored(t, tracker, "job-converted-nobulk")
+		})
+	})
+
 	t.Run("stale claim detected before prepare aborts without any DDL or clear", func(t *testing.T) {
 		db := testDB(t)
 		defer cleanupDB(t, db)
@@ -814,20 +906,30 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		mainCutoff := now - 5000
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
-		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, UpdateAt, DeleteAt, Message, Type, ChannelId) VALUES ('emptied-post', $1, $1, 0, 'Original message', '', 'channel1')", now-10000)
-		require.NoError(t, err)
-		// The pre-edit embedding row that must not survive the repair.
-		_, err = db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ('emptied-post', 'emptied-post', 'Original message', '[0.1, 0.2, 0.3]')")
-		require.NoError(t, err)
+		for _, id := range []string{"emptied-post", "empty-attachments-post", "kept-attachments-post"} {
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, UpdateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, $2, 0, 'Original message', '', 'channel1')", id, now-10000)
+			require.NoError(t, err)
+			// The pre-edit embedding rows; only the last post's must survive.
+			_, err = db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $1, 'Original message', '[0.1, 0.2, 0.3]')", id)
+			require.NoError(t, err)
+		}
 
 		rec := &callRecorder{}
 		bulk := &fakeBulkIndexer{rec: rec}
 		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: mainCutoff}
-		// A props-stripping integration edit empties the message while live
-		// indexing is gated: the post no longer matches the indexable
-		// predicate, so the re-embed loop will never overwrite its rows.
+		// Props-stripping integration edits land while live indexing is
+		// gated. The first two posts no longer match the indexable predicate
+		// (empty message; empty message + EMPTY attachments array, which a
+		// substring LIKE on props would wrongly treat as indexable), so the
+		// re-embed loop will never overwrite their rows. The third keeps a
+		// non-empty attachments array and stays indexable.
 		bulk.onFinalize = func() {
-			_, execErr := db.Exec("UPDATE Posts SET Message = '', UpdateAt = $1 WHERE Id = 'emptied-post'", model.GetMillis())
+			editAt := model.GetMillis()
+			_, execErr := db.Exec("UPDATE Posts SET Message = '', UpdateAt = $1 WHERE Id = 'emptied-post'", editAt)
+			require.NoError(t, execErr)
+			_, execErr = db.Exec(`UPDATE Posts SET Message = '', Props = '{"attachments": []}', UpdateAt = $1 WHERE Id = 'empty-attachments-post'`, editAt)
+			require.NoError(t, execErr)
+			_, execErr = db.Exec(`UPDATE Posts SET Message = '', Props = '{"attachments": [{"text": "still here"}]}', UpdateAt = $1 WHERE Id = 'kept-attachments-post'`, editAt)
 			require.NoError(t, execErr)
 		}
 
@@ -852,6 +954,10 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		var rows int
 		require.NoError(t, db.Get(&rows, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'emptied-post'"))
 		assert.Zero(t, rows, "stale rows of a post edited into a non-indexable form must be removed by the repair")
+		require.NoError(t, db.Get(&rows, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'empty-attachments-post'"))
+		assert.Zero(t, rows, "an empty attachments array is not indexable content; its stale rows must be removed")
+		require.NoError(t, db.Get(&rows, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'kept-attachments-post'"))
+		assert.Equal(t, 1, rows, "a post still indexable via attachments must not have its rows deleted")
 	})
 
 	t.Run("resume of a deferred job skips clear but finalizes at the end", func(t *testing.T) {
@@ -1039,6 +1145,7 @@ func TestResolveDeferredRebuild(t *testing.T) {
 		readErr       error
 		want          bool
 		wantAdopted   bool
+		wantConverted bool
 		wantErr       bool
 		wantState     *VectorIndexState
 		wantCleared   bool
@@ -1115,6 +1222,7 @@ func TestResolveDeferredRebuild(t *testing.T) {
 			existingState: &VectorIndexState{JobID: "old-job", Phase: VectorIndexPhaseRepairing, BuildStartedAt: 12345},
 			want:          true,
 			wantAdopted:   true,
+			wantConverted: true,
 			wantCleared:   false,
 			wantState:     &VectorIndexState{JobID: "new-job", Phase: VectorIndexPhaseDropped},
 		},
@@ -1247,6 +1355,12 @@ func TestResolveDeferredRebuild(t *testing.T) {
 			}
 			require.NotNil(t, got, "expected a deferred run")
 			assert.Equal(t, tt.wantAdopted, got.adopted)
+			if tt.wantConverted {
+				require.NotNil(t, got.convertedFrom, "the pre-conversion repairing marker must be carried for early-exit restore")
+				assert.Equal(t, *tt.existingState, *got.convertedFrom)
+			} else {
+				assert.Nil(t, got.convertedFrom)
+			}
 
 			if tt.wantState != nil {
 				require.NotNil(t, saved, "expected the state to be persisted")
@@ -1548,6 +1662,14 @@ func TestReconcileVectorIndexState(t *testing.T) {
 			// evidence must never clear it, only a completed repair does.
 			name:        "leftover repairing state is kept as a pending-repair marker",
 			state:       &VectorIndexState{JobID: "job1", Phase: VectorIndexPhaseRepairing, BuildStartedAt: 12345},
+			indexExists: true,
+			wantDeleted: false,
+		},
+		{
+			// Conservative: deleting could discard an obligation this
+			// plugin version cannot interpret (e.g. written by a newer one).
+			name:        "unknown phase with a valid index is kept",
+			state:       &VectorIndexState{JobID: "job1", Phase: "some-future-phase", BuildStartedAt: 12345},
 			indexExists: true,
 			wantDeleted: false,
 		},

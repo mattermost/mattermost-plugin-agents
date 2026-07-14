@@ -152,6 +152,21 @@ const (
 	// overwritten in place (Store deletes a post's rows inside its own
 	// transaction before inserting), so no pre-delete is needed and there is
 	// no missing-row window.
+	// indexableContentSQL matches posts whose content can be embedded,
+	// mirroring shouldIndexPost: a non-empty message or a non-empty
+	// attachments array. It is jsonb-aware rather than a substring LIKE,
+	// which would also match Props={"attachments":[]} — a post the
+	// application side refuses to embed; the repair fetch and the stale-row
+	// delete below must partition edited posts exactly, or such a post is
+	// neither re-embedded nor cleaned up. NULLIF and the CASE guard empty
+	// and non-array values (Posts.Props is jsonb since Mattermost 6.0; the
+	// ::text::jsonb round-trip stays valid for older text schemas holding
+	// valid JSON), and the expression is never NULL so its negation is safe.
+	indexableContentSQL = `(COALESCE(Posts.Message, '') != '' OR CASE
+		WHEN jsonb_typeof(NULLIF(Posts.Props::text, '')::jsonb -> 'attachments') = 'array'
+		THEN jsonb_array_length(NULLIF(Posts.Props::text, '')::jsonb -> 'attachments') > 0
+		ELSE FALSE END)`
+
 	editedPostsFetchQuery = `SELECT
 		Posts.Id as id,
 		Posts.Message as message,
@@ -166,12 +181,25 @@ const (
 	FROM Posts
 	LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
 	WHERE Posts.DeleteAt = 0
-		AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
+		AND ` + indexableContentSQL + `
 		AND Posts.Type = ''
 		AND (Posts.UpdateAt, Posts.Id) > ($1, $2)
 		AND Posts.UpdateAt <= $3
 	ORDER BY Posts.UpdateAt ASC, Posts.Id ASC
 	LIMIT $4`
+
+	// staleEditedEmbeddingsDeleteQuery is the exact complement of the repair
+	// fetch above (within the same UpdateAt window): posts edited into a
+	// non-indexable form — deleted, non-default type, or content the
+	// application side would not embed.
+	staleEditedEmbeddingsDeleteQuery = `DELETE FROM llm_posts_embeddings e
+	USING Posts
+	WHERE e.post_id = Posts.Id
+		AND Posts.UpdateAt >= $1
+		AND Posts.UpdateAt <= $2
+		AND (Posts.DeleteAt != 0
+			OR Posts.Type != ''
+			OR NOT ` + indexableContentSQL + `)`
 )
 
 // postFetcher builds a fetchFunc paging the given query up to cutoff.
@@ -697,20 +725,10 @@ func (s *Indexer) reindexEditedPosts(ctx context.Context, jobStatus *JobStatus, 
 	// A gated-window edit can also turn a post NON-indexable (message
 	// emptied by a props-stripping integration edit, deletion, type change).
 	// The re-embed loop's fetch predicate never returns those posts, so
-	// their stale rows must be removed explicitly. The predicate below is
-	// the fetch query's indexability predicate, negated, bounded to the same
-	// window. Removal is the correct final state, so a cancel mid-repair
-	// leaves nothing missing.
-	if _, err := s.db.ExecContext(ctx, `
-		DELETE FROM llm_posts_embeddings e
-		USING Posts p
-		WHERE e.post_id = p.Id
-			AND p.UpdateAt >= $1
-			AND p.UpdateAt <= $2
-			AND (p.DeleteAt != 0
-				OR p.Type != ''
-				OR (p.Message = '' AND COALESCE(p.Props::text, '') NOT LIKE '%"attachments"%'))`,
-		since, upperBound); err != nil {
+	// their stale rows must be removed explicitly by the fetch predicate's
+	// exact complement, bounded to the same window. Removal is the correct
+	// final state, so a cancel mid-repair leaves nothing missing.
+	if _, err := s.db.ExecContext(ctx, staleEditedEmbeddingsDeleteQuery, since, upperBound); err != nil {
 		return fmt.Errorf("failed to delete stale embeddings for posts edited into a non-indexable form: %w", err)
 	}
 

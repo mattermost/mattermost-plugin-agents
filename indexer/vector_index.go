@@ -56,6 +56,12 @@ type deferredRun struct {
 	// adopted reports the claim was inherited from a previous run, so the
 	// index may already be genuinely dropped before this run touches it.
 	adopted bool
+	// convertedFrom is the original repairing marker a fresh full reindex
+	// atomically replaced with its dropped claim. The index is still valid
+	// at that point, so early pre-DDL exits must restore the marker (with
+	// the original BuildStartedAt, which the conversion reset to 0) instead
+	// of leaving a bogus dropped state that gates search over a valid index.
+	convertedFrom *VectorIndexState
 }
 
 // deferredIndexGated reports whether a phase makes the ANN index unusable:
@@ -207,7 +213,7 @@ func (s *Indexer) resolveDeferredRebuild(clearIndex bool, jobID string) (*deferr
 			if !ok {
 				return nil, fmt.Errorf("vector index state changed while replacing leftover repair state")
 			}
-			return &deferredRun{state: newState, adopted: true}, nil
+			return &deferredRun{state: newState, adopted: true, convertedFrom: state}, nil
 		}
 		// Maintain-mode fresh run: delete the marker outright, the full
 		// re-embed supersedes the pending repair. Accepted residual: if this
@@ -409,12 +415,29 @@ func (s *Indexer) restoreDeferredIndex(ctx context.Context, jobStatus *JobStatus
 	return fmt.Sprintf("%s; additionally failed to rebuild vector index: %s", errMsg, rebuildErr)
 }
 
-// abandonUndroppedClaim clears a claimed phase state on an exit path where
-// the ANN index was never actually dropped by this run. Adopted states are
-// left in place instead: they were inherited from a previous run, so the
-// index may genuinely be missing (or a repair may be pending) and clearing
-// the state would lose that marker.
+// abandonUndroppedClaim releases a claimed phase state on an exit path where
+// the ANN index was never actually dropped by this run. A claim converted
+// from a leftover repairing marker is restored to repairing: the index is
+// still valid (repairing implies a completed build), so keeping the bogus
+// dropped state would gate search forever over a working index and silently
+// rewrite the pending-repair obligation. The restore keeps this run's JobID
+// but brings back the original BuildStartedAt (the conversion reset it to
+// 0), so the repair window is intact for a later resume. Genuinely-adopted
+// dropped/building states are left in place: they were inherited from a
+// previous run, so the index may genuinely be missing and clearing the
+// state would lose that marker. Fresh claims are simply deleted.
 func (s *Indexer) abandonUndroppedClaim(run *deferredRun) {
+	if run.convertedFrom != nil {
+		restored := VectorIndexState{
+			JobID:          run.state.JobID,
+			Phase:          VectorIndexPhaseRepairing,
+			BuildStartedAt: run.convertedFrom.BuildStartedAt,
+		}
+		if ok, err := s.casVectorIndexState(&run.state, &restored); err != nil || !ok {
+			s.pluginAPI.LogError("Failed to restore vector index repair marker on early exit", "error", err)
+		}
+		return
+	}
 	if run.adopted {
 		s.pluginAPI.LogError("Reindex job is exiting before completing an inherited vector index lifecycle; the state marker is kept",
 			"job_id", run.state.JobID, "phase", run.state.Phase)
@@ -471,7 +494,8 @@ func (s *Indexer) ReconcileVectorIndexState(ctx context.Context) error {
 			return exErr
 		}
 		if exists {
-			if state.Phase == VectorIndexPhaseBuilding {
+			switch state.Phase {
+			case VectorIndexPhaseBuilding:
 				// The build committed but its completion was never recorded:
 				// live indexing was gated during the build, so a repair is
 				// still pending. Convert the marker instead of deleting it.
@@ -482,12 +506,19 @@ func (s *Indexer) ReconcileVectorIndexState(ctx context.Context) error {
 				if ok, casErr := s.casVectorIndexState(state, &repairing); casErr != nil || !ok {
 					s.pluginAPI.LogError("Failed to convert vector index state to repairing", "error", casErr)
 				}
-				return nil
-			}
-			s.pluginAPI.LogWarn("Vector index state says the index is dropped but a valid index exists; clearing stale state",
-				"job_id", state.JobID, "phase", state.Phase)
-			if ok, casErr := s.casVectorIndexState(state, nil); casErr != nil || !ok {
-				s.pluginAPI.LogError("Failed to clear stale vector index state", "error", casErr)
+			case VectorIndexPhaseDropped:
+				// Pre-drop crash: the index was never touched and nothing
+				// was gated, so the leftover claim is safe to delete.
+				s.pluginAPI.LogWarn("Vector index state says the index is dropped but a valid index exists; clearing stale state",
+					"job_id", state.JobID, "phase", state.Phase)
+				if ok, casErr := s.casVectorIndexState(state, nil); casErr != nil || !ok {
+					s.pluginAPI.LogError("Failed to clear stale vector index state", "error", casErr)
+				}
+			default:
+				// Unknown phase (newer plugin version?): keep it — deleting
+				// could discard an obligation this version cannot interpret.
+				s.pluginAPI.LogWarn("Vector index state has an unknown phase; leaving it in place",
+					"job_id", state.JobID, "phase", state.Phase)
 			}
 			return nil
 		}
