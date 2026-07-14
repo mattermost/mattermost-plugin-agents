@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/jmoiron/sqlx v1.4.0
-	github.com/lib/pq v1.12.0
+	github.com/lib/pq v1.12.3
 	github.com/mattermost/mattermost/server/public v0.3.1-0.20260402155910-d9d71af83e3f
 	github.com/mattermost/morph v1.1.0
 	github.com/mattermost/testcontainers-mattermost-go v0.1.0
@@ -48,7 +48,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 // indirect
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
+	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
@@ -123,7 +123,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
-	github.com/hashicorp/go-plugin v1.7.0 // indirect
+	github.com/hashicorp/go-plugin v1.8.0 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
@@ -188,7 +188,7 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	github.com/tinylib/msgp v1.6.3 // indirect
+	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
 	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
@@ -218,10 +218,10 @@ require (
 	golang.org/x/arch v0.26.0 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
-	golang.org/x/mod v0.35.0 // indirect
+	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260504160031-60b97b32f348 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260504160031-60b97b32f348 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260511170946-3700d4141b60 // indirect
 	google.golang.org/grpc v1.81.0 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 	gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d // indirect
@@ -233,7 +233,9 @@ require (
 	modernc.org/sqlite v1.44.0 // indirect
 )
 
-// Pinned to mattermost/mattermost#35924 (agent permissions). Drop when a tagged server/public includes these symbols.
-replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.3.1-0.20260402155910-d9d71af83e3f
+// DEV-ONLY: local replace for the in-flight ABAC plugin API (EvaluateAccessControl + PAP/CEL
+// methods). Before merge: repin to a published pseudo-version containing those symbols and
+// delete this local-path replace — never merge it.
+replace github.com/mattermost/mattermost/server/public => ../mattermost/server/public
 
 replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.6
