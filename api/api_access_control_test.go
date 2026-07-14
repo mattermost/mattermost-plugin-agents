@@ -217,7 +217,7 @@ func TestServiceAndMCPPolicyRouteAuthMatrix(t *testing.T) {
 }
 
 func TestCELRouteAuthMatrix(t *testing.T) {
-	managerID := model.NewId()   // has ManageOwnAgent
+	managerID := model.NewId()    // has ManageOwnAgent
 	agentAdminID := model.NewId() // manages one agent via AdminUserIDs only
 	plainID := model.NewId()
 	agentID := model.NewId()

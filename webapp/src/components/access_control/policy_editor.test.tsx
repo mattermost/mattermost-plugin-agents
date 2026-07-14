@@ -86,6 +86,7 @@ const existingPolicy: AccessControlPolicy = {
     create_at: 1,
     revision: 1,
     version: 'v0.2',
+    roles: [],
     imports: [],
     rules: [{actions: ['use'], expression: 'user.attributes.team == "sales"'}],
     props: {},

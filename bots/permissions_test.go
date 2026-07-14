@@ -430,7 +430,7 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 			wantDenied: true,
 		},
 		{
-			name:    "service deny after agent allow",
+			name: "service deny after agent allow",
 			perType: map[string]accesscontrol.Outcome{
 				accesscontrol.ResourceTypeAgent:   accesscontrol.OutcomeAllow,
 				accesscontrol.ResourceTypeService: accesscontrol.OutcomeDeny,
@@ -442,7 +442,7 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 			wantDenied: true,
 		},
 		{
-			name:    "agent and service allow",
+			name: "agent and service allow",
 			perType: map[string]accesscontrol.Outcome{
 				accesscontrol.ResourceTypeAgent:   accesscontrol.OutcomeAllow,
 				accesscontrol.ResourceTypeService: accesscontrol.OutcomeAllow,

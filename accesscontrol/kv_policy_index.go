@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"slices"
 	"sync"
-
 )
 
 // PolicyIndexKey is the Agents_System key holding the policy index JSON.

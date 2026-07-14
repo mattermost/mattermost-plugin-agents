@@ -47,16 +47,6 @@ func (s *stubDecisionClient) EvaluateAccessRequest(_ context.Context, userID, re
 	return s.outcome, s.err
 }
 
-func (s *stubDecisionClient) callsFor(resourceType string) []decisionCall {
-	var out []decisionCall
-	for _, c := range s.calls {
-		if c.resourceType == resourceType {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 // stubPolicyIndex is a map-backed PolicyIndex with injectable Has errors.
 type stubPolicyIndex struct {
 	has     map[string]bool // key: resourceType + "/" + resourceID
@@ -198,9 +188,9 @@ func TestCanUseAgentDecisionTable(t *testing.T) {
 		legacy          int
 		indexHas        bool
 		indexErr        error
-		wantDenied      bool  // errors.Is(err, ErrAccessDenied)
-		wantLegacyErr   bool  // the exact legacy error is returned
-		wantLegacyCalls int   // how many times legacyCheck must run
+		wantDenied      bool // errors.Is(err, ErrAccessDenied)
+		wantLegacyErr   bool // the exact legacy error is returned
+		wantLegacyCalls int  // how many times legacyCheck must run
 	}{
 		// attribute-based mode: legacy check must NEVER run
 		{name: "attr allow", outcome: OutcomeAllow, attributeBased: true, legacy: legacyFail},
