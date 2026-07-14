@@ -11,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 func normalizeAdminConfig(cfg config.Config) config.Config {
@@ -20,6 +21,19 @@ func normalizeAdminConfig(cfg config.Config) config.Config {
 	for i := range cfg.Services {
 		if cfg.Services[i].Type == llm.ServiceTypeOpenAI {
 			cfg.Services[i].UseResponsesAPI = true
+		}
+	}
+
+	// Backstop for direct API automation and stale webapp bundles: every
+	// persisted service and external MCP server must have a stable ID.
+	for i := range cfg.Services {
+		if cfg.Services[i].ID == "" {
+			cfg.Services[i].ID = model.NewId()
+		}
+	}
+	for i := range cfg.MCP.Servers {
+		if cfg.MCP.Servers[i].ID == "" {
+			cfg.MCP.Servers[i].ID = model.NewId()
 		}
 	}
 
@@ -66,6 +80,18 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	if err := c.BindJSON(&cfg); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
+	}
+
+	// Carry stable MCP server IDs forward before normalizeAdminConfig mints
+	// fresh ones, so payloads from clients that drop the id field (stale
+	// webapp bundles, raw API automation) cannot rotate IDs on every save.
+	prevCfg, err := a.configStore.GetConfig()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load previous config: %w", err))
+		return
+	}
+	if prevCfg != nil {
+		cfg.MCP.Servers = config.ReconcileMCPServerIDs(cfg.MCP.Servers, prevCfg.MCP.Servers)
 	}
 
 	cfg = normalizeAdminConfig(cfg)

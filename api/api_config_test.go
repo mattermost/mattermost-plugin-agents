@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -347,6 +348,164 @@ func TestHandleSaveConfig(t *testing.T) {
 			if tt.validateClusterNotify != nil {
 				tt.validateClusterNotify(t, notifier)
 			}
+		})
+	}
+}
+
+func TestNormalizeAdminConfigAssignsStableIDs(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      config.Config
+		validate func(t *testing.T, result config.Config)
+	}{
+		{
+			name: "empty service and MCP server IDs get fresh valid IDs",
+			cfg: config.Config{
+				Services: []llm.ServiceConfig{
+					{Name: "no-id"},
+				},
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{Name: "srv-no-id", BaseURL: "https://one.example.com"},
+					},
+				},
+			},
+			validate: func(t *testing.T, result config.Config) {
+				assert.True(t, model.IsValidId(result.Services[0].ID))
+				assert.True(t, model.IsValidId(result.MCP.Servers[0].ID))
+			},
+		},
+		{
+			name: "non-empty IDs untouched",
+			cfg: config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-existing", Name: "has-id"},
+				},
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{ID: "mcp-existing", Name: "srv-has-id", BaseURL: "https://one.example.com"},
+					},
+				},
+			},
+			validate: func(t *testing.T, result config.Config) {
+				assert.Equal(t, "svc-existing", result.Services[0].ID)
+				assert.Equal(t, "mcp-existing", result.MCP.Servers[0].ID)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.validate(t, normalizeAdminConfig(tt.cfg))
+		})
+	}
+}
+
+func TestHandleSaveConfigCarriesForwardMCPServerIDs(t *testing.T) {
+	tests := []struct {
+		name       string
+		storedCfg  *config.Config
+		payloadCfg config.Config
+		validate   func(t *testing.T, store *testConfigStore)
+	}{
+		{
+			name: "payload without id keeps stored id (stale bundle)",
+			storedCfg: &config.Config{
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{ID: "stable-id", Name: "Jira", BaseURL: "https://jira.example.com"},
+					},
+				},
+			},
+			payloadCfg: config.Config{
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{Name: "Jira", BaseURL: "https://jira.example.com"},
+					},
+				},
+			},
+			validate: func(t *testing.T, store *testConfigStore) {
+				require.Len(t, store.cfg.MCP.Servers, 1)
+				assert.Equal(t, "stable-id", store.cfg.MCP.Servers[0].ID)
+			},
+		},
+		{
+			name: "renamed server without id matched by BaseURL",
+			storedCfg: &config.Config{
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{ID: "stable-id", Name: "Old Name", BaseURL: "https://jira.example.com"},
+					},
+				},
+			},
+			payloadCfg: config.Config{
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{Name: "New Name", BaseURL: "https://jira.example.com"},
+					},
+				},
+			},
+			validate: func(t *testing.T, store *testConfigStore) {
+				require.Len(t, store.cfg.MCP.Servers, 1)
+				assert.Equal(t, "stable-id", store.cfg.MCP.Servers[0].ID)
+			},
+		},
+		{
+			name: "brand-new server without match gets a fresh id from the backstop",
+			storedCfg: &config.Config{
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{ID: "stable-id", Name: "Jira", BaseURL: "https://jira.example.com"},
+					},
+				},
+			},
+			payloadCfg: config.Config{
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{Name: "Jira", BaseURL: "https://jira.example.com"},
+						{Name: "Brand New", BaseURL: "https://new.example.com"},
+					},
+				},
+			},
+			validate: func(t *testing.T, store *testConfigStore) {
+				require.Len(t, store.cfg.MCP.Servers, 2)
+				assert.Equal(t, "stable-id", store.cfg.MCP.Servers[0].ID)
+				assert.True(t, model.IsValidId(store.cfg.MCP.Servers[1].ID))
+				assert.NotEqual(t, "stable-id", store.cfg.MCP.Servers[1].ID)
+			},
+		},
+		{
+			name:      "no stored config still assigns ids",
+			storedCfg: nil,
+			payloadCfg: config.Config{
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{Name: "Jira", BaseURL: "https://jira.example.com"},
+					},
+				},
+			},
+			validate: func(t *testing.T, store *testConfigStore) {
+				require.Len(t, store.cfg.MCP.Servers, 1)
+				assert.True(t, model.IsValidId(store.cfg.MCP.Servers[0].ID))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{cfg: tt.storedCfg}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			body, err := json.Marshal(tt.payloadCfg)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			tt.validate(t, store)
 		})
 	}
 }
