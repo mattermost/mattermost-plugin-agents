@@ -217,13 +217,26 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	}
 
 	// Decide whether this run defers the ANN index rebuild (index-after-load)
-	// and record ownership of the index lifecycle before the job starts.
-	deferRebuild := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
+	// and record ownership of the index lifecycle before the job starts. A
+	// resolution failure means the phase state could not be read or claimed,
+	// so the run cannot know whether the index is present — fail the job
+	// cleanly instead of silently running in maintain mode.
+	deferRebuild, adoptedState, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
+	if deferErr != nil {
+		failedStatus := newJobStatus
+		failedStatus.Status = JobStatusFailed
+		failedStatus.Error = deferErr.Error()
+		failedStatus.CompletedAt = time.Now()
+		if _, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, newJobStatus, failedStatus); casErr != nil {
+			s.pluginAPI.LogError("Failed to record reindex job failure", "error", casErr)
+		}
+		return JobStatus{}, deferErr
+	}
 
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
 	// Start the reindexing job in background
-	go s.runReindexJob(&newJobStatus, clearIndex, deferRebuild)
+	go s.runReindexJob(&newJobStatus, clearIndex, deferRebuild, adoptedState)
 
 	return returnStatus, nil
 }
@@ -396,7 +409,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	returnStatus := newJobStatus
 	// Start catch-up job (reuses runReindexJob with clearIndex=false).
 	// Catch-up jobs never defer the index: they only sweep a small tail.
-	go s.runReindexJob(&newJobStatus, false, false)
+	go s.runReindexJob(&newJobStatus, false, false, false)
 
 	return returnStatus, nil
 }

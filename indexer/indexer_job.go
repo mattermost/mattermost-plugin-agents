@@ -142,6 +142,17 @@ const (
 		AND NOT EXISTS (
 			SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id
 		)` + postFetchTail
+
+	// The edited-posts repair pass re-embeds posts updated while live
+	// indexing was gated during the deferred index build; their stale rows
+	// are deleted first, so the NOT EXISTS anti-join picks them up.
+	editedPostsFetchQuery = postFetchBase + `
+		AND Posts.UpdateAt >= $4
+		AND NOT EXISTS (
+			SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id
+		)
+	ORDER BY Posts.CreateAt ASC, Posts.Id ASC
+	LIMIT $5`
 )
 
 // postFetcher builds a fetchFunc paging the given query up to cutoff.
@@ -157,7 +168,9 @@ func (s *Indexer) postFetcher(query string, cutoff int64) fetchFunc {
 // ANN index was claimed for an index-after-load run: it is dropped before
 // the bulk load and rebuilt once afterwards, and it must be restored on
 // EVERY terminal transition (success, failure, cancel, panic).
-func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebuild bool) {
+// adoptedState reports that the claim was inherited from a previous run, so
+// the index may already be genuinely dropped even before this run touches it.
+func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebuild bool, adoptedState bool) {
 	// Shared with the panic-recovery defer so the index is restored even
 	// when the job dies mid-flight.
 	var bulk embeddings.BulkIndexer
@@ -178,7 +191,12 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebu
 	}()
 
 	// Snapshot search at job start for consistency throughout the entire job
-	if s.getSearch == nil {
+	if s.getSearch == nil || s.getSearch() == nil {
+		if deferRebuild {
+			// The index was not dropped by this run; release a fresh claim
+			// so search is not gated forever (an adopted claim is kept).
+			s.abandonUndroppedClaim(jobStatus.JobID, adoptedState)
+		}
 		jobStatus.Status = JobStatusFailed
 		jobStatus.Error = "Search not configured"
 		jobStatus.CompletedAt = time.Now()
@@ -186,13 +204,6 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebu
 		return
 	}
 	search := s.getSearch()
-	if search == nil {
-		jobStatus.Status = JobStatusFailed
-		jobStatus.Error = "Search not configured"
-		jobStatus.CompletedAt = time.Now()
-		s.saveJobStatus(jobStatus)
-		return
-	}
 
 	ctx := context.Background()
 
@@ -200,10 +211,21 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebu
 		bulk = bulkIndexerFor(search)
 		if bulk == nil {
 			// The search snapshot lost bulk index support between job start
-			// and now (e.g. a concurrent config change). The index has not
-			// been dropped yet, so the claimed state can be safely cleared.
+			// and now (e.g. a concurrent config change). A fresh claim can
+			// be cleared (the index was never dropped); an adopted claim
+			// must stay so search remains gated over the missing index.
 			s.pluginAPI.LogWarn("Vector store no longer supports deferred indexing; maintaining the index during reindex")
-			s.deleteVectorIndexState()
+			s.abandonUndroppedClaim(jobStatus.JobID, adoptedState)
+			deferRebuild = false
+		}
+	}
+
+	if deferRebuild {
+		// Fence the DDL on current ownership: a stale-reclaimed worker must
+		// not drop the index under a successor run's claim.
+		if s.ownsVectorIndexState(jobStatus.JobID) == nil {
+			s.pluginAPI.LogWarn("Vector index state is no longer owned by this run; maintaining the index during reindex",
+				"job_id", jobStatus.JobID)
 			deferRebuild = false
 		}
 	}
@@ -272,7 +294,8 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebu
 	// missed during both the main pass and the build window because it
 	// scans from the original cutoff with NOT EXISTS.
 	if deferPending {
-		if buildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk); buildErr != nil {
+		buildStartedAt, buildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk)
+		if buildErr != nil {
 			// The phase state stays in place (reverted to dropped) so the
 			// condition is visible via the health check; a resume rebuilds
 			// the index at the end.
@@ -285,6 +308,17 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRebu
 		// acknowledge it now that the index is present again.
 		if canceled, cancelErr := s.isCancelRequested(jobStatus.JobID); cancelErr == nil && canceled {
 			s.acknowledgeCancel(jobStatus)
+			return
+		}
+		// Posts EDITED while live indexing was gated kept their stale
+		// pre-edit embeddings (catch-up's NOT EXISTS only repairs posts
+		// with no rows at all). Drop and re-embed them before catch-up.
+		if repairErr := s.reindexEditedPosts(ctx, jobStatus, search, buildStartedAt); repairErr != nil {
+			if errors.Is(repairErr, errCancelRequested) {
+				s.acknowledgeCancel(jobStatus)
+				return
+			}
+			s.handleJobError(jobStatus, fmt.Sprintf("Failed to re-index posts edited during the index build: %s", repairErr), watermark.LastCreateAt, watermark.LastID)
 			return
 		}
 	}
@@ -569,4 +603,43 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	catchUpFetch := s.postFetcher(catchUpFetchQuery, catchUpCutoff)
 	startCursor := Cursor{LastCreateAt: jobStatus.CutoffAt, LastID: ""}
 	return s.runIndexPass(ctx, jobStatus, search, catchUpFetch, startCursor, passOptions{workers: 1, batchSize: batchSize})
+}
+
+// reindexEditedPosts repairs posts edited while live indexing was gated
+// during the deferred index build: an edited already-indexed post keeps its
+// stale pre-edit embedding, which the catch-up pass's NOT EXISTS anti-join
+// never touches. Stale rows for posts updated since the gate engaged are
+// deleted first, then a sequential pass re-embeds those posts (the NOT
+// EXISTS filter picks up exactly the deleted ones). Filtering on
+// Posts.UpdateAt rather than EditAt is deliberate: props/attachment updates
+// (which change the embedded content) bump UpdateAt without setting EditAt.
+// The over-match (e.g. reaction-flag updates) is bounded by the build window
+// and only costs re-embedding.
+func (s *Indexer) reindexEditedPosts(ctx context.Context, jobStatus *JobStatus, search embeddings.EmbeddingSearch, since int64) error {
+	if since <= 0 {
+		return nil
+	}
+
+	// Deleting first also covers posts edited into a non-indexable form
+	// (e.g. message cleared): those must not keep stale embeddings even
+	// though the re-embed pass filters them out.
+	if _, err := s.db.ExecContext(ctx, `
+		DELETE FROM llm_posts_embeddings e
+		USING Posts p
+		WHERE e.post_id = p.Id AND p.UpdateAt >= $1`, since); err != nil {
+		return fmt.Errorf("failed to delete stale embeddings for edited posts: %w", err)
+	}
+
+	// Bound the sweep so posts still being edited don't extend it; anything
+	// after this point flows through normal live indexing (the gate is off).
+	upperBound := time.Now().UnixMilli()
+	_, batchSize := s.reindexSettings()
+	fetch := func(fetchCtx context.Context, cursor Cursor, limit int) ([]PostRecord, error) {
+		var posts []PostRecord
+		err := s.db.SelectContext(fetchCtx, &posts, editedPostsFetchQuery,
+			cursor.LastCreateAt, cursor.LastID, upperBound, since, limit)
+		return posts, err
+	}
+	_, _, err := s.runIndexPass(ctx, jobStatus, search, fetch, Cursor{}, passOptions{workers: 1, batchSize: batchSize})
+	return err
 }

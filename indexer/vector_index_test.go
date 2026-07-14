@@ -48,12 +48,14 @@ func (r *callRecorder) firstIndex(call string) int {
 }
 
 // fakeBulkIndexer implements embeddings.BulkIndexer, recording calls and
-// failing or blocking on demand.
+// failing or blocking on demand. onFinalize (when set) runs at the start of
+// FinalizeBulkIndex, e.g. to simulate a post edit during the build window.
 type fakeBulkIndexer struct {
 	rec           *callRecorder
 	prepareErr    error
 	finalizeErr   error
 	finalizeDelay time.Duration
+	onFinalize    func()
 	indexExists   bool
 	existsErr     error
 }
@@ -65,6 +67,9 @@ func (f *fakeBulkIndexer) PrepareBulkIndex(ctx context.Context) error {
 
 func (f *fakeBulkIndexer) FinalizeBulkIndex(ctx context.Context) error {
 	f.rec.record("finalize")
+	if f.onFinalize != nil {
+		f.onFinalize()
+	}
 	if f.finalizeDelay > 0 {
 		time.Sleep(f.finalizeDelay)
 	}
@@ -78,7 +83,8 @@ func (f *fakeBulkIndexer) VectorIndexExists(ctx context.Context) (bool, error) {
 // fakeDeferSearch implements embeddings.EmbeddingSearch and
 // embeddings.BulkIndexerProvider, recording calls. Store calls are tagged
 // "store:main" or "store:catchup" based on the batch's CreateAt relative to
-// mainCutoff, so ordering assertions can distinguish the two passes.
+// mainCutoff, so ordering assertions can distinguish the two passes. Stored
+// document contents are captured for content assertions.
 type fakeDeferSearch struct {
 	rec        *callRecorder
 	bulk       embeddings.BulkIndexer // nil = store without bulk support
@@ -86,6 +92,9 @@ type fakeDeferSearch struct {
 	clearErr   error
 	clearPanic bool
 	storeErr   error
+
+	mu             sync.Mutex
+	storedContents []string
 }
 
 func (s *fakeDeferSearch) Store(ctx context.Context, docs []embeddings.PostDocument) error {
@@ -94,7 +103,18 @@ func (s *fakeDeferSearch) Store(ctx context.Context, docs []embeddings.PostDocum
 		tag = "store:catchup"
 	}
 	s.rec.record(tag)
+	s.mu.Lock()
+	for _, doc := range docs {
+		s.storedContents = append(s.storedContents, doc.Content)
+	}
+	s.mu.Unlock()
 	return s.storeErr
+}
+
+func (s *fakeDeferSearch) contents() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.storedContents)
 }
 
 func (s *fakeDeferSearch) Search(ctx context.Context, query string, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
@@ -121,12 +141,29 @@ func (s *fakeDeferSearch) BulkIndexer() embeddings.BulkIndexer {
 	return s.bulk
 }
 
-// vectorStateTracker tracks vector index state KV writes/deletes through a
-// mock client.
+// vectorStateTracker simulates the durable phase-state KV row with real
+// compare-and-set semantics, recording every applied write and delete.
 type vectorStateTracker struct {
 	mu      sync.Mutex
+	current *VectorIndexState
 	saved   []VectorIndexState
 	deleted bool
+}
+
+func (tr *vectorStateTracker) seed(state VectorIndexState) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	tr.current = &state
+}
+
+func (tr *vectorStateTracker) currentState() *VectorIndexState {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.current == nil {
+		return nil
+	}
+	state := *tr.current
+	return &state
 }
 
 func (tr *vectorStateTracker) savedStates() []VectorIndexState {
@@ -141,23 +178,44 @@ func (tr *vectorStateTracker) wasDeleted() bool {
 	return tr.deleted
 }
 
-// mockVectorStateOps wires VectorIndexStateKey KVSet/KVDelete expectations
-// into the tracker. Call before adding catch-all KVSet/KVDelete mocks.
+// mockVectorStateOps wires VectorIndexStateKey reads and compare-and-set
+// mutations to the tracker. Call before adding catch-all KVGet /
+// KVCompareAndSet mocks so the key-specific expectations match first.
 func mockVectorStateOps(mockClient *mocks.MockClient, tracker *vectorStateTracker) {
-	mockClient.On("KVSet", VectorIndexStateKey, mock.AnythingOfType("indexer.VectorIndexState")).
-		Run(func(args mock.Arguments) {
+	mockClient.On("KVGet", VectorIndexStateKey, mock.AnythingOfType("*indexer.VectorIndexState")).
+		Return(func(key string, value interface{}) error {
 			tracker.mu.Lock()
-			tracker.saved = append(tracker.saved, args.Get(1).(VectorIndexState))
-			tracker.mu.Unlock()
-		}).
-		Return(nil).Maybe()
-	mockClient.On("KVDelete", VectorIndexStateKey).
-		Run(func(args mock.Arguments) {
+			defer tracker.mu.Unlock()
+			if tracker.current == nil {
+				return mmapi.ErrKVNotFound
+			}
+			*value.(*VectorIndexState) = *tracker.current
+			return nil
+		}).Maybe()
+	mockClient.On("KVCompareAndSet", VectorIndexStateKey, mock.Anything, mock.Anything).
+		Return(func(key string, oldValue, newValue interface{}) (bool, error) {
 			tracker.mu.Lock()
-			tracker.deleted = true
-			tracker.mu.Unlock()
-		}).
-		Return(nil).Maybe()
+			defer tracker.mu.Unlock()
+			if oldValue == nil {
+				if tracker.current != nil {
+					return false, nil
+				}
+			} else {
+				old, ok := oldValue.(VectorIndexState)
+				if !ok || tracker.current == nil || *tracker.current != old {
+					return false, nil
+				}
+			}
+			if newValue == nil {
+				tracker.current = nil
+				tracker.deleted = true
+				return true, nil
+			}
+			state := newValue.(VectorIndexState)
+			tracker.current = &state
+			tracker.saved = append(tracker.saved, state)
+			return true, nil
+		}).Maybe()
 }
 
 func TestRunReindexJobDeferLifecycle(t *testing.T) {
@@ -168,6 +226,11 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 			StartedAt: time.Now(),
 			CutoffAt:  cutoff,
 		}
+	}
+	// runReindexJob is called with the claim already made (StartReindexJob
+	// resolves it under the cluster mutex), so defer tests seed the state.
+	seedClaim := func(tracker *vectorStateTracker, jobID string) {
+		tracker.seed(VectorIndexState{JobID: jobID, Phase: VectorIndexPhaseDropped})
 	}
 
 	t.Run("defer mode ordering: prepare, clear, main pass, finalize, catch-up, completed", func(t *testing.T) {
@@ -192,6 +255,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: mainCutoff}
 
 		tracker := &vectorStateTracker{}
+		seedClaim(tracker, "job-defer-ordering")
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -204,7 +268,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
 
 		jobStatus := newDeferJobStatus("job-defer-ordering", mainCutoff)
-		idx.runReindexJob(jobStatus, true, true)
+		idx.runReindexJob(jobStatus, true, true, false)
 
 		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
 
@@ -227,7 +291,10 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		// The building phase was recorded and the state cleared on success.
 		states := tracker.savedStates()
 		require.NotEmpty(t, states)
-		assert.Equal(t, VectorIndexState{JobID: "job-defer-ordering", Phase: VectorIndexPhaseBuilding}, states[len(states)-1])
+		last := states[len(states)-1]
+		assert.Equal(t, "job-defer-ordering", last.JobID)
+		assert.Equal(t, VectorIndexPhaseBuilding, last.Phase)
+		assert.Positive(t, last.BuildStartedAt)
 		assert.True(t, tracker.wasDeleted(), "vector index state must be cleared after a successful build")
 	})
 
@@ -246,6 +313,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: now}
 
 		tracker := &vectorStateTracker{}
+		seedClaim(tracker, "job-finalize-fail")
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -257,16 +325,19 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
 
 		jobStatus := newDeferJobStatus("job-finalize-fail", now-5000)
-		idx.runReindexJob(jobStatus, true, true)
+		idx.runReindexJob(jobStatus, true, true, false)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status, "a failed index build must never complete the job")
 		assert.Contains(t, jobStatus.Error, "Failed to rebuild vector index")
 		assert.False(t, tracker.wasDeleted(), "phase state must stay in place when the build fails")
 		// Nothing is building anymore: the phase reverts to dropped with
-		// the owning job preserved so a resume can take ownership cleanly.
-		states := tracker.savedStates()
-		require.NotEmpty(t, states)
-		assert.Equal(t, VectorIndexState{JobID: "job-finalize-fail", Phase: VectorIndexPhaseDropped}, states[len(states)-1])
+		// the owning job and build timestamp preserved so a resume can
+		// take ownership cleanly and repair the whole gated window.
+		current := tracker.currentState()
+		require.NotNil(t, current)
+		assert.Equal(t, "job-finalize-fail", current.JobID)
+		assert.Equal(t, VectorIndexPhaseDropped, current.Phase)
+		assert.Positive(t, current.BuildStartedAt)
 	})
 
 	t.Run("main pass failure attempts finalize before recording failed", func(t *testing.T) {
@@ -284,6 +355,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: now, storeErr: errors.New("store blew up")}
 
 		tracker := &vectorStateTracker{}
+		seedClaim(tracker, "job-mainpass-fail")
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -296,7 +368,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx.storeRetryAttempts = 1 // fail fast instead of exponential backoff
 
 		jobStatus := newDeferJobStatus("job-mainpass-fail", now-5000)
-		idx.runReindexJob(jobStatus, true, true)
+		idx.runReindexJob(jobStatus, true, true, false)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Failed to index posts")
@@ -321,6 +393,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: now, storeErr: errors.New("store blew up")}
 
 		tracker := &vectorStateTracker{}
+		seedClaim(tracker, "job-mainpass-rebuild-fail")
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -333,16 +406,17 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx.storeRetryAttempts = 1 // fail fast instead of exponential backoff
 
 		jobStatus := newDeferJobStatus("job-mainpass-rebuild-fail", now-5000)
-		idx.runReindexJob(jobStatus, true, true)
+		idx.runReindexJob(jobStatus, true, true, false)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Failed to index posts")
 		assert.Contains(t, jobStatus.Error, "additionally failed to rebuild vector index")
 		assert.Contains(t, jobStatus.Error, "out of shared memory")
 		assert.False(t, tracker.wasDeleted(), "phase state must stay in place when the restore rebuild fails")
-		states := tracker.savedStates()
-		require.NotEmpty(t, states)
-		assert.Equal(t, VectorIndexState{JobID: "job-mainpass-rebuild-fail", Phase: VectorIndexPhaseDropped}, states[len(states)-1])
+		current := tracker.currentState()
+		require.NotNil(t, current)
+		assert.Equal(t, "job-mainpass-rebuild-fail", current.JobID)
+		assert.Equal(t, VectorIndexPhaseDropped, current.Phase)
 	})
 
 	t.Run("cancel during the main pass rebuilds the index before acknowledging", func(t *testing.T) {
@@ -361,6 +435,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 
 		jobID := "job-defer-cancel"
 		tracker := &vectorStateTracker{}
+		seedClaim(tracker, jobID)
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
 		// Cancel is already requested when the pass polls the job row.
@@ -382,7 +457,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
 
 		jobStatus := newDeferJobStatus(jobID, now-5000)
-		idx.runReindexJob(jobStatus, true, true)
+		idx.runReindexJob(jobStatus, true, true, false)
 
 		assert.Equal(t, JobStatusCanceled, jobStatus.Status)
 		require.NotEqual(t, -1, rec.firstIndex("finalize"),
@@ -406,6 +481,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 
 		jobID := "job-cancel-rebuild-fail"
 		tracker := &vectorStateTracker{}
+		seedClaim(tracker, jobID)
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
 		// Cancel is already requested when the pass polls the job row.
@@ -432,7 +508,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
 
 		jobStatus := newDeferJobStatus(jobID, now-5000)
-		idx.runReindexJob(jobStatus, true, true)
+		idx.runReindexJob(jobStatus, true, true, false)
 
 		assert.Equal(t, JobStatusCanceled, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Failed to rebuild vector index")
@@ -445,9 +521,10 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		// The failed rebuild reverts the phase to dropped with the owning
 		// job preserved so a resume can take ownership cleanly.
 		assert.False(t, tracker.wasDeleted(), "phase state must stay in place when the rebuild fails")
-		states := tracker.savedStates()
-		require.NotEmpty(t, states)
-		assert.Equal(t, VectorIndexState{JobID: jobID, Phase: VectorIndexPhaseDropped}, states[len(states)-1])
+		current := tracker.currentState()
+		require.NotNil(t, current)
+		assert.Equal(t, jobID, current.JobID)
+		assert.Equal(t, VectorIndexPhaseDropped, current.Phase)
 	})
 
 	t.Run("panic attempts finalize and fails the job", func(t *testing.T) {
@@ -456,6 +533,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		search := &fakeDeferSearch{rec: rec, bulk: bulk, clearPanic: true}
 
 		tracker := &vectorStateTracker{}
+		seedClaim(tracker, "job-defer-panic")
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -467,7 +545,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, nil, nil)
 
 		jobStatus := newDeferJobStatus("job-defer-panic", 0)
-		idx.runReindexJob(jobStatus, true, true)
+		idx.runReindexJob(jobStatus, true, true, false)
 
 		assert.Equal(t, JobStatusFailed, jobStatus.Status)
 		assert.Contains(t, jobStatus.Error, "Job panicked")
@@ -502,14 +580,14 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
 
 		jobStatus := newDeferJobStatus("job-maintain", now-5000)
-		idx.runReindexJob(jobStatus, true, false)
+		idx.runReindexJob(jobStatus, true, false, false)
 
 		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
 		assert.Equal(t, -1, rec.firstIndex("prepare"), "prepare must not run in maintain mode")
 		assert.Equal(t, -1, rec.firstIndex("finalize"), "finalize must not run in maintain mode")
 	})
 
-	t.Run("defer without bulk support falls back to maintain mode and clears the claim", func(t *testing.T) {
+	t.Run("defer without bulk support falls back to maintain mode and clears a fresh claim", func(t *testing.T) {
 		db := testDB(t)
 		defer cleanupDB(t, db)
 
@@ -523,6 +601,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		search := &fakeDeferSearch{rec: rec, bulk: nil, mainCutoff: now}
 
 		tracker := &vectorStateTracker{}
+		seedClaim(tracker, "job-no-bulk")
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -536,12 +615,141 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
 
 		jobStatus := newDeferJobStatus("job-no-bulk", now-5000)
-		idx.runReindexJob(jobStatus, true, true)
+		idx.runReindexJob(jobStatus, true, true, false)
 
 		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
 		assert.Equal(t, -1, rec.firstIndex("prepare"))
 		assert.Equal(t, -1, rec.firstIndex("finalize"))
-		assert.True(t, tracker.wasDeleted(), "the claimed state must be cleared when falling back")
+		assert.True(t, tracker.wasDeleted(), "a fresh claim must be cleared when falling back")
+	})
+
+	t.Run("defer without bulk support keeps an adopted claim so search stays gated", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post1', $1, 0, 'Message', '', 'channel1')", now-10000)
+		require.NoError(t, err)
+
+		rec := &callRecorder{}
+		search := &fakeDeferSearch{rec: rec, bulk: nil, mainCutoff: now}
+
+		tracker := &vectorStateTracker{}
+		seedClaim(tracker, "job-adopted-no-bulk")
+		mockClient := mocks.NewMockClient(t)
+		mockVectorStateOps(mockClient, tracker)
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything).Return().Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
+
+		// adoptedState=true: the index may genuinely be dropped already.
+		jobStatus := newDeferJobStatus("job-adopted-no-bulk", now-5000)
+		idx.runReindexJob(jobStatus, true, true, true)
+
+		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+		assert.False(t, tracker.wasDeleted(), "an adopted claim must stay so search remains gated over the missing index")
+		require.NotNil(t, tracker.currentState())
+	})
+
+	t.Run("ownership lost before prepare skips the DDL and maintains the index", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post1', $1, 0, 'Message', '', 'channel1')", now-10000)
+		require.NoError(t, err)
+
+		rec := &callRecorder{}
+		bulk := &fakeBulkIndexer{rec: rec}
+		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: now}
+
+		tracker := &vectorStateTracker{}
+		// A successor run owns the state (e.g. this worker was stale-reclaimed).
+		tracker.seed(VectorIndexState{JobID: "successor-job", Phase: VectorIndexPhaseDropped})
+		mockClient := mocks.NewMockClient(t)
+		mockVectorStateOps(mockClient, tracker)
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
+
+		jobStatus := newDeferJobStatus("job-superseded", now-5000)
+		idx.runReindexJob(jobStatus, true, true, false)
+
+		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+		assert.Equal(t, -1, rec.firstIndex("prepare"), "a non-owner must not drop the index")
+		assert.Equal(t, -1, rec.firstIndex("finalize"), "a non-owner must not rebuild the index")
+		current := tracker.currentState()
+		require.NotNil(t, current, "the successor's claim must be preserved")
+		assert.Equal(t, "successor-job", current.JobID)
+	})
+
+	t.Run("post edited during the build is re-indexed with the new content", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		mainCutoff := now - 5000
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, UpdateAt, DeleteAt, Message, Type, ChannelId) VALUES ('edited-post', $1, $1, 0, 'Original message', '', 'channel1')", now-10000)
+		require.NoError(t, err)
+		// The stale pre-edit embedding row that catch-up's NOT EXISTS would
+		// never touch.
+		_, err = db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ('edited-post', 'edited-post', 'Original message', '[0.1, 0.2, 0.3]')")
+		require.NoError(t, err)
+
+		rec := &callRecorder{}
+		bulk := &fakeBulkIndexer{rec: rec}
+		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: mainCutoff}
+		// Simulate the edit landing while the index build runs (live
+		// indexing is gated in the building phase).
+		bulk.onFinalize = func() {
+			_, execErr := db.Exec("UPDATE Posts SET Message = 'Edited message', UpdateAt = $1 WHERE Id = 'edited-post'", model.GetMillis())
+			require.NoError(t, execErr)
+		}
+
+		tracker := &vectorStateTracker{}
+		seedClaim(tracker, "job-edited-post")
+		mockClient := mocks.NewMockClient(t)
+		mockVectorStateOps(mockClient, tracker)
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
+
+		jobStatus := newDeferJobStatus("job-edited-post", mainCutoff)
+		idx.runReindexJob(jobStatus, true, true, false)
+
+		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+
+		// The stale row was dropped so the repair pass could re-embed the
+		// post with its post-edit content.
+		var staleRows int
+		require.NoError(t, db.Get(&staleRows, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'edited-post'"))
+		assert.Zero(t, staleRows, "the stale pre-edit embedding row must be deleted")
+
+		contents := search.contents()
+		assert.Contains(t, contents, "Edited message",
+			"the post must be re-embedded with its post-edit content; stored contents: %v", contents)
 	})
 
 	t.Run("resume of a deferred job skips clear but finalizes at the end", func(t *testing.T) {
@@ -559,6 +767,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: now}
 
 		tracker := &vectorStateTracker{}
+		seedClaim(tracker, "job-defer-resume")
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -572,7 +781,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 
 		// Resume path: clearIndex=false, defer ownership already resolved.
 		jobStatus := newDeferJobStatus("job-defer-resume", now-5000)
-		idx.runReindexJob(jobStatus, false, true)
+		idx.runReindexJob(jobStatus, false, true, true)
 
 		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
 		assert.Equal(t, -1, rec.firstIndex("clear"), "a resume must not clear the index")
@@ -605,8 +814,11 @@ func TestResolveDeferredRebuild(t *testing.T) {
 		configGetter  func() embeddings.EmbeddingSearchConfig
 		search        func(rec *callRecorder) embeddings.EmbeddingSearch
 		existingState *VectorIndexState
-		saveErr       error
+		casErr        error
+		readErr       error
 		want          bool
+		wantAdopted   bool
+		wantErr       bool
 		wantSaved     *VectorIndexState
 	}{
 		{
@@ -632,12 +844,31 @@ func TestResolveDeferredRebuild(t *testing.T) {
 			want:         false,
 		},
 		{
-			name:         "fresh reindex with defer strategy but state persistence failure",
+			name:         "fresh reindex with defer strategy but state persistence failure falls back",
 			clearIndex:   true,
 			configGetter: deferCfg,
 			search:       bulkSearch,
-			saveErr:      errors.New("kv down"),
+			casErr:       errors.New("kv down"),
 			want:         false,
+		},
+		{
+			name:          "fresh reindex ADOPTS leftover dropped state even with maintain strategy",
+			clearIndex:    true,
+			configGetter:  maintainCfg,
+			search:        bulkSearch,
+			existingState: &VectorIndexState{JobID: "old-job", Phase: VectorIndexPhaseDropped, BuildStartedAt: 12345},
+			want:          true,
+			wantAdopted:   true,
+			wantSaved:     &VectorIndexState{JobID: "new-job", Phase: VectorIndexPhaseDropped, BuildStartedAt: 12345},
+		},
+		{
+			name:          "fresh reindex adopting leftover state fails when the ownership write fails",
+			clearIndex:    true,
+			configGetter:  maintainCfg,
+			search:        bulkSearch,
+			existingState: &VectorIndexState{JobID: "old-job", Phase: VectorIndexPhaseDropped},
+			casErr:        errors.New("kv down"),
+			wantErr:       true,
 		},
 		{
 			name:         "resume without leftover state",
@@ -653,15 +884,24 @@ func TestResolveDeferredRebuild(t *testing.T) {
 			search:        bulkSearch,
 			existingState: &VectorIndexState{JobID: "old-job", Phase: VectorIndexPhaseDropped},
 			want:          true,
+			wantAdopted:   true,
 			wantSaved:     &VectorIndexState{JobID: "new-job", Phase: VectorIndexPhaseDropped},
 		},
 		{
-			name:          "resume with leftover state but store without bulk support",
+			name:          "leftover state with store without bulk support stays gated in maintain mode",
 			clearIndex:    false,
 			configGetter:  maintainCfg,
 			search:        nonBulkSearch,
 			existingState: &VectorIndexState{JobID: "old-job", Phase: VectorIndexPhaseDropped},
 			want:          false,
+		},
+		{
+			name:         "state read error fails the resolution instead of silently maintaining",
+			clearIndex:   false,
+			configGetter: maintainCfg,
+			search:       bulkSearch,
+			readErr:      errors.New("kv unreachable"),
+			wantErr:      true,
 		},
 	}
 
@@ -670,24 +910,30 @@ func TestResolveDeferredRebuild(t *testing.T) {
 			rec := &callRecorder{}
 			mockClient := mocks.NewMockClient(t)
 
-			if tt.existingState != nil {
+			switch {
+			case tt.readErr != nil:
+				mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).
+					Return(tt.readErr)
+			case tt.existingState != nil:
 				mockClient.On("KVGet", VectorIndexStateKey, mock.AnythingOfType("*indexer.VectorIndexState")).
 					Run(func(args mock.Arguments) {
 						*args.Get(1).(*VectorIndexState) = *tt.existingState
 					}).
 					Return(nil).Maybe()
-			} else {
+			default:
 				mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).
 					Return(mmapi.ErrKVNotFound).Maybe()
 			}
 
 			var saved *VectorIndexState
-			mockClient.On("KVSet", VectorIndexStateKey, mock.AnythingOfType("indexer.VectorIndexState")).
+			mockClient.On("KVCompareAndSet", VectorIndexStateKey, mock.Anything, mock.AnythingOfType("indexer.VectorIndexState")).
 				Run(func(args mock.Arguments) {
-					state := args.Get(1).(VectorIndexState)
-					saved = &state
+					state := args.Get(2).(VectorIndexState)
+					if tt.casErr == nil {
+						saved = &state
+					}
 				}).
-				Return(tt.saveErr).Maybe()
+				Return(tt.casErr == nil, tt.casErr).Maybe()
 			mockClient.On("LogWarn", mock.Anything).Return().Maybe()
 			mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 			mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
@@ -695,8 +941,14 @@ func TestResolveDeferredRebuild(t *testing.T) {
 			search := tt.search(rec)
 			idx := New(func() embeddings.EmbeddingSearch { return search }, tt.configGetter, mockClient, nil, nil, nil)
 
-			got := idx.resolveDeferredRebuild(tt.clearIndex, "new-job")
+			got, adopted, err := idx.resolveDeferredRebuild(tt.clearIndex, "new-job")
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantAdopted, adopted)
 
 			if tt.wantSaved != nil {
 				require.NotNil(t, saved, "expected the state to be persisted")
@@ -710,10 +962,13 @@ func TestFinalizeDeferredIndexHeartbeat(t *testing.T) {
 	rec := &callRecorder{}
 	bulk := &fakeBulkIndexer{rec: rec, finalizeDelay: 100 * time.Millisecond}
 
+	tracker := &vectorStateTracker{}
+	tracker.seed(VectorIndexState{JobID: "", Phase: VectorIndexPhaseDropped})
+
 	var mu sync.Mutex
 	heartbeatSaves := 0
 	mockClient := mocks.NewMockClient(t)
-	mockClient.On("KVSet", VectorIndexStateKey, mock.Anything).Return(nil)
+	mockVectorStateOps(mockClient, tracker)
 	mockClient.On("KVSet", ReindexJobKey, mock.Anything).
 		Run(func(args mock.Arguments) {
 			mu.Lock()
@@ -722,7 +977,7 @@ func TestFinalizeDeferredIndexHeartbeat(t *testing.T) {
 		}).
 		Return(nil).Maybe()
 	mockClient.On("KVGet", ReindexJobKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
-	mockClient.On("KVDelete", VectorIndexStateKey).Return(nil)
+	mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 	mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
 
 	idx := New(nil, nil, mockClient, nil, nil, nil)
@@ -733,14 +988,68 @@ func TestFinalizeDeferredIndexHeartbeat(t *testing.T) {
 	jobStatus := &JobStatus{Status: JobStatusRunning, StartedAt: time.Now()}
 	before := time.Now()
 
-	err := idx.finalizeDeferredIndex(context.Background(), jobStatus, bulk)
+	buildStartedAt, err := idx.finalizeDeferredIndex(context.Background(), jobStatus, bulk)
 	require.NoError(t, err)
+	assert.Positive(t, buildStartedAt)
 
 	mu.Lock()
 	saves := heartbeatSaves
 	mu.Unlock()
 	assert.GreaterOrEqual(t, saves, 2, "the heartbeat must keep ticking while the index build blocks")
 	assert.True(t, jobStatus.LastUpdatedAt.After(before), "the heartbeat must advance LastUpdatedAt")
+	assert.True(t, tracker.wasDeleted(), "the state must clear after a successful build")
+}
+
+func TestFinalizeDeferredIndexStateFencing(t *testing.T) {
+	t.Run("non-owner state skips the DDL entirely", func(t *testing.T) {
+		rec := &callRecorder{}
+		bulk := &fakeBulkIndexer{rec: rec}
+
+		tracker := &vectorStateTracker{}
+		tracker.seed(VectorIndexState{JobID: "other-job", Phase: VectorIndexPhaseDropped})
+		mockClient := mocks.NewMockClient(t)
+		mockVectorStateOps(mockClient, tracker)
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		idx := New(nil, nil, mockClient, nil, nil, nil)
+
+		jobStatus := &JobStatus{JobID: "my-job", Status: JobStatusRunning, StartedAt: time.Now()}
+		_, err := idx.finalizeDeferredIndex(context.Background(), jobStatus, bulk)
+
+		require.Error(t, err)
+		assert.Equal(t, -1, rec.firstIndex("finalize"), "the DDL must not run when ownership is lost")
+		current := tracker.currentState()
+		require.NotNil(t, current, "the other run's state must be untouched")
+		assert.Equal(t, "other-job", current.JobID)
+	})
+
+	t.Run("failed building-phase write aborts before the DDL", func(t *testing.T) {
+		rec := &callRecorder{}
+		bulk := &fakeBulkIndexer{rec: rec}
+
+		mockClient := mocks.NewMockClient(t)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.AnythingOfType("*indexer.VectorIndexState")).
+			Run(func(args mock.Arguments) {
+				*args.Get(1).(*VectorIndexState) = VectorIndexState{JobID: "my-job", Phase: VectorIndexPhaseDropped}
+			}).
+			Return(nil)
+		// The IndexPost gate only engages once the building phase is
+		// durable; if this write fails the build must not start.
+		mockClient.On("KVCompareAndSet", VectorIndexStateKey, mock.Anything, mock.Anything).
+			Return(false, errors.New("kv down"))
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		idx := New(nil, nil, mockClient, nil, nil, nil)
+
+		jobStatus := &JobStatus{JobID: "my-job", Status: JobStatusRunning, StartedAt: time.Now()}
+		_, err := idx.finalizeDeferredIndex(context.Background(), jobStatus, bulk)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "building phase")
+		assert.Equal(t, -1, rec.firstIndex("finalize"), "the DDL must not run when the gate could not engage")
+	})
 }
 
 func TestIndexPostDeferGating(t *testing.T) {
@@ -828,6 +1137,14 @@ func TestDeferredIndexRebuildActive(t *testing.T) {
 			Return(nil)
 		assert.True(t, DeferredIndexRebuildActive(mockClient))
 	})
+
+	t.Run("unexpected KV error fails closed and reports active", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(errors.New("kv unreachable"))
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return()
+		assert.True(t, DeferredIndexRebuildActive(mockClient),
+			"a transient KV error must not trigger a synchronous constructor index build")
+	})
 }
 
 func TestReconcileVectorIndexState(t *testing.T) {
@@ -861,6 +1178,21 @@ func TestReconcileVectorIndexState(t *testing.T) {
 				StartedAt:     time.Now(),
 				LastUpdatedAt: time.Now(),
 			},
+		},
+		{
+			// The window between the state claim and the DROP: the catalog
+			// still shows a valid index, but the live owner's claim must
+			// not be cleared out from under it.
+			name:        "live owning job with a still-valid index keeps the claim",
+			state:       &stubState,
+			indexExists: true,
+			jobRow: &JobStatus{
+				JobID:         "job1",
+				Status:        JobStatusRunning,
+				StartedAt:     time.Now(),
+				LastUpdatedAt: time.Now(),
+			},
+			wantDeleted: false,
 		},
 		{
 			name:  "missing index without an owning job keeps the state and search stays gated",
@@ -903,9 +1235,9 @@ func TestReconcileVectorIndexState(t *testing.T) {
 			}
 
 			deleted := false
-			mockClient.On("KVDelete", VectorIndexStateKey).
+			mockClient.On("KVCompareAndSet", VectorIndexStateKey, mock.Anything, nil).
 				Run(func(args mock.Arguments) { deleted = true }).
-				Return(nil).Maybe()
+				Return(true, nil).Maybe()
 			mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 			mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
 
