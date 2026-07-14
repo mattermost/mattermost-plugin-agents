@@ -10,6 +10,7 @@ import {GlobalState} from '@mattermost/types/store';
 
 import {TertiaryButton} from '../assets/buttons';
 import {getMCPTools, getVettedToolSeed} from '../../client';
+import {generateId} from '../../utils/id';
 
 import manifest from '@/manifest';
 
@@ -26,6 +27,7 @@ export type MCPToolConfig = {
 };
 
 export type MCPServerConfig = {
+    id?: string; // stable ABAC policy identity; may be absent until the server-side ID migration runs
     name: string;
     enabled: boolean;
     baseURL: string;
@@ -88,8 +90,11 @@ const MCPServer = ({
     const [serverName, setServerName] = useState(serverConfig.name);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
 
-    // Ensure server config has all required properties
+    // Ensure server config has all required properties.
+    // id must be carried through: dropping it here would rotate the server's
+    // stable ID on every edit (the server backstop mints a new one per save).
     const config = {
+        id: serverConfig.id,
         name: serverConfig.name || '',
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
@@ -456,6 +461,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                 ...normalizedServers,
                 {
                     ...defaultServerConfig,
+                    id: generateId(),
                     name: serverName,
                 },
             ],

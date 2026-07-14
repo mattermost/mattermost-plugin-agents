@@ -8,6 +8,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
 import ConfirmationDialog from '../confirmation_dialog';
+import {generateId} from '../../utils/id';
 
 import Service, {LLMService} from './service';
 import {LLMBotConfig} from './bot';
@@ -51,7 +52,7 @@ const Services = (props: Props) => {
 
     const addNewService = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
-        const id = crypto.randomUUID();
+        const id = generateId();
         if (props.services.length === 0) {
             props.onChange([{
                 ...firstNewService,

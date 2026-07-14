@@ -7,6 +7,8 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
 
+import {generateId} from '../../utils/id';
+
 import {Pill} from '../pill';
 
 import Panel, {PanelFooterText} from './panel';
@@ -237,7 +239,7 @@ const Config = (props: Props) => {
     }, [props.setSaveNeeded]);
 
     const addFirstService = () => {
-        const id = crypto.randomUUID();
+        const id = generateId();
         updateConfig({
             services: [{
                 ...firstNewService,
