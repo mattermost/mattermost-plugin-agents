@@ -170,6 +170,20 @@ func TestFinishJob(t *testing.T) {
 			wantCompleted: false,
 			wantWritten:   "",
 		},
+		{
+			name:          "existing failed state is preserved",
+			currentStatus: JobStatusFailed,
+			currentJobID:  "job-1",
+			wantCompleted: false,
+			wantWritten:   "",
+		},
+		{
+			name:          "existing canceled state is preserved",
+			currentStatus: JobStatusCanceled,
+			currentJobID:  "job-1",
+			wantCompleted: false,
+			wantWritten:   "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -199,7 +213,7 @@ func TestFinishJob(t *testing.T) {
 
 			assert.Equal(t, tt.wantCompleted, completed)
 			if tt.wantWritten == "" {
-				assert.Nil(t, written, "superseded worker must not write a terminal state")
+				assert.Nil(t, written, "no terminal write may happen for this state")
 			} else {
 				require.NotNil(t, written)
 				assert.Equal(t, tt.wantWritten, written.Status)
@@ -208,6 +222,47 @@ func TestFinishJob(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("lost CAS against a racing cancel resolves to canceled on retry", func(t *testing.T) {
+		// First read sees running (e.g. a stale replica), so the completion
+		// CAS loses; the re-read observes the admin's cancel_requested and
+		// must land in canceled rather than exhausting into a wedged row.
+		var reads atomic.Int32
+		mockClient := mocks.NewMockClient(t)
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.JobID = "job-1"
+				if reads.Add(1) == 1 {
+					status.Status = JobStatusRunning
+				} else {
+					status.Status = JobStatusCancelRequested
+				}
+			}).
+			Return(nil)
+
+		var written *JobStatus
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.AnythingOfType("indexer.JobStatus")).
+			Return(func(key string, oldValue any, newValue any) (bool, error) {
+				status := newValue.(JobStatus)
+				if status.Status == JobStatusCompleted {
+					return false, nil // predicate lost against the cancel
+				}
+				written = &status
+				return true, nil
+			})
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+		idx := New(nil, nil, mockClient, &bots.MMBots{}, nil, nil)
+		jobStatus := &JobStatus{JobID: "job-1", Status: JobStatusRunning}
+
+		completed := idx.finishJob(jobStatus)
+
+		assert.False(t, completed)
+		require.NotNil(t, written)
+		assert.Equal(t, JobStatusCanceled, written.Status)
+		assert.Equal(t, JobStatusCanceled, jobStatus.Status)
+	})
 }
 
 func TestRunIndexPassWatermark(t *testing.T) {

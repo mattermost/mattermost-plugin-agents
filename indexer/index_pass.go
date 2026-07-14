@@ -22,6 +22,7 @@ const (
 	defaultStoreRetryAttempts  = 5
 	defaultStoreRetryBaseDelay = 2 * time.Second
 	defaultHeartbeatInterval   = time.Minute
+	finishRetryBaseDelay       = 200 * time.Millisecond
 )
 
 // batch is a unit of work flowing through an index pass: dispatched to a

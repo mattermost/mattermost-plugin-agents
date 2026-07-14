@@ -404,7 +404,7 @@ func (s *Indexer) finishJob(jobStatus *JobStatus) bool {
 	}
 
 	const maxAttempts = 5
-	for range maxAttempts {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		var current JobStatus
 		err := s.pluginAPI.KVGet(ReindexJobKey, &current)
 		if err != nil && !mmapi.IsKVNotFound(err) {
@@ -419,11 +419,21 @@ func (s *Indexer) finishJob(jobStatus *JobStatus) bool {
 		}
 
 		newStatus := *jobStatus
-		completed := err != nil || current.Status != JobStatusCancelRequested
-		if completed {
+		completed := false
+		switch {
+		case err != nil || current.Status == JobStatusRunning:
 			newStatus.Status = JobStatusCompleted
-		} else {
+			completed = true
+		case current.Status == JobStatusCancelRequested:
 			newStatus.Status = JobStatusCanceled
+		default:
+			// Another actor already recorded a terminal state (e.g. orphan
+			// reclaim marked the row failed); keep it and skip completion
+			// side effects so the row stays monotonic and resumable.
+			s.pluginAPI.LogWarn("Reindex job already in a terminal state at completion, preserving it",
+				"job_id", jobStatus.JobID,
+				"status", current.Status)
+			return false
 		}
 		newStatus.CompletedAt = time.Now()
 
@@ -445,8 +455,13 @@ func (s *Indexer) finishJob(jobStatus *JobStatus) bool {
 			return completed
 		}
 		// Lost a CAS race (e.g. an admin cancel landed between the read and
-		// the write); re-read and resolve again.
+		// the write, possibly against a lagging replica read); back off so
+		// the row converges before re-reading.
+		if attempt < maxAttempts {
+			time.Sleep(time.Duration(attempt) * finishRetryBaseDelay)
+		}
 	}
+	// Leave the row as-is; stale-job detection reclaims it as resumable.
 	s.pluginAPI.LogError("Failed to persist terminal reindex job status after retries",
 		"job_id", jobStatus.JobID)
 	return false
