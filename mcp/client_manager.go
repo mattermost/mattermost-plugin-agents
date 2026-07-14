@@ -455,6 +455,13 @@ func (m *ClientManager) GetConfig() Config {
 	return m.config
 }
 
+// MCPServerIDByOrigin snapshots the stable-ID mapping for the manager's current
+// config. See config.MCPConfig.ServerIDByOrigin.
+func (m *ClientManager) MCPServerIDByOrigin() map[string]string {
+	cfg := m.config
+	return cfg.ServerIDByOrigin()
+}
+
 // RegisterPluginServer stores or overwrites a plugin-server registration.
 // Callers must ensure cfg.PluginID is non-empty.
 func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
