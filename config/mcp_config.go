@@ -138,37 +138,78 @@ func (c *MCPConfig) OriginByServerID() map[string]string {
 
 // ReconcileMCPServerIDs carries stable IDs forward from prev onto entries in
 // next that arrived without one (e.g. from webapp bundles predating the ID
-// field). Match precedence: exact Name, then exact BaseURL; first unclaimed
-// match wins and each prev entry is consumed at most once. Entries with no
-// match keep an empty ID (normalizeAdminConfig assigns a fresh one).
+// field). ID transfer between servers is worse than ID loss (a transferred
+// policy attachment silently guards the wrong server; a lost one is
+// recoverable), so matching never guesses:
+//
+//  1. Incoming entries that already carry an ID consume the matching prev
+//     entry first, regardless of position, so an ID-less entry can never
+//     steal an identity that an ID-bearing entry still holds.
+//  2. Each ID-less entry then matches unconsumed prev entries by exact
+//     (Name, BaseURL), else by Name with no BaseURL match elsewhere, else by
+//     BaseURL with no Name match elsewhere.
+//  3. Any ambiguity — multiple candidates in a tier, or Name and BaseURL
+//     pointing at different prev entries — leaves the entry ID-less, treated
+//     as NEW (normalizeAdminConfig assigns a fresh ID).
+//
+// Each prev entry is consumed at most once.
 func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) []MCPServerConfig {
-	claimed := make(map[int]bool, len(prev))
+	consumed := make([]bool, len(prev))
 
-	claim := func(match func(p *MCPServerConfig) bool) string {
-		for i := range prev {
-			if claimed[i] || prev[i].ID == "" {
-				continue
-			}
-			if match(&prev[i]) {
-				claimed[i] = true
-				return prev[i].ID
+	// Pass 1: entries arriving with an ID keep it and consume the prev entry
+	// holding that ID.
+	for i := range next {
+		if next[i].ID == "" {
+			continue
+		}
+		for j := range prev {
+			if !consumed[j] && prev[j].ID == next[i].ID {
+				consumed[j] = true
+				break
 			}
 		}
-		return ""
 	}
 
+	// Pass 2: ID-less entries match against remaining prev entries.
 	for i := range next {
 		if next[i].ID != "" {
 			continue
 		}
-		name := next[i].Name
-		if id := claim(func(p *MCPServerConfig) bool { return p.Name == name }); id != "" {
-			next[i].ID = id
-			continue
+
+		var nameMatches, urlMatches, exactMatches []int
+		for j := range prev {
+			if consumed[j] || prev[j].ID == "" {
+				continue
+			}
+			nameEq := prev[j].Name == next[i].Name
+			urlEq := prev[j].BaseURL == next[i].BaseURL
+			if nameEq {
+				nameMatches = append(nameMatches, j)
+			}
+			if urlEq {
+				urlMatches = append(urlMatches, j)
+			}
+			if nameEq && urlEq {
+				exactMatches = append(exactMatches, j)
+			}
 		}
-		baseURL := next[i].BaseURL
-		if id := claim(func(p *MCPServerConfig) bool { return p.BaseURL == baseURL }); id != "" {
-			next[i].ID = id
+
+		match := -1
+		switch {
+		case len(exactMatches) == 1:
+			match = exactMatches[0]
+		case len(exactMatches) > 1:
+			// Identical duplicates in prev: ambiguous.
+		case len(nameMatches) == 1 && len(urlMatches) == 0:
+			match = nameMatches[0]
+		case len(nameMatches) == 0 && len(urlMatches) == 1:
+			match = urlMatches[0]
+			// Everything else (multiple candidates on an axis, or Name and
+			// BaseURL matching different prev entries) is ambiguous: NEW.
+		}
+		if match >= 0 {
+			next[i].ID = prev[match].ID
+			consumed[match] = true
 		}
 	}
 	return next

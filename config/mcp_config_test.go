@@ -163,6 +163,79 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 			},
 			expectIDs: []string{""},
 		},
+		{
+			name: "duplicate names reordered resolve by exact (Name, BaseURL)",
+			next: []MCPServerConfig{
+				{Name: "dup", BaseURL: "https://two.example.com"},
+				{Name: "dup", BaseURL: "https://one.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "id-one", Name: "dup", BaseURL: "https://one.example.com"},
+				{ID: "id-two", Name: "dup", BaseURL: "https://two.example.com"},
+			},
+			expectIDs: []string{"id-two", "id-one"},
+		},
+		{
+			name: "ID-bearing entry consumes prev first; ID-less contender treated as new",
+			next: []MCPServerConfig{
+				// ID-less entry comes first in the payload but must not steal
+				// the identity the ID-bearing entry still holds.
+				{Name: "srv", BaseURL: "https://one.example.com"},
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			expectIDs: []string{"", "prev-id"},
+		},
+		{
+			name: "rename plus URL-change crossing two prev servers is ambiguous, treated as new",
+			next: []MCPServerConfig{
+				// Name matches prev B, BaseURL matches prev A: never guess.
+				{Name: "beta", BaseURL: "https://alpha.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "id-alpha", Name: "alpha", BaseURL: "https://alpha.example.com"},
+				{ID: "id-beta", Name: "beta", BaseURL: "https://beta.example.com"},
+			},
+			expectIDs: []string{""},
+		},
+		{
+			name: "multiple name matches with no exact match are ambiguous, treated as new",
+			next: []MCPServerConfig{
+				{Name: "dup", BaseURL: "https://three.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "id-one", Name: "dup", BaseURL: "https://one.example.com"},
+				{ID: "id-two", Name: "dup", BaseURL: "https://two.example.com"},
+			},
+			expectIDs: []string{""},
+		},
+		{
+			name: "multiple exact (Name, BaseURL) duplicates in prev are ambiguous, treated as new",
+			next: []MCPServerConfig{
+				{Name: "dup", BaseURL: "https://one.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "id-one", Name: "dup", BaseURL: "https://one.example.com"},
+				{ID: "id-two", Name: "dup", BaseURL: "https://one.example.com"},
+			},
+			expectIDs: []string{""},
+		},
+		{
+			name: "unique BaseURL match ignored when a different prev matches by name",
+			next: []MCPServerConfig{
+				{Name: "beta", BaseURL: "https://alpha.example.com"},
+				{Name: "gamma", BaseURL: "https://beta.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "id-alpha", Name: "alpha", BaseURL: "https://alpha.example.com"},
+				{ID: "id-beta", Name: "beta", BaseURL: "https://beta.example.com"},
+			},
+			// next[0]: name→id-beta, url→id-alpha: ambiguous.
+			// next[1]: no name match, url→id-beta: unique claim.
+			expectIDs: []string{"", "id-beta"},
+		},
 	}
 
 	for _, tt := range tests {
