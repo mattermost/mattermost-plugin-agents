@@ -274,12 +274,20 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
 
-		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
+		var getterCalls int
+		idx := New(func() embeddings.EmbeddingSearch {
+			getterCalls++
+			return search
+		}, nil, mockClient, &bots.MMBots{}, db, nil)
 
 		jobStatus := newDeferJobStatus("job-defer-ordering", mainCutoff)
 		idx.runReindexJob(jobStatus, true, deferRun)
 
 		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+		// The search snapshot must be captured with a SINGLE getter call: a
+		// concurrent config change between repeated calls could return nil
+		// (panic) or a different snapshot mid-job.
+		assert.Equal(t, 1, getterCalls, "runReindexJob must snapshot search with exactly one getter call")
 
 		calls := rec.snapshot()
 		prepareIdx := rec.firstIndex("prepare")
@@ -1599,6 +1607,97 @@ func TestIndexPostDeferGating(t *testing.T) {
 			idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, &bots.MMBots{}, nil, nil)
 			err := idx.IndexPost(context.Background(), post, channel)
 			require.NoError(t, err)
+		})
+	}
+}
+
+// The delete hook and retention are gated like IndexPost: a DELETE against
+// the embeddings table blocks under the non-concurrent CREATE INDEX, piling
+// up hook goroutines. Skipping is safe — a deletion bumps Posts.UpdateAt and
+// sets DeleteAt, so the repair pass's stale-row DELETE removes the rows, and
+// retention re-runs on the server's schedule.
+func TestDeleteWritesDeferGating(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     *VectorIndexState
+		readErr   error
+		wantWrite bool
+	}{
+		{
+			name:      "no state deletes normally",
+			state:     nil,
+			wantWrite: true,
+		},
+		{
+			name:      "dropped phase still deletes (index-free deletes are cheap)",
+			state:     &VectorIndexState{JobID: "job1", Phase: VectorIndexPhaseDropped},
+			wantWrite: true,
+		},
+		{
+			name:      "building phase skips the delete",
+			state:     &VectorIndexState{JobID: "job1", Phase: VectorIndexPhaseBuilding},
+			wantWrite: false,
+		},
+		{
+			name:      "repairing phase deletes normally (the index is valid again)",
+			state:     &VectorIndexState{JobID: "job1", Phase: VectorIndexPhaseRepairing},
+			wantWrite: true,
+		},
+		{
+			name:      "unexpected KV error skips the delete",
+			readErr:   errors.New("kv unreachable"),
+			wantWrite: false,
+		},
+	}
+
+	mockKVState := func(mockClient *mocks.MockClient, state *VectorIndexState, readErr error) {
+		switch {
+		case readErr != nil:
+			mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).
+				Return(readErr)
+		case state != nil:
+			mockClient.On("KVGet", VectorIndexStateKey, mock.AnythingOfType("*indexer.VectorIndexState")).
+				Run(func(args mock.Arguments) {
+					*args.Get(1).(*VectorIndexState) = *state
+				}).
+				Return(nil)
+		default:
+			mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).
+				Return(mmapi.ErrKVNotFound)
+		}
+		mockClient.On("LogDebug", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+	}
+
+	for _, tt := range tests {
+		t.Run("DeletePost: "+tt.name, func(t *testing.T) {
+			mockClient := mocks.NewMockClient(t)
+			mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+			mockKVState(mockClient, tt.state, tt.readErr)
+			if tt.wantWrite {
+				mockSearch.On("Delete", mock.Anything, []string{"post1"}).Return(nil).Once()
+			}
+
+			idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, &bots.MMBots{}, nil, nil)
+			err := idx.DeletePost(context.Background(), "post1")
+			require.NoError(t, err)
+		})
+		t.Run("RunDataRetention: "+tt.name, func(t *testing.T) {
+			mockClient := mocks.NewMockClient(t)
+			mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+			mockKVState(mockClient, tt.state, tt.readErr)
+			if tt.wantWrite {
+				mockSearch.On("DeleteOrphaned", mock.Anything, int64(1000), int64(100)).Return(int64(3), nil).Once()
+			}
+
+			idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, &bots.MMBots{}, nil, nil)
+			count, err := idx.RunDataRetention(context.Background(), 1000, 100)
+			require.NoError(t, err)
+			if tt.wantWrite {
+				assert.Equal(t, int64(3), count)
+			} else {
+				assert.Zero(t, count, "a gated retention run must report zero deletions")
+			}
 		})
 	}
 }

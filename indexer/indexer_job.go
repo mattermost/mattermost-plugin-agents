@@ -243,8 +243,14 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 		}
 	}()
 
-	// Snapshot search at job start for consistency throughout the entire job
-	if s.getSearch == nil || s.getSearch() == nil {
+	// Snapshot search ONCE at job start and use the local throughout: a
+	// concurrent config change can make a second getter call return nil or
+	// a different snapshot mid-job.
+	var search embeddings.EmbeddingSearch
+	if s.getSearch != nil {
+		search = s.getSearch()
+	}
+	if search == nil {
 		errMsg := "Search not configured"
 		if deferRun != nil {
 			// The index was not touched by this run; release a fresh claim
@@ -260,7 +266,6 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 		s.saveJobStatus(jobStatus)
 		return
 	}
-	search := s.getSearch()
 
 	ctx := context.Background()
 

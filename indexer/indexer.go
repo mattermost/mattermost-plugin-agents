@@ -69,28 +69,11 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 		return nil // Search not configured
 	}
 
-	// While a deferred index build is running, plain CREATE INDEX blocks
-	// writes; skipping avoids piling up blocked hook goroutines. The
-	// catch-up pass after the build picks these posts up via NOT EXISTS.
-	// During the dropped phase (bulk load) and the repairing phase (index
-	// valid again) writes stay enabled — they are cheap and correct.
-	// Unexpected KV errors fail closed (skip the write): a skipped post is
-	// detectable and repairable (catch-up, health check), while a pile-up of
-	// hook goroutines on blocked writes during a build is not. This gate is
-	// best-effort across nodes: the KV read may lag on a replica for a few
-	// seconds after a phase transition; strict fencing is only needed for
-	// the index DDL, which is CAS-fenced instead.
-	if s.pluginAPI != nil {
-		var state VectorIndexState
-		if err := s.pluginAPI.KVGet(VectorIndexStateKey, &state); err != nil {
-			if !mmapi.IsKVNotFound(err) {
-				s.pluginAPI.LogError("Failed to read vector index state; skipping live post indexing", "post_id", post.Id, "error", err)
-				return nil
-			}
-		} else if state.Phase == VectorIndexPhaseBuilding {
-			s.pluginAPI.LogDebug("Skipping live post indexing while the vector index is being rebuilt", "post_id", post.Id)
-			return nil
-		}
+	// A skipped post is picked up by the catch-up pass after the build via
+	// its NOT EXISTS anti-join (new posts) or the repair pass (edits).
+	if s.deferredBuildWriteGated() {
+		s.pluginAPI.LogDebug("Skipping live post indexing while the vector index is being rebuilt", "post_id", post.Id)
+		return nil
 	}
 
 	// Create document
@@ -117,6 +100,14 @@ func (s *Indexer) DeletePost(ctx context.Context, postID string) error {
 		return nil // Search not configured
 	}
 
+	// Skipping is safe: deleting a post bumps Posts.UpdateAt and sets
+	// DeleteAt, so the repair pass's bounded stale-row DELETE removes its
+	// embedding rows after the build.
+	if s.deferredBuildWriteGated() {
+		s.pluginAPI.LogDebug("Skipping post deletion from the index while the vector index is being rebuilt", "post_id", postID)
+		return nil
+	}
+
 	return search.Delete(ctx, []string{postID})
 }
 
@@ -127,6 +118,14 @@ func (s *Indexer) RunDataRetention(ctx context.Context, nowTime, batchSize int64
 	}
 	search := s.getSearch()
 	if search == nil {
+		return 0, nil
+	}
+
+	// Skipping is safe: retention is hook-driven and re-runs on the server's
+	// schedule, so orphaned rows missed during a build are removed by the
+	// next run.
+	if s.deferredBuildWriteGated() {
+		s.pluginAPI.LogDebug("Skipping embeddings data retention while the vector index is being rebuilt")
 		return 0, nil
 	}
 

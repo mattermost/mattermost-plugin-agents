@@ -99,6 +99,35 @@ func DeferredIndexRebuildActive(client mmapi.Client) bool {
 	return deferredIndexGated(state.Phase)
 }
 
+// deferredBuildWriteGated reports whether hook-driven writes to the
+// embeddings table (live indexing, post deletion, retention) must be
+// skipped. While a deferred index build is running, the non-concurrent
+// CREATE INDEX blocks writes, so proceeding would pile up blocked hook
+// goroutines for the build duration. During the dropped phase (bulk load)
+// and the repairing phase (index valid again) writes stay enabled — they
+// are cheap and correct. Unexpected KV errors fail closed (skip): a skipped
+// write is detectable and repairable afterwards (catch-up, repair pass,
+// retention re-run, health check), while a goroutine pile-up is not. This
+// gate is best-effort across nodes: the KV read may lag on a replica for a
+// few seconds after a phase transition; strict fencing is only needed for
+// the index DDL, which is CAS-fenced instead. The reindex job's own
+// operations must NOT consult this gate — the owning job coordinates with
+// the build directly.
+func (s *Indexer) deferredBuildWriteGated() bool {
+	if s.pluginAPI == nil {
+		return false
+	}
+	var state VectorIndexState
+	if err := s.pluginAPI.KVGet(VectorIndexStateKey, &state); err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return false
+		}
+		s.pluginAPI.LogError("Failed to read vector index state; skipping embeddings write", "error", err)
+		return true
+	}
+	return state.Phase == VectorIndexPhaseBuilding
+}
+
 // bulkIndexerFor resolves the bulk index control from a search snapshot,
 // either through the BulkIndexerProvider accessor or a direct implementation.
 // Returns nil when the search/store does not support deferred indexing.
