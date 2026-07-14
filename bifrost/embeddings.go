@@ -14,14 +14,14 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// Per-request limits for embedding APIs. OpenAI and Azure OpenAI cap a single
-// embeddings request at 2,048 inputs and 300,000 tokens summed across inputs.
+// Per-request limits for embedding APIs, matching the documented OpenAI and
+// Azure OpenAI caps of 2,048 inputs and 300,000 tokens summed across inputs.
 // A BPE token is never shorter than one byte of input, so capping summed
 // bytes at the token limit hard-guarantees the token cap for any content.
 // (Per-input model context limits remain the caller's concern — chunking
 // keeps individual texts small.)
 const (
-	maxEmbeddingRequestInputs = 1024
+	maxEmbeddingRequestInputs = 2048
 	maxEmbeddingRequestBytes  = 300_000
 )
 
