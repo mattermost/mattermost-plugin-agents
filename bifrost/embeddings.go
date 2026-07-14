@@ -15,11 +15,14 @@ import (
 )
 
 // Per-request limits for embedding APIs. OpenAI and Azure OpenAI cap a single
-// embeddings request at 2,048 inputs and 300,000 tokens summed across inputs;
-// stay conservatively below both, estimating tokens at ~4 characters each.
+// embeddings request at 2,048 inputs and 300,000 tokens summed across inputs.
+// A BPE token is never shorter than one byte of input, so capping summed
+// bytes at the token limit hard-guarantees the token cap for any content.
+// (Per-input model context limits remain the caller's concern — chunking
+// keeps individual texts small.)
 const (
 	maxEmbeddingRequestInputs = 1024
-	maxEmbeddingRequestChars  = 1_000_000 // ~250k tokens
+	maxEmbeddingRequestBytes  = 300_000
 )
 
 // EmbeddingProvider implements the embeddings.EmbeddingProvider interface using Bifrost.
@@ -158,14 +161,14 @@ func (p *EmbeddingProvider) batchCreateEmbeddings(ctx context.Context, texts []s
 func splitEmbeddingBatches(texts []string) [][]string {
 	var batches [][]string
 	start := 0
-	chars := 0
+	bytes := 0
 	for i, text := range texts {
-		if i > start && (i-start >= maxEmbeddingRequestInputs || chars+len(text) > maxEmbeddingRequestChars) {
+		if i > start && (i-start >= maxEmbeddingRequestInputs || bytes+len(text) > maxEmbeddingRequestBytes) {
 			batches = append(batches, texts[start:i])
 			start = i
-			chars = 0
+			bytes = 0
 		}
-		chars += len(text)
+		bytes += len(text)
 	}
 	if start < len(texts) {
 		batches = append(batches, texts[start:])

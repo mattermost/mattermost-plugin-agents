@@ -27,9 +27,11 @@ type Indexer struct {
 	db           *sqlx.DB
 	clusterMutex cluster.MutexPluginAPI
 
-	// Store retry policy; overridable in tests to avoid long backoff sleeps.
+	// Store retry policy and heartbeat cadence; overridable in tests to
+	// avoid long sleeps.
 	storeRetryAttempts  int
 	storeRetryBaseDelay time.Duration
+	heartbeatInterval   time.Duration
 }
 
 func New(
@@ -49,6 +51,7 @@ func New(
 		clusterMutex:        clusterMutex,
 		storeRetryAttempts:  defaultStoreRetryAttempts,
 		storeRetryBaseDelay: defaultStoreRetryBaseDelay,
+		heartbeatInterval:   defaultHeartbeatInterval,
 	}
 }
 

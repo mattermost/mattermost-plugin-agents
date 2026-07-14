@@ -89,12 +89,12 @@ func TestSplitEmbeddingBatches(t *testing.T) {
 		{
 			name: "splits on size limit",
 			// 3 texts of just over half the size limit each: no two fit together
-			texts:       repeat(string(make([]byte, maxEmbeddingRequestChars/2+1)), 3),
+			texts:       repeat(string(make([]byte, maxEmbeddingRequestBytes/2+1)), 3),
 			wantBatches: []int{1, 1, 1},
 		},
 		{
 			name:        "single oversized text still gets a batch",
-			texts:       []string{string(make([]byte, maxEmbeddingRequestChars+1))},
+			texts:       []string{string(make([]byte, maxEmbeddingRequestBytes+1))},
 			wantBatches: []int{1},
 		},
 	}

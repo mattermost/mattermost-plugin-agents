@@ -194,8 +194,9 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 	// Load cursor for resumable operation
 	cursor := s.loadCursor()
 
+	workers, batchSize := s.reindexSettings()
 	mainFetch := s.postFetcher(ctx, reindexFetchQuery, jobStatus.CutoffAt)
-	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor)
+	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor, passOptions{workers: workers, batchSize: batchSize})
 	if errors.Is(err, errCancelRequested) {
 		s.acknowledgeCancel(jobStatus)
 		return
@@ -364,10 +365,20 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 		return
 	}
 
-	if err == nil && current.JobID == status.JobID &&
-		current.Status == JobStatusCancelRequested && status.Status == JobStatusRunning {
-		status.Status = JobStatusCancelRequested
-		return
+	if err == nil && current.JobID == status.JobID && current.Status == JobStatusCancelRequested {
+		switch status.Status {
+		case JobStatusRunning:
+			// Drop the heartbeat; the fetcher's next cancel poll observes
+			// the pending cancel on the KV row.
+			status.Status = JobStatusCancelRequested
+			return
+		case JobStatusCompleted:
+			// All work finished, but the admin's cancel landed after the
+			// final poll; honor the protocol by landing in the terminal
+			// canceled state rather than overwriting the cancel.
+			status.Status = JobStatusCanceled
+			status.CompletedAt = time.Now()
+		}
 	}
 
 	var oldValue interface{}
@@ -396,7 +407,12 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	// Posts created after this point will be picked up by the incremental indexer.
 	catchUpCutoff := time.Now().UnixMilli()
 
+	// Run sequentially: with a single worker nothing is ever stored ahead of
+	// the watermark, so the NOT EXISTS filter can't skip-and-undercount posts
+	// a failed run had stored past its checkpoint. Catch-up covers only the
+	// reindex window, so main-pass concurrency isn't needed here.
+	_, batchSize := s.reindexSettings()
 	catchUpFetch := s.postFetcher(ctx, catchUpFetchQuery, catchUpCutoff)
 	startCursor := Cursor{LastCreateAt: jobStatus.CutoffAt, LastID: ""}
-	return s.runIndexPass(ctx, jobStatus, search, catchUpFetch, startCursor)
+	return s.runIndexPass(ctx, jobStatus, search, catchUpFetch, startCursor, passOptions{workers: 1, batchSize: batchSize})
 }
