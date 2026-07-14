@@ -6,79 +6,331 @@ package accesscontrol
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
-// ErrAccessDenied is wrapped by all deny returns once WS-D wires evaluation.
+// ErrAccessDenied is wrapped by all deny returns of the decision tables.
 var ErrAccessDenied = errors.New("access denied by policy")
 
+// ErrABACUnavailable is returned by ValidateAgentWrite when an agent is being
+// saved into attribute-based mode while ABAC is not available on the server.
+var ErrABACUnavailable = errors.New("attribute-based access requires Attribute-Based Access Control to be licensed and enabled on this server")
+
+// availabilityCacheTTL caps how often the availability probe hits the PDP;
+// probe traffic from the status route and agent saves is bursty.
+const availabilityCacheTTL = 30 * time.Second
+
 // Checker is the PEP helper gating end-user access to agents, services, and
-// external MCP servers. In WS-C all methods are legacy passthrough (the
-// no_policy rows of the contract §9.2 decision tables); WS-D fills in the
-// decision-table evaluation without changing the method signatures.
-//
-// When WS-D consults the PolicyIndex on unavailable/error outcomes, an index
-// read error fails closed: the resource is treated as policy-gated and the
-// request is denied. Only a successful Has(...) == false may fall back to
-// legacy behavior.
+// external MCP servers per the contract §9.2 decision tables. It also hosts
+// the PAP proxying (pap.go) so policy saves and index bookkeeping cannot be
+// separated.
 type Checker struct {
 	client DecisionClient
+	papi   plugin.API // PAP calls (pap.go); nil in decision-only tests
 	index  PolicyIndex
-	log    pluginapi.LogService
+	log    Logger
+
+	// mcpIDsByOrigin resolves MCP server origins to stable IDs for
+	// ValidateAgentWrite; set after construction via SetMCPServerIDResolver
+	// because the MCP ClientManager is built after the Checker.
+	mcpResolverMu  sync.RWMutex
+	mcpIDsByOrigin func() map[string]string
+
+	availabilityMu      sync.Mutex
+	availabilityValue   bool
+	availabilityChecked time.Time
 }
 
-// New builds a Checker. WS-C takes the DecisionClient interface rather than
-// the contract §9.1 (*pluginapi.Client, plugin.API) pair: the raw plugin.API
-// handle is only needed once EvaluateAccessControl exists in server/public;
-// WS-D extends the constructor when it builds the real DecisionClient.
-func New(client DecisionClient, index PolicyIndex, log pluginapi.LogService) *Checker {
+// New builds a Checker. papi may be nil when only decision-table evaluation
+// is exercised (tests); production wiring always passes the raw plugin API.
+func New(client DecisionClient, papi plugin.API, index PolicyIndex, log Logger) *Checker {
 	return &Checker{
 		client: client,
+		papi:   papi,
 		index:  index,
 		log:    log,
 	}
 }
 
+// SetMCPServerIDResolver installs the origin→stable-ID mapper used by
+// ValidateAgentWrite (typically mcp.ClientManager.MCPServerIDByOrigin).
+// A nil resolver skips write-time MCP validation.
+func (c *Checker) SetMCPServerIDResolver(f func() map[string]string) {
+	c.mcpResolverMu.Lock()
+	defer c.mcpResolverMu.Unlock()
+	c.mcpIDsByOrigin = f
+}
+
+func (c *Checker) mcpServerIDsByOrigin() map[string]string {
+	c.mcpResolverMu.RLock()
+	f := c.mcpIDsByOrigin
+	c.mcpResolverMu.RUnlock()
+	if f == nil {
+		return nil
+	}
+	return f()
+}
+
+// evaluate runs one decision call. Invalid resource/user IDs short-circuit to
+// no_policy: config bots keep UUID IDs and the core API 400s on non-26-char
+// IDs; such resources can never have policies, so legacy behavior applies.
+func (c *Checker) evaluate(ctx context.Context, userID, resourceType, resourceID string) (Outcome, error) {
+	if !model.IsValidId(resourceID) || !model.IsValidId(userID) {
+		logDebug(c.log, "ABAC evaluate skipped for non-policy-addressable IDs", "resource_type", resourceType, "resource_id", resourceID)
+		return OutcomeNoPolicy, nil
+	}
+	return c.client.EvaluateAccessRequest(ctx, userID, resourceType, resourceID, ActionUse)
+}
+
+// indexGated reports whether the resource must fail closed on an
+// unavailable/error outcome: true when the policy index has a marker for it
+// OR the index itself cannot be read (unknowable = gated).
+func (c *Checker) indexGated(resourceType, resourceID string) bool {
+	has, err := c.index.Has(resourceType, resourceID)
+	if err != nil {
+		return true
+	}
+	return has
+}
+
 // CanUseAgent gates end-user use of an agent. Combines the resource policy
 // with the agent's UserAccessLevel per the contract §9.2 decision table.
 // legacyCheck is the existing UsageRestrictionsForUserConfig outcome supplier,
-// invoked only when the table says so.
-//
-// §9.2 no_policy row (current passthrough behavior): attribute-based mode
-// allows (deliberate fail-open); legacy modes run the legacy check.
+// invoked only when the table says so; attribute-based mode never invokes it
+// (UserIDs/TeamIDs are ignored in that mode).
 func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotConfig, legacyCheck func() error) error {
-	if legacyCheck != nil {
-		return legacyCheck()
+	ctx, span := telemetry.Tracer().Start(ctx, "abac can_use_agent", trace.WithAttributes(
+		telemetry.UserID.String(userID),
+		telemetry.ABACResourceType.String(ResourceTypeAgent),
+		telemetry.ABACResourceID.String(cfg.ID),
+	))
+	defer span.End()
+
+	runLegacy := func() error {
+		if legacyCheck != nil {
+			return legacyCheck()
+		}
+		return nil
 	}
-	return nil
+	deny := func() error {
+		err := fmt.Errorf("agent %s: %w", cfg.ID, ErrAccessDenied)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "access denied")
+		return err
+	}
+	attributeBased := cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased
+
+	outcome, err := c.evaluate(ctx, userID, ResourceTypeAgent, cfg.ID)
+	if err != nil {
+		logError(c.log, "ABAC agent evaluation failed", "agent_id", cfg.ID, "error", err.Error())
+		span.RecordError(err)
+		if attributeBased || c.indexGated(ResourceTypeAgent, cfg.ID) {
+			return deny()
+		}
+		return runLegacy()
+	}
+	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
+
+	switch outcome {
+	case OutcomeAllow:
+		if attributeBased {
+			return nil
+		}
+		return runLegacy()
+	case OutcomeDeny:
+		return deny()
+	case OutcomeNoPolicy:
+		// Deliberate fail-open for attribute-based agents without a policy.
+		if attributeBased {
+			return nil
+		}
+		return runLegacy()
+	case OutcomeUnavailable:
+		if attributeBased || c.indexGated(ResourceTypeAgent, cfg.ID) {
+			return deny()
+		}
+		return runLegacy()
+	default:
+		// Unknown outcome from a future server: fail toward the closed row.
+		if attributeBased || c.indexGated(ResourceTypeAgent, cfg.ID) {
+			return deny()
+		}
+		return runLegacy()
+	}
+}
+
+// canUseResource implements the mode-less §9.2 table shared by services and
+// MCP servers: allow/no_policy → nil; deny → ErrAccessDenied;
+// unavailable/error → deny only when the policy index gates the resource.
+func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resourceType, resourceID string) error {
+	ctx, span := telemetry.Tracer().Start(ctx, spanName, trace.WithAttributes(
+		telemetry.UserID.String(userID),
+		telemetry.ABACResourceType.String(resourceType),
+		telemetry.ABACResourceID.String(resourceID),
+	))
+	defer span.End()
+
+	deny := func() error {
+		err := fmt.Errorf("%s %s: %w", resourceType, resourceID, ErrAccessDenied)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "access denied")
+		return err
+	}
+
+	outcome, err := c.evaluate(ctx, userID, resourceType, resourceID)
+	if err != nil {
+		logError(c.log, "ABAC resource evaluation failed", "resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
+		span.RecordError(err)
+		if c.indexGated(resourceType, resourceID) {
+			return deny()
+		}
+		return nil
+	}
+	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
+
+	switch outcome {
+	case OutcomeAllow, OutcomeNoPolicy:
+		return nil
+	case OutcomeDeny:
+		return deny()
+	case OutcomeUnavailable:
+		if c.indexGated(resourceType, resourceID) {
+			return deny()
+		}
+		return nil
+	default:
+		if c.indexGated(resourceType, resourceID) {
+			return deny()
+		}
+		return nil
+	}
 }
 
 // CanUseService gates end-user use of an LLM service (by stable service ID).
-//
-// §9.2 no_policy row (current passthrough behavior): allow — legacy behavior
-// is unrestricted service use.
 func (c *Checker) CanUseService(ctx context.Context, userID, serviceID string) error {
-	return nil
+	return c.canUseResource(ctx, "abac can_use_service", userID, ResourceTypeService, serviceID)
 }
 
 // CanUseMCPServer gates end-user visibility/use of an external MCP server
 // (by stable ID).
-//
-// §9.2 no_policy row (current passthrough behavior): allow — legacy behavior
-// is unrestricted server visibility.
 func (c *Checker) CanUseMCPServer(ctx context.Context, userID, serverID string) error {
+	return c.canUseResource(ctx, "abac can_use_mcp_server", userID, ResourceTypeMCP, serverID)
+}
+
+// IsAvailable probes whether the ABAC PDP is usable: one decision call for a
+// freshly generated (guaranteed-nonexistent) agent ID, expecting no_policy
+// when ABAC is up and unavailable (or an error) when it is not. The result is
+// cached for availabilityCacheTTL.
+func (c *Checker) IsAvailable(ctx context.Context, userID string) bool {
+	c.availabilityMu.Lock()
+	defer c.availabilityMu.Unlock()
+
+	if !c.availabilityChecked.IsZero() && time.Since(c.availabilityChecked) < availabilityCacheTTL {
+		return c.availabilityValue
+	}
+
+	outcome, err := c.evaluate(ctx, userID, ResourceTypeAgent, model.NewId())
+	available := err == nil && outcome != OutcomeUnavailable
+	c.availabilityValue = available
+	c.availabilityChecked = time.Now()
+	return available
+}
+
+// ValidateAgentWrite validates an agent create/update per contract §9.1:
+//   - rejects UserAccessLevelAttributeBased when ABAC is unavailable, so an
+//     agent cannot be saved into a mode §9.2 would hard-deny;
+//   - rejects newly-assigned service/MCP references the acting user may not
+//     use. prev is the pre-update config (nil on create): create validates
+//     every assignment, update only the changed ServiceID and newly-added MCP
+//     origins, so unrelated edits are never blocked by a since-tightened
+//     policy on a pre-existing assignment.
+//
+// AutoEnableNewMCPTools skips write-time MCP validation entirely: the flag
+// grants future, unknowable servers; runtime per-user filtering is the gate.
+func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, cfg, prev *llm.BotConfig) error {
+	if cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased && !c.IsAvailable(ctx, actingUserID) {
+		return ErrABACUnavailable
+	}
+
+	if prev == nil || cfg.ServiceID != prev.ServiceID {
+		if err := c.CanUseService(ctx, actingUserID, cfg.ServiceID); err != nil {
+			if errors.Is(err, ErrAccessDenied) {
+				return fmt.Errorf("you do not have access to the selected service: %w", err)
+			}
+			return err
+		}
+	}
+
+	if cfg.AutoEnableNewMCPTools {
+		return nil
+	}
+
+	newOrigins := newlyReferencedMCPOrigins(cfg, prev)
+	if len(newOrigins) == 0 {
+		return nil
+	}
+
+	rawIDsByOrigin := c.mcpServerIDsByOrigin()
+	if rawIDsByOrigin == nil {
+		logDebug(c.log, "ABAC agent write: no MCP server ID resolver; skipping MCP assignment validation")
+		return nil
+	}
+	// Key by normalized origin: EnabledMCPTools entries may carry formatting
+	// variants (trailing slash) of the configured BaseURL.
+	idsByOrigin := make(map[string]string, len(rawIDsByOrigin))
+	for origin, id := range rawIDsByOrigin {
+		idsByOrigin[llm.NormalizeMCPServerOrigin(origin)] = id
+	}
+
+	for _, origin := range newOrigins {
+		serverID, ok := idsByOrigin[origin]
+		if !ok {
+			// Embedded/plugin/unknown origins have no stable ID and are not
+			// policy-addressable — matches the runtime filter.
+			continue
+		}
+		if err := c.CanUseMCPServer(ctx, actingUserID, serverID); err != nil {
+			if errors.Is(err, ErrAccessDenied) {
+				return fmt.Errorf("you do not have access to the MCP server %q: %w", origin, err)
+			}
+			return err
+		}
+	}
 	return nil
 }
 
-// ValidateAgentWrite validates an agent create/update: rejects
-// UserAccessLevelAttributeBased when ABAC is unavailable (probe outcome ==
-// unavailable via a decision call), so an agent cannot be saved into a mode
-// that would hard-deny everyone.
-//
-// Passthrough behavior: allow — UserAccessLevelAttributeBased does not exist
-// yet (contract §10 is WS-D), so there is nothing to reject.
-func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, cfg *llm.BotConfig) error {
-	return nil
+// newlyReferencedMCPOrigins returns the distinct ServerOrigins in cfg's
+// enabled MCP tools that are not already referenced by prev (all of them on
+// create). Order follows first appearance for deterministic error messages.
+func newlyReferencedMCPOrigins(cfg, prev *llm.BotConfig) []string {
+	prevOrigins := make(map[string]struct{})
+	if prev != nil {
+		for _, t := range prev.EnabledMCPTools {
+			prevOrigins[llm.NormalizeMCPServerOrigin(t.ServerOrigin)] = struct{}{}
+		}
+	}
+
+	seen := make(map[string]struct{})
+	var out []string
+	for _, t := range cfg.EnabledMCPTools {
+		origin := llm.NormalizeMCPServerOrigin(t.ServerOrigin)
+		if _, ok := prevOrigins[origin]; ok {
+			continue
+		}
+		if _, ok := seen[origin]; ok {
+			continue
+		}
+		seen[origin] = struct{}{}
+		out = append(out, origin)
+	}
+	return out
 }

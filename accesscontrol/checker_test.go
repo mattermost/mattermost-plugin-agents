@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +18,7 @@ import (
 // decision-table test suite: no_policy must keep behaving exactly like this.
 
 func newTestChecker() *Checker {
-	return New(PassthroughClient{}, EmptyPolicyIndex{}, pluginapi.LogService{})
+	return New(PassthroughClient{}, nil, EmptyPolicyIndex{}, nil)
 }
 
 func TestPassthroughClientEvaluateAccessRequest(t *testing.T) {
@@ -77,7 +76,7 @@ func TestCheckerPassthroughHelpersAllow(t *testing.T) {
 		{name: "CanUseService", check: func() error { return c.CanUseService(context.Background(), "userid", "serviceid") }},
 		{name: "CanUseMCPServer", check: func() error { return c.CanUseMCPServer(context.Background(), "userid", "serverid") }},
 		{name: "ValidateAgentWrite", check: func() error {
-			return c.ValidateAgentWrite(context.Background(), "userid", &llm.BotConfig{ID: "agentid"})
+			return c.ValidateAgentWrite(context.Background(), "userid", &llm.BotConfig{ID: "agentid"}, nil)
 		}},
 	}
 
