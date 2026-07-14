@@ -16,7 +16,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -40,6 +42,7 @@ func TestHandleRunSearch(t *testing.T) {
 			name: "search fails - DM error, service enabled",
 			setupMock: func(t *testing.T) *search.Search {
 				mockClient := mmapimocks.NewMockClient(t)
+				mockClient.On("KVGet", indexer.VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound)
 				mockClient.On("DM", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("DM failed"))
 				me := mocks.NewMockEmbeddingSearch(t)
 				return search.New(func() embeddings.EmbeddingSearch { return me }, mockClient, nil, nil, nil, nil)
@@ -51,6 +54,29 @@ func TestHandleRunSearch(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusInternalServerError,
+			expectError:    true,
+		},
+		{
+			name: "search unavailable during deferred reindex returns 503",
+			setupMock: func(t *testing.T) *search.Search {
+				mockClient := mmapimocks.NewMockClient(t)
+				mockClient.On("KVGet", indexer.VectorIndexStateKey, mock.AnythingOfType("*indexer.VectorIndexState")).
+					Run(func(args mock.Arguments) {
+						state := args.Get(1).(*indexer.VectorIndexState)
+						state.JobID = "job1"
+						state.Phase = indexer.VectorIndexPhaseDropped
+					}).
+					Return(nil)
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, mockClient, nil, nil, nil, nil)
+			},
+			requestBody: SearchRequest{
+				Query:      "test query",
+				TeamID:     "team123",
+				ChannelID:  "channel123",
+				MaxResults: 10,
+			},
+			expectedStatus: http.StatusServiceUnavailable,
 			expectError:    true,
 		},
 		{
