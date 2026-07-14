@@ -15,6 +15,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -40,6 +41,20 @@ const MaxAgentRequestBodyBytes = 512 << 10 // 512 KiB
 // human-readable and actionable.
 type agentErrorResponse struct {
 	Error string `json:"error"`
+}
+
+// statusForAccessErr maps ValidateAgentWrite errors onto HTTP statuses: policy
+// denials are 403, saving into attribute-based mode without ABAC is a 400
+// (bad request, actionable), anything else is an infrastructure 500.
+func statusForAccessErr(err error) int {
+	switch {
+	case errors.Is(err, accesscontrol.ErrAccessDenied):
+		return http.StatusForbidden
+	case errors.Is(err, accesscontrol.ErrABACUnavailable):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // abortAgentRequest writes a JSON error response with the given status code so
@@ -363,6 +378,14 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	// ABAC write-time validation (also before bot creation): rejects
+	// attribute-based mode when ABAC is down and service/MCP assignments the
+	// creator may not use. Runtime per-user checks remain the use-time gate.
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, buildAgentConfigForCreate(req, userID, ""), nil); err != nil {
+		abortAgentRequest(c, statusForAccessErr(err), err)
+		return
+	}
+
 	mmBot := &model.Bot{
 		Username:    req.Username,
 		DisplayName: req.DisplayName,
@@ -487,10 +510,19 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
 		return
 	}
+	prev := *cfg
 	displayNameChanged := applyAgentUpdateRequest(cfg, req)
 
 	if err := cfg.Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
+		return
+	}
+
+	// ABAC write-time validation: only changed ServiceID / newly-added MCP
+	// origins are checked, so unrelated edits are never blocked by a
+	// since-tightened policy on a pre-existing assignment.
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
+		abortAgentRequest(c, statusForAccessErr(err), err)
 		return
 	}
 
