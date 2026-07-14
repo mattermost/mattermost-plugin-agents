@@ -426,26 +426,36 @@ func (s *Indexer) restoreDeferredIndex(ctx context.Context, jobStatus *JobStatus
 // dropped/building states are left in place: they were inherited from a
 // previous run, so the index may genuinely be missing and clearing the
 // state would lose that marker. Fresh claims are simply deleted.
-func (s *Indexer) abandonUndroppedClaim(run *deferredRun) {
+//
+// Returns an error when the release CAS conflicts or fails: the claim was
+// superseded (or KV is down) and the state key was NOT touched — callers
+// must surface this on the job rather than proceed as if the claim were
+// cleanly released.
+func (s *Indexer) abandonUndroppedClaim(run *deferredRun) error {
 	if run.convertedFrom != nil {
 		restored := VectorIndexState{
 			JobID:          run.state.JobID,
 			Phase:          VectorIndexPhaseRepairing,
 			BuildStartedAt: run.convertedFrom.BuildStartedAt,
 		}
-		if ok, err := s.casVectorIndexState(&run.state, &restored); err != nil || !ok {
-			s.pluginAPI.LogError("Failed to restore vector index repair marker on early exit", "error", err)
+		ok, err := s.casVectorIndexState(&run.state, &restored)
+		if err != nil {
+			return fmt.Errorf("failed to restore vector index repair marker: %w", err)
 		}
-		return
+		if !ok {
+			return fmt.Errorf("vector index state is no longer owned by this run")
+		}
+		return nil
 	}
 	if run.adopted {
 		s.pluginAPI.LogError("Reindex job is exiting before completing an inherited vector index lifecycle; the state marker is kept",
 			"job_id", run.state.JobID, "phase", run.state.Phase)
-		return
+		return nil
 	}
 	if err := s.clearVectorIndexState(run.state); err != nil {
-		s.pluginAPI.LogError("Failed to clear vector index state on early exit", "error", err)
+		return fmt.Errorf("failed to clear vector index state: %w", err)
 	}
+	return nil
 }
 
 // ReconcileVectorIndexState checks a leftover phase state against the job

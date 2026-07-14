@@ -622,7 +622,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		assert.Equal(t, -1, rec.firstIndex("finalize"), "finalize must not run in maintain mode")
 	})
 
-	t.Run("defer without bulk support falls back to maintain mode and clears a fresh claim", func(t *testing.T) {
+	t.Run("defer without bulk support fails the job and clears a fresh claim", func(t *testing.T) {
 		db := testDB(t)
 		defer cleanupDB(t, db)
 
@@ -652,10 +652,57 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		jobStatus := newDeferJobStatus("job-no-bulk", now-5000)
 		idx.runReindexJob(jobStatus, true, deferRun)
 
-		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+		// The claim may already be superseded; continuing into Clear() in
+		// maintain mode could truncate a successor's data, so the job fails.
+		require.Equal(t, JobStatusFailed, jobStatus.Status)
+		assert.Contains(t, jobStatus.Error, "no longer supports deferred indexing")
 		assert.Equal(t, -1, rec.firstIndex("prepare"))
+		assert.Equal(t, -1, rec.firstIndex("clear"), "Clear must never run after bulk support is lost")
 		assert.Equal(t, -1, rec.firstIndex("finalize"))
-		assert.True(t, tracker.wasDeleted(), "a fresh claim must be cleared when falling back")
+		assert.True(t, tracker.wasDeleted(), "a fresh claim must be cleared before failing")
+	})
+
+	t.Run("defer without bulk support and a superseded claim leaves the successor untouched", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post1', $1, 0, 'Message', '', 'channel1')", now-10000)
+		require.NoError(t, err)
+
+		rec := &callRecorder{}
+		search := &fakeDeferSearch{rec: rec, bulk: nil, mainCutoff: now}
+
+		tracker := &vectorStateTracker{}
+		// A successor took the state after this worker claimed it: the
+		// release CAS must conflict and the successor's claim must survive.
+		tracker.seed(VectorIndexState{JobID: "successor-job", Phase: VectorIndexPhaseDropped})
+		mockClient := mocks.NewMockClient(t)
+		mockVectorStateOps(mockClient, tracker)
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything).Return().Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
+
+		jobStatus := newDeferJobStatus("job-superseded-no-bulk", now-5000)
+		staleRun := &deferredRun{state: VectorIndexState{JobID: "job-superseded-no-bulk", Phase: VectorIndexPhaseDropped}}
+		idx.runReindexJob(jobStatus, true, staleRun)
+
+		require.Equal(t, JobStatusFailed, jobStatus.Status)
+		assert.Contains(t, jobStatus.Error, "no longer supports deferred indexing")
+		assert.Contains(t, jobStatus.Error, "failed to release the vector index claim")
+		assert.Equal(t, -1, rec.firstIndex("clear"), "Clear must never run after bulk support is lost")
+		current := tracker.currentState()
+		require.NotNil(t, current, "the successor's claim must be preserved")
+		assert.Equal(t, "successor-job", current.JobID)
+		assert.False(t, tracker.wasDeleted())
 	})
 
 	t.Run("defer without bulk support keeps an adopted claim so search stays gated", func(t *testing.T) {
@@ -689,7 +736,9 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		jobStatus := newDeferJobStatus("job-adopted-no-bulk", now-5000)
 		idx.runReindexJob(jobStatus, true, deferRun)
 
-		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+		require.Equal(t, JobStatusFailed, jobStatus.Status)
+		assert.Contains(t, jobStatus.Error, "no longer supports deferred indexing")
+		assert.Equal(t, -1, rec.firstIndex("clear"), "Clear must never run after bulk support is lost")
 		assert.False(t, tracker.wasDeleted(), "an adopted claim must stay so search remains gated over the missing index")
 		require.NotNil(t, tracker.currentState())
 	})
@@ -750,7 +799,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 			assertMarkerRestored(t, tracker, "job-converted-nosearch")
 		})
 
-		t.Run("bulk support lost falls back to maintain mode and restores the marker", func(t *testing.T) {
+		t.Run("bulk support lost fails the job and restores the marker", func(t *testing.T) {
 			db := testDB(t)
 			defer cleanupDB(t, db)
 
@@ -780,8 +829,10 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 			jobStatus := newDeferJobStatus("job-converted-nobulk", now-5000)
 			idx.runReindexJob(jobStatus, true, deferRun)
 
-			require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+			require.Equal(t, JobStatusFailed, jobStatus.Status)
+			assert.Contains(t, jobStatus.Error, "no longer supports deferred indexing")
 			assert.Equal(t, -1, rec.firstIndex("prepare"), "the valid index must not be dropped")
+			assert.Equal(t, -1, rec.firstIndex("clear"), "Clear must never run after bulk support is lost")
 			assertMarkerRestored(t, tracker, "job-converted-nobulk")
 		})
 	})

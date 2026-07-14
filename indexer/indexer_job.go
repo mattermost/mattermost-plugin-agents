@@ -245,13 +245,17 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 
 	// Snapshot search at job start for consistency throughout the entire job
 	if s.getSearch == nil || s.getSearch() == nil {
+		errMsg := "Search not configured"
 		if deferRun != nil {
 			// The index was not touched by this run; release a fresh claim
 			// so search is not gated forever (an adopted state is kept).
-			s.abandonUndroppedClaim(deferRun)
+			if abandonErr := s.abandonUndroppedClaim(deferRun); abandonErr != nil {
+				s.pluginAPI.LogError("Failed to release vector index claim on early exit", "error", abandonErr)
+				errMsg = fmt.Sprintf("%s; additionally failed to release the vector index claim: %s", errMsg, abandonErr)
+			}
 		}
 		jobStatus.Status = JobStatusFailed
-		jobStatus.Error = "Search not configured"
+		jobStatus.Error = errMsg
 		jobStatus.CompletedAt = time.Now()
 		s.saveJobStatus(jobStatus)
 		return
@@ -270,47 +274,61 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 			bulk = bulkIndexerFor(search)
 			if bulk == nil {
 				// The search snapshot lost bulk index support between job
-				// start and now (e.g. a concurrent config change). A fresh
-				// claim can be cleared (the index was never dropped); an
-				// adopted state must stay so search remains gated over the
-				// missing index.
-				s.pluginAPI.LogWarn("Vector store no longer supports deferred indexing; maintaining the index during reindex")
-				s.abandonUndroppedClaim(deferRun)
-			} else {
-				// Freshness fence before the destructive part of the run:
-				// the claim CAS in resolveDeferredRebuild may be arbitrarily
-				// old by now (the process can pause past the stale-job
-				// threshold, letting a successor adopt, rebuild, and clear
-				// the state). A no-op CAS of the owned state onto itself
-				// re-asserts ownership on the KV master — same fencing
-				// strength as the dropped→building CAS before the build. If
-				// it does not apply, ABORT before any DDL or Clear and leave
-				// the state key alone (a successor owns it or it is gone).
-				// The remaining milliseconds-wide CAS-to-DDL TOCTOU stays
-				// accepted (full serialization would need a Postgres
-				// advisory lock, which is out of scope).
-				if ok, casErr := s.casVectorIndexState(&ownedState, &ownedState); casErr != nil || !ok {
-					s.pluginAPI.LogError("Deferred index claim is no longer current; aborting before the bulk load",
-						"job_id", jobStatus.JobID, "error", casErr)
-					jobStatus.Status = JobStatusFailed
-					jobStatus.Error = "Deferred index claim lost before bulk load began"
-					jobStatus.CompletedAt = time.Now()
-					s.saveJobStatus(jobStatus)
-					return
+				// start and now (e.g. a concurrent config change). FAIL the
+				// job before any Clear/DDL rather than falling back to
+				// maintain mode mid-run: this run's claim may already be
+				// superseded, and continuing into Clear() would let a stale
+				// worker truncate a successor's data. abandonUndroppedClaim
+				// releases the claim (delete a fresh one, restore a
+				// converted repairing marker, keep an adopted state); if
+				// its CAS conflicts or errors, the successor's claim (or
+				// the marker) is untouched. A new reindex started under the
+				// current non-bulk config resolves any leftover state in
+				// plain maintain mode from resolveDeferredRebuild.
+				errMsg := "Vector store no longer supports deferred indexing; start a new reindex"
+				if abandonErr := s.abandonUndroppedClaim(deferRun); abandonErr != nil {
+					s.pluginAPI.LogError("Failed to release vector index claim", "error", abandonErr)
+					errMsg = fmt.Sprintf("%s (additionally failed to release the vector index claim: %s)", errMsg, abandonErr)
 				}
-				deferPending = true
-				// Drop the ANN index before the bulk load. On a resume this
-				// also clears a leftover invalid index from an interrupted
-				// build.
-				if err := bulk.PrepareBulkIndex(ctx); err != nil {
-					errMsg := s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, fmt.Sprintf("Failed to drop vector index: %s", err))
-					deferPending = false
-					jobStatus.Status = JobStatusFailed
-					jobStatus.Error = errMsg
-					jobStatus.CompletedAt = time.Now()
-					s.saveJobStatus(jobStatus)
-					return
-				}
+				jobStatus.Status = JobStatusFailed
+				jobStatus.Error = errMsg
+				jobStatus.CompletedAt = time.Now()
+				s.saveJobStatus(jobStatus)
+				return
+			}
+			// Freshness fence before the destructive part of the run:
+			// the claim CAS in resolveDeferredRebuild may be arbitrarily
+			// old by now (the process can pause past the stale-job
+			// threshold, letting a successor adopt, rebuild, and clear
+			// the state). A no-op CAS of the owned state onto itself
+			// re-asserts ownership on the KV master — same fencing
+			// strength as the dropped→building CAS before the build. If
+			// it does not apply, ABORT before any DDL or Clear and leave
+			// the state key alone (a successor owns it or it is gone).
+			// The remaining milliseconds-wide CAS-to-DDL TOCTOU stays
+			// accepted (full serialization would need a Postgres
+			// advisory lock, which is out of scope).
+			if ok, casErr := s.casVectorIndexState(&ownedState, &ownedState); casErr != nil || !ok {
+				s.pluginAPI.LogError("Deferred index claim is no longer current; aborting before the bulk load",
+					"job_id", jobStatus.JobID, "error", casErr)
+				jobStatus.Status = JobStatusFailed
+				jobStatus.Error = "Deferred index claim lost before bulk load began"
+				jobStatus.CompletedAt = time.Now()
+				s.saveJobStatus(jobStatus)
+				return
+			}
+			deferPending = true
+			// Drop the ANN index before the bulk load. On a resume this
+			// also clears a leftover invalid index from an interrupted
+			// build.
+			if err := bulk.PrepareBulkIndex(ctx); err != nil {
+				errMsg := s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, fmt.Sprintf("Failed to drop vector index: %s", err))
+				deferPending = false
+				jobStatus.Status = JobStatusFailed
+				jobStatus.Error = errMsg
+				jobStatus.CompletedAt = time.Now()
+				s.saveJobStatus(jobStatus)
+				return
 			}
 		}
 	}
