@@ -291,10 +291,22 @@ Bulk reindexing throughput can be tuned for large datasets:
 |---------|---------|-------------|
 | **Reindex Worker Count** | 4 (max 32) | Concurrent embedding/storage workers during bulk reindexing. Raise for faster reindexing if your embedding provider rate limits allow (limits are respected automatically via retry with backoff); lower to reduce database and provider load. Values above the maximum are clamped. |
 | **Reindex Batch Size** | 200 (max 1000) | Posts fetched and embedded per batch. Larger batches amortize request overhead; requests are split automatically to stay within provider per-request limits. Values above the maximum are clamped. |
+| **Reindex Index Strategy** | Maintain index during reindex | Controls how the vector similarity index is handled during a full reindex. `maintain` keeps the index up to date on every insert (default). `defer` drops the index up front, bulk-loads without index maintenance, and rebuilds the index once at the end — much faster for large databases, but semantic search is unavailable until the rebuild completes. |
 
 The defaults stay comfortably within OpenAI Tier 1 rate limits. On Azure OpenAI, throughput is capped by your deployment's tokens-per-minute quota — raise it to benefit from higher worker counts.
 
 Run the initial indexing process after configuration.
+
+#### Large database reindexing
+
+For large installations (tens of millions of posts), set **Reindex Index Strategy** to `defer` before starting a full reindex. Maintaining the HNSW vector index on every insert is the dominant reindexing cost at scale, and it degrades sharply once the index no longer fits in memory; bulk-loading without the index and building it once afterwards is typically an order of magnitude faster.
+
+Notes on running a deferred reindex:
+
+- **Semantic search is unavailable** from the moment the reindex starts until the final index build completes. Search requests return an error (HTTP 503 on the API) during this window. Live posts continue to be indexed while the bulk load runs; while the final index build itself runs, new posts are skipped and swept up by the automatic catch-up pass afterwards.
+- **Tune the index build on the database side** — the plugin intentionally does not override server settings. Raising `maintenance_work_mem` (e.g. to several GB) speeds up the HNSW build significantly, and pgvector 0.6+ can parallelize the build with `max_parallel_maintenance_workers`.
+- **Crash recovery**: the index lifecycle state is durable. If the plugin or server restarts mid-reindex, the health check (**Check Index Health**) reports the vector index state, and search stays disabled until the index is rebuilt. Resume the reindex job (or start a new full reindex) to rebuild the index; the plugin never rebuilds it implicitly during activation because the build can take hours.
+- The strategy only applies to full reindexes. Catch-up jobs and live post indexing always maintain the index normally.
 
 ### Permission configuration
 
