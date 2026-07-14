@@ -570,6 +570,12 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 		return
 	}
 
+	// Best-effort policy cleanup: agent deletion must not fail on it. A stale
+	// policy on a deleted agent gates nothing.
+	if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
+		a.pluginAPI.Log.Error("Failed to delete access policy for deleted agent", "agent_id", cfg.ID, "error", err.Error())
+	}
+
 	ensureErr := a.refreshBotsAndNotify()
 
 	// EnsureBots deactivates removed bots on success; when it did not run or failed, deactivate explicitly.

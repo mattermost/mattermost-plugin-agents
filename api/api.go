@@ -330,6 +330,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+	// Access policy authoring: agent managers (contract §7.1).
+	agentRouter.GET("/:agentid/access_policy", a.handleGetAgentPolicy)
+	agentRouter.PUT("/:agentid/access_policy", a.handlePutAgentPolicy)
+	agentRouter.DELETE("/:agentid/access_policy", a.handleDeleteAgentPolicy)
 
 	router.GET("/services", a.handleListServices)
 
@@ -387,6 +391,25 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
+	// Service / MCP-server access policy authoring: system admins only
+	// (contract §7.1). The :serverid wildcard coexists with the static
+	// /admin/mcp/* routes above (pinned by a route test).
+	adminRouter.GET("/services/:serviceid/access_policy", a.handleGetServicePolicy)
+	adminRouter.PUT("/services/:serviceid/access_policy", a.handlePutServicePolicy)
+	adminRouter.DELETE("/services/:serviceid/access_policy", a.handleDeleteServicePolicy)
+	adminRouter.GET("/mcp/:serverid/access_policy", a.handleGetMCPPolicy)
+	adminRouter.PUT("/mcp/:serverid/access_policy", a.handlePutMCPPolicy)
+	adminRouter.DELETE("/mcp/:serverid/access_policy", a.handleDeleteMCPPolicy)
+
+	// ABAC availability + CEL editor proxies (contract §7.1).
+	acRouter := router.Group("/access_control")
+	acRouter.GET("/status", a.handleABACStatus) // any authenticated user
+	celRouter := acRouter.Group("/cel")
+	celRouter.Use(a.celRouteAuthzRequired)
+	celRouter.POST("/check", a.handleCELCheck)
+	celRouter.POST("/test", a.handleCELTest)
+	celRouter.GET("/autocomplete/fields", a.handleCELAutocompleteFields)
+	celRouter.POST("/visual_ast", a.handleCELVisualAST)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results
