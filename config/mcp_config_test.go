@@ -101,19 +101,20 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 		next      []MCPServerConfig
 		prev      []MCPServerConfig
 		expectIDs []string
+		expectErr bool
 	}{
 		{
-			name: "ID already present untouched",
+			name: "round-trip payload keeps existing ID",
 			next: []MCPServerConfig{
-				{ID: "keep-me", Name: "srv", BaseURL: "https://one.example.com"},
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
 			},
 			prev: []MCPServerConfig{
 				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
 			},
-			expectIDs: []string{"keep-me"},
+			expectIDs: []string{"prev-id"},
 		},
 		{
-			name: "match by name",
+			name: "match by name when URL edited",
 			next: []MCPServerConfig{
 				{Name: "srv", BaseURL: "https://new-url.example.com"},
 			},
@@ -144,14 +145,26 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 			expectIDs: []string{"prev-id", ""},
 		},
 		{
-			name: "no match keeps empty ID",
+			name: "add flow: genuinely new entry stays ID-less for the caller to mint",
 			next: []MCPServerConfig{
+				{ID: "prev-id", Name: "srv", BaseURL: "https://old.example.com"},
 				{Name: "brand-new", BaseURL: "https://new.example.com"},
 			},
 			prev: []MCPServerConfig{
 				{ID: "prev-id", Name: "srv", BaseURL: "https://old.example.com"},
 			},
-			expectIDs: []string{""},
+			expectIDs: []string{"prev-id", ""},
+		},
+		{
+			name: "delete flow: fewer entries than prev is not an error",
+			next: []MCPServerConfig{
+				{ID: "id-one", Name: "keep", BaseURL: "https://one.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "id-one", Name: "keep", BaseURL: "https://one.example.com"},
+				{ID: "id-two", Name: "delete-me", BaseURL: "https://two.example.com"},
+			},
+			expectIDs: []string{"id-one"},
 		},
 		{
 			name: "prev entries without IDs cannot be claimed",
@@ -176,7 +189,7 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 			expectIDs: []string{"id-two", "id-one"},
 		},
 		{
-			name: "ID-bearing entry consumes prev first; ID-less contender treated as new",
+			name: "ID-bearing entry consumes prev first; ID-less contender is new",
 			next: []MCPServerConfig{
 				// ID-less entry comes first in the payload but must not steal
 				// the identity the ID-bearing entry still holds.
@@ -189,7 +202,28 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 			expectIDs: []string{"", "prev-id"},
 		},
 		{
-			name: "rename plus URL-change crossing two prev servers is ambiguous, treated as new",
+			name: "duplicate incoming IDs rejected",
+			next: []MCPServerConfig{
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
+				{ID: "prev-id", Name: "copy", BaseURL: "https://two.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			expectErr: true,
+		},
+		{
+			name: "fabricated incoming ID rejected",
+			next: []MCPServerConfig{
+				{ID: "never-issued-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			expectErr: true,
+		},
+		{
+			name: "rename plus URL-change crossing two prev servers rejected",
 			next: []MCPServerConfig{
 				// Name matches prev B, BaseURL matches prev A: never guess.
 				{Name: "beta", BaseURL: "https://alpha.example.com"},
@@ -198,10 +232,10 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 				{ID: "id-alpha", Name: "alpha", BaseURL: "https://alpha.example.com"},
 				{ID: "id-beta", Name: "beta", BaseURL: "https://beta.example.com"},
 			},
-			expectIDs: []string{""},
+			expectErr: true,
 		},
 		{
-			name: "multiple name matches with no exact match are ambiguous, treated as new",
+			name: "multiple name matches with no exact match rejected",
 			next: []MCPServerConfig{
 				{Name: "dup", BaseURL: "https://three.example.com"},
 			},
@@ -209,10 +243,10 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 				{ID: "id-one", Name: "dup", BaseURL: "https://one.example.com"},
 				{ID: "id-two", Name: "dup", BaseURL: "https://two.example.com"},
 			},
-			expectIDs: []string{""},
+			expectErr: true,
 		},
 		{
-			name: "multiple exact (Name, BaseURL) duplicates in prev are ambiguous, treated as new",
+			name: "multiple exact (Name, BaseURL) duplicates in prev rejected",
 			next: []MCPServerConfig{
 				{Name: "dup", BaseURL: "https://one.example.com"},
 			},
@@ -220,27 +254,18 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 				{ID: "id-one", Name: "dup", BaseURL: "https://one.example.com"},
 				{ID: "id-two", Name: "dup", BaseURL: "https://one.example.com"},
 			},
-			expectIDs: []string{""},
-		},
-		{
-			name: "unique BaseURL match ignored when a different prev matches by name",
-			next: []MCPServerConfig{
-				{Name: "beta", BaseURL: "https://alpha.example.com"},
-				{Name: "gamma", BaseURL: "https://beta.example.com"},
-			},
-			prev: []MCPServerConfig{
-				{ID: "id-alpha", Name: "alpha", BaseURL: "https://alpha.example.com"},
-				{ID: "id-beta", Name: "beta", BaseURL: "https://beta.example.com"},
-			},
-			// next[0]: name→id-beta, url→id-alpha: ambiguous.
-			// next[1]: no name match, url→id-beta: unique claim.
-			expectIDs: []string{"", "id-beta"},
+			expectErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ReconcileMCPServerIDs(tt.next, tt.prev)
+			result, err := ReconcileMCPServerIDs(tt.next, tt.prev)
+			if tt.expectErr {
+				require.ErrorIs(t, err, ErrMCPServerIDConflict)
+				return
+			}
+			require.NoError(t, err)
 			require.Len(t, result, len(tt.expectIDs))
 			for i, id := range tt.expectIDs {
 				require.Equal(t, id, result[i].ID, "server %d", i)

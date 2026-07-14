@@ -531,6 +531,94 @@ func TestHandleSaveConfigCarriesForwardMCPServerIDs(t *testing.T) {
 	}
 }
 
+// TestHandleSaveConfigRejectsMCPServerIDConflicts covers stale or corrupt
+// admin payloads whose MCP server identities cannot be reconciled with the
+// stored config: the save must fail with 409 (never silently re-mint IDs,
+// which would detach existing policies), while legitimate add/edit flows
+// still succeed.
+func TestHandleSaveConfigRejectsMCPServerIDConflicts(t *testing.T) {
+	storedServer := config.MCPServerConfig{ID: "stable-id", Name: "Jira", BaseURL: "https://jira.example.com"}
+	storedOther := config.MCPServerConfig{ID: "other-id", Name: "Linear", BaseURL: "https://linear.example.com"}
+
+	tests := []struct {
+		name           string
+		payloadServers []config.MCPServerConfig
+		expectedStatus int
+		validate       func(t *testing.T, store *testConfigStore)
+	}{
+		{
+			name: "fabricated incoming ID returns 409",
+			payloadServers: []config.MCPServerConfig{
+				{ID: "invented-by-client", Name: "Jira", BaseURL: "https://jira.example.com"},
+			},
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name: "duplicate incoming IDs return 409",
+			payloadServers: []config.MCPServerConfig{
+				{ID: "stable-id", Name: "Jira", BaseURL: "https://jira.example.com"},
+				{ID: "stable-id", Name: "Copy", BaseURL: "https://copy.example.com"},
+			},
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name: "ambiguous ID-less identity match returns 409",
+			payloadServers: []config.MCPServerConfig{
+				// Name matches Linear, BaseURL matches Jira: never guess.
+				{Name: "Linear", BaseURL: "https://jira.example.com"},
+			},
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name: "add flow: new ID-less server minted server-side",
+			payloadServers: []config.MCPServerConfig{
+				{ID: "stable-id", Name: "Jira", BaseURL: "https://jira.example.com"},
+				{ID: "other-id", Name: "Linear", BaseURL: "https://linear.example.com"},
+				{Name: "Brand New", BaseURL: "https://new.example.com"},
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, store *testConfigStore) {
+				require.Len(t, store.cfg.MCP.Servers, 3)
+				assert.Equal(t, "stable-id", store.cfg.MCP.Servers[0].ID)
+				assert.Equal(t, "other-id", store.cfg.MCP.Servers[1].ID)
+				assert.True(t, model.IsValidId(store.cfg.MCP.Servers[2].ID), "new server gets a server-minted ID")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stored := &config.Config{
+				MCP: config.MCPConfig{Servers: []config.MCPServerConfig{storedServer, storedOther}},
+			}
+			store := &testConfigStore{cfg: stored}
+			updater := &testConfigUpdater{}
+			notifier := &testClusterNotifier{}
+			router := setupTestRouter(store, updater, notifier)
+
+			body, err := json.Marshal(config.Config{
+				MCP: config.MCPConfig{Servers: tt.payloadServers},
+			})
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedStatus == http.StatusConflict {
+				assert.Equal(t, "stable-id", store.cfg.MCP.Servers[0].ID, "stored config must be untouched on rejection")
+				assert.Equal(t, 0, updater.callCount, "in-memory config must not be updated on rejection")
+				assert.Equal(t, 0, notifier.callCount, "cluster must not be notified on rejection")
+			}
+			if tt.validate != nil {
+				tt.validate(t, store)
+			}
+		})
+	}
+}
+
 // TestHandleSaveConfigRejectsStaleLegacyServiceIDs covers the interleaving
 // where a pre-upgrade webapp bundle loaded the config before the ID migration
 // ran and then saves UUID service IDs back: the save must fail with 409 and

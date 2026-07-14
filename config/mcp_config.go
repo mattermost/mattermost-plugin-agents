@@ -3,6 +3,11 @@
 
 package config
 
+import (
+	"errors"
+	"fmt"
+)
+
 const (
 	MCPToolPolicyAsk               = "ask"
 	MCPToolPolicyAutoRunInDM       = "auto_run_in_dm"
@@ -136,38 +141,61 @@ func (c *MCPConfig) OriginByServerID() map[string]string {
 	return out
 }
 
+// ErrMCPServerIDConflict is the base error for every MCP server identity
+// problem ReconcileMCPServerIDs can detect. The wrapped message describes the
+// specific conflict; callers map it to a client error (the admin console
+// payload is stale or corrupt and the admin should reload).
+var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
+
 // ReconcileMCPServerIDs carries stable IDs forward from prev onto entries in
 // next that arrived without one (e.g. from webapp bundles predating the ID
-// field). ID transfer between servers is worse than ID loss (a transferred
-// policy attachment silently guards the wrong server; a lost one is
-// recoverable), so matching never guesses:
+// field). Server IDs are ABAC policy identities, so identity mistakes are
+// never papered over: silently minting a fresh ID for an existing server
+// detaches its policy (lookup becomes no-policy, which fails open), and
+// transferring an ID guards the wrong server. Matching therefore never
+// guesses, and anything suspicious is an ErrMCPServerIDConflict error:
 //
-//  1. Incoming entries that already carry an ID consume the matching prev
-//     entry first, regardless of position, so an ID-less entry can never
-//     steal an identity that an ID-bearing entry still holds.
+//  1. Incoming entries that already carry an ID must reference a distinct
+//     existing prev entry. Duplicate incoming IDs and IDs absent from prev
+//     (fabricated/foreign — an admin bundle never invents IDs) are errors.
+//     Matching prev entries are consumed first, regardless of position, so an
+//     ID-less entry can never steal an identity an ID-bearing entry holds.
 //  2. Each ID-less entry then matches unconsumed prev entries by exact
 //     (Name, BaseURL), else by Name with no BaseURL match elsewhere, else by
 //     BaseURL with no Name match elsewhere.
 //  3. Any ambiguity — multiple candidates in a tier, or Name and BaseURL
-//     pointing at different prev entries — leaves the entry ID-less, treated
-//     as NEW (normalizeAdminConfig assigns a fresh ID).
+//     pointing at different prev entries — is an error.
+//  4. Entries matching nothing at all are genuinely new and stay ID-less;
+//     the caller mints a fresh ID (the legitimate add-server path).
 //
 // Each prev entry is consumed at most once.
-func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) []MCPServerConfig {
+func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MCPServerConfig, error) {
+	prevByID := make(map[string]int, len(prev))
+	for j := range prev {
+		if prev[j].ID != "" {
+			prevByID[prev[j].ID] = j
+		}
+	}
+
 	consumed := make([]bool, len(prev))
 
 	// Pass 1: entries arriving with an ID keep it and consume the prev entry
 	// holding that ID.
+	seenIncoming := make(map[string]bool, len(next))
 	for i := range next {
-		if next[i].ID == "" {
+		id := next[i].ID
+		if id == "" {
 			continue
 		}
-		for j := range prev {
-			if !consumed[j] && prev[j].ID == next[i].ID {
-				consumed[j] = true
-				break
-			}
+		if seenIncoming[id] {
+			return nil, fmt.Errorf("%w: server %q duplicates the ID of another entry in the payload", ErrMCPServerIDConflict, next[i].Name)
 		}
+		seenIncoming[id] = true
+		j, ok := prevByID[id]
+		if !ok {
+			return nil, fmt.Errorf("%w: server %q carries ID %q which does not exist in the stored configuration", ErrMCPServerIDConflict, next[i].Name, id)
+		}
+		consumed[j] = true
 	}
 
 	// Pass 2: ID-less entries match against remaining prev entries.
@@ -199,20 +227,24 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) []MCP
 		case len(exactMatches) == 1:
 			match = exactMatches[0]
 		case len(exactMatches) > 1:
-			// Identical duplicates in prev: ambiguous.
+			return nil, fmt.Errorf("%w: server %q matches multiple identical stored servers", ErrMCPServerIDConflict, next[i].Name)
+		case len(nameMatches) == 0 && len(urlMatches) == 0:
+			// Genuinely new: no identity claim to resolve.
 		case len(nameMatches) == 1 && len(urlMatches) == 0:
 			match = nameMatches[0]
 		case len(nameMatches) == 0 && len(urlMatches) == 1:
 			match = urlMatches[0]
-			// Everything else (multiple candidates on an axis, or Name and
-			// BaseURL matching different prev entries) is ambiguous: NEW.
+		default:
+			// Multiple candidates on an axis, or Name and BaseURL pointing at
+			// different stored servers.
+			return nil, fmt.Errorf("%w: server %q ambiguously matches more than one stored server", ErrMCPServerIDConflict, next[i].Name)
 		}
 		if match >= 0 {
 			next[i].ID = prev[match].ID
 			consumed[match] = true
 		}
 	}
-	return next
+	return next, nil
 }
 
 // PluginServerConfig describes an MCP server registered by another plugin.

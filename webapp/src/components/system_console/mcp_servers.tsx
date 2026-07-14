@@ -10,7 +10,6 @@ import {GlobalState} from '@mattermost/types/store';
 
 import {TertiaryButton} from '../assets/buttons';
 import {getMCPTools, getVettedToolSeed} from '../../client';
-import {generateId} from '../../utils/id';
 
 import manifest from '@/manifest';
 
@@ -374,10 +373,6 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
 
-    // IDs added this session are not persisted server-side yet; policy
-    // authoring against them is gated until the config is saved.
-    const sessionAddedIdsRef = useRef(new Set<string>());
-
     const configuredSiteURL = useSelector<GlobalState, string | undefined>(
         (state) => state.entities.general.config.SiteURL,
     );
@@ -467,20 +462,19 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         return `${prefix}${counter}`;
     };
 
-    // Add a new server
+    // Add a new server. No id is assigned client-side: the server treats
+    // ID-less entries with no identity match as new and mints the stable ID
+    // on save (client-invented IDs are rejected as fabricated).
     const addServer = () => {
         // Use the auto-generated name
         const serverName = generateServerName();
 
-        const id = generateId();
-        sessionAddedIdsRef.current.add(id);
         onChange({
             ...config,
             servers: [
                 ...normalizedServers,
                 {
                     ...defaultServerConfig,
-                    id,
                     name: serverName,
                 },
             ],
@@ -592,7 +586,11 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                         serverConfig={serverConfig}
                                         onChange={updateServer}
                                         onDelete={() => deleteServer(index)}
-                                        isPersisted={!serverConfig.id || !sessionAddedIdsRef.current.has(serverConfig.id)}
+
+                                        // Servers only ever get an id from the persisted
+                                        // config (IDs are minted server-side on save), so
+                                        // any id-bearing entry is persisted.
+                                        isPersisted={true}
                                     />
                                 ))
                             )}

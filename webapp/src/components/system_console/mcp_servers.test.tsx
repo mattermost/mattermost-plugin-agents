@@ -41,7 +41,6 @@ jest.mock('./mcp_tools_viewer', () => ({
 import MCPServers, {MCPConfig, MCPServerConfig} from './mcp_servers';
 /* eslint-enable import/first, import/order */
 
-const MATTERMOST_ID_PATTERN = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{26}$/;
 const STABLE_ID = 'abcdefghijklmnopqrstuvwxyz';
 
 function makeMCPConfig(servers: MCPServerConfig[]): MCPConfig {
@@ -103,14 +102,14 @@ describe('MCPServers stable ID handling', () => {
         expect(servers[0].id).toBe(STABLE_ID);
     });
 
-    it('assigns a fresh 26-char id when adding a server', () => {
+    it('adds a new server without an id so the backend mints the stable ID on save', () => {
         const {onChange} = renderServers([existingServer]);
 
         fireEvent.click(screen.getByText('Add Remote MCP Server'));
 
         const servers = lastChangedServers(onChange);
         expect(servers).toHaveLength(2);
-        expect(servers[1].id).toMatch(MATTERMOST_ID_PATTERN);
-        expect(servers[1].id).not.toBe(STABLE_ID);
+        expect(servers[1].id).toBeUndefined();
+        expect(servers[0].id).toBe(STABLE_ID);
     });
 });

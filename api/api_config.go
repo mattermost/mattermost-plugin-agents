@@ -89,21 +89,31 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// interleave. Reconciliation carries stable MCP server IDs forward before
 	// normalizeAdminConfig mints fresh ones, so payloads from clients that
 	// drop the id field (stale webapp bundles, raw API automation) cannot
-	// rotate IDs on every save.
+	// rotate IDs on every save; identity conflicts abort the save entirely.
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		next := cfg
 		if prev != nil {
-			next.MCP.Servers = config.ReconcileMCPServerIDs(next.MCP.Servers, prev.MCP.Servers)
+			reconciled, reconcileErr := config.ReconcileMCPServerIDs(next.MCP.Servers, prev.MCP.Servers)
+			if reconcileErr != nil {
+				return config.Config{}, reconcileErr
+			}
+			next.MCP.Servers = reconciled
 		}
 		return normalizeAdminConfig(next), nil
 	})
-	if errors.Is(err, store.ErrStaleLegacyServiceIDs) {
+	switch {
+	case errors.Is(err, config.ErrMCPServerIDConflict):
+		// The payload's MCP server identities cannot be safely reconciled
+		// with the stored config (stale or corrupt admin console state).
+		// Minting fresh IDs here would silently detach existing policies.
+		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload conflicts with the stored MCP server identities; reload the System Console and retry: %w", err))
+		return
+	case errors.Is(err, store.ErrStaleLegacyServiceIDs):
 		// A pre-upgrade webapp bundle is echoing back UUID service IDs from
 		// before the ID migration; writing them would undo it.
 		c.AbortWithError(http.StatusConflict, fmt.Errorf("stale configuration payload; reload the System Console and retry: %w", err))
 		return
-	}
-	if err != nil {
+	case err != nil:
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
 		return
 	}
