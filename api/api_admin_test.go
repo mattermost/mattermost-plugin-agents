@@ -986,3 +986,14 @@ func (s *failingConfigStore) SaveConfig(cfg config.Config) error {
 	s.cfg = &clone
 	return nil
 }
+
+func (s *failingConfigStore) UpdateConfig(transform func(prev *config.Config) config.Config) (config.Config, error) {
+	if s.getErr != nil {
+		return config.Config{}, s.getErr
+	}
+	next := transform(s.cfg)
+	if err := s.SaveConfig(next); err != nil {
+		return next, err
+	}
+	return next, nil
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,6 +23,9 @@ import (
 // testConfigStore is a simple in-memory implementation of ConfigStore for testing.
 type testConfigStore struct {
 	cfg *config.Config
+	// serviceIDMigrationDone mirrors the store's migration marker driving the
+	// stale legacy UUID rejection in UpdateConfig.
+	serviceIDMigrationDone bool
 }
 
 func (s *testConfigStore) GetConfig() (*config.Config, error) {
@@ -32,6 +36,20 @@ func (s *testConfigStore) SaveConfig(cfg config.Config) error {
 	clone := cfg
 	s.cfg = &clone
 	return nil
+}
+
+func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) config.Config) (config.Config, error) {
+	next := transform(s.cfg)
+	if s.serviceIDMigrationDone {
+		for i := range next.Services {
+			if len(next.Services[i].ID) == 36 {
+				return next, store.ErrStaleLegacyServiceIDs
+			}
+		}
+	}
+	clone := next
+	s.cfg = &clone
+	return next, nil
 }
 
 // testConfigUpdater tracks whether Update was called and with what config.
@@ -508,6 +526,56 @@ func TestHandleSaveConfigCarriesForwardMCPServerIDs(t *testing.T) {
 			tt.validate(t, store)
 		})
 	}
+}
+
+// TestHandleSaveConfigRejectsStaleLegacyServiceIDs covers the interleaving
+// where a pre-upgrade webapp bundle loaded the config before the ID migration
+// ran and then saves UUID service IDs back: the save must fail with 409 and
+// leave the migrated config untouched, while a fresh payload is accepted.
+func TestHandleSaveConfigRejectsStaleLegacyServiceIDs(t *testing.T) {
+	migrated := &config.Config{
+		Services: []llm.ServiceConfig{
+			{ID: "migrated26charidmigrated26", Name: "OpenAI", Type: "openai"},
+		},
+	}
+	store := &testConfigStore{cfg: migrated, serviceIDMigrationDone: true}
+	updater := &testConfigUpdater{}
+	notifier := &testClusterNotifier{}
+	router := setupTestRouter(store, updater, notifier)
+
+	put := func(cfg config.Config) *httptest.ResponseRecorder {
+		body, err := json.Marshal(cfg)
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	// Stale payload echoing a pre-migration UUID service ID.
+	stale := config.Config{
+		Services: []llm.ServiceConfig{
+			{ID: "550e8400-e29b-41d4-a716-446655440000", Name: "OpenAI", Type: "openai"},
+		},
+	}
+	w := put(stale)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, "migrated26charidmigrated26", store.cfg.Services[0].ID, "migrated ID must survive the stale save")
+	assert.Equal(t, 0, updater.callCount, "in-memory config must not be updated on rejection")
+	assert.Equal(t, 0, notifier.callCount, "cluster must not be notified on rejection")
+
+	// Fresh payload with the migrated ID is accepted.
+	fresh := config.Config{
+		Services: []llm.ServiceConfig{
+			{ID: "migrated26charidmigrated26", Name: "OpenAI Renamed", Type: "openai"},
+		},
+	}
+	w = put(fresh)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "OpenAI Renamed", store.cfg.Services[0].Name)
+	assert.Equal(t, 1, updater.callCount)
+	assert.Equal(t, 1, notifier.callCount)
 }
 
 func TestSaveAndGetConfigRoundTrip(t *testing.T) {

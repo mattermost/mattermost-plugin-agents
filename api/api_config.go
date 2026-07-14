@@ -4,6 +4,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -82,27 +84,32 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	// Carry stable MCP server IDs forward before normalizeAdminConfig mints
-	// fresh ones, so payloads from clients that drop the id field (stale
-	// webapp bundles, raw API automation) cannot rotate IDs on every save.
-	prevCfg, err := a.configStore.GetConfig()
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load previous config: %w", err))
+	// Read-previous → reconcile → normalize → save runs atomically under the
+	// config advisory lock, so a concurrent save or migration cannot
+	// interleave. Reconciliation carries stable MCP server IDs forward before
+	// normalizeAdminConfig mints fresh ones, so payloads from clients that
+	// drop the id field (stale webapp bundles, raw API automation) cannot
+	// rotate IDs on every save.
+	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) config.Config {
+		next := cfg
+		if prev != nil {
+			next.MCP.Servers = config.ReconcileMCPServerIDs(next.MCP.Servers, prev.MCP.Servers)
+		}
+		return normalizeAdminConfig(next)
+	})
+	if errors.Is(err, store.ErrStaleLegacyServiceIDs) {
+		// A pre-upgrade webapp bundle is echoing back UUID service IDs from
+		// before the ID migration; writing them would undo it.
+		c.AbortWithError(http.StatusConflict, fmt.Errorf("stale configuration payload: %w", err))
 		return
 	}
-	if prevCfg != nil {
-		cfg.MCP.Servers = config.ReconcileMCPServerIDs(cfg.MCP.Servers, prevCfg.MCP.Servers)
-	}
-
-	cfg = normalizeAdminConfig(cfg)
-
-	if err := a.configStore.SaveConfig(cfg); err != nil {
+	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
 		return
 	}
 
 	// Update in-memory config on this node
-	a.configUpdater.Update(&cfg)
+	a.configUpdater.Update(&saved)
 
 	// Notify other cluster nodes to reload config from DB
 	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {

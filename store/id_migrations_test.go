@@ -591,3 +591,75 @@ func TestMigrateABACIDsConcurrentIdempotent(t *testing.T) {
 	requireMarker(t, s, mcpServerIDMigrationKey)
 }
 
+// TestUpdateConfigRejectsStaleLegacyServiceIDs is the interleaving regression
+// for the migration/stale-save race: once the service ID migration has run, a
+// save echoing pre-migration UUID service IDs (stale webapp bundle) must be
+// rejected, while a fresh payload goes through.
+func TestUpdateConfigRejectsStaleLegacyServiceIDs(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	// Stale client loads the pre-migration config...
+	seedConfigRow(t, s, config.Config{
+		Services: []llm.ServiceConfig{
+			{ID: testUUIDA, Name: "A"},
+		},
+	}, true)
+	staleSnapshot, err := s.GetConfig()
+	require.NoError(t, err)
+
+	// ...then the migration runs.
+	report, err := s.MigrateABACIDs()
+	require.NoError(t, err)
+	require.True(t, report.Migrated)
+	migratedCfg, err := s.GetConfig()
+	require.NoError(t, err)
+	migratedID := migratedCfg.Services[0].ID
+	require.True(t, model.IsValidId(migratedID))
+
+	// Stale save replays the UUID payload: rejected, active config untouched.
+	rowsBefore := configHistoryCount(t, s)
+	_, err = s.UpdateConfig(func(prev *config.Config) config.Config {
+		return *staleSnapshot
+	})
+	require.ErrorIs(t, err, ErrStaleLegacyServiceIDs)
+	assert.Equal(t, rowsBefore, configHistoryCount(t, s), "rejected save must not write a config row")
+	current, err := s.GetConfig()
+	require.NoError(t, err)
+	assert.Equal(t, migratedID, current.Services[0].ID, "migrated ID must survive the stale save")
+
+	// A fresh payload (post-migration IDs) is accepted.
+	fresh := *migratedCfg
+	fresh.Services[0].Name = "A-renamed"
+	saved, err := s.UpdateConfig(func(prev *config.Config) config.Config {
+		require.NotNil(t, prev)
+		assert.Equal(t, migratedID, prev.Services[0].ID, "transform must see the migrated config")
+		return fresh
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "A-renamed", saved.Services[0].Name)
+	current, err = s.GetConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "A-renamed", current.Services[0].Name)
+	assert.Equal(t, migratedID, current.Services[0].ID)
+}
+
+// Before the migration marker is set, UpdateConfig must accept UUID service
+// IDs: pre-migration saves are legitimate.
+func TestUpdateConfigAllowsUUIDsBeforeMigration(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	saved, err := s.UpdateConfig(func(prev *config.Config) config.Config {
+		assert.Nil(t, prev, "no active config yet")
+		return config.Config{
+			Services: []llm.ServiceConfig{{ID: testUUIDA, Name: "A"}},
+		}
+	})
+	require.NoError(t, err)
+	assert.Equal(t, testUUIDA, saved.Services[0].ID)
+
+	current, err := s.GetConfig()
+	require.NoError(t, err)
+	assert.Equal(t, testUUIDA, current.Services[0].ID)
+}
