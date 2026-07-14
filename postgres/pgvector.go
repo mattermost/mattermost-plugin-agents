@@ -43,12 +43,31 @@ func uniqueSortedPostIDs(docs []embeddings.PostDocument) []string {
 	return out
 }
 
+// vectorIndexName is the HNSW ANN index used for similarity search. It is
+// dropped and rebuilt around bulk loads when the deferred reindex strategy
+// is active.
+const vectorIndexName = "llm_posts_embeddings_embedding_idx"
+
+// createVectorIndexQuery is the ANN index DDL shared by the constructor and
+// FinalizeBulkIndex so both always build the identical index.
+const createVectorIndexQuery = "CREATE INDEX IF NOT EXISTS " + vectorIndexName +
+	" ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops)"
+
 type PGVector struct {
 	db *sqlx.DB
 }
 
+// Compile-time check that PGVector supports deferred bulk indexing.
+var _ embeddings.BulkIndexer = (*PGVector)(nil)
+
 type PGVectorConfig struct {
 	Dimensions int `json:"dimensions"`
+
+	// SkipVectorIndex skips ANN index creation in the constructor while a
+	// deferred reindex owns the index lifecycle; without it, activation or a
+	// config save would synchronously rebuild a huge index that was dropped
+	// on purpose. Not admin-configurable.
+	SkipVectorIndex bool `json:"-"`
 }
 
 func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
@@ -82,12 +101,14 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 
 	// Create indexes
 	queries := []string{
-		// Index for similarity search using HNSW
-		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_embedding_idx ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops)",
 		// Index on post_id for efficient lookups and deletions
 		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_post_id_idx ON llm_posts_embeddings(post_id)",
 		// Index on is_chunk to filter by chunks
 		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_is_chunk_idx ON llm_posts_embeddings(is_chunk)",
+	}
+	if !config.SkipVectorIndex {
+		// Index for similarity search using HNSW
+		queries = append(queries, createVectorIndexQuery)
 	}
 
 	for _, query := range queries {
@@ -361,6 +382,88 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 		return fmt.Errorf("failed to clear vectors: %w", err)
 	}
 	return nil
+}
+
+// PrepareBulkIndex drops the ANN index so bulk inserts skip HNSW graph
+// maintenance. The post_id/is_chunk B-tree indexes and the primary key are
+// kept: the catch-up pass's NOT EXISTS anti-join needs the post_id index.
+func (pv *PGVector) PrepareBulkIndex(ctx context.Context) error {
+	if _, err := pv.db.ExecContext(ctx, "DROP INDEX IF EXISTS "+vectorIndexName); err != nil {
+		return fmt.Errorf("failed to drop vector index: %w", err)
+	}
+	return nil
+}
+
+// FinalizeBulkIndex (re)builds the ANN index with the same DDL as the
+// constructor and verifies the result is valid. A leftover invalid index
+// with the target name (e.g. from an interrupted build) is dropped first so
+// CREATE INDEX IF NOT EXISTS can't silently keep it.
+func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
+	valid, exists, err := pv.vectorIndexStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check vector index state: %w", err)
+	}
+	if exists && !valid {
+		if _, dropErr := pv.db.ExecContext(ctx, "DROP INDEX IF EXISTS "+vectorIndexName); dropErr != nil {
+			return fmt.Errorf("failed to drop invalid vector index: %w", dropErr)
+		}
+	}
+
+	// Build on a pinned connection with the session statement_timeout
+	// disabled: the plugin DB driver discards contexts once execution
+	// starts, and a database/role-level statement_timeout could kill an
+	// hours-long build.
+	conn, err := pv.db.Connx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection for index build: %w", err)
+	}
+	defer conn.Close()
+
+	if _, timeoutErr := conn.ExecContext(ctx, "SET statement_timeout = 0"); timeoutErr != nil {
+		return fmt.Errorf("failed to disable statement timeout for index build: %w", timeoutErr)
+	}
+	if _, buildErr := conn.ExecContext(ctx, createVectorIndexQuery); buildErr != nil {
+		return fmt.Errorf("failed to build vector index: %w", buildErr)
+	}
+	// Best effort: restore the session timeout before the connection
+	// returns to the pool.
+	_, _ = conn.ExecContext(ctx, "RESET statement_timeout")
+
+	valid, exists, err = pv.vectorIndexStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to verify vector index after build: %w", err)
+	}
+	if !exists || !valid {
+		return fmt.Errorf("vector index %s is missing or invalid after build", vectorIndexName)
+	}
+	return nil
+}
+
+// VectorIndexExists reports whether a valid ANN index currently exists.
+func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
+	valid, exists, err := pv.vectorIndexStatus(ctx)
+	if err != nil {
+		return false, err
+	}
+	return exists && valid, nil
+}
+
+// vectorIndexStatus queries the catalog for the ANN index and reports its
+// validity and existence.
+func (pv *PGVector) vectorIndexStatus(ctx context.Context) (valid, exists bool, err error) {
+	var indisvalid []bool
+	err = pv.db.SelectContext(ctx, &indisvalid, `
+		SELECT i.indisvalid
+		FROM pg_class c
+		JOIN pg_index i ON i.indexrelid = c.oid
+		WHERE c.relkind = 'i' AND c.relname = $1`, vectorIndexName)
+	if err != nil {
+		return false, false, err
+	}
+	if len(indisvalid) == 0 {
+		return false, false, nil
+	}
+	return indisvalid[0], true, nil
 }
 
 // DeleteOrphaned removes embeddings whose posts no longer exist or are soft-deleted past retention.
