@@ -83,10 +83,11 @@ type ConfigStore interface {
 	GetConfig() (*config.Config, error)
 	SaveConfig(cfg config.Config) error
 	// UpdateConfig atomically reads the active config, applies transform, and
-	// persists the result under the config advisory lock. It returns
+	// persists the result under the config advisory lock. A transform error
+	// aborts the update and is returned as-is. It returns
 	// store.ErrStaleLegacyServiceIDs when the result would reintroduce legacy
 	// UUID service IDs after the one-time ID migration.
-	UpdateConfig(transform func(prev *config.Config) config.Config) (config.Config, error)
+	UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error)
 }
 
 // AgentStore provides CRUD access to user-created agents in the database.

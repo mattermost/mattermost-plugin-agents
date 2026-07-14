@@ -90,17 +90,17 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// normalizeAdminConfig mints fresh ones, so payloads from clients that
 	// drop the id field (stale webapp bundles, raw API automation) cannot
 	// rotate IDs on every save.
-	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) config.Config {
+	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		next := cfg
 		if prev != nil {
 			next.MCP.Servers = config.ReconcileMCPServerIDs(next.MCP.Servers, prev.MCP.Servers)
 		}
-		return normalizeAdminConfig(next)
+		return normalizeAdminConfig(next), nil
 	})
 	if errors.Is(err, store.ErrStaleLegacyServiceIDs) {
 		// A pre-upgrade webapp bundle is echoing back UUID service IDs from
 		// before the ID migration; writing them would undo it.
-		c.AbortWithError(http.StatusConflict, fmt.Errorf("stale configuration payload: %w", err))
+		c.AbortWithError(http.StatusConflict, fmt.Errorf("stale configuration payload; reload the System Console and retry: %w", err))
 		return
 	}
 	if err != nil {

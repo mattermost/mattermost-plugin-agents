@@ -38,8 +38,11 @@ func (s *testConfigStore) SaveConfig(cfg config.Config) error {
 	return nil
 }
 
-func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) config.Config) (config.Config, error) {
-	next := transform(s.cfg)
+func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	next, err := transform(s.cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
 	if s.serviceIDMigrationDone {
 		for i := range next.Services {
 			if len(next.Services[i].ID) == 36 {

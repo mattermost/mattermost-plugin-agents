@@ -114,19 +114,24 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		byUsername[bc.Name] = struct{}{}
 	}
 
-	newCfg := *dbCfg
-	newCfg.Bots = nil
-	if saveErr := st.SaveConfig(newCfg); saveErr != nil {
-		return false, fmt.Errorf("failed to save config after legacy bot migration: %w", saveErr)
-	}
-	reloaded, err := st.GetConfig()
-	if err != nil {
-		return false, fmt.Errorf("failed to reload config: %w", err)
-	}
-	if reloaded != nil {
-		if err := cfg.StorePersistedConfigWithoutNotify(reloaded); err != nil {
-			return false, fmt.Errorf("failed to store config after legacy bot migration: %w", err)
+	// Clear Bots atomically against the freshest persisted config: a blind
+	// SaveConfig of the dbCfg snapshot read above could overwrite a concurrent
+	// writer's changes (e.g. an admin save or the ID migration's remapped IDs).
+	saved, err := st.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		if prev == nil {
+			return config.Config{}, fmt.Errorf("active config disappeared during legacy bot migration")
 		}
+		next := *prev
+		next.Bots = nil
+		return next, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to save config after legacy bot migration: %w", err)
+	}
+	// Deliberately without notify: the caller is already servicing a config
+	// update listener; notifying here would re-enter it.
+	if err := cfg.StorePersistedConfigWithoutNotify(&saved); err != nil {
+		return false, fmt.Errorf("failed to store config after legacy bot migration: %w", err)
 	}
 
 	if err := st.SetSystemValue(legacyConfigBotsMigratedKey, "true"); err != nil {

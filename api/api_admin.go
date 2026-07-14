@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -469,37 +470,39 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		updated.ToolConfigs = *req.ToolConfigs
 	}
 
-	existing, getErr := a.configStore.GetConfig()
-	if getErr != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load config for plugin-server save: %w", getErr))
-		return
-	}
-	if existing == nil {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
-		return
-	}
-	// Clone to avoid mutating the store's cached pointer.
-	cfg := existing.Clone()
-
-	// Merge by PluginID against the persisted list rather than overwriting
-	// with the in-memory snapshot, which would silently drop entries for
-	// plugins that are persisted but currently inactive in memory.
-	merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
-	mergedIdx := -1
-	for i := range merged {
-		if merged[i].PluginID == updated.PluginID {
-			mergedIdx = i
-			break
+	// Read-merge-save runs atomically under the config advisory lock via
+	// UpdateConfig, so a concurrent config writer cannot be overwritten
+	// (e.g. an admin save landing between our read and write).
+	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		if prev == nil {
+			// A nil persisted config must not be silently replaced by a
+			// zero-value baseline; doing so would clobber unrelated settings
+			// (services, bots, MCP flags) on the next save.
+			return config.Config{}, errors.New("no plugin configuration available")
 		}
-	}
-	if mergedIdx >= 0 {
-		merged[mergedIdx] = updated
-	} else {
-		merged = append(merged, updated)
-	}
-	cfg.MCP.PluginServers = merged
+		// Clone to avoid mutating the store's cached pointer.
+		cfg := prev.Clone()
 
-	if err := a.configStore.SaveConfig(*cfg); err != nil {
+		// Merge by PluginID against the persisted list rather than overwriting
+		// with the in-memory snapshot, which would silently drop entries for
+		// plugins that are persisted but currently inactive in memory.
+		merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
+		mergedIdx := -1
+		for i := range merged {
+			if merged[i].PluginID == updated.PluginID {
+				mergedIdx = i
+				break
+			}
+		}
+		if mergedIdx >= 0 {
+			merged[mergedIdx] = updated
+		} else {
+			merged = append(merged, updated)
+		}
+		cfg.MCP.PluginServers = merged
+		return *cfg, nil
+	})
+	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save plugin-server config: %w", err))
 		return
 	}
@@ -510,7 +513,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	}
 
 	a.mcpClientManager.RegisterPluginServer(updated)
-	a.configUpdater.Update(cfg)
+	a.configUpdater.Update(&saved)
 
 	// Rebuild when either old or new state was external so removed tools
 	// disappear from the aggregate server.
