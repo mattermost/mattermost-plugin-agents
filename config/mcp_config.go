@@ -48,6 +48,12 @@ type MCPConfig struct {
 
 // MCPServerConfig contains the configuration for a single MCP server
 type MCPServerConfig struct {
+	// ID is the immutable, globally unique stable identifier for this server,
+	// assigned by the Agents plugin (model.NewId()). It is the policy identity
+	// for ABAC: it survives Name/BaseURL edits and is never reused. It is NOT
+	// used for OAuth keying (Name) or runtime tool origin (BaseURL) — those
+	// identity systems are intentionally unchanged.
+	ID           string            `json:"id,omitempty"`
 	Name         string            `json:"name"`
 	Enabled      bool              `json:"enabled"`
 	BaseURL      string            `json:"baseURL"`
@@ -99,6 +105,73 @@ func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
 func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	policy, enabled := s.GetToolPolicy(toolName)
 	return IsToolPolicyAutoRunInDM(policy) && enabled
+}
+
+// ServerIDByOrigin maps a runtime ServerOrigin (llm.Tool.ServerOrigin, which is
+// the server BaseURL for external servers) to the stable server ID. Servers with
+// no assigned ID are omitted. On duplicate BaseURLs the last config entry wins,
+// matching filterToolsByConfig's serverByOrigin overwrite semantics. Disabled
+// servers are included: they produce no tools at runtime, and policy CRUD needs
+// the mapping regardless of enablement.
+func (c *MCPConfig) ServerIDByOrigin() map[string]string {
+	out := make(map[string]string, len(c.Servers))
+	for i := range c.Servers {
+		if c.Servers[i].ID == "" {
+			continue
+		}
+		out[c.Servers[i].BaseURL] = c.Servers[i].ID
+	}
+	return out
+}
+
+// OriginByServerID is the inverse of ServerIDByOrigin: stable ID -> current BaseURL.
+func (c *MCPConfig) OriginByServerID() map[string]string {
+	out := make(map[string]string, len(c.Servers))
+	for i := range c.Servers {
+		if c.Servers[i].ID == "" {
+			continue
+		}
+		out[c.Servers[i].ID] = c.Servers[i].BaseURL
+	}
+	return out
+}
+
+// ReconcileMCPServerIDs carries stable IDs forward from prev onto entries in
+// next that arrived without one (e.g. from webapp bundles predating the ID
+// field). Match precedence: exact Name, then exact BaseURL; first unclaimed
+// match wins and each prev entry is consumed at most once. Entries with no
+// match keep an empty ID (normalizeAdminConfig assigns a fresh one).
+func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) []MCPServerConfig {
+	claimed := make(map[int]bool, len(prev))
+
+	claim := func(match func(p *MCPServerConfig) bool) string {
+		for i := range prev {
+			if claimed[i] || prev[i].ID == "" {
+				continue
+			}
+			if match(&prev[i]) {
+				claimed[i] = true
+				return prev[i].ID
+			}
+		}
+		return ""
+	}
+
+	for i := range next {
+		if next[i].ID != "" {
+			continue
+		}
+		name := next[i].Name
+		if id := claim(func(p *MCPServerConfig) bool { return p.Name == name }); id != "" {
+			next[i].ID = id
+			continue
+		}
+		baseURL := next[i].BaseURL
+		if id := claim(func(p *MCPServerConfig) bool { return p.BaseURL == baseURL }); id != "" {
+			next[i].ID = id
+		}
+	}
+	return next
 }
 
 // PluginServerConfig describes an MCP server registered by another plugin.
