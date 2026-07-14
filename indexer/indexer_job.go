@@ -249,12 +249,31 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 				s.pluginAPI.LogWarn("Vector store no longer supports deferred indexing; maintaining the index during reindex")
 				s.abandonUndroppedClaim(deferRun)
 			} else {
+				// Freshness fence before the destructive part of the run:
+				// the claim CAS in resolveDeferredRebuild may be arbitrarily
+				// old by now (the process can pause past the stale-job
+				// threshold, letting a successor adopt, rebuild, and clear
+				// the state). A no-op CAS of the owned state onto itself
+				// re-asserts ownership on the KV master — same fencing
+				// strength as the dropped→building CAS before the build. If
+				// it does not apply, ABORT before any DDL or Clear and leave
+				// the state key alone (a successor owns it or it is gone).
+				// The remaining milliseconds-wide CAS-to-DDL TOCTOU stays
+				// accepted (full serialization would need a Postgres
+				// advisory lock, which is out of scope).
+				if ok, casErr := s.casVectorIndexState(&ownedState, &ownedState); casErr != nil || !ok {
+					s.pluginAPI.LogError("Deferred index claim is no longer current; aborting before the bulk load",
+						"job_id", jobStatus.JobID, "error", casErr)
+					jobStatus.Status = JobStatusFailed
+					jobStatus.Error = "Deferred index claim lost before bulk load began"
+					jobStatus.CompletedAt = time.Now()
+					s.saveJobStatus(jobStatus)
+					return
+				}
 				deferPending = true
-				// Drop the ANN index before the bulk load. The claim CAS in
-				// resolveDeferredRebuild is the ownership proof for this
-				// DDL; no re-read (a replica read could lie, CAS cannot).
-				// On a resume this also clears a leftover invalid index
-				// from an interrupted build.
+				// Drop the ANN index before the bulk load. On a resume this
+				// also clears a leftover invalid index from an interrupted
+				// build.
 				if err := bulk.PrepareBulkIndex(ctx); err != nil {
 					errMsg := s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, fmt.Sprintf("Failed to drop vector index: %s", err))
 					deferPending = false
@@ -674,6 +693,27 @@ func (s *Indexer) reindexEditedPosts(ctx context.Context, jobStatus *JobStatus, 
 	// Bound the sweep so posts still being edited don't extend it; anything
 	// after this point flows through normal live indexing (the gate is off).
 	upperBound := time.Now().UnixMilli()
+
+	// A gated-window edit can also turn a post NON-indexable (message
+	// emptied by a props-stripping integration edit, deletion, type change).
+	// The re-embed loop's fetch predicate never returns those posts, so
+	// their stale rows must be removed explicitly. The predicate below is
+	// the fetch query's indexability predicate, negated, bounded to the same
+	// window. Removal is the correct final state, so a cancel mid-repair
+	// leaves nothing missing.
+	if _, err := s.db.ExecContext(ctx, `
+		DELETE FROM llm_posts_embeddings e
+		USING Posts p
+		WHERE e.post_id = p.Id
+			AND p.UpdateAt >= $1
+			AND p.UpdateAt <= $2
+			AND (p.DeleteAt != 0
+				OR p.Type != ''
+				OR (p.Message = '' AND COALESCE(p.Props::text, '') NOT LIKE '%"attachments"%'))`,
+		since, upperBound); err != nil {
+		return fmt.Errorf("failed to delete stale embeddings for posts edited into a non-indexable form: %w", err)
+	}
+
 	_, batchSize := s.reindexSettings()
 	lastUpdateAt, lastID := since, ""
 	for {

@@ -156,6 +156,25 @@ func (s *Indexer) clearVectorIndexState(state VectorIndexState) error {
 	return fmt.Errorf("failed to clear vector index state: %w", lastErr)
 }
 
+// deferStrategyUsable reports whether a fresh full reindex should run in
+// defer mode: the strategy is configured AND the current vector store can
+// actually drop/rebuild the index. Logs a warning when the strategy is set
+// but unusable.
+func (s *Indexer) deferStrategyUsable() bool {
+	if s.configGetter == nil {
+		return false
+	}
+	cfg := s.configGetter()
+	if cfg.EffectiveReindexIndexStrategy() != embeddings.ReindexIndexStrategyDefer {
+		return false
+	}
+	if bulkIndexerFor(s.getSearch()) == nil {
+		s.pluginAPI.LogWarn("Reindex index strategy is 'defer' but the vector store does not support it; maintaining the index during reindex")
+		return false
+	}
+	return true
+}
+
 // resolveDeferredRebuild decides whether this run participates in the
 // deferred index lifecycle and claims/adopts the durable phase state
 // accordingly. Any leftover state is handled — the invariant is that every
@@ -176,7 +195,26 @@ func (s *Indexer) resolveDeferredRebuild(clearIndex bool, jobID string) (*deferr
 
 	if state != nil && clearIndex && state.Phase == VectorIndexPhaseRepairing {
 		// A fresh full reindex re-embeds everything, so a pending repair is
-		// moot: clear it and start clean per the configured strategy.
+		// moot. The leftover marker is resolved in a SINGLE atomic CAS per
+		// strategy — a delete-then-create pair could strand the system with
+		// neither marker nor claim if it failed in between.
+		if s.deferStrategyUsable() {
+			newState := VectorIndexState{JobID: jobID, Phase: VectorIndexPhaseDropped, BuildStartedAt: 0}
+			ok, casErr := s.casVectorIndexState(state, &newState)
+			if casErr != nil {
+				return nil, fmt.Errorf("failed to replace leftover vector index repair state: %w", casErr)
+			}
+			if !ok {
+				return nil, fmt.Errorf("vector index state changed while replacing leftover repair state")
+			}
+			return &deferredRun{state: newState, adopted: true}, nil
+		}
+		// Maintain-mode fresh run: delete the marker outright, the full
+		// re-embed supersedes the pending repair. Accepted residual: if this
+		// run then dies before Clear() completes and is never resumed,
+		// build-window stale edits persist without a marker — acceptable
+		// because the failed job row stays visible and any subsequent full
+		// reindex re-embeds everything.
 		ok, casErr := s.casVectorIndexState(state, nil)
 		if casErr != nil {
 			return nil, fmt.Errorf("failed to clear leftover vector index repair state: %w", casErr)
@@ -184,7 +222,7 @@ func (s *Indexer) resolveDeferredRebuild(clearIndex bool, jobID string) (*deferr
 		if !ok {
 			return nil, fmt.Errorf("vector index state changed while clearing leftover repair state")
 		}
-		state = nil
+		return nil, nil
 	}
 
 	if state != nil {
@@ -231,15 +269,7 @@ func (s *Indexer) resolveDeferredRebuild(clearIndex bool, jobID string) (*deferr
 		return nil, nil
 	}
 
-	if s.configGetter == nil {
-		return nil, nil
-	}
-	cfg := s.configGetter()
-	if cfg.EffectiveReindexIndexStrategy() != embeddings.ReindexIndexStrategyDefer {
-		return nil, nil
-	}
-	if bulkIndexerFor(s.getSearch()) == nil {
-		s.pluginAPI.LogWarn("Reindex index strategy is 'defer' but the vector store does not support it; maintaining the index during reindex")
+	if !s.deferStrategyUsable() {
 		return nil, nil
 	}
 	// Persist the state BEFORE the index is dropped so a crash in between
@@ -403,10 +433,16 @@ func (s *Indexer) abandonUndroppedClaim(run *deferredRun) {
 // ungate search mid-drop. A leftover repairing state is always kept — it is
 // the pending-repair marker and the index is SUPPOSED to exist in that
 // phase, so catalog evidence must not clear it. Only ownerless
-// dropped/building leftovers use catalog evidence. If the index is genuinely
-// missing and no live job owns the state, the index is NOT rebuilt here — a
-// build can take hours and must not run inside activation. Search stays
-// gated until an admin starts or resumes a reindex, which rebuilds it.
+// dropped/building leftovers use catalog evidence: a dropped leftover with a
+// valid index means the pre-drop crash left nothing to repair, so the state
+// is cleared; a building leftover with a valid index means the CREATE
+// committed but the building→repairing transition never did, so the state
+// converts to repairing (preserving JobID and BuildStartedAt) — the
+// gated-window edits still need repair and deleting the marker would lose
+// them silently. If the index is genuinely missing and no live job owns the
+// state, the index is NOT rebuilt here — a build can take hours and must not
+// run inside activation. Search stays gated until an admin starts or resumes
+// a reindex, which rebuilds it.
 func (s *Indexer) ReconcileVectorIndexState(ctx context.Context) error {
 	state, err := s.loadVectorIndexState()
 	if err != nil {
@@ -435,6 +471,19 @@ func (s *Indexer) ReconcileVectorIndexState(ctx context.Context) error {
 			return exErr
 		}
 		if exists {
+			if state.Phase == VectorIndexPhaseBuilding {
+				// The build committed but its completion was never recorded:
+				// live indexing was gated during the build, so a repair is
+				// still pending. Convert the marker instead of deleting it.
+				repairing := *state
+				repairing.Phase = VectorIndexPhaseRepairing
+				s.pluginAPI.LogWarn("Vector index build completed but the repair of gated-window edits is pending; resume the job or run a reindex to re-index them",
+					"job_id", state.JobID)
+				if ok, casErr := s.casVectorIndexState(state, &repairing); casErr != nil || !ok {
+					s.pluginAPI.LogError("Failed to convert vector index state to repairing", "error", casErr)
+				}
+				return nil
+			}
 			s.pluginAPI.LogWarn("Vector index state says the index is dropped but a valid index exists; clearing stale state",
 				"job_id", state.JobID, "phase", state.Phase)
 			if ok, casErr := s.casVectorIndexState(state, nil); casErr != nil || !ok {
