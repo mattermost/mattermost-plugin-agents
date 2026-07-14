@@ -13,6 +13,8 @@ import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
 
+import ConsolePolicySection from '../access_control/console_policy_section';
+
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
 
 export type LLMService = {
@@ -445,6 +447,10 @@ type Props = {
     services: LLMService[]
     onChange: (service: LLMService) => void
     onDelete: () => void
+
+    // False for entries added this session (not yet saved server-side):
+    // policy authoring is gated until the configuration is saved.
+    isPersisted?: boolean
 }
 
 const Service = (props: Props) => {
@@ -488,6 +494,12 @@ const Service = (props: Props) => {
                             onChange={props.onChange}
                         />
                     </ItemList>
+                    <ConsolePolicySection
+                        resourceType='service'
+                        resourceId={props.service.id}
+                        resourceDisplayName={props.service.name || serviceTypeToDisplayName(intl, props.service.type)}
+                        isPersisted={props.isPersisted ?? true}
+                    />
                 </ItemListContainer>
             )}
         </ServiceContainer>

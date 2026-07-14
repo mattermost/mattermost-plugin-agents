@@ -14,6 +14,8 @@ import {generateId} from '../../utils/id';
 
 import manifest from '@/manifest';
 
+import ConsolePolicySection from '../access_control/console_policy_section';
+
 import {CopyableTextItem} from './copyable_text_item';
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
@@ -79,11 +81,13 @@ const MCPServer = ({
     serverConfig,
     onChange,
     onDelete,
+    isPersisted,
 }: {
     serverIndex: number;
     serverConfig: MCPServerConfig;
     onChange: (serverIndex: number, config: MCPServerConfig) => void;
     onDelete: () => void;
+    isPersisted?: boolean;
 }) => {
     const intl = useIntl();
     const [isEditingName, setIsEditingName] = useState(false);
@@ -349,6 +353,15 @@ const MCPServer = ({
                     </OAuthSectionContent>
                 )}
             </OAuthSection>
+
+            {config.id && (
+                <ConsolePolicySection
+                    resourceType='mcp'
+                    resourceId={config.id}
+                    resourceDisplayName={config.name || `Server ${serverIndex + 1}`}
+                    isPersisted={isPersisted ?? true}
+                />
+            )}
         </ServerContainer>
     );
 };
@@ -360,6 +373,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
+
+    // IDs added this session are not persisted server-side yet; policy
+    // authoring against them is gated until the config is saved.
+    const sessionAddedIdsRef = useRef(new Set<string>());
 
     const configuredSiteURL = useSelector<GlobalState, string | undefined>(
         (state) => state.entities.general.config.SiteURL,
@@ -455,13 +472,15 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         // Use the auto-generated name
         const serverName = generateServerName();
 
+        const id = generateId();
+        sessionAddedIdsRef.current.add(id);
         onChange({
             ...config,
             servers: [
                 ...normalizedServers,
                 {
                     ...defaultServerConfig,
-                    id: generateId(),
+                    id,
                     name: serverName,
                 },
             ],
@@ -573,6 +592,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                         serverConfig={serverConfig}
                                         onChange={updateServer}
                                         onDelete={() => deleteServer(index)}
+                                        isPersisted={!serverConfig.id || !sessionAddedIdsRef.current.has(serverConfig.id)}
                                     />
                                 ))
                             )}

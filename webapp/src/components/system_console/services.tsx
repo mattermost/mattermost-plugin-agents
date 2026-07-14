@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useRef, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -50,9 +50,14 @@ const Services = (props: Props) => {
     const [showErrorDialog, setShowErrorDialog] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
 
+    // IDs added this session are not persisted server-side yet; policy
+    // authoring against them is gated until the config is saved.
+    const sessionAddedIdsRef = useRef(new Set<string>());
+
     const addNewService = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         const id = generateId();
+        sessionAddedIdsRef.current.add(id);
         if (props.services.length === 0) {
             props.onChange([{
                 ...firstNewService,
@@ -103,6 +108,7 @@ const Services = (props: Props) => {
                         services={props.services}
                         onChange={onChange}
                         onDelete={() => onDelete(service.id)}
+                        isPersisted={!sessionAddedIdsRef.current.has(service.id)}
                     />
                 ))}
             </ServicesList>

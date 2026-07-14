@@ -34,6 +34,17 @@ jest.mock('@/client', () => ({
     updateAgent: jest.fn(),
     uploadAgentAvatar: jest.fn(),
     getUserMCPTools: jest.fn(),
+    deleteAgentAccessPolicy: jest.fn(),
+}));
+
+// The view reads currentUserId / system-admin status from the host store and
+// probes ABAC support; neither is under test here.
+jest.mock('react-redux', () => ({
+    useSelector: jest.fn(() => false),
+}));
+
+jest.mock('@/utils/access_control', () => ({
+    useABACSupport: () => ({supported: false, checking: false}),
 }));
 
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
@@ -46,6 +57,7 @@ jest.mock('@/components/system_console/bot', () => ({
     },
     UserAccessLevel: {
         All: 0,
+        AttributeBased: 4,
     },
 }));
 

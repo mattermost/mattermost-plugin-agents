@@ -32,6 +32,10 @@ export enum UserAccessLevel {
     Allow,
     Block,
     None,
+
+    // AttributeBased makes the ABAC resource policy the sole user-access
+    // gate; user/team lists are ignored in this mode. Wire value 4.
+    AttributeBased,
 }
 
 export type LLMBotConfig = {

@@ -4,13 +4,17 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
+import {useSelector} from 'react-redux';
+import {GlobalState} from '@mattermost/types/store';
 import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
-import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
+import {createAgent, deleteAgentAccessPolicy, updateAgent, uploadAgentAvatar} from '@/client';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
+import {useABACSupport} from '@/utils/access_control';
+import {userHasSystemPermission} from '@/utils/permissions';
 
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
@@ -191,6 +195,7 @@ type Props = {
 }
 
 const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
+const DELETE_AGENT_POLICY_TITLE_ID = 'delete-agent-policy-title';
 
 const AgentConfigView = (props: Props) => {
     const {mode, agent, services, onBack, onSaved} = props;
@@ -206,6 +211,19 @@ const AgentConfigView = (props: Props) => {
     const [showDiscardDialog, setShowDiscardDialog] = useState(false);
     const showDiscardDialogRef = useRef(false);
     showDiscardDialogRef.current = showDiscardDialog;
+
+    const {supported: abacSupported} = useABACSupport();
+    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
+    const isSystemAdmin = useSelector((state: GlobalState) => userHasSystemPermission(state, currentUserId, 'manage_system'));
+
+    // Tracks whether the agent currently has an ABAC policy (reported by the
+    // policy editor) for the switch-away-from-attribute-based confirmation.
+    const policyExistsRef = useRef(false);
+    const handlePolicyExistenceChange = useCallback((exists: boolean) => {
+        policyExistsRef.current = exists;
+    }, []);
+    const [showDeletePolicyDialog, setShowDeletePolicyDialog] = useState(false);
+    const [savedAgentPendingPolicyChoice, setSavedAgentPendingPolicyChoice] = useState<UserAgent | null>(null);
 
     // Leave MCPs tab if tools are disabled
     useEffect(() => {
@@ -332,6 +350,19 @@ const AgentConfigView = (props: Props) => {
             // Clear dirty state so onSaved -> onBack flow doesn't trigger discard prompt
             setBaselineDraft(cloneDraft(draft));
             setAvatarFile(null);
+
+            // Switching away from attribute-based while a policy exists: ask
+            // whether to delete it. A kept policy continues to restrict access
+            // in addition to the new setting.
+            const switchedAwayFromAttributeBased =
+                baselineDraft.userAccessLevel === UserAccessLevel.AttributeBased &&
+                draft.userAccessLevel !== UserAccessLevel.AttributeBased;
+            if (mode === 'edit' && switchedAwayFromAttributeBased && policyExistsRef.current) {
+                setSavedAgentPendingPolicyChoice(savedAgent);
+                setShowDeletePolicyDialog(true);
+                return;
+            }
+
             onSaved(savedAgent);
         } catch (e: any) {
             const message = (typeof e?.message === 'string' ? e.message : '').trim();
@@ -351,7 +382,33 @@ const AgentConfigView = (props: Props) => {
         } finally {
             setSaving(false);
         }
-    }, [mode, agent, draft, avatarFile, intl, onSaved, validate]);
+    }, [mode, agent, draft, baselineDraft, avatarFile, intl, onSaved, validate]);
+
+    const handleDeletePolicyConfirm = useCallback(async () => {
+        setShowDeletePolicyDialog(false);
+        const savedAgent = savedAgentPendingPolicyChoice;
+        setSavedAgentPendingPolicyChoice(null);
+        if (!savedAgent) {
+            return;
+        }
+        try {
+            await deleteAgentAccessPolicy(savedAgent.id);
+            policyExistsRef.current = false;
+        } catch {
+            // Non-fatal: the agent was saved; the policy can be removed later
+            // from the access tab.
+        }
+        onSaved(savedAgent);
+    }, [savedAgentPendingPolicyChoice, onSaved]);
+
+    const handleDeletePolicyKeep = useCallback(() => {
+        setShowDeletePolicyDialog(false);
+        const savedAgent = savedAgentPendingPolicyChoice;
+        setSavedAgentPendingPolicyChoice(null);
+        if (savedAgent) {
+            onSaved(savedAgent);
+        }
+    }, [savedAgentPendingPolicyChoice, onSaved]);
 
     const title = mode === 'create' ? intl.formatMessage({defaultMessage: 'New Agent'}) : draft.displayName || intl.formatMessage({defaultMessage: 'Edit Agent'});
 
@@ -417,6 +474,10 @@ const AgentConfigView = (props: Props) => {
                         <AccessTab
                             draft={draft}
                             onChange={updateDraft}
+                            agentId={agent?.id}
+                            abacSupported={abacSupported}
+                            isSystemAdmin={isSystemAdmin}
+                            onPolicyExistenceChange={handlePolicyExistenceChange}
                         />
                     )}
                     {activeTab === 'mcps' && (
@@ -447,6 +508,21 @@ const AgentConfigView = (props: Props) => {
                     </SaveButton>
                 </ViewFooter>
             </ViewContainer>
+            <ConfirmationDialog
+                show={showDeletePolicyDialog}
+                titleId={DELETE_AGENT_POLICY_TITLE_ID}
+                title={<FormattedMessage defaultMessage='Delete access policy?'/>}
+                message={(
+                    <FormattedMessage defaultMessage="You switched away from attribute-based access. Delete this agent's access policy? If kept, the policy continues to restrict access in addition to the new setting."/>
+                )}
+                confirmButtonText={<FormattedMessage defaultMessage='Delete policy'/>}
+                cancelButtonText={<FormattedMessage defaultMessage='Keep policy'/>}
+                onConfirm={handleDeletePolicyConfirm}
+                onCancel={handleDeletePolicyKeep}
+                isDestructive={true}
+                managedAccessibility={true}
+                zIndex={2100}
+            />
             <ConfirmationDialog
                 show={showDiscardDialog}
                 titleId={DISCARD_CHANGES_TITLE_ID}
