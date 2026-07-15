@@ -75,7 +75,11 @@ type Plugin struct {
 // abacRebuildJoinTimeout bounds how long OnDeactivate waits for the ABAC
 // index rebuild goroutine to observe cancellation and exit. A rebuild parked
 // on a plugin API call or the cluster mutex should unwind well within this;
-// exceeding it is logged and deactivation proceeds.
+// exceeding it is logged and deactivation proceeds. A straggler that
+// outlives the timeout cannot mutate the policy index: every heal re-checks
+// the canceled lifecycle context immediately before its index write
+// (accesscontrol.Checker.RebuildIndex) — at worst its in-flight policy
+// reads briefly outlive shutdown.
 const abacRebuildJoinTimeout = 10 * time.Second
 
 type pluginLogger struct {
@@ -251,8 +255,10 @@ func (p *Plugin) OnActivate() error {
 	// caused by a lost mutex lease must not survive a restart (see
 	// accesscontrol.Checker.RebuildIndex). The rebuild runs under a
 	// plugin-lifecycle context: OnDeactivate cancels it AND joins on the
-	// done channel, so no in-flight fetch or heal can touch plugin APIs
-	// after deactivation returns.
+	// done channel (bounded by abacRebuildJoinTimeout). Guarantee: no index
+	// mutation after cancellation — every heal re-checks the context
+	// immediately before writing — while a straggler's in-flight reads may
+	// briefly outlive a timed-out join.
 	abacRebuildCtx, abacRebuildCancel := context.WithCancel(context.Background())
 	p.abacRebuildCancel = abacRebuildCancel
 	abacRebuildDone := make(chan struct{})
@@ -620,10 +626,12 @@ func (p *Plugin) OnDeactivate() error {
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
 
-	// Abandon a still-running ABAC index rebuild: cancel AND join, so the
-	// rebuild goroutine can never touch plugin APIs after deactivation. Then
-	// stop the background reconciliation worker (waits for an in-flight item
-	// to finish).
+	// Abandon a still-running ABAC index rebuild: cancel AND join. If the
+	// join times out, the canceled lifecycle context still guarantees that
+	// no index mutation happens afterwards (heals re-check it immediately
+	// before writing); only in-flight reads may briefly outlive shutdown.
+	// Then stop the background reconciliation worker (Close also cancels the
+	// Checker's own lifecycle context, giving its heals the same guarantee).
 	if p.abacRebuildCancel != nil {
 		p.abacRebuildCancel()
 	}

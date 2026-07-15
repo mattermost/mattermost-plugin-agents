@@ -55,6 +55,14 @@ type Checker struct {
 	// definitive outcomes. Stopped by Close.
 	reconciler *reconciler
 
+	// lifecycleCtx scopes the reconciler's index mutations to the Checker's
+	// lifetime; Close cancels it. Healing re-checks the governing context
+	// immediately before every index mutation (healDivergenceUnderLock), so
+	// after cancellation nothing can write to the index — at most in-flight
+	// reads briefly outlive shutdown.
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+
 	availabilityMu      sync.Mutex
 	availabilityValue   bool
 	availabilityChecked time.Time
@@ -77,22 +85,31 @@ func New(client DecisionClient, papi plugin.API, index PolicyIndex, mcpIDsByOrig
 	if mutationMutex == nil {
 		mutationMutex = &sync.Mutex{}
 	}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	c := &Checker{
-		client:         client,
-		papi:           papi,
-		index:          index,
-		mcpIDsByOrigin: mcpIDsByOrigin,
-		mutationMu:     mutationMutex,
-		reconciler:     newReconciler(defaultReconcileCooldown),
-		log:            log,
+		client:          client,
+		papi:            papi,
+		index:           index,
+		mcpIDsByOrigin:  mcpIDsByOrigin,
+		mutationMu:      mutationMutex,
+		reconciler:      newReconciler(defaultReconcileCooldown),
+		lifecycleCtx:    lifecycleCtx,
+		lifecycleCancel: lifecycleCancel,
+		log:             log,
 	}
-	go c.reconciler.run(c.reconcileIndex)
+	go c.reconciler.run(func(resourceType, resourceID string) bool {
+		return c.reconcileIndex(c.lifecycleCtx, resourceType, resourceID)
+	})
 	return c
 }
 
-// Close stops the background reconciliation worker, waiting for an in-flight
-// reconciliation to finish. Call on plugin deactivation. Idempotent.
+// Close cancels the Checker's lifecycle context — guaranteeing that no index
+// mutation happens after it returns (an in-flight heal degrades to a no-op
+// before its write; only reads may briefly outlive shutdown) — and stops the
+// background reconciliation worker, waiting for the in-flight item to
+// finish. Call on plugin deactivation. Idempotent.
 func (c *Checker) Close() {
+	c.lifecycleCancel()
 	c.reconciler.close()
 }
 
@@ -158,13 +175,16 @@ func (c *Checker) scheduleReconcile(resourceType, resourceID string, outcome Out
 // under the mutation mutex with the truth re-confirmed under the lock
 // (healDivergenceUnderLock).
 //
+// ctx is the governing lifecycle context (the Checker's own for the
+// background worker): once canceled, no index mutation is performed.
+//
 // Returns true when the resource is confirmed converged — no divergence
 // found, or the heal write succeeded — which is the only condition that
 // starts the per-resource reconciliation cooldown. The residual hazard
 // window — lease loss AND a concurrent opposing mutation AND an ABAC outage
 // before the next successful decision or plugin activation — is an accepted,
 // self-correcting risk (see also RebuildIndex and DeletePolicy).
-func (c *Checker) reconcileIndex(resourceType, resourceID string) bool {
+func (c *Checker) reconcileIndex(ctx context.Context, resourceType, resourceID string) bool {
 	if c.papi == nil {
 		// Decision-only wiring (tests): no server truth to reconcile against.
 		return true
@@ -183,7 +203,7 @@ func (c *Checker) reconcileIndex(resourceType, resourceID string) bool {
 	if has == want {
 		return true
 	}
-	return c.healDivergenceUnderLock(rebuildRef{resourceType: resourceType, resourceID: resourceID})
+	return c.healDivergenceUnderLock(ctx, rebuildRef{resourceType: resourceType, resourceID: resourceID})
 }
 
 // policyMarkerTruth fetches the server truth for one resource: wantMarker

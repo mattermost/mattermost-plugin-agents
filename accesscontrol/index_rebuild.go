@@ -34,8 +34,12 @@ type rebuildTruth struct {
 // Server truth is fetched OUTSIDE the cluster mutex with bounded concurrency;
 // the mutex is taken only per divergent resource, re-confirming the
 // divergence under the lock before writing, so the global PAP lease is never
-// held across the whole sweep. ctx should be a plugin-lifecycle context:
-// cancellation (deactivation) abandons the remaining work cleanly.
+// held across the whole sweep. ctx must be a plugin-lifecycle context:
+// cancellation (deactivation) abandons the remaining work, and because the
+// context is re-checked immediately before every index write
+// (healDivergenceUnderLock), no index mutation happens after cancellation —
+// even for a straggler that outlived the deactivation join timeout. Only
+// in-flight policy reads may briefly outlive shutdown.
 //
 // resourceIDsByType maps ResourceTypeAgent/Service/MCP to all resource IDs
 // known to the plugin at the time of the call. IDs that are not
@@ -125,7 +129,7 @@ gather:
 		if has == want {
 			continue
 		}
-		if c.healDivergenceUnderLock(ref) {
+		if c.healDivergenceUnderLock(ctx, ref) {
 			healed++
 		} else {
 			failed.Add(1)
@@ -156,7 +160,13 @@ gather:
 // with no policy). Reports true when the resource is confirmed converged
 // (no divergence remained, or the heal write succeeded); false when the
 // truth could not be re-read or the write failed.
-func (c *Checker) healDivergenceUnderLock(ref rebuildRef) bool {
+//
+// ctx is the governing lifecycle context and is re-checked immediately
+// before the index mutation: the guarantee is that NO index mutation happens
+// after cancellation — a straggler that outlived a deactivation join timeout
+// (blocked on the mutex or mid-Get) degrades to a no-op. Only its in-flight
+// reads may briefly outlive shutdown.
+func (c *Checker) healDivergenceUnderLock(ctx context.Context, ref rebuildRef) bool {
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 
@@ -174,6 +184,14 @@ func (c *Checker) healDivergenceUnderLock(ref rebuildRef) bool {
 	}
 	if has == want {
 		return true
+	}
+
+	// Last gate before mutating: a context canceled between the truth fetch
+	// and the write (plugin shutdown) must make the heal a no-op.
+	if ctx.Err() != nil {
+		logDebug(c.log, "ABAC policy index heal abandoned before its write: lifecycle context canceled",
+			"resource_type", ref.resourceType, "resource_id", ref.resourceID)
+		return false
 	}
 
 	if want {

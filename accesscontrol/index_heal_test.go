@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -500,6 +501,36 @@ func TestRebuildIndexAdditionRegatedUnderLock(t *testing.T) {
 	c.RebuildIndex(context.Background(), map[string][]string{ResourceTypeService: {resourceID}})
 
 	assert.Empty(t, index.addedKeys(), "a marker must not be re-added for a policy deleted between the phases")
+	assert.False(t, index.marker(ResourceTypeService, resourceID))
+}
+
+// TestHealNoIndexMutationAfterCancellation: the deactivation join timeout
+// can leave a straggler heal alive past OnDeactivate — blocked on the mutex
+// or mid-Get. The lifecycle context is re-checked immediately before the
+// index write, so a cancellation landing between the under-lock truth fetch
+// and the mutation must turn the heal into a no-op: no marker write after
+// cancellation, even though the truth fetch itself succeeded.
+func TestHealNoIndexMutationAfterCancellation(t *testing.T) {
+	resourceID := model.NewId()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	// Phase-one truth: the policy exists (marker missing → divergent).
+	api.On("GetAccessControlPolicy", resourceID).Return(&model.AccessControlPolicy{ID: resourceID}, nil).Once()
+	// Under-lock truth fetch: still exists, but the lifecycle context is
+	// canceled while the read is in flight (deactivation gave up joining).
+	api.On("GetAccessControlPolicy", resourceID).
+		Run(func(mock.Arguments) { cancel() }).
+		Return(&model.AccessControlPolicy{ID: resourceID}, nil).Once()
+
+	index := &stubPolicyIndex{has: map[string]bool{}}
+	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
+	t.Cleanup(c.Close)
+
+	c.RebuildIndex(ctx, map[string][]string{ResourceTypeService: {resourceID}})
+
+	assert.Empty(t, index.addedKeys(), "no index mutation may happen after lifecycle cancellation")
 	assert.False(t, index.marker(ResourceTypeService, resourceID))
 }
 
