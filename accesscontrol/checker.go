@@ -210,10 +210,13 @@ func (c *Checker) IsAvailable(ctx context.Context) bool {
 
 	available := false
 	if c.papi != nil {
-		_, appErr := c.papi.GetAccessControlPolicy(model.NewId())
-		// A nil appErr would mean a policy exists under the fresh ID —
-		// practically impossible, but it still proves the PAP answered.
-		available = appErr == nil || isNotFoundAppErr(appErr)
+		policy, appErr := c.papi.GetAccessControlPolicy(model.NewId())
+		// The probe uses a fresh ID, so the expected success signal is a
+		// 404 AppError. A non-nil policy with no error (a policy exists
+		// under the fresh ID — practically impossible) still proves the PAP
+		// answered. (nil, nil) is the generated RPC client's silent
+		// transport-failure mode and must map to unavailable.
+		available = isNotFoundAppErr(appErr) || (appErr == nil && policy != nil)
 	}
 	c.availabilityValue = available
 	c.availabilityChecked = time.Now()

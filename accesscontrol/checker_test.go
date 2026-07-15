@@ -335,6 +335,9 @@ func TestIsAvailable(t *testing.T) {
 		// Practically impossible, but a policy under the fresh ID still
 		// proves the PAP answered.
 		{name: "existing policy means available", policy: &model.AccessControlPolicy{}, want: true},
+		// The generated RPC client returns (nil, nil) on transport failure;
+		// that proves nothing about the PAP and must read as unavailable.
+		{name: "transport failure (nil, nil) means unavailable", want: false},
 	}
 
 	for _, tt := range tests {

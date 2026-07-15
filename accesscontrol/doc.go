@@ -14,7 +14,10 @@
 //
 // Outage invariant: `unavailable` (and any call error) always denies — the
 // server resolves policy existence even when ABAC is down, so `no_policy` is
-// trustworthy and legacy behavior applies exactly when no policy exists.
+// trustworthy. On `no_policy`, agents in the legacy access modes run the
+// legacy allow/block checks (services and MCP servers are unrestricted),
+// while attribute-based agents fail open by design — allowed without any
+// legacy check, since their user/team lists are ignored in that mode.
 //
 // Enforcement call sites live in bots/ (composite agent+service gate), mcp/
 // (per-user server filtering), llmcontext/ (meta-tool omission), and api/

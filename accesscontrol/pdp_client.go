@@ -5,6 +5,7 @@ package accesscontrol
 
 import (
 	"context"
+	"errors"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -12,6 +13,12 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// errRPCTransportFailure surfaces the generated plugin RPC client's silent
+// failure mode: on a transport error it logs, swallows the error, and returns
+// (nil, nil). The checkers' error path denies, which is the correct
+// fail-closed handling for a decision that never happened.
+var errRPCTransportFailure = errors.New("plugin RPC transport failure: EvaluateAccessControl returned no decision")
 
 // PluginAPIClient implements DecisionClient over plugin.API.EvaluateAccessControl.
 type PluginAPIClient struct {
@@ -41,6 +48,12 @@ func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, res
 		span.RecordError(appErr)
 		span.SetStatus(codes.Error, "access control evaluation failed")
 		return "", appErr
+	}
+	if decision == nil {
+		// The generated RPC client returns (nil, nil) on transport failure.
+		span.RecordError(errRPCTransportFailure)
+		span.SetStatus(codes.Error, "access control evaluation returned no decision")
+		return "", errRPCTransportFailure
 	}
 
 	span.SetAttributes(telemetry.ABACOutcome.String(string(decision.Outcome)))
