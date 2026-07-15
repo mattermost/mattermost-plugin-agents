@@ -2,18 +2,26 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Dev-only drift tripwire for the window.Components editor contract: type-
-// checks scripts/editor_contract/probe.ts, which asserts assignability
-// between the mattermost webapp's exported editor prop types and this
-// plugin's mirrors (src/types/access_control_editors.ts).
+// Drift tripwire for the window.Components editor contract, in two layers:
 //
-// The check needs a mattermost webapp checkout with node_modules installed.
-// Lookup order:
+// 1. ALWAYS (CI): type-checks scripts/editor_contract/probe_snapshot.ts,
+//    which asserts assignability between this plugin's mirrors
+//    (src/types/access_control_editors.ts) and the committed snapshot of the
+//    host types (src/types/host_editor_contract.snapshot.d.ts). No
+//    mattermost checkout needed — the contract is pinned in this repo.
+//
+// 2. WHEN A HOST CHECKOUT IS PRESENT (dev): additionally type-checks
+//    scripts/editor_contract/probe.ts against the live host source, and
+//    verifies the committed snapshot still matches what the host source
+//    generates — failing with regeneration instructions when the host moved.
+//
+// Pass --update-snapshot to regenerate the snapshot from the host checkout
+// (also exposed as `npm run update-editor-contract-snapshot`).
+//
+// Host checkout lookup order:
 //   1. $MM_WEBAPP_PATH (path to the mattermost repo's webapp/ directory)
 //   2. ../mattermost-wsw/webapp   (sibling checkout of the plugin repo)
 //   3. ../mattermost/webapp       (sibling checkout of the plugin repo)
-// When no usable checkout is found the check is skipped with exit code 0, so
-// wiring it into CI or `make check-style` is safe.
 
 /* eslint-disable no-console, no-process-env, no-process-exit */
 
@@ -23,10 +31,44 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
+import {generateSnapshot, parseCompilerOptions} from './editor_contract/generate_snapshot.mjs';
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const webappDir = path.resolve(scriptDir, '..');
 const repoRoot = path.resolve(webappDir, '..');
 const probeDir = path.join(scriptDir, 'editor_contract');
+const snapshotPath = path.join(webappDir, 'src', 'types', 'host_editor_contract.snapshot.d.ts');
+const updateSnapshot = process.argv.includes('--update-snapshot');
+
+const tscBin = path.join(webappDir, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
+
+// runProbe type-checks one probe file with the given tsconfig and returns the
+// diagnostics attributed to files under scripts/editor_contract/. Incidental
+// diagnostics inside host files are ignored: the synthetic program pulls the
+// transitive closure of the host editor files without exactly replicating the
+// host's own build environment.
+function runProbe(tsconfig, label) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'editor-contract-'));
+    const tsconfigPath = path.join(tmpDir, 'tsconfig.json');
+    fs.writeFileSync(tsconfigPath, JSON.stringify(tsconfig, null, 4));
+
+    const result = spawnSync(tscBin, ['-p', tsconfigPath, '--pretty', 'false'], {encoding: 'utf8'});
+    fs.rmSync(tmpDir, {recursive: true, force: true});
+
+    if (result.error) {
+        console.error(`check-editor-contract: failed to run tsc for the ${label} probe: ${result.error.message}`);
+        process.exit(1);
+    }
+
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    const probePrefixes = [probeDir, path.relative(process.cwd(), probeDir)];
+    return output.split('\n').filter((line) => {
+        if (!(/\(\d+,\d+\): error TS\d+/).test(line)) {
+            return false;
+        }
+        return probePrefixes.some((prefix) => line.startsWith(prefix) || line.startsWith(prefix.split(path.sep).join('/')));
+    });
+}
 
 // The host file whose exported types anchor the contract.
 const marker = path.join(
@@ -47,7 +89,7 @@ function findHostWebapp() {
             continue;
         }
         if (!fs.existsSync(path.join(candidate, 'node_modules'))) {
-            console.log(`check-editor-contract: found ${candidate} but its node_modules are not installed; skipping.`);
+            console.log(`check-editor-contract: found ${candidate} but its node_modules are not installed; skipping the live-host checks.`);
             return null;
         }
         return candidate;
@@ -55,76 +97,108 @@ function findHostWebapp() {
     return null;
 }
 
+// hostTsconfig builds the synthetic tsconfig compiling against a host
+// checkout. The probe compiles under the HOST's compiler options (baseUrl
+// resolves against the host checkout via `extends`), with the probe files and
+// the host's ambient declarations in the program. `paths` must be re-declared
+// in full (a shallow override replaces the host's), with absolute targets:
+// the probe file lives in the plugin tree, so bare host packages like
+// @mattermost/types would otherwise resolve against the plugin's own copy.
+function hostTsconfig(host) {
+    return {
+        extends: path.join(host, 'channels', 'tsconfig.json'),
+        compilerOptions: {
+            composite: false,
+            incremental: false,
+            noEmit: true,
+            skipLibCheck: true,
+            types: [],
+            paths: {
+                'mattermost-redux/*': [path.join(host, 'channels', 'src', 'packages', 'mattermost-redux', 'src', '*')],
+                '@mui/styled-engine': [path.join(host, 'channels', 'node_modules', '@mui', 'styled-engine-sc')],
+                '@mattermost/types/*': [path.join(host, 'platform', 'types', 'src', '*')],
+            },
+        },
+        include: [
+            path.join(probeDir, 'probe.ts').split(path.sep).join('/'),
+            path.join(host, 'channels', 'src', '**', '*.d.ts').split(path.sep).join('/'),
+        ],
+    };
+}
+
+// --- Layer 1: snapshot probe (always on; the CI gate) ---
+
+if (!fs.existsSync(snapshotPath) && !updateSnapshot) {
+    console.error(`check-editor-contract: missing committed snapshot ${path.relative(webappDir, snapshotPath)}.`);
+    console.error('Regenerate it against a mattermost webapp checkout: npm run update-editor-contract-snapshot');
+    process.exit(1);
+}
+
+if (fs.existsSync(snapshotPath)) {
+    const snapshotDiagnostics = runProbe({
+        extends: path.join(webappDir, 'tsconfig.json'),
+        compilerOptions: {noEmit: true, skipLibCheck: true},
+        include: [
+            path.join(probeDir, 'probe_snapshot.ts').split(path.sep).join('/'),
+            path.join(webappDir, 'src', 'types', '**', '*').split(path.sep).join('/'),
+        ],
+    }, 'snapshot');
+    if (snapshotDiagnostics.length > 0) {
+        console.error(snapshotDiagnostics.join('\n'));
+        console.error('check-editor-contract: FAILED — the plugin\'s editor prop mirrors have drifted from the pinned host contract snapshot.');
+        console.error('Reconcile webapp/src/types/access_control_editors.ts with src/types/host_editor_contract.snapshot.d.ts');
+        console.error('(or, if the host contract legitimately moved, regenerate the snapshot: npm run update-editor-contract-snapshot).');
+        process.exit(1);
+    }
+    console.log('check-editor-contract: snapshot probe OK — mirrors match the pinned host contract.');
+}
+
+// --- Layer 2: live host probe + snapshot freshness (dev only) ---
+
 const host = findHostWebapp();
 if (!host) {
-    console.log('check-editor-contract: no mattermost webapp checkout found (set MM_WEBAPP_PATH to point at one); skipping.');
+    if (updateSnapshot) {
+        console.error('check-editor-contract: --update-snapshot needs a mattermost webapp checkout (set MM_WEBAPP_PATH to point at one).');
+        process.exit(1);
+    }
+    console.log('check-editor-contract: no mattermost webapp checkout found (set MM_WEBAPP_PATH to point at one); skipping the live-host checks.');
     process.exit(0);
 }
 
 console.log(`check-editor-contract: probing against ${host}`);
+const tsconfig = hostTsconfig(host);
 
-// The probe compiles under the HOST's compiler options (baseUrl resolves
-// against the host checkout via `extends`), with the probe files and the
-// host's ambient declarations in the program. `paths` must be re-declared in
-// full (a shallow override replaces the host's), with absolute targets:
-// the probe file lives in the plugin tree, so bare host packages like
-// @mattermost/types would otherwise resolve against the plugin's own copy.
-const tsconfig = {
-    extends: path.join(host, 'channels', 'tsconfig.json'),
-    compilerOptions: {
-        composite: false,
-        incremental: false,
-        noEmit: true,
-        skipLibCheck: true,
-        types: [],
-        paths: {
-            'mattermost-redux/*': [path.join(host, 'channels', 'src', 'packages', 'mattermost-redux', 'src', '*')],
-            '@mui/styled-engine': [path.join(host, 'channels', 'node_modules', '@mui', 'styled-engine-sc')],
-            '@mattermost/types/*': [path.join(host, 'platform', 'types', 'src', '*')],
-        },
-    },
-    include: [
-        path.join(probeDir, '**', '*.ts').split(path.sep).join('/'),
-        path.join(host, 'channels', 'src', '**', '*.d.ts').split(path.sep).join('/'),
-    ],
-};
-
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'editor-contract-'));
-const tsconfigPath = path.join(tmpDir, 'tsconfig.json');
-fs.writeFileSync(tsconfigPath, JSON.stringify(tsconfig, null, 4));
-
-const tscBin = path.join(webappDir, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
-const result = spawnSync(tscBin, ['-p', tsconfigPath, '--pretty', 'false'], {encoding: 'utf8'});
-
-fs.rmSync(tmpDir, {recursive: true, force: true});
-
-if (result.error) {
-    console.error(`check-editor-contract: failed to run tsc: ${result.error.message}`);
-    process.exit(1);
-}
-
-// The synthetic program pulls the transitive closure of the host editor
-// files without exactly replicating the host's own build environment, which
-// yields incidental diagnostics inside host files (e.g. globals declared by
-// build tooling we don't mirror). The contract lives in the probe: only
-// diagnostics in files under scripts/editor_contract/ are enforced.
-const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-const probePrefixes = [
-    probeDir,
-    path.relative(process.cwd(), probeDir),
-];
-const probeDiagnostics = output.split('\n').filter((line) => {
-    if (!(/\(\d+,\d+\): error TS\d+/).test(line)) {
-        return false;
-    }
-    return probePrefixes.some((prefix) => line.startsWith(prefix) || line.startsWith(prefix.split(path.sep).join('/')));
-});
-
-if (probeDiagnostics.length > 0) {
-    console.error(probeDiagnostics.join('\n'));
+const liveDiagnostics = runProbe(tsconfig, 'live host');
+if (liveDiagnostics.length > 0) {
+    console.error(liveDiagnostics.join('\n'));
     console.error('check-editor-contract: FAILED — the plugin\'s editor prop mirrors have drifted from the mattermost webapp\'s exported types.');
     console.error('Reconcile webapp/src/types/access_control_editors.ts with the host files named in its header comment.');
     process.exit(1);
 }
+console.log('check-editor-contract: live probe OK — mirrors match the host checkout.');
 
-console.log('check-editor-contract: OK — plugin editor prop mirrors match the host contract.');
+// Snapshot freshness: the committed snapshot must match what the live host
+// source generates, otherwise CI is enforcing a stale contract.
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'editor-contract-gen-'));
+const genTsconfigPath = path.join(tmpDir, 'tsconfig.json');
+fs.writeFileSync(genTsconfigPath, JSON.stringify(tsconfig, null, 4));
+let generated;
+try {
+    generated = generateSnapshot(host, parseCompilerOptions(genTsconfigPath));
+} finally {
+    fs.rmSync(tmpDir, {recursive: true, force: true});
+}
+
+if (updateSnapshot) {
+    fs.writeFileSync(snapshotPath, generated);
+    console.log(`check-editor-contract: wrote ${path.relative(process.cwd(), snapshotPath)} — review and commit it.`);
+    process.exit(0);
+}
+
+const committed = fs.readFileSync(snapshotPath, 'utf8');
+if (committed !== generated) {
+    console.error('check-editor-contract: FAILED — the committed host contract snapshot no longer matches the host checkout.');
+    console.error('The host editor types moved; regenerate and commit the snapshot: npm run update-editor-contract-snapshot');
+    process.exit(1);
+}
+console.log('check-editor-contract: snapshot is fresh — matches the host checkout.');

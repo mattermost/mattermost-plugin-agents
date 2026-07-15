@@ -230,6 +230,8 @@ jobs:
         run: make check-i18n
       - name: Check package-lock.json drift
         run: make check-locks
+      - name: Check editor contract against the pinned host snapshot
+        run: cd webapp && npm run check-editor-contract
 
   build:
     runs-on: ubuntu-latest

@@ -291,8 +291,9 @@ check-style: manifest-check apply webapp/node_modules install-go-tools
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && npm run lint
 	cd webapp && npm run check-types
-# Drift tripwire for the window.Components editor contract; skips itself
-# cleanly when no mattermost webapp checkout is available (e.g. CI).
+# Drift tripwire for the window.Components editor contract: always checks the
+# mirrors against the committed host snapshot; additionally probes a live
+# mattermost webapp checkout (and the snapshot's freshness) when one is found.
 	cd webapp && npm run check-editor-contract
 endif
 
