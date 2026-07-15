@@ -55,7 +55,11 @@ const ConsolePolicySection = (props: Props) => {
             </SectionHeader>
             {expanded && (
                 <SectionContent>
+                    {/* Keyed remount: a resource identity change must never
+                        leave stale editor state (open delete dialog, advanced
+                        lock, draft expression) aimed at the new resource. */}
                     <PolicyEditor
+                        key={`${resourceType}-${resourceId}`}
                         resourceType={resourceType}
                         resourceId={resourceId}
                         resourceDisplayName={resourceDisplayName}

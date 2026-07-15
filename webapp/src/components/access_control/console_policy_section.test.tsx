@@ -1,0 +1,129 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import React from 'react';
+import {fireEvent, render, screen} from '@testing-library/react';
+import {IntlProvider} from 'react-intl';
+
+import {AccessControlPolicy} from '@/types/access_control';
+
+import ConsolePolicySection from './console_policy_section';
+
+jest.mock('react-intl', () => {
+    const actual = jest.requireActual('react-intl');
+    const intl = {
+        formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+    };
+    return {
+        ...actual,
+        useIntl: () => intl,
+        FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+    };
+});
+
+jest.mock('@/utils/access_control', () => {
+    const actual = jest.requireActual('@/utils/access_control');
+    return {
+        ...actual,
+        useABACSupport: () => ({supported: true, loading: false}),
+    };
+});
+
+jest.mock('@/client/access_control', () => ({
+    getAgentAccessPolicy: jest.fn(),
+    putAgentAccessPolicy: jest.fn(),
+    deleteAgentAccessPolicy: jest.fn(),
+    getServiceAccessPolicy: jest.fn(),
+    putServiceAccessPolicy: jest.fn(),
+    deleteServiceAccessPolicy: jest.fn(),
+    getMCPServerAccessPolicy: jest.fn(),
+    putMCPServerAccessPolicy: jest.fn(),
+    deleteMCPServerAccessPolicy: jest.fn(),
+    getAccessControlFields: jest.fn(),
+    checkAccessControlExpression: jest.fn(),
+    testAccessControlExpression: jest.fn(),
+    getAccessControlVisualAST: jest.fn(),
+}));
+
+const client = jest.requireMock('@/client/access_control') as Record<string, jest.Mock>;
+
+const FakeCELEditor = ({value}: {value: string}) => (
+    <div data-testid='cel-editor'>{value}</div>
+);
+
+function policyFor(id: string): AccessControlPolicy {
+    return {
+        id,
+        name: 'Service',
+        type: 'plugins/mattermost-ai.service',
+        active: true,
+        create_at: 1,
+        revision: 1,
+        version: 'v0.2',
+        roles: [],
+        imports: [],
+        rules: [{actions: ['use'], expression: 'user.attributes.team == "sales"'}],
+        props: {},
+    };
+}
+
+function renderSection(resourceId: string) {
+    return render(
+        <IntlProvider locale='en'>
+            <ConsolePolicySection
+                resourceType='service'
+                resourceId={resourceId}
+                resourceDisplayName='Service'
+            />
+        </IntlProvider>,
+    );
+}
+
+beforeEach(() => {
+    Object.values(client).forEach((mock) => mock.mockReset());
+    client.getServiceAccessPolicy.mockImplementation((id: string) => Promise.resolve(policyFor(id)));
+    client.getAccessControlFields.mockResolvedValue([]);
+    (window as unknown as {Components?: Record<string, unknown>}).Components = {
+        AccessControlTableEditor: FakeCELEditor,
+        AccessControlCELEditor: FakeCELEditor,
+    };
+});
+
+afterEach(() => {
+    delete (window as unknown as {Components?: Record<string, unknown>}).Components;
+});
+
+describe('ConsolePolicySection', () => {
+    test('a resource swap while the delete dialog is open discards the dialog and fires no delete', async () => {
+        // M4 regression: the section keys PolicyEditor by resource identity,
+        // so changing resourceId remounts the editor — the open dialog (and
+        // every other bit of editor state) from the old resource is gone and
+        // the old resource's delete can never target the new one.
+        const {rerender} = renderSection('serviceidaaaaaaaaaaaaaaaaa');
+
+        fireEvent.click(screen.getByText('Access policy'));
+        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+
+        fireEvent.click(screen.getByText('Remove policy'));
+        expect(screen.getByText('Remove access policy?')).toBeTruthy();
+
+        rerender(
+            <IntlProvider locale='en'>
+                <ConsolePolicySection
+                    resourceType='service'
+                    resourceId='serviceidbbbbbbbbbbbbbbbbb'
+                    resourceDisplayName='Service'
+                />
+            </IntlProvider>,
+        );
+
+        // Dialog gone; the new resource's editor loads fresh.
+        expect(screen.queryByText('Remove access policy?')).toBeNull();
+        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+        expect(client.getServiceAccessPolicy).toHaveBeenCalledWith('serviceidbbbbbbbbbbbbbbbbb');
+
+        // Nothing (neither the old dialog's confirm nor anything else) may
+        // fire a delete across the swap.
+        expect(client.deleteServiceAccessPolicy).not.toHaveBeenCalled();
+    });
+});

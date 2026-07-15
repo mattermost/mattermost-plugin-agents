@@ -9,11 +9,16 @@ import Service, {ServiceFields, type LLMService} from './service';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
+
+    // The intl object must be referentially stable across renders: effects in
+    // the component depend on it, and a fresh object per render re-triggers
+    // them forever (leaking never-settling async state updates outside act()).
+    const intl = {
+        formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+    };
     return {
         ...actual,
-        useIntl: () => ({
-            formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
-        }),
+        useIntl: () => intl,
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
 });
@@ -314,6 +319,11 @@ describe('Service access policy section', () => {
         );
 
         expect(screen.getByTestId('console-policy-section')).toBeTruthy();
+
+        // The rerender remounts ServiceFields (keyed by the minted id), which
+        // kicks off a fresh model fetch; wait for it to settle so its async
+        // state updates land inside act().
+        await waitFor(() => expect(screen.queryByText('Loading models...')).toBeNull());
     });
 });
 

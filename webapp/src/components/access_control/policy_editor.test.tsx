@@ -292,9 +292,10 @@ describe('PolicyEditor', () => {
         expect((screen.getByText('Save policy').closest('button') as HTMLButtonElement).disabled).toBe(false);
     });
 
-    it('resets a stale lock when loading a different resource', async () => {
-        // F6 recovery, load-path: switching to another resource must not
-        // inherit the previous resource's advanced lock.
+    it('starts from fresh state when the keyed resource identity changes', async () => {
+        // Call sites key the editor by resource identity, so a resource
+        // switch remounts: a lock (or any other editor state) from the
+        // previous resource can never leak into the next one.
         client.getAgentAccessPolicy.mockResolvedValue({
             ...existingPolicy,
             rules: [
@@ -302,13 +303,22 @@ describe('PolicyEditor', () => {
                 {actions: ['use'], expression: 'user.attributes.level >= 2'},
             ],
         });
-        const {rerender} = renderEditor({allowAdvanced: false});
+        const {rerender} = render(
+            <IntlProvider locale='en'>
+                <PolicyEditor
+                    key={'agent-' + defaultProps.resourceId}
+                    {...defaultProps}
+                    allowAdvanced={false}
+                />
+            </IntlProvider>,
+        );
         expect(await screen.findByText('This policy uses expressions that can only be edited by a system administrator. You can remove the policy to start over.')).toBeTruthy();
 
         client.getAgentAccessPolicy.mockResolvedValue(null);
         rerender(
             <IntlProvider locale='en'>
                 <PolicyEditor
+                    key='agent-agentidbbbbbbbbbbbbbbbbbbb'
                     {...defaultProps}
                     allowAdvanced={false}
                     resourceId='agentidbbbbbbbbbbbbbbbbbbb'

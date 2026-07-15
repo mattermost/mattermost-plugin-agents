@@ -27,6 +27,11 @@ import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import LoadingSpinner from '@/components/assets/loading_spinner';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 
+// Call sites MUST key this component by resource identity
+// (key={`${resourceType}-${resourceId}`}): all editor state (draft
+// expression, advanced lock, the delete-confirmation dialog) is scoped to one
+// resource, and a keyed remount guarantees none of it can survive a resource
+// switch and act on the wrong target.
 export type PolicyEditorProps = {
     resourceType: PolicyResourceType;
     resourceId: string;
@@ -97,18 +102,15 @@ const PolicyEditor = (props: PolicyEditorProps) => {
     const [saveError, setSaveError] = useState('');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+    // Load once per mount. Cross-resource state bleed (stale advanced lock,
+    // open delete dialog, draft expression) is prevented structurally: every
+    // call site keys this component by resource identity, so a resource
+    // switch remounts with fresh state. The cancelled flag guards the load's
+    // own async completions across that remount.
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
         setLoadError('');
-
-        // F6 recovery: each load starts from a clean authoring state so a
-        // lock inherited from a previous resource (or a policy that has since
-        // been deleted server-side) doesn't strand the editor in the
-        // read-only unsupported view. The load below re-locks if warranted.
-        setAdvancedLocked(false);
-        setMode(allowSimplified ? 'simplified' : 'advanced');
-        setExpressionValid(true);
         Promise.all([
             client.get(resourceId),
             getAccessControlFields('', 100, agentIdForAuthz).catch(() => [] as AccessControlPropertyField[]),
@@ -144,7 +146,7 @@ const PolicyEditor = (props: PolicyEditorProps) => {
         return () => {
             cancelled = true;
         };
-    }, [client, resourceId, agentIdForAuthz, allowSimplified, allowAdvanced, intl]);
+    }, [client, resourceId, agentIdForAuthz, allowAdvanced, intl]);
 
     // Contract §6.2: CEL editor takes {attribute, values, isNative}[].
     const celAttributes = useMemo<CELEditorAttribute[]>(() => fields.map((field) => ({
