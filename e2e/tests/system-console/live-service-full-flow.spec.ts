@@ -8,7 +8,7 @@ import {buildTextResponse, buildTitleFixture, mergeFixtureFiles, stubAimockModel
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {SystemConsoleHelper} from 'helpers/system-console';
-import {AgentPageHelper} from 'helpers/agent-page';
+import {AgentPageHelper} from 'helpers/agent_page';
 import {AgentAPIHelper} from 'helpers/agent-api';
 import RunSystemConsoleContainer, {adminUsername, adminPassword} from 'helpers/system-console-container';
 

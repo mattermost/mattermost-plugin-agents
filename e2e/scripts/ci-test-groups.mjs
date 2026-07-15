@@ -10,7 +10,7 @@ const testsRoot = path.resolve(e2eRoot, 'tests');
 
 const groups = {
     'e2e-shard-1': [
-        'tests/agents/provider-config.spec.ts',
+        'tests/agents/provider_config.spec.ts',
         'tests/channel-analysis/integration/integration.spec.ts',
         'tests/bot-configuration/service-changes.spec.ts',
         'tests/long-conversation-handling/pagination.spec.ts',
