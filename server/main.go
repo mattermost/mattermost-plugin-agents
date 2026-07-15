@@ -225,11 +225,29 @@ func (p *Plugin) OnActivate() error {
 	// plugin-side policy index, mutex, or rebuild is needed. The config-backed
 	// resolver is injected at construction so write-time MCP assignment
 	// validation can never silently skip.
+	//
+	// Capability selection is version-based: pre-11.10 servers lack the ABAC
+	// plugin APIs entirely (the generated RPC client silently swallows calls
+	// to nonexistent methods), so the checker gets the passthrough client and
+	// no PAP handle — pure legacy behavior, with the status endpoint
+	// reporting unavailable so all ABAC UI hides. It must never be
+	// probe-based: a transient probe failure on a new server selecting
+	// passthrough would fail open where the decision tables require deny.
 	mcpServerIDsByOrigin := func() map[string]string {
 		mcpConfig := p.configuration.MCP()
 		return mcpConfig.ServerIDByOrigin()
 	}
-	accessChecker := accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, mcpServerIDsByOrigin, &pluginAPI.Log)
+	serverVersion := p.API.GetServerVersion()
+	var decisionClient accesscontrol.DecisionClient = accesscontrol.PassthroughClient{}
+	var papAPI plugin.API
+	if accesscontrol.ServerSupportsABAC(serverVersion) {
+		decisionClient = accesscontrol.NewPluginAPIClient(p.API)
+		papAPI = p.API
+	} else {
+		pluginAPI.Log.Warn("Attribute-based access control requires Mattermost server "+accesscontrol.MinServerVersionForABAC+" or later; running with legacy access checks only",
+			"server_version", serverVersion)
+	}
+	accessChecker := accesscontrol.New(decisionClient, papAPI, mcpServerIDsByOrigin, &pluginAPI.Log)
 	p.accessChecker = accessChecker
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, accessChecker, llmUpstreamHTTPClient, metricsService)

@@ -297,7 +297,7 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 **Prerequisites:**
 
-- A Mattermost server (v11.10.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable.
+- A Mattermost server (v11.10.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On servers older than v11.10.0 the plugin still runs, but skips ABAC entirely: only the legacy user/team-list checks apply and no ABAC UI is shown.
 - User attributes (custom profile attributes) configured on the server, since policies are written against them.
 
 **Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
