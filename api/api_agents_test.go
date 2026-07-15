@@ -697,6 +697,7 @@ func TestListServicesNoSecrets(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
@@ -796,6 +797,7 @@ func TestFetchModelsForServiceMissingCredentials(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
@@ -833,6 +835,7 @@ func TestFetchModelsForServiceVertexMissingProject(t *testing.T) {
 	}
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
@@ -856,6 +859,7 @@ func TestFetchModelsForServiceGeminiMissingAPIKey(t *testing.T) {
 	}
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
@@ -898,6 +902,7 @@ func TestListServicesWithManageOthersPermission(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
@@ -911,6 +916,7 @@ func TestFetchModelsForServiceWithManageOthersPermission(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()

@@ -635,7 +635,16 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// handleListServices handles GET /services (non-secret fields only).
+// canBypassServicePolicies reports whether userID sees policy-gated services
+// regardless of ABAC decisions: system admins author the policies and must be
+// able to see the full catalog.
+func (a *API) canBypassServicePolicies(userID string) bool {
+	return a.pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem)
+}
+
+// handleListServices handles GET /services (non-secret fields only). System
+// admins get the full catalog; other callers only see services the ABAC
+// service policy lets them use.
 func (a *API) handleListServices(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	if !canConfigureAgentServices(a.pluginAPI, userID) {
@@ -654,8 +663,14 @@ func (a *API) handleListServices(c *gin.Context) {
 		return
 	}
 
+	bypassPolicies := a.canBypassServicePolicies(userID)
 	services := make([]ServiceInfo, 0, len(cfg.Services))
 	for _, svc := range cfg.Services {
+		if !bypassPolicies {
+			if policyErr := a.accessChecker.CanUseService(c.Request.Context(), userID, svc.ID); policyErr != nil {
+				continue
+			}
+		}
 		services = append(services, ServiceInfo{
 			ID:               svc.ID,
 			Name:             svc.Name,
@@ -708,6 +723,15 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	if svc == nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", req.ServiceID))
 		return
+	}
+
+	// Same gate as GET /services: non-admins may not probe models of a
+	// service the ABAC service policy denies them.
+	if !a.canBypassServicePolicies(userID) {
+		if policyErr := a.accessChecker.CanUseService(c.Request.Context(), userID, svc.ID); policyErr != nil {
+			abortAgentRequest(c, http.StatusForbidden, errors.New("you do not have access to the selected service"))
+			return
+		}
 	}
 
 	supportsModelFetching := svc.Type == llm.ServiceTypeAnthropic ||

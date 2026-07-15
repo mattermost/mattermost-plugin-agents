@@ -425,3 +425,167 @@ func TestABACStatusRoute(t *testing.T) {
 		})
 	}
 }
+
+// gatedPolicyIndex reports a fixed marker state / read error; used for the
+// unavailable / index-error decision rows.
+type gatedPolicyIndex struct {
+	has    bool
+	hasErr error
+}
+
+func (g gatedPolicyIndex) Has(_, _ string) (bool, error) { return g.has, g.hasErr }
+func (g gatedPolicyIndex) Add(_, _ string) error         { return nil }
+func (g gatedPolicyIndex) Remove(_, _ string) error      { return nil }
+
+// seedTwoServiceConfig registers two services with valid stable IDs.
+func seedTwoServiceConfig(e *TestEnvironment, firstID, secondID string) {
+	e.api.configStore = &mockConfigStore{
+		cfg: &config.Config{
+			Services: []llm.ServiceConfig{
+				{ID: firstID, Name: "Allowed Service", Type: "openai"},
+				{ID: secondID, Name: "Gated Service", Type: "openai"},
+			},
+		},
+	}
+}
+
+// TestListServicesAppliesServicePolicies covers F3: system admins get the
+// full catalog, everyone else is filtered through CanUseService — including
+// the unavailable/index-error fail-closed rows.
+func TestListServicesAppliesServicePolicies(t *testing.T) {
+	allowedID := model.NewId()
+	gatedID := model.NewId()
+
+	tests := []struct {
+		name    string
+		isAdmin bool
+		checker func() *accesscontrol.Checker
+		wantIDs []string
+	}{
+		{
+			name: "non-admin loses denied service",
+			checker: func() *accesscontrol.Checker {
+				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{gatedID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+			},
+			wantIDs: []string{allowedID},
+		},
+		{
+			name:    "system admin keeps the full catalog",
+			isAdmin: true,
+			checker: func() *accesscontrol.Checker {
+				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{gatedID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+			},
+			wantIDs: []string{allowedID, gatedID},
+		},
+		{
+			name: "unavailable with index marker fails closed",
+			checker: func() *accesscontrol.Checker {
+				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{has: true}, accesscontrol.NoMCPServerIDs, nil, nil)
+			},
+			wantIDs: []string{},
+		},
+		{
+			name: "unavailable without index marker falls open",
+			checker: func() *accesscontrol.Checker {
+				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{has: false}, accesscontrol.NoMCPServerIDs, nil, nil)
+			},
+			wantIDs: []string{allowedID, gatedID},
+		},
+		{
+			name: "unavailable with unreadable index fails closed",
+			checker: func() *accesscontrol.Checker {
+				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{hasErr: assert.AnError}, accesscontrol.NoMCPServerIDs, nil, nil)
+			},
+			wantIDs: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := model.NewId()
+			e, _ := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+			seedTwoServiceConfig(e, allowedID, gatedID)
+			e.api.accessChecker = tt.checker()
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			recorder := doRequest(e.api, http.MethodGet, "/services", nil, userID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+			var services []ServiceInfo
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&services))
+			var gotIDs []string
+			for _, svc := range services {
+				gotIDs = append(gotIDs, svc.ID)
+			}
+			assert.ElementsMatch(t, tt.wantIDs, gotIDs)
+		})
+	}
+}
+
+// TestFetchModelsForServiceAppliesServicePolicies covers the F3 gate on
+// POST /agents/models/fetch: non-admin probing a denied service gets 403;
+// admins bypass the policy (and then fail later on missing credentials, 400).
+func TestFetchModelsForServiceAppliesServicePolicies(t *testing.T) {
+	serviceID := model.NewId()
+
+	tests := []struct {
+		name       string
+		isAdmin    bool
+		checker    func() *accesscontrol.Checker
+		wantStatus int
+	}{
+		{
+			name: "non-admin denied service is 403",
+			checker: func() *accesscontrol.Checker {
+				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+			},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:    "admin bypasses the policy",
+			isAdmin: true,
+			checker: func() *accesscontrol.Checker {
+				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+			},
+			wantStatus: http.StatusBadRequest, // missing credentials, past the policy gate
+		},
+		{
+			name: "unavailable with index marker fails closed",
+			checker: func() *accesscontrol.Checker {
+				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{has: true}, accesscontrol.NoMCPServerIDs, nil, nil)
+			},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "unavailable with unreadable index fails closed",
+			checker: func() *accesscontrol.Checker {
+				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{hasErr: assert.AnError}, accesscontrol.NoMCPServerIDs, nil, nil)
+			},
+			wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := model.NewId()
+			e, _ := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+			seedServiceConfig(e, serviceID)
+			e.api.accessChecker = tt.checker()
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			body := map[string]string{"serviceID": serviceID}
+			recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, userID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+		})
+	}
+}
