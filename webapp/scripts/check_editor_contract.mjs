@@ -140,15 +140,19 @@ if (!fs.existsSync(snapshotPath) && !updateSnapshot) {
 }
 
 if (fs.existsSync(snapshotPath)) {
-    // The snapshot program is entirely self-contained (probe + plugin types
-    // + committed snapshot), so ANY tsc diagnostic is a real failure —
-    // require a zero exit status rather than filtering for probe lines.
+    // The snapshot program is entirely self-contained: only the probe file
+    // is listed and tsc pulls its imports (the plugin mirrors + the committed
+    // snapshot) transitively. Deliberately NOT src/types/**/*: unrelated type
+    // files there import application modules, dragging in the whole webapp
+    // component tree — including the generated (gitignored) src/manifest.ts,
+    // which does not exist on CI. Since the program is self-contained, ANY
+    // tsc diagnostic is a real failure — require a zero exit status rather
+    // than filtering for probe lines.
     const snapshot = runProbe({
         extends: path.join(webappDir, 'tsconfig.json'),
         compilerOptions: {noEmit: true, skipLibCheck: true},
         include: [
             path.join(probeDir, 'probe_snapshot.ts').split(path.sep).join('/'),
-            path.join(webappDir, 'src', 'types', '**', '*').split(path.sep).join('/'),
         ],
     }, 'snapshot');
     if (snapshot.status !== 0) {
