@@ -165,7 +165,7 @@ export class AgentPageHelper {
     }
 
     getReasoningEffortSelect(): Locator {
-        return this.getExactLabel('Reasoning Effort').locator('xpath=following-sibling::select[1]');
+        return this.getExactLabel('Reasoning Effort').locator('xpath=ancestor::div[1]//select[1]');
     }
 
     getThinkingBudgetInput(): Locator {
