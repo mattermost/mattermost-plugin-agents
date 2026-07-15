@@ -162,6 +162,10 @@ func TestAgentPolicyDeleteUpdatesIndex(t *testing.T) {
 
 	e.mockAPI.On("DeleteAccessControlPolicy", creatorID, accesscontrol.ResourceTypeAgent, agentID).Return(nil).Once()
 
+	// Delete-confirm step: the marker is only removed after Get reports 404.
+	notFound := model.NewAppError("GetAccessControlPolicy", "not found", nil, "", http.StatusNotFound)
+	e.mockAPI.On("GetAccessControlPolicy", agentID).Return(nil, notFound).Once()
+
 	recorder := doRequest(e.api, http.MethodDelete, "/agents/"+agentID+"/access_policy", nil, creatorID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	assert.Equal(t, []string{accesscontrol.ResourceTypeAgent + "/" + agentID}, index.removed)

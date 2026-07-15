@@ -74,17 +74,65 @@ func TestSavePolicyOverwritesIdentityFieldsAndUpdatesIndex(t *testing.T) {
 func TestDeletePolicyUpdatesIndex(t *testing.T) {
 	resourceID := model.NewId()
 	actingUserID := model.NewId()
+	notFound := model.NewAppError("GetAccessControlPolicy", "not found", nil, "", http.StatusNotFound)
 
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 	api.On("DeleteAccessControlPolicy", actingUserID, ResourceTypeService, resourceID).
 		Return(nil).Once()
 
+	// The marker is only removed after the delete is confirmed via Get(404).
+	api.On("GetAccessControlPolicy", resourceID).Return(nil, notFound).Once()
+
 	index := &stubPolicyIndex{has: map[string]bool{}}
 	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
 
 	require.NoError(t, c.DeletePolicy(context.Background(), actingUserID, ResourceTypeService, resourceID))
 	assert.Equal(t, []string{indexKey(ResourceTypeService, resourceID)}, index.removed)
+}
+
+// TestDeletePolicyKeepsMarkerWhenDeleteUnconfirmed covers the delete-confirm
+// step: when the post-delete Get does not report 404 — the policy reappeared
+// (a save from an instance whose mutex lease was lost) or truth is unreadable
+// — the fail-closed marker must be kept.
+func TestDeletePolicyKeepsMarkerWhenDeleteUnconfirmed(t *testing.T) {
+	tests := []struct {
+		name      string
+		getPolicy *model.AccessControlPolicy
+		getErr    *model.AppError
+	}{
+		{
+			name:      "policy reappeared after delete",
+			getPolicy: &model.AccessControlPolicy{},
+		},
+		{
+			name:   "server truth unreadable",
+			getErr: model.NewAppError("GetAccessControlPolicy", "boom", nil, "", http.StatusInternalServerError),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resourceID := model.NewId()
+			actingUserID := model.NewId()
+
+			api := &plugintest.API{}
+			defer api.AssertExpectations(t)
+			api.On("DeleteAccessControlPolicy", actingUserID, ResourceTypeAgent, resourceID).Return(nil).Once()
+			if tt.getPolicy != nil {
+				tt.getPolicy.ID = resourceID
+			}
+			api.On("GetAccessControlPolicy", resourceID).Return(tt.getPolicy, tt.getErr).Once()
+
+			index := &stubPolicyIndex{has: map[string]bool{indexKey(ResourceTypeAgent, resourceID): true}}
+			c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
+
+			// The delete itself succeeded, so no error surfaces to the caller.
+			require.NoError(t, c.DeletePolicy(context.Background(), actingUserID, ResourceTypeAgent, resourceID))
+			assert.Empty(t, index.removed, "an unconfirmed delete must keep the fail-closed marker")
+			assert.True(t, index.has[indexKey(ResourceTypeAgent, resourceID)])
+		})
+	}
 }
 
 func TestGetAndDeletePolicyNotFound(t *testing.T) {
@@ -194,6 +242,11 @@ func TestConcurrentSaveDeleteHoldsMarkerInvariant(t *testing.T) {
 			policyExists.Store(false)
 		}).
 		Return(nil)
+
+	// Delete-confirm Get: inside the critical section the policy is always
+	// gone right after a successful delete.
+	notFound := model.NewAppError("GetAccessControlPolicy", "not found", nil, "", http.StatusNotFound)
+	api.On("GetAccessControlPolicy", resourceID).Return(nil, notFound)
 
 	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
 

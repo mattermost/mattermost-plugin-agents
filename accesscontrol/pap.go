@@ -116,6 +116,13 @@ func (c *Checker) GetPolicy(ctx context.Context, resourceID string) (*model.Acce
 // after a successful delete leaves a stale fail-closed marker — acceptable
 // (contract risk #3) and logged. Returns ErrPolicyNotFound when no policy
 // exists.
+//
+// Before dropping the marker the delete is confirmed against server truth
+// (Get returning 404): the mutex lease is renewable but not fenced, so a
+// save from an instance whose lease was lost could re-create the policy
+// between our delete and the marker removal. When the confirm fails or finds
+// a policy, the marker is kept — a stale marker only fails closed during
+// ABAC outages and self-heals at the next decision (see reconcileIndex).
 func (c *Checker) DeletePolicy(ctx context.Context, actingUserID, resourceType, resourceID string) error {
 	_, span := telemetry.Tracer().Start(ctx, "abac delete_policy", trace.WithAttributes(
 		telemetry.UserID.String(actingUserID),
@@ -138,6 +145,14 @@ func (c *Checker) DeletePolicy(ctx context.Context, actingUserID, resourceType, 
 		span.RecordError(appErr)
 		span.SetStatus(codes.Error, "policy delete failed")
 		return appErr
+	}
+
+	// Confirm the policy is really gone before dropping the fail-closed
+	// marker; keep the marker whenever the 404 cannot be confirmed.
+	if _, appErr := c.papi.GetAccessControlPolicy(resourceID); !isNotFoundAppErr(appErr) {
+		logWarn(c.log, "Policy delete could not be confirmed against server truth; keeping the fail-closed marker",
+			"resource_type", resourceType, "resource_id", resourceID)
+		return nil
 	}
 
 	if err := c.index.Remove(resourceType, resourceID); err != nil {

@@ -234,6 +234,32 @@ func (p *Plugin) OnActivate() error {
 	}
 	accessChecker := accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, policyIndex, mcpServerIDsByOrigin, abacMutex, &pluginAPI.Log)
 
+	// Rebuild the fail-closed policy index from server truth in the
+	// background: enumerate every known resource ID and reconcile its marker
+	// against GetAccessControlPolicy. Best-effort and non-fatal — divergence
+	// caused by a lost mutex lease must not survive a restart (see
+	// accesscontrol.Checker.RebuildIndex).
+	go func() {
+		resourceIDsByType := map[string][]string{}
+		if agents, listErr := p.store.ListAgents(); listErr != nil {
+			pluginAPI.Log.Warn("ABAC index rebuild could not list agents", "error", listErr.Error())
+		} else {
+			for _, agent := range agents {
+				resourceIDsByType[accesscontrol.ResourceTypeAgent] = append(resourceIDsByType[accesscontrol.ResourceTypeAgent], agent.ID)
+			}
+		}
+		for _, service := range p.configuration.Config().Services {
+			if service.ID != "" {
+				resourceIDsByType[accesscontrol.ResourceTypeService] = append(resourceIDsByType[accesscontrol.ResourceTypeService], service.ID)
+			}
+		}
+		mcpConfig := p.configuration.MCP()
+		for _, serverID := range mcpConfig.ServerIDByOrigin() {
+			resourceIDsByType[accesscontrol.ResourceTypeMCP] = append(resourceIDsByType[accesscontrol.ResourceTypeMCP], serverID)
+		}
+		accessChecker.RebuildIndex(context.Background(), resourceIDsByType)
+	}()
+
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, accessChecker, llmUpstreamHTTPClient, metricsService)
 
 	// migrateAndRefresh runs the one-time legacy bot migration, then forces

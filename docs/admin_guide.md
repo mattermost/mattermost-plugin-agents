@@ -314,6 +314,8 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 **Policy staleness note.** The plugin remembers which resources have had policies (the policy index) so it can fail closed during outages. Deleting an agent removes its policy best-effort; deleting a service or MCP server from the configuration does not delete its policy. If you recreate a resource with the same ID, the old policy applies again. Remove the policy first (via the resource's policy editor) if that is not what you want.
 
+**Index self-healing note.** In a multi-server cluster, policy edits are coordinated with a renewable lock lease. If a lease is lost mid-edit while an opposing edit runs on another server (a rare double fault), the policy index can briefly diverge from the stored policies. The plugin self-heals: every access decision reconciles the index entry for the resource it evaluated, and each plugin start rebuilds the index from the stored policies. The only residual exposure is the window where a divergence coincides with an ABAC engine outage before any decision or restart has healed it — during that window an affected resource may fail open (marker lost) or fail closed (marker stale). This is an accepted, self-correcting risk.
+
 **Authoring permissions:**
 
 | Route | Who |

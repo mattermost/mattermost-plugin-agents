@@ -104,6 +104,79 @@ func (c *Checker) indexGated(resourceType, resourceID string) bool {
 	return has
 }
 
+// reconcileIndex self-heals the fail-closed policy index from server truth at
+// decision time. The cluster mutex serializing PAP mutations uses a renewable
+// lease; if the lease is lost mid-mutation, an interleaving with a concurrent
+// opposing mutation can leave the index divergent from the stored policies
+// (e.g. an enforced policy without its marker). Server-side fencing is not
+// available through the plugin API, so instead of trying to win that race we
+// eliminate its PERSISTENCE: every decision with a definitive outcome
+// reconciles the marker for the resource it just evaluated.
+//
+//   - allow/deny means the PDP evaluated a stored policy — the marker must
+//     exist. Adding is the fail-closed direction and needs no confirmation.
+//   - no_policy suggests the marker is stale, but the outcome may predate an
+//     in-flight save, so removal is confirmed against server truth (a Get
+//     returning 404) under the mutation mutex before the marker is dropped.
+//
+// Writes happen only when the index diverges, so steady state costs one index
+// read per decision. The residual hazard window — lease loss AND a concurrent
+// opposing mutation AND an ABAC outage before the next successful decision or
+// plugin activation — is an accepted, self-correcting risk (see also
+// RebuildIndex and DeletePolicy).
+func (c *Checker) reconcileIndex(resourceType, resourceID string, outcome Outcome) {
+	if !model.IsValidId(resourceID) {
+		// Short-circuited evaluations (config bots, invalid IDs) are never
+		// policy-addressable and can never carry a marker.
+		return
+	}
+
+	switch outcome {
+	case OutcomeAllow, OutcomeDeny:
+		if has, err := c.index.Has(resourceType, resourceID); err != nil || has {
+			return
+		}
+		c.mutationMu.Lock()
+		defer c.mutationMu.Unlock()
+		if has, err := c.index.Has(resourceType, resourceID); err != nil || has {
+			return
+		}
+		if err := c.index.Add(resourceType, resourceID); err != nil {
+			logWarn(c.log, "ABAC policy index self-heal failed to restore a missing marker",
+				"resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
+			return
+		}
+		logWarn(c.log, "ABAC policy index self-healed: restored a missing fail-closed marker for an enforced policy",
+			"resource_type", resourceType, "resource_id", resourceID)
+	case OutcomeNoPolicy:
+		if has, err := c.index.Has(resourceType, resourceID); err != nil || !has {
+			return
+		}
+		if c.papi == nil {
+			return
+		}
+		c.mutationMu.Lock()
+		defer c.mutationMu.Unlock()
+		if has, err := c.index.Has(resourceType, resourceID); err != nil || !has {
+			return
+		}
+		// Confirm against server truth under the mutex: the no_policy outcome
+		// may predate a save that committed in the meantime.
+		if _, appErr := c.papi.GetAccessControlPolicy(resourceID); !isNotFoundAppErr(appErr) {
+			return
+		}
+		if err := c.index.Remove(resourceType, resourceID); err != nil {
+			logWarn(c.log, "ABAC policy index self-heal failed to drop a stale marker",
+				"resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
+			return
+		}
+		logWarn(c.log, "ABAC policy index self-healed: dropped a stale fail-closed marker with no stored policy",
+			"resource_type", resourceType, "resource_id", resourceID)
+	case OutcomeUnavailable:
+		// No server truth to reconcile against.
+	}
+}
+
 // CanUseAgent gates end-user use of an agent. Combines the resource policy
 // with the agent's UserAccessLevel per the contract §9.2 decision table.
 // legacyCheck is the existing UsageRestrictionsForUserConfig outcome supplier,
@@ -141,6 +214,7 @@ func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotCo
 		return runLegacy()
 	}
 	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
+	c.reconcileIndex(ResourceTypeAgent, cfg.ID, outcome)
 
 	switch outcome {
 	case OutcomeAllow:
@@ -198,6 +272,7 @@ func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resource
 		return nil
 	}
 	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
+	c.reconcileIndex(resourceType, resourceID, outcome)
 
 	switch outcome {
 	case OutcomeAllow, OutcomeNoPolicy:
