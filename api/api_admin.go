@@ -462,17 +462,12 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	updated := live
-	if req.Enabled != nil {
-		updated.Enabled = *req.Enabled
-	}
-	if req.ToolConfigs != nil {
-		updated.ToolConfigs = *req.ToolConfigs
-	}
-
-	// Read-merge-save runs atomically under the config advisory lock via
-	// UpdateConfig, so a concurrent config writer cannot be overwritten
-	// (e.g. an admin save landing between our read and write).
+	// The request's fields are applied to the freshest persisted entry inside
+	// the UpdateConfig transform, which runs atomically under the config
+	// advisory lock. Deriving the merged entry from the live snapshot read
+	// above would let two concurrent field updates overwrite each other: both
+	// would rebase onto the same stale in-memory state.
+	var updated mcp.PluginServerConfig
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		if prev == nil {
 			// A nil persisted config must not be silently replaced by a
@@ -489,15 +484,31 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
 		mergedIdx := -1
 		for i := range merged {
-			if merged[i].PluginID == updated.PluginID {
+			if merged[i].PluginID == pluginID {
 				mergedIdx = i
 				break
 			}
 		}
+
+		// Base is the persisted entry when one exists; the live registry
+		// entry only seeds plugin-owned fields (Name, Path, ExposeExternal)
+		// the first time this plugin server is persisted.
+		base := live
 		if mergedIdx >= 0 {
-			merged[mergedIdx] = updated
+			base = merged[mergedIdx]
+		}
+		if req.Enabled != nil {
+			base.Enabled = *req.Enabled
+		}
+		if req.ToolConfigs != nil {
+			base.ToolConfigs = *req.ToolConfigs
+		}
+		updated = base
+
+		if mergedIdx >= 0 {
+			merged[mergedIdx] = base
 		} else {
-			merged = append(merged, updated)
+			merged = append(merged, base)
 		}
 		cfg.MCP.PluginServers = merged
 		return *cfg, nil

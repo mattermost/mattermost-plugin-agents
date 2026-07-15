@@ -965,6 +965,55 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 	}
 }
 
+// TestHandleUpdatePluginServer_ConcurrentFieldUpdatesBothSurvive is the
+// lost-update regression for the read-and-apply step: the merged entry must
+// be derived from the freshest persisted entry inside the UpdateConfig
+// transform, not from the in-memory live snapshot captured before it. Two
+// updates to different fields that both read the same live state must both
+// survive in the persisted config.
+func TestHandleUpdatePluginServer_ConcurrentFieldUpdatesBothSurvive(t *testing.T) {
+	api, mockAPI, stores := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+	// Fresh copies each time: the mock's RegisterPluginServer mutates the
+	// slice in place, and the reset below must restore the pristine state.
+	liveSnapshot := func() []mcp.PluginServerConfig {
+		return []mcp.PluginServerConfig{{
+			PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+		}}
+	}
+	mgr := api.mcpClientManager.(*mockMCPClientManager)
+	mgr.pluginServers = liveSnapshot()
+	stores.configStore.cfg = &config.Config{}
+
+	put := func(body string) int {
+		req := httptest.NewRequest(http.MethodPut, "/admin/mcp/plugin-servers/com.mattermost.demo", strings.NewReader(body))
+		req.Header.Set("Mattermost-User-Id", "admin-user")
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		api.ServeHTTP(&plugin.Context{}, recorder, req)
+		return recorder.Result().StatusCode
+	}
+
+	require.Equal(t, http.StatusOK, put(`{"enabled": false}`))
+
+	// Pin the exact racing interleaving: the second request read the live
+	// registry before the first request's RegisterPluginServer landed, so it
+	// sees the original Enabled:true snapshot.
+	mgr.pluginServers = liveSnapshot()
+
+	require.Equal(t, http.StatusOK, put(`{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`))
+
+	require.Len(t, stores.configStore.cfg.MCP.PluginServers, 1)
+	persisted := stores.configStore.cfg.MCP.PluginServers[0]
+	require.False(t, persisted.Enabled, "first update's Enabled=false must survive the second update")
+	require.Len(t, persisted.ToolConfigs, 1, "second update's tool_configs must be applied")
+	require.Equal(t, "echo", persisted.ToolConfigs[0].Name)
+}
+
 // failingConfigStore is a testConfigStore variant with configurable error injection on Get/Save.
 type failingConfigStore struct {
 	cfg           *config.Config
