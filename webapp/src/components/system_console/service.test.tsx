@@ -5,7 +5,7 @@ import React from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {ServiceFields, type LLMService} from './service';
+import Service, {ServiceFields, type LLMService} from './service';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -20,6 +20,11 @@ jest.mock('react-intl', () => {
 
 jest.mock('../../client', () => ({
     fetchModels: jest.fn(),
+}));
+
+jest.mock('../access_control/console_policy_section', () => ({
+    __esModule: true,
+    default: () => <div data-testid='console-policy-section'/>,
 }));
 
 const {fetchModels} = jest.requireMock('../../client') as {
@@ -233,6 +238,43 @@ describe('ServiceFields token-limit inputs', () => {
         expect(inputField.disabled).toBe(false);
         const outputField = screen.getByDisplayValue('4096') as HTMLInputElement;
         expect(outputField.disabled).toBe(false);
+    });
+});
+
+describe('Service access policy section', () => {
+    beforeEach(() => {
+        fetchModels.mockResolvedValue([]);
+    });
+
+    // The name avoids the service-type display string so the header click
+    // target is unambiguous.
+    const namedService: LLMService = {...baseService, name: 'Policy Target'};
+
+    async function renderService(service: LLMService) {
+        render(
+            <IntlProvider locale='en'>
+                <Service
+                    service={service}
+                    services={[service]}
+                    onChange={jest.fn()}
+                    onDelete={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        // Expand the collapsed service panel.
+        fireEvent.click(screen.getByText(service.name));
+        await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+    }
+
+    it('renders the policy section for entries with a persisted id', async () => {
+        await renderService(namedService);
+        expect(screen.getByTestId('console-policy-section')).toBeTruthy();
+    });
+
+    it('omits the policy section for unsaved (ID-less) entries', async () => {
+        await renderService({...namedService, id: ''});
+        expect(screen.queryByTestId('console-policy-section')).toBeNull();
     });
 });
 

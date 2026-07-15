@@ -7,8 +7,6 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
 
-import {generateId} from '../../utils/id';
-
 import {Pill} from '../pill';
 
 import Panel, {PanelFooterText} from './panel';
@@ -238,13 +236,11 @@ const Config = (props: Props) => {
         props.setSaveNeeded();
     }, [props.setSaveNeeded]);
 
+    // No id is assigned client-side: the backend mints the stable service ID
+    // on save (normalizeAdminConfig).
     const addFirstService = () => {
-        const id = generateId();
         updateConfig({
-            services: [{
-                ...firstNewService,
-                id,
-            }],
+            services: [{...firstNewService}],
         });
     };
 

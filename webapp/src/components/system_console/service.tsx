@@ -428,7 +428,10 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     {intl.formatMessage({defaultMessage: 'No fallback'})}
                 </SelectionItemOption>
                 {(props.services ?? []).
-                    filter((s) => s.id !== props.service.id).
+
+                    // ID-less entries were added this session and aren't
+                    // addressable as fallbacks until the config is saved.
+                    filter((s) => s.id && s.id !== props.service.id).
                     map((s) => (
                         <SelectionItemOption
                             key={s.id}
@@ -447,10 +450,6 @@ type Props = {
     services: LLMService[]
     onChange: (service: LLMService) => void
     onDelete: () => void
-
-    // False for entries added this session (not yet saved server-side):
-    // policy authoring is gated until the configuration is saved.
-    isPersisted?: boolean
 }
 
 const Service = (props: Props) => {
@@ -494,12 +493,18 @@ const Service = (props: Props) => {
                             onChange={props.onChange}
                         />
                     </ItemList>
-                    <ConsolePolicySection
-                        resourceType='service'
-                        resourceId={props.service.id}
-                        resourceDisplayName={props.service.name || serviceTypeToDisplayName(intl, props.service.type)}
-                        isPersisted={props.isPersisted ?? true}
-                    />
+                    {props.service.id && (
+                        <ConsolePolicySection
+                            resourceType='service'
+                            resourceId={props.service.id}
+                            resourceDisplayName={props.service.name || serviceTypeToDisplayName(intl, props.service.type)}
+
+                            // Services only ever get an id from the persisted
+                            // config (IDs are minted server-side on save), so
+                            // any id-bearing entry is persisted.
+                            isPersisted={true}
+                        />
+                    )}
                 </ItemListContainer>
             )}
         </ServiceContainer>
