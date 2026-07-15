@@ -76,6 +76,8 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 // handleSaveConfig saves a new plugin configuration to the database,
 // updates the in-memory configuration, and notifies other cluster nodes.
+// It responds with the normalized saved config so clients can adopt
+// server-minted service/MCP server IDs without a refetch.
 // PUT /admin/config
 func (a *API) handleSaveConfig(c *gin.Context) {
 	var cfg config.Config
@@ -133,5 +135,5 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	c.Status(http.StatusOK)
+	c.JSON(http.StatusOK, saved)
 }

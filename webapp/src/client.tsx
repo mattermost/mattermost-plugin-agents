@@ -842,7 +842,10 @@ export async function getPluginConfig(): Promise<PluginConfig> {
     });
 }
 
-export async function savePluginConfig(config: PluginConfig): Promise<void> {
+// savePluginConfig persists the config and returns the normalized config the
+// server saved, including server-minted service/MCP server IDs the payload
+// did not have yet.
+export async function savePluginConfig(config: PluginConfig): Promise<PluginConfig> {
     const url = `${baseRoute()}/admin/config`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',
@@ -851,7 +854,7 @@ export async function savePluginConfig(config: PluginConfig): Promise<void> {
     }));
 
     if (response.ok) {
-        return;
+        return response.json();
     }
 
     throw new ClientError(Client4.url, {

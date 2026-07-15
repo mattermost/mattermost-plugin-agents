@@ -219,7 +219,13 @@ const Config = (props: Props) => {
     useEffect(() => {
         const save = async () => {
             try {
-                await savePluginConfig(localConfig);
+                const saved = await savePluginConfig(localConfig);
+
+                // Adopt the normalized config the server saved: it carries
+                // server-minted service/MCP server IDs, so ID-gated UI (e.g.
+                // policy sections) appears immediately instead of after a
+                // page reload.
+                setLocalConfig({...defaultConfig, ...saved});
                 return {};
             } catch (e: any) {
                 return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save configuration.'})}};

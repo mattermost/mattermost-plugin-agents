@@ -668,6 +668,42 @@ func TestHandleSaveConfigFirstWriteRejectsIncomingMCPIDs(t *testing.T) {
 	}
 }
 
+// TestHandleSaveConfigReturnsNormalizedConfig verifies the PUT response body
+// carries the normalized saved config, so the webapp can adopt server-minted
+// service and MCP server IDs immediately instead of waiting for a reload.
+func TestHandleSaveConfigReturnsNormalizedConfig(t *testing.T) {
+	store := &testConfigStore{}
+	router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+	payload := config.Config{
+		Services: []llm.ServiceConfig{{Name: "OpenAI", Type: "openai"}},
+		MCP: config.MCPConfig{
+			Servers: []config.MCPServerConfig{{Name: "Jira", BaseURL: "https://jira.example.com"}},
+		},
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp config.Config
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	require.Len(t, resp.Services, 1)
+	assert.True(t, model.IsValidId(resp.Services[0].ID), "response must carry the server-minted service ID")
+	assert.Equal(t, store.cfg.Services[0].ID, resp.Services[0].ID, "response ID must match the persisted one")
+
+	require.Len(t, resp.MCP.Servers, 1)
+	assert.True(t, model.IsValidId(resp.MCP.Servers[0].ID), "response must carry the server-minted MCP server ID")
+	assert.Equal(t, store.cfg.MCP.Servers[0].ID, resp.MCP.Servers[0].ID, "response ID must match the persisted one")
+
+	assert.True(t, resp.Services[0].UseResponsesAPI, "response must reflect normalization")
+}
+
 // TestHandleSaveConfigRejectsStaleLegacyServiceIDs covers the interleaving
 // where a pre-upgrade webapp bundle loaded the config before the ID migration
 // ran and then saves UUID service IDs back: the save must fail with 409 and
