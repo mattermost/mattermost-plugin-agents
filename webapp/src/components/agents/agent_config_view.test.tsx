@@ -575,7 +575,7 @@ describe('AgentConfigView', () => {
         expect(onSaved).not.toHaveBeenCalled();
 
         // Retry succeeds and only then does the view close.
-        accessControlClient.deleteAgentAccessPolicy.mockResolvedValueOnce(undefined);
+        accessControlClient.deleteAgentAccessPolicy.mockResolvedValueOnce(null);
         fireEvent.click(screen.getByRole('button', {name: 'Retry'}));
 
         await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
