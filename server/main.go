@@ -66,6 +66,9 @@ type Plugin struct {
 	telemetryEndpoint    string
 	store                *store.Store
 	configMigrated       bool
+
+	accessChecker     *accesscontrol.Checker
+	abacRebuildCancel context.CancelFunc
 }
 
 type pluginLogger struct {
@@ -233,12 +236,17 @@ func (p *Plugin) OnActivate() error {
 		return mcpConfig.ServerIDByOrigin()
 	}
 	accessChecker := accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, policyIndex, mcpServerIDsByOrigin, abacMutex, &pluginAPI.Log)
+	p.accessChecker = accessChecker
 
 	// Rebuild the fail-closed policy index from server truth in the
 	// background: enumerate every known resource ID and reconcile its marker
 	// against GetAccessControlPolicy. Best-effort and non-fatal — divergence
 	// caused by a lost mutex lease must not survive a restart (see
-	// accesscontrol.Checker.RebuildIndex).
+	// accesscontrol.Checker.RebuildIndex). The rebuild runs under a
+	// plugin-lifecycle context: OnDeactivate cancels it and the sweep
+	// abandons its remaining work cleanly.
+	abacRebuildCtx, abacRebuildCancel := context.WithCancel(context.Background())
+	p.abacRebuildCancel = abacRebuildCancel
 	go func() {
 		resourceIDsByType := map[string][]string{}
 		if agents, listErr := p.store.ListAgents(); listErr != nil {
@@ -257,7 +265,7 @@ func (p *Plugin) OnActivate() error {
 		for _, serverID := range mcpConfig.ServerIDByOrigin() {
 			resourceIDsByType[accesscontrol.ResourceTypeMCP] = append(resourceIDsByType[accesscontrol.ResourceTypeMCP], serverID)
 		}
-		accessChecker.RebuildIndex(context.Background(), resourceIDsByType)
+		accessChecker.RebuildIndex(abacRebuildCtx, resourceIDsByType)
 	}()
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, accessChecker, llmUpstreamHTTPClient, metricsService)
@@ -600,6 +608,15 @@ func (p *Plugin) OnDeactivate() error {
 
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
+
+	// Abandon a still-running ABAC index rebuild and stop the background
+	// reconciliation worker (waits for an in-flight item to finish).
+	if p.abacRebuildCancel != nil {
+		p.abacRebuildCancel()
+	}
+	if p.accessChecker != nil {
+		p.accessChecker.Close()
+	}
 
 	return nil
 }

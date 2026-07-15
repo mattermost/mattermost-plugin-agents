@@ -50,6 +50,11 @@ type Checker struct {
 	// PolicyIndexMutexKey cluster mutex; tests may pass a plain sync.Mutex.
 	mutationMu sync.Locker
 
+	// reconciler runs decision-time index self-healing in the background so
+	// the authorization hot path never blocks on the KV-backed index for
+	// definitive outcomes. Stopped by Close.
+	reconciler *reconciler
+
 	availabilityMu      sync.Mutex
 	availabilityValue   bool
 	availabilityChecked time.Time
@@ -72,14 +77,23 @@ func New(client DecisionClient, papi plugin.API, index PolicyIndex, mcpIDsByOrig
 	if mutationMutex == nil {
 		mutationMutex = &sync.Mutex{}
 	}
-	return &Checker{
+	c := &Checker{
 		client:         client,
 		papi:           papi,
 		index:          index,
 		mcpIDsByOrigin: mcpIDsByOrigin,
 		mutationMu:     mutationMutex,
+		reconciler:     newReconciler(defaultReconcileCooldown),
 		log:            log,
 	}
+	go c.reconciler.run(c.reconcileIndex)
+	return c
+}
+
+// Close stops the background reconciliation worker, waiting for an in-flight
+// reconciliation to finish. Call on plugin deactivation. Idempotent.
+func (c *Checker) Close() {
+	c.reconciler.close()
 }
 
 // evaluate runs one decision call. Invalid resource/user IDs short-circuit to
@@ -104,14 +118,33 @@ func (c *Checker) indexGated(resourceType, resourceID string) bool {
 	return has
 }
 
-// reconcileIndex self-heals the fail-closed policy index from server truth at
-// decision time. The cluster mutex serializing PAP mutations uses a renewable
-// lease; if the lease is lost mid-mutation, an interleaving with a concurrent
-// opposing mutation can leave the index divergent from the stored policies
-// (e.g. an enforced policy without its marker). Server-side fencing is not
-// available through the plugin API, so instead of trying to win that race we
-// eliminate its PERSISTENCE: every decision with a definitive outcome
-// reconciles the marker for the resource it just evaluated.
+// scheduleReconcile hands a definitive decision outcome to the background
+// reconciliation worker. The hot path must never block on the KV-backed
+// index for allow/deny/no_policy outcomes: enqueue is in-memory bookkeeping
+// plus a non-blocking buffered channel send; the actual index reads/writes
+// happen in reconcileIndex on the worker goroutine.
+func (c *Checker) scheduleReconcile(resourceType, resourceID string, outcome Outcome) {
+	if outcome == OutcomeUnavailable {
+		// No server truth to reconcile against.
+		return
+	}
+	if !model.IsValidId(resourceID) {
+		// Short-circuited evaluations (config bots, invalid IDs) are never
+		// policy-addressable and can never carry a marker.
+		return
+	}
+	c.reconciler.enqueue(resourceType, resourceID, outcome)
+}
+
+// reconcileIndex self-heals the fail-closed policy index from server truth
+// after a decision. The cluster mutex serializing PAP mutations uses a
+// renewable lease; if the lease is lost mid-mutation, an interleaving with a
+// concurrent opposing mutation can leave the index divergent from the stored
+// policies (e.g. an enforced policy without its marker). Server-side fencing
+// is not available through the plugin API, so instead of trying to win that
+// race we eliminate its PERSISTENCE: every decision with a definitive outcome
+// schedules a reconciliation of the marker for the resource it evaluated,
+// processed here on the background worker (see reconciler).
 //
 //   - allow/deny means the PDP evaluated a stored policy — the marker must
 //     exist. Adding is the fail-closed direction and needs no confirmation.
@@ -119,11 +152,10 @@ func (c *Checker) indexGated(resourceType, resourceID string) bool {
 //     in-flight save, so removal is confirmed against server truth (a Get
 //     returning 404) under the mutation mutex before the marker is dropped.
 //
-// Writes happen only when the index diverges, so steady state costs one index
-// read per decision. The residual hazard window — lease loss AND a concurrent
-// opposing mutation AND an ABAC outage before the next successful decision or
-// plugin activation — is an accepted, self-correcting risk (see also
-// RebuildIndex and DeletePolicy).
+// Writes happen only when the index diverges. The residual hazard window —
+// lease loss AND a concurrent opposing mutation AND an ABAC outage before the
+// next successful decision or plugin activation — is an accepted,
+// self-correcting risk (see also RebuildIndex and DeletePolicy).
 func (c *Checker) reconcileIndex(resourceType, resourceID string, outcome Outcome) {
 	if !model.IsValidId(resourceID) {
 		// Short-circuited evaluations (config bots, invalid IDs) are never
@@ -214,7 +246,7 @@ func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotCo
 		return runLegacy()
 	}
 	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
-	c.reconcileIndex(ResourceTypeAgent, cfg.ID, outcome)
+	c.scheduleReconcile(ResourceTypeAgent, cfg.ID, outcome)
 
 	switch outcome {
 	case OutcomeAllow:
@@ -272,7 +304,7 @@ func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resource
 		return nil
 	}
 	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
-	c.reconcileIndex(resourceType, resourceID, outcome)
+	c.scheduleReconcile(resourceType, resourceID, outcome)
 
 	switch outcome {
 	case OutcomeAllow, OutcomeNoPolicy:

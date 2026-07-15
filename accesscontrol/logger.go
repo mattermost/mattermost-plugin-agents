@@ -7,6 +7,7 @@ package accesscontrol
 // *pluginapi.LogService. A nil Logger disables logging (tests).
 type Logger interface {
 	Debug(message string, keyValuePairs ...any)
+	Info(message string, keyValuePairs ...any)
 	Warn(message string, keyValuePairs ...any)
 	Error(message string, keyValuePairs ...any)
 }
@@ -14,6 +15,12 @@ type Logger interface {
 func logDebug(log Logger, message string, keyValuePairs ...any) {
 	if log != nil {
 		log.Debug(message, keyValuePairs...)
+	}
+}
+
+func logInfo(log Logger, message string, keyValuePairs ...any) {
+	if log != nil {
+		log.Info(message, keyValuePairs...)
 	}
 }
 

@@ -6,6 +6,7 @@ package accesscontrol
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -49,18 +50,25 @@ func (s *stubDecisionClient) EvaluateAccessRequest(_ context.Context, userID, re
 
 // stubPolicyIndex is a map-backed PolicyIndex with injectable errors.
 // Successful Add/Remove also update `has` so marker state stays observable.
+// Mutex-protected: the background reconciler accesses it from its own
+// goroutine. hasCalls counts reads so tests can pin index-read-free paths.
 type stubPolicyIndex struct {
+	mu        sync.Mutex
 	has       map[string]bool // key: resourceType + "/" + resourceID
 	hasErr    error
 	addErr    error
 	removeErr error
 	added     []string
 	removed   []string
+	hasCalls  int
 }
 
 func indexKey(resourceType, resourceID string) string { return resourceType + "/" + resourceID }
 
 func (s *stubPolicyIndex) Has(resourceType, resourceID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hasCalls++
 	if s.hasErr != nil {
 		return false, s.hasErr
 	}
@@ -68,6 +76,8 @@ func (s *stubPolicyIndex) Has(resourceType, resourceID string) (bool, error) {
 }
 
 func (s *stubPolicyIndex) Add(resourceType, resourceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.addErr != nil {
 		return s.addErr
 	}
@@ -80,12 +90,51 @@ func (s *stubPolicyIndex) Add(resourceType, resourceID string) error {
 }
 
 func (s *stubPolicyIndex) Remove(resourceType, resourceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.removeErr != nil {
 		return s.removeErr
 	}
 	s.removed = append(s.removed, indexKey(resourceType, resourceID))
 	delete(s.has, indexKey(resourceType, resourceID))
 	return nil
+}
+
+func (s *stubPolicyIndex) addedKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.added...)
+}
+
+func (s *stubPolicyIndex) removedKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.removed...)
+}
+
+func (s *stubPolicyIndex) marker(resourceType, resourceID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.has[indexKey(resourceType, resourceID)]
+}
+
+func (s *stubPolicyIndex) setMarker(resourceType, resourceID string, present bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.has == nil {
+		s.has = map[string]bool{}
+	}
+	if present {
+		s.has[indexKey(resourceType, resourceID)] = true
+	} else {
+		delete(s.has, indexKey(resourceType, resourceID))
+	}
+}
+
+func (s *stubPolicyIndex) reads() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hasCalls
 }
 
 func newTestChecker() *Checker {
