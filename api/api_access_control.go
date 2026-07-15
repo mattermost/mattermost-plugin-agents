@@ -36,6 +36,35 @@ func abortPolicyRequest(c *gin.Context, err error) {
 	}
 }
 
+// Legacy resource IDs (hand-crafted, non-26-char — e.g. a service id set via
+// a raw config PUT before server-side minting) can never carry an access
+// policy: the PDP short-circuits them to no_policy (see Checker.evaluate)
+// and the server's policy APIs reject them outright. Mirroring that
+// philosophy here keeps the upstream validation error (400 "Invalid
+// identifier") from surfacing as a load failure in the UI.
+
+// policyReadableID gates policy GETs: an invalid resource ID means the
+// policy cannot exist, which is exactly ErrPolicyNotFound (404). Returns
+// false after writing the response.
+func policyReadableID(c *gin.Context, resourceID string) bool {
+	if model.IsValidId(resourceID) {
+		return true
+	}
+	abortPolicyRequest(c, accesscontrol.ErrPolicyNotFound)
+	return false
+}
+
+// policyWritableID gates policy PUT/DELETE: writes against an invalid
+// resource ID get an explicit 400 instead of a confusing upstream error.
+// Returns false after writing the response.
+func policyWritableID(c *gin.Context, resourceID string) bool {
+	if model.IsValidId(resourceID) {
+		return true
+	}
+	abortAgentRequest(c, http.StatusBadRequest, errors.New("resource has a legacy ID that cannot carry an access policy"))
+	return false
+}
+
 // validPolicyResourceType reports whether t is one of the three plugin
 // resource types accepted by the CEL proxy routes.
 func validPolicyResourceType(t string) bool {
@@ -91,6 +120,9 @@ func (a *API) handleGetAgentPolicy(c *gin.Context) {
 	if cfg == nil {
 		return
 	}
+	if !policyReadableID(c, cfg.ID) {
+		return
+	}
 	policy, err := a.accessChecker.GetPolicy(c.Request.Context(), cfg.ID)
 	if err != nil {
 		abortPolicyRequest(c, err)
@@ -103,6 +135,9 @@ func (a *API) handlePutAgentPolicy(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	cfg := a.loadManagedAgent(c)
 	if cfg == nil {
+		return
+	}
+	if !policyWritableID(c, cfg.ID) {
 		return
 	}
 	policy := bindPolicyBody(c)
@@ -121,6 +156,9 @@ func (a *API) handleDeleteAgentPolicy(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	cfg := a.loadManagedAgent(c)
 	if cfg == nil {
+		return
+	}
+	if !policyWritableID(c, cfg.ID) {
 		return
 	}
 	if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil {
@@ -153,6 +191,9 @@ func (a *API) handleGetServicePolicy(c *gin.Context) {
 	if svc == nil {
 		return
 	}
+	if !policyReadableID(c, svc.ID) {
+		return
+	}
 	policy, err := a.accessChecker.GetPolicy(c.Request.Context(), svc.ID)
 	if err != nil {
 		abortPolicyRequest(c, err)
@@ -165,6 +206,9 @@ func (a *API) handlePutServicePolicy(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	svc := a.resolveServiceForPolicy(c)
 	if svc == nil {
+		return
+	}
+	if !policyWritableID(c, svc.ID) {
 		return
 	}
 	policy := bindPolicyBody(c)
@@ -183,6 +227,9 @@ func (a *API) handleDeleteServicePolicy(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	svc := a.resolveServiceForPolicy(c)
 	if svc == nil {
+		return
+	}
+	if !policyWritableID(c, svc.ID) {
 		return
 	}
 	if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeService, svc.ID); err != nil {
@@ -214,6 +261,9 @@ func (a *API) handleGetMCPPolicy(c *gin.Context) {
 	if server == nil {
 		return
 	}
+	if !policyReadableID(c, server.ID) {
+		return
+	}
 	policy, err := a.accessChecker.GetPolicy(c.Request.Context(), server.ID)
 	if err != nil {
 		abortPolicyRequest(c, err)
@@ -226,6 +276,9 @@ func (a *API) handlePutMCPPolicy(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	server := a.resolveMCPServerForPolicy(c)
 	if server == nil {
+		return
+	}
+	if !policyWritableID(c, server.ID) {
 		return
 	}
 	policy := bindPolicyBody(c)
@@ -244,6 +297,9 @@ func (a *API) handleDeleteMCPPolicy(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	server := a.resolveMCPServerForPolicy(c)
 	if server == nil {
+		return
+	}
+	if !policyWritableID(c, server.ID) {
 		return
 	}
 	if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeMCP, server.ID); err != nil {

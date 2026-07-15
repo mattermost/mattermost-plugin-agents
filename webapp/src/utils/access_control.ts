@@ -20,6 +20,15 @@ type WindowComponents = {
     AccessControlCELEditor?: AccessControlCELEditorComponent;
 };
 
+// isValidMattermostId mirrors the server's model.IsValidId: 26 lowercase
+// base-36 characters. Resources with hand-crafted legacy IDs (e.g. a service
+// id set via a raw config PUT before server-side minting) fail this and can
+// never carry an access policy — the PDP short-circuits them to no_policy —
+// so the policy UI must not offer authoring for them.
+export function isValidMattermostId(id: string): boolean {
+    return (/^[a-z0-9]{26}$/).test(id);
+}
+
 // getAccessControlEditors feature-detects the host webapp's editor exports.
 // Returns null on older webapps (hide all ABAC UI).
 export function getAccessControlEditors(): AccessControlEditors | null {

@@ -126,4 +126,35 @@ describe('ConsolePolicySection', () => {
         // fire a delete across the swap.
         expect(client.deleteServiceAccessPolicy).not.toHaveBeenCalled();
     });
+
+    test('a legacy (non-minted) service id renders an explanatory note instead of the editor', async () => {
+        // Hand-crafted ids (raw config PUT before server-side minting, e.g.
+        // "mock-openai") can never carry a policy; the section must explain
+        // that instead of surfacing a load failure.
+        renderSection('mock-openai');
+
+        fireEvent.click(screen.getByText('Access policy'));
+
+        expect(await screen.findByText("Access policies aren't available for this service because it has a legacy ID.")).toBeTruthy();
+        expect(screen.queryByTestId('cel-editor')).toBeNull();
+        expect(client.getServiceAccessPolicy).not.toHaveBeenCalled();
+    });
+
+    test('a legacy (non-minted) MCP server id renders the MCP note instead of the editor', async () => {
+        render(
+            <IntlProvider locale='en'>
+                <ConsolePolicySection
+                    resourceType='mcp'
+                    resourceId='my-legacy-mcp'
+                    resourceDisplayName='Legacy MCP'
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByText('Access policy'));
+
+        expect(await screen.findByText("Access policies aren't available for this MCP server because it has a legacy ID.")).toBeTruthy();
+        expect(screen.queryByTestId('cel-editor')).toBeNull();
+        expect(client.getMCPServerAccessPolicy).not.toHaveBeenCalled();
+    });
 });

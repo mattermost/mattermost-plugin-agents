@@ -220,6 +220,60 @@ func TestServiceAndMCPPolicyRouteAuthMatrix(t *testing.T) {
 	}
 }
 
+// TestLegacyIDPolicyRoutes: resources whose stored ID is a hand-crafted
+// legacy string (set via a raw config PUT before server-side minting) can
+// never carry a policy — the PDP short-circuits them to no_policy. GET must
+// report the policy absent (404) instead of surfacing the upstream "Invalid
+// identifier" 400, and writes must fail with an explicit 400.
+func TestLegacyIDPolicyRoutes(t *testing.T) {
+	adminID := model.NewId()
+	const legacyServiceID = "mock-openai"
+	const legacyServerID = "my-mcp"
+
+	policyBody := map[string]any{
+		"rules": []map[string]any{{"actions": []string{"use"}, "expression": "true"}},
+	}
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       any
+		wantStatus int
+	}{
+		{name: "service GET maps to policy absent", method: http.MethodGet, path: "/admin/services/" + legacyServiceID + "/access_policy", wantStatus: http.StatusNotFound},
+		{name: "service PUT rejected explicitly", method: http.MethodPut, path: "/admin/services/" + legacyServiceID + "/access_policy", body: policyBody, wantStatus: http.StatusBadRequest},
+		{name: "service DELETE rejected explicitly", method: http.MethodDelete, path: "/admin/services/" + legacyServiceID + "/access_policy", wantStatus: http.StatusBadRequest},
+		{name: "mcp GET maps to policy absent", method: http.MethodGet, path: "/admin/mcp/" + legacyServerID + "/access_policy", wantStatus: http.StatusNotFound},
+		{name: "mcp PUT rejected explicitly", method: http.MethodPut, path: "/admin/mcp/" + legacyServerID + "/access_policy", body: policyBody, wantStatus: http.StatusBadRequest},
+		{name: "mcp DELETE rejected explicitly", method: http.MethodDelete, path: "/admin/mcp/" + legacyServerID + "/access_policy", wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, index := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.api.configStore = &mockConfigStore{
+				cfg: &config.Config{
+					Services: []llm.ServiceConfig{{ID: legacyServiceID, Name: "Mock OpenAI", Type: "openaicompatible"}},
+					MCP: config.MCPConfig{
+						Servers: []config.MCPServerConfig{{ID: legacyServerID, Name: "Legacy", Enabled: true, BaseURL: "https://mcp.example.com"}},
+					},
+				},
+			}
+
+			e.mockAPI.On("HasPermissionTo", adminID, model.PermissionManageSystem).Return(true).Maybe()
+			// No GetAccessControlPolicy / Save / Delete expectations: the
+			// gate must short-circuit before any upstream policy call.
+
+			recorder := doRequest(e.api, tt.method, tt.path, tt.body, adminID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+			assert.Empty(t, index.added, "legacy-ID routes must never touch the policy index")
+			assert.Empty(t, index.removed, "legacy-ID routes must never touch the policy index")
+		})
+	}
+}
+
 func TestCELRouteAuthMatrix(t *testing.T) {
 	managerID := model.NewId()    // has ManageOwnAgent
 	agentAdminID := model.NewId() // manages one agent via AdminUserIDs only
