@@ -509,18 +509,19 @@ describe('AgentConfigView', () => {
 
     function renderEditView(agent: UserAgent) {
         const onSaved = jest.fn();
+        const onBack = jest.fn();
         render(
             <IntlProvider locale='en'>
                 <AgentConfigView
                     mode='edit'
                     agent={agent}
                     services={services}
-                    onBack={jest.fn()}
+                    onBack={onBack}
                     onSaved={onSaved}
                 />
             </IntlProvider>,
         );
-        return {onSaved};
+        return {onSaved, onBack};
     }
 
     function switchAwayAndSave() {
@@ -599,6 +600,92 @@ describe('AgentConfigView', () => {
         fireEvent.click(within(retryDialog).getByRole('button', {name: 'Keep policy'}));
 
         await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    });
+
+    // --- Escape hatch: Escape and parent navigation in every machine state ---
+    // idle is covered by 'loads edit mode without treating existing values as
+    // dirty' (Escape → onBack immediately).
+
+    test('Escape while confirming keeps the policy and closes via onSaved, never bare onBack', async () => {
+        mockUpdateAgent.mockResolvedValue({...attributeBasedAgent, userAccessLevel: 0});
+        accessControlClient.getAgentAccessPolicy.mockResolvedValue(existingPolicy);
+
+        const {onSaved, onBack} = renderEditView(attributeBasedAgent);
+        switchAwayAndSave();
+
+        await screen.findByRole('dialog', {name: 'Delete access policy?'});
+        fireEvent.keyDown(document, {key: 'Escape'});
+
+        // The dialog's own Escape resolves the machine as "keep policy"; the
+        // parent Escape handler must not fire an extra navigation of its own.
+        await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+        expect(accessControlClient.deleteAgentAccessPolicy).not.toHaveBeenCalled();
+        expect(onBack).not.toHaveBeenCalled();
+    });
+
+    test('parent navigation is blocked while the policy dialog is open', async () => {
+        mockUpdateAgent.mockResolvedValue({...attributeBasedAgent, userAccessLevel: 0});
+        accessControlClient.getAgentAccessPolicy.mockResolvedValue(existingPolicy);
+
+        const {onSaved, onBack} = renderEditView(attributeBasedAgent);
+        switchAwayAndSave();
+
+        await screen.findByRole('dialog', {name: 'Delete access policy?'});
+        fireEvent.click(screen.getByRole('button', {name: 'Back to agents'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
+
+        expect(onBack).not.toHaveBeenCalled();
+        expect(onSaved).not.toHaveBeenCalled();
+        expect(screen.getByRole('dialog', {name: 'Delete access policy?'})).not.toBeNull();
+    });
+
+    test('Escape and navigation are inert while the deletion is in flight', async () => {
+        mockUpdateAgent.mockResolvedValue({...attributeBasedAgent, userAccessLevel: 0});
+        accessControlClient.getAgentAccessPolicy.mockResolvedValue(existingPolicy);
+
+        let resolveDelete: (value: null) => void = () => null;
+        accessControlClient.deleteAgentAccessPolicy.mockImplementationOnce(
+            () => new Promise((resolve) => {
+                resolveDelete = resolve;
+            }),
+        );
+
+        const {onSaved, onBack} = renderEditView(attributeBasedAgent);
+        switchAwayAndSave();
+
+        await screen.findByRole('dialog', {name: 'Delete access policy?'});
+        fireEvent.click(screen.getByRole('button', {name: 'Delete policy'}));
+
+        // While deleting, the dialog buttons are disabled (confirmPending)
+        // and neither Escape nor parent navigation may exit the machine.
+        expect((screen.getByRole('button', {name: 'Keep policy'}) as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByRole('button', {name: 'Delete policy'}) as HTMLButtonElement).disabled).toBe(true);
+        fireEvent.keyDown(document, {key: 'Escape'});
+        fireEvent.click(screen.getByRole('button', {name: 'Back to agents'}));
+        expect(onSaved).not.toHaveBeenCalled();
+        expect(onBack).not.toHaveBeenCalled();
+        expect(screen.getByRole('dialog', {name: 'Delete access policy?'})).not.toBeNull();
+
+        resolveDelete(null);
+        await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    });
+
+    test('Escape in the delete-failed state keeps the policy and closes via onSaved', async () => {
+        mockUpdateAgent.mockResolvedValue({...attributeBasedAgent, userAccessLevel: 0});
+        accessControlClient.getAgentAccessPolicy.mockResolvedValue(existingPolicy);
+        accessControlClient.deleteAgentAccessPolicy.mockRejectedValue(new Error('still broken'));
+
+        const {onSaved, onBack} = renderEditView(attributeBasedAgent);
+        switchAwayAndSave();
+
+        await screen.findByRole('dialog', {name: 'Delete access policy?'});
+        fireEvent.click(screen.getByRole('button', {name: 'Delete policy'}));
+
+        await screen.findByRole('dialog', {name: "Couldn't delete the access policy"});
+        fireEvent.keyDown(document, {key: 'Escape'});
+
+        await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+        expect(onBack).not.toHaveBeenCalled();
     });
 
     test('offers the delete flow when the policy existence check fails', async () => {

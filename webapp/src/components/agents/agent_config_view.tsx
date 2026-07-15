@@ -253,12 +253,19 @@ const AgentConfigView = (props: Props) => {
         if (showDiscardDialogRef.current) {
             return;
         }
+
+        // While the policy-switch machine is mid-flight the only exits are its
+        // own dialog actions (delete/keep) — parent navigation would abandon a
+        // still-enforced policy without resolution.
+        if (policySwitch.step !== 'idle') {
+            return;
+        }
         if (isDirty) {
             setShowDiscardDialog(true);
             return;
         }
         onBack();
-    }, [isDirty, onBack, saving]);
+    }, [isDirty, onBack, saving, policySwitch.step]);
 
     const handleDiscardConfirm = useCallback(() => {
         setShowDiscardDialog(false);
@@ -544,6 +551,7 @@ const AgentConfigView = (props: Props) => {
                 onConfirm={handleDeletePolicyConfirm}
                 onCancel={handleDeletePolicyKeep}
                 isDestructive={true}
+                confirmPending={policySwitch.step === 'deleting'}
                 managedAccessibility={true}
                 zIndex={2100}
             />
