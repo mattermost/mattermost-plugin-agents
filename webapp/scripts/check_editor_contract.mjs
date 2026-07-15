@@ -42,11 +42,15 @@ const updateSnapshot = process.argv.includes('--update-snapshot');
 
 const tscBin = path.join(webappDir, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
 
-// runProbe type-checks one probe file with the given tsconfig and returns the
-// diagnostics attributed to files under scripts/editor_contract/. Incidental
-// diagnostics inside host files are ignored: the synthetic program pulls the
-// transitive closure of the host editor files without exactly replicating the
-// host's own build environment.
+// runProbe type-checks one probe file with the given tsconfig and returns
+// the tsc exit status, its full output, and the diagnostics attributed to
+// files under scripts/editor_contract/. How much of that the caller enforces
+// differs per layer: the self-contained snapshot probe requires a zero exit
+// status (any diagnostic anywhere in the program is a real failure), while
+// the live-host probe only acts on probe-file diagnostics — the synthetic
+// program pulls the transitive closure of the host editor files without
+// exactly replicating the host's own build environment, so incidental
+// diagnostics inside host files are expected there.
 function runProbe(tsconfig, label) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'editor-contract-'));
     const tsconfigPath = path.join(tmpDir, 'tsconfig.json');
@@ -62,12 +66,13 @@ function runProbe(tsconfig, label) {
 
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
     const probePrefixes = [probeDir, path.relative(process.cwd(), probeDir)];
-    return output.split('\n').filter((line) => {
+    const probeDiagnostics = output.split('\n').filter((line) => {
         if (!(/\(\d+,\d+\): error TS\d+/).test(line)) {
             return false;
         }
         return probePrefixes.some((prefix) => line.startsWith(prefix) || line.startsWith(prefix.split(path.sep).join('/')));
     });
+    return {status: result.status, output, probeDiagnostics};
 }
 
 // The host file whose exported types anchor the contract.
@@ -135,7 +140,10 @@ if (!fs.existsSync(snapshotPath) && !updateSnapshot) {
 }
 
 if (fs.existsSync(snapshotPath)) {
-    const snapshotDiagnostics = runProbe({
+    // The snapshot program is entirely self-contained (probe + plugin types
+    // + committed snapshot), so ANY tsc diagnostic is a real failure —
+    // require a zero exit status rather than filtering for probe lines.
+    const snapshot = runProbe({
         extends: path.join(webappDir, 'tsconfig.json'),
         compilerOptions: {noEmit: true, skipLibCheck: true},
         include: [
@@ -143,8 +151,8 @@ if (fs.existsSync(snapshotPath)) {
             path.join(webappDir, 'src', 'types', '**', '*').split(path.sep).join('/'),
         ],
     }, 'snapshot');
-    if (snapshotDiagnostics.length > 0) {
-        console.error(snapshotDiagnostics.join('\n'));
+    if (snapshot.status !== 0) {
+        console.error(snapshot.output.trimEnd());
         console.error('check-editor-contract: FAILED — the plugin\'s editor prop mirrors have drifted from the pinned host contract snapshot.');
         console.error('Reconcile webapp/src/types/access_control_editors.ts with src/types/host_editor_contract.snapshot.d.ts');
         console.error('(or, if the host contract legitimately moved, regenerate the snapshot: npm run update-editor-contract-snapshot).');
@@ -168,9 +176,9 @@ if (!host) {
 console.log(`check-editor-contract: probing against ${host}`);
 const tsconfig = hostTsconfig(host);
 
-const liveDiagnostics = runProbe(tsconfig, 'live host');
-if (liveDiagnostics.length > 0) {
-    console.error(liveDiagnostics.join('\n'));
+const live = runProbe(tsconfig, 'live host');
+if (live.probeDiagnostics.length > 0) {
+    console.error(live.probeDiagnostics.join('\n'));
     console.error('check-editor-contract: FAILED — the plugin\'s editor prop mirrors have drifted from the mattermost webapp\'s exported types.');
     console.error('Reconcile webapp/src/types/access_control_editors.ts with the host files named in its header comment.');
     process.exit(1);
