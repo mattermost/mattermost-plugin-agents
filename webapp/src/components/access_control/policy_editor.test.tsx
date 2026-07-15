@@ -49,13 +49,15 @@ type FakeEditorProps = {
     value: string;
     onChange: (value: string) => void;
     onValidate: (valid: boolean) => void;
+    onParseError?: (error: string) => void;
 };
 
-const FakeTableEditor = ({value, onChange, onValidate}: FakeEditorProps) => (
+const FakeTableEditor = ({value, onChange, onValidate, onParseError}: FakeEditorProps) => (
     <div data-testid='table-editor'>
         <span data-testid='table-value'>{value}</span>
         <button onClick={() => onChange('user.attributes.team == "eng"')}>{'table-edit'}</button>
         <button onClick={() => onValidate(false)}>{'table-invalidate'}</button>
+        <button onClick={() => onParseError?.('unsupported expression')}>{'table-parse-error'}</button>
     </div>
 );
 
@@ -243,6 +245,48 @@ describe('PolicyEditor', () => {
         expect(await screen.findByTestId('cel-editor')).toBeTruthy();
         expect(screen.queryByText('Simple')).toBeNull();
         expect(screen.getByText("This policy uses expressions the simple editor can't display.")).toBeTruthy();
+    });
+
+    it('shows a read-only unsupported state for multi-rule policies when advanced is not allowed', async () => {
+        client.getAgentAccessPolicy.mockResolvedValue({
+            ...existingPolicy,
+            rules: [
+                {actions: ['use'], expression: 'user.attributes.team == "sales"'},
+                {actions: ['use'], expression: 'user.attributes.level >= 2'},
+            ],
+        });
+        renderEditor({allowAdvanced: false});
+
+        expect(await screen.findByText('This policy uses expressions that can only be edited by a system administrator. You can remove the policy to start over.')).toBeTruthy();
+
+        // Never the CEL editor, no editing surface, no save — only removal.
+        expect(screen.queryByTestId('cel-editor')).toBeNull();
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+        expect(screen.queryByText('Save policy')).toBeNull();
+        expect(screen.getByText('user.attributes.team == "sales"')).toBeTruthy();
+        expect(screen.getByText('Remove policy')).toBeTruthy();
+    });
+
+    it('shows the read-only unsupported state on parse errors when advanced is not allowed', async () => {
+        renderEditor({allowAdvanced: false});
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+
+        fireEvent.click(screen.getByText('table-parse-error'));
+
+        expect(await screen.findByText('This policy uses expressions that can only be edited by a system administrator. You can remove the policy to start over.')).toBeTruthy();
+        expect(screen.queryByTestId('cel-editor')).toBeNull();
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+        expect(screen.queryByText('Save policy')).toBeNull();
+    });
+
+    it('locks to the advanced editor on parse errors when advanced is allowed', async () => {
+        renderEditor();
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+
+        fireEvent.click(screen.getByText('table-parse-error'));
+
+        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+        expect(screen.queryByText('Simple')).toBeNull();
     });
 
     it('shows a load error when the policy fetch fails', async () => {

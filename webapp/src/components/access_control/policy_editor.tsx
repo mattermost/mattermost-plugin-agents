@@ -46,7 +46,12 @@ export type PolicyEditorProps = {
     onPolicyExistenceChange?: (exists: boolean) => void;
 };
 
+// EditorMode is the user-selectable editor. The rendered view additionally
+// models the case where the policy can't render in the table editor and the
+// caller may not use the advanced (CEL) editor: a read-only unsupported state
+// (F6) — the CEL editor must never render for non-admin callers.
 type EditorMode = 'simplified' | 'advanced';
+type EditorView = EditorMode | 'unsupported';
 
 // wrapAction adapts plugin client promises onto the ActionResult shape
 // ({data} / {error}) the host webapp's editors expect.
@@ -119,11 +124,14 @@ const PolicyEditor = (props: PolicyEditorProps) => {
             notifyExistence(loaded !== null);
 
             // Multi-rule policies (future/external authoring) can't round-trip
-            // through the simple editor; edit rule 0 in advanced mode and
-            // preserve the others verbatim on save.
+            // through the simple editor; lock away from it. Admins edit rule 0
+            // in advanced mode (the other rules are preserved verbatim on
+            // save); everyone else gets the read-only unsupported view.
             if ((loaded?.rules?.length ?? 0) > 1) {
-                setMode('advanced');
                 setAdvancedLocked(true);
+                if (allowAdvanced) {
+                    setMode('advanced');
+                }
             }
         }).catch(() => {
             if (!cancelled) {
@@ -137,7 +145,7 @@ const PolicyEditor = (props: PolicyEditorProps) => {
         return () => {
             cancelled = true;
         };
-    }, [client, resourceId, agentIdForAuthz, intl, notifyExistence]);
+    }, [client, resourceId, agentIdForAuthz, allowAdvanced, intl, notifyExistence]);
 
     // Contract §6.2: CEL editor takes {attribute, values, isNative}[].
     const celAttributes = useMemo<CELEditorAttribute[]>(() => fields.map((field) => ({
@@ -157,10 +165,12 @@ const PolicyEditor = (props: PolicyEditorProps) => {
     }), [resourceType, agentIdForAuthz]);
 
     const handleParseError = useCallback(() => {
-        // The simple editor can't display this expression: lock to advanced.
-        setMode('advanced');
+        // The simple editor can't display this expression: lock away from it.
         setAdvancedLocked(true);
-    }, []);
+        if (allowAdvanced) {
+            setMode('advanced');
+        }
+    }, [allowAdvanced]);
 
     const handleSave = useCallback(async () => {
         setSaving(true);
@@ -233,9 +243,17 @@ const PolicyEditor = (props: PolicyEditorProps) => {
         return <ErrorText>{loadError}</ErrorText>;
     }
 
+    // Allowed-modes model: a locked policy renders in the advanced editor only
+    // for callers that are allowed to use it; everyone else gets the read-only
+    // unsupported view.
+    let view: EditorView = mode;
+    if (advancedLocked) {
+        view = allowAdvanced ? 'advanced' : 'unsupported';
+    }
+
     const showToggle = allowSimplified && allowAdvanced && !advancedLocked;
     const dirty = expression !== savedExpression;
-    const canSave = dirty && expressionValid && expression.trim() !== '' && !saving;
+    const canSave = view !== 'unsupported' && dirty && expressionValid && expression.trim() !== '' && !saving;
 
     const {TableEditor, CELEditor} = editors;
 
@@ -259,39 +277,48 @@ const PolicyEditor = (props: PolicyEditorProps) => {
                     </ModeButton>
                 </ModeToggleRow>
             )}
-            {advancedLocked && allowSimplified && (
+            {view === 'advanced' && advancedLocked && allowSimplified && (
                 <HelperText>
                     <FormattedMessage defaultMessage="This policy uses expressions the simple editor can't display."/>
                 </HelperText>
             )}
 
-            <Suspense
-                fallback={
-                    <SpinnerContainer>
-                        <LoadingSpinner/>
-                    </SpinnerContainer>
-                }
-            >
-                {mode === 'simplified' ? (
-                    <TableEditor
-                        value={expression}
-                        onChange={setExpression}
-                        onValidate={setExpressionValid}
-                        userAttributes={fields}
-                        enableUserManagedAttributes={false}
-                        onParseError={handleParseError}
-                        actions={tableActions}
-                    />
-                ) : (
-                    <CELEditor
-                        value={expression}
-                        onChange={setExpression}
-                        onValidate={setExpressionValid}
-                        userAttributes={celAttributes}
-                        actions={celActions}
-                    />
-                )}
-            </Suspense>
+            {view === 'unsupported' ? (
+                <>
+                    <HelperText>
+                        <FormattedMessage defaultMessage='This policy uses expressions that can only be edited by a system administrator. You can remove the policy to start over.'/>
+                    </HelperText>
+                    {savedExpression !== '' && <ReadOnlyExpression>{savedExpression}</ReadOnlyExpression>}
+                </>
+            ) : (
+                <Suspense
+                    fallback={
+                        <SpinnerContainer>
+                            <LoadingSpinner/>
+                        </SpinnerContainer>
+                    }
+                >
+                    {view === 'simplified' ? (
+                        <TableEditor
+                            value={expression}
+                            onChange={setExpression}
+                            onValidate={setExpressionValid}
+                            userAttributes={fields}
+                            enableUserManagedAttributes={false}
+                            onParseError={handleParseError}
+                            actions={tableActions}
+                        />
+                    ) : (
+                        <CELEditor
+                            value={expression}
+                            onChange={setExpression}
+                            onValidate={setExpressionValid}
+                            userAttributes={celAttributes}
+                            actions={celActions}
+                        />
+                    )}
+                </Suspense>
+            )}
 
             {saveError && <ErrorText>{saveError}</ErrorText>}
 
@@ -305,17 +332,19 @@ const PolicyEditor = (props: PolicyEditorProps) => {
                         <FormattedMessage defaultMessage='Remove policy'/>
                     </RemoveButton>
                 )}
-                <SavePolicyButton
-                    type='button'
-                    onClick={handleSave}
-                    disabled={!canSave}
-                >
-                    {saving ? (
-                        <FormattedMessage defaultMessage='Saving...'/>
-                    ) : (
-                        <FormattedMessage defaultMessage='Save policy'/>
-                    )}
-                </SavePolicyButton>
+                {view !== 'unsupported' && (
+                    <SavePolicyButton
+                        type='button'
+                        onClick={handleSave}
+                        disabled={!canSave}
+                    >
+                        {saving ? (
+                            <FormattedMessage defaultMessage='Saving...'/>
+                        ) : (
+                            <FormattedMessage defaultMessage='Save policy'/>
+                        )}
+                    </SavePolicyButton>
+                )}
             </ButtonRow>
 
             <ConfirmationDialog
@@ -371,6 +400,16 @@ const ErrorText = styled.div`
 const HelperText = styled.div`
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
+`;
+
+const ReadOnlyExpression = styled.code`
+    display: block;
+    padding: 8px 10px;
+    border-radius: 4px;
+    background: rgba(var(--center-channel-color-rgb), 0.04);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
 `;
 
 const ModeToggleRow = styled.div`
