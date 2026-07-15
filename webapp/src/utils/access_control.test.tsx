@@ -6,11 +6,11 @@ import {render, screen, waitFor} from '@testing-library/react';
 
 import {getAccessControlEditors, resetABACSupportCacheForTesting, useABACSupport} from './access_control';
 
-jest.mock('@/client', () => ({
+jest.mock('@/client/access_control', () => ({
     getABACStatus: jest.fn(),
 }));
 
-const {getABACStatus} = jest.requireMock('@/client') as {
+const {getABACStatus} = jest.requireMock('@/client/access_control') as {
     getABACStatus: jest.Mock;
 };
 

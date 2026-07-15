@@ -25,7 +25,7 @@ jest.mock('react-intl', () => {
     };
 });
 
-jest.mock('@/client', () => ({
+jest.mock('@/client/access_control', () => ({
     getAgentAccessPolicy: jest.fn(),
     putAgentAccessPolicy: jest.fn(),
     deleteAgentAccessPolicy: jest.fn(),
@@ -41,7 +41,7 @@ jest.mock('@/client', () => ({
     getAccessControlVisualAST: jest.fn(),
 }));
 
-const client = jest.requireMock('@/client') as Record<string, jest.Mock>;
+const client = jest.requireMock('@/client/access_control') as Record<string, jest.Mock>;
 
 // Fake host editors: expose which editor rendered plus onChange/onValidate
 // hooks so tests can drive expression edits.

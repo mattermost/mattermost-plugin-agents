@@ -34,6 +34,10 @@ jest.mock('@/client', () => ({
     updateAgent: jest.fn(),
     uploadAgentAvatar: jest.fn(),
     getUserMCPTools: jest.fn(),
+}));
+
+jest.mock('@/client/access_control', () => ({
+    getAgentAccessPolicy: jest.fn(),
     deleteAgentAccessPolicy: jest.fn(),
 }));
 

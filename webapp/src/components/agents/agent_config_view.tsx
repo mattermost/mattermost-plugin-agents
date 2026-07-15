@@ -8,7 +8,8 @@ import {useSelector} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
-import {createAgent, deleteAgentAccessPolicy, updateAgent, uploadAgentAvatar} from '@/client';
+import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
+import {deleteAgentAccessPolicy, getAgentAccessPolicy} from '@/client/access_control';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';

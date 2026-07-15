@@ -1,22 +1,23 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {ComponentType, useEffect, useState} from 'react';
+import {useEffect, useState} from 'react';
 
-import {getABACStatus} from '@/client';
+import {getABACStatus} from '@/client/access_control';
+import type {AccessControlCELEditorComponent, AccessControlTableEditorComponent} from '@/types/access_control_editors';
 
 // The host webapp exports the access-control editors on window.Components as
 // React.lazy components (contract §6.1). Older webapps lack the exports: all
 // ABAC UI must then be hidden.
 
 export type AccessControlEditors = {
-    TableEditor: ComponentType<any>;
-    CELEditor: ComponentType<any>;
+    TableEditor: AccessControlTableEditorComponent;
+    CELEditor: AccessControlCELEditorComponent;
 };
 
 type WindowComponents = {
-    AccessControlTableEditor?: ComponentType<any>;
-    AccessControlCELEditor?: ComponentType<any>;
+    AccessControlTableEditor?: AccessControlTableEditorComponent;
+    AccessControlCELEditor?: AccessControlCELEditorComponent;
 };
 
 // getAccessControlEditors feature-detects the host webapp's editor exports.

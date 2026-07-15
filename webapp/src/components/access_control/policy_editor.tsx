@@ -19,8 +19,9 @@ import {
     putMCPServerAccessPolicy,
     putServiceAccessPolicy,
     testAccessControlExpression,
-} from '@/client';
+} from '@/client/access_control';
 import {AccessControlPolicy, AccessControlPropertyField, PolicyResourceType} from '@/types/access_control';
+import type {ActionResult, CELEditorActions, CELEditorAttribute, TableEditorActions} from '@/types/access_control_editors';
 import {getAccessControlEditors} from '@/utils/access_control';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import LoadingSpinner from '@/components/assets/loading_spinner';
@@ -49,7 +50,7 @@ type EditorMode = 'simplified' | 'advanced';
 
 // wrapAction adapts plugin client promises onto the ActionResult shape
 // ({data} / {error}) the host webapp's editors expect.
-function wrapAction<Args extends unknown[], T>(fn: (...args: Args) => Promise<T>): (...args: Args) => Promise<{data?: T; error?: Error}> {
+function wrapAction<Args extends unknown[], T>(fn: (...args: Args) => Promise<T>): (...args: Args) => Promise<ActionResult<T, Error>> {
     return async (...args: Args) => {
         try {
             return {data: await fn(...args)};
@@ -139,18 +140,18 @@ const PolicyEditor = (props: PolicyEditorProps) => {
     }, [client, resourceId, agentIdForAuthz, intl, notifyExistence]);
 
     // Contract §6.2: CEL editor takes {attribute, values, isNative}[].
-    const celAttributes = useMemo(() => fields.map((field) => ({
+    const celAttributes = useMemo<CELEditorAttribute[]>(() => fields.map((field) => ({
         attribute: field.name,
         values: extractFieldValues(field),
         isNative: false,
     })), [fields]);
 
-    const tableActions = useMemo(() => ({
+    const tableActions = useMemo<TableEditorActions>(() => ({
         getVisualAST: wrapAction((expr: string) => getAccessControlVisualAST(resourceType, expr, agentIdForAuthz)),
         searchUsers: wrapAction((expr: string, term: string, after: string, limit: number) => testAccessControlExpression(resourceType, expr, term, after, limit, agentIdForAuthz)),
     }), [resourceType, agentIdForAuthz]);
 
-    const celActions = useMemo(() => ({
+    const celActions = useMemo<CELEditorActions>(() => ({
         checkExpression: (expr: string) => checkAccessControlExpression(resourceType, expr, agentIdForAuthz),
         searchUsers: wrapAction((expr: string, term: string, after: string, limit: number) => testAccessControlExpression(resourceType, expr, term, after, limit, agentIdForAuthz)),
     }), [resourceType, agentIdForAuthz]);
