@@ -3,11 +3,21 @@
 
 // Prop contracts for the access-control editors the host webapp exports on
 // window.Components (contract §6.1). These mirror the props implemented in
-// the mattermost webapp — the source of truth is
-// components/admin_console/access_control/editors/ over there; keep the two
-// in sync when the host editors gain or change props.
+// the mattermost webapp, narrowed to EXACTLY the props this plugin passes
+// (see policy_editor.tsx): with structural typing, mirroring props we never
+// pass would only widen the drift surface without adding safety.
+//
+// Source of truth (in the mattermost repo, under webapp/):
+//   - channels/src/components/admin_console/access_control/editors/table_editor/table_editor.tsx (TableEditorProps)
+//   - channels/src/components/admin_console/access_control/editors/cel_editor/editor.tsx (CELEditorProps, CELEditorActions)
+//   - channels/src/packages/mattermost-redux/src/types/actions.ts (ActionResult)
+//
+// Drift tripwire: `npm run check-editor-contract` type-checks these mirrors
+// against the host's exported prop types when a mattermost webapp checkout is
+// available (see scripts/editor_contract/probe.ts). Keep the two in sync when
+// the host editors gain or change props.
 
-import type {ComponentType, ReactNode} from 'react';
+import type {ComponentType} from 'react';
 
 import type {AccessControlPropertyField, AccessControlTestResult, CELExpressionError, VisualExpression} from './access_control';
 
@@ -18,7 +28,7 @@ export type ActionResult<Data = unknown, Err = unknown> = {
     error?: Err;
 };
 
-// Mirrors TableEditorProps['actions'] in the host webapp's table_editor.tsx.
+// Mirrors the subset of TableEditorProps['actions'] this plugin supplies.
 export type TableEditorActions = {
     getVisualAST: (expr: string) => Promise<ActionResult<VisualExpression>>;
 
@@ -27,27 +37,18 @@ export type TableEditorActions = {
     searchUsers?: (expression: string, term: string, after: string, limit: number) => Promise<ActionResult<AccessControlTestResult>>;
 };
 
-// Mirrors TableEditorProps in the host webapp's table_editor.tsx. The host
-// types userAttributes as UserPropertyField[]; AccessControlPropertyField is
-// this plugin's mirror of the same model.PropertyField wire shape.
+// Mirrors the subset of TableEditorProps this plugin passes. The host types
+// userAttributes as UserPropertyField[]; AccessControlPropertyField is this
+// plugin's deliberately-looser mirror of the same model.PropertyField wire
+// shape (the values flow from the server through the plugin untouched).
 export type TableEditorProps = {
     value: string;
     onChange: (value: string) => void;
     onValidate?: (isValid: boolean) => void;
-    disabled?: boolean;
     userAttributes: AccessControlPropertyField[];
     enableUserManagedAttributes: boolean;
     onParseError: (error: string) => void;
-    channelId?: string;
-    teamId?: string;
     actions: TableEditorActions;
-    isSystemAdmin?: boolean;
-    validateExpressionAgainstRequester?: (expression: string) => Promise<ActionResult<{requester_matches: boolean}>>;
-    onTestClick?: () => void;
-    testButtonDisabled?: boolean;
-    testButtonTooltip?: string;
-    testButtonLabel?: ReactNode;
-    onMaskedStateChange?: (hasMasked: boolean) => void;
 };
 
 // Mirrors CELEditorProps['userAttributes'] entries (contract §6.2).
@@ -57,7 +58,7 @@ export type CELEditorAttribute = {
     isNative?: boolean;
 };
 
-// Mirrors CELEditorActions in the host webapp's cel_editor/editor.tsx.
+// Mirrors the subset of CELEditorActions this plugin supplies.
 export type CELEditorActions = {
 
     // Overrides Client4.checkAccessControlExpression; receives only the
@@ -66,20 +67,12 @@ export type CELEditorActions = {
     searchUsers?: (expression: string, term: string, after: string, limit: number) => Promise<ActionResult<AccessControlTestResult>>;
 };
 
-// Mirrors CELEditorProps in the host webapp's cel_editor/editor.tsx.
+// Mirrors the subset of CELEditorProps this plugin passes.
 export type CELEditorProps = {
     value: string;
     onChange: (value: string) => void;
     onValidate?: (isValid: boolean) => void;
-    placeholder?: string;
-    className?: string;
-    channelId?: string;
-    teamId?: string;
-    disabled?: boolean;
     userAttributes: CELEditorAttribute[];
-    onTestClick?: () => void;
-    testButtonLabel?: ReactNode;
-    hasMaskedRows?: boolean;
     actions?: CELEditorActions;
 };
 
