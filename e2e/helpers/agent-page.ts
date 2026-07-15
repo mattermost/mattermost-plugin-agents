@@ -176,6 +176,19 @@ export class AgentPageHelper {
         return this.page.getByText('Extended thinking is turned off while structured output is enabled', {exact: false});
     }
 
+    getAdvancedConfigurationToggle(): Locator {
+        return this.page.getByRole('button', {name: /Advanced configuration/i});
+    }
+
+    async expandAdvancedConfiguration(): Promise<void> {
+        const toggle = this.getAdvancedConfigurationToggle();
+        await toggle.waitFor({state: 'visible', timeout: 10000});
+        if (await toggle.getAttribute('aria-expanded') !== 'true') {
+            await toggle.click();
+            await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        }
+    }
+
     // --- Delete Dialog ---
 
     getDeleteDialog(): Locator {

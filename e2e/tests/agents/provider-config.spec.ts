@@ -116,7 +116,7 @@ test.describe('Agent provider configuration', () => {
 
         await expect(page.getByText('Display name is required')).toBeVisible({timeout: 10000});
         await expect(page.getByText('Username is required')).toBeVisible({timeout: 10000});
-        await expect(page.getByText('AI Service is required')).toBeVisible({timeout: 10000});
+        await expect(agentPage.getAIServiceSelect()).toHaveValue('validation-service');
 
         await agentPage.getDisplayNameInput().fill('Validation Agent');
         await agentPage.getUsernameInput().fill('Invalid Name');
@@ -162,6 +162,7 @@ test.describe('Agent provider configuration', () => {
         await agentPage.openAgentActions('Direct OpenAI Agent');
         await agentPage.clickEditAction('Direct OpenAI Agent');
         await agentPage.waitForModal();
+        await agentPage.expandAdvancedConfiguration();
 
         await expect(agentPage.getNativeToolsSection('Native OpenAI Tools')).toBeVisible({timeout: 10000});
         await expect(agentPage.getNativeToolCheckbox('Native OpenAI Tools')).toBeChecked();
@@ -212,6 +213,7 @@ test.describe('Agent provider configuration', () => {
         await agentPage.openAgentActions('Legacy Responses Agent');
         await agentPage.clickEditAction('Legacy Responses Agent');
         await agentPage.waitForModal();
+        await agentPage.expandAdvancedConfiguration();
 
         await expect(agentPage.getNativeToolsSection('Native OpenAI Tools')).toBeVisible({timeout: 10000});
         await expect(agentPage.getNativeToolCheckbox('Native OpenAI Tools')).toBeChecked();
@@ -235,6 +237,7 @@ test.describe('Agent provider configuration', () => {
         await agentPage.openAgentActions('Legacy Responses Agent');
         await agentPage.clickEditAction('Legacy Responses Agent');
         await agentPage.waitForModal();
+        await agentPage.expandAdvancedConfiguration();
 
         await expect(agentPage.getAIServiceSelect()).toHaveValue('responses-service');
         await expect(agentPage.getNativeToolsSection('Native OpenAI Tools')).toBeVisible({timeout: 10000});
@@ -277,6 +280,7 @@ test.describe('Agent provider configuration', () => {
         await agentPage.openAgentActions('Legacy Anthropic Agent');
         await agentPage.clickEditAction('Legacy Anthropic Agent');
         await agentPage.waitForModal();
+        await agentPage.expandAdvancedConfiguration();
 
         await expect(agentPage.getNativeToolsSection('Native Claude Tools')).toBeVisible({timeout: 10000});
         await expect(agentPage.getNativeToolCheckbox('Native Claude Tools')).toBeChecked();
@@ -306,6 +310,7 @@ test.describe('Agent provider configuration', () => {
         await agentPage.openAgentActions('Legacy Anthropic Agent');
         await agentPage.clickEditAction('Legacy Anthropic Agent');
         await agentPage.waitForModal();
+        await agentPage.expandAdvancedConfiguration();
 
         await expect(agentPage.getNativeToolsSection('Native Claude Tools')).toBeVisible({timeout: 10000});
         await expect(agentPage.getNativeToolCheckbox('Native Claude Tools')).not.toBeChecked();
