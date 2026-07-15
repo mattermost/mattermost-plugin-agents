@@ -4,7 +4,7 @@
 import React from 'react';
 import {render, screen, waitFor} from '@testing-library/react';
 
-import {getAccessControlEditors, resetABACSupportCacheForTesting, useABACSupport} from './access_control';
+import {getAccessControlEditors, isValidMattermostId, resetABACSupportCacheForTesting, useABACSupport} from './access_control';
 
 jest.mock('@/client/access_control', () => ({
     getABACStatus: jest.fn(),
@@ -38,6 +38,25 @@ beforeEach(() => {
 
 afterEach(() => {
     clearWindowComponents();
+});
+
+describe('isValidMattermostId', () => {
+    // Parity with the server's model.IsValidId (26 alphanumeric characters,
+    // any case): anything the server would accept as policy-addressable must
+    // pass here, or the UI would hide the editor for a valid resource.
+    it.each([
+        ['minted lowercase id', 'exw1yknsx3f3tmnjm1tqmg53ir', true],
+        ['uppercase alphanumeric id', 'EXW1YKNSX3F3TMNJM1TQMG53IR', true],
+        ['mixed-case alphanumeric id', 'Exw1YknSx3f3TmnJm1tQmg53Ir', true],
+        ['25 characters', 'exw1yknsx3f3tmnjm1tqmg53i', false],
+        ['27 characters', 'exw1yknsx3f3tmnjm1tqmg53ira', false],
+        ['legacy id with hyphen', 'mock-openai-aaaaaaaaaaaaaa', false],
+        ['legacy short id', 'mock-openai', false],
+        ['symbols', 'exw1yknsx3f3tmnjm1tqmg53!r', false],
+        ['empty', '', false],
+    ])('%s -> %s', (_name, id, want) => {
+        expect(isValidMattermostId(id)).toBe(want);
+    });
 });
 
 describe('getAccessControlEditors', () => {
