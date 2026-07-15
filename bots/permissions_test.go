@@ -385,6 +385,67 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 	}
 }
 
+// TestCheckUsageRestrictionsDowngradedServer pins the pre-11.10 production
+// wiring (accesscontrol.NewLegacyOnly, as selected by server/main.go's
+// version gate — the downgrade scenario): a persisted attribute-based agent
+// must deny every user (fail closed — the plugin cannot resolve whether a
+// policy gates it), agents in the legacy access modes keep their legacy
+// behavior, and services/MCP servers are unrestricted.
+func TestCheckUsageRestrictionsDowngradedServer(t *testing.T) {
+	userID := model.NewId()
+	agentID := model.NewId()
+	serviceID := model.NewId()
+
+	setup := func(t *testing.T) *TestEnvironment {
+		t.Helper()
+		mockAPI := &plugintest.API{}
+		client := pluginapi.NewClient(mockAPI, nil)
+		checker := accesscontrol.NewLegacyOnly(accesscontrol.NoMCPServerIDs, nil)
+		mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, checker, &http.Client{}, nil)
+		return &TestEnvironment{bots: mmBots, client: client, mockAPI: mockAPI}
+	}
+
+	t.Run("persisted attribute-based agent is denied for every user", func(t *testing.T) {
+		e := setup(t)
+		defer e.Cleanup(t)
+
+		cfg := llm.BotConfig{
+			ID: agentID, ServiceID: serviceID,
+			UserAccessLevel: llm.UserAccessLevelAttributeBased,
+			UserIDs:         []string{userID}, // ignored in attribute-based mode; must not open access
+		}
+		err := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), cfg, userID)
+		require.ErrorIs(t, err, ErrUsageRestriction)
+		require.ErrorIs(t, err, accesscontrol.ErrAccessDenied)
+	})
+
+	t.Run("legacy-mode agent keeps legacy behavior", func(t *testing.T) {
+		e := setup(t)
+		defer e.Cleanup(t)
+
+		// All → allowed. This also pins the service leg of the composite
+		// gate as unrestricted: CheckUsageRestrictionsForUserConfig calls
+		// CanUseService for cfg.ServiceID and would deny otherwise.
+		allowed := llm.BotConfig{ID: agentID, ServiceID: serviceID, UserAccessLevel: llm.UserAccessLevelAll}
+		require.NoError(t, e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), allowed, userID))
+
+		// Block with the user listed → denied by the legacy check.
+		blocked := llm.BotConfig{
+			ID: agentID, ServiceID: serviceID,
+			UserAccessLevel: llm.UserAccessLevelBlock,
+			UserIDs:         []string{userID},
+		}
+		err := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), blocked, userID)
+		require.ErrorIs(t, err, ErrUsageRestriction)
+	})
+
+	t.Run("service and mcp server are unrestricted", func(t *testing.T) {
+		checker := accesscontrol.NewLegacyOnly(accesscontrol.NoMCPServerIDs, nil)
+		require.NoError(t, checker.CanUseService(context.Background(), userID, serviceID))
+		require.NoError(t, checker.CanUseMCPServer(context.Background(), userID, model.NewId()))
+	})
+}
+
 // abacStubClient answers decision calls per resource type; unlisted types
 // evaluate as no_policy (legacy behavior).
 type abacStubClient struct {

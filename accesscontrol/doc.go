@@ -19,6 +19,11 @@
 // while attribute-based agents fail open by design — allowed without any
 // legacy check, since their user/team lists are ignored in that mode.
 //
+// Servers below MinServerVersionForABAC lack the ABAC plugin APIs entirely;
+// production wiring selects NewLegacyOnly for them (version-gated, never
+// probe-based). In that mode the fail-open above does NOT apply: policy
+// existence cannot be resolved, so persisted attribute-based agents deny.
+//
 // Enforcement call sites live in bots/ (composite agent+service gate), mcp/
 // (per-user server filtering), llmcontext/ (meta-tool omission), and api/
 // (authoring routes, list filters) per contract §9.4.

@@ -228,26 +228,26 @@ func (p *Plugin) OnActivate() error {
 	//
 	// Capability selection is version-based: pre-11.10 servers lack the ABAC
 	// plugin APIs entirely (the generated RPC client silently swallows calls
-	// to nonexistent methods), so the checker gets the passthrough client and
-	// no PAP handle — pure legacy behavior, with the status endpoint
-	// reporting unavailable so all ABAC UI hides. It must never be
-	// probe-based: a transient probe failure on a new server selecting
-	// passthrough would fail open where the decision tables require deny.
+	// to nonexistent methods), so the checker runs in legacy-only mode —
+	// legacy access modes keep their legacy checks, services/MCP servers are
+	// unrestricted, persisted attribute-based agents are denied (the plugin
+	// cannot know whether a policy gates them), and the status endpoint
+	// reports unavailable so all ABAC UI hides. Selection must never be
+	// probe-based: a transient probe failure on a new server dropping to
+	// legacy-only would fail open where the decision tables require deny.
 	mcpServerIDsByOrigin := func() map[string]string {
 		mcpConfig := p.configuration.MCP()
 		return mcpConfig.ServerIDByOrigin()
 	}
 	serverVersion := p.API.GetServerVersion()
-	var decisionClient accesscontrol.DecisionClient = accesscontrol.PassthroughClient{}
-	var papAPI plugin.API
+	var accessChecker *accesscontrol.Checker
 	if accesscontrol.ServerSupportsABAC(serverVersion) {
-		decisionClient = accesscontrol.NewPluginAPIClient(p.API)
-		papAPI = p.API
+		accessChecker = accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, mcpServerIDsByOrigin, &pluginAPI.Log)
 	} else {
-		pluginAPI.Log.Warn("Attribute-based access control requires Mattermost server "+accesscontrol.MinServerVersionForABAC+" or later; running with legacy access checks only",
+		pluginAPI.Log.Warn("Attribute-based access control requires Mattermost server "+accesscontrol.MinServerVersionForABAC+" or later; running with legacy access checks only, and denying agents saved in attribute-based mode",
 			"server_version", serverVersion)
+		accessChecker = accesscontrol.NewLegacyOnly(mcpServerIDsByOrigin, &pluginAPI.Log)
 	}
-	accessChecker := accesscontrol.New(decisionClient, papAPI, mcpServerIDsByOrigin, &pluginAPI.Log)
 	p.accessChecker = accessChecker
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, accessChecker, llmUpstreamHTTPClient, metricsService)

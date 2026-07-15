@@ -76,7 +76,8 @@ type MMBots struct {
 }
 
 // New builds the bot registry. accessChecker must be non-nil; tests wanting
-// pure-legacy behavior pass an accesscontrol.New with the PassthroughClient.
+// no-policies-anywhere decision behavior pass an accesscontrol.New with the
+// PassthroughClient.
 func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, accessChecker *accesscontrol.Checker, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
 	var pluginTokenLogger llm.TokenUsagePluginLogger
 	if pluginAPI != nil {
