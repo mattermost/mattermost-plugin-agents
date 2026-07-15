@@ -92,13 +92,19 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// rotate IDs on every save; identity conflicts abort the save entirely.
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		next := cfg
+		// Reconciliation runs even on the first write (empty previous list):
+		// every incoming ID must reference a stored server, so fabricated or
+		// duplicate IDs cannot slip in unvalidated before the first config
+		// row exists.
+		var prevServers []config.MCPServerConfig
 		if prev != nil {
-			reconciled, reconcileErr := config.ReconcileMCPServerIDs(next.MCP.Servers, prev.MCP.Servers)
-			if reconcileErr != nil {
-				return config.Config{}, reconcileErr
-			}
-			next.MCP.Servers = reconciled
+			prevServers = prev.MCP.Servers
 		}
+		reconciled, reconcileErr := config.ReconcileMCPServerIDs(next.MCP.Servers, prevServers)
+		if reconcileErr != nil {
+			return config.Config{}, reconcileErr
+		}
+		next.MCP.Servers = reconciled
 		return normalizeAdminConfig(next), nil
 	})
 	switch {

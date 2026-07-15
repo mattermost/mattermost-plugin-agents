@@ -619,6 +619,55 @@ func TestHandleSaveConfigRejectsMCPServerIDConflicts(t *testing.T) {
 	}
 }
 
+// TestHandleSaveConfigFirstWriteRejectsIncomingMCPIDs covers the first-write
+// path (no stored config yet): reconciliation must still run against an empty
+// previous list, so fabricated or duplicate incoming MCP server IDs are
+// rejected instead of being persisted unvalidated.
+func TestHandleSaveConfigFirstWriteRejectsIncomingMCPIDs(t *testing.T) {
+	tests := []struct {
+		name           string
+		payloadServers []config.MCPServerConfig
+	}{
+		{
+			name: "fabricated ID on first write",
+			payloadServers: []config.MCPServerConfig{
+				{ID: "invented-by-client", Name: "Jira", BaseURL: "https://jira.example.com"},
+			},
+		},
+		{
+			name: "duplicate IDs on first write",
+			payloadServers: []config.MCPServerConfig{
+				{ID: "invented-by-client", Name: "Jira", BaseURL: "https://jira.example.com"},
+				{ID: "invented-by-client", Name: "Copy", BaseURL: "https://copy.example.com"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{cfg: nil}
+			updater := &testConfigUpdater{}
+			notifier := &testClusterNotifier{}
+			router := setupTestRouter(store, updater, notifier)
+
+			body, err := json.Marshal(config.Config{
+				MCP: config.MCPConfig{Servers: tt.payloadServers},
+			})
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusConflict, w.Code)
+			assert.Nil(t, store.cfg, "nothing must be persisted on rejection")
+			assert.Equal(t, 0, updater.callCount)
+			assert.Equal(t, 0, notifier.callCount)
+		})
+	}
+}
+
 // TestHandleSaveConfigRejectsStaleLegacyServiceIDs covers the interleaving
 // where a pre-upgrade webapp bundle loaded the config before the ID migration
 // ran and then saves UUID service IDs back: the save must fail with 409 and

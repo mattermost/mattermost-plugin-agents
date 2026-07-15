@@ -152,23 +152,28 @@ var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
 // field). Server IDs are ABAC policy identities, so identity mistakes are
 // never papered over: silently minting a fresh ID for an existing server
 // detaches its policy (lookup becomes no-policy, which fails open), and
-// transferring an ID guards the wrong server. Matching therefore never
-// guesses, and anything suspicious is an ErrMCPServerIDConflict error:
+// transferring an ID guards the wrong server. Matching runs in global phases
+// over the whole payload rather than entry-by-entry, so the outcome cannot
+// depend on payload order, and anything suspicious is an
+// ErrMCPServerIDConflict error:
 //
-//  1. Incoming entries that already carry an ID must reference a distinct
-//     existing prev entry. Duplicate incoming IDs and IDs absent from prev
-//     (fabricated/foreign — an admin bundle never invents IDs) are errors.
-//     Matching prev entries are consumed first, regardless of position, so an
-//     ID-less entry can never steal an identity an ID-bearing entry holds.
-//  2. Each ID-less entry then matches unconsumed prev entries by exact
-//     (Name, BaseURL), else by Name with no BaseURL match elsewhere, else by
-//     BaseURL with no Name match elsewhere.
-//  3. Any ambiguity — multiple candidates in a tier, or Name and BaseURL
-//     pointing at different prev entries — is an error.
+//  1. Explicit-ID claims: incoming entries that already carry an ID must each
+//     reference a distinct existing prev entry. Duplicate incoming IDs and
+//     IDs absent from prev (fabricated/foreign — an admin bundle never
+//     invents IDs) are errors.
+//  2. Exact claims: each remaining ID-less entry with an exact
+//     (Name, BaseURL) match takes that prev entry's ID. Matching is against
+//     the full stored list, so a prev entry already claimed — in phase 1 or
+//     by another exact claim — is an error, never a silent fallback.
+//  3. Weak claims: each still-unmatched entry matches the unclaimed
+//     remainder by Name with no BaseURL match elsewhere, else by BaseURL
+//     with no Name match elsewhere. Ambiguity (multiple candidates on an
+//     axis, or Name and BaseURL pointing at different prev entries) and two
+//     entries resolving to the same prev entry are errors.
 //  4. Entries matching nothing at all are genuinely new and stay ID-less;
 //     the caller mints a fresh ID (the legitimate add-server path).
 //
-// Each prev entry is consumed at most once.
+// Each prev entry is claimed at most once across all phases.
 func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MCPServerConfig, error) {
 	prevByID := make(map[string]int, len(prev))
 	for j := range prev {
@@ -177,9 +182,9 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MC
 		}
 	}
 
-	consumed := make([]bool, len(prev))
+	claimed := make([]bool, len(prev))
 
-	// Pass 1: entries arriving with an ID keep it and consume the prev entry
+	// Phase 1: entries arriving with an ID keep it and claim the prev entry
 	// holding that ID.
 	seenIncoming := make(map[string]bool, len(next))
 	for i := range next {
@@ -195,41 +200,72 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MC
 		if !ok {
 			return nil, fmt.Errorf("%w: server %q carries ID %q which does not exist in the stored configuration", ErrMCPServerIDConflict, next[i].Name, id)
 		}
-		consumed[j] = true
+		claimed[j] = true
 	}
 
-	// Pass 2: ID-less entries match against remaining prev entries.
+	// Phase 2: exact (Name, BaseURL) claims, resolved against the full stored
+	// list. Resolving exact claims for the whole payload before any weak
+	// claim means an earlier weak match can never shadow a later exact one.
+	exactMatch := make([]int, len(next))
 	for i := range next {
+		exactMatch[i] = -1
+		if next[i].ID != "" {
+			continue
+		}
+		candidate := -1
+		for j := range prev {
+			if prev[j].ID == "" || prev[j].Name != next[i].Name || prev[j].BaseURL != next[i].BaseURL {
+				continue
+			}
+			if candidate >= 0 {
+				return nil, fmt.Errorf("%w: server %q matches multiple identical stored servers", ErrMCPServerIDConflict, next[i].Name)
+			}
+			candidate = j
+		}
+		if candidate < 0 {
+			continue
+		}
+		if claimed[candidate] {
+			return nil, fmt.Errorf("%w: server %q claims a stored server another entry in the payload already claims", ErrMCPServerIDConflict, next[i].Name)
+		}
+		claimed[candidate] = true
+		exactMatch[i] = candidate
+	}
+	for i, j := range exactMatch {
+		if j >= 0 {
+			next[i].ID = prev[j].ID
+		}
+	}
+
+	// Phase 3: weak claims against the unclaimed remainder. Every entry sees
+	// the same post-phase-2 snapshot, and two weak claims resolving to the
+	// same prev entry are rejected, so this phase is order-independent too.
+	weakClaimed := make(map[int]bool, len(prev))
+	weakMatch := make([]int, len(next))
+	for i := range next {
+		weakMatch[i] = -1
 		if next[i].ID != "" {
 			continue
 		}
 
-		var nameMatches, urlMatches, exactMatches []int
+		var nameMatches, urlMatches []int
 		for j := range prev {
-			if consumed[j] || prev[j].ID == "" {
+			if claimed[j] || prev[j].ID == "" {
 				continue
 			}
-			nameEq := prev[j].Name == next[i].Name
-			urlEq := prev[j].BaseURL == next[i].BaseURL
-			if nameEq {
+			if prev[j].Name == next[i].Name {
 				nameMatches = append(nameMatches, j)
 			}
-			if urlEq {
+			if prev[j].BaseURL == next[i].BaseURL {
 				urlMatches = append(urlMatches, j)
-			}
-			if nameEq && urlEq {
-				exactMatches = append(exactMatches, j)
 			}
 		}
 
-		match := -1
+		var match int
 		switch {
-		case len(exactMatches) == 1:
-			match = exactMatches[0]
-		case len(exactMatches) > 1:
-			return nil, fmt.Errorf("%w: server %q matches multiple identical stored servers", ErrMCPServerIDConflict, next[i].Name)
 		case len(nameMatches) == 0 && len(urlMatches) == 0:
 			// Genuinely new: no identity claim to resolve.
+			continue
 		case len(nameMatches) == 1 && len(urlMatches) == 0:
 			match = nameMatches[0]
 		case len(nameMatches) == 0 && len(urlMatches) == 1:
@@ -239,11 +275,18 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MC
 			// different stored servers.
 			return nil, fmt.Errorf("%w: server %q ambiguously matches more than one stored server", ErrMCPServerIDConflict, next[i].Name)
 		}
-		if match >= 0 {
-			next[i].ID = prev[match].ID
-			consumed[match] = true
+		if weakClaimed[match] {
+			return nil, fmt.Errorf("%w: server %q claims a stored server another entry in the payload already claims", ErrMCPServerIDConflict, next[i].Name)
+		}
+		weakClaimed[match] = true
+		weakMatch[i] = match
+	}
+	for i, j := range weakMatch {
+		if j >= 0 {
+			next[i].ID = prev[j].ID
 		}
 	}
+
 	return next, nil
 }
 

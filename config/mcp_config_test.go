@@ -189,17 +189,74 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 			expectIDs: []string{"id-two", "id-one"},
 		},
 		{
-			name: "ID-bearing entry consumes prev first; ID-less contender is new",
+			name: "explicit-ID claim and exact match competing across phases rejected",
 			next: []MCPServerConfig{
-				// ID-less entry comes first in the payload but must not steal
-				// the identity the ID-bearing entry still holds.
+				// The ID-less entry exactly matches the stored server the
+				// ID-bearing entry still holds: two entries strongly claiming
+				// one identity is a corrupt payload, never a guess.
 				{Name: "srv", BaseURL: "https://one.example.com"},
 				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
 			},
 			prev: []MCPServerConfig{
 				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
 			},
+			expectErr: true,
+		},
+		{
+			name: "weak match earlier in the payload cannot steal a later exact match",
+			next: []MCPServerConfig{
+				// Payload order: the unique-Name weak match comes first, but
+				// the second entry is an exact (Name, BaseURL) round-trip of
+				// the stored server. Exact claims resolve globally before any
+				// weak claim, so the first entry stays new.
+				{Name: "srv", BaseURL: "https://moved.example.com"},
+				{Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
 			expectIDs: []string{"", "prev-id"},
+		},
+		{
+			name: "two identical ID-less entries competing for one stored server rejected",
+			next: []MCPServerConfig{
+				{Name: "srv", BaseURL: "https://one.example.com"},
+				{Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			expectErr: true,
+		},
+		{
+			name: "two weak claims resolving to the same stored server rejected",
+			next: []MCPServerConfig{
+				// First entry matches by unique Name, second by unique
+				// BaseURL — both resolve to the single stored server, and
+				// which one deserves the identity cannot be decided.
+				{Name: "srv", BaseURL: "https://a.example.com"},
+				{Name: "other", BaseURL: "https://one.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			expectErr: true,
+		},
+		{
+			name: "first write: incoming ID with no stored config rejected",
+			next: []MCPServerConfig{
+				{ID: "invented-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			prev:      nil,
+			expectErr: true,
+		},
+		{
+			name: "first write: ID-less entries stay ID-less for the caller to mint",
+			next: []MCPServerConfig{
+				{Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			prev:      nil,
+			expectIDs: []string{""},
 		},
 		{
 			name: "duplicate incoming IDs rejected",
