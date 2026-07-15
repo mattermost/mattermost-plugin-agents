@@ -362,9 +362,9 @@ func TestRebuildIndexRemovalRegatedUnderLock(t *testing.T) {
 	assert.True(t, index.marker(ResourceTypeService, resourceID))
 }
 
-// TestRebuildIndexAbandonsOnCancelledContext: a cancelled lifecycle context
+// TestRebuildIndexAbandonsOnCanceledContext: a canceled lifecycle context
 // (plugin deactivation) abandons the sweep without touching the index.
-func TestRebuildIndexAbandonsOnCancelledContext(t *testing.T) {
+func TestRebuildIndexAbandonsOnCanceledContext(t *testing.T) {
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 
