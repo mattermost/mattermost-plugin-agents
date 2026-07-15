@@ -35,11 +35,7 @@ const AccessTab = (props: Props) => {
         if (abacSupported && agentId) {
             attributeBasedContent = (
                 <PolicyEditorWrapper>
-                    {/* Keyed remount: a resource identity change must never
-                        leave stale editor state (open delete dialog, advanced
-                        lock, draft expression) aimed at the new resource. */}
                     <PolicyEditor
-                        key={`agent-${agentId}`}
                         resourceType='agent'
                         resourceId={agentId}
                         resourceDisplayName={draft.displayName}

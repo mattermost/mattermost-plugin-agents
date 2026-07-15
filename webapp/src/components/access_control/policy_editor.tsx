@@ -27,11 +27,6 @@ import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import LoadingSpinner from '@/components/assets/loading_spinner';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 
-// Call sites MUST key this component by resource identity
-// (key={`${resourceType}-${resourceId}`}): all editor state (draft
-// expression, advanced lock, the delete-confirmation dialog) is scoped to one
-// resource, and a keyed remount guarantees none of it can survive a resource
-// switch and act on the wrong target.
 export type PolicyEditorProps = {
     resourceType: PolicyResourceType;
     resourceId: string;
@@ -53,6 +48,27 @@ export type PolicyEditorProps = {
 // (F6) — the CEL editor must never render for non-admin callers.
 type EditorMode = 'simplified' | 'advanced';
 type EditorView = EditorMode | 'unsupported';
+
+// deriveView computes the rendered view purely from the stored mode, the
+// lock state, and the CURRENT permission props on every render. The stored
+// mode is a preference, never an entitlement: 'advanced' is structurally
+// unreachable when allowAdvanced is false, so a privilege downgrade
+// mid-session (allowAdvanced flipping without a resource change) can never
+// leave the CEL editor exposed.
+function deriveView(mode: EditorMode, advancedLocked: boolean, allowSimplified: boolean, allowAdvanced: boolean): EditorView {
+    if (advancedLocked) {
+        // The expression can't render in the table editor: advanced for
+        // those allowed to use it, read-only unsupported for everyone else.
+        return allowAdvanced ? 'advanced' : 'unsupported';
+    }
+    if (mode === 'advanced' && allowAdvanced) {
+        return 'advanced';
+    }
+    if (allowSimplified) {
+        return 'simplified';
+    }
+    return allowAdvanced ? 'advanced' : 'unsupported';
+}
 
 // wrapAction adapts plugin client promises onto the ActionResult shape
 // ({data} / {error}) the host webapp's editors expect.
@@ -83,7 +99,7 @@ function policyClientFor(resourceType: PolicyResourceType) {
 
 const DELETE_POLICY_TITLE_ID = 'delete-access-policy-title';
 
-const PolicyEditor = (props: PolicyEditorProps) => {
+const PolicyEditorContent = (props: PolicyEditorProps) => {
     const {resourceType, resourceId, resourceDisplayName, allowSimplified, allowAdvanced, agentIdForAuthz} = props;
     const intl = useIntl();
     const editors = getAccessControlEditors();
@@ -103,10 +119,10 @@ const PolicyEditor = (props: PolicyEditorProps) => {
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
     // Load once per mount. Cross-resource state bleed (stale advanced lock,
-    // open delete dialog, draft expression) is prevented structurally: every
-    // call site keys this component by resource identity, so a resource
-    // switch remounts with fresh state. The cancelled flag guards the load's
-    // own async completions across that remount.
+    // open delete dialog, draft expression) is prevented structurally: the
+    // exported PolicyEditor wrapper keys this component by resource identity,
+    // so a resource switch remounts with fresh state. The cancelled flag
+    // guards the load's own async completions across that remount.
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
@@ -249,13 +265,7 @@ const PolicyEditor = (props: PolicyEditorProps) => {
         return <ErrorText>{loadError}</ErrorText>;
     }
 
-    // Allowed-modes model: a locked policy renders in the advanced editor only
-    // for callers that are allowed to use it; everyone else gets the read-only
-    // unsupported view.
-    let view: EditorView = mode;
-    if (advancedLocked) {
-        view = allowAdvanced ? 'advanced' : 'unsupported';
-    }
+    const view = deriveView(mode, advancedLocked, allowSimplified, allowAdvanced);
 
     const showToggle = allowSimplified && allowAdvanced && !advancedLocked;
     const dirty = expression !== savedExpression;
@@ -448,5 +458,17 @@ const RemoveButton = styled(TertiaryButton)`
 const SavePolicyButton = styled(PrimaryButton)`
     height: 36px;
 `;
+
+// PolicyEditor applies the resource-identity keyed remount itself: all
+// editor state (draft expression, advanced lock, the delete-confirmation
+// dialog) is scoped to one resource, and remounting on identity change
+// guarantees none of it can survive a resource switch and act on the wrong
+// target. Centralized here so no call site can forget it.
+const PolicyEditor = (props: PolicyEditorProps) => (
+    <PolicyEditorContent
+        key={`${props.resourceType}-${props.resourceId}`}
+        {...props}
+    />
+);
 
 export default PolicyEditor;

@@ -292,10 +292,11 @@ describe('PolicyEditor', () => {
         expect((screen.getByText('Save policy').closest('button') as HTMLButtonElement).disabled).toBe(false);
     });
 
-    it('starts from fresh state when the keyed resource identity changes', async () => {
-        // Call sites key the editor by resource identity, so a resource
-        // switch remounts: a lock (or any other editor state) from the
-        // previous resource can never leak into the next one.
+    it('starts from fresh state when the resource identity changes', async () => {
+        // The exported PolicyEditor keys its content by resource identity
+        // itself (no key prop at the call site), so a resource switch
+        // remounts: a lock (or any other editor state) from the previous
+        // resource can never leak into the next one.
         client.getAgentAccessPolicy.mockResolvedValue({
             ...existingPolicy,
             rules: [
@@ -303,22 +304,13 @@ describe('PolicyEditor', () => {
                 {actions: ['use'], expression: 'user.attributes.level >= 2'},
             ],
         });
-        const {rerender} = render(
-            <IntlProvider locale='en'>
-                <PolicyEditor
-                    key={'agent-' + defaultProps.resourceId}
-                    {...defaultProps}
-                    allowAdvanced={false}
-                />
-            </IntlProvider>,
-        );
+        const {rerender} = renderEditor({allowAdvanced: false});
         expect(await screen.findByText('This policy uses expressions that can only be edited by a system administrator. You can remove the policy to start over.')).toBeTruthy();
 
         client.getAgentAccessPolicy.mockResolvedValue(null);
         rerender(
             <IntlProvider locale='en'>
                 <PolicyEditor
-                    key='agent-agentidbbbbbbbbbbbbbbbbbbb'
                     {...defaultProps}
                     allowAdvanced={false}
                     resourceId='agentidbbbbbbbbbbbbbbbbbbb'
@@ -328,6 +320,49 @@ describe('PolicyEditor', () => {
 
         expect(await screen.findByTestId('table-editor')).toBeTruthy();
         expect(screen.getByTestId('table-value').textContent).toBe('');
+    });
+
+    it('falls back to the simple editor when advanced permission is revoked mid-session', async () => {
+        // A privilege downgrade changes props without changing the resource,
+        // so nothing remounts: the derived view must stop rendering the CEL
+        // editor even though the stored mode is still 'advanced'.
+        const {rerender} = renderEditor();
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+        fireEvent.click(screen.getByText('Advanced'));
+        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+
+        rerender(
+            <IntlProvider locale='en'>
+                <PolicyEditor
+                    {...defaultProps}
+                    allowAdvanced={false}
+                />
+            </IntlProvider>,
+        );
+
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+        expect(screen.queryByTestId('cel-editor')).toBeNull();
+        expect(screen.queryByText('Advanced')).toBeNull();
+    });
+
+    it('shows the read-only unsupported state when advanced permission is revoked and simplified is not allowed', async () => {
+        const {rerender} = renderEditor({allowSimplified: false});
+        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+
+        rerender(
+            <IntlProvider locale='en'>
+                <PolicyEditor
+                    {...defaultProps}
+                    allowSimplified={false}
+                    allowAdvanced={false}
+                />
+            </IntlProvider>,
+        );
+
+        expect(await screen.findByText('This policy uses expressions that can only be edited by a system administrator. You can remove the policy to start over.')).toBeTruthy();
+        expect(screen.queryByTestId('cel-editor')).toBeNull();
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+        expect(screen.queryByText('Save policy')).toBeNull();
     });
 
     it('shows the read-only unsupported state on parse errors when advanced is not allowed', async () => {
