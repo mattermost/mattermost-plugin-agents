@@ -118,11 +118,16 @@ func (c *Checker) indexGated(resourceType, resourceID string) bool {
 	return has
 }
 
-// scheduleReconcile hands a definitive decision outcome to the background
-// reconciliation worker. The hot path must never block on the KV-backed
-// index for allow/deny/no_policy outcomes: enqueue is in-memory bookkeeping
-// plus a non-blocking buffered channel send; the actual index reads/writes
-// happen in reconcileIndex on the worker goroutine.
+// scheduleReconcile hands a resource that produced a definitive decision
+// outcome to the background reconciliation worker. The hot path must never
+// block on the KV-backed index for allow/deny/no_policy outcomes: enqueue is
+// in-memory bookkeeping plus a non-blocking buffered channel send; the actual
+// index reads/writes happen in reconcileIndex on the worker goroutine.
+//
+// Only the resource identity is enqueued, never the outcome: by the time the
+// worker runs, the outcome may predate a policy save/delete, and reconciling
+// against a stale outcome would let the deduplication window suppress the
+// correction. The worker always fetches fresh server truth instead.
 func (c *Checker) scheduleReconcile(resourceType, resourceID string, outcome Outcome) {
 	if outcome == OutcomeUnavailable {
 		// No server truth to reconcile against.
@@ -133,7 +138,7 @@ func (c *Checker) scheduleReconcile(resourceType, resourceID string, outcome Out
 		// policy-addressable and can never carry a marker.
 		return
 	}
-	c.reconciler.enqueue(resourceType, resourceID, outcome)
+	c.reconciler.enqueue(resourceType, resourceID)
 }
 
 // reconcileIndex self-heals the fail-closed policy index from server truth
@@ -146,66 +151,54 @@ func (c *Checker) scheduleReconcile(resourceType, resourceID string, outcome Out
 // schedules a reconciliation of the marker for the resource it evaluated,
 // processed here on the background worker (see reconciler).
 //
-//   - allow/deny means the PDP evaluated a stored policy — the marker must
-//     exist. Adding is the fail-closed direction and needs no confirmation.
-//   - no_policy suggests the marker is stale, but the outcome may predate an
-//     in-flight save, so removal is confirmed against server truth (a Get
-//     returning 404) under the mutation mutex before the marker is dropped.
+// The decision outcome that scheduled the reconciliation is deliberately
+// ignored: the marker is reconciled against FRESH server truth (a Get of the
+// stored policy), so a queued request can never apply an outcome that a
+// concurrent policy mutation has since invalidated. Divergent writes happen
+// under the mutation mutex with the truth re-confirmed under the lock
+// (healDivergenceUnderLock).
 //
-// Writes happen only when the index diverges. The residual hazard window —
-// lease loss AND a concurrent opposing mutation AND an ABAC outage before the
-// next successful decision or plugin activation — is an accepted,
+// Returns true when the resource is confirmed converged — no divergence
+// found, or the heal write succeeded — which is the only condition that
+// starts the per-resource reconciliation cooldown. The residual hazard
+// window — lease loss AND a concurrent opposing mutation AND an ABAC outage
+// before the next successful decision or plugin activation — is an accepted,
 // self-correcting risk (see also RebuildIndex and DeletePolicy).
-func (c *Checker) reconcileIndex(resourceType, resourceID string, outcome Outcome) {
-	if !model.IsValidId(resourceID) {
-		// Short-circuited evaluations (config bots, invalid IDs) are never
-		// policy-addressable and can never carry a marker.
-		return
+func (c *Checker) reconcileIndex(resourceType, resourceID string) bool {
+	if c.papi == nil {
+		// Decision-only wiring (tests): no server truth to reconcile against.
+		return true
 	}
 
-	switch outcome {
-	case OutcomeAllow, OutcomeDeny:
-		if has, err := c.index.Has(resourceType, resourceID); err != nil || has {
-			return
-		}
-		c.mutationMu.Lock()
-		defer c.mutationMu.Unlock()
-		if has, err := c.index.Has(resourceType, resourceID); err != nil || has {
-			return
-		}
-		if err := c.index.Add(resourceType, resourceID); err != nil {
-			logWarn(c.log, "ABAC policy index self-heal failed to restore a missing marker",
-				"resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
-			return
-		}
-		logWarn(c.log, "ABAC policy index self-healed: restored a missing fail-closed marker for an enforced policy",
-			"resource_type", resourceType, "resource_id", resourceID)
-	case OutcomeNoPolicy:
-		if has, err := c.index.Has(resourceType, resourceID); err != nil || !has {
-			return
-		}
-		if c.papi == nil {
-			return
-		}
-		c.mutationMu.Lock()
-		defer c.mutationMu.Unlock()
-		if has, err := c.index.Has(resourceType, resourceID); err != nil || !has {
-			return
-		}
-		// Confirm against server truth under the mutex: the no_policy outcome
-		// may predate a save that committed in the meantime.
-		if _, appErr := c.papi.GetAccessControlPolicy(resourceID); !isNotFoundAppErr(appErr) {
-			return
-		}
-		if err := c.index.Remove(resourceType, resourceID); err != nil {
-			logWarn(c.log, "ABAC policy index self-heal failed to drop a stale marker",
-				"resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
-			return
-		}
-		logWarn(c.log, "ABAC policy index self-healed: dropped a stale fail-closed marker with no stored policy",
-			"resource_type", resourceType, "resource_id", resourceID)
-	case OutcomeUnavailable:
-		// No server truth to reconcile against.
+	want, readable := c.policyMarkerTruth(resourceID)
+	if !readable {
+		return false
+	}
+	has, err := c.index.Has(resourceType, resourceID)
+	if err != nil {
+		logWarn(c.log, "ABAC policy index self-heal could not read the policy index",
+			"resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
+		return false
+	}
+	if has == want {
+		return true
+	}
+	return c.healDivergenceUnderLock(rebuildRef{resourceType: resourceType, resourceID: resourceID})
+}
+
+// policyMarkerTruth fetches the server truth for one resource: wantMarker
+// reports whether a stored policy exists (the fail-closed marker must exist
+// exactly then); readable is false when the read failed and no conclusion
+// can be drawn.
+func (c *Checker) policyMarkerTruth(resourceID string) (wantMarker, readable bool) {
+	_, appErr := c.papi.GetAccessControlPolicy(resourceID)
+	switch {
+	case appErr == nil:
+		return true, true
+	case isNotFoundAppErr(appErr):
+		return false, true
+	default:
+		return false, false
 	}
 }
 

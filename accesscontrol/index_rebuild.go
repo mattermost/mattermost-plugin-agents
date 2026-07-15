@@ -60,16 +60,21 @@ func (c *Checker) RebuildIndex(ctx context.Context, resourceIDsByType map[string
 	}
 
 	// Phase 1: gather server truth outside the mutex, bounded concurrency.
+	// Semaphore acquisition selects on ctx so a deactivation never leaves
+	// this goroutine parked on a slot; the caller joins on the whole rebuild
+	// (see server/main.go), so no fetch can outlive the plugin.
 	truths := make([]rebuildTruth, len(refs))
 	var failed atomic.Int64
 	sem := make(chan struct{}, rebuildConcurrency)
 	var wg sync.WaitGroup
+gather:
 	for i := range refs {
-		if ctx.Err() != nil {
-			break
+		select {
+		case <-ctx.Done():
+			break gather
+		case sem <- struct{}{}:
 		}
 		wg.Add(1)
-		sem <- struct{}{}
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
@@ -92,10 +97,10 @@ func (c *Checker) RebuildIndex(ctx context.Context, resourceIDsByType map[string
 	wg.Wait()
 
 	// Phase 2: heal divergences. The cheap divergence check runs without the
-	// mutex; only a divergent resource takes the lock, and the divergence is
-	// re-confirmed under it (a concurrent PAP mutation may have already
-	// corrected the marker, and dropping a marker is additionally re-gated on
-	// fresh server truth, mirroring reconcileIndex).
+	// mutex against phase-one truth; only an apparently divergent resource
+	// takes the lock, where BOTH the index state and the server truth are
+	// re-derived fresh (a policy mutated between the phases must never be
+	// healed from the stale phase-one snapshot, in either direction).
 	var healed int64
 	for i, ref := range refs {
 		if ctx.Err() != nil {
@@ -115,7 +120,7 @@ func (c *Checker) RebuildIndex(ctx context.Context, resourceIDsByType map[string
 		if has == want {
 			continue
 		}
-		if c.healDivergenceUnderLock(ref, want) {
+		if c.healDivergenceUnderLock(ref) {
 			healed++
 		} else {
 			failed.Add(1)
@@ -136,45 +141,53 @@ func (c *Checker) RebuildIndex(ctx context.Context, resourceIDsByType map[string
 		"scanned", len(refs), "healed", 0, "failed", 0)
 }
 
-// healDivergenceUnderLock re-confirms and heals one divergent marker under
-// the mutation mutex. Reports true when the marker was changed; false when
-// the write failed. A divergence that disappeared under the lock (concurrent
-// PAP mutation, or fresher server truth for a removal) is reported as true
-// without a write: it is no longer divergent.
-func (c *Checker) healDivergenceUnderLock(ref rebuildRef, wantMarker bool) bool {
+// healDivergenceUnderLock heals one apparently divergent marker under the
+// mutation mutex, re-deriving BOTH sides of the comparison under the lock:
+// the index state (a concurrent PAP mutation may have already corrected it)
+// and the server truth via a fresh Get. Re-confirming the truth matters in
+// both directions — a pre-lock 404 may predate a save that committed in the
+// meantime (dropping the marker would fail open), and a pre-lock hit may
+// predate a delete (re-adding the marker would fail closed for a resource
+// with no policy). Reports true when the resource is confirmed converged
+// (no divergence remained, or the heal write succeeded); false when the
+// truth could not be re-read or the write failed.
+func (c *Checker) healDivergenceUnderLock(ref rebuildRef) bool {
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 
 	has, err := c.index.Has(ref.resourceType, ref.resourceID)
 	if err != nil {
-		logWarn(c.log, "ABAC index rebuild could not re-read the policy index under the lock",
+		logWarn(c.log, "ABAC policy index heal could not re-read the policy index under the lock",
 			"resource_type", ref.resourceType, "resource_id", ref.resourceID, "error", err.Error())
 		return false
 	}
-	if has == wantMarker {
+	want, readable := c.policyMarkerTruth(ref.resourceID)
+	if !readable {
+		logDebug(c.log, "ABAC policy index heal could not re-read the policy under the lock; leaving the marker unchanged",
+			"resource_type", ref.resourceType, "resource_id", ref.resourceID)
+		return false
+	}
+	if has == want {
 		return true
 	}
 
-	if wantMarker {
-		// Adding is the fail-closed direction and needs no re-confirmation.
+	if want {
 		if err := c.index.Add(ref.resourceType, ref.resourceID); err != nil {
-			logWarn(c.log, "ABAC index rebuild failed to restore a marker",
+			logWarn(c.log, "ABAC policy index heal failed to restore a marker",
 				"resource_type", ref.resourceType, "resource_id", ref.resourceID, "error", err.Error())
 			return false
 		}
+		logWarn(c.log, "ABAC policy index self-healed: restored a missing fail-closed marker for an enforced policy",
+			"resource_type", ref.resourceType, "resource_id", ref.resourceID)
 		return true
 	}
 
-	// Dropping a marker fails open, so re-confirm against fresh server truth
-	// under the lock: the pre-lock 404 may predate a save that committed in
-	// the meantime.
-	if _, appErr := c.papi.GetAccessControlPolicy(ref.resourceID); !isNotFoundAppErr(appErr) {
-		return true
-	}
 	if err := c.index.Remove(ref.resourceType, ref.resourceID); err != nil {
-		logWarn(c.log, "ABAC index rebuild failed to drop a stale marker",
+		logWarn(c.log, "ABAC policy index heal failed to drop a stale marker",
 			"resource_type", ref.resourceType, "resource_id", ref.resourceID, "error", err.Error())
 		return false
 	}
+	logWarn(c.log, "ABAC policy index self-healed: dropped a stale fail-closed marker with no stored policy",
+		"resource_type", ref.resourceType, "resource_id", ref.resourceID)
 	return true
 }

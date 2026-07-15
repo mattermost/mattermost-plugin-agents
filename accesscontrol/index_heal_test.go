@@ -21,8 +21,9 @@ import (
 // policy index divergent from the stored policies. Every decision with a
 // definitive outcome schedules a background reconciliation of the marker for
 // the evaluated resource (the hot path never blocks on the index for
-// definitive outcomes), and activation rebuilds the whole index from server
-// truth.
+// definitive outcomes), the worker reconciles against FRESH server truth
+// rather than the outcome that scheduled it, and activation rebuilds the
+// whole index from server truth.
 
 func notFoundGetAppErr() *model.AppError {
 	return model.NewAppError("GetAccessControlPolicy", "not found", nil, "", http.StatusNotFound)
@@ -72,9 +73,16 @@ func TestDecisionHealsMissingMarker(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resourceID := model.NewId()
+
+			// The worker reconciles against fresh server truth: one Get in
+			// the reconcile pass, one re-confirmation under the lock.
+			api := &plugintest.API{}
+			defer api.AssertExpectations(t)
+			api.On("GetAccessControlPolicy", resourceID).Return(&model.AccessControlPolicy{ID: resourceID}, nil).Twice()
+
 			client := &stubDecisionClient{outcome: tt.outcome}
 			index := &stubPolicyIndex{has: map[string]bool{}}
-			c := New(client, nil, index, NoMCPServerIDs, nil, nil)
+			c := New(client, api, index, NoMCPServerIDs, nil, nil)
 			t.Cleanup(c.Close)
 
 			err := tt.invoke(c, model.NewId(), resourceID)
@@ -96,9 +104,15 @@ func TestDecisionHealsMissingMarker(t *testing.T) {
 // already matches the outcome (only write when divergent).
 func TestDecisionDoesNotRewritePresentMarker(t *testing.T) {
 	resourceID := model.NewId()
+
+	// Fresh truth agrees with the marker: one Get, no lock, no writes.
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	api.On("GetAccessControlPolicy", resourceID).Return(&model.AccessControlPolicy{ID: resourceID}, nil).Once()
+
 	client := &stubDecisionClient{outcome: OutcomeAllow}
 	index := &stubPolicyIndex{has: map[string]bool{indexKey(ResourceTypeService, resourceID): true}}
-	c := New(client, nil, index, NoMCPServerIDs, nil, nil)
+	c := New(client, api, index, NoMCPServerIDs, nil, nil)
 	t.Cleanup(c.Close)
 
 	require.NoError(t, c.CanUseService(context.Background(), model.NewId(), resourceID))
@@ -163,9 +177,16 @@ func TestDecisionFailClosedPathStillReadsIndexSynchronously(t *testing.T) {
 // requests are dropped while one is pending or inside the cooldown window.
 func TestReconcilerDedupsBurstsToOneHeal(t *testing.T) {
 	resourceID := model.NewId()
+
+	// Exactly one reconciliation: one truth Get plus one under-lock
+	// re-confirmation. More Gets would mean the dedup failed.
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	api.On("GetAccessControlPolicy", resourceID).Return(&model.AccessControlPolicy{ID: resourceID}, nil).Twice()
+
 	client := &stubDecisionClient{outcome: OutcomeAllow}
 	index := &stubPolicyIndex{has: map[string]bool{}}
-	c := New(client, nil, index, NoMCPServerIDs, nil, nil)
+	c := New(client, api, index, NoMCPServerIDs, nil, nil)
 	t.Cleanup(c.Close)
 	c.reconciler.cooldown = time.Hour
 
@@ -187,9 +208,16 @@ func TestReconcilerDedupsBurstsToOneHeal(t *testing.T) {
 // requests for the same resource are dropped until the cooldown elapses.
 func TestReconcilerThrottlesPerResourceCooldown(t *testing.T) {
 	resourceID := model.NewId()
+
+	// Two heals run (before and after the cooldown), two Gets each; the
+	// throttled request in between must not hit the server at all.
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	api.On("GetAccessControlPolicy", resourceID).Return(&model.AccessControlPolicy{ID: resourceID}, nil).Times(4)
+
 	client := &stubDecisionClient{outcome: OutcomeAllow}
 	index := &stubPolicyIndex{has: map[string]bool{}}
-	c := New(client, nil, index, NoMCPServerIDs, nil, nil)
+	c := New(client, api, index, NoMCPServerIDs, nil, nil)
 	t.Cleanup(c.Close)
 	c.reconciler.cooldown = time.Hour
 
@@ -215,6 +243,91 @@ func TestReconcilerThrottlesPerResourceCooldown(t *testing.T) {
 	assert.Len(t, index.addedKeys(), 2, "after the cooldown the divergence heals again")
 }
 
+// TestReconcilerStaleOutcomeConvergesToFreshTruth: a queued no_policy
+// outcome can go stale when a policy save commits before the worker runs,
+// and the newer allow decision is deduplicated away. The worker must ignore
+// the enqueued outcome and reconcile against fresh server truth, so the
+// marker still converges to present.
+func TestReconcilerStaleOutcomeConvergesToFreshTruth(t *testing.T) {
+	resourceID := model.NewId()
+
+	// Server truth at reconcile time: the policy exists (the save committed
+	// after the no_policy outcome was queued).
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	api.On("GetAccessControlPolicy", resourceID).Return(&model.AccessControlPolicy{ID: resourceID}, nil).Twice()
+
+	client := &stubDecisionClient{outcome: OutcomeNoPolicy}
+	index := &stubPolicyIndex{has: map[string]bool{}}
+	c := New(client, api, index, NoMCPServerIDs, nil, nil)
+	t.Cleanup(c.Close)
+	c.reconciler.cooldown = time.Hour
+
+	// Decision 1 queues the (about-to-be-stale) no_policy outcome; the newer
+	// allow decision is dropped by dedup/cooldown either way.
+	require.NoError(t, c.CanUseService(context.Background(), model.NewId(), resourceID))
+	client.outcome = OutcomeAllow
+	require.NoError(t, c.CanUseService(context.Background(), model.NewId(), resourceID))
+	drainReconciler(t, c)
+
+	assert.EqualValues(t, 1, c.reconciler.enqueued.Load())
+	assert.EqualValues(t, 1, c.reconciler.dropped.Load(), "the newer decision must have been deduplicated away")
+	assert.Equal(t, []string{indexKey(ResourceTypeService, resourceID)}, index.addedKeys(),
+		"fresh server truth must win over the stale queued outcome")
+	assert.True(t, index.marker(ResourceTypeService, resourceID))
+}
+
+// TestReconcilerNoCooldownWithoutConvergence: a reconciliation that cannot
+// confirm convergence (unreadable server truth) must not start the cooldown;
+// the next decision re-enqueues and heals once the truth is readable again.
+func TestReconcilerNoCooldownWithoutConvergence(t *testing.T) {
+	resourceID := model.NewId()
+
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	api.On("GetAccessControlPolicy", resourceID).
+		Return(nil, model.NewAppError("GetAccessControlPolicy", "boom", nil, "", http.StatusInternalServerError)).Once()
+	api.On("GetAccessControlPolicy", resourceID).Return(&model.AccessControlPolicy{ID: resourceID}, nil).Twice()
+
+	client := &stubDecisionClient{outcome: OutcomeAllow}
+	index := &stubPolicyIndex{has: map[string]bool{}}
+	c := New(client, api, index, NoMCPServerIDs, nil, nil)
+	t.Cleanup(c.Close)
+	c.reconciler.cooldown = time.Hour
+
+	require.NoError(t, c.CanUseService(context.Background(), model.NewId(), resourceID))
+	drainReconciler(t, c)
+	require.Empty(t, index.addedKeys(), "unreadable truth must not heal anything")
+
+	require.NoError(t, c.CanUseService(context.Background(), model.NewId(), resourceID))
+	drainReconciler(t, c)
+	assert.EqualValues(t, 2, c.reconciler.enqueued.Load(), "a failed reconciliation must not suppress the retry")
+	assert.Equal(t, []string{indexKey(ResourceTypeService, resourceID)}, index.addedKeys())
+}
+
+// TestReconcilerPruneExpiredCooldowns: the ticker sweep drops entries whose
+// cooldown has elapsed and keeps the ones that can still throttle.
+func TestReconcilerPruneExpiredCooldowns(t *testing.T) {
+	r := newReconciler(time.Minute)
+	r.mu.Lock()
+	r.lastRun["service/expired-a"] = time.Now().Add(-2 * time.Minute)
+	r.lastRun["service/expired-b"] = time.Now().Add(-time.Hour)
+	r.lastRun["service/fresh"] = time.Now()
+	r.mu.Unlock()
+
+	r.pruneExpiredCooldowns()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	assert.Equal(t, map[string]bool{"service/fresh": true}, func() map[string]bool {
+		keys := map[string]bool{}
+		for k := range r.lastRun {
+			keys[k] = true
+		}
+		return keys
+	}(), "only entries still inside the cooldown window survive the sweep")
+}
+
 // TestDecisionHealsStaleMarker: a no_policy outcome with a marker present
 // drops the marker — but only after Get confirms no stored policy (404).
 func TestDecisionHealsStaleMarker(t *testing.T) {
@@ -222,11 +335,14 @@ func TestDecisionHealsStaleMarker(t *testing.T) {
 		name       string
 		getPolicy  *model.AccessControlPolicy
 		getErr     *model.AppError
+		getCalls   int
 		wantRemove bool
 	}{
-		{name: "confirmed 404 removes the stale marker", getErr: notFoundGetAppErr(), wantRemove: true},
-		{name: "policy exists keeps the marker", getPolicy: &model.AccessControlPolicy{}},
-		{name: "unreadable truth keeps the marker", getErr: model.NewAppError("GetAccessControlPolicy", "boom", nil, "", http.StatusInternalServerError)},
+		// A confirmed 404 is read twice: once in the reconcile pass, once
+		// re-confirmed under the mutation lock before the fail-open removal.
+		{name: "confirmed 404 removes the stale marker", getErr: notFoundGetAppErr(), getCalls: 2, wantRemove: true},
+		{name: "policy exists keeps the marker", getPolicy: &model.AccessControlPolicy{}, getCalls: 1},
+		{name: "unreadable truth keeps the marker", getErr: model.NewAppError("GetAccessControlPolicy", "boom", nil, "", http.StatusInternalServerError), getCalls: 1},
 	}
 
 	for _, tt := range tests {
@@ -238,7 +354,7 @@ func TestDecisionHealsStaleMarker(t *testing.T) {
 
 			api := &plugintest.API{}
 			defer api.AssertExpectations(t)
-			api.On("GetAccessControlPolicy", resourceID).Return(tt.getPolicy, tt.getErr).Once()
+			api.On("GetAccessControlPolicy", resourceID).Return(tt.getPolicy, tt.getErr).Times(tt.getCalls)
 
 			client := &stubDecisionClient{outcome: OutcomeNoPolicy}
 			index := &stubPolicyIndex{has: map[string]bool{indexKey(ResourceTypeService, resourceID): true}}
@@ -307,9 +423,10 @@ func TestRebuildIndexHealsFromServerTruth(t *testing.T) {
 
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
-	api.On("GetAccessControlPolicy", agentWithPolicy).Return(&model.AccessControlPolicy{ID: agentWithPolicy}, nil).Once()
-	// The stale marker is fetched once in the truth-gathering phase and
-	// re-confirmed under the mutation lock before the fail-open removal.
+	// Divergent resources are fetched once in the truth-gathering phase and
+	// re-confirmed under the mutation lock before the heal write — in both
+	// directions (add and remove).
+	api.On("GetAccessControlPolicy", agentWithPolicy).Return(&model.AccessControlPolicy{ID: agentWithPolicy}, nil).Twice()
 	api.On("GetAccessControlPolicy", serviceStale).Return(nil, notFoundGetAppErr()).Twice()
 	api.On("GetAccessControlPolicy", mcpUnreadable).
 		Return(nil, model.NewAppError("GetAccessControlPolicy", "boom", nil, "", http.StatusInternalServerError)).Once()
@@ -360,6 +477,30 @@ func TestRebuildIndexRemovalRegatedUnderLock(t *testing.T) {
 
 	assert.Empty(t, index.removedKeys(), "a marker whose policy re-appeared under the lock must survive")
 	assert.True(t, index.marker(ResourceTypeService, resourceID))
+}
+
+// TestRebuildIndexAdditionRegatedUnderLock: the pre-lock hit may predate a
+// delete that committed between the phases; the under-lock re-confirmation
+// must not re-add a marker for a policy that no longer exists (a stale
+// marker would incorrectly fail closed later).
+func TestRebuildIndexAdditionRegatedUnderLock(t *testing.T) {
+	resourceID := model.NewId()
+
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	// First Get (truth phase): policy exists. Second Get (under lock): 404 —
+	// the policy was deleted between the phases.
+	api.On("GetAccessControlPolicy", resourceID).Return(&model.AccessControlPolicy{ID: resourceID}, nil).Once()
+	api.On("GetAccessControlPolicy", resourceID).Return(nil, notFoundGetAppErr()).Once()
+
+	index := &stubPolicyIndex{has: map[string]bool{}}
+	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
+	t.Cleanup(c.Close)
+
+	c.RebuildIndex(context.Background(), map[string][]string{ResourceTypeService: {resourceID}})
+
+	assert.Empty(t, index.addedKeys(), "a marker must not be re-added for a policy deleted between the phases")
+	assert.False(t, index.marker(ResourceTypeService, resourceID))
 }
 
 // TestRebuildIndexAbandonsOnCanceledContext: a canceled lifecycle context
