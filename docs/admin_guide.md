@@ -308,7 +308,7 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 **Allow and deny semantics.** For each request the plugin evaluates the applicable policies and applies these rules:
 
-- No policy exists for a resource → the legacy checks (user/team lists for agents; nothing for services/MCP servers) apply unchanged. Installing the plugin or upgrading changes nothing until you author a policy.
+- No policy exists for a resource → the legacy checks (user/team lists for agents in the legacy access modes — All, Allow, Block, or None; nothing for services/MCP servers) apply unchanged, while agents in attribute-based mode allow every user (see the unavailability rule for details). Installing the plugin or upgrading changes nothing until you author a policy.
 - A policy exists → the policy decides: matching users are allowed, non-matching users are denied.
 - The ABAC engine is unavailable (for example the license lapsed or the feature was disabled) → the server still resolves whether a policy exists for each resource. Resources **with** a policy, and agents in attribute-based mode with a policy, **fail closed**: users are denied rather than falling back to unrestricted access. Resources with **no** policy behave as if ABAC were never involved: agents in the legacy access modes apply their user/team lists, services and MCP servers are unrestricted, and agents in attribute-based mode **fail open** by design — every user is allowed, because attribute-based agents ignore user/team lists and have no other gate without a policy.
 
