@@ -347,6 +347,8 @@ github.com/mattermost/ldap v3.0.4+incompatible h1:SOeNnz+JNR+foQ3yHkYqijb9MLPhXN
 github.com/mattermost/ldap v3.0.4+incompatible/go.mod h1:b4reDCcGpBxJ4WX0f224KFY+OR0npin7or7EFpeIko4=
 github.com/mattermost/logr/v2 v2.0.22 h1:npFkXlkAWR9J8payh8ftPcCZvLbHSI125mAM5/r/lP4=
 github.com/mattermost/logr/v2 v2.0.22/go.mod h1:0sUKpO+XNMZApeumaid7PYaUZPBIydfuWZ0dqixXo+s=
+github.com/mattermost/mattermost/server/public v0.4.4-0.20260715162756-4d1c1816fcff h1:4zX1D3Y0dGQB3sbYm6CsfmFCydEVo8TRtLefrq9ElsM=
+github.com/mattermost/mattermost/server/public v0.4.4-0.20260715162756-4d1c1816fcff/go.mod h1:rHFKFSnyNmyk1qieL00Fv+YuLb093Q7y8VTwBu/43ic=
 github.com/mattermost/morph v1.1.0 h1:Q9vrJbeM3s2jfweGheq12EFIzdNp9a/6IovcbvOQ6Cw=
 github.com/mattermost/morph v1.1.0/go.mod h1:gD+EaqX2UMyyuzmF4PFh4r33XneQ8Nzi+0E8nXjMa3A=
 github.com/mattermost/testcontainers-mattermost-go v0.1.0 h1:oWNqnU2mua2PYMSornWjjiFQUZqPNeODSQSsWjFcuMw=
