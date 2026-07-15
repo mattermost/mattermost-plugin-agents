@@ -69,7 +69,14 @@ type Plugin struct {
 
 	accessChecker     *accesscontrol.Checker
 	abacRebuildCancel context.CancelFunc
+	abacRebuildDone   chan struct{}
 }
+
+// abacRebuildJoinTimeout bounds how long OnDeactivate waits for the ABAC
+// index rebuild goroutine to observe cancellation and exit. A rebuild parked
+// on a plugin API call or the cluster mutex should unwind well within this;
+// exceeding it is logged and deactivation proceeds.
+const abacRebuildJoinTimeout = 10 * time.Second
 
 type pluginLogger struct {
 	service *pluginapi.LogService
@@ -243,11 +250,15 @@ func (p *Plugin) OnActivate() error {
 	// against GetAccessControlPolicy. Best-effort and non-fatal — divergence
 	// caused by a lost mutex lease must not survive a restart (see
 	// accesscontrol.Checker.RebuildIndex). The rebuild runs under a
-	// plugin-lifecycle context: OnDeactivate cancels it and the sweep
-	// abandons its remaining work cleanly.
+	// plugin-lifecycle context: OnDeactivate cancels it AND joins on the
+	// done channel, so no in-flight fetch or heal can touch plugin APIs
+	// after deactivation returns.
 	abacRebuildCtx, abacRebuildCancel := context.WithCancel(context.Background())
 	p.abacRebuildCancel = abacRebuildCancel
+	abacRebuildDone := make(chan struct{})
+	p.abacRebuildDone = abacRebuildDone
 	go func() {
+		defer close(abacRebuildDone)
 		resourceIDsByType := map[string][]string{}
 		if agents, listErr := p.store.ListAgents(); listErr != nil {
 			pluginAPI.Log.Warn("ABAC index rebuild could not list agents", "error", listErr.Error())
@@ -609,10 +620,20 @@ func (p *Plugin) OnDeactivate() error {
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
 
-	// Abandon a still-running ABAC index rebuild and stop the background
-	// reconciliation worker (waits for an in-flight item to finish).
+	// Abandon a still-running ABAC index rebuild: cancel AND join, so the
+	// rebuild goroutine can never touch plugin APIs after deactivation. Then
+	// stop the background reconciliation worker (waits for an in-flight item
+	// to finish).
 	if p.abacRebuildCancel != nil {
 		p.abacRebuildCancel()
+	}
+	if p.abacRebuildDone != nil {
+		select {
+		case <-p.abacRebuildDone:
+		case <-time.After(abacRebuildJoinTimeout):
+			p.pluginAPI.Log.Warn("ABAC index rebuild did not stop within the deactivation timeout; abandoning the join",
+				"timeout", abacRebuildJoinTimeout.String())
+		}
 	}
 	if p.accessChecker != nil {
 		p.accessChecker.Close()
