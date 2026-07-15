@@ -166,8 +166,10 @@ func (m *ClientManager) Close() {
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager.
 // When forceRefresh is true the remote connect bypasses the shared tools cache and any
-// existing cached client is replaced.
-func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string, forceRefresh bool) (*UserClients, *Errors) {
+// existing cached client is replaced. Servers whose origin is in deniedOrigins
+// are never connected to, so a policy-denied server produces no connection
+// artifacts (auth errors, connect errors) for this user at all.
+func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string, forceRefresh bool, deniedOrigins map[string]bool) (*UserClients, *Errors) {
 	// Unless forcing a refresh, reuse an already-cached client so we skip a
 	// redundant remote connect when another goroutine cached one first.
 	if !forceRefresh {
@@ -182,10 +184,21 @@ func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID str
 
 	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 
+	servers := m.config.Servers
+	if len(deniedOrigins) > 0 {
+		allowed := make([]ServerConfig, 0, len(servers))
+		for _, server := range servers {
+			if !deniedOrigins[server.BaseURL] {
+				allowed = append(allowed, server)
+			}
+		}
+		servers = allowed
+	}
+
 	// Connect outside the manager lock so remote MCP handshakes do not block other users.
 	// Cacheable client creation must not inherit request cancellation; a canceled
 	// popover/tab close would otherwise poison initialRemoteConnectErrors until TTL.
-	mcpErrors := userClients.ConnectToRemoteServers(cacheableContext(ctx), m.config.Servers, forceRefresh)
+	mcpErrors := userClients.ConnectToRemoteServers(cacheableContext(ctx), servers, forceRefresh)
 	userClients.setInitialRemoteConnectErrors(mcpErrors)
 
 	m.clientsMu.Lock()
@@ -211,7 +224,7 @@ func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID str
 }
 
 // getClientForUser gets or creates an MCP client for a specific user.
-func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*UserClients, *Errors) {
+func (m *ClientManager) getClientForUser(ctx context.Context, userID string, deniedOrigins map[string]bool) (*UserClients, *Errors) {
 	m.clientsMu.Lock()
 	client, exists := m.clients[userID]
 	if exists {
@@ -221,14 +234,20 @@ func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*U
 	}
 	m.clientsMu.Unlock()
 
-	return m.createAndStoreUserClient(ctx, userID, false)
+	return m.createAndStoreUserClient(ctx, userID, false, deniedOrigins)
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
 func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
+	// Authorized origins are computed up front so denied servers are neither
+	// connected to nor represented by any artifact (tools, auth errors).
+	deniedOrigins := m.deniedExternalOrigins(ctx, userID)
+
 	// Get or create client for this user (connects to remote servers only)
-	userClient, initialErrors := m.getClientForUser(ctx, userID)
-	mcpErrors := cloneMCPErrors(initialErrors)
+	userClient, initialErrors := m.getClientForUser(ctx, userID, deniedOrigins)
+	// Cached clients may predate a policy change, so origin-scoped errors are
+	// re-filtered on every request, exactly like the tools below.
+	mcpErrors := filterErrorsByDeniedOrigins(cloneMCPErrors(initialErrors), deniedOrigins)
 
 	// Embedded and plugin connects intentionally receive the raw cancelable ctx:
 	// they run per-request and are not cached, so a canceled request should abort
@@ -256,46 +275,70 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 
 	rawTools := userClient.GetTools(ctx)
 	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
-	filtered = m.filterToolsByUserAccess(ctx, userID, filtered)
+	filtered = dropToolsFromDeniedOrigins(filtered, deniedOrigins)
 	return filtered, mcpErrors
 }
 
-// filterToolsByUserAccess silently drops tools from external servers the user
-// fails the ABAC check for (contract §9.4). One decision call per distinct
-// origin. Origins without a stable ID (embedded, plugin servers) pass through
-// untouched. Filtering is silent by design: Debug log only, no mcpErrors
-// entries, no chat banners.
-func (m *ClientManager) filterToolsByUserAccess(ctx context.Context, userID string, tools []llm.Tool) []llm.Tool {
-	if m.accessChecker == nil || len(tools) == 0 {
-		return tools
+// deniedExternalOrigins evaluates the ABAC gate for every enabled external
+// server with a stable ID and returns the origins (BaseURLs) the user is
+// denied (contract §9.4). One decision call per server. Origins without a
+// stable ID (embedded, plugin servers) are never denied here. Filtering is
+// silent by design: Debug log only, no mcpErrors entries, no chat banners.
+func (m *ClientManager) deniedExternalOrigins(ctx context.Context, userID string) map[string]bool {
+	if m.accessChecker == nil {
+		return nil
 	}
 
-	idByOrigin := m.config.ServerIDByOrigin()
-	if len(idByOrigin) == 0 {
-		return tools
-	}
-
-	allowedByOrigin := make(map[string]bool, len(idByOrigin))
-	filtered := make([]llm.Tool, 0, len(tools))
-	for _, tool := range tools {
-		serverID, gated := idByOrigin[tool.ServerOrigin]
-		if !gated {
-			filtered = append(filtered, tool)
+	var denied map[string]bool
+	for _, server := range m.config.Servers {
+		if !server.Enabled || server.BaseURL == "" || server.ID == "" {
 			continue
 		}
-		allowed, evaluated := allowedByOrigin[tool.ServerOrigin]
-		if !evaluated {
-			allowed = m.accessChecker.CanUseMCPServer(ctx, userID, serverID) == nil
-			allowedByOrigin[tool.ServerOrigin] = allowed
-			if !allowed {
-				m.log.Debug("Dropping MCP server tools for user by access policy", "userID", userID, "serverID", serverID)
+		if err := m.accessChecker.CanUseMCPServer(ctx, userID, server.ID); err != nil {
+			if denied == nil {
+				denied = make(map[string]bool)
 			}
+			denied[server.BaseURL] = true
+			m.log.Debug("Omitting MCP server for user by access policy", "userID", userID, "serverID", server.ID)
 		}
-		if allowed {
+	}
+	return denied
+}
+
+// dropToolsFromDeniedOrigins silently drops tools originating from denied
+// servers. Needed on top of the connect-time skip because cached user clients
+// may have connected before the policy changed.
+func dropToolsFromDeniedOrigins(tools []llm.Tool, deniedOrigins map[string]bool) []llm.Tool {
+	if len(deniedOrigins) == 0 || len(tools) == 0 {
+		return tools
+	}
+	filtered := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if !deniedOrigins[tool.ServerOrigin] {
 			filtered = append(filtered, tool)
 		}
 	}
 	return filtered
+}
+
+// filterErrorsByDeniedOrigins strips origin-scoped auth errors for denied
+// servers so a denied OAuth server leaks no auth artifacts to the tool store
+// or the UI. Returns nil when nothing remains.
+func filterErrorsByDeniedOrigins(mcpErrors *Errors, deniedOrigins map[string]bool) *Errors {
+	if mcpErrors == nil || len(deniedOrigins) == 0 {
+		return mcpErrors
+	}
+	kept := make([]llm.ToolAuthError, 0, len(mcpErrors.ToolAuthErrors))
+	for _, authErr := range mcpErrors.ToolAuthErrors {
+		if !deniedOrigins[authErr.ServerOrigin] {
+			kept = append(kept, authErr)
+		}
+	}
+	mcpErrors.ToolAuthErrors = kept
+	if len(mcpErrors.ToolAuthErrors) == 0 && len(mcpErrors.Errors) == 0 {
+		return nil
+	}
+	return mcpErrors
 }
 
 // RefreshToolsForUser drops cached user clients and shared server tool lists,
@@ -311,8 +354,9 @@ func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) 
 	}
 	m.InvalidateUserClients(userID)
 	// Pre-warm the user client with a forced remote rediscovery; GetToolsForUser
-	// then reuses this cached client rather than rebuilding it.
-	m.createAndStoreUserClient(ctx, userID, true)
+	// then reuses this cached client rather than rebuilding it. Denied servers
+	// are excluded from the refresh connect just like the initial one.
+	m.createAndStoreUserClient(ctx, userID, true, m.deniedExternalOrigins(ctx, userID))
 
 	tools, mcpErrors := m.GetToolsForUser(ctx, userID)
 	return tools, mcpErrors, nil

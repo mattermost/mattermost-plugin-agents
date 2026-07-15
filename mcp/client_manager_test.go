@@ -883,7 +883,7 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 	}
 
 	before := time.Now()
-	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), "user-1", false)
+	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), "user-1", false, nil)
 	after := time.Now()
 
 	require.NotNil(t, userClients)
@@ -928,7 +928,7 @@ func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for range iterations {
-				got, errs := manager.getClientForUser(context.Background(), "user-1")
+				got, errs := manager.getClientForUser(context.Background(), "user-1", nil)
 				if got != userClients || errs != nil {
 					t.Errorf("getClientForUser returned unexpected result: got=%p errs=%v", got, errs)
 					return
