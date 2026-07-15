@@ -129,6 +129,67 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 	require.Len(t, m.ListPluginServers(), 1)
 }
 
+func TestClientManager_UpdatePluginServerAdminFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		pluginID    string
+		enabled     bool
+		toolConfigs []ToolConfig
+		expectFound bool
+	}{
+		{
+			name:        "patches admin fields on a registered entry",
+			pluginID:    "com.example.mcp",
+			enabled:     false,
+			toolConfigs: []ToolConfig{{Name: "echo", Policy: "ask", Enabled: false}},
+			expectFound: true,
+		},
+		{
+			name:        "unregistered plugin reports not found",
+			pluginID:    "com.example.missing",
+			enabled:     true,
+			expectFound: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
+			t.Cleanup(m.Close)
+
+			registered := PluginServerConfig{
+				PluginID:       "com.example.mcp",
+				Name:           "Example v2",
+				Path:           "/mcp/v2",
+				Enabled:        true,
+				ExposeExternal: true,
+			}
+			m.RegisterPluginServer(registered)
+
+			got, ok := m.UpdatePluginServerAdminFields(tc.pluginID, tc.enabled, tc.toolConfigs)
+			require.Equal(t, tc.expectFound, ok)
+			if !tc.expectFound {
+				require.Equal(t, PluginServerConfig{}, got)
+				stored, stillOK := m.GetPluginServer("com.example.mcp")
+				require.True(t, stillOK)
+				require.Equal(t, registered, stored, "a miss must not disturb other entries")
+				return
+			}
+
+			// Plugin-owned fields survive; admin-owned fields are patched.
+			require.Equal(t, "Example v2", got.Name)
+			require.Equal(t, "/mcp/v2", got.Path)
+			require.True(t, got.ExposeExternal)
+			require.Equal(t, tc.enabled, got.Enabled)
+			require.Equal(t, tc.toolConfigs, got.ToolConfigs)
+
+			stored, stillOK := m.GetPluginServer(tc.pluginID)
+			require.True(t, stillOK)
+			require.Equal(t, got, stored, "the patched entry must be stored back")
+		})
+	}
+}
+
 func TestClientManager_GetPluginServer(t *testing.T) {
 	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
 	t.Cleanup(m.Close)

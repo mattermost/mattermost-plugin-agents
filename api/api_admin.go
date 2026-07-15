@@ -490,12 +490,17 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 			}
 		}
 
-		// Base is the persisted entry when one exists; the live registry
-		// entry only seeds plugin-owned fields (Name, Path, ExposeExternal)
-		// the first time this plugin server is persisted.
+		// Field ownership: the live registry entry is authoritative for the
+		// plugin-owned fields (Name, Path, ExposeExternal) — the source
+		// plugin may have re-registered with new values since the entry was
+		// last persisted, and adopting the persisted object wholesale would
+		// resurrect the stale ones. Only the admin-owned fields (Enabled,
+		// ToolConfigs) are carried over from the freshest persisted entry,
+		// with the request patch applied on top.
 		base := live
 		if mergedIdx >= 0 {
-			base = merged[mergedIdx]
+			base.Enabled = merged[mergedIdx].Enabled
+			base.ToolConfigs = merged[mergedIdx].ToolConfigs
 		}
 		if req.Enabled != nil {
 			base.Enabled = *req.Enabled
@@ -523,7 +528,14 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	a.mcpClientManager.RegisterPluginServer(updated)
+	// Runtime registration receives an admin-field patch rather than a
+	// whole-object replacement: if the source plugin re-registered between
+	// the snapshot above and now, its plugin-owned fields survive. A missing
+	// entry means the plugin unregistered concurrently; the persisted entry
+	// is hydrated again on its next registration.
+	if patched, ok := a.mcpClientManager.UpdatePluginServerAdminFields(pluginID, updated.Enabled, updated.ToolConfigs); ok {
+		updated = patched
+	}
 	a.configUpdater.Update(&saved)
 
 	// Rebuild when either old or new state was external so removed tools

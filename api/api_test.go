@@ -127,6 +127,7 @@ type mockMCPClientManager struct {
 	ensureSessionErr    error
 
 	registerCalls   []mcp.PluginServerConfig
+	adminPatchCalls []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig
 	// orphanPluginIDs simulates entries present in pluginServers but with
@@ -215,6 +216,20 @@ func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) 
 		}
 	}
 	m.pluginServers = append(m.pluginServers, cfg)
+}
+
+func (m *mockMCPClientManager) UpdatePluginServerAdminFields(pluginID string, enabled bool, toolConfigs []mcp.ToolConfig) (mcp.PluginServerConfig, bool) {
+	// Mirror real ClientManager: patch only admin-owned fields on the live entry.
+	for i, existing := range m.pluginServers {
+		if existing.PluginID == pluginID {
+			existing.Enabled = enabled
+			existing.ToolConfigs = toolConfigs
+			m.pluginServers[i] = existing
+			m.adminPatchCalls = append(m.adminPatchCalls, existing)
+			return existing, true
+		}
+	}
+	return mcp.PluginServerConfig{}, false
 }
 
 func (m *mockMCPClientManager) UnregisterPluginServer(pluginID string) {

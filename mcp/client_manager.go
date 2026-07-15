@@ -566,6 +566,24 @@ func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
 	m.pluginRegistered[cfg.PluginID] = true
 }
 
+// UpdatePluginServerAdminFields applies the admin-owned fields (Enabled,
+// ToolConfigs) onto the current registry entry for pluginID without touching
+// the plugin-owned fields (Name, Path, ExposeExternal), so an admin update can
+// never revert a concurrent re-registration by the source plugin. Returns the
+// resulting entry; reports false when pluginID is not registered.
+func (m *ClientManager) UpdatePluginServerAdminFields(pluginID string, enabled bool, toolConfigs []ToolConfig) (PluginServerConfig, bool) {
+	m.pluginServersMu.Lock()
+	defer m.pluginServersMu.Unlock()
+	cfg, ok := m.pluginServers[pluginID]
+	if !ok {
+		return PluginServerConfig{}, false
+	}
+	cfg.Enabled = enabled
+	cfg.ToolConfigs = toolConfigs
+	m.pluginServers[pluginID] = cfg
+	return cfg, true
+}
+
 func (m *ClientManager) UnregisterPluginServer(pluginID string) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
