@@ -47,12 +47,15 @@ func (s *stubDecisionClient) EvaluateAccessRequest(_ context.Context, userID, re
 	return s.outcome, s.err
 }
 
-// stubPolicyIndex is a map-backed PolicyIndex with injectable Has errors.
+// stubPolicyIndex is a map-backed PolicyIndex with injectable errors.
+// Successful Add/Remove also update `has` so marker state stays observable.
 type stubPolicyIndex struct {
-	has     map[string]bool // key: resourceType + "/" + resourceID
-	hasErr  error
-	added   []string
-	removed []string
+	has       map[string]bool // key: resourceType + "/" + resourceID
+	hasErr    error
+	addErr    error
+	removeErr error
+	added     []string
+	removed   []string
 }
 
 func indexKey(resourceType, resourceID string) string { return resourceType + "/" + resourceID }
@@ -65,17 +68,28 @@ func (s *stubPolicyIndex) Has(resourceType, resourceID string) (bool, error) {
 }
 
 func (s *stubPolicyIndex) Add(resourceType, resourceID string) error {
+	if s.addErr != nil {
+		return s.addErr
+	}
 	s.added = append(s.added, indexKey(resourceType, resourceID))
+	if s.has == nil {
+		s.has = map[string]bool{}
+	}
+	s.has[indexKey(resourceType, resourceID)] = true
 	return nil
 }
 
 func (s *stubPolicyIndex) Remove(resourceType, resourceID string) error {
+	if s.removeErr != nil {
+		return s.removeErr
+	}
 	s.removed = append(s.removed, indexKey(resourceType, resourceID))
+	delete(s.has, indexKey(resourceType, resourceID))
 	return nil
 }
 
 func newTestChecker() *Checker {
-	return New(PassthroughClient{}, nil, EmptyPolicyIndex{}, nil)
+	return New(PassthroughClient{}, nil, EmptyPolicyIndex{}, NoMCPServerIDs, nil, nil)
 }
 
 // --- WS-C passthrough pins (the no_policy rows must keep behaving like this) ---
@@ -236,7 +250,7 @@ func TestCanUseAgentDecisionTable(t *testing.T) {
 			if tt.indexHas {
 				index.has[indexKey(ResourceTypeAgent, agentID)] = true
 			}
-			c := New(client, nil, index, nil)
+			c := New(client, nil, index, NoMCPServerIDs, nil, nil)
 
 			cfg := &llm.BotConfig{ID: agentID}
 			if tt.attributeBased {
@@ -324,7 +338,7 @@ func TestCanUseServiceAndMCPServerDecisionTable(t *testing.T) {
 				if tt.indexHas {
 					index.has[indexKey(check.resourceType, resourceID)] = true
 				}
-				c := New(client, nil, index, nil)
+				c := New(client, nil, index, NoMCPServerIDs, nil, nil)
 
 				err := check.invoke(c, userID, resourceID)
 				if tt.wantDenied {
@@ -359,7 +373,7 @@ func TestEvaluateInvalidIDsAreNoPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Deny-everything client: if it were consulted these would all fail.
 			client := &stubDecisionClient{outcome: OutcomeDeny}
-			c := New(client, nil, EmptyPolicyIndex{}, nil)
+			c := New(client, nil, EmptyPolicyIndex{}, NoMCPServerIDs, nil, nil)
 
 			// Agent path: falls back to legacy behavior.
 			legacyCalls := 0
@@ -394,7 +408,7 @@ func TestIsAvailable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &stubDecisionClient{outcome: tt.outcome, err: tt.err}
-			c := New(client, nil, EmptyPolicyIndex{}, nil)
+			c := New(client, nil, EmptyPolicyIndex{}, NoMCPServerIDs, nil, nil)
 			userID := model.NewId()
 
 			assert.Equal(t, tt.want, c.IsAvailable(context.Background(), userID))
@@ -443,14 +457,14 @@ func TestValidateAgentWrite(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		perType     map[string]Outcome
-		cfg         *llm.BotConfig
-		prev        *llm.BotConfig
-		nilResolver bool
-		wantErr     error
-		wantErrText string
-		wantTypes   []string // resource types the client must have been called with, in order
+		name          string
+		perType       map[string]Outcome
+		cfg           *llm.BotConfig
+		prev          *llm.BotConfig
+		emptyResolver bool
+		wantErr       error
+		wantErrText   string
+		wantTypes     []string // resource types the client must have been called with, in order
 	}{
 		{
 			name:      "create attribute-based while unavailable",
@@ -536,14 +550,14 @@ func TestValidateAgentWrite(t *testing.T) {
 			wantTypes: []string{ResourceTypeService},
 		},
 		{
-			name:    "nil resolver skips mcp validation",
+			name:    "empty resolver leaves origins non-addressable",
 			perType: map[string]Outcome{ResourceTypeService: OutcomeAllow, ResourceTypeMCP: OutcomeDeny},
 			cfg: &llm.BotConfig{
 				ID: model.NewId(), ServiceID: serviceID,
 				EnabledMCPTools: tools(deniedOrigin),
 			},
-			nilResolver: true,
-			wantTypes:   []string{ResourceTypeService},
+			emptyResolver: true,
+			wantTypes:     []string{ResourceTypeService},
 		},
 		{
 			name:    "unresolvable origins are not policy-addressable",
@@ -559,10 +573,11 @@ func TestValidateAgentWrite(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &stubDecisionClient{outcome: OutcomeNoPolicy, perType: tt.perType}
-			c := New(client, nil, EmptyPolicyIndex{}, nil)
-			if !tt.nilResolver {
-				c.SetMCPServerIDResolver(resolver)
+			idsByOrigin := resolver
+			if tt.emptyResolver {
+				idsByOrigin = NoMCPServerIDs
 			}
+			c := New(client, nil, EmptyPolicyIndex{}, idsByOrigin, nil, nil)
 
 			err := c.ValidateAgentWrite(context.Background(), model.NewId(), tt.cfg, tt.prev)
 
@@ -583,4 +598,10 @@ func TestValidateAgentWrite(t *testing.T) {
 			assert.Equal(t, tt.wantTypes, gotTypes, "decision calls by resource type")
 		})
 	}
+}
+
+func TestNewPanicsWithoutMCPServerIDResolver(t *testing.T) {
+	assert.Panics(t, func() {
+		New(PassthroughClient{}, nil, EmptyPolicyIndex{}, nil, nil, nil)
+	}, "a nil MCP server ID resolver is a wiring bug and must fail fast")
 }

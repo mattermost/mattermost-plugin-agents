@@ -32,10 +32,13 @@ func isNotFoundAppErr(appErr *model.AppError) bool {
 }
 
 // SavePolicy overwrites the identity fields (ID, Type, Version, Active) per
-// contract §7.2, defaults an empty Name to defaultName, saves via plugin.API,
-// then records the resource in the policy index. An index failure after a
-// successful save is returned as an error (the policy exists and is enforced;
-// a retried PUT re-adds the marker).
+// contract §7.2, defaults an empty Name to defaultName, and persists the
+// policy with conservative ordering under the policy-index mutex: the
+// fail-closed index marker is written FIRST, then the policy. An enforced
+// policy therefore can never exist without its outage marker; the inverse
+// (a marker without a policy, after a failed save) only fails closed during
+// ABAC outages — acceptable. On save failure the marker this call added is
+// removed best-effort; a failed removal is tolerated for the same reason.
 func (c *Checker) SavePolicy(ctx context.Context, actingUserID, resourceType, resourceID, defaultName string, policy *model.AccessControlPolicy) (*model.AccessControlPolicy, error) {
 	_, span := telemetry.Tracer().Start(ctx, "abac save_policy", trace.WithAttributes(
 		telemetry.UserID.String(actingUserID),
@@ -56,18 +59,30 @@ func (c *Checker) SavePolicy(ctx context.Context, actingUserID, resourceType, re
 		policy.Name = defaultName
 	}
 
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+
+	// Remember whether the marker pre-existed so a rollback below can never
+	// strip the marker of a still-enforced older policy.
+	hadMarker, hasErr := c.index.Has(resourceType, resourceID)
+
+	if err := c.index.Add(resourceType, resourceID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "policy index update failed")
+		return nil, fmt.Errorf("failed to update the policy index; the policy was not saved: %w", err)
+	}
+
 	saved, appErr := c.papi.SaveAccessControlPolicy(actingUserID, policy)
 	if appErr != nil {
 		span.RecordError(appErr)
 		span.SetStatus(codes.Error, "policy save failed")
+		if hasErr == nil && !hadMarker {
+			if rmErr := c.index.Remove(resourceType, resourceID); rmErr != nil {
+				logWarn(c.log, "Policy save failed and the policy index marker could not be rolled back; the stale marker fails closed during ABAC outages",
+					"resource_type", resourceType, "resource_id", resourceID, "error", rmErr.Error())
+			}
+		}
 		return nil, appErr
-	}
-
-	if err := c.index.Add(resourceType, resourceID); err != nil {
-		logError(c.log, "Policy saved but policy index update failed; retry the save to restore the fail-closed marker",
-			"resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
-		span.RecordError(err)
-		return nil, fmt.Errorf("policy saved, but failed to update the policy index: %w", err)
 	}
 	return saved, nil
 }
@@ -96,8 +111,11 @@ func (c *Checker) GetPolicy(ctx context.Context, resourceID string) (*model.Acce
 	return policy, nil
 }
 
-// DeletePolicy deletes the stored policy and clears its policy-index marker.
-// Returns ErrPolicyNotFound when no policy exists.
+// DeletePolicy deletes the stored policy and clears its policy-index marker,
+// under the policy-index mutex and in that order: a marker-removal failure
+// after a successful delete leaves a stale fail-closed marker — acceptable
+// (contract risk #3) and logged. Returns ErrPolicyNotFound when no policy
+// exists.
 func (c *Checker) DeletePolicy(ctx context.Context, actingUserID, resourceType, resourceID string) error {
 	_, span := telemetry.Tracer().Start(ctx, "abac delete_policy", trace.WithAttributes(
 		telemetry.UserID.String(actingUserID),
@@ -109,6 +127,9 @@ func (c *Checker) DeletePolicy(ctx context.Context, actingUserID, resourceType, 
 	if c.papi == nil {
 		return ErrPolicyNotFound
 	}
+
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
 
 	if appErr := c.papi.DeleteAccessControlPolicy(actingUserID, resourceType, resourceID); appErr != nil {
 		if isNotFoundAppErr(appErr) {

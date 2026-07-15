@@ -39,45 +39,47 @@ type Checker struct {
 	index  PolicyIndex
 	log    Logger
 
-	// mcpIDsByOrigin resolves MCP server origins to stable IDs for
-	// ValidateAgentWrite; set after construction via SetMCPServerIDResolver
-	// because the MCP ClientManager is built after the Checker.
-	mcpResolverMu  sync.RWMutex
+	// mcpIDsByOrigin resolves external MCP server origins to stable IDs for
+	// ValidateAgentWrite. Injected at construction (config-backed in
+	// production) so MCP assignment validation can never silently skip.
 	mcpIDsByOrigin func() map[string]string
+
+	// mutationMu serializes whole PAP mutations (policy save/delete plus the
+	// index bookkeeping) so no interleaving can produce an enforced policy
+	// without its fail-closed index marker. Production passes the
+	// PolicyIndexMutexKey cluster mutex; tests may pass a plain sync.Mutex.
+	mutationMu sync.Locker
 
 	availabilityMu      sync.Mutex
 	availabilityValue   bool
 	availabilityChecked time.Time
 }
 
+// NoMCPServerIDs is an mcpIDsByOrigin resolver for wirings without external
+// MCP servers (tests, passthrough checkers).
+func NoMCPServerIDs() map[string]string { return nil }
+
 // New builds a Checker. papi may be nil when only decision-table evaluation
 // is exercised (tests); production wiring always passes the raw plugin API.
-func New(client DecisionClient, papi plugin.API, index PolicyIndex, log Logger) *Checker {
+// mcpIDsByOrigin must be non-nil (use NoMCPServerIDs when there are no
+// external MCP servers); a nil resolver is a wiring bug and fails fast.
+// mutationMutex must be the PolicyIndexMutexKey cluster mutex in production;
+// nil falls back to a process-local mutex (single-instance tests only).
+func New(client DecisionClient, papi plugin.API, index PolicyIndex, mcpIDsByOrigin func() map[string]string, mutationMutex sync.Locker, log Logger) *Checker {
+	if mcpIDsByOrigin == nil {
+		panic("accesscontrol: New requires a non-nil MCP server ID resolver (use NoMCPServerIDs)")
+	}
+	if mutationMutex == nil {
+		mutationMutex = &sync.Mutex{}
+	}
 	return &Checker{
-		client: client,
-		papi:   papi,
-		index:  index,
-		log:    log,
+		client:         client,
+		papi:           papi,
+		index:          index,
+		mcpIDsByOrigin: mcpIDsByOrigin,
+		mutationMu:     mutationMutex,
+		log:            log,
 	}
-}
-
-// SetMCPServerIDResolver installs the origin→stable-ID mapper used by
-// ValidateAgentWrite (typically mcp.ClientManager.MCPServerIDByOrigin).
-// A nil resolver skips write-time MCP validation.
-func (c *Checker) SetMCPServerIDResolver(f func() map[string]string) {
-	c.mcpResolverMu.Lock()
-	defer c.mcpResolverMu.Unlock()
-	c.mcpIDsByOrigin = f
-}
-
-func (c *Checker) mcpServerIDsByOrigin() map[string]string {
-	c.mcpResolverMu.RLock()
-	f := c.mcpIDsByOrigin
-	c.mcpResolverMu.RUnlock()
-	if f == nil {
-		return nil
-	}
-	return f()
 }
 
 // evaluate runs one decision call. Invalid resource/user IDs short-circuit to
@@ -279,11 +281,7 @@ func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, c
 		return nil
 	}
 
-	rawIDsByOrigin := c.mcpServerIDsByOrigin()
-	if rawIDsByOrigin == nil {
-		logDebug(c.log, "ABAC agent write: no MCP server ID resolver; skipping MCP assignment validation")
-		return nil
-	}
+	rawIDsByOrigin := c.mcpIDsByOrigin()
 	// Key by normalized origin: EnabledMCPTools entries may carry formatting
 	// variants (trailing slash) of the configured BaseURL.
 	idsByOrigin := make(map[string]string, len(rawIDsByOrigin))

@@ -402,7 +402,7 @@ func setupABACTestEnvironment(t *testing.T, perType map[string]accesscontrol.Out
 	t.Helper()
 	mockAPI := &plugintest.API{}
 	client := pluginapi.NewClient(mockAPI, nil)
-	checker := accesscontrol.New(abacStubClient{perType: perType}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+	checker := accesscontrol.New(abacStubClient{perType: perType}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
 	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, checker, &http.Client{}, nil)
 	return &TestEnvironment{bots: mmBots, client: client, mockAPI: mockAPI}
 }

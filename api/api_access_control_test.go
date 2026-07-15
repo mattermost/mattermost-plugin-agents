@@ -53,7 +53,7 @@ func setupAccessControlTestEnvironment(t *testing.T) (*TestEnvironment, *recordi
 	e := SetupTestEnvironment(t)
 	e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
 	index := &recordingPolicyIndex{}
-	e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, index, nil)
+	e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, index, accesscontrol.NoMCPServerIDs, nil, nil)
 	return e, index
 }
 
@@ -307,7 +307,7 @@ func TestCreateAgentDeniedServiceReturns403(t *testing.T) {
 	e, _ := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 	seedServiceConfig(e, serviceID)
-	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
@@ -329,7 +329,7 @@ func TestCreateAgentAttributeBasedWhileUnavailableReturns400(t *testing.T) {
 	e, _ := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 	seedServiceConfig(e, serviceID)
-	e.api.accessChecker = accesscontrol.New(unavailableDecisionClient{}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+	e.api.accessChecker = accesscontrol.New(unavailableDecisionClient{}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
@@ -353,7 +353,7 @@ func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
 	seedServiceConfig(e, serviceID)
 	// The service is denied to the editor, but it is a pre-existing
 	// assignment: unrelated edits must not be blocked.
-	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
@@ -377,7 +377,7 @@ func TestListAgentsFiltersPolicyDeniedAgents(t *testing.T) {
 
 	e, _ := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
-	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{deniedAgentID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{deniedAgentID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
@@ -414,7 +414,7 @@ func TestABACStatusRoute(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			e, _ := setupAccessControlTestEnvironment(t)
 			defer e.Cleanup(t)
-			e.api.accessChecker = accesscontrol.New(tt.client, nil, accesscontrol.EmptyPolicyIndex{}, nil)
+			e.api.accessChecker = accesscontrol.New(tt.client, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
 
 			recorder := doRequest(e.api, http.MethodGet, "/access_control/status", nil, model.NewId())
 			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)

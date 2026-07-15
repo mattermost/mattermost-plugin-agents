@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sync"
 )
 
 // PolicyIndexKey is the Agents_System key holding the policy index JSON.
@@ -44,17 +43,19 @@ func (d *policyIndexData) bucket(resourceType string) (*[]string, error) {
 }
 
 // KVPolicyIndex persists the policy index in the Agents_System KV table.
+//
+// Add/Remove perform an unguarded read-modify-write: callers MUST serialize
+// mutations under the PolicyIndexMutexKey cluster mutex. In production the
+// only mutator is Checker.SavePolicy/DeletePolicy, which holds that mutex
+// across the whole policy+index mutation (see pap.go).
 type KVPolicyIndex struct {
-	kv    SystemKV
-	mutex sync.Locker
-	log   Logger
+	kv  SystemKV
+	log Logger
 }
 
-// NewKVPolicyIndex builds the production PolicyIndex. mutex must be the
-// cluster mutex created with PolicyIndexMutexKey (*cluster.Mutex satisfies
-// sync.Locker); tests may pass a plain sync.Mutex.
-func NewKVPolicyIndex(kv SystemKV, mutex sync.Locker, log Logger) *KVPolicyIndex {
-	return &KVPolicyIndex{kv: kv, mutex: mutex, log: log}
+// NewKVPolicyIndex builds the production PolicyIndex.
+func NewKVPolicyIndex(kv SystemKV, log Logger) *KVPolicyIndex {
+	return &KVPolicyIndex{kv: kv, log: log}
 }
 
 func (i *KVPolicyIndex) load() (policyIndexData, error) {
@@ -72,7 +73,7 @@ func (i *KVPolicyIndex) load() (policyIndexData, error) {
 	return data, nil
 }
 
-// Has reads without the mutex: it is consulted only on unavailable/error
+// Has reads without serialization: it is consulted only on unavailable/error
 // outcomes (rare) and a torn read is impossible because SetSystemValue
 // replaces the value atomically.
 func (i *KVPolicyIndex) Has(resourceType, resourceID string) (bool, error) {
@@ -106,9 +107,6 @@ func (i *KVPolicyIndex) Remove(resourceType, resourceID string) error {
 }
 
 func (i *KVPolicyIndex) update(resourceType string, transform func([]string) []string) error {
-	i.mutex.Lock()
-	defer i.mutex.Unlock()
-
 	data, err := i.load()
 	if err != nil {
 		return err

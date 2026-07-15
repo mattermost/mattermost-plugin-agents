@@ -5,7 +5,10 @@ package accesscontrol
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -41,7 +44,7 @@ func TestSavePolicyOverwritesIdentityFieldsAndUpdatesIndex(t *testing.T) {
 				Return(&model.AccessControlPolicy{ID: resourceID}, nil).Once()
 
 			index := &stubPolicyIndex{has: map[string]bool{}}
-			c := New(PassthroughClient{}, api, index, nil)
+			c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
 
 			// Spoofed identity fields must be overwritten from the route
 			// (contract §7.2): ID, Type, Version, Active never come from the body.
@@ -78,7 +81,7 @@ func TestDeletePolicyUpdatesIndex(t *testing.T) {
 		Return(nil).Once()
 
 	index := &stubPolicyIndex{has: map[string]bool{}}
-	c := New(PassthroughClient{}, api, index, nil)
+	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
 
 	require.NoError(t, c.DeletePolicy(context.Background(), actingUserID, ResourceTypeService, resourceID))
 	assert.Equal(t, []string{indexKey(ResourceTypeService, resourceID)}, index.removed)
@@ -95,7 +98,7 @@ func TestGetAndDeletePolicyNotFound(t *testing.T) {
 	api.On("DeleteAccessControlPolicy", actingUserID, ResourceTypeMCP, resourceID).Return(notFound).Once()
 
 	index := &stubPolicyIndex{has: map[string]bool{}}
-	c := New(PassthroughClient{}, api, index, nil)
+	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
 
 	_, err := c.GetPolicy(context.Background(), resourceID)
 	assert.ErrorIs(t, err, ErrPolicyNotFound)
@@ -103,4 +106,118 @@ func TestGetAndDeletePolicyNotFound(t *testing.T) {
 	err = c.DeletePolicy(context.Background(), actingUserID, ResourceTypeMCP, resourceID)
 	assert.ErrorIs(t, err, ErrPolicyNotFound)
 	assert.Empty(t, index.removed, "not-found delete must not touch the index")
+}
+
+// --- F1: conservative marker-first ordering ---
+
+func TestSavePolicyIndexWriteFailureBlocksSave(t *testing.T) {
+	resourceID := model.NewId()
+
+	// No SaveAccessControlPolicy expectation: an index write failure must
+	// abort the mutation before the policy is ever persisted.
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+
+	index := &stubPolicyIndex{addErr: errors.New("kv write failed")}
+	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
+
+	_, err := c.SavePolicy(context.Background(), model.NewId(), ResourceTypeAgent, resourceID, "policy", &model.AccessControlPolicy{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the policy was not saved")
+}
+
+func TestSavePolicyRollsBackFreshMarkerOnSaveFailure(t *testing.T) {
+	resourceID := model.NewId()
+	saveErr := model.NewAppError("SaveAccessControlPolicy", "boom", nil, "", http.StatusInternalServerError)
+
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	api.On("SaveAccessControlPolicy", mock.Anything, mock.Anything).Return(nil, saveErr).Once()
+
+	index := &stubPolicyIndex{}
+	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
+
+	_, err := c.SavePolicy(context.Background(), model.NewId(), ResourceTypeAgent, resourceID, "policy", &model.AccessControlPolicy{})
+	require.Error(t, err)
+
+	// The marker added by this call is rolled back best-effort.
+	assert.Equal(t, []string{indexKey(ResourceTypeAgent, resourceID)}, index.removed)
+	assert.False(t, index.has[indexKey(ResourceTypeAgent, resourceID)])
+}
+
+func TestSavePolicyKeepsPreexistingMarkerOnSaveFailure(t *testing.T) {
+	resourceID := model.NewId()
+	saveErr := model.NewAppError("SaveAccessControlPolicy", "boom", nil, "", http.StatusInternalServerError)
+
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	api.On("SaveAccessControlPolicy", mock.Anything, mock.Anything).Return(nil, saveErr).Once()
+
+	// The resource already had a policy (and marker) before this failed
+	// update; rolling the marker back would fail open for the old policy.
+	index := &stubPolicyIndex{has: map[string]bool{indexKey(ResourceTypeAgent, resourceID): true}}
+	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
+
+	_, err := c.SavePolicy(context.Background(), model.NewId(), ResourceTypeAgent, resourceID, "policy", &model.AccessControlPolicy{})
+	require.Error(t, err)
+
+	assert.Empty(t, index.removed, "a pre-existing marker must survive a failed policy update")
+	assert.True(t, index.has[indexKey(ResourceTypeAgent, resourceID)])
+}
+
+// TestConcurrentSaveDeleteHoldsMarkerInvariant hammers SavePolicy/DeletePolicy
+// from concurrent goroutines and asserts the F1 invariant at every save (the
+// marker is already present when the policy is persisted — index-first
+// ordering under the mutation mutex) and at the end (an existing policy
+// always has its marker).
+func TestConcurrentSaveDeleteHoldsMarkerInvariant(t *testing.T) {
+	resourceID := model.NewId()
+	actingUserID := model.NewId()
+
+	kv := newFakeSystemKV()
+	index := NewKVPolicyIndex(kv, nil)
+
+	var policyExists atomic.Bool
+
+	api := &plugintest.API{}
+	api.On("SaveAccessControlPolicy", mock.Anything, mock.Anything).
+		Run(func(_ mock.Arguments) {
+			// Runs inside the checker's mutation critical section.
+			has, hasErr := index.Has(ResourceTypeAgent, resourceID)
+			assert.NoError(t, hasErr)
+			assert.True(t, has, "policy persisted without its fail-closed marker")
+			policyExists.Store(true)
+		}).
+		Return(&model.AccessControlPolicy{ID: resourceID}, nil)
+	api.On("DeleteAccessControlPolicy", actingUserID, ResourceTypeAgent, resourceID).
+		Run(func(_ mock.Arguments) {
+			policyExists.Store(false)
+		}).
+		Return(nil)
+
+	c := New(PassthroughClient{}, api, index, NoMCPServerIDs, nil, nil)
+
+	var wg sync.WaitGroup
+	for g := range 8 {
+		wg.Add(1)
+		go func(seed int) {
+			defer wg.Done()
+			for i := range 25 {
+				if (seed+i)%2 == 0 {
+					_, err := c.SavePolicy(context.Background(), actingUserID, ResourceTypeAgent, resourceID, "policy", &model.AccessControlPolicy{})
+					assert.NoError(t, err)
+				} else {
+					err := c.DeletePolicy(context.Background(), actingUserID, ResourceTypeAgent, resourceID)
+					assert.NoError(t, err)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	if policyExists.Load() {
+		has, err := index.Has(ResourceTypeAgent, resourceID)
+		require.NoError(t, err)
+		assert.True(t, has, "an enforced policy must always carry its fail-closed marker")
+	}
 }

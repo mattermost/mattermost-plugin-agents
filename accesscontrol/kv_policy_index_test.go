@@ -6,7 +6,6 @@ package accesscontrol
 import (
 	"encoding/json"
 	"errors"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,7 +39,7 @@ func (f *fakeSystemKV) SetSystemValue(key, value string) error {
 }
 
 func newTestKVIndex(kv SystemKV) *KVPolicyIndex {
-	return NewKVPolicyIndex(kv, &sync.Mutex{}, nil)
+	return NewKVPolicyIndex(kv, nil)
 }
 
 func TestKVPolicyIndexAddRemoveRoundTrip(t *testing.T) {
