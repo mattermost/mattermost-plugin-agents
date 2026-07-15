@@ -5,7 +5,7 @@ import React from 'react';
 import styled from 'styled-components';
 import {useIntl} from 'react-intl';
 
-import {ItemLabel, HelpText} from './item';
+import {ItemLabel, HelpText, FormRow, FieldControlRow, InlineCheckbox, SelectField} from './item';
 import {LLMBotConfig} from './bot';
 import {LLMService} from './service';
 
@@ -69,23 +69,21 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
         intl.formatMessage({defaultMessage: 'Reasoning'});
 
     return (
-        <>
+        <FormRow>
             <ItemLabel>
                 <Horizontal>
                     {headerLabel}
                 </Horizontal>
             </ItemLabel>
             <ReasoningContainer>
-                <BooleanToggle>
-                    <StyledCheckbox
-                        type='checkbox'
+                <FieldControlRow>
+                    <InlineCheckbox
+                        testId='reasoning-enable'
+                        label={intl.formatMessage({defaultMessage: 'Enable'})}
                         checked={reasoningEnabled}
-                        onChange={(e) => props.onChange({...props.bot, reasoningEnabled: e.target.checked})}
+                        onChange={(checked) => props.onChange({...props.bot, reasoningEnabled: checked})}
                     />
-                    <ToggleLabel>
-                        {intl.formatMessage({defaultMessage: 'Enable'})}
-                    </ToggleLabel>
-                </BooleanToggle>
+                </FieldControlRow>
 
                 {reasoningEnabled && (
                     <>
@@ -149,7 +147,8 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     <FieldLabel>
                                         {intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
                                     </FieldLabel>
-                                    <FieldSelect
+                                    <SelectField
+                                        maxWidth='200px'
                                         value={reasoningEffort}
                                         onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
                                     >
@@ -165,7 +164,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                         <option value='high'>
                                             {intl.formatMessage({defaultMessage: 'High'})}
                                         </option>
-                                    </FieldSelect>
+                                    </SelectField>
                                     <HelpText>
                                         {intl.formatMessage({
                                             defaultMessage: 'Effort level maps to Gemini 3.0+ thinkingLevel and is estimated as a budget for Gemini 2.5 models. Ignored when a thinking budget is set above.',
@@ -180,10 +179,11 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                 <FieldLabel>
                                     {intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
                                 </FieldLabel>
-                                <FieldSelect
-                                    value={reasoningEffort}
-                                    onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
-                                >
+                            <SelectField
+                                maxWidth='200px'
+                                value={reasoningEffort}
+                                onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
+                            >
                                     <option value='minimal'>
                                         {intl.formatMessage({defaultMessage: 'Minimal'})}
                                     </option>
@@ -196,7 +196,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     <option value='high'>
                                         {intl.formatMessage({defaultMessage: 'High'})}
                                     </option>
-                                </FieldSelect>
+                                </SelectField>
                                 <HelpText>
                                     {intl.formatMessage({
                                         defaultMessage: 'Controls how much computational effort the model spends on reasoning. Higher effort levels produce more thorough responses but take longer and cost more. Minimal is fastest, High is most thorough.',
@@ -207,7 +207,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                     </>
                 )}
             </ReasoningContainer>
-        </>
+        </FormRow>
     );
 };
 
@@ -224,25 +224,10 @@ const ReasoningContainer = styled.div`
     gap: 16px;
 `;
 
-const BooleanToggle = styled.div`
-    display: flex;
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 8px;
-`;
-
-const ToggleLabel = styled.label`
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
-    cursor: pointer;
-`;
-
 const ConfigField = styled.div`
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding-left: 28px;
 `;
 
 const FieldLabel = styled.label`
@@ -276,38 +261,11 @@ const FieldInput = styled.input`
     }
 `;
 
-const FieldSelect = styled.select`
-    appearance: none;
-    padding: 7px 12px;
-    border-radius: 2px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
-    height: 35px;
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
-    max-width: 200px;
-    cursor: pointer;
-
-    &:focus {
-        border-color: var(--button-bg);
-        outline: none;
-        box-shadow: none;
-    }
-`;
-
 const ErrorText = styled.div`
     font-size: 12px;
     font-weight: 400;
     line-height: 16px;
     color: var(--dnd-indicator, #D24B4E);
-`;
-
-const StyledCheckbox = styled.input`
-    cursor: pointer;
-    margin: 0;
 `;
 
 export default ReasoningConfigItem;

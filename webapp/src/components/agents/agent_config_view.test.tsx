@@ -69,6 +69,12 @@ jest.mock('./tabs/config_tab', () => ({
                 onChange={(e) => onChange({maxToolTurns: Number(e.target.value)})}
             />
             {errors.maxToolTurns && <div>{errors.maxToolTurns}</div>}
+            <input
+                aria-label='Dynamic tool loading'
+                type='checkbox'
+                checked={draft.mcpDynamicToolLoading}
+                onChange={(e) => onChange({mcpDynamicToolLoading: e.target.checked})}
+            />
             <button
                 type='button'
                 onClick={() => onChange({serviceId: 'svc_1'})}
@@ -87,21 +93,11 @@ jest.mock('./tabs/access_tab', () => ({
 jest.mock('./tabs/mcps_tab', () => ({
     __esModule: true,
     default: ({
-        mcpDynamicToolLoading,
-        onChange,
         onReconcileEnabledTools,
     }: {
-        mcpDynamicToolLoading: boolean;
-        onChange: (updates: Partial<AgentDraft>) => void;
         onReconcileEnabledTools?: (cleaned: EnabledTool[]) => void;
     }) => (
         <>
-            <input
-                aria-label='Dynamic tool loading'
-                type='checkbox'
-                checked={mcpDynamicToolLoading}
-                onChange={(e) => onChange({mcpDynamicToolLoading: e.target.checked})}
-            />
             <button
                 type='button'
                 onClick={() => onReconcileEnabledTools?.([])}
@@ -378,8 +374,6 @@ describe('AgentConfigView', () => {
 
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
         fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
-        fireEvent.click(screen.getByText('Select service'));
-        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
         fireEvent.click(screen.getByLabelText('Dynamic tool loading'));
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 

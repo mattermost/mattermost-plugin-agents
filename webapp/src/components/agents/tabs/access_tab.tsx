@@ -7,7 +7,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from '@/components/system_console/llm_access';
-import {ItemLabel, ItemList} from '@/components/system_console/item';
+import {FormRow, ItemLabel, ItemList} from '@/components/system_console/item';
 import {SelectUser} from '@/components/select';
 
 import {AgentDraft} from '../agent_config_view';
@@ -32,9 +32,12 @@ const AccessTab = (props: Props) => {
                     channelIDs={draft.channelIds}
                     onChangeChannelIDs={(ids: string[]) => onChange({channelIds: ids})}
                 />
-                <HelpTextInSecondColumn>
-                    <FormattedMessage defaultMessage='Control which channels this agent can be mentioned in.'/>
-                </HelpTextInSecondColumn>
+                <FormRow>
+                    <span aria-hidden={true}/>
+                    <HelpTextInSecondColumn>
+                        <FormattedMessage defaultMessage='Control which channels this agent can be mentioned in.'/>
+                    </HelpTextInSecondColumn>
+                </FormRow>
             </ItemList>
 
             {/* User Access Section */}
@@ -47,17 +50,21 @@ const AccessTab = (props: Props) => {
                     teamIDs={draft.teamIds}
                     onChangeIDs={(userIds: string[], teamIds: string[]) => onChange({userIds, teamIds})}
                 />
-                <HelpTextInSecondColumn>
-                    <FormattedMessage defaultMessage='Control which users can interact with this agent.'/>
-                </HelpTextInSecondColumn>
+                <FormRow>
+                    <span aria-hidden={true}/>
+                    <HelpTextInSecondColumn>
+                        <FormattedMessage defaultMessage='Control which users can interact with this agent.'/>
+                    </HelpTextInSecondColumn>
+                </FormRow>
             </ItemList>
 
             {/* Admin Access Section */}
             <ItemList>
-                <ItemLabel>
-                    <FormattedMessage defaultMessage='Agent admins'/>
-                </ItemLabel>
-                <AdminsColumn>
+                <FormRow>
+                    <ItemLabel>
+                        <FormattedMessage defaultMessage='Agent admins'/>
+                    </ItemLabel>
+                    <AdminsColumn>
                     <SelectUser
                         userIDs={draft.adminUserIds}
                         teamIDs={[]}
@@ -69,7 +76,8 @@ const AccessTab = (props: Props) => {
                     <HelpTextInline>
                         <FormattedMessage defaultMessage='These users can edit and delete this agent. The agent creator is always an admin.'/>
                     </HelpTextInline>
-                </AdminsColumn>
+                    </AdminsColumn>
+                </FormRow>
             </ItemList>
         </SectionsContainer>
     );
@@ -84,7 +92,6 @@ const SectionsContainer = styled.div`
 `;
 
 const HelpTextInSecondColumn = styled.div`
-    grid-column: 2;
     margin-top: -16px;
     font-size: 12px;
     font-weight: 400;
