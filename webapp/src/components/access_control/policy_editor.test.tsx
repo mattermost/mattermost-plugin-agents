@@ -204,23 +204,19 @@ describe('PolicyEditor', () => {
         expect(client.putAgentAccessPolicy).not.toHaveBeenCalled();
     });
 
-    it('hides the remove button when no policy exists and reports non-existence', async () => {
+    it('hides the remove button when no policy exists', async () => {
         client.getAgentAccessPolicy.mockResolvedValue(null);
-        const onPolicyExistenceChange = jest.fn();
-        renderEditor({onPolicyExistenceChange});
+        renderEditor();
 
         expect(await screen.findByTestId('table-editor')).toBeTruthy();
         expect(screen.queryByText('Remove policy')).toBeNull();
-        expect(onPolicyExistenceChange).toHaveBeenCalledWith(false);
     });
 
-    it('deletes the policy after confirmation and reports non-existence', async () => {
+    it('deletes the policy after confirmation', async () => {
         client.deleteAgentAccessPolicy.mockResolvedValue(null);
-        const onPolicyExistenceChange = jest.fn();
-        renderEditor({onPolicyExistenceChange});
+        renderEditor();
 
         expect(await screen.findByTestId('table-editor')).toBeTruthy();
-        expect(onPolicyExistenceChange).toHaveBeenLastCalledWith(true);
 
         fireEvent.click(screen.getByText('Remove policy'));
         fireEvent.click(screen.getByText('Remove'));
@@ -228,7 +224,6 @@ describe('PolicyEditor', () => {
         await waitFor(() => {
             expect(client.deleteAgentAccessPolicy).toHaveBeenCalledWith(defaultProps.resourceId);
         });
-        expect(onPolicyExistenceChange).toHaveBeenLastCalledWith(false);
         expect(screen.queryByText('Remove policy')).toBeNull();
     });
 

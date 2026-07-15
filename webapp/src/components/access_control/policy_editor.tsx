@@ -40,10 +40,6 @@ export type PolicyEditorProps = {
 
     // Forwarded as ?agent_id= on CEL calls (per-agent-admin authz lane).
     agentIdForAuthz?: string;
-
-    // Lets the parent track whether a policy currently exists (used by the
-    // switch-away-from-attribute-based confirmation).
-    onPolicyExistenceChange?: (exists: boolean) => void;
 };
 
 // EditorMode is the user-selectable editor. The rendered view additionally
@@ -83,7 +79,7 @@ function policyClientFor(resourceType: PolicyResourceType) {
 const DELETE_POLICY_TITLE_ID = 'delete-access-policy-title';
 
 const PolicyEditor = (props: PolicyEditorProps) => {
-    const {resourceType, resourceId, resourceDisplayName, allowSimplified, allowAdvanced, agentIdForAuthz, onPolicyExistenceChange} = props;
+    const {resourceType, resourceId, resourceDisplayName, allowSimplified, allowAdvanced, agentIdForAuthz} = props;
     const intl = useIntl();
     const editors = getAccessControlEditors();
     const client = useMemo(() => policyClientFor(resourceType), [resourceType]);
@@ -101,10 +97,6 @@ const PolicyEditor = (props: PolicyEditorProps) => {
     const [saveError, setSaveError] = useState('');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-    const notifyExistence = useCallback((exists: boolean) => {
-        onPolicyExistenceChange?.(exists);
-    }, [onPolicyExistenceChange]);
-
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
@@ -121,7 +113,6 @@ const PolicyEditor = (props: PolicyEditorProps) => {
             const expr = loaded?.rules?.[0]?.expression ?? '';
             setExpression(expr);
             setSavedExpression(expr);
-            notifyExistence(loaded !== null);
 
             // Multi-rule policies (future/external authoring) can't round-trip
             // through the simple editor; lock away from it. Admins edit rule 0
@@ -145,7 +136,7 @@ const PolicyEditor = (props: PolicyEditorProps) => {
         return () => {
             cancelled = true;
         };
-    }, [client, resourceId, agentIdForAuthz, allowAdvanced, intl, notifyExistence]);
+    }, [client, resourceId, agentIdForAuthz, allowAdvanced, intl]);
 
     // Contract §6.2: CEL editor takes {attribute, values, isNative}[].
     const celAttributes = useMemo<CELEditorAttribute[]>(() => fields.map((field) => ({
@@ -198,14 +189,13 @@ const PolicyEditor = (props: PolicyEditorProps) => {
             const saved = await client.put(resourceId, {...base, name: base.name || resourceDisplayName, rules});
             setPolicy(saved);
             setSavedExpression(expression);
-            notifyExistence(true);
         } catch (e) {
             const message = e instanceof Error && e.message ? e.message : '';
             setSaveError(message || intl.formatMessage({defaultMessage: 'Failed to save the access policy. Please try again.'}));
         } finally {
             setSaving(false);
         }
-    }, [client, policy, resourceId, resourceDisplayName, expression, intl, notifyExistence]);
+    }, [client, policy, resourceId, resourceDisplayName, expression, intl]);
 
     const handleDelete = useCallback(async () => {
         setShowDeleteConfirm(false);
@@ -216,14 +206,13 @@ const PolicyEditor = (props: PolicyEditorProps) => {
             setPolicy(null);
             setExpression('');
             setSavedExpression('');
-            notifyExistence(false);
         } catch (e) {
             const message = e instanceof Error && e.message ? e.message : '';
             setSaveError(message || intl.formatMessage({defaultMessage: 'Failed to remove the access policy. Please try again.'}));
         } finally {
             setSaving(false);
         }
-    }, [client, resourceId, intl, notifyExistence]);
+    }, [client, resourceId, intl]);
 
     if (!editors) {
         // Feature detection failed after the parent already checked: render

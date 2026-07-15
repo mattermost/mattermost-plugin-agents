@@ -22,11 +22,10 @@ type Props = {
     agentId?: string;
     abacSupported: boolean;
     isSystemAdmin: boolean;
-    onPolicyExistenceChange?: (exists: boolean) => void;
 }
 
 const AccessTab = (props: Props) => {
-    const {draft, onChange, agentId, abacSupported, isSystemAdmin, onPolicyExistenceChange} = props;
+    const {draft, onChange, agentId, abacSupported, isSystemAdmin} = props;
     const intl = useIntl();
 
     const attributeBasedSelected = draft.userAccessLevel === UserAccessLevel.AttributeBased;
@@ -43,7 +42,6 @@ const AccessTab = (props: Props) => {
                         allowSimplified={true}
                         allowAdvanced={isSystemAdmin}
                         agentIdForAuthz={agentId}
-                        onPolicyExistenceChange={onPolicyExistenceChange}
                     />
                 </PolicyEditorWrapper>
             );

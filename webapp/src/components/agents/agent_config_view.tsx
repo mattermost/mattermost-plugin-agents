@@ -195,8 +195,18 @@ type Props = {
     onSaved: (agent: UserAgent) => void; // called after successful create or update
 }
 
+// PolicySwitchState sequences the switch-away-from-attribute-based flow after
+// a successful agent update: confirm deletion of the leftover policy, delete
+// it, and surface a retry/error state when the deletion fails.
+type PolicySwitchState =
+    | {step: 'idle'}
+    | {step: 'confirming'; savedAgent: UserAgent}
+    | {step: 'deleting'; savedAgent: UserAgent}
+    | {step: 'delete-failed'; savedAgent: UserAgent; message: string};
+
 const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
 const DELETE_AGENT_POLICY_TITLE_ID = 'delete-agent-policy-title';
+const DELETE_AGENT_POLICY_RETRY_TITLE_ID = 'delete-agent-policy-retry-title';
 
 const AgentConfigView = (props: Props) => {
     const {mode, agent, services, onBack, onSaved} = props;
@@ -217,14 +227,12 @@ const AgentConfigView = (props: Props) => {
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const isSystemAdmin = useSelector((state: GlobalState) => userHasSystemPermission(state, currentUserId, 'manage_system'));
 
-    // Tracks whether the agent currently has an ABAC policy (reported by the
-    // policy editor) for the switch-away-from-attribute-based confirmation.
-    const policyExistsRef = useRef(false);
-    const handlePolicyExistenceChange = useCallback((exists: boolean) => {
-        policyExistsRef.current = exists;
-    }, []);
-    const [showDeletePolicyDialog, setShowDeletePolicyDialog] = useState(false);
-    const [savedAgentPendingPolicyChoice, setSavedAgentPendingPolicyChoice] = useState<UserAgent | null>(null);
+    // Switching away from attribute-based access while a policy exists runs a
+    // small state machine after the agent update: an explicit policy existence
+    // fetch decides whether to offer the delete flow, and a failed deletion
+    // keeps the view open with a retry/error dialog instead of silently
+    // closing over an invisible still-enforced policy.
+    const [policySwitch, setPolicySwitch] = useState<PolicySwitchState>({step: 'idle'});
 
     // Leave MCPs tab if tools are disabled
     useEffect(() => {
@@ -358,10 +366,21 @@ const AgentConfigView = (props: Props) => {
             const switchedAwayFromAttributeBased =
                 baselineDraft.userAccessLevel === UserAccessLevel.AttributeBased &&
                 draft.userAccessLevel !== UserAccessLevel.AttributeBased;
-            if (mode === 'edit' && switchedAwayFromAttributeBased && policyExistsRef.current) {
-                setSavedAgentPendingPolicyChoice(savedAgent);
-                setShowDeletePolicyDialog(true);
-                return;
+            if (mode === 'edit' && switchedAwayFromAttributeBased) {
+                // Explicit existence check: the policy editor may never have
+                // mounted (or its load may still be in flight), so the switch
+                // flow cannot rely on state it reported earlier.
+                let policyExists = true;
+                try {
+                    policyExists = (await getAgentAccessPolicy(savedAgent.id)) !== null;
+                } catch {
+                    // Unknown state: offer the delete flow rather than risk
+                    // leaving an invisible policy behind silently.
+                }
+                if (policyExists) {
+                    setPolicySwitch({step: 'confirming', savedAgent});
+                    return;
+                }
             }
 
             onSaved(savedAgent);
@@ -386,30 +405,35 @@ const AgentConfigView = (props: Props) => {
     }, [mode, agent, draft, baselineDraft, avatarFile, intl, onSaved, validate]);
 
     const handleDeletePolicyConfirm = useCallback(async () => {
-        setShowDeletePolicyDialog(false);
-        const savedAgent = savedAgentPendingPolicyChoice;
-        setSavedAgentPendingPolicyChoice(null);
-        if (!savedAgent) {
+        if (policySwitch.step !== 'confirming' && policySwitch.step !== 'delete-failed') {
             return;
         }
+        const {savedAgent} = policySwitch;
+        setPolicySwitch({step: 'deleting', savedAgent});
         try {
             await deleteAgentAccessPolicy(savedAgent.id);
-            policyExistsRef.current = false;
-        } catch {
-            // Non-fatal: the agent was saved; the policy can be removed later
-            // from the access tab.
+            setPolicySwitch({step: 'idle'});
+            onSaved(savedAgent);
+        } catch (e) {
+            // The agent was saved but its policy still exists and continues to
+            // restrict access. Keep the view open with a retry/error state.
+            const message = e instanceof Error && e.message ? e.message : '';
+            setPolicySwitch({
+                step: 'delete-failed',
+                savedAgent,
+                message: message || intl.formatMessage({defaultMessage: 'Failed to delete the access policy.'}),
+            });
         }
-        onSaved(savedAgent);
-    }, [savedAgentPendingPolicyChoice, onSaved]);
+    }, [policySwitch, onSaved, intl]);
 
     const handleDeletePolicyKeep = useCallback(() => {
-        setShowDeletePolicyDialog(false);
-        const savedAgent = savedAgentPendingPolicyChoice;
-        setSavedAgentPendingPolicyChoice(null);
-        if (savedAgent) {
-            onSaved(savedAgent);
+        if (policySwitch.step !== 'confirming' && policySwitch.step !== 'delete-failed') {
+            return;
         }
-    }, [savedAgentPendingPolicyChoice, onSaved]);
+        const {savedAgent} = policySwitch;
+        setPolicySwitch({step: 'idle'});
+        onSaved(savedAgent);
+    }, [policySwitch, onSaved]);
 
     const title = mode === 'create' ? intl.formatMessage({defaultMessage: 'New Agent'}) : draft.displayName || intl.formatMessage({defaultMessage: 'Edit Agent'});
 
@@ -478,7 +502,6 @@ const AgentConfigView = (props: Props) => {
                             agentId={agent?.id}
                             abacSupported={abacSupported}
                             isSystemAdmin={isSystemAdmin}
-                            onPolicyExistenceChange={handlePolicyExistenceChange}
                         />
                     )}
                     {activeTab === 'mcps' && (
@@ -510,13 +533,31 @@ const AgentConfigView = (props: Props) => {
                 </ViewFooter>
             </ViewContainer>
             <ConfirmationDialog
-                show={showDeletePolicyDialog}
+                show={policySwitch.step === 'confirming' || policySwitch.step === 'deleting'}
                 titleId={DELETE_AGENT_POLICY_TITLE_ID}
                 title={<FormattedMessage defaultMessage='Delete access policy?'/>}
                 message={(
                     <FormattedMessage defaultMessage="You switched away from attribute-based access. Delete this agent's access policy? If kept, the policy continues to restrict access in addition to the new setting."/>
                 )}
                 confirmButtonText={<FormattedMessage defaultMessage='Delete policy'/>}
+                cancelButtonText={<FormattedMessage defaultMessage='Keep policy'/>}
+                onConfirm={handleDeletePolicyConfirm}
+                onCancel={handleDeletePolicyKeep}
+                isDestructive={true}
+                managedAccessibility={true}
+                zIndex={2100}
+            />
+            <ConfirmationDialog
+                show={policySwitch.step === 'delete-failed'}
+                titleId={DELETE_AGENT_POLICY_RETRY_TITLE_ID}
+                title={<FormattedMessage defaultMessage="Couldn't delete the access policy"/>}
+                message={(
+                    <>
+                        {policySwitch.step === 'delete-failed' ? `${policySwitch.message} ` : ''}
+                        <FormattedMessage defaultMessage='The agent was saved, but its access policy still exists and continues to restrict access. Retry the deletion, or keep the policy and remove it later from the Access tab.'/>
+                    </>
+                )}
+                confirmButtonText={<FormattedMessage defaultMessage='Retry'/>}
                 cancelButtonText={<FormattedMessage defaultMessage='Keep policy'/>}
                 onConfirm={handleDeletePolicyConfirm}
                 onCancel={handleDeletePolicyKeep}
