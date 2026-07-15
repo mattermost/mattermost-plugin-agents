@@ -3,7 +3,7 @@
 
 import React from 'react';
 import styled, {createGlobalStyle} from 'styled-components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, CloseIcon} from '@mattermost/compass-icons/components';
 import CreatableSelect from 'react-select/creatable';
 import {components, StylesConfig, SingleValue, type ClearIndicatorProps, type DropdownIndicatorProps} from 'react-select';
@@ -97,6 +97,7 @@ export const TextItem = (props: TextItemProps) => {
                 <FieldControlRow>
                     <StyledInput
                         as={props.multiline ? 'textarea' : 'input'}
+                        readOnly={props.readOnly}
                         value={props.value}
                         type={props.type ? props.type : 'text'}
                         placeholder={props.placeholder ? props.placeholder : props.label}
@@ -166,7 +167,7 @@ export type ComboboxItemProps = {
     placeholder?: string
     helptext?: string
     isClearable?: boolean
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+    onChange: (value: string) => void
 };
 
 type SelectOption = {
@@ -277,6 +278,8 @@ function buildComboboxStyles<Option>(): StylesConfig<Option, false> {
 }
 
 export const ComboboxItem = (props: ComboboxItemProps) => {
+    const intl = useIntl();
+
     // Convert ComboboxOption[] to SelectOption[] for react-select
     const selectOptions: SelectOption[] = props.options.map((opt) => ({
         value: opt.id,
@@ -287,14 +290,7 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
     const currentValue: SelectOption | null = props.value ? selectOptions.find((opt) => opt.value === props.value) || {value: props.value, label: props.value} : null;
 
     const handleChange = (newValue: SingleValue<SelectOption>) => {
-        // Create a synthetic event to match the existing onChange signature
-        const syntheticEvent = {
-            target: {
-                value: newValue?.value || '',
-            },
-        } as React.ChangeEvent<HTMLInputElement>;
-
-        props.onChange(syntheticEvent);
+        props.onChange(newValue?.value ?? '');
     };
 
     const selectStyles = buildComboboxStyles<SelectOption>();
@@ -317,7 +313,10 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                             ClearIndicator: ComboboxClearIndicator,
                         }}
                         isClearable={props.isClearable ?? true}
-                        formatCreateLabel={(inputValue: string) => `Use custom model: ${inputValue}`}
+                        formatCreateLabel={(inputValue: string) => intl.formatMessage(
+                            {defaultMessage: 'Use custom model: {modelName}'},
+                            {modelName: inputValue},
+                        )}
                         menuPortalTarget={getPortalTarget()}
                         menuPosition='fixed'
                     />

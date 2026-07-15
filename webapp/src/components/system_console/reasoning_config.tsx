@@ -179,11 +179,11 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                 <FieldLabel>
                                     {intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
                                 </FieldLabel>
-                            <SelectField
-                                maxWidth='200px'
-                                value={reasoningEffort}
-                                onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
-                            >
+                                <SelectField
+                                    maxWidth='200px'
+                                    value={reasoningEffort}
+                                    onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
+                                >
                                     <option value='minimal'>
                                         {intl.formatMessage({defaultMessage: 'Minimal'})}
                                     </option>

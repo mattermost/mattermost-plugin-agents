@@ -54,6 +54,12 @@ const ConfigTab = (props: Props) => {
     const intl = useIntl();
     const [advancedExpanded, setAdvancedExpanded] = useState(false);
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
+
+    useEffect(() => {
+        if (errors.maxToolTurns) {
+            setAdvancedExpanded(true);
+        }
+    }, [errors.maxToolTurns]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState('');
 
@@ -318,7 +324,7 @@ const ConfigTab = (props: Props) => {
                         value={draft.model}
                         options={availableModels}
                         placeholder={comboboxModelPlaceholder}
-                        onChange={(e) => onChange({model: e.target.value})}
+                        onChange={(value) => onChange({model: value})}
                         helptext={comboboxModelHelptext}
                     />
                 ) : (

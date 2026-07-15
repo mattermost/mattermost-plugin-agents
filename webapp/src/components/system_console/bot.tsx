@@ -307,7 +307,7 @@ const Bot = (props: Props) => {
                                 value={props.bot.model}
                                 options={availableModels}
                                 placeholder={intl.formatMessage({defaultMessage: 'Use service default'})}
-                                onChange={(e) => props.onChange({...props.bot, model: e.target.value})}
+                                onChange={(value) => props.onChange({...props.bot, model: value})}
                                 helptext={intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Select from the list or type a custom model name.'})}
                             />
                         ) : (

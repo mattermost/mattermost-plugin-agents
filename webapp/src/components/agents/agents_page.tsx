@@ -27,26 +27,25 @@ const AgentsPage = () => {
 
     useEffect(() => {
         const wrapper = pageRef.current;
-        if (!wrapper) {
-            return undefined;
-        }
+        const restored: Array<{el: HTMLElement; overflowY: string}> = [];
 
-        // Mattermost's product shell may scroll when our page grows taller than the viewport.
-        // Pin overflow on those ancestors so only the agents list viewport scrolls.
-        const restored: Array<{el: HTMLElement; overflow: string}> = [];
-        let node: HTMLElement | null = wrapper.parentElement;
-        while (node) {
-            const {overflowY} = window.getComputedStyle(node);
-            if (overflowY === 'auto' || overflowY === 'scroll') {
-                restored.push({el: node, overflow: node.style.overflow});
-                node.style.overflow = 'hidden';
+        if (wrapper) {
+            // Mattermost's product shell may scroll when our page grows taller than the viewport.
+            // Pin overflow on those ancestors so only the agents list viewport scrolls.
+            let node: HTMLElement | null = wrapper.parentElement;
+            while (node) {
+                const {overflowY} = window.getComputedStyle(node);
+                if (overflowY === 'auto' || overflowY === 'scroll') {
+                    restored.push({el: node, overflowY: node.style.overflowY});
+                    node.style.overflowY = 'hidden';
+                }
+                node = node.parentElement;
             }
-            node = node.parentElement;
         }
 
         return () => {
-            restored.forEach(({el, overflow}) => {
-                el.style.overflow = overflow;
+            restored.forEach(({el, overflowY}) => {
+                el.style.overflowY = overflowY;
             });
         };
     }, []);

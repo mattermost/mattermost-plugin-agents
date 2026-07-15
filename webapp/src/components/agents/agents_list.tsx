@@ -186,128 +186,128 @@ const AgentsList = () => {
             <FixedChrome>
                 <ContentColumn>
                     <Header>
-                <TitleRow>
-                    <Title>
-                        <FormattedMessage defaultMessage='Agents'/>
-                    </Title>
-                    <Subtitle>
-                        <FormattedMessage defaultMessage='Agents are AI assistants in your workspace. Mention @username in a channel or direct message to chat with one.'/>
-                    </Subtitle>
-                </TitleRow>
-                {userCanCreateAgent && (
-                    createQuotaReached ? (
-                        <OverlayTrigger
-                            placement='bottom'
-                            overlay={
-                                <Tooltip id='create-agent-quota-tooltip'>
-                                    <FormattedMessage defaultMessage='Multiple self-service agents require a qualifying Mattermost plan'/>
-                                </Tooltip>
-                            }
-                        >
-                            {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
-                            <CreateButtonWrapper>
+                        <TitleRow>
+                            <Title>
+                                <FormattedMessage defaultMessage='Agents'/>
+                            </Title>
+                            <Subtitle>
+                                <FormattedMessage defaultMessage='Agents are AI assistants in your workspace. Mention @username in a channel or direct message to chat with one.'/>
+                            </Subtitle>
+                        </TitleRow>
+                        {userCanCreateAgent && (
+                            createQuotaReached ? (
+                                <OverlayTrigger
+                                    placement='bottom'
+                                    overlay={
+                                        <Tooltip id='create-agent-quota-tooltip'>
+                                            <FormattedMessage defaultMessage='Multiple self-service agents require a qualifying Mattermost plan'/>
+                                        </Tooltip>
+                                    }
+                                >
+                                    {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
+                                    <CreateButtonWrapper>
+                                        <CreateButton
+                                            onClick={handleCreateAgent}
+                                            disabled={true}
+                                        >
+                                            <PlusIcon size={16}/>
+                                            <FormattedMessage defaultMessage='Create agent'/>
+                                        </CreateButton>
+                                    </CreateButtonWrapper>
+                                </OverlayTrigger>
+                            ) : (
                                 <CreateButton
                                     onClick={handleCreateAgent}
-                                    disabled={true}
+                                    disabled={createButtonDisabled}
                                 >
                                     <PlusIcon size={16}/>
                                     <FormattedMessage defaultMessage='Create agent'/>
                                 </CreateButton>
-                            </CreateButtonWrapper>
-                        </OverlayTrigger>
-                    ) : (
-                        <CreateButton
-                            onClick={handleCreateAgent}
-                            disabled={createButtonDisabled}
-                        >
-                            <PlusIcon size={16}/>
-                            <FormattedMessage defaultMessage='Create agent'/>
-                        </CreateButton>
-                    )
-                )}
-            </Header>
+                            )
+                        )}
+                    </Header>
 
                     <TabBar>
-                <TabButton
-                    $active={activeTab === 'all'}
-                    onClick={() => setActiveTab('all')}
-                >
-                    <FormattedMessage defaultMessage='All agents'/>
-                </TabButton>
-                <TabButton
-                    $active={activeTab === 'yours'}
-                    onClick={() => setActiveTab('yours')}
-                >
-                    <FormattedMessage defaultMessage='Your agents'/>
-                </TabButton>
-            </TabBar>
+                        <TabButton
+                            $active={activeTab === 'all'}
+                            onClick={() => setActiveTab('all')}
+                        >
+                            <FormattedMessage defaultMessage='All agents'/>
+                        </TabButton>
+                        <TabButton
+                            $active={activeTab === 'yours'}
+                            onClick={() => setActiveTab('yours')}
+                        >
+                            <FormattedMessage defaultMessage='Your agents'/>
+                        </TabButton>
+                    </TabBar>
 
                     <SearchContainer>
-                <SearchInputWrapper>
-                    <SearchIconWrapper>
-                        <MagnifyIcon size={18}/>
-                    </SearchIconWrapper>
-                    <SearchInput
-                        type='text'
-                        placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                </SearchInputWrapper>
-            </SearchContainer>
+                        <SearchInputWrapper>
+                            <SearchIconWrapper>
+                                <MagnifyIcon size={18}/>
+                            </SearchIconWrapper>
+                            <SearchInput
+                                type='text'
+                                placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                        </SearchInputWrapper>
+                    </SearchContainer>
                 </ContentColumn>
             </FixedChrome>
 
             <ListViewport data-testid='agents-list-viewport'>
                 <ListContent>
-                {loading && (
-                    <LoadingContainer>
-                        <FormattedMessage defaultMessage='Loading agents...'/>
-                    </LoadingContainer>
-                )}
+                    {loading && (
+                        <LoadingContainer>
+                            <FormattedMessage defaultMessage='Loading agents...'/>
+                        </LoadingContainer>
+                    )}
 
-                {error && (
-                    <ErrorContainer>{error}</ErrorContainer>
-                )}
+                    {error && (
+                        <ErrorContainer>{error}</ErrorContainer>
+                    )}
 
-                {servicesError && !error && (
-                    <ServicesWarningBanner>{servicesError}</ServicesWarningBanner>
-                )}
+                    {servicesError && !error && (
+                        <ServicesWarningBanner>{servicesError}</ServicesWarningBanner>
+                    )}
 
-                {!loading && !error && filteredAgents.length === 0 && searchQuery.trim() && (
-                    <NoResultsMessage>
-                        <FormattedMessage
-                            defaultMessage='No agents match "{query}"'
-                            values={{query: searchQuery}}
-                        />
-                    </NoResultsMessage>
-                )}
-
-                {!loading && !error && filteredAgents.length === 0 && !searchQuery.trim() && (
-                    <EmptyState>
-                        {activeTab === 'yours' ? (
-                            <FormattedMessage defaultMessage="You haven't created any agents yet."/>
-                        ) : (
-                            <FormattedMessage defaultMessage='No agents have been created yet.'/>
-                        )}
-                    </EmptyState>
-                )}
-
-                {!loading && !error && filteredAgents.length > 0 && (
-                    <AgentListContainer>
-                        {filteredAgents.map((agent) => (
-                            <AgentRow
-                                key={agent.id}
-                                agent={agent}
-                                services={services}
-                                servicesLoaded={servicesLoaded}
-                                canManage={userCanManageAgent(agent)}
-                                onEdit={handleEdit}
-                                onDelete={handleDeleteRequest}
+                    {!loading && !error && filteredAgents.length === 0 && searchQuery.trim() && (
+                        <NoResultsMessage>
+                            <FormattedMessage
+                                defaultMessage='No agents match "{query}"'
+                                values={{query: searchQuery}}
                             />
-                        ))}
-                    </AgentListContainer>
-                )}
+                        </NoResultsMessage>
+                    )}
+
+                    {!loading && !error && filteredAgents.length === 0 && !searchQuery.trim() && (
+                        <EmptyState>
+                            {activeTab === 'yours' ? (
+                                <FormattedMessage defaultMessage="You haven't created any agents yet."/>
+                            ) : (
+                                <FormattedMessage defaultMessage='No agents have been created yet.'/>
+                            )}
+                        </EmptyState>
+                    )}
+
+                    {!loading && !error && filteredAgents.length > 0 && (
+                        <AgentListContainer>
+                            {filteredAgents.map((agent) => (
+                                <AgentRow
+                                    key={agent.id}
+                                    agent={agent}
+                                    services={services}
+                                    servicesLoaded={servicesLoaded}
+                                    canManage={userCanManageAgent(agent)}
+                                    onEdit={handleEdit}
+                                    onDelete={handleDeleteRequest}
+                                />
+                            ))}
+                        </AgentListContainer>
+                    )}
                 </ListContent>
             </ListViewport>
 

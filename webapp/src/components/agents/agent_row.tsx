@@ -163,15 +163,7 @@ const AgentRow = (props: Props) => {
                                 </Tooltip>
                             }
                         >
-                            <ReadOnlyBadgeTrigger
-                                tabIndex={0}
-                                aria-label={intl.formatMessage(
-                                    {
-                                        defaultMessage: 'Read only. Mention @{username} in a channel or direct message to chat with this agent.',
-                                    },
-                                    {username: agent.name},
-                                )}
-                            >
+                            <ReadOnlyBadgeTrigger tabIndex={0}>
                                 <ReadOnlyBadge>
                                     <FormattedMessage defaultMessage='Read only'/>
                                 </ReadOnlyBadge>
@@ -310,7 +302,6 @@ const ReadOnlyBadgeTrigger = styled.span`
     display: inline-flex;
     flex-shrink: 0;
     cursor: default;
-    outline: none;
 `;
 
 const ReadOnlyBadge = styled.span`
