@@ -262,6 +262,64 @@ describe('PolicyEditor', () => {
         expect(screen.getByText('Remove policy')).toBeTruthy();
     });
 
+    it('recovers to an editable simple editor after deleting an unsupported policy', async () => {
+        // F6 recovery: a multi-rule policy locks a non-admin caller into the
+        // read-only unsupported view; removing the policy must return the
+        // editor to a usable authoring state without a remount.
+        client.getAgentAccessPolicy.mockResolvedValue({
+            ...existingPolicy,
+            rules: [
+                {actions: ['use'], expression: 'user.attributes.team == "sales"'},
+                {actions: ['use'], expression: 'user.attributes.level >= 2'},
+            ],
+        });
+        client.deleteAgentAccessPolicy.mockResolvedValue(null);
+        renderEditor({allowAdvanced: false});
+
+        expect(await screen.findByText('This policy uses expressions that can only be edited by a system administrator. You can remove the policy to start over.')).toBeTruthy();
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+
+        fireEvent.click(screen.getByText('Remove policy'));
+        fireEvent.click(screen.getByText('Remove'));
+        await waitFor(() => {
+            expect(client.deleteAgentAccessPolicy).toHaveBeenCalledWith(defaultProps.resourceId);
+        });
+
+        // Back in the simple editor, empty and editable.
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+        expect(screen.getByTestId('table-value').textContent).toBe('');
+        fireEvent.click(screen.getByText('table-edit'));
+        expect((screen.getByText('Save policy').closest('button') as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('resets a stale lock when loading a different resource', async () => {
+        // F6 recovery, load-path: switching to another resource must not
+        // inherit the previous resource's advanced lock.
+        client.getAgentAccessPolicy.mockResolvedValue({
+            ...existingPolicy,
+            rules: [
+                {actions: ['use'], expression: 'user.attributes.team == "sales"'},
+                {actions: ['use'], expression: 'user.attributes.level >= 2'},
+            ],
+        });
+        const {rerender} = renderEditor({allowAdvanced: false});
+        expect(await screen.findByText('This policy uses expressions that can only be edited by a system administrator. You can remove the policy to start over.')).toBeTruthy();
+
+        client.getAgentAccessPolicy.mockResolvedValue(null);
+        rerender(
+            <IntlProvider locale='en'>
+                <PolicyEditor
+                    {...defaultProps}
+                    allowAdvanced={false}
+                    resourceId='agentidbbbbbbbbbbbbbbbbbbb'
+                />
+            </IntlProvider>,
+        );
+
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+        expect(screen.getByTestId('table-value').textContent).toBe('');
+    });
+
     it('shows the read-only unsupported state on parse errors when advanced is not allowed', async () => {
         renderEditor({allowAdvanced: false});
         expect(await screen.findByTestId('table-editor')).toBeTruthy();

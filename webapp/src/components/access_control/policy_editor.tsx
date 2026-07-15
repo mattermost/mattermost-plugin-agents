@@ -101,6 +101,14 @@ const PolicyEditor = (props: PolicyEditorProps) => {
         let cancelled = false;
         setLoading(true);
         setLoadError('');
+
+        // F6 recovery: each load starts from a clean authoring state so a
+        // lock inherited from a previous resource (or a policy that has since
+        // been deleted server-side) doesn't strand the editor in the
+        // read-only unsupported view. The load below re-locks if warranted.
+        setAdvancedLocked(false);
+        setMode(allowSimplified ? 'simplified' : 'advanced');
+        setExpressionValid(true);
         Promise.all([
             client.get(resourceId),
             getAccessControlFields('', 100, agentIdForAuthz).catch(() => [] as AccessControlPropertyField[]),
@@ -136,7 +144,7 @@ const PolicyEditor = (props: PolicyEditorProps) => {
         return () => {
             cancelled = true;
         };
-    }, [client, resourceId, agentIdForAuthz, allowAdvanced, intl]);
+    }, [client, resourceId, agentIdForAuthz, allowSimplified, allowAdvanced, intl]);
 
     // Contract §6.2: CEL editor takes {attribute, values, isNative}[].
     const celAttributes = useMemo<CELEditorAttribute[]>(() => fields.map((field) => ({
@@ -206,13 +214,20 @@ const PolicyEditor = (props: PolicyEditorProps) => {
             setPolicy(null);
             setExpression('');
             setSavedExpression('');
+
+            // F6 recovery: the expression that forced the lock is gone, so
+            // return to a usable authoring state instead of staying in the
+            // read-only unsupported view until remount.
+            setAdvancedLocked(false);
+            setMode(allowSimplified ? 'simplified' : 'advanced');
+            setExpressionValid(true);
         } catch (e) {
             const message = e instanceof Error && e.message ? e.message : '';
             setSaveError(message || intl.formatMessage({defaultMessage: 'Failed to remove the access policy. Please try again.'}));
         } finally {
             setSaving(false);
         }
-    }, [client, resourceId, intl]);
+    }, [client, resourceId, allowSimplified, intl]);
 
     if (!editors) {
         // Feature detection failed after the parent already checked: render
