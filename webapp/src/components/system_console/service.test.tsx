@@ -276,6 +276,45 @@ describe('Service access policy section', () => {
         await renderService({...namedService, id: ''});
         expect(screen.queryByTestId('console-policy-section')).toBeNull();
     });
+
+    // Regression: PUT /admin/config returns the normalized saved config and
+    // config.tsx adopts it, so an entry added ID-less this session receives
+    // its server-minted id through props right after save. The gate must read
+    // the CURRENT prop — the policy section appears without a reload.
+    it('shows the policy section as soon as the parent passes down a server-minted id', async () => {
+        const unsaved = {...namedService, id: ''};
+        const onChange = jest.fn();
+        const onDelete = jest.fn();
+        const {rerender} = render(
+            <IntlProvider locale='en'>
+                <Service
+                    service={unsaved}
+                    services={[unsaved]}
+                    onChange={onChange}
+                    onDelete={onDelete}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByText(unsaved.name));
+        await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+        expect(screen.queryByTestId('console-policy-section')).toBeNull();
+
+        // The save response minted an id; the parent re-renders with it.
+        const minted = {...unsaved, id: 'serviceidmintedaaaaaaaaaaa'};
+        rerender(
+            <IntlProvider locale='en'>
+                <Service
+                    service={minted}
+                    services={[minted]}
+                    onChange={onChange}
+                    onDelete={onDelete}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByTestId('console-policy-section')).toBeTruthy();
+    });
 });
 
 describe('ServiceFields fallback selector', () => {

@@ -80,13 +80,11 @@ const MCPServer = ({
     serverConfig,
     onChange,
     onDelete,
-    isPersisted,
 }: {
     serverIndex: number;
     serverConfig: MCPServerConfig;
     onChange: (serverIndex: number, config: MCPServerConfig) => void;
     onDelete: () => void;
-    isPersisted?: boolean;
 }) => {
     const intl = useIntl();
     const [isEditingName, setIsEditingName] = useState(false);
@@ -353,12 +351,15 @@ const MCPServer = ({
                 )}
             </OAuthSection>
 
+            {/* Servers only ever get an id from the persisted config (IDs are
+                minted server-side on save and adopted from the save response),
+                so any id-bearing entry is persisted and policy authoring is
+                safe. */}
             {config.id && (
                 <ConsolePolicySection
                     resourceType='mcp'
                     resourceId={config.id}
                     resourceDisplayName={config.name || `Server ${serverIndex + 1}`}
-                    isPersisted={isPersisted ?? true}
                 />
             )}
         </ServerContainer>
@@ -586,11 +587,6 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                         serverConfig={serverConfig}
                                         onChange={updateServer}
                                         onDelete={() => deleteServer(index)}
-
-                                        // Servers only ever get an id from the persisted
-                                        // config (IDs are minted server-side on save), so
-                                        // any id-bearing entry is persisted.
-                                        isPersisted={true}
                                     />
                                 ))
                             )}

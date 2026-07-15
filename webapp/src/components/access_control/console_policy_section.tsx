@@ -15,18 +15,18 @@ type Props = {
     resourceType: PolicyResourceType;
     resourceId: string;
     resourceDisplayName: string;
-
-    // Entries added this admin-console session are not yet persisted
-    // server-side; policy PUTs are immediate while config saves are deferred,
-    // so authoring against them would orphan the policy.
-    isPersisted: boolean;
 };
 
 // ConsolePolicySection is the collapsible "Access policy" block appended to
 // the system console service and MCP server panels. Admin-only surface:
 // advanced (CEL) editor only.
+//
+// Callers render this only for entries with a persisted id: IDs are minted
+// server-side on save (normalizeAdminConfig) and adopted from the PUT
+// /admin/config response, so an id-bearing entry is always persisted and
+// policy PUTs can never orphan a policy against an unsaved resource.
 const ConsolePolicySection = (props: Props) => {
-    const {resourceType, resourceId, resourceDisplayName, isPersisted} = props;
+    const {resourceType, resourceId, resourceDisplayName} = props;
     const {supported} = useABACSupport();
     const [expanded, setExpanded] = useState(false);
 
@@ -55,19 +55,13 @@ const ConsolePolicySection = (props: Props) => {
             </SectionHeader>
             {expanded && (
                 <SectionContent>
-                    {isPersisted ? (
-                        <PolicyEditor
-                            resourceType={resourceType}
-                            resourceId={resourceId}
-                            resourceDisplayName={resourceDisplayName}
-                            allowSimplified={false}
-                            allowAdvanced={true}
-                        />
-                    ) : (
-                        <UnsavedNote>
-                            <FormattedMessage defaultMessage='Save the configuration first to define an access policy.'/>
-                        </UnsavedNote>
-                    )}
+                    <PolicyEditor
+                        resourceType={resourceType}
+                        resourceId={resourceId}
+                        resourceDisplayName={resourceDisplayName}
+                        allowSimplified={false}
+                        allowAdvanced={true}
+                    />
                 </SectionContent>
             )}
         </SectionContainer>
@@ -97,11 +91,6 @@ const SectionTitle = styled.div`
 
 const SectionContent = styled.div`
     margin-top: 12px;
-`;
-
-const UnsavedNote = styled.div`
-    font-size: 13px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
 export default ConsolePolicySection;
