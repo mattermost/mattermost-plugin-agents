@@ -69,6 +69,11 @@ func (c *Checker) RebuildIndex(ctx context.Context, resourceIDsByType map[string
 	var wg sync.WaitGroup
 gather:
 	for i := range refs {
+		// Checked before the select too: with the context already done both
+		// select cases are ready and the pick would be random.
+		if ctx.Err() != nil {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			break gather
