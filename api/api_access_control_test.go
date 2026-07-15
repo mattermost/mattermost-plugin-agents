@@ -21,40 +21,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// recordingPolicyIndex records Add/Remove calls for route tests.
-type recordingPolicyIndex struct {
-	added   []string
-	removed []string
-}
-
-func (r *recordingPolicyIndex) Has(_, _ string) (bool, error) { return false, nil }
-func (r *recordingPolicyIndex) Add(resourceType, resourceID string) error {
-	r.added = append(r.added, resourceType+"/"+resourceID)
-	return nil
-}
-func (r *recordingPolicyIndex) Remove(resourceType, resourceID string) error {
-	r.removed = append(r.removed, resourceType+"/"+resourceID)
-	return nil
-}
-
-// unavailableDecisionClient makes IsAvailable report false.
+// unavailableDecisionClient reports every resource as unavailable, which the
+// amended §9.2 tables translate to an unconditional deny.
 type unavailableDecisionClient struct{}
 
-func (unavailableDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (accesscontrol.Outcome, error) {
-	return accesscontrol.OutcomeUnavailable, nil
+func (unavailableDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (model.AccessDecisionOutcome, error) {
+	return model.AccessDecisionOutcomeUnavailable, nil
 }
 
 // setupAccessControlTestEnvironment builds an API whose accessChecker proxies
-// PAP calls to e.mockAPI and records index updates.
-func setupAccessControlTestEnvironment(t *testing.T) (*TestEnvironment, *recordingPolicyIndex) {
+// PAP calls to e.mockAPI.
+func setupAccessControlTestEnvironment(t *testing.T) *TestEnvironment {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
 	e := SetupTestEnvironment(t)
 	e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-	index := &recordingPolicyIndex{}
-	e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, index, accesscontrol.NoMCPServerIDs, nil, nil)
-	return e, index
+	e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, accesscontrol.NoMCPServerIDs, nil)
+	return e
 }
 
 func TestAgentPolicyRouteAuthMatrix(t *testing.T) {
@@ -83,7 +67,7 @@ func TestAgentPolicyRouteAuthMatrix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, _ := setupAccessControlTestEnvironment(t)
+			e := setupAccessControlTestEnvironment(t)
 			defer e.Cleanup(t)
 
 			e.agentStore.agents[agentID] = &llm.BotConfig{
@@ -107,11 +91,11 @@ func TestAgentPolicyRouteAuthMatrix(t *testing.T) {
 	}
 }
 
-func TestAgentPolicyPutOverwritesIdentityAndUpdatesIndex(t *testing.T) {
+func TestAgentPolicyPutOverwritesIdentity(t *testing.T) {
 	creatorID := model.NewId()
 	agentID := model.NewId()
 
-	e, index := setupAccessControlTestEnvironment(t)
+	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 
 	e.agentStore.agents[agentID] = &llm.BotConfig{
@@ -144,15 +128,13 @@ func TestAgentPolicyPutOverwritesIdentityAndUpdatesIndex(t *testing.T) {
 	assert.Equal(t, model.AccessControlPolicyVersionV0_5, savedPolicy.Version)
 	assert.True(t, savedPolicy.Active)
 	assert.Equal(t, "Policy Agent", savedPolicy.Name, "empty name defaults to the agent display name")
-
-	assert.Equal(t, []string{accesscontrol.ResourceTypeAgent + "/" + agentID}, index.added)
 }
 
-func TestAgentPolicyDeleteUpdatesIndex(t *testing.T) {
+func TestAgentPolicyDelete(t *testing.T) {
 	creatorID := model.NewId()
 	agentID := model.NewId()
 
-	e, index := setupAccessControlTestEnvironment(t)
+	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 
 	e.agentStore.agents[agentID] = &llm.BotConfig{
@@ -162,13 +144,8 @@ func TestAgentPolicyDeleteUpdatesIndex(t *testing.T) {
 
 	e.mockAPI.On("DeleteAccessControlPolicy", creatorID, accesscontrol.ResourceTypeAgent, agentID).Return(nil).Once()
 
-	// Delete-confirm step: the marker is only removed after Get reports 404.
-	notFound := model.NewAppError("GetAccessControlPolicy", "not found", nil, "", http.StatusNotFound)
-	e.mockAPI.On("GetAccessControlPolicy", agentID).Return(nil, notFound).Once()
-
 	recorder := doRequest(e.api, http.MethodDelete, "/agents/"+agentID+"/access_policy", nil, creatorID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
-	assert.Equal(t, []string{accesscontrol.ResourceTypeAgent + "/" + agentID}, index.removed)
 }
 
 func TestServiceAndMCPPolicyRouteAuthMatrix(t *testing.T) {
@@ -205,7 +182,7 @@ func TestServiceAndMCPPolicyRouteAuthMatrix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, _ := setupAccessControlTestEnvironment(t)
+			e := setupAccessControlTestEnvironment(t)
 			defer e.Cleanup(t)
 			seedConfig(e)
 
@@ -251,7 +228,7 @@ func TestLegacyIDPolicyRoutes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, index := setupAccessControlTestEnvironment(t)
+			e := setupAccessControlTestEnvironment(t)
 			defer e.Cleanup(t)
 			e.api.configStore = &mockConfigStore{
 				cfg: &config.Config{
@@ -268,8 +245,6 @@ func TestLegacyIDPolicyRoutes(t *testing.T) {
 
 			recorder := doRequest(e.api, tt.method, tt.path, tt.body, adminID)
 			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
-			assert.Empty(t, index.added, "legacy-ID routes must never touch the policy index")
-			assert.Empty(t, index.removed, "legacy-ID routes must never touch the policy index")
 		})
 	}
 }
@@ -299,7 +274,7 @@ func TestCELRouteAuthMatrix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, _ := setupAccessControlTestEnvironment(t)
+			e := setupAccessControlTestEnvironment(t)
 			defer e.Cleanup(t)
 
 			e.agentStore.agents[agentID] = &llm.BotConfig{
@@ -323,7 +298,7 @@ func TestCELRouteAuthMatrix(t *testing.T) {
 func TestCELCheckRejectsForeignResourceType(t *testing.T) {
 	userID := model.NewId()
 
-	e, _ := setupAccessControlTestEnvironment(t)
+	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true).Maybe()
@@ -341,11 +316,11 @@ type perIDDecisionClient struct {
 	denied map[string]bool
 }
 
-func (c perIDDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, resourceID, _ string) (accesscontrol.Outcome, error) {
+func (c perIDDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, resourceID, _ string) (model.AccessDecisionOutcome, error) {
 	if c.denied[resourceID] {
-		return accesscontrol.OutcomeDeny, nil
+		return model.AccessDecisionOutcomeDeny, nil
 	}
-	return accesscontrol.OutcomeNoPolicy, nil
+	return model.AccessDecisionOutcomeNoPolicy, nil
 }
 
 // seedServiceConfig registers a service with a valid stable ID so ABAC
@@ -362,10 +337,10 @@ func TestCreateAgentDeniedServiceReturns403(t *testing.T) {
 	serviceID := model.NewId()
 	userID := model.NewId()
 
-	e, _ := setupAccessControlTestEnvironment(t)
+	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 	seedServiceConfig(e, serviceID)
-	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
@@ -384,10 +359,12 @@ func TestCreateAgentAttributeBasedWhileUnavailableReturns400(t *testing.T) {
 	serviceID := model.NewId()
 	userID := model.NewId()
 
-	e, _ := setupAccessControlTestEnvironment(t)
+	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 	seedServiceConfig(e, serviceID)
-	e.api.accessChecker = accesscontrol.New(unavailableDecisionClient{}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+	// nil plugin API: the PAP availability probe has nothing to ask, so
+	// IsAvailable reports false and the attribute-based save is rejected.
+	e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
@@ -406,12 +383,12 @@ func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
 	userID := model.NewId()
 	agentID := model.NewId()
 
-	e, _ := setupAccessControlTestEnvironment(t)
+	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 	seedServiceConfig(e, serviceID)
 	// The service is denied to the editor, but it is a pre-existing
 	// assignment: unrelated edits must not be blocked.
-	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
@@ -433,9 +410,9 @@ func TestListAgentsFiltersPolicyDeniedAgents(t *testing.T) {
 	deniedAgentID := model.NewId()
 	allowedAgentID := model.NewId()
 
-	e, _ := setupAccessControlTestEnvironment(t)
+	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
-	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{deniedAgentID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{deniedAgentID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
@@ -458,21 +435,27 @@ func TestListAgentsFiltersPolicyDeniedAgents(t *testing.T) {
 	assert.Equal(t, allowedAgentID, agents[0].ID)
 }
 
+// TestABACStatusRoute drives the status endpoint through the PAP availability
+// probe: GetAccessControlPolicy on a fresh ID returning 404 means ABAC is up;
+// a 501-class error means it is not.
 func TestABACStatusRoute(t *testing.T) {
+	notFound := model.NewAppError("GetAccessControlPolicy", "not found", nil, "", http.StatusNotFound)
+	notImplemented := model.NewAppError("GetAccessControlPolicy", "abac unavailable", nil, "", http.StatusNotImplemented)
+
 	tests := []struct {
 		name          string
-		client        accesscontrol.DecisionClient
+		probeErr      *model.AppError
 		wantAvailable bool
 	}{
-		{name: "available", client: accesscontrol.PassthroughClient{}, wantAvailable: true},
-		{name: "unavailable", client: unavailableDecisionClient{}, wantAvailable: false},
+		{name: "available", probeErr: notFound, wantAvailable: true},
+		{name: "unavailable", probeErr: notImplemented, wantAvailable: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, _ := setupAccessControlTestEnvironment(t)
+			e := setupAccessControlTestEnvironment(t)
 			defer e.Cleanup(t)
-			e.api.accessChecker = accesscontrol.New(tt.client, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+			e.mockAPI.On("GetAccessControlPolicy", mock.AnythingOfType("string")).Return(nil, tt.probeErr).Once()
 
 			recorder := doRequest(e.api, http.MethodGet, "/access_control/status", nil, model.NewId())
 			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
@@ -483,17 +466,6 @@ func TestABACStatusRoute(t *testing.T) {
 		})
 	}
 }
-
-// gatedPolicyIndex reports a fixed marker state / read error; used for the
-// unavailable / index-error decision rows.
-type gatedPolicyIndex struct {
-	has    bool
-	hasErr error
-}
-
-func (g gatedPolicyIndex) Has(_, _ string) (bool, error) { return g.has, g.hasErr }
-func (g gatedPolicyIndex) Add(_, _ string) error         { return nil }
-func (g gatedPolicyIndex) Remove(_, _ string) error      { return nil }
 
 // seedTwoServiceConfig registers two services with valid stable IDs.
 func seedTwoServiceConfig(e *TestEnvironment, firstID, secondID string) {
@@ -509,7 +481,7 @@ func seedTwoServiceConfig(e *TestEnvironment, firstID, secondID string) {
 
 // TestListServicesAppliesServicePolicies covers F3: system admins get the
 // full catalog, everyone else is filtered through CanUseService — including
-// the unavailable/index-error fail-closed rows.
+// the unavailable row, which now fails closed unconditionally (Option B).
 func TestListServicesAppliesServicePolicies(t *testing.T) {
 	allowedID := model.NewId()
 	gatedID := model.NewId()
@@ -523,7 +495,7 @@ func TestListServicesAppliesServicePolicies(t *testing.T) {
 		{
 			name: "non-admin loses denied service",
 			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{gatedID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{gatedID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 			},
 			wantIDs: []string{allowedID},
 		},
@@ -531,28 +503,14 @@ func TestListServicesAppliesServicePolicies(t *testing.T) {
 			name:    "system admin keeps the full catalog",
 			isAdmin: true,
 			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{gatedID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{gatedID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 			},
 			wantIDs: []string{allowedID, gatedID},
 		},
 		{
-			name: "unavailable with index marker fails closed",
+			name: "unavailable fails closed for every service",
 			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{has: true}, accesscontrol.NoMCPServerIDs, nil, nil)
-			},
-			wantIDs: []string{},
-		},
-		{
-			name: "unavailable without index marker falls open",
-			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{has: false}, accesscontrol.NoMCPServerIDs, nil, nil)
-			},
-			wantIDs: []string{allowedID, gatedID},
-		},
-		{
-			name: "unavailable with unreadable index fails closed",
-			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{hasErr: assert.AnError}, accesscontrol.NoMCPServerIDs, nil, nil)
+				return accesscontrol.New(unavailableDecisionClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
 			},
 			wantIDs: []string{},
 		},
@@ -561,7 +519,7 @@ func TestListServicesAppliesServicePolicies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			userID := model.NewId()
-			e, _ := setupAccessControlTestEnvironment(t)
+			e := setupAccessControlTestEnvironment(t)
 			defer e.Cleanup(t)
 			seedTwoServiceConfig(e, allowedID, gatedID)
 			e.api.accessChecker = tt.checker()
@@ -600,7 +558,7 @@ func TestFetchModelsForServiceAppliesServicePolicies(t *testing.T) {
 		{
 			name: "non-admin denied service is 403",
 			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 			},
 			wantStatus: http.StatusForbidden,
 		},
@@ -608,21 +566,14 @@ func TestFetchModelsForServiceAppliesServicePolicies(t *testing.T) {
 			name:    "admin bypasses the policy",
 			isAdmin: true,
 			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+				return accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 			},
 			wantStatus: http.StatusBadRequest, // missing credentials, past the policy gate
 		},
 		{
-			name: "unavailable with index marker fails closed",
+			name: "unavailable fails closed",
 			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{has: true}, accesscontrol.NoMCPServerIDs, nil, nil)
-			},
-			wantStatus: http.StatusForbidden,
-		},
-		{
-			name: "unavailable with unreadable index fails closed",
-			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(unavailableDecisionClient{}, nil, gatedPolicyIndex{hasErr: assert.AnError}, accesscontrol.NoMCPServerIDs, nil, nil)
+				return accesscontrol.New(unavailableDecisionClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
 			},
 			wantStatus: http.StatusForbidden,
 		},
@@ -631,7 +582,7 @@ func TestFetchModelsForServiceAppliesServicePolicies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			userID := model.NewId()
-			e, _ := setupAccessControlTestEnvironment(t)
+			e := setupAccessControlTestEnvironment(t)
 			defer e.Cleanup(t)
 			seedServiceConfig(e, serviceID)
 			e.api.accessChecker = tt.checker()

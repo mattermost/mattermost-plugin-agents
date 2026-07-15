@@ -25,43 +25,22 @@ var ErrAccessDenied = errors.New("access denied by policy")
 // saved into attribute-based mode while ABAC is not available on the server.
 var ErrABACUnavailable = errors.New("attribute-based access requires Attribute-Based Access Control to be licensed and enabled on this server")
 
-// availabilityCacheTTL caps how often the availability probe hits the PDP;
+// availabilityCacheTTL caps how often the availability probe hits the PAP;
 // probe traffic from the status route and agent saves is bursty.
 const availabilityCacheTTL = 30 * time.Second
 
 // Checker is the PEP helper gating end-user access to agents, services, and
-// external MCP servers per the contract §9.2 decision tables. It also hosts
-// the PAP proxying (pap.go) so policy saves and index bookkeeping cannot be
-// separated.
+// external MCP servers per the contract §9.2 decision tables (as amended by
+// Option B). It also hosts the PAP proxying (pap.go).
 type Checker struct {
 	client DecisionClient
 	papi   plugin.API // PAP calls (pap.go); nil in decision-only tests
-	index  PolicyIndex
 	log    Logger
 
 	// mcpIDsByOrigin resolves external MCP server origins to stable IDs for
 	// ValidateAgentWrite. Injected at construction (config-backed in
 	// production) so MCP assignment validation can never silently skip.
 	mcpIDsByOrigin func() map[string]string
-
-	// mutationMu serializes whole PAP mutations (policy save/delete plus the
-	// index bookkeeping) so no interleaving can produce an enforced policy
-	// without its fail-closed index marker. Production passes the
-	// PolicyIndexMutexKey cluster mutex; tests may pass a plain sync.Mutex.
-	mutationMu sync.Locker
-
-	// reconciler runs decision-time index self-healing in the background so
-	// the authorization hot path never blocks on the KV-backed index for
-	// definitive outcomes. Stopped by Close.
-	reconciler *reconciler
-
-	// lifecycleCtx scopes the reconciler's index mutations to the Checker's
-	// lifetime; Close cancels it. Healing re-checks the governing context
-	// immediately before every index mutation (healDivergenceUnderLock), so
-	// after cancellation nothing can write to the index — at most in-flight
-	// reads briefly outlive shutdown.
-	lifecycleCtx    context.Context
-	lifecycleCancel context.CancelFunc
 
 	availabilityMu      sync.Mutex
 	availabilityValue   bool
@@ -76,150 +55,27 @@ func NoMCPServerIDs() map[string]string { return nil }
 // is exercised (tests); production wiring always passes the raw plugin API.
 // mcpIDsByOrigin must be non-nil (use NoMCPServerIDs when there are no
 // external MCP servers); a nil resolver is a wiring bug and fails fast.
-// mutationMutex must be the PolicyIndexMutexKey cluster mutex in production;
-// nil falls back to a process-local mutex (single-instance tests only).
-func New(client DecisionClient, papi plugin.API, index PolicyIndex, mcpIDsByOrigin func() map[string]string, mutationMutex sync.Locker, log Logger) *Checker {
+func New(client DecisionClient, papi plugin.API, mcpIDsByOrigin func() map[string]string, log Logger) *Checker {
 	if mcpIDsByOrigin == nil {
 		panic("accesscontrol: New requires a non-nil MCP server ID resolver (use NoMCPServerIDs)")
 	}
-	if mutationMutex == nil {
-		mutationMutex = &sync.Mutex{}
+	return &Checker{
+		client:         client,
+		papi:           papi,
+		mcpIDsByOrigin: mcpIDsByOrigin,
+		log:            log,
 	}
-	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
-	c := &Checker{
-		client:          client,
-		papi:            papi,
-		index:           index,
-		mcpIDsByOrigin:  mcpIDsByOrigin,
-		mutationMu:      mutationMutex,
-		reconciler:      newReconciler(defaultReconcileCooldown),
-		lifecycleCtx:    lifecycleCtx,
-		lifecycleCancel: lifecycleCancel,
-		log:             log,
-	}
-	go c.reconciler.run(func(resourceType, resourceID string) bool {
-		return c.reconcileIndex(c.lifecycleCtx, resourceType, resourceID)
-	})
-	return c
-}
-
-// Close cancels the Checker's lifecycle context — guaranteeing that no index
-// mutation happens after it returns (an in-flight heal degrades to a no-op
-// before its write; only reads may briefly outlive shutdown) — and stops the
-// background reconciliation worker, waiting for the in-flight item to
-// finish. Call on plugin deactivation. Idempotent.
-func (c *Checker) Close() {
-	c.lifecycleCancel()
-	c.reconciler.close()
 }
 
 // evaluate runs one decision call. Invalid resource/user IDs short-circuit to
 // no_policy: config bots keep UUID IDs and the core API 400s on non-26-char
 // IDs; such resources can never have policies, so legacy behavior applies.
-func (c *Checker) evaluate(ctx context.Context, userID, resourceType, resourceID string) (Outcome, error) {
+func (c *Checker) evaluate(ctx context.Context, userID, resourceType, resourceID string) (model.AccessDecisionOutcome, error) {
 	if !model.IsValidId(resourceID) || !model.IsValidId(userID) {
 		logDebug(c.log, "ABAC evaluate skipped for non-policy-addressable IDs", "resource_type", resourceType, "resource_id", resourceID)
-		return OutcomeNoPolicy, nil
+		return model.AccessDecisionOutcomeNoPolicy, nil
 	}
 	return c.client.EvaluateAccessRequest(ctx, userID, resourceType, resourceID, ActionUse)
-}
-
-// indexGated reports whether the resource must fail closed on an
-// unavailable/error outcome: true when the policy index has a marker for it
-// OR the index itself cannot be read (unknowable = gated).
-func (c *Checker) indexGated(resourceType, resourceID string) bool {
-	has, err := c.index.Has(resourceType, resourceID)
-	if err != nil {
-		return true
-	}
-	return has
-}
-
-// scheduleReconcile hands a resource that produced a definitive decision
-// outcome to the background reconciliation worker. The hot path must never
-// block on the KV-backed index for allow/deny/no_policy outcomes: enqueue is
-// in-memory bookkeeping plus a non-blocking buffered channel send; the actual
-// index reads/writes happen in reconcileIndex on the worker goroutine.
-//
-// Only the resource identity is enqueued, never the outcome: by the time the
-// worker runs, the outcome may predate a policy save/delete, and reconciling
-// against a stale outcome would let the deduplication window suppress the
-// correction. The worker always fetches fresh server truth instead.
-func (c *Checker) scheduleReconcile(resourceType, resourceID string, outcome Outcome) {
-	if outcome == OutcomeUnavailable {
-		// No server truth to reconcile against.
-		return
-	}
-	if !model.IsValidId(resourceID) {
-		// Short-circuited evaluations (config bots, invalid IDs) are never
-		// policy-addressable and can never carry a marker.
-		return
-	}
-	c.reconciler.enqueue(resourceType, resourceID)
-}
-
-// reconcileIndex self-heals the fail-closed policy index from server truth
-// after a decision. The cluster mutex serializing PAP mutations uses a
-// renewable lease; if the lease is lost mid-mutation, an interleaving with a
-// concurrent opposing mutation can leave the index divergent from the stored
-// policies (e.g. an enforced policy without its marker). Server-side fencing
-// is not available through the plugin API, so instead of trying to win that
-// race we eliminate its PERSISTENCE: every decision with a definitive outcome
-// schedules a reconciliation of the marker for the resource it evaluated,
-// processed here on the background worker (see reconciler).
-//
-// The decision outcome that scheduled the reconciliation is deliberately
-// ignored: the marker is reconciled against FRESH server truth (a Get of the
-// stored policy), so a queued request can never apply an outcome that a
-// concurrent policy mutation has since invalidated. Divergent writes happen
-// under the mutation mutex with the truth re-confirmed under the lock
-// (healDivergenceUnderLock).
-//
-// ctx is the governing lifecycle context (the Checker's own for the
-// background worker): once canceled, no index mutation is performed.
-//
-// Returns true when the resource is confirmed converged — no divergence
-// found, or the heal write succeeded — which is the only condition that
-// starts the per-resource reconciliation cooldown. The residual hazard
-// window — lease loss AND a concurrent opposing mutation AND an ABAC outage
-// before the next successful decision or plugin activation — is an accepted,
-// self-correcting risk (see also RebuildIndex and DeletePolicy).
-func (c *Checker) reconcileIndex(ctx context.Context, resourceType, resourceID string) bool {
-	if c.papi == nil {
-		// Decision-only wiring (tests): no server truth to reconcile against.
-		return true
-	}
-
-	want, readable := c.policyMarkerTruth(resourceID)
-	if !readable {
-		return false
-	}
-	has, err := c.index.Has(resourceType, resourceID)
-	if err != nil {
-		logWarn(c.log, "ABAC policy index self-heal could not read the policy index",
-			"resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
-		return false
-	}
-	if has == want {
-		return true
-	}
-	return c.healDivergenceUnderLock(ctx, rebuildRef{resourceType: resourceType, resourceID: resourceID})
-}
-
-// policyMarkerTruth fetches the server truth for one resource: wantMarker
-// reports whether a stored policy exists (the fail-closed marker must exist
-// exactly then); readable is false when the read failed and no conclusion
-// can be drawn.
-func (c *Checker) policyMarkerTruth(resourceID string) (wantMarker, readable bool) {
-	_, appErr := c.papi.GetAccessControlPolicy(resourceID)
-	switch {
-	case appErr == nil:
-		return true, true
-	case isNotFoundAppErr(appErr):
-		return false, true
-	default:
-		return false, false
-	}
 }
 
 // CanUseAgent gates end-user use of an agent. Combines the resource policy
@@ -227,6 +83,11 @@ func (c *Checker) policyMarkerTruth(resourceID string) (wantMarker, readable boo
 // legacyCheck is the existing UsageRestrictionsForUserConfig outcome supplier,
 // invoked only when the table says so; attribute-based mode never invokes it
 // (UserIDs/TeamIDs are ignored in that mode).
+//
+// The server resolves policy existence even when ABAC is unavailable, so
+// no_policy is trustworthy and unavailable means a policy exists (or
+// existence could not be determined): unavailable — like any call error —
+// denies unconditionally, in every agent mode.
 func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotConfig, legacyCheck func() error) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "abac can_use_agent", trace.WithAttributes(
 		telemetry.UserID.String(userID),
@@ -253,45 +114,34 @@ func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotCo
 	if err != nil {
 		logError(c.log, "ABAC agent evaluation failed", "agent_id", cfg.ID, "error", err.Error())
 		span.RecordError(err)
-		if attributeBased || c.indexGated(ResourceTypeAgent, cfg.ID) {
-			return deny()
-		}
-		return runLegacy()
+		return deny()
 	}
 	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
-	c.scheduleReconcile(ResourceTypeAgent, cfg.ID, outcome)
 
 	switch outcome {
-	case OutcomeAllow:
+	case model.AccessDecisionOutcomeAllow:
 		if attributeBased {
 			return nil
 		}
 		return runLegacy()
-	case OutcomeDeny:
+	case model.AccessDecisionOutcomeDeny:
 		return deny()
-	case OutcomeNoPolicy:
+	case model.AccessDecisionOutcomeNoPolicy:
 		// Deliberate fail-open for attribute-based agents without a policy.
 		if attributeBased {
 			return nil
 		}
 		return runLegacy()
-	case OutcomeUnavailable:
-		if attributeBased || c.indexGated(ResourceTypeAgent, cfg.ID) {
-			return deny()
-		}
-		return runLegacy()
+	case model.AccessDecisionOutcomeUnavailable:
+		return deny()
 	default:
-		// Unknown outcome from a future server: fail toward the closed row.
-		if attributeBased || c.indexGated(ResourceTypeAgent, cfg.ID) {
-			return deny()
-		}
-		return runLegacy()
+		// Unknown outcome from a future server: fail closed.
+		return deny()
 	}
 }
 
 // canUseResource implements the mode-less §9.2 table shared by services and
-// MCP servers: allow/no_policy → nil; deny → ErrAccessDenied;
-// unavailable/error → deny only when the policy index gates the resource.
+// MCP servers: allow/no_policy → nil; deny/unavailable/error/unknown → deny.
 func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resourceType, resourceID string) error {
 	ctx, span := telemetry.Tracer().Start(ctx, spanName, trace.WithAttributes(
 		telemetry.UserID.String(userID),
@@ -311,29 +161,17 @@ func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resource
 	if err != nil {
 		logError(c.log, "ABAC resource evaluation failed", "resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
 		span.RecordError(err)
-		if c.indexGated(resourceType, resourceID) {
-			return deny()
-		}
-		return nil
+		return deny()
 	}
 	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
-	c.scheduleReconcile(resourceType, resourceID, outcome)
 
 	switch outcome {
-	case OutcomeAllow, OutcomeNoPolicy:
+	case model.AccessDecisionOutcomeAllow, model.AccessDecisionOutcomeNoPolicy:
 		return nil
-	case OutcomeDeny:
+	case model.AccessDecisionOutcomeDeny, model.AccessDecisionOutcomeUnavailable:
 		return deny()
-	case OutcomeUnavailable:
-		if c.indexGated(resourceType, resourceID) {
-			return deny()
-		}
-		return nil
 	default:
-		if c.indexGated(resourceType, resourceID) {
-			return deny()
-		}
-		return nil
+		return deny()
 	}
 }
 
@@ -348,11 +186,21 @@ func (c *Checker) CanUseMCPServer(ctx context.Context, userID, serverID string) 
 	return c.canUseResource(ctx, "abac can_use_mcp_server", userID, ResourceTypeMCP, serverID)
 }
 
-// IsAvailable probes whether the ABAC PDP is usable: one decision call for a
-// freshly generated (guaranteed-nonexistent) agent ID, expecting no_policy
-// when ABAC is up and unavailable (or an error) when it is not. The result is
+// IsAvailable probes whether the ABAC PAP is usable: one GetAccessControlPolicy
+// for a freshly generated (guaranteed-nonexistent) ID. When ABAC is up the
+// store miss collapses to a 404 (available); open core / unlicensed / disabled
+// servers return a non-404 error (unavailable). A decision-call probe cannot
+// distinguish these anymore: the server resolves policy existence even while
+// ABAC is down, so a nonexistent ID yields no_policy either way. The result is
 // cached for availabilityCacheTTL.
-func (c *Checker) IsAvailable(ctx context.Context, userID string) bool {
+//
+// This aligns the probe with what it gates: the status endpoint shows/hides
+// authoring UI and ValidateAgentWrite rejects saving into a mode the PAP/PDP
+// cannot serve — both exactly PAP availability.
+func (c *Checker) IsAvailable(ctx context.Context) bool {
+	_, span := telemetry.Tracer().Start(ctx, "abac is_available")
+	defer span.End()
+
 	c.availabilityMu.Lock()
 	defer c.availabilityMu.Unlock()
 
@@ -360,8 +208,13 @@ func (c *Checker) IsAvailable(ctx context.Context, userID string) bool {
 		return c.availabilityValue
 	}
 
-	outcome, err := c.evaluate(ctx, userID, ResourceTypeAgent, model.NewId())
-	available := err == nil && outcome != OutcomeUnavailable
+	available := false
+	if c.papi != nil {
+		_, appErr := c.papi.GetAccessControlPolicy(model.NewId())
+		// A nil appErr would mean a policy exists under the fresh ID —
+		// practically impossible, but it still proves the PAP answered.
+		available = appErr == nil || isNotFoundAppErr(appErr)
+	}
 	c.availabilityValue = available
 	c.availabilityChecked = time.Now()
 	return available
@@ -379,7 +232,7 @@ func (c *Checker) IsAvailable(ctx context.Context, userID string) bool {
 // AutoEnableNewMCPTools skips write-time MCP validation entirely: the flag
 // grants future, unknowable servers; runtime per-user filtering is the gate.
 func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, cfg, prev *llm.BotConfig) error {
-	if cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased && !c.IsAvailable(ctx, actingUserID) {
+	if cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased && !c.IsAvailable(ctx) {
 		return ErrABACUnavailable
 	}
 

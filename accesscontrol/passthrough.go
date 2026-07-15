@@ -3,7 +3,11 @@
 
 package accesscontrol
 
-import "context"
+import (
+	"context"
+
+	"github.com/mattermost/mattermost/server/public/model"
+)
 
 // PassthroughClient is the pre-ABAC decision client: it reports that no
 // policy exists for every resource, which reproduces legacy behavior exactly
@@ -11,6 +15,6 @@ import "context"
 type PassthroughClient struct{}
 
 // EvaluateAccessRequest always reports no_policy.
-func (PassthroughClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (Outcome, error) {
-	return OutcomeNoPolicy, nil
+func (PassthroughClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (model.AccessDecisionOutcome, error) {
+	return model.AccessDecisionOutcomeNoPolicy, nil
 }

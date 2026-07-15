@@ -22,5 +22,5 @@ const (
 // DecisionClient abstracts the PDP call (plugin.API.EvaluateAccessControl in
 // WS-D) so Checker logic is testable against a stub.
 type DecisionClient interface {
-	EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (Outcome, error)
+	EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (model.AccessDecisionOutcome, error)
 }

@@ -530,7 +530,7 @@ func (t *testPluginAPI) PluginHTTP(req *http.Request) *http.Response {
 // newPassthroughAccessChecker builds an ABAC checker that always reports
 // no_policy, so tests exercise pure legacy permission behavior.
 func newPassthroughAccessChecker() *accesscontrol.Checker {
-	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
 }
 
 // createTestBots creates a test MMBots instance for testing

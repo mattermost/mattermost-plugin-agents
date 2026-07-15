@@ -6,7 +6,6 @@ package accesscontrol
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -24,8 +23,7 @@ var ErrPolicyNotFound = errors.New("access policy not found")
 var errNoPluginAPI = errors.New("access control plugin API is not available")
 
 // PAP (policy administration) proxying lives on the Checker — not in the api
-// package — so a successful save/delete can never skip the policy-index
-// update, and the api package never holds a raw plugin.API handle.
+// package — so the api package never holds a raw plugin.API handle.
 
 func isNotFoundAppErr(appErr *model.AppError) bool {
 	return appErr != nil && appErr.StatusCode == http.StatusNotFound
@@ -33,12 +31,9 @@ func isNotFoundAppErr(appErr *model.AppError) bool {
 
 // SavePolicy overwrites the identity fields (ID, Type, Version, Active) per
 // contract §7.2, defaults an empty Name to defaultName, and persists the
-// policy with conservative ordering under the policy-index mutex: the
-// fail-closed index marker is written FIRST, then the policy. An enforced
-// policy therefore can never exist without its outage marker; the inverse
-// (a marker without a policy, after a failed save) only fails closed during
-// ABAC outages — acceptable. On save failure the marker this call added is
-// removed best-effort; a failed removal is tolerated for the same reason.
+// policy. The save is a single plugin-API call: the server owns policy
+// existence (Option B), so no plugin-side bookkeeping or serialization is
+// needed.
 func (c *Checker) SavePolicy(ctx context.Context, actingUserID, resourceType, resourceID, defaultName string, policy *model.AccessControlPolicy) (*model.AccessControlPolicy, error) {
 	_, span := telemetry.Tracer().Start(ctx, "abac save_policy", trace.WithAttributes(
 		telemetry.UserID.String(actingUserID),
@@ -59,29 +54,10 @@ func (c *Checker) SavePolicy(ctx context.Context, actingUserID, resourceType, re
 		policy.Name = defaultName
 	}
 
-	c.mutationMu.Lock()
-	defer c.mutationMu.Unlock()
-
-	// Remember whether the marker pre-existed so a rollback below can never
-	// strip the marker of a still-enforced older policy.
-	hadMarker, hasErr := c.index.Has(resourceType, resourceID)
-
-	if err := c.index.Add(resourceType, resourceID); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "policy index update failed")
-		return nil, fmt.Errorf("failed to update the policy index; the policy was not saved: %w", err)
-	}
-
 	saved, appErr := c.papi.SaveAccessControlPolicy(actingUserID, policy)
 	if appErr != nil {
 		span.RecordError(appErr)
 		span.SetStatus(codes.Error, "policy save failed")
-		if hasErr == nil && !hadMarker {
-			if rmErr := c.index.Remove(resourceType, resourceID); rmErr != nil {
-				logWarn(c.log, "Policy save failed and the policy index marker could not be rolled back; the stale marker fails closed during ABAC outages",
-					"resource_type", resourceType, "resource_id", resourceID, "error", rmErr.Error())
-			}
-		}
 		return nil, appErr
 	}
 	return saved, nil
@@ -111,18 +87,8 @@ func (c *Checker) GetPolicy(ctx context.Context, resourceID string) (*model.Acce
 	return policy, nil
 }
 
-// DeletePolicy deletes the stored policy and clears its policy-index marker,
-// under the policy-index mutex and in that order: a marker-removal failure
-// after a successful delete leaves a stale fail-closed marker — acceptable
-// (contract risk #3) and logged. Returns ErrPolicyNotFound when no policy
-// exists.
-//
-// Before dropping the marker the delete is confirmed against server truth
-// (Get returning 404): the mutex lease is renewable but not fenced, so a
-// save from an instance whose lease was lost could re-create the policy
-// between our delete and the marker removal. When the confirm fails or finds
-// a policy, the marker is kept — a stale marker only fails closed during
-// ABAC outages and self-heals at the next decision (see reconcileIndex).
+// DeletePolicy deletes the stored policy. Returns ErrPolicyNotFound when no
+// policy exists.
 func (c *Checker) DeletePolicy(ctx context.Context, actingUserID, resourceType, resourceID string) error {
 	_, span := telemetry.Tracer().Start(ctx, "abac delete_policy", trace.WithAttributes(
 		telemetry.UserID.String(actingUserID),
@@ -135,9 +101,6 @@ func (c *Checker) DeletePolicy(ctx context.Context, actingUserID, resourceType, 
 		return ErrPolicyNotFound
 	}
 
-	c.mutationMu.Lock()
-	defer c.mutationMu.Unlock()
-
 	if appErr := c.papi.DeleteAccessControlPolicy(actingUserID, resourceType, resourceID); appErr != nil {
 		if isNotFoundAppErr(appErr) {
 			return ErrPolicyNotFound
@@ -145,22 +108,6 @@ func (c *Checker) DeletePolicy(ctx context.Context, actingUserID, resourceType, 
 		span.RecordError(appErr)
 		span.SetStatus(codes.Error, "policy delete failed")
 		return appErr
-	}
-
-	// Confirm the policy is really gone before dropping the fail-closed
-	// marker; keep the marker whenever the 404 cannot be confirmed.
-	if _, appErr := c.papi.GetAccessControlPolicy(resourceID); !isNotFoundAppErr(appErr) {
-		logWarn(c.log, "Policy delete could not be confirmed against server truth; keeping the fail-closed marker",
-			"resource_type", resourceType, "resource_id", resourceID)
-		return nil
-	}
-
-	if err := c.index.Remove(resourceType, resourceID); err != nil {
-		// Stale marker only fails closed during ABAC outages — acceptable
-		// (contract risk #3); the delete itself succeeded.
-		logError(c.log, "Policy deleted but policy index cleanup failed; a stale fail-closed marker remains",
-			"resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
-		span.RecordError(err)
 	}
 	return nil
 }

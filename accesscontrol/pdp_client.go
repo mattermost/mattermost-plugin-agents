@@ -25,7 +25,10 @@ func NewPluginAPIClient(papi plugin.API) *PluginAPIClient {
 
 // EvaluateAccessRequest proxies one PDP decision call. The ctx is used only
 // for the span: the plugin RPC hop is synchronous and carries no context.
-func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (Outcome, error) {
+// The server outcome is returned verbatim: unknown values from a future
+// server fall into the checkers' default switch row, which denies —
+// preserving fail-closed normalization without a translation layer.
+func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (model.AccessDecisionOutcome, error) {
 	_, span := telemetry.Tracer().Start(ctx, "abac evaluate", trace.WithAttributes(
 		telemetry.UserID.String(userID),
 		telemetry.ABACResourceType.String(resourceType),
@@ -40,25 +43,6 @@ func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, res
 		return "", appErr
 	}
 
-	outcome := outcomeFromModel(decision.Outcome)
-	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
-	return outcome, nil
-}
-
-// outcomeFromModel maps the server outcome onto the plugin-local Outcome.
-// Unknown values from a future server map to unavailable — the fail-closed
-// row of the decision tables.
-func outcomeFromModel(o model.AccessDecisionOutcome) Outcome {
-	switch o {
-	case model.AccessDecisionOutcomeAllow:
-		return OutcomeAllow
-	case model.AccessDecisionOutcomeDeny:
-		return OutcomeDeny
-	case model.AccessDecisionOutcomeNoPolicy:
-		return OutcomeNoPolicy
-	case model.AccessDecisionOutcomeUnavailable:
-		return OutcomeUnavailable
-	default:
-		return OutcomeUnavailable
-	}
+	span.SetAttributes(telemetry.ABACOutcome.String(string(decision.Outcome)))
+	return decision.Outcome, nil
 }

@@ -26,7 +26,7 @@ import (
 // newPassthroughAccessChecker builds an ABAC checker that always reports
 // no_policy, so tests exercise pure legacy permission behavior.
 func newPassthroughAccessChecker() *accesscontrol.Checker {
-	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
 }
 
 type failingAgentStore struct{}

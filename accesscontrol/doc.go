@@ -5,16 +5,16 @@
 // helper for attribute-based access control over agents, LLM services, and
 // external MCP servers.
 //
-// Layout, per the cross-repo ABAC contract:
+// Layout, per the cross-repo ABAC contract (as amended by Option B):
 //   - checker.go — the §9.2 decision tables (CanUseAgent/CanUseService/
 //     CanUseMCPServer), write-time validation (ValidateAgentWrite), and the
-//     cached PDP availability probe (IsAvailable).
+//     cached PAP availability probe (IsAvailable).
 //   - pdp_client.go — DecisionClient over plugin.API.EvaluateAccessControl.
-//   - pap.go — policy save/get/delete and CEL editor proxying (§7), colocated
-//     with the policy-index bookkeeping so a successful save/delete can never
-//     skip the index update.
-//   - kv_policy_index.go — the persisted policy index (§9.3), consulted only
-//     on unavailable/error outcomes to decide whether to fail closed.
+//   - pap.go — policy save/get/delete and CEL editor proxying (§7).
+//
+// Outage invariant: `unavailable` (and any call error) always denies — the
+// server resolves policy existence even when ABAC is down, so `no_policy` is
+// trustworthy and legacy behavior applies exactly when no policy exists.
 //
 // Enforcement call sites live in bots/ (composite agent+service gate), mcp/
 // (per-user server filtering), llmcontext/ (meta-tool omission), and api/

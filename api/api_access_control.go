@@ -438,8 +438,7 @@ type ABACStatusResponse struct {
 // handleABACStatus reports whether the server-side ABAC engine is usable;
 // the webapp hides all policy UI when it is not.
 func (a *API) handleABACStatus(c *gin.Context) {
-	userID := c.GetHeader("Mattermost-User-Id")
 	c.JSON(http.StatusOK, ABACStatusResponse{
-		Available: a.accessChecker.IsAvailable(c.Request.Context(), userID),
+		Available: a.accessChecker.IsAvailable(c.Request.Context()),
 	})
 }

@@ -67,20 +67,8 @@ type Plugin struct {
 	store                *store.Store
 	configMigrated       bool
 
-	accessChecker     *accesscontrol.Checker
-	abacRebuildCancel context.CancelFunc
-	abacRebuildDone   chan struct{}
+	accessChecker *accesscontrol.Checker
 }
-
-// abacRebuildJoinTimeout bounds how long OnDeactivate waits for the ABAC
-// index rebuild goroutine to observe cancellation and exit. A rebuild parked
-// on a plugin API call or the cluster mutex should unwind well within this;
-// exceeding it is logged and deactivation proceeds. A straggler that
-// outlives the timeout cannot mutate the policy index: every heal re-checks
-// the canceled lifecycle context immediately before its index write
-// (accesscontrol.Checker.RebuildIndex) — at worst its in-flight policy
-// reads briefly outlive shutdown.
-const abacRebuildJoinTimeout = 10 * time.Second
 
 type pluginLogger struct {
 	service *pluginapi.LogService
@@ -231,59 +219,18 @@ func (p *Plugin) OnActivate() error {
 		}
 	}
 
-	// ABAC checker: PDP decisions over plugin.API, fail-closed policy index in
-	// the Agents_System KV. Built before bots.New so the composite usage gate
-	// always has a checker. The cluster mutex serializes whole policy+index
-	// mutations (see accesscontrol.Checker.SavePolicy) and the config-backed
+	// ABAC checker: PDP decisions over plugin.API. Built before bots.New so
+	// the composite usage gate always has a checker. The server resolves
+	// policy existence even when ABAC is unavailable (Option B), so no
+	// plugin-side policy index, mutex, or rebuild is needed. The config-backed
 	// resolver is injected at construction so write-time MCP assignment
 	// validation can never silently skip.
-	abacMutex, err := cluster.NewMutex(p.API, accesscontrol.PolicyIndexMutexKey)
-	if err != nil {
-		return fmt.Errorf("failed to create ABAC policy index mutex: %w", err)
-	}
-	policyIndex := accesscontrol.NewKVPolicyIndex(p.store, &pluginAPI.Log)
 	mcpServerIDsByOrigin := func() map[string]string {
 		mcpConfig := p.configuration.MCP()
 		return mcpConfig.ServerIDByOrigin()
 	}
-	accessChecker := accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, policyIndex, mcpServerIDsByOrigin, abacMutex, &pluginAPI.Log)
+	accessChecker := accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, mcpServerIDsByOrigin, &pluginAPI.Log)
 	p.accessChecker = accessChecker
-
-	// Rebuild the fail-closed policy index from server truth in the
-	// background: enumerate every known resource ID and reconcile its marker
-	// against GetAccessControlPolicy. Best-effort and non-fatal — divergence
-	// caused by a lost mutex lease must not survive a restart (see
-	// accesscontrol.Checker.RebuildIndex). The rebuild runs under a
-	// plugin-lifecycle context: OnDeactivate cancels it AND joins on the
-	// done channel (bounded by abacRebuildJoinTimeout). Guarantee: no index
-	// mutation after cancellation — every heal re-checks the context
-	// immediately before writing — while a straggler's in-flight reads may
-	// briefly outlive a timed-out join.
-	abacRebuildCtx, abacRebuildCancel := context.WithCancel(context.Background())
-	p.abacRebuildCancel = abacRebuildCancel
-	abacRebuildDone := make(chan struct{})
-	p.abacRebuildDone = abacRebuildDone
-	go func() {
-		defer close(abacRebuildDone)
-		resourceIDsByType := map[string][]string{}
-		if agents, listErr := p.store.ListAgents(); listErr != nil {
-			pluginAPI.Log.Warn("ABAC index rebuild could not list agents", "error", listErr.Error())
-		} else {
-			for _, agent := range agents {
-				resourceIDsByType[accesscontrol.ResourceTypeAgent] = append(resourceIDsByType[accesscontrol.ResourceTypeAgent], agent.ID)
-			}
-		}
-		for _, service := range p.configuration.Config().Services {
-			if service.ID != "" {
-				resourceIDsByType[accesscontrol.ResourceTypeService] = append(resourceIDsByType[accesscontrol.ResourceTypeService], service.ID)
-			}
-		}
-		mcpConfig := p.configuration.MCP()
-		for _, serverID := range mcpConfig.ServerIDByOrigin() {
-			resourceIDsByType[accesscontrol.ResourceTypeMCP] = append(resourceIDsByType[accesscontrol.ResourceTypeMCP], serverID)
-		}
-		accessChecker.RebuildIndex(abacRebuildCtx, resourceIDsByType)
-	}()
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, accessChecker, llmUpstreamHTTPClient, metricsService)
 
@@ -625,27 +572,6 @@ func (p *Plugin) OnDeactivate() error {
 
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
-
-	// Abandon a still-running ABAC index rebuild: cancel AND join. If the
-	// join times out, the canceled lifecycle context still guarantees that
-	// no index mutation happens afterwards (heals re-check it immediately
-	// before writing); only in-flight reads may briefly outlive shutdown.
-	// Then stop the background reconciliation worker (Close also cancels the
-	// Checker's own lifecycle context, giving its heals the same guarantee).
-	if p.abacRebuildCancel != nil {
-		p.abacRebuildCancel()
-	}
-	if p.abacRebuildDone != nil {
-		select {
-		case <-p.abacRebuildDone:
-		case <-time.After(abacRebuildJoinTimeout):
-			p.pluginAPI.Log.Warn("ABAC index rebuild did not stop within the deactivation timeout; abandoning the join",
-				"timeout", abacRebuildJoinTimeout.String())
-		}
-	}
-	if p.accessChecker != nil {
-		p.accessChecker.Close()
-	}
 
 	return nil
 }

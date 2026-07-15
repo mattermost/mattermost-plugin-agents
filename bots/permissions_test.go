@@ -388,21 +388,21 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 // abacStubClient answers decision calls per resource type; unlisted types
 // evaluate as no_policy (legacy behavior).
 type abacStubClient struct {
-	perType map[string]accesscontrol.Outcome
+	perType map[string]model.AccessDecisionOutcome
 }
 
-func (s abacStubClient) EvaluateAccessRequest(_ context.Context, _, resourceType, _, _ string) (accesscontrol.Outcome, error) {
+func (s abacStubClient) EvaluateAccessRequest(_ context.Context, _, resourceType, _, _ string) (model.AccessDecisionOutcome, error) {
 	if outcome, ok := s.perType[resourceType]; ok {
 		return outcome, nil
 	}
-	return accesscontrol.OutcomeNoPolicy, nil
+	return model.AccessDecisionOutcomeNoPolicy, nil
 }
 
-func setupABACTestEnvironment(t *testing.T, perType map[string]accesscontrol.Outcome) *TestEnvironment {
+func setupABACTestEnvironment(t *testing.T, perType map[string]model.AccessDecisionOutcome) *TestEnvironment {
 	t.Helper()
 	mockAPI := &plugintest.API{}
 	client := pluginapi.NewClient(mockAPI, nil)
-	checker := accesscontrol.New(abacStubClient{perType: perType}, nil, accesscontrol.EmptyPolicyIndex{}, accesscontrol.NoMCPServerIDs, nil, nil)
+	checker := accesscontrol.New(abacStubClient{perType: perType}, nil, accesscontrol.NoMCPServerIDs, nil)
 	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, checker, &http.Client{}, nil)
 	return &TestEnvironment{bots: mmBots, client: client, mockAPI: mockAPI}
 }
@@ -416,13 +416,13 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		perType    map[string]accesscontrol.Outcome
+		perType    map[string]model.AccessDecisionOutcome
 		cfg        llm.BotConfig
 		wantDenied bool
 	}{
 		{
 			name:    "agent policy deny masks legacy allow",
-			perType: map[string]accesscontrol.Outcome{accesscontrol.ResourceTypeAgent: accesscontrol.OutcomeDeny},
+			perType: map[string]model.AccessDecisionOutcome{accesscontrol.ResourceTypeAgent: model.AccessDecisionOutcomeDeny},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
 				UserAccessLevel: llm.UserAccessLevelAll,
@@ -431,9 +431,9 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 		},
 		{
 			name: "service deny after agent allow",
-			perType: map[string]accesscontrol.Outcome{
-				accesscontrol.ResourceTypeAgent:   accesscontrol.OutcomeAllow,
-				accesscontrol.ResourceTypeService: accesscontrol.OutcomeDeny,
+			perType: map[string]model.AccessDecisionOutcome{
+				accesscontrol.ResourceTypeAgent:   model.AccessDecisionOutcomeAllow,
+				accesscontrol.ResourceTypeService: model.AccessDecisionOutcomeDeny,
 			},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
@@ -443,9 +443,9 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 		},
 		{
 			name: "agent and service allow",
-			perType: map[string]accesscontrol.Outcome{
-				accesscontrol.ResourceTypeAgent:   accesscontrol.OutcomeAllow,
-				accesscontrol.ResourceTypeService: accesscontrol.OutcomeAllow,
+			perType: map[string]model.AccessDecisionOutcome{
+				accesscontrol.ResourceTypeAgent:   model.AccessDecisionOutcomeAllow,
+				accesscontrol.ResourceTypeService: model.AccessDecisionOutcomeAllow,
 			},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
@@ -454,7 +454,7 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 		},
 		{
 			name:    "attribute-based agent ignores legacy user lists",
-			perType: map[string]accesscontrol.Outcome{accesscontrol.ResourceTypeAgent: accesscontrol.OutcomeAllow},
+			perType: map[string]model.AccessDecisionOutcome{accesscontrol.ResourceTypeAgent: model.AccessDecisionOutcomeAllow},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
 				UserAccessLevel: llm.UserAccessLevelAttributeBased,
@@ -463,10 +463,23 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 		},
 		{
 			name:    "attribute-based agent denied by policy",
-			perType: map[string]accesscontrol.Outcome{accesscontrol.ResourceTypeAgent: accesscontrol.OutcomeDeny},
+			perType: map[string]model.AccessDecisionOutcome{accesscontrol.ResourceTypeAgent: model.AccessDecisionOutcomeDeny},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
 				UserAccessLevel: llm.UserAccessLevelAttributeBased,
+			},
+			wantDenied: true,
+		},
+		{
+			// Option B end-to-end pin: unavailable means the server vouched a
+			// policy exists (or existence is unknowable), so even a
+			// legacy-mode agent whose user lists would allow fails closed at
+			// the enforcement point.
+			name:    "legacy-mode agent denied on unavailable",
+			perType: map[string]model.AccessDecisionOutcome{accesscontrol.ResourceTypeAgent: model.AccessDecisionOutcomeUnavailable},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAll,
 			},
 			wantDenied: true,
 		},
