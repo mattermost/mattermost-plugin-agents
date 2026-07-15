@@ -175,11 +175,20 @@ var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
 //
 // Each prev entry is claimed at most once across all phases.
 func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MCPServerConfig, error) {
+	// Stored IDs are ABAC policy identities and must be unique. A duplicate
+	// here means the persisted config is already corrupt; silently keeping
+	// the last row would let two servers share one policy ID (an explicit
+	// claim can consume one duplicate row and an exact claim the other).
 	prevByID := make(map[string]int, len(prev))
 	for j := range prev {
-		if prev[j].ID != "" {
-			prevByID[prev[j].ID] = j
+		id := prev[j].ID
+		if id == "" {
+			continue
 		}
+		if _, dup := prevByID[id]; dup {
+			return nil, fmt.Errorf("%w: stored configuration contains two servers with ID %q", ErrMCPServerIDConflict, id)
+		}
+		prevByID[id] = j
 	}
 
 	claimed := make([]bool, len(prev))

@@ -303,6 +303,22 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 			expectErr: true,
 		},
 		{
+			name: "duplicate non-empty stored IDs rejected",
+			next: []MCPServerConfig{
+				// One entry claims the ID explicitly, the other by exact
+				// (Name, BaseURL) match: with two stored rows sharing the ID,
+				// both claims could be satisfied by different rows, leaving
+				// two servers guarded by one policy identity.
+				{ID: "shared-id", Name: "srv", BaseURL: "https://one.example.com"},
+				{Name: "copy", BaseURL: "https://two.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "shared-id", Name: "srv", BaseURL: "https://one.example.com"},
+				{ID: "shared-id", Name: "copy", BaseURL: "https://two.example.com"},
+			},
+			expectErr: true,
+		},
+		{
 			name: "multiple exact (Name, BaseURL) duplicates in prev rejected",
 			next: []MCPServerConfig{
 				{Name: "dup", BaseURL: "https://one.example.com"},
