@@ -168,7 +168,7 @@ func (s *Indexer) runIndexPass(
 	var firstErr error
 
 	for {
-		b, canceled, ok := s.waitForBatch(orderedCh, heartbeat.C, jobStatus)
+		b, canceled, ok := s.waitForBatch(ctx, orderedCh, heartbeat.C, jobStatus)
 		if !ok {
 			if canceled {
 				firstErr = errCancelRequested
@@ -177,7 +177,7 @@ func (s *Indexer) runIndexPass(
 			break
 		}
 
-		err, canceled := s.waitForBatchResult(b, heartbeat.C, jobStatus)
+		err, canceled := s.waitForBatchResult(ctx, b, heartbeat.C, jobStatus)
 		if canceled {
 			firstErr = errCancelRequested
 			cancelPass()
@@ -227,8 +227,9 @@ func (s *Indexer) runIndexPass(
 }
 
 // waitForBatch waits for the next ordered batch while heartbeating. ok is
-// false when orderedCh is closed or cancel was requested during the wait.
+// false when orderedCh is closed, ctx is canceled, or cancel was requested.
 func (s *Indexer) waitForBatch(
+	ctx context.Context,
 	orderedCh <-chan *batch,
 	heartbeat <-chan time.Time,
 	jobStatus *JobStatus,
@@ -244,6 +245,8 @@ func (s *Indexer) waitForBatch(
 			if s.heartbeatTick(jobStatus) {
 				return nil, true, false
 			}
+		case <-ctx.Done():
+			return nil, false, false
 		}
 	}
 }
@@ -251,6 +254,7 @@ func (s *Indexer) waitForBatch(
 // waitForBatchResult waits for a worker to resolve b while heartbeating.
 // canceled is true when cancel was requested during the wait.
 func (s *Indexer) waitForBatchResult(
+	ctx context.Context,
 	b *batch,
 	heartbeat <-chan time.Time,
 	jobStatus *JobStatus,
@@ -263,6 +267,8 @@ func (s *Indexer) waitForBatchResult(
 			if s.heartbeatTick(jobStatus) {
 				return nil, true
 			}
+		case <-ctx.Done():
+			return ctx.Err(), false
 		}
 	}
 }
