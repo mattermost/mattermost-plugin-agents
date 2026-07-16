@@ -16,7 +16,7 @@ import {fetchModels} from '../../client';
 
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
-import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
+import {ChannelAccessLevelItem, MentionAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
 import ReasoningConfigItem from './reasoning_config';
 
@@ -32,6 +32,14 @@ export enum UserAccessLevel {
     Allow,
     Block,
     None,
+}
+
+// MentionAccessLevel gates who may trigger a channel-visible response by
+// @mentioning the agent. Mirrors llm.MentionAccessLevel on the backend.
+export enum MentionAccessLevel {
+    Everyone = 0,
+    ChannelAdmins,
+    Disabled,
 }
 
 export type LLMBotConfig = {
@@ -50,6 +58,7 @@ export type LLMBotConfig = {
     userAccessLevel: UserAccessLevel
     userIDs: string[] | null
     teamIDs: string[] | null
+    mentionAccessLevel?: MentionAccessLevel
     enabledNativeTools?: string[] | null
     reasoningEnabled?: boolean
     reasoningEffort?: string
@@ -431,6 +440,11 @@ const Bot = (props: Props) => {
                             userIDs={props.bot.userIDs ?? []}
                             teamIDs={props.bot.teamIDs ?? []}
                             onChangeIDs={(userIds: string[], teamIds: string[]) => props.onChange({...props.bot, userIDs: userIds, teamIDs: teamIds})}
+                        />
+                        <MentionAccessLevelItem
+                            label={intl.formatMessage({defaultMessage: 'Channel mention access'})}
+                            level={props.bot.mentionAccessLevel ?? MentionAccessLevel.Everyone}
+                            onChangeLevel={(to: MentionAccessLevel) => props.onChange({...props.bot, mentionAccessLevel: to})}
                         />
 
                     </ItemList>

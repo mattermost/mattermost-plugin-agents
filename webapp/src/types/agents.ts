@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
+import {ChannelAccessLevel, MentionAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 
 // EnabledTool matches llm.EnabledMCPTool (persisted agents and config bots).
 // Inner field names stay snake_case to match the backend's json:"server_origin"
@@ -46,6 +46,7 @@ export type UserAgent = {
     userAccessLevel: UserAccessLevel;
     userIDs: string[] | null;
     teamIDs: string[] | null;
+    mentionAccessLevel: MentionAccessLevel;
     enabledNativeTools: string[] | null;
     enabledMCPTools: EnabledTool[] | null;
     autoEnableNewMCPTools: boolean;
@@ -87,6 +88,7 @@ export type CreateAgentRequest = {
     userAccessLevel?: number;
     userIDs?: string[];
     teamIDs?: string[];
+    mentionAccessLevel?: number;
     adminUserIDs?: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
@@ -117,6 +119,7 @@ export type UpdateAgentRequest = {
     userAccessLevel?: number;
     userIDs?: string[];
     teamIDs?: string[];
+    mentionAccessLevel?: number;
     adminUserIDs?: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;

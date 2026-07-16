@@ -67,6 +67,20 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 		return
 	}
 
+	// Don't nudge the user to @mention the agent if the mention would be
+	// rejected by the agent's mention-access policy; the loop-in link would
+	// just fail for them.
+	if err := c.bots.CheckMentionRestrictions(post.UserId, bot, channel); err != nil {
+		c.mmClient.LogDebug(
+			"agent mention reminder: mentions restricted for user/channel",
+			"error", err.Error(),
+			"post_id", post.Id,
+			"user_id", post.UserId,
+			"bot_username", mmBot.Username,
+		)
+		return
+	}
+
 	fallback := "To respond to an agent you must @mention them."
 	if c.i18n != nil {
 		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(""))

@@ -27,6 +27,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		UserAccessLevel:    llm.UserAccessLevelAll,
 		UserIDs:            nil,
 		TeamIDs:            []string{"team-1"},
+		MentionAccessLevel: llm.MentionAccessLevelChannelAdmins,
 		AdminUserIDs:       []string{"admin-1", "admin-2"},
 		EnabledMCPTools: []llm.EnabledMCPTool{
 			{ServerOrigin: "https://mcp.example.com", ToolName: "web_search"},
@@ -77,6 +78,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, agent.CustomInstructions, fetched.CustomInstructions)
 	assert.Equal(t, llm.ChannelAccessLevelAllow, fetched.ChannelAccessLevel)
 	assert.Equal(t, llm.UserAccessLevelAll, fetched.UserAccessLevel)
+	assert.Equal(t, llm.MentionAccessLevelChannelAdmins, fetched.MentionAccessLevel)
 	assert.Equal(t, agent.CreateAt, fetched.CreateAt)
 	assert.Equal(t, agent.UpdateAt, fetched.UpdateAt)
 	assert.Equal(t, agent.DeleteAt, fetched.DeleteAt)

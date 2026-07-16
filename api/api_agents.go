@@ -68,6 +68,7 @@ type CreateAgentRequest struct {
 	UserAccessLevel         int                  `json:"userAccessLevel"`
 	UserIDs                 []string             `json:"userIDs"`
 	TeamIDs                 []string             `json:"teamIDs"`
+	MentionAccessLevel      int                  `json:"mentionAccessLevel"`
 	AdminUserIDs            []string             `json:"adminUserIDs"`
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
@@ -95,6 +96,7 @@ type UpdateAgentRequest struct {
 	UserAccessLevel         int                  `json:"userAccessLevel"`
 	UserIDs                 []string             `json:"userIDs"`
 	TeamIDs                 []string             `json:"teamIDs"`
+	MentionAccessLevel      int                  `json:"mentionAccessLevel"`
 	AdminUserIDs            []string             `json:"adminUserIDs"`
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
@@ -253,6 +255,7 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 		UserAccessLevel:         llm.UserAccessLevel(req.UserAccessLevel),
 		UserIDs:                 req.UserIDs,
 		TeamIDs:                 req.TeamIDs,
+		MentionAccessLevel:      llm.MentionAccessLevel(req.MentionAccessLevel),
 		AdminUserIDs:            req.AdminUserIDs,
 		EnabledMCPTools:         req.EnabledMCPTools,
 		AutoEnableNewMCPTools:   req.AutoEnableNewMCPTools,
@@ -280,6 +283,7 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.UserAccessLevel = llm.UserAccessLevel(req.UserAccessLevel)
 	cfg.UserIDs = req.UserIDs
 	cfg.TeamIDs = req.TeamIDs
+	cfg.MentionAccessLevel = llm.MentionAccessLevel(req.MentionAccessLevel)
 	cfg.AdminUserIDs = req.AdminUserIDs
 	cfg.EnabledMCPTools = req.EnabledMCPTools
 	cfg.AutoEnableNewMCPTools = req.AutoEnableNewMCPTools

@@ -28,6 +28,29 @@ func (m *MMBots) CheckUsageRestrictions(requestingUserID string, bot *Bot, chann
 	return nil
 }
 
+// CheckMentionRestrictions returns nil if requestingUserID may trigger a
+// channel-visible response by @mentioning bot in channel, otherwise an error
+// wrapping ErrUsageRestriction. This is intentionally separate from
+// CheckUsageRestrictions: it applies only to the channel @mention path (which
+// posts publicly), not to the UI-button / DM / RHS flows that stream privately
+// to the requesting user.
+func (m *MMBots) CheckMentionRestrictions(requestingUserID string, bot *Bot, channel *model.Channel) error {
+	switch bot.GetConfig().MentionAccessLevel {
+	case llm.MentionAccessLevelEveryone:
+		return nil
+	case llm.MentionAccessLevelChannelAdmins:
+		// PermissionManageChannelRoles is held by the channel_admin role and by
+		// system admins, so this admits exactly the intended set.
+		if m.pluginAPI.User.HasPermissionToChannel(requestingUserID, channel.Id, model.PermissionManageChannelRoles) {
+			return nil
+		}
+		return fmt.Errorf("mentions restricted to channel admins: %w", ErrUsageRestriction)
+	case llm.MentionAccessLevelDisabled:
+		return fmt.Errorf("channel mentions disabled for bot: %w", ErrUsageRestriction)
+	}
+	return fmt.Errorf("unknown mention access level %d: %w", bot.GetConfig().MentionAccessLevel, ErrUsageRestriction)
+}
+
 func (m *MMBots) checkUsageRestrictionsForChannel(bot *Bot, channel *model.Channel) error {
 	switch bot.GetConfig().ChannelAccessLevel {
 	case llm.ChannelAccessLevelAll:

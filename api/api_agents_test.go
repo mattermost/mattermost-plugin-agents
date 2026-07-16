@@ -135,6 +135,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"userAccessLevel":         int(cfg.UserAccessLevel),
 		"userIDs":                 cfg.UserIDs,
 		"teamIDs":                 cfg.TeamIDs,
+		"mentionAccessLevel":      int(cfg.MentionAccessLevel),
 		"adminUserIDs":            cfg.AdminUserIDs,
 		"enabledMCPTools":         cfg.EnabledMCPTools,
 		"autoEnableNewMCPTools":   cfg.AutoEnableNewMCPTools,

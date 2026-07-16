@@ -7,7 +7,7 @@ import {FormattedMessage} from 'react-intl';
 
 import {SelectUser, SelectChannel} from '../select';
 
-import {ChannelAccessLevel, UserAccessLevel} from './bot';
+import {ChannelAccessLevel, MentionAccessLevel, UserAccessLevel} from './bot';
 
 import {HelpText, ItemLabel, StyledRadio} from './item';
 
@@ -84,6 +84,45 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                         </HelpText>
                     </SelectWrapper>
                 )}
+            </MainContainer>
+        </>
+    );
+};
+
+type MentionAccessLevelProps = {
+    label: string;
+    level: MentionAccessLevel;
+    onChangeLevel: (level: MentionAccessLevel) => void;
+};
+
+export const MentionAccessLevelItem = (props: MentionAccessLevelProps) => {
+    return (
+        <>
+            <ItemLabel>{props.label}</ItemLabel>
+            <MainContainer>
+                <AllowTypes>
+                    <StyledRadio
+                        type='radio'
+                        value={MentionAccessLevel.Everyone}
+                        checked={props.level === MentionAccessLevel.Everyone}
+                        onChange={() => props.onChangeLevel(MentionAccessLevel.Everyone)}
+                    />
+                    <FormattedMessage defaultMessage='Everyone allowed to use this agent'/>
+                    <StyledRadio
+                        type='radio'
+                        value={MentionAccessLevel.ChannelAdmins}
+                        checked={props.level === MentionAccessLevel.ChannelAdmins}
+                        onChange={() => props.onChangeLevel(MentionAccessLevel.ChannelAdmins)}
+                    />
+                    <FormattedMessage defaultMessage='Channel admins only'/>
+                    <StyledRadio
+                        type='radio'
+                        value={MentionAccessLevel.Disabled}
+                        checked={props.level === MentionAccessLevel.Disabled}
+                        onChange={() => props.onChangeLevel(MentionAccessLevel.Disabled)}
+                    />
+                    <FormattedMessage defaultMessage='No one (disable channel mentions)'/>
+                </AllowTypes>
             </MainContainer>
         </>
     );

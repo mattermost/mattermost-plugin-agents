@@ -8,7 +8,7 @@ import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
-import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
+import {ChannelAccessLevel, MentionAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 
@@ -31,6 +31,7 @@ export type AgentDraft = {
     userAccessLevel: UserAccessLevel;
     userIds: string[];
     teamIds: string[];
+    mentionAccessLevel: MentionAccessLevel;
     adminUserIds: string[];
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
@@ -62,6 +63,7 @@ const emptyDraft: AgentDraft = {
     userAccessLevel: UserAccessLevel.All,
     userIds: [],
     teamIds: [],
+    mentionAccessLevel: MentionAccessLevel.Everyone,
     adminUserIds: [],
     enabledTools: [],
     autoEnableNewMCPTools: true,
@@ -108,6 +110,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         userAccessLevel: draft.userAccessLevel,
         userIDs: draft.userIds,
         teamIDs: draft.teamIds,
+        mentionAccessLevel: draft.mentionAccessLevel,
         adminUserIDs: draft.adminUserIds,
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
@@ -139,6 +142,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         userAccessLevel: draft.userAccessLevel,
         userIDs: draft.userIds,
         teamIDs: draft.teamIds,
+        mentionAccessLevel: draft.mentionAccessLevel,
         adminUserIDs: draft.adminUserIds,
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
@@ -166,6 +170,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         userAccessLevel: agent.userAccessLevel,
         userIds: agent.userIDs ?? [],
         teamIds: agent.teamIDs ?? [],
+        mentionAccessLevel: agent.mentionAccessLevel ?? MentionAccessLevel.Everyone,
         adminUserIds: agent.adminUserIDs ?? [],
         enabledTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools ?? false,

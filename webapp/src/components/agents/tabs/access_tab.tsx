@@ -5,8 +5,8 @@ import React from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {ChannelAccessLevelItem, UserAccessLevelItem} from '@/components/system_console/llm_access';
+import {ChannelAccessLevel, MentionAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
+import {ChannelAccessLevelItem, MentionAccessLevelItem, UserAccessLevelItem} from '@/components/system_console/llm_access';
 import {ItemLabel, ItemList} from '@/components/system_console/item';
 import {SelectUser} from '@/components/select';
 
@@ -49,6 +49,18 @@ const AccessTab = (props: Props) => {
                 />
                 <HelpTextInSecondColumn>
                     <FormattedMessage defaultMessage='Control which users can interact with this agent.'/>
+                </HelpTextInSecondColumn>
+            </ItemList>
+
+            {/* Channel Mention Access Section */}
+            <ItemList>
+                <MentionAccessLevelItem
+                    label={intl.formatMessage({defaultMessage: 'Channel mention access'})}
+                    level={draft.mentionAccessLevel}
+                    onChangeLevel={(level: MentionAccessLevel) => onChange({mentionAccessLevel: level})}
+                />
+                <HelpTextInSecondColumn>
+                    <FormattedMessage defaultMessage='Control who can trigger a channel-visible response by @mentioning this agent. This does not affect the message action buttons (summarize, action items) or direct messages, which stream privately to the requesting user.'/>
                 </HelpTextInSecondColumn>
             </ItemList>
 

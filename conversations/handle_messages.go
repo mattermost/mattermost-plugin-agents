@@ -231,6 +231,13 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		return err
 	}
 
+	// Channel @mentions post a response everyone in the channel sees, so they
+	// carry their own access gate on top of the general usage restrictions. The
+	// UI-button / DM flows do not run this check and remain broadly available.
+	if err := c.bots.CheckMentionRestrictions(postingUser.Id, bot, channel); err != nil {
+		return err
+	}
+
 	// Check config to determine if tools should be allowed in channel mentions
 	configEnabled := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
 	hasToolPolicyChecker := c.toolPolicyChecker != nil
