@@ -167,40 +167,21 @@ func (s *Indexer) runIndexPass(
 	watermark := startCursor
 	var firstErr error
 
-committing:
 	for {
-		var b *batch
-	awaitBatch:
-		for {
-			select {
-			case next, ok := <-orderedCh:
-				if !ok {
-					break committing
-				}
-				b = next
-				break awaitBatch
-			case <-heartbeat.C:
-				if s.heartbeatTick(jobStatus) {
-					firstErr = errCancelRequested
-					cancelPass()
-					break committing
-				}
+		b, canceled, ok := s.waitForBatch(orderedCh, heartbeat.C, jobStatus)
+		if !ok {
+			if canceled {
+				firstErr = errCancelRequested
+				cancelPass()
 			}
+			break
 		}
 
-		var err error
-	awaitResult:
-		for {
-			select {
-			case err = <-b.result:
-				break awaitResult
-			case <-heartbeat.C:
-				if s.heartbeatTick(jobStatus) {
-					firstErr = errCancelRequested
-					cancelPass()
-					break committing
-				}
-			}
+		err, canceled := s.waitForBatchResult(b, heartbeat.C, jobStatus)
+		if canceled {
+			firstErr = errCancelRequested
+			cancelPass()
+			break
 		}
 		if err != nil {
 			firstErr = err
@@ -243,6 +224,47 @@ committing:
 	jobStatus.ProcessedRows = processed
 	jobStatus.LastUpdatedAt = time.Now()
 	return processed - startProcessed, watermark, firstErr
+}
+
+// waitForBatch waits for the next ordered batch while heartbeating. ok is
+// false when orderedCh is closed or cancel was requested during the wait.
+func (s *Indexer) waitForBatch(
+	orderedCh <-chan *batch,
+	heartbeat <-chan time.Time,
+	jobStatus *JobStatus,
+) (b *batch, canceled, ok bool) {
+	for {
+		select {
+		case next, open := <-orderedCh:
+			if !open {
+				return nil, false, false
+			}
+			return next, false, true
+		case <-heartbeat:
+			if s.heartbeatTick(jobStatus) {
+				return nil, true, false
+			}
+		}
+	}
+}
+
+// waitForBatchResult waits for a worker to resolve b while heartbeating.
+// canceled is true when cancel was requested during the wait.
+func (s *Indexer) waitForBatchResult(
+	b *batch,
+	heartbeat <-chan time.Time,
+	jobStatus *JobStatus,
+) (err error, canceled bool) {
+	for {
+		select {
+		case err = <-b.result:
+			return err, false
+		case <-heartbeat:
+			if s.heartbeatTick(jobStatus) {
+				return nil, true
+			}
+		}
+	}
 }
 
 // heartbeatTick refreshes the job's heartbeat so stale-job detection sees
