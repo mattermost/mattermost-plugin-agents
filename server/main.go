@@ -267,9 +267,7 @@ func (p *Plugin) OnActivate() error {
 		return val.(string)
 	}
 
-	// Initialize embedding search. While a deferred reindex owns the ANN
-	// index lifecycle, the vector store constructor must not synchronously
-	// rebuild the intentionally dropped index inside activation.
+	// Skip constructor CREATE while a deferred reindex owns the ANN index.
 	embeddingsSearch, err := search.InitEmbeddingsSearch(
 		dbClient.DB,
 		llmUpstreamHTTPClient,
@@ -314,10 +312,7 @@ func (p *Plugin) OnActivate() error {
 		lastSearchInitError.Store("") // Clear any previous error
 	}
 
-	// Reconcile any leftover deferred-reindex index state now that the
-	// orphan check ran and the search snapshot is available: clears stale
-	// state when the index actually exists, and logs (without auto-building
-	// inside activation) when the index is genuinely missing.
+	// Reconcile leftover deferred-index state (never auto-build on activate).
 	if reconcileErr := indexerService.ReconcileVectorIndexState(context.Background()); reconcileErr != nil {
 		pluginAPI.Log.Warn("Failed to reconcile vector index state", "error", reconcileErr)
 	}

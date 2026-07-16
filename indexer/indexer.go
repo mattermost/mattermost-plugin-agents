@@ -69,8 +69,7 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 		return nil // Search not configured
 	}
 
-	// A skipped post is picked up by the catch-up pass after the build via
-	// its NOT EXISTS anti-join (new posts) or the repair pass (edits).
+	// Skipped posts: catch-up (new) or repair (edits) after the build.
 	if s.deferredBuildWriteGated() {
 		s.pluginAPI.LogDebug("Skipping live post indexing while the vector index is being rebuilt", "post_id", post.Id)
 		return nil
@@ -100,9 +99,7 @@ func (s *Indexer) DeletePost(ctx context.Context, postID string) error {
 		return nil // Search not configured
 	}
 
-	// Skipping is safe: deleting a post bumps Posts.UpdateAt and sets
-	// DeleteAt, so the repair pass's bounded stale-row DELETE removes its
-	// embedding rows after the build.
+	// Safe to skip: repair's stale-row DELETE removes them after the build.
 	if s.deferredBuildWriteGated() {
 		s.pluginAPI.LogDebug("Skipping post deletion from the index while the vector index is being rebuilt", "post_id", postID)
 		return nil
@@ -121,9 +118,7 @@ func (s *Indexer) RunDataRetention(ctx context.Context, nowTime, batchSize int64
 		return 0, nil
 	}
 
-	// Skipping is safe: retention is hook-driven and re-runs on the server's
-	// schedule, so orphaned rows missed during a build are removed by the
-	// next run.
+	// Safe to skip: retention re-runs on schedule.
 	if s.deferredBuildWriteGated() {
 		s.pluginAPI.LogDebug("Skipping embeddings data retention while the vector index is being rebuilt")
 		return 0, nil
@@ -226,11 +221,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		}
 	}
 
-	// Decide whether this run defers the ANN index rebuild (index-after-load)
-	// and record ownership of the index lifecycle before the job starts. A
-	// resolution failure means the phase state could not be read or claimed,
-	// so the run cannot know whether the index is present — fail the job
-	// cleanly instead of silently running in maintain mode.
+	// Claim deferred-index ownership before start; fail if lifecycle unknown.
 	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
 	if deferErr != nil {
 		failedStatus := newJobStatus
@@ -417,8 +408,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
-	// Start catch-up job (reuses runReindexJob with clearIndex=false).
-	// Catch-up jobs never defer the index: they only sweep a small tail.
+	// Catch-up never defers the index (small tail only).
 	go s.runReindexJob(&newJobStatus, false, nil)
 
 	return returnStatus, nil
@@ -434,8 +424,7 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 		CheckedAt: time.Now(),
 	}
 
-	// Surface a deferred reindex owning the index lifecycle so admins can
-	// see why search is unavailable.
+	// Surface deferred-index ownership (explains search unavailability).
 	if state, stateErr := s.loadVectorIndexState(); stateErr == nil && state != nil {
 		result.VectorIndexState = state
 	}

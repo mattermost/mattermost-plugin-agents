@@ -195,9 +195,7 @@ const StaleActions = styled.div`
     gap: 8px;
 `;
 
-// The server may send phases a newer plugin version introduced; anything
-// unrecognized gets explicit fallback text instead of being misrendered as
-// one of the known states.
+// Unknown phases get fallback text (may come from a newer plugin version).
 const renderVectorIndexPhase = (phase: string) => {
     switch (phase) {
     case 'dropped':

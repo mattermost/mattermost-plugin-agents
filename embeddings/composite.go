@@ -101,8 +101,7 @@ func (c *CompositeSearch) DeleteOrphaned(ctx context.Context, nowTime, batchSize
 	return c.store.DeleteOrphaned(ctx, nowTime, batchSize)
 }
 
-// BulkIndexer exposes the underlying vector store's bulk index control when
-// the store supports it, nil otherwise.
+// BulkIndexer returns the store's bulk control, or nil.
 func (c *CompositeSearch) BulkIndexer() BulkIndexer {
 	if bulk, ok := c.store.(BulkIndexer); ok {
 		return bulk

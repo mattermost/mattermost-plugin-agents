@@ -37,8 +37,7 @@ const normalizeReindexValue = (value: number | undefined, fallback: number, max:
     return Math.min(value, max);
 };
 
-// Mirror the server's EffectiveReindexIndexStrategy: anything other than
-// 'defer' (including absent/unknown values) normalizes to 'maintain'.
+// Mirror EffectiveReindexIndexStrategy: only 'defer' stays; else maintain.
 const normalizeReindexIndexStrategy = (value: string | undefined): ReindexIndexStrategy => {
     if (value === REINDEX_INDEX_STRATEGY.defer) {
         return REINDEX_INDEX_STRATEGY.defer;

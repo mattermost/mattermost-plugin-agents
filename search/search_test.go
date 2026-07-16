@@ -28,8 +28,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
-// allowVectorIndexStateRead permits the availability check's KV read on the
-// search paths, reporting no deferred reindex in progress.
+// allowVectorIndexStateRead: availability check sees no deferred reindex.
 func allowVectorIndexStateRead(m *mmapimocks.MockClient) {
 	m.On("KVGet", indexer.VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 }
@@ -646,8 +645,7 @@ func TestSearchQuery(t *testing.T) {
 	}
 }
 
-// mockDeferredReindexActive makes the availability check see a deferred
-// reindex owning the vector index, gating search.
+// mockDeferredReindexActive gates search via deferred reindex state.
 func mockDeferredReindexActive(m *mmapimocks.MockClient) {
 	m.On("KVGet", indexer.VectorIndexStateKey, mock.AnythingOfType("*indexer.VectorIndexState")).
 		Run(func(args mock.Arguments) {

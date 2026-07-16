@@ -166,10 +166,7 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		ctx := context.Background()
 		require.NoError(t, pgVector.PrepareBulkIndex(ctx))
 
-		// Manufacture an INVALID leftover index with the target name: a
-		// failing CREATE INDEX CONCURRENTLY leaves the index behind marked
-		// invalid. A unique index over duplicate post_id values (two chunks
-		// of the same post) fails deterministically.
+		// INVALID leftover with target name (simulates failed CONCURRENTLY).
 		now := model.GetMillis()
 		addTestPosts(t, db, []string{"dup"}, []int64{now})
 		docs := []embeddings.PostDocument{
@@ -187,7 +184,6 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		require.True(t, catExists, "failed CREATE INDEX CONCURRENTLY should leave an invalid index behind")
 		require.False(t, catValid)
 
-		// VectorIndexExists must not report the invalid leftover as present.
 		indexExists, err := pgVector.VectorIndexExists(ctx)
 		require.NoError(t, err)
 		assert.False(t, indexExists)
@@ -198,7 +194,7 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		assert.True(t, catExists)
 		assert.True(t, catValid)
 
-		// The rebuilt index must be the HNSW one, not the leftover B-tree.
+		// Must be HNSW, not leftover B-tree.
 		var indexdef string
 		err = db.Get(&indexdef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName)
 		require.NoError(t, err)
@@ -215,8 +211,7 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		ctx := context.Background()
 		require.NoError(t, pgVector.PrepareBulkIndex(ctx))
 
-		// A valid B-tree occupying the target name: CREATE INDEX IF NOT
-		// EXISTS alone would silently keep it and report success.
+		// Same-named B-tree: IF NOT EXISTS would silently keep it.
 		_, err = db.Exec("CREATE INDEX " + vectorIndexName + " ON llm_posts_embeddings(post_id)")
 		require.NoError(t, err)
 
@@ -247,8 +242,7 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		ctx := context.Background()
 		require.NoError(t, pgVector.PrepareBulkIndex(ctx))
 
-		// A valid HNSW index with the cosine opclass: an access-method-only
-		// check would accept it, silently breaking `<->` L2 queries.
+		// Cosine HNSW would break <-> L2 if we only checked access method.
 		_, err = db.Exec("CREATE INDEX " + vectorIndexName + " ON llm_posts_embeddings USING hnsw (embedding vector_cosine_ops)")
 		require.NoError(t, err)
 
@@ -276,7 +270,7 @@ func TestNewPGVectorSkipVectorIndex(t *testing.T) {
 	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, SkipVectorIndex: true})
 	require.NoError(t, err)
 
-	// Table and B-tree indexes exist, HNSW does not.
+	// Table/B-trees exist; HNSW does not.
 	var count int
 	err = db.Get(&count, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'llm_posts_embeddings'")
 	require.NoError(t, err)
@@ -291,7 +285,6 @@ func TestNewPGVectorSkipVectorIndex(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, indexExists)
 
-	// FinalizeBulkIndex can build the index later.
 	require.NoError(t, pgVector.FinalizeBulkIndex(context.Background()))
 	assert.Contains(t, embeddingsTableIndexes(t, db), vectorIndexName)
 }

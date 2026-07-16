@@ -83,9 +83,7 @@ export interface HealthCheckResultType {
     stored_dimensions?: number;
     stored_model_name?: string;
 
-    // Set while a deferred reindex owns the vector index lifecycle
-    // (index dropped, being rebuilt, or edited posts pending repair).
-    // Search is unavailable during 'dropped' and 'building' only.
+    // Deferred reindex owns the ANN lifecycle; search gated for dropped/building.
     vector_index_state?: {
         job_id: string;
         phase: VectorIndexPhase;

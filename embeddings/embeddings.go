@@ -99,25 +99,16 @@ type VectorStore interface {
 	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
 }
 
-// BulkIndexer is implemented by vector stores that support dropping the ANN
-// index during bulk loads and rebuilding it afterwards.
+// BulkIndexer drops/rebuilds the ANN index around bulk loads.
 type BulkIndexer interface {
-	// PrepareBulkIndex drops the ANN index so bulk inserts skip index
-	// maintenance.
 	PrepareBulkIndex(ctx context.Context) error
-
-	// FinalizeBulkIndex (re)builds the ANN index and verifies it is valid.
 	FinalizeBulkIndex(ctx context.Context) error
-
-	// VectorIndexExists reports whether a valid ANN index currently exists.
 	VectorIndexExists(ctx context.Context) (bool, error)
 }
 
-// BulkIndexerProvider is implemented by search services that can expose bulk
-// index control over their underlying vector store.
+// BulkIndexerProvider exposes bulk index control from a search service.
 type BulkIndexerProvider interface {
-	// BulkIndexer returns the underlying store's bulk index control, or nil
-	// when the store does not support it.
+	// BulkIndexer returns control, or nil if unsupported.
 	BulkIndexer() BulkIndexer
 }
 
@@ -151,9 +142,7 @@ const (
 	MaxReindexBatchSize     = 1000
 )
 
-// Reindex index strategies. Maintain keeps the ANN index up to date during a
-// full reindex (today's behavior); defer drops it up front and rebuilds it
-// once after the bulk load, which is much cheaper at large scale.
+// ReindexIndexStrategy*: maintain updates ANN during load; defer rebuilds after.
 const (
 	ReindexIndexStrategyMaintain = "maintain"
 	ReindexIndexStrategyDefer    = "defer"
@@ -169,8 +158,6 @@ type EmbeddingSearchConfig struct {
 	ChunkingOptions   chunking.Options `json:"chunkingOptions"`
 	ReindexWorkers    int              `json:"reindexWorkers,omitempty"`
 	ReindexBatchSize  int              `json:"reindexBatchSize,omitempty"`
-	// ReindexIndexStrategy selects how the ANN index is handled during a
-	// full reindex; see ReindexIndexStrategy* constants.
 	ReindexIndexStrategy string `json:"reindexIndexStrategy,omitempty"`
 }
 
@@ -192,9 +179,7 @@ func (c *EmbeddingSearchConfig) GetReindexBatchSize() int {
 	return min(c.ReindexBatchSize, MaxReindexBatchSize)
 }
 
-// EffectiveReindexIndexStrategy returns the normalized reindex index
-// strategy: defer when explicitly configured, maintain for everything else
-// (unset, empty, or unknown values).
+// EffectiveReindexIndexStrategy: defer if set, otherwise maintain.
 func (c *EmbeddingSearchConfig) EffectiveReindexIndexStrategy() string {
 	switch c.ReindexIndexStrategy {
 	case ReindexIndexStrategyDefer:

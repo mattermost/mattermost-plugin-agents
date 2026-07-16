@@ -284,9 +284,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		idx.runReindexJob(jobStatus, true, deferRun)
 
 		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
-		// The search snapshot must be captured with a SINGLE getter call: a
-		// concurrent config change between repeated calls could return nil
-		// (panic) or a different snapshot mid-job.
+		// Must snapshot with one getter call (config can change mid-job).
 		assert.Equal(t, 1, getterCalls, "runReindexJob must snapshot search with exactly one getter call")
 
 		calls := rec.snapshot()
@@ -751,10 +749,8 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		require.NotNil(t, tracker.currentState())
 	})
 
-	// A claim converted from a leftover repairing marker sits over a VALID
-	// index (repairing implies a completed build). Early pre-DDL exits must
-	// restore the marker — keeping the bogus dropped claim would gate search
-	// forever over a working index.
+	// Converted repairing→dropped still has a valid index; pre-DDL exit must
+	// restore the marker rather than gate search forever.
 	t.Run("early exit with a repairing-converted claim restores the repair marker", func(t *testing.T) {
 		deferCfg := func() embeddings.EmbeddingSearchConfig {
 			return embeddings.EmbeddingSearchConfig{ReindexIndexStrategy: embeddings.ReindexIndexStrategyDefer}
@@ -796,8 +792,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 
 			deferRun := resolveConvertedRun(t, mockClient, "job-converted-nosearch")
 
-			// The search snapshot is gone by the time the job body runs
-			// (e.g. a concurrent config change disabled embedding search).
+			// Search gone by job body (e.g. config disabled embeddings).
 			idx := New(func() embeddings.EmbeddingSearch { return nil }, deferCfg, mockClient, &bots.MMBots{}, nil, nil)
 			jobStatus := newDeferJobStatus("job-converted-nosearch", model.GetMillis())
 			idx.runReindexJob(jobStatus, true, deferRun)
@@ -860,12 +855,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: now}
 
 		tracker := &vectorStateTracker{}
-		// The worker paused after claiming; a successor stale-reclaimed the
-		// job, adopted the state, completed, and now owns (or already
-		// cleared) the key. The paused worker's in-memory claim no longer
-		// matches KV, so the pre-prepare freshness CAS must fail and abort
-		// the run before it can DROP the successor's index or Clear() its
-		// data.
+		// Successor owns KV; freshness CAS must abort before DROP/Clear.
 		tracker.seed(VectorIndexState{JobID: "successor-job", Phase: VectorIndexPhaseDropped})
 		mockClient := mocks.NewMockClient(t)
 		mockVectorStateOps(mockClient, tracker)
@@ -903,8 +893,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, UpdateAt, DeleteAt, Message, Type, ChannelId) VALUES ('edited-post', $1, $1, 0, 'Original message', '', 'channel1')", now-10000)
 		require.NoError(t, err)
-		// The stale pre-edit embedding row that catch-up's NOT EXISTS would
-		// never touch.
+		// Pre-edit row catch-up's NOT EXISTS would never touch.
 		_, err = db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ('edited-post', 'edited-post', 'Original message', '[0.1, 0.2, 0.3]')")
 		require.NoError(t, err)
 
@@ -976,12 +965,8 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		rec := &callRecorder{}
 		bulk := &fakeBulkIndexer{rec: rec}
 		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: mainCutoff}
-		// Props-stripping integration edits land while live indexing is
-		// gated. The first two posts no longer match the indexable predicate
-		// (empty message; empty message + EMPTY attachments array, which a
-		// substring LIKE on props would wrongly treat as indexable), so the
-		// re-embed loop will never overwrite their rows. The third keeps a
-		// non-empty attachments array and stays indexable.
+		// Gated edits: first two become non-indexable (empty msg / empty
+		// attachments array — LIKE would wrongly treat [] as indexable).
 		bulk.onFinalize = func() {
 			editAt := model.GetMillis()
 			_, execErr := db.Exec("UPDATE Posts SET Message = '', UpdateAt = $1 WHERE Id = 'emptied-post'", editAt)
@@ -1079,9 +1064,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		tracker := &vectorStateTracker{}
 		deferRun := seedClaim(tracker, jobID)
 
-		// The cancel request lands while the (uninterruptible) build DDL is
-		// running: the job row reports running until FinalizeBulkIndex
-		// starts, then cancel_requested.
+		// Cancel lands during uninterruptible DDL.
 		var buildStarted atomic.Bool
 		bulk.onFinalize = func() { buildStarted.Store(true) }
 
@@ -1248,8 +1231,7 @@ func TestResolveDeferredRebuild(t *testing.T) {
 			wantErr:      true,
 		},
 		{
-			// A full reindex re-embeds everything up to its own cutoff, so
-			// the previous gated-edits window is moot: BuildStartedAt resets.
+			// Full reindex resets BuildStartedAt (gated-edits window restarts).
 			name:          "fresh reindex ADOPTS leftover dropped state even with maintain strategy and resets BuildStartedAt",
 			clearIndex:    true,
 			configGetter:  maintainCfg,
@@ -1260,8 +1242,6 @@ func TestResolveDeferredRebuild(t *testing.T) {
 			wantState:     &VectorIndexState{JobID: "new-job", Phase: VectorIndexPhaseDropped},
 		},
 		{
-			// Maintain-mode fresh run: the full re-embed supersedes the
-			// pending repair, so the marker is deleted in one CAS.
 			name:          "fresh reindex clears a leftover repairing state and starts clean",
 			clearIndex:    true,
 			configGetter:  maintainCfg,
@@ -1271,9 +1251,7 @@ func TestResolveDeferredRebuild(t *testing.T) {
 			wantCleared:   true,
 		},
 		{
-			// Defer-mode fresh run: the leftover marker is replaced by the
-			// new dropped claim in a SINGLE CAS — no delete-then-create gap
-			// where neither marker nor claim exists.
+			// Single CAS convert — no delete-then-create gap.
 			name:          "fresh reindex with defer strategy atomically converts leftover repairing to a fresh claim",
 			clearIndex:    true,
 			configGetter:  deferCfg,
@@ -1455,8 +1433,7 @@ func TestFinalizeDeferredIndexHeartbeat(t *testing.T) {
 	idx := New(nil, nil, mockClient, nil, nil, nil)
 	idx.heartbeatInterval = 5 * time.Millisecond
 
-	// Empty JobID makes saveJobStatus an unconditional KVSet, so heartbeat
-	// ticks are directly countable.
+	// Empty JobID → unconditional KVSet; heartbeats are countable.
 	jobStatus := &JobStatus{Status: JobStatusRunning, StartedAt: time.Now()}
 	before := time.Now()
 
@@ -1470,8 +1447,7 @@ func TestFinalizeDeferredIndexHeartbeat(t *testing.T) {
 	mu.Unlock()
 	assert.GreaterOrEqual(t, saves, 2, "the heartbeat must keep ticking while the index build blocks")
 	assert.True(t, jobStatus.LastUpdatedAt.After(before), "the heartbeat must advance LastUpdatedAt")
-	// The state is NOT cleared here: the repairing marker persists until
-	// the caller finishes the edited-posts repair.
+	// Repairing marker stays until edit repair finishes.
 	assert.False(t, tracker.wasDeleted(), "finalize must leave the repairing marker in place")
 	current := tracker.currentState()
 	require.NotNil(t, current)
@@ -1483,9 +1459,7 @@ func TestFinalizeDeferredIndexStateFencing(t *testing.T) {
 		rec := &callRecorder{}
 		bulk := &fakeBulkIndexer{rec: rec}
 
-		// The KV master holds a successor's claim; this run's in-memory
-		// state no longer matches, so the dropped->building CAS must fail
-		// and the DDL must not run.
+		// Successor owns KV; dropped→building CAS must fail (no DDL).
 		tracker := &vectorStateTracker{}
 		tracker.seed(VectorIndexState{JobID: "other-job", Phase: VectorIndexPhaseDropped})
 		mockClient := mocks.NewMockClient(t)
@@ -1510,8 +1484,7 @@ func TestFinalizeDeferredIndexStateFencing(t *testing.T) {
 		bulk := &fakeBulkIndexer{rec: rec}
 
 		mockClient := mocks.NewMockClient(t)
-		// The IndexPost gate only engages once the building phase is
-		// durable; if this write fails the build must not start.
+		// Building phase must be durable before DDL (engages write gate).
 		mockClient.On("KVCompareAndSet", VectorIndexStateKey, mock.Anything, mock.Anything).
 			Return(false, errors.New("kv down"))
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
@@ -1570,8 +1543,7 @@ func TestIndexPostDeferGating(t *testing.T) {
 			wantStore: true,
 		},
 		{
-			// Fail closed: a skipped post is repairable (catch-up, health
-			// check); a goroutine pile-up on a blocked write is not.
+			// Fail closed: skip is repairable; blocked-write pile-up is not.
 			name:      "unexpected KV error skips the write",
 			readErr:   errors.New("kv unreachable"),
 			wantStore: false,
@@ -1776,9 +1748,7 @@ func TestReconcileVectorIndexState(t *testing.T) {
 			},
 		},
 		{
-			// The window between the state claim and the DROP: the catalog
-			// still shows a valid index, but the live owner's claim must
-			// not be cleared out from under it.
+			// claim→DROP window: catalog still valid; do not clear live claim.
 			name:        "live owning job with a still-valid index keeps the claim",
 			state:       &stubState,
 			indexExists: true,
@@ -1799,25 +1769,21 @@ func TestReconcileVectorIndexState(t *testing.T) {
 			state: &VectorIndexState{JobID: "job1", Phase: VectorIndexPhaseBuilding, BuildStartedAt: 12345},
 		},
 		{
-			// The build committed but the building->repairing transition
-			// never did: the gated-window edits still need repair, so the
-			// marker converts instead of being deleted.
+			// CREATE done, repairing CAS lost — convert, don't delete.
 			name:          "building leftover with a valid index converts to repairing",
 			state:         &VectorIndexState{JobID: "job1", Phase: VectorIndexPhaseBuilding, BuildStartedAt: 12345},
 			indexExists:   true,
 			wantRepairing: true,
 		},
 		{
-			// The repairing marker means the index SHOULD exist: catalog
-			// evidence must never clear it, only a completed repair does.
+			// Catalog must not clear repairing; only completed repair does.
 			name:        "leftover repairing state is kept as a pending-repair marker",
 			state:       &VectorIndexState{JobID: "job1", Phase: VectorIndexPhaseRepairing, BuildStartedAt: 12345},
 			indexExists: true,
 			wantDeleted: false,
 		},
 		{
-			// Conservative: deleting could discard an obligation this
-			// plugin version cannot interpret (e.g. written by a newer one).
+			// Keep unknown phases (may be from a newer plugin version).
 			name:        "unknown phase with a valid index is kept",
 			state:       &VectorIndexState{JobID: "job1", Phase: "some-future-phase", BuildStartedAt: 12345},
 			indexExists: true,

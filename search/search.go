@@ -22,9 +22,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// ErrSearchUnavailable is returned while a deferred reindex owns the vector
-// index: similarity queries would sequentially scan a freshly truncated,
-// partial table.
+// ErrSearchUnavailable: deferred reindex owns the vector index (no ANN yet).
 var ErrSearchUnavailable = errors.New("semantic search is temporarily unavailable during reindexing")
 
 // Request represents a search query request
@@ -106,8 +104,7 @@ func (s *Search) Enabled() bool {
 	return s != nil && s.getSearch != nil && s.getSearch() != nil
 }
 
-// checkAvailability returns ErrSearchUnavailable while a deferred reindex
-// owns the vector index (index dropped or being rebuilt).
+// checkAvailability gates search while the ANN index is dropped/building.
 func (s *Search) checkAvailability() error {
 	if s.mmclient != nil && indexer.DeferredIndexRebuildActive(s.mmclient) {
 		return ErrSearchUnavailable
@@ -295,8 +292,7 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 		return nil, fmt.Errorf("query cannot be empty")
 	}
 
-	// Fail fast before posting anything when search is gated by a deferred
-	// reindex; the async path would otherwise DM an opaque error.
+	// Fail before posting; async path would otherwise DM an opaque error.
 	if err := s.checkAvailability(); err != nil {
 		return nil, err
 	}

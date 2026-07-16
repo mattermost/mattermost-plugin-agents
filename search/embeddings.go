@@ -117,10 +117,8 @@ func mapEmbeddingProvider(provider string) (schemas.ModelProvider, error) {
 	}
 }
 
-// InitEmbeddingsSearch creates and initializes the embedding search system.
-// skipVectorIndex must be true while a deferred reindex owns the ANN index
-// lifecycle (see indexer.DeferredIndexRebuildActive) so the vector store
-// constructor does not synchronously rebuild an intentionally dropped index.
+// InitEmbeddingsSearch initializes embedding search. skipVectorIndex must be
+// true while a deferred reindex owns the ANN index (see DeferredIndexRebuildActive).
 func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.EmbeddingSearchConfig, licenseChecker *enterprise.LicenseChecker, skipVectorIndex bool) (embeddings.EmbeddingSearch, error) {
 	if cfg.Type == "" {
 		// Search is intentionally disabled, not an error

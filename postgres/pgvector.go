@@ -45,23 +45,15 @@ func uniqueSortedPostIDs(docs []embeddings.PostDocument) []string {
 	return out
 }
 
-// vectorIndexName is the HNSW ANN index used for similarity search. It is
-// dropped and rebuilt around bulk loads when the deferred reindex strategy
-// is active.
+// vectorIndexName is the HNSW ANN index; dropped/rebuilt around deferred bulk loads.
 const vectorIndexName = "llm_posts_embeddings_embedding_idx"
 
-// createVectorIndexQuery is the ANN index DDL shared by the constructor and
-// FinalizeBulkIndex so both always build the identical index.
+// Shared by constructor and FinalizeBulkIndex so both build the same index.
 const createVectorIndexQuery = "CREATE INDEX IF NOT EXISTS " + vectorIndexName +
 	" ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops)"
 
-// expectedVectorIndexDefSuffix is what pg_get_indexdef must end with for the
-// index to count as the ANN index: the hnsw access method on the plain
-// embedding column with the L2 opclass and no predicate. Anything else with
-// the right name (a B-tree, a vector_cosine_ops HNSW, a partial or
-// expression index) would silently break `<->` L2 queries and must be
-// replaced. pg_get_indexdef output is canonical, so a plain suffix match is
-// an exact comparison of everything after "CREATE INDEX name ON table".
+// Canonical pg_get_indexdef suffix for the expected HNSW L2 index. Same-named
+// B-tree/cosine/partial/expression indexes would silently break <-> queries.
 const expectedVectorIndexDefSuffix = "USING hnsw (embedding vector_l2_ops)"
 
 type PGVector struct {
@@ -74,10 +66,8 @@ var _ embeddings.BulkIndexer = (*PGVector)(nil)
 type PGVectorConfig struct {
 	Dimensions int `json:"dimensions"`
 
-	// SkipVectorIndex skips ANN index creation in the constructor while a
-	// deferred reindex owns the index lifecycle; without it, activation or a
-	// config save would synchronously rebuild a huge index that was dropped
-	// on purpose. Not admin-configurable.
+	// SkipVectorIndex: skip constructor CREATE while a deferred reindex owns
+	// the lifecycle (avoids sync rebuild of an intentionally dropped index).
 	SkipVectorIndex bool `json:"-"`
 }
 
@@ -395,9 +385,8 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 	return nil
 }
 
-// PrepareBulkIndex drops the ANN index so bulk inserts skip HNSW graph
-// maintenance. The post_id/is_chunk B-tree indexes and the primary key are
-// kept: the catch-up pass's NOT EXISTS anti-join needs the post_id index.
+// PrepareBulkIndex drops the ANN index for bulk load. Keeps post_id B-tree
+// (needed by catch-up's NOT EXISTS).
 func (pv *PGVector) PrepareBulkIndex(ctx context.Context) error {
 	if _, err := pv.db.ExecContext(ctx, "DROP INDEX IF EXISTS "+vectorIndexName); err != nil {
 		return fmt.Errorf("failed to drop vector index: %w", err)
@@ -405,17 +394,10 @@ func (pv *PGVector) PrepareBulkIndex(ctx context.Context) error {
 	return nil
 }
 
-// FinalizeBulkIndex (re)builds the ANN index with the same DDL as the
-// constructor and verifies the result is valid. A leftover index with the
-// target name but the wrong definition — invalid (e.g. from an interrupted
-// build) or not exactly the expected HNSW L2 index (e.g. a same-named
-// B-tree or a vector_cosine_ops HNSW) — is dropped first so CREATE INDEX IF
-// NOT EXISTS can't silently keep it.
-//
-// Everything runs on a single pinned connection: the session
-// statement_timeout is disabled for the (potentially hours-long) build, and
-// with a pool capped at one open connection any query through pv.db while
-// the pinned connection is held would self-deadlock.
+// FinalizeBulkIndex rebuilds the ANN index (same DDL as the constructor).
+// Drops a same-named wrong/invalid leftover first so IF NOT EXISTS cannot
+// keep it. Uses a pinned connection with statement_timeout=0; querying via
+// pv.db while holding it would self-deadlock on a one-conn pool.
 func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 	conn, err := pv.db.Connx(ctx)
 	if err != nil {
@@ -426,9 +408,7 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 	if _, timeoutErr := conn.ExecContext(ctx, "SET statement_timeout = 0"); timeoutErr != nil {
 		return fmt.Errorf("failed to disable statement timeout for index build: %w", timeoutErr)
 	}
-	// Restore the session timeout on every exit path (including build
-	// errors) so the GUC does not leak into the pool. The reset uses an
-	// independent bounded context: the caller's ctx may already be done.
+	// Reset GUC on every exit; caller's ctx may already be done.
 	defer func() {
 		resetCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -459,8 +439,7 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 	return nil
 }
 
-// VectorIndexExists reports whether a valid ANN index with the expected
-// definition currently exists.
+// VectorIndexExists is true only for a valid index with the expected definition.
 func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
 	status, err := vectorIndexStatus(ctx, pv.db)
 	if err != nil {
@@ -472,18 +451,12 @@ func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
 type indexStatus struct {
 	exists bool
 	valid  bool
-	// definitionOK reports the index definition matches the expected ANN
-	// index exactly (hnsw, embedding column, vector_l2_ops, no predicate).
+	// definitionOK: exact match for expected HNSW L2 def (see suffix const).
 	definitionOK bool
 }
 
-// vectorIndexStatus queries the catalog for the ANN index, constrained to
-// the target table in the current schema so a same-named index elsewhere
-// can't match, and reports validity plus whether the normalized definition
-// (pg_get_indexdef) matches the expected one exactly — a same-named valid
-// B-tree, cosine-opclass, partial, or expression index must not count as
-// the ANN index. The queryer parameter lets FinalizeBulkIndex run this on
-// its pinned connection instead of the pool.
+// vectorIndexStatus looks up the ANN index on llm_posts_embeddings in the
+// current schema. Same-named wrong defs do not count. q may be a pinned conn.
 func vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext) (indexStatus, error) {
 	rows := []struct {
 		Valid    bool   `db:"indisvalid"`
