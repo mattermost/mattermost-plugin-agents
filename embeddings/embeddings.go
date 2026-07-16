@@ -150,15 +150,15 @@ const (
 
 // ServiceConfig holds configuration for the embedding search service
 type EmbeddingSearchConfig struct {
-	Type              string           `json:"type"`
-	VectorStore       UpstreamConfig   `json:"vectorStore"`
-	EmbeddingProvider UpstreamConfig   `json:"embeddingProvider"`
-	Parameters        json.RawMessage  `json:"parameters"`
-	Dimensions        int              `json:"dimensions"`
-	ChunkingOptions   chunking.Options `json:"chunkingOptions"`
-	ReindexWorkers    int              `json:"reindexWorkers,omitempty"`
-	ReindexBatchSize  int              `json:"reindexBatchSize,omitempty"`
-	ReindexIndexStrategy string `json:"reindexIndexStrategy,omitempty"`
+	Type                 string           `json:"type"`
+	VectorStore          UpstreamConfig   `json:"vectorStore"`
+	EmbeddingProvider    UpstreamConfig   `json:"embeddingProvider"`
+	Parameters           json.RawMessage  `json:"parameters"`
+	Dimensions           int              `json:"dimensions"`
+	ChunkingOptions      chunking.Options `json:"chunkingOptions"`
+	ReindexWorkers       int              `json:"reindexWorkers,omitempty"`
+	ReindexBatchSize     int              `json:"reindexBatchSize,omitempty"`
+	ReindexIndexStrategy string           `json:"reindexIndexStrategy,omitempty"`
 }
 
 // GetReindexWorkers returns the configured reindex worker count, clamped to
