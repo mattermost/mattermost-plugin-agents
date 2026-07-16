@@ -488,9 +488,9 @@ func TestRunIndexPassWatermark(t *testing.T) {
 
 	t.Run("terminates when context is canceled while a batch is stuck", func(t *testing.T) {
 		// With one worker busy on b0, the fetcher blocks dispatching b1.
-		// Canceling the parent context must unwind the fetcher, workers,
-		// and committer without hanging, and must surface as an error so
-		// the truncated pass isn't mistaken for completion.
+		// Canceling the parent context must unwind the committer promptly
+		// (not wait for the stuck batch), and surface as an error so the
+		// truncated pass isn't mistaken for completion.
 		idx, _ := newPassTestIndexer(t)
 
 		b0 := makeTestPosts("b0", 10, 1000)
@@ -527,11 +527,10 @@ func TestRunIndexPassWatermark(t *testing.T) {
 			ctx, jobStatus, mockSearch,
 			batchedFetch([][]PostRecord{b0, b1}), Cursor{}, passOptions{workers: 1, batchSize: 100})
 
-		// b0 completes successfully (its store returns nil after release);
-		// b1 was never dispatched, so the cancellation surfaces as the
-		// pass error instead of a phantom completion.
-		assert.Equal(t, int64(10), processed)
-		assert.Equal(t, b0[len(b0)-1].ID, watermark.LastID)
+		// Committer aborts on ctx.Done without waiting for b0; watermark
+		// stays at the start so a resume re-processes the uncommitted batch.
+		assert.Equal(t, int64(0), processed)
+		assert.Equal(t, Cursor{}, watermark)
 		require.ErrorIs(t, err, context.Canceled)
 	})
 
