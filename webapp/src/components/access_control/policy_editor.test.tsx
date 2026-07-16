@@ -263,9 +263,9 @@ describe('PolicyEditor', () => {
     });
 
     it('recovers to an editable simple editor after deleting an unsupported policy', async () => {
-        // F6 recovery: a multi-rule policy locks a non-admin caller into the
-        // read-only unsupported view; removing the policy must return the
-        // editor to a usable authoring state without a remount.
+        // A multi-rule policy locks a non-admin caller into the read-only
+        // unsupported view; removing the policy must return the editor to a
+        // usable authoring state without a remount.
         client.getAgentAccessPolicy.mockResolvedValue({
             ...existingPolicy,
             rules: [

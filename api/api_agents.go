@@ -378,9 +378,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	// ABAC write-time validation (also before bot creation): rejects
-	// attribute-based mode when ABAC is down and service/MCP assignments the
-	// creator may not use. Runtime per-user checks remain the use-time gate.
+	// ABAC write-time validation, before bot creation.
 	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, buildAgentConfigForCreate(req, userID, ""), nil); err != nil {
 		abortAgentRequest(c, statusForAccessErr(err), err)
 		return
@@ -518,9 +516,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// ABAC write-time validation: only changed ServiceID / newly-added MCP
-	// origins are checked, so unrelated edits are never blocked by a
-	// since-tightened policy on a pre-existing assignment.
+	// ABAC write-time validation; only changed assignments are checked.
 	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
 		abortAgentRequest(c, statusForAccessErr(err), err)
 		return
@@ -769,12 +765,10 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	c.JSON(http.StatusOK, models)
 }
 
-// canUserAccessAgent reports whether userID may view or use the agent (admin,
-// then the ABAC agent decision with the legacy usage restrictions as the
-// legacy fallback). Deliberately agent-policy-only — no service check: this
-// gates viewing an agent's card in the management UI, where per-agent admins
-// must still see agents whose service is currently denied to them. The
-// runtime composite gate remains authoritative for actual use.
+// canUserAccessAgent reports whether userID may view or use the agent.
+// Deliberately agent-policy-only — no service check — so per-agent admins
+// still see agents whose service is currently denied to them; the runtime
+// composite gate remains authoritative for actual use.
 func (a *API) canUserAccessAgent(ctx context.Context, cfg *llm.BotConfig, userID string) bool {
 	if cfg == nil || a.pluginAPI == nil {
 		return false

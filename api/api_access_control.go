@@ -16,7 +16,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// Access-control authoring routes (contract §7). Request/response bodies are
+// Access-control authoring routes. Request/response bodies are
 // model.AccessControlPolicy JSON verbatim; identity fields (ID, Type, Version,
 // Active) are always overwritten from the route, never trusted from the body.
 
@@ -36,12 +36,9 @@ func abortPolicyRequest(c *gin.Context, err error) {
 	}
 }
 
-// Legacy resource IDs (hand-crafted, non-26-char — e.g. a service id set via
-// a raw config PUT before server-side minting) can never carry an access
-// policy: the PDP short-circuits them to no_policy (see Checker.evaluate)
-// and the server's policy APIs reject them outright. Mirroring that
-// philosophy here keeps the upstream validation error (400 "Invalid
-// identifier") from surfacing as a load failure in the UI.
+// Legacy non-26-char resource IDs can never carry an access policy: the PDP
+// short-circuits them to no_policy and the server's policy APIs reject them.
+// The gates below keep the upstream 400 from surfacing as a UI load failure.
 
 // policyReadableID gates policy GETs: an invalid resource ID means the
 // policy cannot exist, which is exactly ErrPolicyNotFound (404). Returns
@@ -240,7 +237,7 @@ func (a *API) handleDeleteServicePolicy(c *gin.Context) {
 }
 
 // resolveMCPServerForPolicy resolves :serverid to a configured external MCP
-// server (external only, contract §8). Returns nil after aborting.
+// server (external only). Returns nil after aborting.
 func (a *API) resolveMCPServerForPolicy(c *gin.Context) *config.MCPServerConfig {
 	serverID := c.Param("serverid")
 	cfg, ok := a.loadPluginConfigForAgents(c)
@@ -309,7 +306,7 @@ func (a *API) handleDeleteMCPPolicy(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// celRouteAuthzRequired gates the CEL proxy routes (contract §7.1): system
+// celRouteAuthzRequired gates the CEL proxy routes: system
 // admins and agent managers (canConfigureAgentServices) pass outright;
 // otherwise a per-agent admin passes when the agent_id query param names an
 // agent they manage.

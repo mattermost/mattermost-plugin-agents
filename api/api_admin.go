@@ -462,17 +462,14 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// The request's fields are applied to the freshest persisted entry inside
-	// the UpdateConfig transform, which runs atomically under the config
-	// advisory lock. Deriving the merged entry from the live snapshot read
-	// above would let two concurrent field updates overwrite each other: both
-	// would rebase onto the same stale in-memory state.
+	// Apply the request to the freshest persisted entry inside the UpdateConfig
+	// transform; rebasing onto the live snapshot read above would let two
+	// concurrent field updates overwrite each other.
 	var updated mcp.PluginServerConfig
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		if prev == nil {
-			// A nil persisted config must not be silently replaced by a
-			// zero-value baseline; doing so would clobber unrelated settings
-			// (services, bots, MCP flags) on the next save.
+			// Replacing a nil persisted config with a zero-value baseline
+			// would clobber unrelated settings on the next save.
 			return config.Config{}, errors.New("no plugin configuration available")
 		}
 		// Clone to avoid mutating the store's cached pointer.
@@ -490,12 +487,9 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 			}
 		}
 
-		// Field ownership: the live registry entry is authoritative for the
-		// plugin-owned fields (Name, Path, ExposeExternal) — the source
-		// plugin may have re-registered with new values since the entry was
-		// last persisted, and adopting the persisted object wholesale would
-		// resurrect the stale ones. Only the admin-owned fields (Enabled,
-		// ToolConfigs) are carried over from the freshest persisted entry,
+		// The live registry entry is authoritative for the plugin-owned
+		// fields (Name, Path, ExposeExternal); only the admin-owned fields
+		// (Enabled, ToolConfigs) come from the freshest persisted entry,
 		// with the request patch applied on top.
 		base := live
 		if mergedIdx >= 0 {
@@ -528,11 +522,9 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// Runtime registration receives an admin-field patch rather than a
-	// whole-object replacement: if the source plugin re-registered between
-	// the snapshot above and now, its plugin-owned fields survive. A missing
-	// entry means the plugin unregistered concurrently; the persisted entry
-	// is hydrated again on its next registration.
+	// Patch admin fields rather than replace the whole object, so plugin-owned
+	// fields survive a concurrent re-registration. A missing entry means the
+	// plugin unregistered; it is hydrated again on its next registration.
 	if patched, ok := a.mcpClientManager.UpdatePluginServerAdminFields(pluginID, updated.Enabled, updated.ToolConfigs); ok {
 		updated = patched
 	}

@@ -49,10 +49,8 @@ const Services = (props: Props) => {
     const [showErrorDialog, setShowErrorDialog] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
 
-    // Add a new service. No id is assigned client-side: the backend treats
-    // ID-less entries as new and mints the stable ID on save
-    // (normalizeAdminConfig), mirroring MCP servers. Policy authoring only
-    // becomes available once the entry has a persisted id.
+    // No id is assigned client-side: the backend mints the stable ID on save
+    // (normalizeAdminConfig); policy authoring needs a persisted id.
     const addNewService = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         if (props.services.length === 0) {

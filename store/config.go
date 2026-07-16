@@ -19,11 +19,10 @@ const (
 	configSaveLockKey       = int32(1)
 )
 
-// ErrStaleLegacyServiceIDs is returned by any config write whose payload
-// still contains legacy 36-char UUID service IDs after the one-time service
-// ID migration has run. It indicates a stale client (e.g. a pre-upgrade
-// webapp bundle) trying to write pre-migration IDs back. Enforced inside
-// insertActiveConfigTx so every writer, present or future, is covered.
+// ErrStaleLegacyServiceIDs is returned by any config write that still
+// contains legacy UUID service IDs after the one-time service ID migration
+// has run — a stale client writing pre-migration IDs back. Enforced inside
+// insertActiveConfigTx so every writer is covered.
 var ErrStaleLegacyServiceIDs = errors.New("config contains legacy UUID service IDs from before the ID migration; reload the system console and retry")
 
 // GetConfig retrieves the currently active configuration from the database.
@@ -50,11 +49,9 @@ func (s *Store) GetConfig() (*config.Config, error) {
 // The previous active config is deactivated and a new active row is inserted.
 // All prior configs are preserved with Active = false.
 //
-// SaveConfig is a blind write: it does not read the current config first, so
-// it is only appropriate for bootstrap/first-write paths (config.json -> DB
-// migration). Read-modify-write callers must use UpdateConfig instead, or
-// they can race a concurrent writer and lose its update. The post-migration
-// legacy UUID guard still applies (see insertActiveConfigTx).
+// SaveConfig is a blind write, only appropriate for bootstrap/first-write
+// paths. Read-modify-write callers must use UpdateConfig or they can lose a
+// concurrent writer's update.
 func (s *Store) SaveConfig(cfg config.Config) error {
 	tx, err := s.db.Beginx()
 	if err != nil {
@@ -83,17 +80,12 @@ func (s *Store) SaveConfig(cfg config.Config) error {
 	return nil
 }
 
-// UpdateConfig atomically reads the active config, applies transform to
-// produce the next config, and persists the result as the new active row —
-// all in one transaction under the same advisory lock as SaveConfig, so no
-// concurrent save or migration can interleave between the read and the write.
-// transform receives nil when no active config exists; a transform error
-// aborts the update with nothing written and is returned unwrapped so callers
-// can map their own sentinel errors.
-//
-// After the one-time service ID migration has run, a transformed config that
-// still contains legacy UUID service IDs is rejected with
-// ErrStaleLegacyServiceIDs: a stale client must never write UUIDs back.
+// UpdateConfig atomically reads the active config, applies transform, and
+// persists the result as the new active row — one transaction under the same
+// advisory lock as SaveConfig, so no concurrent save or migration can
+// interleave. transform receives nil when no active config exists; a
+// transform error aborts with nothing written and is returned unwrapped so
+// callers can map their own sentinel errors.
 func (s *Store) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
 	var next config.Config
 
@@ -142,16 +134,11 @@ func configHasLegacyUUIDServiceIDs(cfg *config.Config) bool {
 	return false
 }
 
-// insertActiveConfigTx is the single transactional primitive for writing a
-// new active config-history row: it deactivates the current active row and
-// inserts cfg as the new active one. Used by SaveConfig, UpdateConfig, and
-// the ABAC ID migration.
-//
-// It enforces the post-migration invariant here so that no writer can
-// reintroduce legacy UUID service IDs once the service ID migration marker is
-// set. The ID migration itself never trips this guard: it rewrites UUIDs
-// before inserting when its marker is unset, and once the marker is set the
-// active config no longer contains UUIDs (they commit atomically).
+// insertActiveConfigTx deactivates the current active config-history row and
+// inserts cfg as the new active one. It enforces the post-migration invariant
+// that no writer can reintroduce legacy UUID service IDs once the service ID
+// migration marker is set (the migration itself rewrites UUIDs before
+// inserting, so it never trips the guard).
 func insertActiveConfigTx(tx *sqlx.Tx, cfg config.Config) error {
 	migrated, err := getSystemValueTx(tx, serviceIDMigrationKey)
 	if err != nil {

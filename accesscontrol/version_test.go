@@ -28,9 +28,7 @@ func TestServerSupportsABAC(t *testing.T) {
 		{name: "minor above minimum", serverVersion: "11.11.0", want: true},
 		{name: "next major", serverVersion: "12.0.0", want: true},
 		{name: "prerelease of the minimum predates it", serverVersion: "11.10.0-rc1", want: false},
-		// Unparseable versions err toward supported so enforcement stays
-		// fail-closed (the real client denies on transport failure) instead
-		// of silently selecting passthrough.
+		// Unparseable versions err toward supported so enforcement stays fail-closed.
 		{name: "empty version errs toward supported", serverVersion: "", want: true},
 		{name: "garbage version errs toward supported", serverVersion: "not-a-version", want: true},
 	}
@@ -42,11 +40,9 @@ func TestServerSupportsABAC(t *testing.T) {
 	}
 }
 
-// TestLegacyOnlyModeDecisionTable pins the pre-11.10 wiring that
-// server/main.go selects when ServerSupportsABAC is false (NewLegacyOnly):
-// agents in the legacy access modes run their legacy checks unchanged;
-// persisted attribute-based agents DENY — the plugin cannot resolve policy
-// existence, so the no_policy fail-open must not apply; services and MCP
+// TestLegacyOnlyModeDecisionTable pins the pre-11.10 wiring (NewLegacyOnly):
+// legacy access modes run their legacy checks unchanged, attribute-based
+// agents deny (policy existence cannot be resolved), and services and MCP
 // servers are unrestricted.
 func TestLegacyOnlyModeDecisionTable(t *testing.T) {
 	legacyErr := errors.New("legacy restriction")
@@ -116,9 +112,7 @@ func TestLegacyOnlyModeDecisionTable(t *testing.T) {
 	}
 }
 
-// TestLegacyOnlyModeReportsUnavailable: the status endpoint must report
-// unavailable (hiding all ABAC UI) and attribute-based agent saves must be
-// rejected under legacy-only wiring.
+// Legacy-only wiring must report unavailable and reject attribute-based saves.
 func TestLegacyOnlyModeReportsUnavailable(t *testing.T) {
 	c := NewLegacyOnly(NoMCPServerIDs, nil)
 

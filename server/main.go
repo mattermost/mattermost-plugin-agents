@@ -202,10 +202,9 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
-	// ABAC ID migrations must run after the config.json->DB migration and the
-	// config load above, and before bots.New/EnsureBots and the legacy config
-	// bot migration, so migrated bots copy already-remapped service IDs into
-	// Agents_UserAgents. Publishing happens only after the migration committed.
+	// ABAC ID migrations must run after the config.json->DB migration and
+	// before the legacy config bot migration, so migrated bots copy
+	// already-remapped service IDs into Agents_UserAgents.
 	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store, &p.configuration)
 	if err != nil {
 		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
@@ -219,22 +218,11 @@ func (p *Plugin) OnActivate() error {
 		}
 	}
 
-	// ABAC checker: PDP decisions over plugin.API. Built before bots.New so
-	// the composite usage gate always has a checker. The server resolves
-	// policy existence even when ABAC is unavailable (Option B), so no
-	// plugin-side policy index, mutex, or rebuild is needed. The config-backed
-	// resolver is injected at construction so write-time MCP assignment
-	// validation can never silently skip.
-	//
-	// Capability selection is version-based: pre-11.10 servers lack the ABAC
-	// plugin APIs entirely (the generated RPC client silently swallows calls
-	// to nonexistent methods), so the checker runs in legacy-only mode —
-	// legacy access modes keep their legacy checks, services/MCP servers are
-	// unrestricted, persisted attribute-based agents are denied (the plugin
-	// cannot know whether a policy gates them), and the status endpoint
-	// reports unavailable so all ABAC UI hides. Selection must never be
-	// probe-based: a transient probe failure on a new server dropping to
-	// legacy-only would fail open where the decision tables require deny.
+	// ABAC checker, built before bots.New so the composite usage gate always
+	// has one. Capability selection is version-based, never probe-based:
+	// pre-11.10 servers lack the ABAC plugin APIs and get legacy-only mode
+	// (attribute-based agents deny, ABAC UI hides), while a transient probe
+	// failure on a new server must never fail open into legacy-only.
 	mcpServerIDsByOrigin := func() map[string]string {
 		mcpConfig := p.configuration.MCP()
 		return mcpConfig.ServerIDByOrigin()

@@ -53,11 +53,9 @@ type MCPConfig struct {
 
 // MCPServerConfig contains the configuration for a single MCP server
 type MCPServerConfig struct {
-	// ID is the immutable, globally unique stable identifier for this server,
-	// assigned by the Agents plugin (model.NewId()). It is the policy identity
-	// for ABAC: it survives Name/BaseURL edits and is never reused. It is NOT
-	// used for OAuth keying (Name) or runtime tool origin (BaseURL) — those
-	// identity systems are intentionally unchanged.
+	// ID is the immutable plugin-assigned ABAC policy identity: it survives
+	// Name/BaseURL edits and is never reused. OAuth keying (Name) and runtime
+	// tool origin (BaseURL) are separate identity systems.
 	ID           string            `json:"id,omitempty"`
 	Name         string            `json:"name"`
 	Enabled      bool              `json:"enabled"`
@@ -112,12 +110,10 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	return IsToolPolicyAutoRunInDM(policy) && enabled
 }
 
-// ServerIDByOrigin maps a runtime ServerOrigin (llm.Tool.ServerOrigin, which is
-// the server BaseURL for external servers) to the stable server ID. Servers with
-// no assigned ID are omitted. On duplicate BaseURLs the last config entry wins,
-// matching filterToolsByConfig's serverByOrigin overwrite semantics. Disabled
-// servers are included: they produce no tools at runtime, and policy CRUD needs
-// the mapping regardless of enablement.
+// ServerIDByOrigin maps a runtime ServerOrigin (BaseURL for external servers)
+// to the stable server ID. ID-less servers are omitted; on duplicate BaseURLs
+// the last entry wins (matching filterToolsByConfig); disabled servers are
+// included because policy CRUD needs the mapping regardless of enablement.
 func (c *MCPConfig) ServerIDByOrigin() map[string]string {
 	out := make(map[string]string, len(c.Servers))
 	for i := range c.Servers {
@@ -141,44 +137,29 @@ func (c *MCPConfig) OriginByServerID() map[string]string {
 	return out
 }
 
-// ErrMCPServerIDConflict is the base error for every MCP server identity
-// problem ReconcileMCPServerIDs can detect. The wrapped message describes the
-// specific conflict; callers map it to a client error (the admin console
-// payload is stale or corrupt and the admin should reload).
+// ErrMCPServerIDConflict is the base error for every identity problem
+// ReconcileMCPServerIDs can detect; callers map it to a client error (stale
+// or corrupt admin console payload).
 var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
 
-// ReconcileMCPServerIDs carries stable IDs forward from prev onto entries in
-// next that arrived without one (e.g. from webapp bundles predating the ID
-// field). Server IDs are ABAC policy identities, so identity mistakes are
-// never papered over: silently minting a fresh ID for an existing server
-// detaches its policy (lookup becomes no-policy, which fails open), and
-// transferring an ID guards the wrong server. Matching runs in global phases
-// over the whole payload rather than entry-by-entry, so the outcome cannot
-// depend on payload order, and anything suspicious is an
-// ErrMCPServerIDConflict error:
+// ReconcileMCPServerIDs carries stable IDs forward from prev onto ID-less
+// entries in next (e.g. from webapp bundles predating the ID field). Server
+// IDs are ABAC policy identities, so identity mistakes are never papered
+// over: minting a fresh ID for an existing server detaches its policy (which
+// fails open). Matching runs in global phases over the whole payload so the
+// outcome cannot depend on payload order; anything suspicious errors:
 //
-//  1. Explicit-ID claims: incoming entries that already carry an ID must each
-//     reference a distinct existing prev entry. Duplicate incoming IDs and
-//     IDs absent from prev (fabricated/foreign — an admin bundle never
-//     invents IDs) are errors.
-//  2. Exact claims: each remaining ID-less entry with an exact
-//     (Name, BaseURL) match takes that prev entry's ID. Matching is against
-//     the full stored list, so a prev entry already claimed — in phase 1 or
-//     by another exact claim — is an error, never a silent fallback.
-//  3. Weak claims: each still-unmatched entry matches the unclaimed
-//     remainder by Name with no BaseURL match elsewhere, else by BaseURL
-//     with no Name match elsewhere. Ambiguity (multiple candidates on an
-//     axis, or Name and BaseURL pointing at different prev entries) and two
-//     entries resolving to the same prev entry are errors.
-//  4. Entries matching nothing at all are genuinely new and stay ID-less;
-//     the caller mints a fresh ID (the legitimate add-server path).
+//  1. Explicit-ID claims: each must reference a distinct existing prev entry.
+//  2. Exact (Name, BaseURL) claims against the full stored list; claiming an
+//     already-claimed prev entry is an error, never a silent fallback.
+//  3. Weak claims against the unclaimed remainder: by unique Name or unique
+//     BaseURL; any ambiguity or double-claim is an error.
+//  4. Entries matching nothing stay ID-less; the caller mints a fresh ID.
 //
 // Each prev entry is claimed at most once across all phases.
 func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MCPServerConfig, error) {
-	// Stored IDs are ABAC policy identities and must be unique. A duplicate
-	// here means the persisted config is already corrupt; silently keeping
-	// the last row would let two servers share one policy ID (an explicit
-	// claim can consume one duplicate row and an exact claim the other).
+	// Duplicate stored IDs mean the persisted config is already corrupt;
+	// keeping the last row would let two servers share one policy ID.
 	prevByID := make(map[string]int, len(prev))
 	for j := range prev {
 		id := prev[j].ID
@@ -193,8 +174,7 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MC
 
 	claimed := make([]bool, len(prev))
 
-	// Phase 1: entries arriving with an ID keep it and claim the prev entry
-	// holding that ID.
+	// Phase 1: entries arriving with an ID claim the prev entry holding it.
 	seenIncoming := make(map[string]bool, len(next))
 	for i := range next {
 		id := next[i].ID
@@ -212,9 +192,8 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MC
 		claimed[j] = true
 	}
 
-	// Phase 2: exact (Name, BaseURL) claims, resolved against the full stored
-	// list. Resolving exact claims for the whole payload before any weak
-	// claim means an earlier weak match can never shadow a later exact one.
+	// Phase 2: exact (Name, BaseURL) claims, resolved for the whole payload
+	// before any weak claim so a weak match can never shadow an exact one.
 	exactMatch := make([]int, len(next))
 	for i := range next {
 		exactMatch[i] = -1
@@ -246,9 +225,8 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MC
 		}
 	}
 
-	// Phase 3: weak claims against the unclaimed remainder. Every entry sees
-	// the same post-phase-2 snapshot, and two weak claims resolving to the
-	// same prev entry are rejected, so this phase is order-independent too.
+	// Phase 3: weak claims against the unclaimed remainder; every entry sees
+	// the same post-phase-2 snapshot, so this phase is order-independent too.
 	weakClaimed := make(map[int]bool, len(prev))
 	weakMatch := make([]int, len(next))
 	for i := range next {
@@ -280,8 +258,6 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MC
 		case len(nameMatches) == 0 && len(urlMatches) == 1:
 			match = urlMatches[0]
 		default:
-			// Multiple candidates on an axis, or Name and BaseURL pointing at
-			// different stored servers.
 			return nil, fmt.Errorf("%w: server %q ambiguously matches more than one stored server", ErrMCPServerIDConflict, next[i].Name)
 		}
 		if weakClaimed[match] {

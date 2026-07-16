@@ -33,8 +33,7 @@ func (a *API) handleRunSearch(c *gin.Context) {
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	// Search triggers a full LLM completion, so the agent+service usage gate
-	// applies just like every other completion entry point. User-level only:
-	// search requests are not channel-scoped at this point.
+	// applies (user-level only: search requests are not channel-scoped here).
 	if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {
 		c.AbortWithError(http.StatusForbidden, err)
 		return

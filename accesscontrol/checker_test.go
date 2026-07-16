@@ -54,7 +54,7 @@ func newTestChecker() *Checker {
 	return New(PassthroughClient{}, nil, NoMCPServerIDs, nil)
 }
 
-// --- WS-C passthrough pins (the no_policy rows must keep behaving like this) ---
+// --- passthrough pins (the no_policy rows must keep behaving like this) ---
 
 func TestPassthroughClientEvaluateAccessRequest(t *testing.T) {
 	tests := []struct {
@@ -122,7 +122,7 @@ func TestCheckerPassthroughHelpersAllow(t *testing.T) {
 	}
 }
 
-// --- §9.2 agent decision table (Option B amendment) ---
+// --- agent decision table ---
 
 func TestCanUseAgentDecisionTable(t *testing.T) {
 	legacyErr := errors.New("legacy restriction")
@@ -158,25 +158,14 @@ func TestCanUseAgentDecisionTable(t *testing.T) {
 		{name: "legacy allow runs legacy fail", outcome: model.AccessDecisionOutcomeAllow, legacy: legacyFail, wantLegacyErr: true, wantLegacyCalls: 1},
 		{name: "legacy allow nil legacy", outcome: model.AccessDecisionOutcomeAllow, legacy: legacyNil},
 
-		// no_policy with ABAC off passes legacy-mode agents through the
-		// legacy check: this outcome is exactly what the server now returns
-		// when ABAC is unavailable and no policy exists for the resource.
 		{name: "legacy no_policy runs legacy pass", outcome: model.AccessDecisionOutcomeNoPolicy, legacy: legacyPass, wantLegacyCalls: 1},
 		{name: "legacy no_policy runs legacy fail", outcome: model.AccessDecisionOutcomeNoPolicy, legacy: legacyFail, wantLegacyErr: true, wantLegacyCalls: 1},
 
-		// deny always denies, legacy never consulted
+		// deny/unavailable/error/unknown fail closed in every mode
 		{name: "legacy deny", outcome: model.AccessDecisionOutcomeDeny, legacy: legacyPass, wantDenied: true},
-
-		// unavailable denies a legacy-mode agent even when the legacy check
-		// would pass: the server vouched that a policy exists (or existence
-		// is unknowable), so the resource must fail closed in every mode.
 		{name: "legacy unavailable denies despite passing legacy check", outcome: model.AccessDecisionOutcomeUnavailable, legacy: legacyPass, wantDenied: true},
 		{name: "legacy unavailable denies with nil legacy check", outcome: model.AccessDecisionOutcomeUnavailable, legacy: legacyNil, wantDenied: true},
-
-		// call errors deny in every mode (Option B DECISION (a))
 		{name: "legacy eval error denies", evalErr: evalErr, legacy: legacyPass, wantDenied: true},
-
-		// unknown outcome from a future server fails closed
 		{name: "legacy unknown outcome denies", outcome: model.AccessDecisionOutcome("future_value"), legacy: legacyPass, wantDenied: true},
 	}
 
@@ -223,7 +212,7 @@ func TestCanUseAgentDecisionTable(t *testing.T) {
 	}
 }
 
-// --- §9.2 mode-less service/MCP decision table (Option B amendment) ---
+// --- mode-less service/MCP decision table ---
 
 func TestCanUseServiceAndMCPServerDecisionTable(t *testing.T) {
 	evalErr := errors.New("pdp exploded")
@@ -277,7 +266,7 @@ func TestCanUseServiceAndMCPServerDecisionTable(t *testing.T) {
 	}
 }
 
-// --- DECISION 5: invalid IDs are no_policy, never PDP calls ---
+// --- invalid IDs are no_policy, never PDP calls ---
 
 func TestEvaluateInvalidIDsAreNoPolicy(t *testing.T) {
 	legacyErr := errors.New("legacy restriction")
@@ -327,16 +316,10 @@ func TestIsAvailable(t *testing.T) {
 		appErr *model.AppError
 		want   bool
 	}{
-		// ABAC up: the store miss on a fresh ID collapses to a 404.
 		{name: "not found means available", appErr: notFound, want: true},
-		// Open core / unlicensed / flag off: 501-class error from the PAP.
 		{name: "unavailable-class error means unavailable", appErr: notImplemented, want: false},
 		{name: "other errors mean unavailable", appErr: serverErr, want: false},
-		// Practically impossible, but a policy under the fresh ID still
-		// proves the PAP answered.
 		{name: "existing policy means available", policy: &model.AccessControlPolicy{}, want: true},
-		// The generated RPC client returns (nil, nil) on transport failure;
-		// that proves nothing about the PAP and must read as unavailable.
 		{name: "transport failure (nil, nil) means unavailable", want: false},
 	}
 
@@ -369,7 +352,7 @@ func TestIsAvailableWithoutPluginAPI(t *testing.T) {
 	assert.False(t, c.IsAvailable(context.Background()), "a checker without a plugin API has no PAP to probe")
 }
 
-// --- ValidateAgentWrite (contract §9.1 + DECISION 9) ---
+// --- ValidateAgentWrite ---
 
 func TestValidateAgentWrite(t *testing.T) {
 	serviceID := model.NewId()

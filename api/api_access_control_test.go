@@ -22,7 +22,7 @@ import (
 )
 
 // unavailableDecisionClient reports every resource as unavailable, which the
-// amended §9.2 tables translate to an unconditional deny.
+// decision tables translate to an unconditional deny.
 type unavailableDecisionClient struct{}
 
 func (unavailableDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (model.AccessDecisionOutcome, error) {
@@ -479,9 +479,8 @@ func seedTwoServiceConfig(e *TestEnvironment, firstID, secondID string) {
 	}
 }
 
-// TestListServicesAppliesServicePolicies covers F3: system admins get the
-// full catalog, everyone else is filtered through CanUseService — including
-// the unavailable row, which now fails closed unconditionally (Option B).
+// System admins get the full catalog; everyone else is filtered through
+// CanUseService — including the unavailable row, which fails closed.
 func TestListServicesAppliesServicePolicies(t *testing.T) {
 	allowedID := model.NewId()
 	gatedID := model.NewId()
@@ -543,8 +542,7 @@ func TestListServicesAppliesServicePolicies(t *testing.T) {
 	}
 }
 
-// TestFetchModelsForServiceAppliesServicePolicies covers the F3 gate on
-// POST /agents/models/fetch: non-admin probing a denied service gets 403;
+// On POST /agents/models/fetch a non-admin probing a denied service gets 403;
 // admins bypass the policy (and then fail later on missing credentials, 400).
 func TestFetchModelsForServiceAppliesServicePolicies(t *testing.T) {
 	serviceID := model.NewId()

@@ -965,12 +965,9 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 	}
 }
 
-// TestHandleUpdatePluginServer_ConcurrentFieldUpdatesBothSurvive is the
-// lost-update regression for the read-and-apply step: the merged entry must
-// be derived from the freshest persisted entry inside the UpdateConfig
-// transform, not from the in-memory live snapshot captured before it. Two
-// updates to different fields that both read the same live state must both
-// survive in the persisted config.
+// Lost-update regression: two updates to different fields that both read the
+// same live state must both survive in the persisted config (the merge must
+// rebase onto the freshest persisted entry inside the UpdateConfig transform).
 func TestHandleUpdatePluginServer_ConcurrentFieldUpdatesBothSurvive(t *testing.T) {
 	api, mockAPI, stores := setupAdminTestEnvironment(t)
 	defer mockAPI.AssertExpectations(t)
@@ -1014,13 +1011,10 @@ func TestHandleUpdatePluginServer_ConcurrentFieldUpdatesBothSurvive(t *testing.T
 	require.Equal(t, "echo", persisted.ToolConfigs[0].Name)
 }
 
-// TestHandleUpdatePluginServer_PluginOwnedFieldsNotReverted pins the field
-// ownership model: the source plugin owns Name, Path, and ExposeExternal (the
-// live registry entry is authoritative), while admins own Enabled and
-// ToolConfigs (the persisted entry is authoritative). An admin update whose
-// persisted entry predates a plugin re-registration must not resurrect the
-// stale plugin-owned values — in the persisted config, the runtime registry,
-// or the response.
+// Pins field ownership: the source plugin owns Name/Path/ExposeExternal and
+// admins own Enabled/ToolConfigs. An admin update whose persisted entry
+// predates a plugin re-registration must not resurrect stale plugin-owned
+// values in the persisted config, the runtime registry, or the response.
 func TestHandleUpdatePluginServer_PluginOwnedFieldsNotReverted(t *testing.T) {
 	api, mockAPI, stores := setupAdminTestEnvironment(t)
 	defer mockAPI.AssertExpectations(t)

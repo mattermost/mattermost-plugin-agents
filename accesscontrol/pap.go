@@ -29,11 +29,10 @@ func isNotFoundAppErr(appErr *model.AppError) bool {
 	return appErr != nil && appErr.StatusCode == http.StatusNotFound
 }
 
-// SavePolicy overwrites the identity fields (ID, Type, Version, Active) per
-// contract §7.2, defaults an empty Name to defaultName, and persists the
-// policy. The save is a single plugin-API call: the server owns policy
-// existence (Option B), so no plugin-side bookkeeping or serialization is
-// needed.
+// SavePolicy overwrites the identity fields (ID, Type, Version, Active),
+// defaults an empty Name to defaultName, and persists the policy in a single
+// plugin-API call — the server owns policy existence, so no plugin-side
+// bookkeeping is needed.
 func (c *Checker) SavePolicy(ctx context.Context, actingUserID, resourceType, resourceID, defaultName string, policy *model.AccessControlPolicy) (*model.AccessControlPolicy, error) {
 	_, span := telemetry.Tracer().Start(ctx, "abac save_policy", trace.WithAttributes(
 		telemetry.UserID.String(actingUserID),
@@ -64,7 +63,7 @@ func (c *Checker) SavePolicy(ctx context.Context, actingUserID, resourceType, re
 }
 
 // GetPolicy returns the stored policy or ErrPolicyNotFound. Ownership/type
-// scoping is enforced server-side (contract §4.1).
+// scoping is enforced server-side.
 func (c *Checker) GetPolicy(ctx context.Context, resourceID string) (*model.AccessControlPolicy, error) {
 	_, span := telemetry.Tracer().Start(ctx, "abac get_policy", trace.WithAttributes(
 		telemetry.ABACResourceID.String(resourceID),

@@ -42,8 +42,8 @@ func TestSavePolicyOverwritesIdentityFields(t *testing.T) {
 
 			c := New(PassthroughClient{}, api, NoMCPServerIDs, nil)
 
-			// Spoofed identity fields must be overwritten from the route
-			// (contract §7.2): ID, Type, Version, Active never come from the body.
+			// Spoofed identity fields (ID, Type, Version, Active) must be
+			// overwritten from the route, never taken from the body.
 			body := &model.AccessControlPolicy{
 				ID:      "spoofed-id",
 				Type:    model.AccessControlPolicyTypeChannel,

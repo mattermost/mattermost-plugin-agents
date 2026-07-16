@@ -297,7 +297,7 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 **Prerequisites:**
 
-- A Mattermost server (v11.10.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On servers older than v11.10.0 the plugin still runs, but without any ABAC support: agents in the legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted, no ABAC UI is shown — and **agents in attribute-based mode are unusable** (every user is denied) until the server is upgraded or the agent is switched to a legacy access mode, because the plugin cannot check whether a policy restricts them.
+- A Mattermost server (v11.10.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On older servers the plugin still runs without ABAC: legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted — but **agents in attribute-based mode are unusable** (every user is denied, since the plugin cannot check whether a policy restricts them) until the server is upgraded or the agent is switched to a legacy access mode.
 - User attributes (custom profile attributes) configured on the server, since policies are written against them.
 
 **Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
@@ -308,9 +308,9 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 **Allow and deny semantics.** For each request the plugin evaluates the applicable policies and applies these rules:
 
-- No policy exists for a resource → the legacy checks (user/team lists for agents in the legacy access modes — All, Allow, Block, or None; nothing for services/MCP servers) apply unchanged, while agents in attribute-based mode allow every user (see the unavailability rule for details). Installing the plugin or upgrading changes nothing until you author a policy.
+- No policy exists for a resource → the legacy checks apply unchanged (user/team lists for agents in the legacy access modes; nothing for services/MCP servers), while agents in attribute-based mode allow every user. Installing or upgrading the plugin changes nothing until you author a policy.
 - A policy exists → the policy decides: matching users are allowed, non-matching users are denied.
-- The ABAC engine is unavailable (for example the license lapsed or the feature was disabled) → the server still resolves whether a policy exists for each resource. Resources **with** a policy, and agents in attribute-based mode with a policy, **fail closed**: users are denied rather than falling back to unrestricted access. Resources with **no** policy behave as if ABAC were never involved: agents in the legacy access modes apply their user/team lists, services and MCP servers are unrestricted, and agents in attribute-based mode **fail open** by design — every user is allowed, because attribute-based agents ignore user/team lists and have no other gate without a policy.
+- The ABAC engine is unavailable (for example the license lapsed) → the server still resolves whether a policy exists per resource. Resources **with** a policy **fail closed**: users are denied rather than falling back to unrestricted access. Resources with **no** policy behave as if ABAC were never involved — including attribute-based agents, which **fail open** by design (they ignore user/team lists and have no other gate without a policy).
 
 **Resource lifecycle note.** Deleting an agent removes its policy best-effort; deleting a service or MCP server from the configuration does not delete its policy. If you recreate a resource with the same ID, the old policy applies again. Remove the policy first (via the resource's policy editor) if that is not what you want.
 

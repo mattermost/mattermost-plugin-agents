@@ -9,9 +9,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// Plugin-local names for the server-registered resource types / action
-// (contract §1.1). Sourced from model so a server-side rename is a compile
-// error here rather than a silent policy mismatch.
+// Plugin-local names for the server-registered resource types / action,
+// sourced from model so a server-side rename is a compile error here.
 const (
 	ResourceTypeAgent   = model.AccessControlPolicyTypePluginAgent
 	ResourceTypeService = model.AccessControlPolicyTypePluginService
@@ -19,8 +18,8 @@ const (
 	ActionUse           = model.AccessControlPolicyActionUse
 )
 
-// DecisionClient abstracts the PDP call (plugin.API.EvaluateAccessControl in
-// WS-D) so Checker logic is testable against a stub.
+// DecisionClient abstracts the PDP call (plugin.API.EvaluateAccessControl)
+// so Checker logic is testable against a stub.
 type DecisionClient interface {
 	EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (model.AccessDecisionOutcome, error)
 }

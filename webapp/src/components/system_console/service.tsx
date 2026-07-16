@@ -493,10 +493,8 @@ const Service = (props: Props) => {
                             onChange={props.onChange}
                         />
                     </ItemList>
-                    {/* Services only ever get an id from the persisted config
-                        (IDs are minted server-side on save and adopted from
-                        the save response), so any id-bearing entry is
-                        persisted and policy authoring is safe. */}
+                    {/* IDs are minted server-side on save, so any id-bearing
+                        entry is persisted and policy authoring is safe. */}
                     {props.service.id && (
                         <ConsolePolicySection
                             resourceType='service'

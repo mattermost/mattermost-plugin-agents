@@ -2,15 +2,10 @@
 // See LICENSE.txt for license information.
 
 // CI-facing half of the editor-contract drift tripwire: the same
-// assignability assertions as probe.ts, but against the committed snapshot of
-// the host types (src/types/host_editor_contract.snapshot.d.ts) instead of a
-// live mattermost webapp checkout, so scripts/check_editor_contract.mjs can
-// enforce the contract unconditionally — no host checkout required. When a
-// checkout IS present the script additionally runs probe.ts against it and
-// verifies the snapshot itself is still fresh.
-//
-// See probe.ts for the rationale behind the two deliberate wire-shape
-// exceptions (userAttributes and searchUsers results).
+// assignability assertions as probe.ts, but against the committed snapshot
+// (src/types/host_editor_contract.snapshot.d.ts) so the contract is enforced
+// without a host checkout. See probe.ts for the rationale behind the two
+// deliberate wire-shape exceptions (userAttributes and searchUsers results).
 
 /* eslint-disable @typescript-eslint/no-unused-vars, no-undef */
 

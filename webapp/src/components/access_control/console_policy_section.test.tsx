@@ -95,10 +95,9 @@ afterEach(() => {
 
 describe('ConsolePolicySection', () => {
     test('a resource swap while the delete dialog is open discards the dialog and fires no delete', async () => {
-        // M4 regression: the section keys PolicyEditor by resource identity,
-        // so changing resourceId remounts the editor — the open dialog (and
-        // every other bit of editor state) from the old resource is gone and
-        // the old resource's delete can never target the new one.
+        // PolicyEditor is keyed by resource identity, so changing resourceId
+        // remounts it: the old resource's dialog is gone and its delete can
+        // never target the new one.
         const {rerender} = renderSection('serviceidaaaaaaaaaaaaaaaaa');
 
         fireEvent.click(screen.getByText('Access policy'));

@@ -104,20 +104,18 @@ func UsageRestrictionsForUserConfig(client *pluginapi.Client, cfg llm.BotConfig,
 	case llm.UserAccessLevelNone:
 		return fmt.Errorf("user usage block for bot: %w", ErrUsageRestriction)
 	case llm.UserAccessLevelAttributeBased:
-		// Attribute-based agents are gated exclusively by the ABAC decision
-		// table (Checker.CanUseAgent), which never invokes this legacy check
-		// for that mode. This case exists so any stale direct caller — and the
-		// "unknown user assistance level" fallthrough — cannot misfire.
+		// Gated exclusively by Checker.CanUseAgent, which never invokes this
+		// legacy check for that mode; the case only keeps stale direct
+		// callers off the "unknown user assistance level" fallthrough.
 		return nil
 	}
 	return fmt.Errorf("unknown user assistance level")
 }
 
 // CheckUsageRestrictionsForUserConfig is the composite per-request user gate:
-// it runs the ABAC agent decision (with the legacy UserAccessLevel switch as
-// the legacyCheck closure), then the ABAC service decision for cfg.ServiceID.
-// Every user-attributable completion entry point funnels through here, so
-// agent and service `use` policies are evaluated on every completion.
+// the ABAC agent decision (with the legacy UserAccessLevel switch as the
+// legacyCheck closure), then the ABAC service decision for cfg.ServiceID.
+// Every user-attributable completion entry point funnels through here.
 func (m *MMBots) CheckUsageRestrictionsForUserConfig(ctx context.Context, cfg llm.BotConfig, requestingUserID string) error {
 	legacy := func() error { return UsageRestrictionsForUserConfig(m.pluginAPI, cfg, requestingUserID) }
 	if err := m.accessChecker.CanUseAgent(ctx, requestingUserID, &cfg, legacy); err != nil {

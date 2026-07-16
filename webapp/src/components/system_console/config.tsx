@@ -221,10 +221,9 @@ const Config = (props: Props) => {
             try {
                 const saved = await savePluginConfig(localConfig);
 
-                // Adopt the normalized config the server saved: it carries
-                // server-minted service/MCP server IDs, so ID-gated UI (e.g.
-                // policy sections) appears immediately instead of after a
-                // page reload.
+                // Adopt the normalized saved config so server-minted
+                // service/MCP IDs (and the UI gated on them) appear
+                // immediately instead of after a page reload.
                 setLocalConfig({...defaultConfig, ...saved});
                 return {};
             } catch (e: any) {

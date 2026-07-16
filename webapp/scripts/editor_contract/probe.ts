@@ -2,21 +2,15 @@
 // See LICENSE.txt for license information.
 
 // Compile-time drift tripwire between this plugin's mirrored editor prop
-// contracts (src/types/access_control_editors.ts, src/types/access_control.ts)
-// and the mattermost webapp's exported editor prop types. Never executed and
-// never bundled: scripts/check_editor_contract.mjs type-checks this file
+// contracts and the mattermost webapp's exported editor prop types. Never
+// executed or bundled: scripts/check_editor_contract.mjs type-checks it
 // against a mattermost webapp checkout when one is available.
 //
-// The plugin hands mirror-typed props to the host components pulled off
-// window.Components, so the mirrors must stay assignable to the host types.
-// Two payloads are deliberate exceptions, typed as the server wire shape the
-// plugin proxies through untouched rather than as the host's stricter view:
-//   - TableEditor's userAttributes (host: UserPropertyField[]; plugin:
-//     AccessControlPropertyField[], its mirror of model.PropertyField JSON).
-//   - searchUsers results (host: users: UserProfile[]; plugin: the
-//     model.AccessControlPolicyTestResponse wire shape).
-// For those the probe checks the inverse direction instead — the host's
-// strict type must keep satisfying the plugin's wire mirror — so host-side
+// The mirrors must stay assignable to the host types. Two payloads are
+// deliberate exceptions, typed as the server wire shape the plugin proxies
+// through untouched: TableEditor's userAttributes and searchUsers results.
+// For those the probe checks the inverse direction — the host's strict type
+// must keep satisfying the plugin's wire mirror — so host-side
 // renames/removals still fail this check.
 
 /* eslint-disable @typescript-eslint/no-unused-vars, no-undef */

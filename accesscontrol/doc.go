@@ -1,30 +1,18 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Package accesscontrol is the plugin-side PEP (policy enforcement point)
-// helper for attribute-based access control over agents, LLM services, and
-// external MCP servers.
+// Package accesscontrol is the plugin-side policy enforcement point for
+// attribute-based access control over agents, LLM services, and external MCP
+// servers: decision tables and the availability probe (checker.go), decision
+// calls (pdp_client.go), and policy CRUD / CEL editor proxying (pap.go).
 //
-// Layout, per the cross-repo ABAC contract (as amended by Option B):
-//   - checker.go — the §9.2 decision tables (CanUseAgent/CanUseService/
-//     CanUseMCPServer), write-time validation (ValidateAgentWrite), and the
-//     cached PAP availability probe (IsAvailable).
-//   - pdp_client.go — DecisionClient over plugin.API.EvaluateAccessControl.
-//   - pap.go — policy save/get/delete and CEL editor proxying (§7).
+// Invariants: `unavailable` and any call error always deny. `no_policy` is
+// trustworthy (the server resolves policy existence even when ABAC is down):
+// legacy-mode agents run their legacy allow/block checks, services and MCP
+// servers are unrestricted, and attribute-based agents fail open by design.
+// On servers below MinServerVersionForABAC (NewLegacyOnly, version-gated)
+// policy existence cannot be resolved, so attribute-based agents deny.
 //
-// Outage invariant: `unavailable` (and any call error) always denies — the
-// server resolves policy existence even when ABAC is down, so `no_policy` is
-// trustworthy. On `no_policy`, agents in the legacy access modes run the
-// legacy allow/block checks (services and MCP servers are unrestricted),
-// while attribute-based agents fail open by design — allowed without any
-// legacy check, since their user/team lists are ignored in that mode.
-//
-// Servers below MinServerVersionForABAC lack the ABAC plugin APIs entirely;
-// production wiring selects NewLegacyOnly for them (version-gated, never
-// probe-based). In that mode the fail-open above does NOT apply: policy
-// existence cannot be resolved, so persisted attribute-based agents deny.
-//
-// Enforcement call sites live in bots/ (composite agent+service gate), mcp/
-// (per-user server filtering), llmcontext/ (meta-tool omission), and api/
-// (authoring routes, list filters) per contract §9.4.
+// Enforcement call sites: bots/ (agent+service gate), mcp/ (per-user server
+// filtering), llmcontext/ (meta-tool omission), api/ (authoring, list filters).
 package accesscontrol

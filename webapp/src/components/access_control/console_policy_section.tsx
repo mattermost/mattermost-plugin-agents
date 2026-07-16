@@ -17,10 +17,8 @@ type Props = {
     resourceDisplayName: string;
 };
 
-// legacyIDNote explains why the editor is absent for a resource whose stored
-// ID is a hand-crafted legacy string (raw config PUT before server-side
-// minting): such IDs can never carry a policy — the PDP short-circuits them
-// to no_policy — so authoring against them is meaningless.
+// legacyIDNote explains why the editor is absent for a resource with a
+// legacy ID: such IDs can never carry a policy.
 function legacyIDNote(resourceType: PolicyResourceType) {
     switch (resourceType) {
     case 'service':
@@ -36,16 +34,11 @@ function legacyIDNote(resourceType: PolicyResourceType) {
     }
 }
 
-// ConsolePolicySection is the collapsible "Access policy" block appended to
-// the system console service and MCP server panels. Admin-only surface:
-// advanced (CEL) editor only.
-//
-// Callers render this only for entries with a persisted id: IDs are minted
-// server-side on save (normalizeAdminConfig) and adopted from the PUT
-// /admin/config response, so an id-bearing entry is always persisted and
-// policy PUTs can never orphan a policy against an unsaved resource.
-// Persisted legacy IDs (hand-set before minting existed) still reach here;
-// they get an explanatory note instead of the editor.
+// ConsolePolicySection is the collapsible "Access policy" block on the system
+// console service and MCP server panels; admin-only, CEL editor only.
+// Callers render it only for entries with a persisted id (minted server-side
+// on save), so policy PUTs can never orphan a policy against an unsaved
+// resource. Persisted legacy IDs get an explanatory note instead.
 const ConsolePolicySection = (props: Props) => {
     const {resourceType, resourceId, resourceDisplayName} = props;
     const {supported} = useABACSupport();

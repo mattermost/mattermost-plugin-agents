@@ -21,8 +21,7 @@ import (
 var ErrOAuthNotConfigured = errors.New("oauth not configured")
 
 // ServerAccessChecker gates per-user visibility of external MCP servers by
-// stable ID (satisfied by *accesscontrol.Checker). Kept as a local interface
-// so mcp stays testable against a stub without new libraries.
+// stable ID (satisfied by *accesscontrol.Checker).
 type ServerAccessChecker interface {
 	CanUseMCPServer(ctx context.Context, userID, serverID string) error
 }
@@ -281,9 +280,9 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 
 // deniedExternalOrigins evaluates the ABAC gate for every enabled external
 // server with a stable ID and returns the origins (BaseURLs) the user is
-// denied (contract §9.4). One decision call per server. Origins without a
-// stable ID (embedded, plugin servers) are never denied here. Filtering is
-// silent by design: Debug log only, no mcpErrors entries, no chat banners.
+// denied. One decision call per server. Origins without a stable ID
+// (embedded, plugin servers) are never denied here. Filtering is silent by
+// design: Debug log only, no mcpErrors entries, no chat banners.
 func (m *ClientManager) deniedExternalOrigins(ctx context.Context, userID string) map[string]bool {
 	if m.accessChecker == nil {
 		return nil

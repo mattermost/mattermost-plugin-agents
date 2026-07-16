@@ -15,9 +15,7 @@ import (
 )
 
 // errRPCTransportFailure surfaces the generated plugin RPC client's silent
-// failure mode: on a transport error it logs, swallows the error, and returns
-// (nil, nil). The checkers' error path denies, which is the correct
-// fail-closed handling for a decision that never happened.
+// (nil, nil) transport-failure mode; the checkers' error path denies it.
 var errRPCTransportFailure = errors.New("plugin RPC transport failure: EvaluateAccessControl returned no decision")
 
 // PluginAPIClient implements DecisionClient over plugin.API.EvaluateAccessControl.
@@ -30,11 +28,9 @@ func NewPluginAPIClient(papi plugin.API) *PluginAPIClient {
 	return &PluginAPIClient{papi: papi}
 }
 
-// EvaluateAccessRequest proxies one PDP decision call. The ctx is used only
-// for the span: the plugin RPC hop is synchronous and carries no context.
-// The server outcome is returned verbatim: unknown values from a future
-// server fall into the checkers' default switch row, which denies —
-// preserving fail-closed normalization without a translation layer.
+// EvaluateAccessRequest proxies one PDP decision call (ctx is span-only; the
+// plugin RPC hop carries no context). The server outcome is returned verbatim;
+// unknown values hit the checkers' default switch row, which denies.
 func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (model.AccessDecisionOutcome, error) {
 	_, span := telemetry.Tracer().Start(ctx, "abac evaluate", trace.WithAttributes(
 		telemetry.UserID.String(userID),

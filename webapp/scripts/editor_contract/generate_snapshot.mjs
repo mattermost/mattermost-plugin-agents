@@ -2,14 +2,10 @@
 // See LICENSE.txt for license information.
 
 // Generates src/types/host_editor_contract.snapshot.d.ts from a mattermost
-// webapp checkout: resolves the host's exported editor contract types with
-// the TypeScript compiler API and prints each as a fully flattened structural
-// type, so the snapshot is self-contained (no host imports) and CI can
-// type-check the plugin's mirrors against it without a host checkout.
-//
-// Used by scripts/check_editor_contract.mjs both to (re)generate the
-// snapshot (--update-snapshot) and to verify the committed snapshot still
-// matches the live host source when a checkout is present.
+// webapp checkout: resolves the host's exported editor contract types via the
+// TypeScript compiler API and prints each as a flattened structural type, so
+// the snapshot is self-contained and CI needs no host checkout. Used by
+// scripts/check_editor_contract.mjs to regenerate and to verify freshness.
 
 /* eslint-disable no-console */
 

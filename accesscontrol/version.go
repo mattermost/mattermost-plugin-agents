@@ -12,15 +12,10 @@ import "github.com/Masterminds/semver/v3"
 const MinServerVersionForABAC = "11.10.0"
 
 // ServerSupportsABAC reports whether a server at the given version carries
-// the ABAC plugin APIs. Capability selection must be version-based, never
-// probe-based: on an older server the generated RPC client silently swallows
-// calls to nonexistent methods, and on a new server a transient probe failure
-// must never select passthrough (that would fail open where the decision
-// tables require deny).
-//
-// An unparseable version errs toward supported — the real client stays wired
-// and transport failures deny (fail closed) — rather than silently dropping
-// enforcement.
+// the ABAC plugin APIs. Selection must be version-based, never probe-based:
+// a transient probe failure must never select passthrough (fail-open).
+// An unparseable version errs toward supported so transport failures still
+// deny (fail closed) rather than silently dropping enforcement.
 func ServerSupportsABAC(serverVersion string) bool {
 	v, err := semver.NewVersion(serverVersion)
 	if err != nil {

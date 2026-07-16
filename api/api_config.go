@@ -87,17 +87,14 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	}
 
 	// Read-previous → reconcile → normalize → save runs atomically under the
-	// config advisory lock, so a concurrent save or migration cannot
-	// interleave. Reconciliation carries stable MCP server IDs forward before
-	// normalizeAdminConfig mints fresh ones, so payloads from clients that
-	// drop the id field (stale webapp bundles, raw API automation) cannot
-	// rotate IDs on every save; identity conflicts abort the save entirely.
+	// config advisory lock. Reconciliation carries stable MCP server IDs
+	// forward before normalizeAdminConfig mints fresh ones, so clients that
+	// drop the id field cannot rotate IDs on every save; identity conflicts
+	// abort the save entirely.
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		next := cfg
-		// Reconciliation runs even on the first write (empty previous list):
-		// every incoming ID must reference a stored server, so fabricated or
-		// duplicate IDs cannot slip in unvalidated before the first config
-		// row exists.
+		// Reconcile even on the first write (empty previous list) so
+		// fabricated or duplicate incoming IDs cannot slip in unvalidated.
 		var prevServers []config.MCPServerConfig
 		if prev != nil {
 			prevServers = prev.MCP.Servers
@@ -111,14 +108,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	})
 	switch {
 	case errors.Is(err, config.ErrMCPServerIDConflict):
-		// The payload's MCP server identities cannot be safely reconciled
-		// with the stored config (stale or corrupt admin console state).
 		// Minting fresh IDs here would silently detach existing policies.
 		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload conflicts with the stored MCP server identities; reload the System Console and retry: %w", err))
 		return
 	case errors.Is(err, store.ErrStaleLegacyServiceIDs):
-		// A pre-upgrade webapp bundle is echoing back UUID service IDs from
-		// before the ID migration; writing them would undo it.
+		// A pre-upgrade client echoing UUID service IDs would undo the migration.
 		c.AbortWithError(http.StatusConflict, fmt.Errorf("stale configuration payload; reload the System Console and retry: %w", err))
 		return
 	case err != nil:

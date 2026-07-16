@@ -227,11 +227,6 @@ const AgentConfigView = (props: Props) => {
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const isSystemAdmin = useSelector((state: GlobalState) => userHasSystemPermission(state, currentUserId, 'manage_system'));
 
-    // Switching away from attribute-based access while a policy exists runs a
-    // small state machine after the agent update: an explicit policy existence
-    // fetch decides whether to offer the delete flow, and a failed deletion
-    // keeps the view open with a retry/error dialog instead of silently
-    // closing over an invisible still-enforced policy.
     const [policySwitch, setPolicySwitch] = useState<PolicySwitchState>({step: 'idle'});
 
     // Leave MCPs tab if tools are disabled
@@ -254,9 +249,8 @@ const AgentConfigView = (props: Props) => {
             return;
         }
 
-        // While the policy-switch machine is mid-flight the only exits are its
-        // own dialog actions (delete/keep) — parent navigation would abandon a
-        // still-enforced policy without resolution.
+        // Mid-flight policy switch: the only exits are its own dialog actions,
+        // or navigation would abandon a still-enforced policy unresolved.
         if (policySwitch.step !== 'idle') {
             return;
         }
@@ -375,14 +369,13 @@ const AgentConfigView = (props: Props) => {
                 draft.userAccessLevel !== UserAccessLevel.AttributeBased;
             if (mode === 'edit' && switchedAwayFromAttributeBased) {
                 // Explicit existence check: the policy editor may never have
-                // mounted (or its load may still be in flight), so the switch
-                // flow cannot rely on state it reported earlier.
+                // mounted, so this flow cannot rely on its state.
                 let policyExists = true;
                 try {
                     policyExists = (await getAgentAccessPolicy(savedAgent.id)) !== null;
                 } catch {
                     // Unknown state: offer the delete flow rather than risk
-                    // leaving an invisible policy behind silently.
+                    // silently leaving an invisible policy behind.
                 }
                 if (policyExists) {
                     setPolicySwitch({step: 'confirming', savedAgent});

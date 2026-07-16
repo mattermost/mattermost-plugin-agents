@@ -2,9 +2,7 @@
 // See LICENSE.txt for license information.
 
 // Client methods for the attribute-based access control (ABAC) surface:
-// policy CRUD per resource type plus the CEL authoring proxies. Kept out of
-// client.tsx so the main client module stays focused on conversation and
-// admin plumbing.
+// policy CRUD per resource type plus the CEL authoring proxies.
 
 import {ClientError} from '@mattermost/client';
 
@@ -120,7 +118,7 @@ export function deleteMCPServerAccessPolicy(serverId: string): Promise<void> {
 }
 
 // celRouteURL appends the ?agent_id= authz lane for per-agent admins who hold
-// no system permissions (contract §7.1).
+// no system permissions.
 function celRouteURL(path: string, agentId?: string, extraQuery?: Record<string, string>): string {
     const url = new URL(`${baseRoute()}/access_control/cel/${path}`, window.location.origin);
     if (agentId) {

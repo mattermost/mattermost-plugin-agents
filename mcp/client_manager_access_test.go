@@ -137,9 +137,9 @@ func TestDeniedExternalOriginsAndToolFiltering(t *testing.T) {
 	}
 }
 
-// TestFilterErrorsByDeniedOrigins covers the F2 leak: a denied OAuth server
-// with zero tools must not surface its ToolAuthError (silent omission), while
-// auth errors from allowed servers and origin-less generic errors survive.
+// A denied OAuth server with zero tools must not surface its ToolAuthError
+// (silent omission); auth errors from allowed servers and origin-less generic
+// errors survive.
 func TestFilterErrorsByDeniedOrigins(t *testing.T) {
 	deniedAuthErr := llm.ToolAuthError{
 		ServerName:   "Denied",

@@ -44,19 +44,15 @@ type ABACIDMigrationReport struct {
 // transaction that writes at most one new active config row and sets both
 // Agents_System markers atomically:
 //
-//   - service IDs: legacy UUID service IDs in the active config
-//     (ServiceConfig.ID, ServiceConfig.FallbackServiceID, BotConfig.ServiceID)
-//     and in Agents_UserAgents.ServiceID are rewritten to model.NewId() values.
-//     When duplicate legacy IDs exist, every occurrence gets its own unique new
-//     ID, but references remap to the FIRST occurrence's new ID, mirroring
-//     GetServiceByID first-match semantics. Dangling UUID references (no
-//     matching service) are left unchanged and reported.
+//   - service IDs: legacy UUID service IDs in the active config and in
+//     Agents_UserAgents.ServiceID are rewritten to model.NewId() values.
+//     Dangling UUID references are left unchanged and reported.
 //   - MCP server IDs: every external MCP server entry with no ID gets a
 //     stable model.NewId().
 //
-// Idempotent: markers short-circuit re-runs per migration, and the rewrite is
-// content-based (only UUID service IDs / empty MCP IDs are touched), so a
-// crash between the config write and the marker write is recovered safely.
+// Idempotent: markers short-circuit re-runs, and the rewrite is content-based
+// (only UUID service IDs / empty MCP IDs are touched), so a crash between the
+// config write and the marker write is recovered safely.
 func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 	report := ABACIDMigrationReport{}
 
@@ -84,7 +80,7 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 	}()
 
 	// Same advisory lock as SaveConfig: serializes against concurrent admin
-	// saves and concurrent migration attempts from other nodes/goroutines.
+	// saves and migration attempts from other nodes.
 	if _, err = tx.Exec("SELECT pg_advisory_xact_lock($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
 		return report, fmt.Errorf("failed to lock ABAC ID migration transaction: %w", err)
 	}
@@ -98,7 +94,7 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 		return report, err
 	}
 	if serviceDone == "1" && mcpDone == "1" {
-		// Another node/goroutine finished between the fast path and the lock.
+		// Another node finished between the fast path and the lock.
 		_ = tx.Rollback()
 		return report, nil
 	}
@@ -152,9 +148,8 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 // in Agents_UserAgents rows, recording what it did in report. It does not
 // write the config row; the caller commits everything in one transaction.
 func migrateServiceIDsTx(tx *sqlx.Tx, cfg *config.Config, report *ABACIDMigrationReport) error {
-	// Reference remapping keeps the FIRST occurrence's new ID when the same
-	// legacy UUID appears on multiple services, mirroring GetServiceByID
-	// first-match behavior; each occurrence still gets its own unique new ID.
+	// Duplicate legacy UUIDs: each occurrence gets its own new ID, but
+	// references remap to the FIRST occurrence's, mirroring GetServiceByID.
 	idMap := make(map[string]string)
 	for i := range cfg.Services {
 		oldID := cfg.Services[i].ID
@@ -169,9 +164,8 @@ func migrateServiceIDsTx(tx *sqlx.Tx, cfg *config.Config, report *ABACIDMigratio
 		report.ServicesRemapped++
 	}
 
+	// No-op (also covers re-run after a crash before the marker write).
 	if len(idMap) == 0 {
-		// Content-based no-op (also covers re-run after a crash between the
-		// config write and the marker write).
 		return nil
 	}
 
@@ -202,7 +196,7 @@ func migrateServiceIDsTx(tx *sqlx.Tx, cfg *config.Config, report *ABACIDMigratio
 	}
 
 	// Update every agent row, including soft-deleted ones. UpdateAt is
-	// deliberately not bumped: this is a data migration, not a user edit.
+	// deliberately not bumped (data migration, not a user edit).
 	for oldID, newID := range idMap {
 		res, err := tx.Exec("UPDATE Agents_UserAgents SET ServiceID = $1 WHERE ServiceID = $2", newID, oldID)
 		if err != nil {

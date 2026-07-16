@@ -99,7 +99,7 @@ const (
 	UserAccessLevelBlock
 	UserAccessLevelNone
 	// UserAccessLevelAttributeBased makes the ABAC resource policy the sole
-	// user-access gate; UserIDs/TeamIDs are ignored in this mode (contract §10).
+	// user-access gate; UserIDs/TeamIDs are ignored in this mode.
 	UserAccessLevelAttributeBased
 )
 

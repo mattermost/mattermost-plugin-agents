@@ -3,25 +3,16 @@
 // See LICENSE.txt for license information.
 
 // Drift tripwire for the window.Components editor contract, in two layers:
+// 1. ALWAYS (CI): type-checks probe_snapshot.ts, asserting assignability
+//    between the plugin mirrors (src/types/access_control_editors.ts) and the
+//    committed host-type snapshot; no mattermost checkout needed.
+// 2. WHEN A HOST CHECKOUT IS PRESENT (dev): additionally type-checks probe.ts
+//    against the live host source and verifies the committed snapshot is
+//    still what the host source generates.
 //
-// 1. ALWAYS (CI): type-checks scripts/editor_contract/probe_snapshot.ts,
-//    which asserts assignability between this plugin's mirrors
-//    (src/types/access_control_editors.ts) and the committed snapshot of the
-//    host types (src/types/host_editor_contract.snapshot.d.ts). No
-//    mattermost checkout needed — the contract is pinned in this repo.
-//
-// 2. WHEN A HOST CHECKOUT IS PRESENT (dev): additionally type-checks
-//    scripts/editor_contract/probe.ts against the live host source, and
-//    verifies the committed snapshot still matches what the host source
-//    generates — failing with regeneration instructions when the host moved.
-//
-// Pass --update-snapshot to regenerate the snapshot from the host checkout
-// (also exposed as `npm run update-editor-contract-snapshot`).
-//
-// Host checkout lookup order:
-//   1. $MM_WEBAPP_PATH (path to the mattermost repo's webapp/ directory)
-//   2. ../mattermost-wsw/webapp   (sibling checkout of the plugin repo)
-//   3. ../mattermost/webapp       (sibling checkout of the plugin repo)
+// Pass --update-snapshot (npm run update-editor-contract-snapshot) to
+// regenerate the snapshot. Host checkout lookup: $MM_WEBAPP_PATH, then the
+// sibling checkouts ../mattermost-wsw/webapp and ../mattermost/webapp.
 
 /* eslint-disable no-console, no-process-env, no-process-exit */
 
@@ -42,15 +33,11 @@ const updateSnapshot = process.argv.includes('--update-snapshot');
 
 const tscBin = path.join(webappDir, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
 
-// runProbe type-checks one probe file with the given tsconfig and returns
-// the tsc exit status, its full output, and the diagnostics attributed to
-// files under scripts/editor_contract/. How much of that the caller enforces
-// differs per layer: the self-contained snapshot probe requires a zero exit
-// status (any diagnostic anywhere in the program is a real failure), while
-// the live-host probe only acts on probe-file diagnostics — the synthetic
-// program pulls the transitive closure of the host editor files without
-// exactly replicating the host's own build environment, so incidental
-// diagnostics inside host files are expected there.
+// runProbe type-checks one probe file and returns the tsc exit status, full
+// output, and the diagnostics attributed to files under
+// scripts/editor_contract/. The snapshot probe requires a zero exit status;
+// the live-host probe only acts on probe-file diagnostics, since incidental
+// diagnostics inside host files are expected outside the host's own build.
 function runProbe(tsconfig, label) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'editor-contract-'));
     const tsconfigPath = path.join(tmpDir, 'tsconfig.json');
@@ -102,13 +89,10 @@ function findHostWebapp() {
     return null;
 }
 
-// hostTsconfig builds the synthetic tsconfig compiling against a host
-// checkout. The probe compiles under the HOST's compiler options (baseUrl
-// resolves against the host checkout via `extends`), with the probe files and
-// the host's ambient declarations in the program. `paths` must be re-declared
-// in full (a shallow override replaces the host's), with absolute targets:
-// the probe file lives in the plugin tree, so bare host packages like
-// @mattermost/types would otherwise resolve against the plugin's own copy.
+// hostTsconfig builds the synthetic tsconfig compiling the probe under the
+// HOST's compiler options plus the host's ambient declarations. `paths` must
+// be re-declared in full with absolute targets: the probe lives in the plugin
+// tree, so bare host packages would otherwise resolve against the plugin's copy.
 function hostTsconfig(host) {
     return {
         extends: path.join(host, 'channels', 'tsconfig.json'),
@@ -140,14 +124,10 @@ if (!fs.existsSync(snapshotPath) && !updateSnapshot) {
 }
 
 if (fs.existsSync(snapshotPath)) {
-    // The snapshot program is entirely self-contained: only the probe file
-    // is listed and tsc pulls its imports (the plugin mirrors + the committed
-    // snapshot) transitively. Deliberately NOT src/types/**/*: unrelated type
-    // files there import application modules, dragging in the whole webapp
-    // component tree — including the generated (gitignored) src/manifest.ts,
-    // which does not exist on CI. Since the program is self-contained, ANY
-    // tsc diagnostic is a real failure — require a zero exit status rather
-    // than filtering for probe lines.
+    // Self-contained program: only the probe file is listed and tsc pulls its
+    // imports transitively. Deliberately NOT src/types/**/* — that would drag
+    // in the webapp component tree, including the generated (gitignored)
+    // src/manifest.ts absent on CI. Any diagnostic is therefore a real failure.
     const snapshot = runProbe({
         extends: path.join(webappDir, 'tsconfig.json'),
         compilerOptions: {noEmit: true, skipLibCheck: true},

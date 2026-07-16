@@ -26,13 +26,9 @@ func TestPluginAPIClientEvaluateAccessRequest(t *testing.T) {
 		{name: "deny", decision: &model.PluginAccessControlDecision{Outcome: model.AccessDecisionOutcomeDeny}, wantOutcome: model.AccessDecisionOutcomeDeny},
 		{name: "no_policy", decision: &model.PluginAccessControlDecision{Outcome: model.AccessDecisionOutcomeNoPolicy}, wantOutcome: model.AccessDecisionOutcomeNoPolicy},
 		{name: "unavailable", decision: &model.PluginAccessControlDecision{Outcome: model.AccessDecisionOutcomeUnavailable}, wantOutcome: model.AccessDecisionOutcomeUnavailable},
-		// Unknown values pass through verbatim; the checkers' default switch
-		// row denies them (see TestCanUseAgentDecisionTable).
 		{name: "unknown outcome passes through", decision: &model.PluginAccessControlDecision{Outcome: model.AccessDecisionOutcome("future_value")}, wantOutcome: model.AccessDecisionOutcome("future_value")},
 		{name: "app error", appErr: model.NewAppError("EvaluateAccessControl", "boom", nil, "", http.StatusInternalServerError), wantErr: true},
-		// The generated RPC client returns (nil, nil) on transport failure
-		// (it logs and swallows the error); that must surface as an error so
-		// the checkers deny, never as a dereference or a silent outcome.
+		// (nil, nil) is the RPC client's silent transport failure; it must surface as an error so the checkers deny.
 		{name: "transport failure (nil, nil) returns error", wantErr: true},
 	}
 

@@ -532,10 +532,9 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 			wantDenied: true,
 		},
 		{
-			// Option B end-to-end pin: unavailable means the server vouched a
-			// policy exists (or existence is unknowable), so even a
-			// legacy-mode agent whose user lists would allow fails closed at
-			// the enforcement point.
+			// Unavailable means a policy exists (or existence is unknowable),
+			// so even a legacy-mode agent whose user lists would allow fails
+			// closed at the enforcement point.
 			name:    "legacy-mode agent denied on unavailable",
 			perType: map[string]model.AccessDecisionOutcome{accesscontrol.ResourceTypeAgent: model.AccessDecisionOutcomeUnavailable},
 			cfg: llm.BotConfig{

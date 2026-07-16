@@ -2,20 +2,13 @@
 // See LICENSE.txt for license information.
 
 // Prop contracts for the access-control editors the host webapp exports on
-// window.Components (contract §6.1). These mirror the props implemented in
-// the mattermost webapp, narrowed to EXACTLY the props this plugin passes
-// (see policy_editor.tsx): with structural typing, mirroring props we never
-// pass would only widen the drift surface without adding safety.
-//
-// Source of truth (in the mattermost repo, under webapp/):
+// window.Components, narrowed to exactly the props this plugin passes (see
+// policy_editor.tsx). Source of truth in the mattermost repo (webapp/):
 //   - channels/src/components/admin_console/access_control/editors/table_editor/table_editor.tsx (TableEditorProps)
 //   - channels/src/components/admin_console/access_control/editors/cel_editor/editor.tsx (CELEditorProps, CELEditorActions)
 //   - channels/src/packages/mattermost-redux/src/types/actions.ts (ActionResult)
-//
 // Drift tripwire: `npm run check-editor-contract` type-checks these mirrors
-// against the host's exported prop types when a mattermost webapp checkout is
-// available (see scripts/editor_contract/probe.ts). Keep the two in sync when
-// the host editors gain or change props.
+// against the host's exported prop types.
 
 import type {ComponentType} from 'react';
 
@@ -51,7 +44,7 @@ export type TableEditorProps = {
     actions: TableEditorActions;
 };
 
-// Mirrors CELEditorProps['userAttributes'] entries (contract §6.2).
+// Mirrors CELEditorProps['userAttributes'] entries.
 export type CELEditorAttribute = {
     attribute: string;
     values: string[];

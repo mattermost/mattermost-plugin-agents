@@ -42,18 +42,16 @@ export type PolicyEditorProps = {
     agentIdForAuthz?: string;
 };
 
-// EditorMode is the user-selectable editor. The rendered view additionally
-// models the case where the policy can't render in the table editor and the
-// caller may not use the advanced (CEL) editor: a read-only unsupported state
-// (F6) — the CEL editor must never render for non-admin callers.
+// EditorMode is the user-selectable editor; 'unsupported' is the read-only
+// view when the policy can't render in the table editor and the caller may
+// not use the CEL editor.
 type EditorMode = 'simplified' | 'advanced';
 type EditorView = EditorMode | 'unsupported';
 
-// deriveView computes the rendered view purely from the stored mode, the
-// lock state, and the CURRENT permission props on every render. The stored
-// mode is a preference, never an entitlement: 'advanced' is structurally
-// unreachable when allowAdvanced is false, so a privilege downgrade
-// mid-session (allowAdvanced flipping without a resource change) can never
+// deriveView computes the rendered view from the stored mode, the lock state,
+// and the CURRENT permission props on every render. The stored mode is a
+// preference, never an entitlement: 'advanced' is unreachable when
+// allowAdvanced is false, so a mid-session privilege downgrade can never
 // leave the CEL editor exposed.
 function deriveView(mode: EditorMode, advancedLocked: boolean, allowSimplified: boolean, allowAdvanced: boolean): EditorView {
     if (advancedLocked) {
@@ -118,11 +116,8 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
     const [saveError, setSaveError] = useState('');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-    // Load once per mount. Cross-resource state bleed (stale advanced lock,
-    // open delete dialog, draft expression) is prevented structurally: the
-    // exported PolicyEditor wrapper keys this component by resource identity,
-    // so a resource switch remounts with fresh state. The cancelled flag
-    // guards the load's own async completions across that remount.
+    // Load once per mount; the exported wrapper keys this component by
+    // resource identity, so a resource switch remounts with fresh state.
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
@@ -140,10 +135,9 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
             setExpression(expr);
             setSavedExpression(expr);
 
-            // Multi-rule policies (future/external authoring) can't round-trip
-            // through the simple editor; lock away from it. Admins edit rule 0
-            // in advanced mode (the other rules are preserved verbatim on
-            // save); everyone else gets the read-only unsupported view.
+            // Multi-rule policies can't round-trip through the simple editor;
+            // admins edit rule 0 in advanced mode (other rules preserved on
+            // save), everyone else gets the read-only unsupported view.
             if ((loaded?.rules?.length ?? 0) > 1) {
                 setAdvancedLocked(true);
                 if (allowAdvanced) {
@@ -164,7 +158,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
         };
     }, [client, resourceId, agentIdForAuthz, allowAdvanced, intl]);
 
-    // Contract §6.2: CEL editor takes {attribute, values, isNative}[].
+    // The CEL editor takes {attribute, values, isNative}[].
     const celAttributes = useMemo<CELEditorAttribute[]>(() => fields.map((field) => ({
         attribute: field.name,
         values: extractFieldValues(field),
@@ -233,9 +227,8 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
             setExpression('');
             setSavedExpression('');
 
-            // F6 recovery: the expression that forced the lock is gone, so
-            // return to a usable authoring state instead of staying in the
-            // read-only unsupported view until remount.
+            // The expression that forced the lock is gone; return to a
+            // usable authoring state instead of staying read-only.
             setAdvancedLocked(false);
             setMode(allowSimplified ? 'simplified' : 'advanced');
             setExpressionValid(true);
@@ -459,11 +452,8 @@ const SavePolicyButton = styled(PrimaryButton)`
     height: 36px;
 `;
 
-// PolicyEditor applies the resource-identity keyed remount itself: all
-// editor state (draft expression, advanced lock, the delete-confirmation
-// dialog) is scoped to one resource, and remounting on identity change
-// guarantees none of it can survive a resource switch and act on the wrong
-// target. Centralized here so no call site can forget it.
+// PolicyEditor keys the content by resource identity so no editor state can
+// survive a resource switch; centralized here so no call site can forget it.
 const PolicyEditor = (props: PolicyEditorProps) => (
     <PolicyEditorContent
         key={`${props.resourceType}-${props.resourceId}`}
