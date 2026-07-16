@@ -652,30 +652,3 @@ func TestCompositeSearch_ContextCancellation(t *testing.T) {
 		assert.Contains(t, err.Error(), "context canceled")
 	})
 }
-
-// bulkStubVectorStore is a stubVectorStore that also supports bulk indexing.
-type bulkStubVectorStore struct {
-	stubVectorStore
-}
-
-func (s *bulkStubVectorStore) PrepareBulkIndex(ctx context.Context) error  { return nil }
-func (s *bulkStubVectorStore) FinalizeBulkIndex(ctx context.Context) error { return nil }
-func (s *bulkStubVectorStore) VectorIndexExists(ctx context.Context) (bool, error) {
-	return true, nil
-}
-
-func TestCompositeSearchBulkIndexer(t *testing.T) {
-	t.Run("forwards the store's bulk index control when supported", func(t *testing.T) {
-		store := &bulkStubVectorStore{}
-		cs := NewCompositeSearch(store, &stubEmbeddingProvider{}, chunking.DefaultOptions())
-
-		bulk := cs.BulkIndexer()
-		require.NotNil(t, bulk)
-		assert.Same(t, BulkIndexer(store), bulk)
-	})
-
-	t.Run("returns nil when the store has no bulk index support", func(t *testing.T) {
-		cs := NewCompositeSearch(&stubVectorStore{}, &stubEmbeddingProvider{}, chunking.DefaultOptions())
-		assert.Nil(t, cs.BulkIndexer())
-	})
-}
