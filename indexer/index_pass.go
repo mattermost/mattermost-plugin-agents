@@ -177,7 +177,7 @@ func (s *Indexer) runIndexPass(
 			break
 		}
 
-		err, canceled := s.waitForBatchResult(ctx, b, heartbeat.C, jobStatus)
+		canceled, err := s.waitForBatchResult(ctx, b, heartbeat.C, jobStatus)
 		if canceled {
 			firstErr = errCancelRequested
 			cancelPass()
@@ -258,17 +258,17 @@ func (s *Indexer) waitForBatchResult(
 	b *batch,
 	heartbeat <-chan time.Time,
 	jobStatus *JobStatus,
-) (err error, canceled bool) {
+) (canceled bool, err error) {
 	for {
 		select {
 		case err = <-b.result:
-			return err, false
+			return false, err
 		case <-heartbeat:
 			if s.heartbeatTick(jobStatus) {
-				return nil, true
+				return true, nil
 			}
 		case <-ctx.Done():
-			return ctx.Err(), false
+			return false, ctx.Err()
 		}
 	}
 }
