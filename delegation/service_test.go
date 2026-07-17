@@ -10,10 +10,17 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	promptsassets "github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -143,6 +150,147 @@ func TestDelegateNotConfigured(t *testing.T) {
 		TargetAgent:         "projects",
 	})
 	require.ErrorIs(t, err, ErrNotConfigured)
+}
+
+// fakeConversationStore backs a real conversation.Service with canned turns.
+type fakeConversationStore struct {
+	conversation.Store
+	turns []store.Turn
+}
+
+func (f *fakeConversationStore) GetTurnsForConversation(string) ([]store.Turn, error) {
+	return f.turns, nil
+}
+
+// completeForStatusTests wires the minimum dependencies StatusByParentToolCall
+// needs (a conversation service over canned turns).
+func completeForStatusTests(t *testing.T, svc *Service, turns []store.Turn) {
+	t.Helper()
+	convService := conversation.NewService(&fakeConversationStore{turns: turns}, nil, nil, nil)
+	svc.Complete(
+		convService,
+		conversations.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil),
+		llmcontext.NewLLMContextBuilder(nil, nil, nil, nil),
+		nil,
+		nil,
+	)
+	// prompts/streaming are unused by StatusByParentToolCall but gate Available.
+	prompts, err := llm.NewPrompts(promptsassets.PromptsFolder)
+	require.NoError(t, err)
+	svc.prompts = prompts
+	svc.streaming = streaming.NewMMPostStreamService(nil, nil)
+}
+
+func TestStatusByParentToolCall(t *testing.T) {
+	answerTurns := []store.Turn{
+		turnOf(t, "user", []map[string]any{{"type": "text", "text": "task"}}),
+		turnOf(t, "assistant", []map[string]any{{"type": "text", "text": "the answer"}}),
+	}
+	waitingTurns := []store.Turn{
+		turnOf(t, "user", []map[string]any{{"type": "text", "text": "task"}}),
+		turnOf(t, "assistant", []map[string]any{
+			{"type": "tool_use", "id": "t1", "name": "create_post", "status": "pending"},
+		}),
+	}
+	record := Record{
+		DelegationID:         "conv-1",
+		ParentToolCallID:     "ptc-1",
+		InitiatorUserID:      "alice-id",
+		TargetBotID:          "projects-bot-id",
+		TargetBotUsername:    "projects",
+		TargetBotDisplayName: "Projects Agent",
+		TaskPostID:           "task-post-id",
+		CreatedAt:            123,
+	}
+
+	tests := []struct {
+		name        string
+		userID      string
+		toolCallID  string
+		record      *Record
+		turns       []store.Turn
+		wantNil     bool
+		wantPhase   string
+		wantPreview string
+	}{
+		{
+			name:        "initiator sees completed with preview",
+			userID:      "alice-id",
+			toolCallID:  "ptc-1",
+			record:      &record,
+			turns:       answerTurns,
+			wantPhase:   PhaseCompleted,
+			wantPreview: "the answer",
+		},
+		{
+			name:       "initiator sees waiting_on_you",
+			userID:     "alice-id",
+			toolCallID: "ptc-1",
+			record:     &record,
+			turns:      waitingTurns,
+			wantPhase:  PhaseWaitingOnYou,
+		},
+		{
+			name:       "non-initiator gets nothing",
+			userID:     "bob-id",
+			toolCallID: "ptc-1",
+			record:     &record,
+			turns:      answerTurns,
+			wantNil:    true,
+		},
+		{
+			name:       "unknown tool call gets nothing",
+			userID:     "alice-id",
+			toolCallID: "ptc-unknown",
+			record:     nil,
+			turns:      answerTurns,
+			wantNil:    true,
+		},
+		{
+			name:       "empty user gets nothing",
+			userID:     "",
+			toolCallID: "ptc-1",
+			record:     &record,
+			turns:      answerTurns,
+			wantNil:    true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := mocks.NewMockClient(t)
+			if tc.userID != "" && tc.toolCallID != "" {
+				call := client.EXPECT().KVGet(recordKeyByParentToolCall(tc.toolCallID), mock.Anything)
+				if tc.record != nil {
+					rec := *tc.record
+					call.RunAndReturn(func(_ string, value any) error {
+						*(value.(*Record)) = rec
+						return nil
+					})
+				} else {
+					call.Return(mmapi.ErrKVNotFound)
+				}
+				call.Maybe()
+			}
+
+			svc := New(client, newTestBots(t), nil, nil, nil, nil)
+			completeForStatusTests(t, svc, tc.turns)
+			client.EXPECT().GetConfig().Return(&model.Config{ServiceSettings: model.ServiceSettings{SiteURL: model.NewPointer("https://mm.example.com")}}).Maybe()
+
+			status, err := svc.StatusByParentToolCall(tc.userID, tc.toolCallID)
+			require.NoError(t, err)
+
+			if tc.wantNil {
+				require.Nil(t, status)
+				return
+			}
+			require.NotNil(t, status)
+			require.Equal(t, tc.wantPhase, status.Phase)
+			require.Equal(t, tc.wantPreview, status.AnswerPreview)
+			require.Equal(t, "https://mm.example.com/_redirect/pl/task-post-id", status.Permalink)
+			require.Equal(t, "projects", status.TargetAgentUsername)
+		})
+	}
 }
 
 // fakeTurnSource implements turnSource for state derivation tests.
