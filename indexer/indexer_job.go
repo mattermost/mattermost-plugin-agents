@@ -42,6 +42,9 @@ type PostRecord struct {
 	ChannelID   string `db:"channelid"`
 	ChannelName string `db:"channelname"`
 	ChannelType string `db:"channeltype"`
+
+	// Set only by the edited-posts repair query (keyset on UpdateAt).
+	UpdateAt int64 `db:"updateat"`
 }
 
 // JobStatus represents the status of a reindex job
@@ -94,6 +97,9 @@ type HealthCheckResult struct {
 	StoredProviderType string `json:"stored_provider_type,omitempty"`
 	StoredDimensions   int    `json:"stored_dimensions,omitempty"`
 	StoredModelName    string `json:"stored_model_name,omitempty"`
+
+	// Present while a deferred reindex owns the ANN index lifecycle.
+	VectorIndexState *VectorIndexState `json:"vector_index_state,omitempty"`
 }
 
 // ModelCompatibility represents the result of checking model compatibility
@@ -138,6 +144,47 @@ const (
 		AND NOT EXISTS (
 			SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id
 		)` + postFetchTail
+
+	// Repair fetch: gated-window edits, keyset on (UpdateAt, Id). Store
+	// overwrites in-place (delete+insert in one txn) — no pre-delete.
+	// indexableContentSQL mirrors shouldIndexPost with jsonb (not LIKE), so
+	// Props={"attachments":[]} is non-indexable; fetch and stale delete must
+	// partition the same set. Expression is never NULL (safe to negate).
+	indexableContentSQL = `(COALESCE(Posts.Message, '') != '' OR CASE
+		WHEN jsonb_typeof(NULLIF(Posts.Props::text, '')::jsonb -> 'attachments') = 'array'
+		THEN jsonb_array_length(NULLIF(Posts.Props::text, '')::jsonb -> 'attachments') > 0
+		ELSE FALSE END)`
+
+	editedPostsFetchQuery = `SELECT
+		Posts.Id as id,
+		Posts.Message as message,
+		Posts.Props as props,
+		Posts.UserId as userid,
+		Posts.ChannelId as channelid,
+		Posts.CreateAt as createat,
+		Posts.UpdateAt as updateat,
+		Channels.TeamId as teamid,
+		Channels.Name as channelname,
+		Channels.Type as channeltype
+	FROM Posts
+	LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
+	WHERE Posts.DeleteAt = 0
+		AND ` + indexableContentSQL + `
+		AND Posts.Type = ''
+		AND (Posts.UpdateAt, Posts.Id) > ($1, $2)
+		AND Posts.UpdateAt <= $3
+	ORDER BY Posts.UpdateAt ASC, Posts.Id ASC
+	LIMIT $4`
+
+	// Exact complement of the repair fetch in the same UpdateAt window.
+	staleEditedEmbeddingsDeleteQuery = `DELETE FROM llm_posts_embeddings e
+	USING Posts
+	WHERE e.post_id = Posts.Id
+		AND Posts.UpdateAt >= $1
+		AND Posts.UpdateAt <= $2
+		AND (Posts.DeleteAt != 0
+			OR Posts.Type != ''
+			OR NOT ` + indexableContentSQL + `)`
 )
 
 // postFetcher builds a fetchFunc paging the given query up to cutoff.
@@ -149,30 +196,48 @@ func (s *Indexer) postFetcher(query string, cutoff int64) fetchFunc {
 	}
 }
 
-// runReindexJob runs the reindexing process
-func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
+// runReindexJob runs reindexing. Non-nil deferRun owns the index lifecycle:
+// dropped → drop, bulk load, rebuild on every terminal path; repairing →
+// edit repair only (index already intact).
+func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun *deferredRun) {
+	// ownedState is this run's last CAS-written claim (ownership proof).
+	var bulk embeddings.BulkIndexer
+	var ownedState VectorIndexState
+	deferPending := false  // index dropped; must rebuild on exit
+	repairPending := false // gated-window edits still need re-indexing
+
 	defer func() {
 		if r := recover(); r != nil {
 			s.pluginAPI.LogError("Reindex job panicked", "panic", r)
+			errMsg := fmt.Sprintf("Job panicked: %v", r)
+			if deferPending && bulk != nil {
+				errMsg = s.restoreDeferredIndex(context.Background(), jobStatus, bulk, ownedState, errMsg)
+			} else if repairPending {
+				errMsg = appendPendingRepairNote(errMsg)
+			}
 			jobStatus.Status = JobStatusFailed
-			jobStatus.Error = fmt.Sprintf("Job panicked: %v", r)
+			jobStatus.Error = errMsg
 			jobStatus.CompletedAt = time.Now()
 			s.saveJobStatus(jobStatus)
 		}
 	}()
 
-	// Snapshot search at job start for consistency throughout the entire job
-	if s.getSearch == nil {
-		jobStatus.Status = JobStatusFailed
-		jobStatus.Error = "Search not configured"
-		jobStatus.CompletedAt = time.Now()
-		s.saveJobStatus(jobStatus)
-		return
+	// Snapshot once; a mid-job config change can alter getSearch().
+	var search embeddings.EmbeddingSearch
+	if s.getSearch != nil {
+		search = s.getSearch()
 	}
-	search := s.getSearch()
 	if search == nil {
+		errMsg := "Search not configured"
+		if deferRun != nil {
+			// Index untouched: release fresh claim (adopted state kept).
+			if abandonErr := s.abandonUndroppedClaim(deferRun); abandonErr != nil {
+				s.pluginAPI.LogError("Failed to release vector index claim on early exit", "error", abandonErr)
+				errMsg = fmt.Sprintf("%s; additionally failed to release the vector index claim: %s", errMsg, abandonErr)
+			}
+		}
 		jobStatus.Status = JobStatusFailed
-		jobStatus.Error = "Search not configured"
+		jobStatus.Error = errMsg
 		jobStatus.CompletedAt = time.Now()
 		s.saveJobStatus(jobStatus)
 		return
@@ -180,11 +245,64 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 
 	ctx := context.Background()
 
+	if deferRun != nil {
+		ownedState = deferRun.state
+		if ownedState.Phase == VectorIndexPhaseRepairing {
+			// Index intact — repair only; do not drop.
+			repairPending = true
+		} else {
+			bulk = bulkIndexerFor(search)
+			if bulk == nil {
+				// Bulk support gone mid-job: fail before Clear/DDL (never
+				// fall back to maintain). abandonUndroppedClaim releases
+				// without touching a successor's claim on CAS conflict.
+				errMsg := "Vector store no longer supports deferred indexing; start a new reindex"
+				if abandonErr := s.abandonUndroppedClaim(deferRun); abandonErr != nil {
+					s.pluginAPI.LogError("Failed to release vector index claim", "error", abandonErr)
+					errMsg = fmt.Sprintf("%s (additionally failed to release the vector index claim: %s)", errMsg, abandonErr)
+				}
+				jobStatus.Status = JobStatusFailed
+				jobStatus.Error = errMsg
+				jobStatus.CompletedAt = time.Now()
+				s.saveJobStatus(jobStatus)
+				return
+			}
+			// Freshness fence: no-op CAS re-asserts ownership before DROP/
+			// Clear (claim may be stale after a long pause past reclaim).
+			// Abort and leave the key alone if it no longer applies.
+			if ok, casErr := s.casVectorIndexState(&ownedState, &ownedState); casErr != nil || !ok {
+				s.pluginAPI.LogError("Deferred index claim is no longer current; aborting before the bulk load",
+					"job_id", jobStatus.JobID, "error", casErr)
+				jobStatus.Status = JobStatusFailed
+				jobStatus.Error = "Deferred index claim lost before bulk load began"
+				jobStatus.CompletedAt = time.Now()
+				s.saveJobStatus(jobStatus)
+				return
+			}
+			deferPending = true
+			// Drop before bulk load (also clears an interrupted invalid index).
+			if err := bulk.PrepareBulkIndex(ctx); err != nil {
+				errMsg := s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, fmt.Sprintf("Failed to drop vector index: %s", err))
+				deferPending = false
+				jobStatus.Status = JobStatusFailed
+				jobStatus.Error = errMsg
+				jobStatus.CompletedAt = time.Now()
+				s.saveJobStatus(jobStatus)
+				return
+			}
+		}
+	}
+
 	// Only clear the index if explicitly requested (full reindex)
 	if clearIndex {
 		if err := search.Clear(ctx); err != nil {
+			errMsg := fmt.Sprintf("Failed to clear search index: %s", err)
+			if deferPending {
+				errMsg = s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, errMsg)
+				deferPending = false
+			}
 			jobStatus.Status = JobStatusFailed
-			jobStatus.Error = fmt.Sprintf("Failed to clear search index: %s", err)
+			jobStatus.Error = errMsg
 			jobStatus.CompletedAt = time.Now()
 			s.saveJobStatus(jobStatus)
 			return
@@ -198,12 +316,65 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 	mainFetch := s.postFetcher(reindexFetchQuery, jobStatus.CutoffAt)
 	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor, passOptions{workers: workers, batchSize: batchSize})
 	if errors.Is(err, errCancelRequested) {
+		if deferPending {
+			// Rebuild before terminal cancel; surface rebuild errors on status.
+			jobStatus.Error = s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, jobStatus.Error)
+			deferPending = false
+		} else if repairPending {
+			jobStatus.Error = appendPendingRepairNote(jobStatus.Error)
+		}
 		s.acknowledgeCancel(jobStatus)
 		return
 	}
 	if err != nil {
-		s.handleJobError(jobStatus, fmt.Sprintf("Failed to index posts: %s", err), watermark.LastCreateAt, watermark.LastID)
+		errMsg := fmt.Sprintf("Failed to index posts: %s", err)
+		if deferPending {
+			errMsg = s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, errMsg)
+			deferPending = false
+		} else if repairPending {
+			errMsg = appendPendingRepairNote(errMsg)
+		}
+		s.handleJobError(jobStatus, errMsg, watermark.LastCreateAt, watermark.LastID)
 		return
+	}
+
+	// Build before catch-up: writes are gated during CREATE INDEX; catch-up
+	// then sweeps misses from the original cutoff via NOT EXISTS.
+	if deferPending {
+		newState, buildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk, ownedState)
+		ownedState = newState
+		if buildErr != nil {
+			// State stays dropped for health/resume.
+			deferPending = false
+			s.handleJobError(jobStatus, fmt.Sprintf("Failed to rebuild vector index: %s", buildErr), watermark.LastCreateAt, watermark.LastID)
+			return
+		}
+		deferPending = false
+		repairPending = true
+		// DDL is not interruptible; ack cancel now, keep repairing marker.
+		if canceled, cancelErr := s.isCancelRequested(jobStatus.JobID); cancelErr == nil && canceled {
+			jobStatus.Error = appendPendingRepairNote(jobStatus.Error)
+			s.acknowledgeCancel(jobStatus)
+			return
+		}
+	}
+
+	// Catch-up's NOT EXISTS misses already-indexed edits; repair then clear.
+	if repairPending {
+		if repairErr := s.reindexEditedPosts(ctx, jobStatus, search, ownedState.BuildStartedAt); repairErr != nil {
+			if errors.Is(repairErr, errCancelRequested) {
+				jobStatus.Error = appendPendingRepairNote(jobStatus.Error)
+				s.acknowledgeCancel(jobStatus)
+				return
+			}
+			s.handleJobError(jobStatus, fmt.Sprintf("Failed to re-index posts edited during the index build: %s", repairErr), watermark.LastCreateAt, watermark.LastID)
+			return
+		}
+		if clearErr := s.clearVectorIndexState(ownedState); clearErr != nil {
+			s.handleJobError(jobStatus, fmt.Sprintf("Repair completed but the vector index state could not be cleared: %s", clearErr), watermark.LastCreateAt, watermark.LastID)
+			return
+		}
+		repairPending = false
 	}
 
 	// Run catch-up pass to index posts created during the main reindex
@@ -486,4 +657,46 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	catchUpFetch := s.postFetcher(catchUpFetchQuery, catchUpCutoff)
 	startCursor := Cursor{LastCreateAt: jobStatus.CutoffAt, LastID: ""}
 	return s.runIndexPass(ctx, jobStatus, search, catchUpFetch, startCursor, passOptions{workers: 1, batchSize: batchSize})
+}
+
+// reindexEditedPosts re-embeds posts edited while live indexing was gated.
+// Catch-up's NOT EXISTS never touches already-indexed rows. Uses UpdateAt
+// (not EditAt) so props/attachment changes are covered. Sequential on
+// (UpdateAt, Id) — must not checkpoint into IndexerCursorKey (would poison
+// main-pass resume). Store overwrites in-place; cancel mid-repair is safe.
+func (s *Indexer) reindexEditedPosts(ctx context.Context, jobStatus *JobStatus, search embeddings.EmbeddingSearch, since int64) error {
+	if since <= 0 {
+		return nil
+	}
+
+	// Bound the window; later edits go through live indexing (gate is off).
+	upperBound := time.Now().UnixMilli()
+
+	// Delete stale rows for posts edited into a non-indexable form (complement
+	// of the repair fetch). Cancel mid-repair leaves removals done.
+	if _, err := s.db.ExecContext(ctx, staleEditedEmbeddingsDeleteQuery, since, upperBound); err != nil {
+		return fmt.Errorf("failed to delete stale embeddings for posts edited into a non-indexable form: %w", err)
+	}
+
+	_, batchSize := s.reindexSettings()
+	lastUpdateAt, lastID := since, ""
+	for {
+		// Heartbeat only (never cursor); also polls cancel.
+		if s.heartbeatTick(jobStatus) {
+			return errCancelRequested
+		}
+		var posts []PostRecord
+		if err := s.db.SelectContext(ctx, &posts, editedPostsFetchQuery,
+			lastUpdateAt, lastID, upperBound, batchSize); err != nil {
+			return fmt.Errorf("failed to fetch edited posts: %w", err)
+		}
+		if len(posts) == 0 {
+			return nil
+		}
+		if err := s.safeStoreBatch(ctx, search, posts); err != nil {
+			return err
+		}
+		last := posts[len(posts)-1]
+		lastUpdateAt, lastID = last.UpdateAt, last.ID
+	}
 }

@@ -255,6 +255,7 @@ func TestSearchQueryCreatesConversation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockEmbedding := embeddingmocks.NewMockEmbeddingSearch(t)
 			mockClient := mmapimocks.NewMockClient(t)
+			allowVectorIndexStateRead(mockClient)
 			mockLLM := llmmocks.NewMockLanguageModel(t)
 			fakeStore := newFakeConversationStore()
 
@@ -304,6 +305,7 @@ func TestSearchQueryToolsAlwaysDisabled(t *testing.T) {
 
 	mockEmbedding := embeddingmocks.NewMockEmbeddingSearch(t)
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 	mockLLM := llmmocks.NewMockLanguageModel(t)
 	fakeStore := newFakeConversationStore()
 
@@ -354,6 +356,7 @@ func TestSearchQueryUsesConversationCompletionRequest(t *testing.T) {
 
 	mockEmbedding := embeddingmocks.NewMockEmbeddingSearch(t)
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 	mockLLM := llmmocks.NewMockLanguageModel(t)
 	fakeStore := newFakeConversationStore()
 
@@ -403,6 +406,7 @@ func TestSearchQueryNilConversationServiceFallsBack(t *testing.T) {
 
 	mockEmbedding := embeddingmocks.NewMockEmbeddingSearch(t)
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 	mockLLM := llmmocks.NewMockLanguageModel(t)
 
 	setupMockClientForSearch(mockClient)

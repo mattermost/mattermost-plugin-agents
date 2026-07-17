@@ -13,7 +13,7 @@ import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
 import {IntItem} from '../number_items';
 
-import {EmbeddingSearchConfig, REINDEX_DEFAULTS} from './types';
+import {EmbeddingSearchConfig, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, ReindexIndexStrategy} from './types';
 import {OpenAIProviderConfig, OpenAICompatibleProviderConfig} from './provider_configs';
 import {ChunkingOptionsConfig} from './chunking_options';
 import {ReindexSection} from './reindex_section';
@@ -35,6 +35,14 @@ const normalizeReindexValue = (value: number | undefined, fallback: number, max:
         return fallback;
     }
     return Math.min(value, max);
+};
+
+// Mirror EffectiveReindexIndexStrategy: only 'defer' stays; else maintain.
+const normalizeReindexIndexStrategy = (value: string | undefined): ReindexIndexStrategy => {
+    if (value === REINDEX_INDEX_STRATEGY.defer) {
+        return REINDEX_INDEX_STRATEGY.defer;
+    }
+    return REINDEX_INDEX_STRATEGY.maintain;
 };
 
 interface Props {
@@ -136,6 +144,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                 },
                                 reindexWorkers: REINDEX_DEFAULTS.workers,
                                 reindexBatchSize: REINDEX_DEFAULTS.batchSize,
+                                reindexIndexStrategy: REINDEX_INDEX_STRATEGY.maintain,
                             });
                         } else {
                             onChange({
@@ -248,6 +257,20 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                             max={REINDEX_DEFAULTS.maxBatchSize}
                             helptext={intl.formatMessage({defaultMessage: 'Number of posts fetched and embedded per batch during bulk reindexing.'})}
                         />
+
+                        <SelectionItem
+                            label={intl.formatMessage({defaultMessage: 'Reindex Index Strategy'})}
+                            value={normalizeReindexIndexStrategy(value.reindexIndexStrategy)}
+                            onChange={(e) => onChange({...value, reindexIndexStrategy: normalizeReindexIndexStrategy(e.target.value)})}
+                            helptext={intl.formatMessage({defaultMessage: 'Controls how the vector index is handled during a full reindex. Dropping and rebuilding the index after the bulk load is much faster for large databases, but semantic search is unavailable until the rebuild completes.'})}
+                        >
+                            <SelectionItemOption value={REINDEX_INDEX_STRATEGY.maintain}>
+                                {intl.formatMessage({defaultMessage: 'Maintain index during reindex (default)'})}
+                            </SelectionItemOption>
+                            <SelectionItemOption value={REINDEX_INDEX_STRATEGY.defer}>
+                                {intl.formatMessage({defaultMessage: 'Drop and rebuild index after reindex (faster for large databases)'})}
+                            </SelectionItemOption>
+                        </SelectionItem>
                     </>
                 )}
 

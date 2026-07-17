@@ -16,7 +16,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -34,12 +36,12 @@ func TestHandleRunSearch(t *testing.T) {
 		setupMock      func(t *testing.T) *search.Search
 		requestBody    SearchRequest
 		expectedStatus int
-		expectError    bool
 	}{
 		{
 			name: "search fails - DM error, service enabled",
 			setupMock: func(t *testing.T) *search.Search {
 				mockClient := mmapimocks.NewMockClient(t)
+				mockClient.On("KVGet", indexer.VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound)
 				mockClient.On("DM", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("DM failed"))
 				me := mocks.NewMockEmbeddingSearch(t)
 				return search.New(func() embeddings.EmbeddingSearch { return me }, mockClient, nil, nil, nil, nil)
@@ -51,7 +53,28 @@ func TestHandleRunSearch(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusInternalServerError,
-			expectError:    true,
+		},
+		{
+			name: "search unavailable during deferred reindex returns 503",
+			setupMock: func(t *testing.T) *search.Search {
+				mockClient := mmapimocks.NewMockClient(t)
+				mockClient.On("KVGet", indexer.VectorIndexStateKey, mock.AnythingOfType("*indexer.VectorIndexState")).
+					Run(func(args mock.Arguments) {
+						state := args.Get(1).(*indexer.VectorIndexState)
+						state.JobID = "job1"
+						state.Phase = indexer.VectorIndexPhaseDropped
+					}).
+					Return(nil)
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, mockClient, nil, nil, nil, nil)
+			},
+			requestBody: SearchRequest{
+				Query:      "test query",
+				TeamID:     "team123",
+				ChannelID:  "channel123",
+				MaxResults: 10,
+			},
+			expectedStatus: http.StatusServiceUnavailable,
 		},
 		{
 			name:          "search fails - service disabled",
@@ -63,7 +86,6 @@ func TestHandleRunSearch(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectError:    true,
 		},
 		{
 			name:          "search fails - no service",
@@ -75,7 +97,6 @@ func TestHandleRunSearch(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectError:    true,
 		},
 		{
 			name: "search fails - empty query",
@@ -90,7 +111,6 @@ func TestHandleRunSearch(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectError:    true,
 		},
 		{
 			name: "search fails - query exceeds max length",
@@ -105,7 +125,6 @@ func TestHandleRunSearch(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectError:    true,
 		},
 	}
 
@@ -160,7 +179,6 @@ func TestHandleSearchQuery(t *testing.T) {
 		searchService  *search.Search
 		requestBody    SearchRequest
 		expectedStatus int
-		expectError    bool
 	}{
 		{
 			name: "search query succeeds - service enabled",
@@ -176,7 +194,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusOK,
-			expectError:    false,
 		},
 		{
 			name:          "search query fails - service disabled",
@@ -188,7 +205,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectError:    true,
 		},
 		{
 			name:          "search query fails - no service",
@@ -200,7 +216,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectError:    true,
 		},
 		{
 			name: "search query succeeds - negative maxResults defaults to 5",
@@ -219,7 +234,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: -10,
 			},
 			expectedStatus: http.StatusOK,
-			expectError:    false,
 		},
 		{
 			name: "search query succeeds - zero maxResults defaults to 5",
@@ -238,7 +252,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: 0,
 			},
 			expectedStatus: http.StatusOK,
-			expectError:    false,
 		},
 		{
 			name: "search query succeeds - very large maxResults capped to 100",
@@ -257,7 +270,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: 10000,
 			},
 			expectedStatus: http.StatusOK,
-			expectError:    false,
 		},
 		{
 			name: "search query fails - query exceeds max length",
@@ -272,7 +284,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectError:    true,
 		},
 		{
 			name: "search query succeeds - query at max length",
@@ -288,7 +299,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: 10,
 			},
 			expectedStatus: http.StatusOK,
-			expectError:    false,
 		},
 		{
 			name: "search query succeeds - maxResults at boundary (100)",
@@ -307,7 +317,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: 100,
 			},
 			expectedStatus: http.StatusOK,
-			expectError:    false,
 		},
 		{
 			name: "search query succeeds - maxResults just above boundary (101) capped to 100",
@@ -326,7 +335,6 @@ func TestHandleSearchQuery(t *testing.T) {
 				MaxResults: 101,
 			},
 			expectedStatus: http.StatusOK,
-			expectError:    false,
 		},
 	}
 

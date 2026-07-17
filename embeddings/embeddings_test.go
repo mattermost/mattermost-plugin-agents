@@ -136,3 +136,44 @@ func TestEmbeddingSearchConfig_ReindexThroughputSettings(t *testing.T) {
 		})
 	}
 }
+
+func TestEmbeddingSearchConfig_EffectiveReindexIndexStrategy(t *testing.T) {
+	tests := []struct {
+		name     string
+		strategy string
+		want     string
+	}{
+		{
+			name:     "unset falls back to maintain",
+			strategy: "",
+			want:     ReindexIndexStrategyMaintain,
+		},
+		{
+			name:     "explicit maintain is kept",
+			strategy: ReindexIndexStrategyMaintain,
+			want:     ReindexIndexStrategyMaintain,
+		},
+		{
+			name:     "explicit defer is kept",
+			strategy: ReindexIndexStrategyDefer,
+			want:     ReindexIndexStrategyDefer,
+		},
+		{
+			name:     "unknown value normalizes to maintain",
+			strategy: "bogus",
+			want:     ReindexIndexStrategyMaintain,
+		},
+		{
+			name:     "case-sensitive: uppercase DEFER normalizes to maintain",
+			strategy: "DEFER",
+			want:     ReindexIndexStrategyMaintain,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := EmbeddingSearchConfig{ReindexIndexStrategy: tt.strategy}
+			assert.Equal(t, tt.want, config.EffectiveReindexIndexStrategy())
+		})
+	}
+}
