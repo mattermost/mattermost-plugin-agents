@@ -538,24 +538,24 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 		expected           bool
 	}{
 		{
-			name:               "native tools configured returns true",
+			name:               "OpenAI-compatible native tools do not override disabled Responses API",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
-			expected:           true,
+			expected:           false,
 		},
 		{
-			name:               "NativeWebSearchAllowed with web_search enabled returns true",
+			name:               "OpenAI-compatible native web search does not override disabled Responses API",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
-			expected:           true,
+			expected:           false,
 		},
 		{
-			name:               "NativeWebSearchAllowed without web_search in tools returns true",
+			name:               "OpenAI-compatible request option does not override disabled Responses API",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
-			expected:           true,
+			expected:           false,
 		},
 		{
 			name:               "explicit responses API flag wins for direct OpenAI",
@@ -563,6 +563,19 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 			useResponsesAPI:    true,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{},
+			expected:           true,
+		},
+		{
+			name:               "Azure native tools do not override disabled Responses API",
+			provider:           schemas.Azure,
+			enabledNativeTools: []string{"web_search"},
+			expected:           false,
+		},
+		{
+			name:               "Azure uses Responses API when explicitly enabled",
+			provider:           schemas.Azure,
+			useResponsesAPI:    true,
+			enabledNativeTools: []string{"web_search"},
 			expected:           true,
 		},
 		{
@@ -1600,6 +1613,55 @@ func chatCompletionSSE(w http.ResponseWriter, content string) {
 	fmt.Fprintf(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":null}]}\n\n", content)
 	fmt.Fprint(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
 	fmt.Fprint(w, "data: [DONE]\n\n")
+}
+
+func TestOpenAICompatibleResponsesToggleIsHardRoutingGate(t *testing.T) {
+	var chatHit, responsesHit atomic.Bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			chatHit.Store(true)
+			chatCompletionSSE(w, "from-chat-completions")
+		case "/v1/responses":
+			responsesHit.Store(true)
+			http.Error(w, `{"error":"ROUTE NOT SUPPORTED"}`, http.StatusUnprocessableEntity)
+		default:
+			http.Error(w, "unexpected path", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	service := llm.ServiceConfig{
+		ID:              "scaleway",
+		Type:            llm.ServiceTypeOpenAICompatible,
+		APIKey:          "key",
+		APIURL:          server.URL,
+		DefaultModel:    "gemma",
+		UseResponsesAPI: false,
+	}
+	bot := llm.BotConfig{
+		ID:                 "bot-1",
+		ServiceID:          service.ID,
+		DisableTools:       true,
+		EnabledNativeTools: []string{"web_search"},
+	}
+
+	llmInstance, err := NewFromServiceConfig(service, bot, nil)
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(
+		context.Background(),
+		llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}}},
+		llm.WithToolsDisabled(),
+		llm.WithNativeWebSearchAllowed(),
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "from-chat-completions", result)
+	assert.True(t, chatHit.Load(), "request must use /v1/chat/completions")
+	assert.False(t, responsesHit.Load(), "request must not use /v1/responses")
 }
 
 // TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint is the
