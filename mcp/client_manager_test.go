@@ -92,6 +92,42 @@ func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 	}
 }
 
+func TestClientManager_TouchUserActivity(t *testing.T) {
+	tests := []struct {
+		name        string
+		userID      string
+		hasClient   bool
+		wantTouched bool
+	}{
+		{name: "refreshes activity for cached client", userID: "user-1", hasClient: true, wantTouched: true},
+		{name: "no-op for unknown user", userID: "user-2", hasClient: false, wantTouched: false},
+		{name: "no-op for empty user", userID: "", hasClient: false, wantTouched: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := &ClientManager{}
+			t.Cleanup(manager.Close)
+			manager.ReInit(Config{}, nil)
+
+			stale := time.Now().Add(-time.Hour)
+			if tc.hasClient {
+				manager.clients[tc.userID] = &UserClients{}
+				manager.activity[tc.userID] = stale
+			}
+
+			manager.TouchUserActivity(tc.userID)
+
+			if tc.wantTouched {
+				require.True(t, manager.activity[tc.userID].After(stale), "activity timestamp must be refreshed")
+			} else {
+				_, exists := manager.activity[tc.userID]
+				require.False(t, exists, "no activity entry must be created without a cached client")
+			}
+		})
+	}
+}
+
 func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T) {
 	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
 	t.Cleanup(m.Close)

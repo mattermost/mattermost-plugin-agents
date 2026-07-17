@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -673,12 +674,18 @@ const (
 	subTurnStateCompleted
 )
 
+// turnSource is the subset of the conversation service used to derive the
+// sub-turn state. *conversation.Service implements it.
+type turnSource interface {
+	GetTurns(conversationID string) ([]store.Turn, error)
+}
+
 // latestSubTurnState inspects the delegation conversation's turns after the
 // last user turn. The database is the single source of truth for the await
 // loop, the reconciliation endpoint, and orphaned-completion flips, so all
 // three agree regardless of which node executed what.
-func latestSubTurnState(convService *conversation.Service, conversationID string) (subTurnState, string) {
-	turns, err := convService.GetTurns(conversationID)
+func latestSubTurnState(src turnSource, conversationID string) (subTurnState, string) {
+	turns, err := src.GetTurns(conversationID)
 	if err != nil {
 		return subTurnStateNone, ""
 	}
