@@ -169,6 +169,24 @@ func WritePost(w *strings.Builder, entry PostEntry) {
 		fmt.Fprintf(w, "Time: %s\n", t.UTC().Format(time.RFC3339))
 	}
 
+	// File attachments as metadata so a reader can fetch content on demand
+	// (e.g. via the read_file MCP tool). Prefer the rich metadata; fall back
+	// to bare file IDs when the post carries only FileIds.
+	if entry.Post.Metadata != nil && len(entry.Post.Metadata.Files) > 0 {
+		w.WriteString("Attached files:\n")
+		for _, fileInfo := range entry.Post.Metadata.Files {
+			if fileInfo == nil {
+				continue
+			}
+			fmt.Fprintf(w, "- %s (%s, %d bytes) [File ID: %s]\n", fileInfo.Name, fileInfo.MimeType, fileInfo.Size, fileInfo.Id)
+		}
+	} else if len(entry.Post.FileIds) > 0 {
+		w.WriteString("Attached files:\n")
+		for _, fileID := range entry.Post.FileIds {
+			fmt.Fprintf(w, "- [File ID: %s]\n", fileID)
+		}
+	}
+
 	fmt.Fprintf(w, "Message: %s\n\n", PostBody(entry.Post))
 }
 

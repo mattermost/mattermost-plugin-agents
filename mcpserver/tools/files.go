@@ -11,6 +11,8 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // FileContentService reads the text contents of Mattermost file attachments on
@@ -29,16 +31,16 @@ type ReadFileArgs struct {
 }
 
 // readFileDescription is the MCP tool metadata description for read_file.
-const readFileDescription = "Read the text contents of a Mattermost file attachment by its File ID. Large attachments in a conversation are shown to you as metadata (name, type, size, File ID) instead of inline content — call this tool with that File ID to read them. Returns extracted text for documents (PDF, Office) and the raw text for plain-text files. Supports ranged reads via offset and limit to page through large files. Parameters: file_id (required), offset (optional), limit (optional). Example: {\"file_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"offset\": 0, \"limit\": 6000}"
+const readFileDescription = "Read the contents of a Mattermost file attachment by its File ID. Attachments in a conversation are shown to you as metadata (name, type, size, File ID) instead of inline content — call this tool with that File ID to read them. Images (JPEG/PNG/GIF/WebP) are returned as viewable image content; documents (PDF, Office) return server-extracted text; plain-text files return their raw text. Supports ranged reads via offset and limit to page through large text files. Parameters: file_id (required), offset (optional), limit (optional). Example: {\"file_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"offset\": 0, \"limit\": 6000}"
 
 // getFileTools returns the file-related tools.
 func (p *MattermostToolProvider) getFileTools() []MCPTool {
 	return []MCPTool{
 		{
-			Name:        "read_file",
-			Description: readFileDescription,
-			Schema:      NewJSONSchemaForAccessMode[ReadFileArgs](string(p.accessMode)),
-			Resolver:    typed("read_file", p.toolReadFile),
+			Name:         "read_file",
+			Description:  readFileDescription,
+			Schema:       NewJSONSchemaForAccessMode[ReadFileArgs](string(p.accessMode)),
+			RichResolver: typedRich("read_file", p.toolReadFile),
 		},
 		{
 			Name:        "get_file_info",
@@ -73,25 +75,105 @@ func (p *MattermostToolProvider) getFileTools() []MCPTool {
 	}
 }
 
-// toolReadFile implements the read_file tool.
-func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, args ReadFileArgs) (string, error) {
-	if err := requireID("file_id", args.FileID); err != nil {
-		return "", err
+// maxInlineImageBytes caps images returned as inline MCP image content. The
+// limit mirrors the common LLM provider per-image request cap (5 MB).
+const maxInlineImageBytes = 5 * 1024 * 1024
+
+// isInlineImageMimeType reports whether mimeType is an image format that LLM
+// providers accept as inline image content.
+func isInlineImageMimeType(mimeType string) bool {
+	switch strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0])) {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	}
+	return false
+}
+
+// isTextLikeMimeType reports whether mimeType can be served as plain text
+// straight from the raw file bytes, without server-side extraction.
+func isTextLikeMimeType(mimeType string) bool {
+	base := strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0]))
+	if strings.HasPrefix(base, "text/") {
+		return true
+	}
+	switch base {
+	case "application/json", "application/xml", "application/javascript",
+		"application/yaml", "application/x-yaml", "application/toml",
+		"application/x-sh", "application/sql", "application/csv":
+		return true
+	}
+	return false
+}
+
+// readFileContentStandalone reads a file's text directly through the user's
+// Mattermost client, for servers that cannot reach the plugin's extraction
+// endpoint. Server-side document extraction (PDF, Office) is unavailable on
+// this path, so only plain-text files have readable content.
+func readFileContentStandalone(mcpContext *MCPToolContext, info *model.FileInfo, offset, limit int) (files.Content, error) {
+	if !isTextLikeMimeType(info.MimeType) {
+		return files.Content{Name: info.Name, MimeType: info.MimeType, HasText: false}, nil
 	}
 
-	if p.fileContentService == nil {
-		return "file reading is not available", nil
-	}
-
-	content, err := p.fileContentService.GetContent(mcpContext.Ctx, mcpContext.UserID, args.FileID, args.Offset, args.Limit)
+	data, _, err := mcpContext.Client.GetFile(mcpContext.Ctx, info.Id)
 	if err != nil {
-		if errors.Is(err, files.ErrForbidden) {
-			return "you do not have permission to read this file", nil
-		}
-		return "", fmt.Errorf("error reading file %s: %w", args.FileID, err)
+		return files.Content{}, fmt.Errorf("error downloading file: %w", err)
 	}
 
-	return formatFileContent(content), nil
+	return files.Slice(info.Name, info.MimeType, strings.TrimSpace(string(data)), offset, limit), nil
+}
+
+// toolReadFile implements the read_file tool.
+func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, args ReadFileArgs) ([]mcp.Content, error) {
+	if err := requireID("file_id", args.FileID); err != nil {
+		return nil, err
+	}
+
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	info, _, err := client.GetFileInfo(ctx, args.FileID)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching file info for %s: %w", args.FileID, err)
+	}
+
+	// Images are returned as inline image content, fetched directly with the
+	// user's client (the extraction service is text-only).
+	if isInlineImageMimeType(info.MimeType) {
+		if info.Size > maxInlineImageBytes {
+			return []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+				"Image %q (%s) is %d bytes, larger than the %d-byte inline limit. Use get_file_link to get a URL instead.",
+				info.Name, info.MimeType, info.Size, maxInlineImageBytes)}}, nil
+		}
+		data, _, err := client.GetFile(ctx, args.FileID)
+		if err != nil {
+			return nil, fmt.Errorf("error downloading image %s: %w", args.FileID, err)
+		}
+		return []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Image: %s (%s, %dx%d, %d bytes)", info.Name, info.MimeType, info.Width, info.Height, info.Size)},
+			&mcp.ImageContent{Data: data, MIMEType: info.MimeType},
+		}, nil
+	}
+
+	// Prefer the plugin's extraction service (the only source of text for PDF
+	// and Office documents). When it is unavailable — e.g. a standalone server
+	// pointed at a Mattermost without the plugin — fall back to reading raw
+	// bytes for plain-text files.
+	if p.fileContentService != nil {
+		content, svcErr := p.fileContentService.GetContent(ctx, mcpContext.UserID, args.FileID, args.Offset, args.Limit)
+		if svcErr == nil {
+			return []mcp.Content{&mcp.TextContent{Text: formatFileContent(content)}}, nil
+		}
+		if errors.Is(svcErr, files.ErrForbidden) {
+			return []mcp.Content{&mcp.TextContent{Text: "you do not have permission to read this file"}}, nil
+		}
+		p.logger.Debug("file content service unavailable, falling back to direct read", "file_id", args.FileID, "error", svcErr)
+	}
+
+	content, err := readFileContentStandalone(mcpContext, info, args.Offset, args.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("error reading file %s: %w", args.FileID, err)
+	}
+	return []mcp.Content{&mcp.TextContent{Text: formatFileContent(content)}}, nil
 }
 
 // formatFileContent renders a ranged file read for the LLM, including paging
