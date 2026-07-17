@@ -97,24 +97,23 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 		var aggregateUsage TokenUsage
 		hasUsage := false
 
+		// Observe usage events for sink aggregation, but forward every event
+		// downstream unchanged so consumers (streaming turn accumulator,
+		// toolrunner, bridge SSE) see the same stream with or without
+		// token-usage logging enabled.
 		for event := range result.Stream {
-			switch event.Type {
-			case EventTypeUsage:
-				usage, ok := event.Value.(TokenUsage)
-				if !ok {
-					continue
+			if event.Type == EventTypeUsage {
+				if usage, ok := event.Value.(TokenUsage); ok {
+					hasUsage = true
+					aggregateUsage.InputTokens += usage.InputTokens
+					aggregateUsage.OutputTokens += usage.OutputTokens
+					aggregateUsage.CachedReadTokens += usage.CachedReadTokens
+					aggregateUsage.CachedWriteTokens += usage.CachedWriteTokens
+					aggregateUsage.ReasoningTokens += usage.ReasoningTokens
+					aggregateUsage.Cost += usage.Cost
 				}
-				hasUsage = true
-				aggregateUsage.InputTokens += usage.InputTokens
-				aggregateUsage.OutputTokens += usage.OutputTokens
-				aggregateUsage.CachedReadTokens += usage.CachedReadTokens
-				aggregateUsage.CachedWriteTokens += usage.CachedWriteTokens
-				aggregateUsage.ReasoningTokens += usage.ReasoningTokens
-				aggregateUsage.Cost += usage.Cost
-				continue
-			default:
-				interceptedStream <- event
 			}
+			interceptedStream <- event
 		}
 
 		if hasUsage {

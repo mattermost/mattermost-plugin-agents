@@ -132,13 +132,13 @@ func makeTestTokenUsageSinks(loggingEnabled bool, pluginLogger TokenUsagePluginL
 
 func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 	tests := []struct {
-		name               string
-		request            CompletionRequest
-		opts               []LanguageModelOption
-		stream             *TextStreamResult
-		expectedEventTypes []EventType
-		expectedMetrics    []observedTokenUsage
-		expectedLogFields  map[string]any
+		name              string
+		request           CompletionRequest
+		opts              []LanguageModelOption
+		stream            *TextStreamResult
+		expectedEvents    []TextStreamEvent
+		expectedMetrics   []observedTokenUsage
+		expectedLogFields map[string]any
 	}{
 		{
 			name: "aggregates usage and emits rich dimensions",
@@ -165,7 +165,12 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 2, OutputTokens: 3}},
 				TextStreamEvent{Type: EventTypeEnd, Value: nil},
 			),
-			expectedEventTypes: []EventType{EventTypeText, EventTypeEnd},
+			expectedEvents: []TextStreamEvent{
+				{Type: EventTypeText, Value: "hello"},
+				{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 10, OutputTokens: 5}},
+				{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 2, OutputTokens: 3}},
+				{Type: EventTypeEnd, Value: nil},
+			},
 			expectedMetrics: []observedTokenUsage{
 				{
 					botName:      "testbot",
@@ -204,7 +209,10 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 1, OutputTokens: 2}},
 				TextStreamEvent{Type: EventTypeEnd, Value: nil},
 			),
-			expectedEventTypes: []EventType{EventTypeEnd},
+			expectedEvents: []TextStreamEvent{
+				{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 1, OutputTokens: 2}},
+				{Type: EventTypeEnd, Value: nil},
+			},
 			expectedMetrics: []observedTokenUsage{
 				{
 					botName:      "fallback-bot",
@@ -250,7 +258,10 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 3, OutputTokens: 4}},
 				TextStreamEvent{Type: EventTypeEnd, Value: nil},
 			),
-			expectedEventTypes: []EventType{EventTypeEnd},
+			expectedEvents: []TextStreamEvent{
+				{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 3, OutputTokens: 4}},
+				{Type: EventTypeEnd, Value: nil},
+			},
 			expectedMetrics: []observedTokenUsage{
 				{
 					botName:      "dm-bot",
@@ -273,7 +284,22 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				TextStreamEvent{Type: EventTypeUsage, Value: "invalid-usage"},
 				TextStreamEvent{Type: EventTypeEnd, Value: nil},
 			),
-			expectedEventTypes: []EventType{EventTypeEnd},
+			expectedEvents: []TextStreamEvent{
+				{Type: EventTypeUsage, Value: "invalid-usage"},
+				{Type: EventTypeEnd, Value: nil},
+			},
+		},
+		{
+			name:    "no usage events forwards stream untouched and emits nothing",
+			request: CompletionRequest{},
+			stream: makeStream(
+				TextStreamEvent{Type: EventTypeText, Value: "hello"},
+				TextStreamEvent{Type: EventTypeEnd, Value: nil},
+			),
+			expectedEvents: []TextStreamEvent{
+				{Type: EventTypeText, Value: "hello"},
+				{Type: EventTypeEnd, Value: nil},
+			},
 		},
 	}
 
@@ -291,11 +317,11 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
-			eventTypes := []EventType{}
+			forwarded := []TextStreamEvent{}
 			for event := range result.Stream {
-				eventTypes = append(eventTypes, event.Type)
+				forwarded = append(forwarded, event)
 			}
-			assert.Equal(t, tc.expectedEventTypes, eventTypes)
+			assert.Equal(t, tc.expectedEvents, forwarded)
 
 			observedCalls := metrics.Calls()
 			if tc.expectedMetrics == nil {
@@ -312,6 +338,74 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				for key, expectedValue := range tc.expectedLogFields {
 					assert.Equalf(t, expectedValue, entries[0].fields[key], "field %s", key)
 				}
+			}
+
+			mockLLM.AssertExpectations(t)
+		})
+	}
+}
+
+func TestTokenTrackingWrapper_UsageReachesDownstreamAccumulator(t *testing.T) {
+	tests := []struct {
+		name           string
+		loggingEnabled bool
+	}{
+		{name: "logging enabled forwards usage to downstream accumulator", loggingEnabled: true},
+		{name: "logging disabled passthrough keeps identical downstream totals", loggingEnabled: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockLLM := &MockLanguageModel{}
+			pluginLogger := &observedPluginLogger{}
+			sinks := makeTestTokenUsageSinks(tc.loggingEnabled, pluginLogger, nil)
+			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", sinks, nil)
+
+			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(
+				makeStream(
+					TextStreamEvent{Type: EventTypeText, Value: "a"},
+					TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 50, OutputTokens: 20}},
+					TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 30, OutputTokens: 10}},
+					TextStreamEvent{Type: EventTypeEnd, Value: nil},
+				),
+				nil,
+			).Once()
+
+			result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
+				Operation: OperationConversation,
+				Context:   &Context{},
+			})
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			var tokensIn, tokensOut int64
+			usageEventCount := 0
+			for event := range result.Stream {
+				if event.Type == EventTypeUsage {
+					usage, ok := event.Value.(TokenUsage)
+					if !ok {
+						continue
+					}
+					usageEventCount++
+					tokensIn += usage.InputTokens
+					tokensOut += usage.OutputTokens
+				}
+			}
+
+			assert.Equal(t, int64(80), tokensIn)
+			assert.Equal(t, int64(30), tokensOut)
+			assert.Equal(t, 2, usageEventCount)
+
+			if tc.loggingEnabled {
+				require.Eventually(t, func() bool {
+					return len(pluginLogger.Entries()) == 1
+				}, time.Second, 10*time.Millisecond)
+				entries := pluginLogger.Entries()
+				require.Len(t, entries, 1)
+				assert.Equal(t, int64(80), entries[0].fields["input_tokens"])
+				assert.Equal(t, int64(30), entries[0].fields["output_tokens"])
+			} else {
+				assert.Empty(t, pluginLogger.Entries())
 			}
 
 			mockLLM.AssertExpectations(t)
