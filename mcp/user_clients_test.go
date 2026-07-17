@@ -343,18 +343,73 @@ func TestPrepareToolCallMetadata_EmbeddedMergesCallMetadataAndBotUserID(t *testi
 	embeddedClient := &Client{config: ServerConfig{Name: EmbeddedClientKey}}
 	remoteClient := &Client{config: ServerConfig{Name: "remote-server"}}
 
-	embeddedMeta := clients.prepareToolCallMetadata(embeddedClient, "search_posts", llmContext)
+	embeddedMeta := clients.prepareToolCallMetadata(context.Background(), embeddedClient, "search_posts", llmContext)
 	require.NotNil(t, embeddedMeta)
 	require.Equal(t, "bot-user-id", embeddedMeta["bot_user_id"])
 	hooks, ok := embeddedMeta["tool_hooks"].(map[string]any)
 	require.True(t, ok)
 	require.Contains(t, hooks, "search_posts")
+	require.NotContains(t, embeddedMeta, "parent_tool_call_id")
 
-	noHookMeta := clients.prepareToolCallMetadata(embeddedClient, "no_hooks", llmContext)
+	noHookMeta := clients.prepareToolCallMetadata(context.Background(), embeddedClient, "no_hooks", llmContext)
 	require.Equal(t, map[string]any{"bot_user_id": "bot-user-id"}, noHookMeta)
 
-	remoteMeta := clients.prepareToolCallMetadata(remoteClient, "search_posts", llmContext)
+	remoteMeta := clients.prepareToolCallMetadata(context.Background(), remoteClient, "search_posts", llmContext)
 	require.Nil(t, remoteMeta)
+}
+
+func TestPrepareToolCallMetadata_ParentToolCallID(t *testing.T) {
+	llmContext := llm.NewContext()
+	llmContext.BotUserID = "bot-user-id"
+	llmContext.Tools = llm.NewToolStore()
+	llmContext.Tools.AddTools([]llm.Tool{{Name: "ask_agent"}})
+
+	clients := &UserClients{}
+	embeddedClient := &Client{config: ServerConfig{Name: EmbeddedClientKey}}
+	remoteClient := &Client{config: ServerConfig{Name: "remote-server"}}
+
+	tests := []struct {
+		name       string
+		ctx        context.Context
+		client     *Client
+		wantMeta   bool
+		wantCallID string
+	}{
+		{
+			name:       "embedded with stamped tool call ID",
+			ctx:        llm.ContextWithToolCallID(context.Background(), "toolcall-123"),
+			client:     embeddedClient,
+			wantMeta:   true,
+			wantCallID: "toolcall-123",
+		},
+		{
+			name:     "embedded without stamped tool call ID",
+			ctx:      context.Background(),
+			client:   embeddedClient,
+			wantMeta: true,
+		},
+		{
+			name:   "remote never gets metadata",
+			ctx:    llm.ContextWithToolCallID(context.Background(), "toolcall-123"),
+			client: remoteClient,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := clients.prepareToolCallMetadata(tc.ctx, tc.client, "ask_agent", llmContext)
+			if !tc.wantMeta {
+				require.Nil(t, meta)
+				return
+			}
+			require.NotNil(t, meta)
+			if tc.wantCallID == "" {
+				require.NotContains(t, meta, "parent_tool_call_id")
+			} else {
+				require.Equal(t, tc.wantCallID, meta["parent_tool_call_id"])
+			}
+		})
+	}
 }
 
 func testClientWithTools(name, baseURL string, toolNames ...string) *Client {

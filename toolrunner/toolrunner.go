@@ -367,6 +367,9 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 					telemetry.ToolID.String(tc.ID),
 				),
 			)
+			// Stamp the tool call ID so per-call consumers (e.g. embedded MCP
+			// call metadata) can key state on it without trusting the model.
+			toolCtx = llm.ContextWithToolCallID(toolCtx, tc.ID)
 			result, resolveErr = request.Context.Tools.ResolveTool(
 				toolCtx,
 				lookup.RuntimeName,

@@ -623,6 +623,10 @@ func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, b
 		return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
 	}
 
+	// Stamp the tool call ID so per-call consumers (e.g. embedded MCP call
+	// metadata) can key state on it, matching the tool runner's behavior.
+	ctx = llm.ContextWithToolCallID(ctx, block.ID)
+
 	return llmContext.Tools.ResolveTool(ctx, lookup.RuntimeName, func(args any) error {
 		return json.Unmarshal(block.Input, args)
 	}, llmContext)

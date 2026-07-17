@@ -30,6 +30,7 @@ const (
 	OperationEvalGrading              = "eval_grading"
 	OperationBridgeAgent              = "bridge_agent"
 	OperationBridgeService            = "bridge_service"
+	OperationDelegation               = "delegation"
 )
 
 // operation_subtype is a low-cardinality detail for the operation.

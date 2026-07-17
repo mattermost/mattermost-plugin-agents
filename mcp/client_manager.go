@@ -363,6 +363,25 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 	return out
 }
 
+// TouchUserActivity refreshes the idle-cleanup timestamp for a user's cached
+// MCP clients. Long-running in-process tool executions (e.g. an ask_agent
+// delegation waiting on the initiator) call this periodically so the idle
+// sweep cannot close the user's embedded session — and thereby sever the
+// in-flight tool call — while work is still ongoing. No-op when the user has
+// no cached clients.
+func (m *ClientManager) TouchUserActivity(userID string) {
+	if userID == "" {
+		return
+	}
+
+	m.clientsMu.Lock()
+	defer m.clientsMu.Unlock()
+
+	if _, ok := m.clients[userID]; ok {
+		m.activity[userID] = time.Now()
+	}
+}
+
 // InvalidateUserClients closes and removes cached MCP clients for a user.
 func (m *ClientManager) InvalidateUserClients(userID string) {
 	if userID == "" {
