@@ -402,8 +402,10 @@ func (c *Conversations) executeResolvedToolBatch(
 
 	if !executedAny {
 		// Rejection-only batches produce no follow-up stream; a waiting
-		// delegation parent must still be told the sub-turn settled.
+		// delegation parent must still be told the sub-turn settled, and
+		// open clients need a refetch nudge since no stream event will come.
 		c.notifyDelegationSubTurnCompleted(conv)
+		c.publishConversationUpdated(conv, post)
 		return nil
 	}
 
@@ -411,8 +413,11 @@ func (c *Conversations) executeResolvedToolBatch(
 	// output, so it must not stream until the requester approves sharing in
 	// HandleToolResult. When no share decision remains (every executed result
 	// was a user-interaction answer), HandleToolResult will never fire, so
-	// stream the follow-up now.
+	// stream the follow-up now. Batches executed asynchronously (delegations)
+	// have long since answered their HTTP request, so nudge open clients to
+	// refetch the conversation — that is what reveals the Share decision.
 	if !isDM && needsShareDecision {
+		c.publishConversationUpdated(conv, post)
 		return nil
 	}
 

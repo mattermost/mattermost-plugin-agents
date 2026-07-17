@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
@@ -543,6 +544,23 @@ func (c *Conversations) streamContinuationToExistingPost(ctx context.Context, st
 	}()
 
 	return nil
+}
+
+// publishConversationUpdated nudges open clients to refetch a conversation
+// whose turns changed without an accompanying post stream (e.g. an
+// asynchronously executed tool batch whose results await a share decision).
+// The conversation content API redacts unshared content for non-requesters,
+// so a channel-scoped refetch nudge leaks nothing.
+func (c *Conversations) publishConversationUpdated(conv *store.Conversation, post *model.Post) {
+	if conv == nil || post == nil || c.mmClient == nil {
+		return
+	}
+	c.mmClient.PublishWebSocketEvent("conversation_updated", map[string]interface{}{
+		"conversation_id": conv.ID,
+	}, &model.WebsocketBroadcast{
+		ChannelId:           post.ChannelId,
+		ReliableClusterSend: true,
+	})
 }
 
 func (c *Conversations) failResponsePlaceholder(post *model.Post, userLocale string) {
