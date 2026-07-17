@@ -43,6 +43,7 @@ type CreatePostAsUserArgs struct {
 type DMArgs struct {
 	Username    string   `json:"username,omitempty" jsonschema:"Target username. If omitted the message is sent to yourself."`
 	Message     string   `json:"message" jsonschema:"The message content to send,minLength=1"`
+	RootID      string   `json:"root_id,omitempty" jsonschema:"Optional post ID to reply in an existing thread of this DM. Any post ID from the thread works; replies always land on the thread root.,maxLength=26"`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
 }
 
@@ -50,6 +51,7 @@ type DMArgs struct {
 type GroupMessageArgs struct {
 	Usernames   []string `json:"usernames" jsonschema:"Target usernames (must be at least 2)."`
 	Message     string   `json:"message" jsonschema:"The message content to send,minLength=1"`
+	RootID      string   `json:"root_id,omitempty" jsonschema:"Optional post ID to reply in an existing thread of this group conversation. Any post ID from the thread works; replies always land on the thread root.,maxLength=26"`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
 }
 
@@ -59,11 +61,11 @@ type GroupMessageArgs struct {
 const (
 	readPostDescription = "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}"
 
-	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
+	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. For DM and group conversations (which have no display name or team) pass channel_display_name 'Direct Message' or 'Group Message' and team_display_name 'N/A'. Parameters: channel_id (required), message (required), root_id (optional - for replies; any post ID from the thread works)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
 
-	dmDescriptionFmt = "Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}"
+	dmDescriptionFmt = "Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional), root_id (optional - to reply in an existing thread of the DM)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}"
 
-	groupMessageDescriptionFmt = "Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}"
+	groupMessageDescriptionFmt = "Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required), root_id (optional - to reply in an existing thread)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}"
 )
 
 // getPostTools returns all post-related tools
@@ -285,6 +287,32 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 	return result.String(), nil
 }
 
+// resolveThreadRoot validates a reply target and returns the ID of the actual
+// thread root. Mattermost only supports one level of threading, so when rootID
+// points at a reply the reply's own root is returned; models frequently pass
+// the ID of the latest post in a thread rather than the root. An empty rootID
+// resolves to "".
+func resolveThreadRoot(mcpContext *MCPToolContext, channelID, rootID string) (string, error) {
+	if rootID == "" {
+		return "", nil
+	}
+	if err := requireID("root_id", rootID); err != nil {
+		return "", err
+	}
+
+	rootPost, _, err := mcpContext.Client.GetPost(mcpContext.Ctx, rootID, "")
+	if err != nil {
+		return "", fmt.Errorf("error fetching root post %s: %w", rootID, err)
+	}
+	if rootPost.ChannelId != channelID {
+		return "", fmt.Errorf("root_id %s belongs to channel %s, not the target conversation %s - use a post ID from the same conversation", rootID, rootPost.ChannelId, channelID)
+	}
+	if rootPost.RootId != "" {
+		return rootPost.RootId, nil
+	}
+	return rootPost.Id, nil
+}
+
 // toolCreatePost implements the create_post tool
 func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args CreatePostArgs) (string, error) {
 	// Validate required fields
@@ -315,32 +343,57 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "", fmt.Errorf("error fetching channel for validation: %w", err)
 	}
 
-	// Check if channel display name matches
-	if channel.DisplayName != args.ChannelDisplayName {
-		return "", fmt.Errorf("channel_display_name mismatch: provided '%s' but channel ID '%s' has display name '%s'",
-			args.ChannelDisplayName, args.ChannelID, channel.DisplayName)
+	// DM and group channels have no display name and no team, so the strict
+	// display-name context check only applies to regular team channels.
+	channelDisplayName := channel.DisplayName
+	var teamDisplayName string
+	switch channel.Type {
+	case model.ChannelTypeDirect, model.ChannelTypeGroup:
+		if channelDisplayName == "" {
+			channelDisplayName = "Direct Message"
+			if channel.Type == model.ChannelTypeGroup {
+				channelDisplayName = "Group Message"
+			}
+		}
+		teamDisplayName = "N/A"
+	default:
+		// Check if channel display name matches
+		if channel.DisplayName != args.ChannelDisplayName {
+			return "", fmt.Errorf("channel_display_name mismatch: provided '%s' but channel ID '%s' has display name '%s'",
+				args.ChannelDisplayName, args.ChannelID, channel.DisplayName)
+		}
+
+		// Get team info to validate team display name
+		team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+		if teamErr != nil {
+			return "", fmt.Errorf("error fetching team for validation: %w", teamErr)
+		}
+
+		// Check if team display name matches
+		if team.DisplayName != args.TeamDisplayName {
+			return "", fmt.Errorf("team_display_name mismatch: provided '%s' but team ID '%s' has display name '%s'",
+				args.TeamDisplayName, channel.TeamId, team.DisplayName)
+		}
+		teamDisplayName = team.DisplayName
 	}
 
-	// Get team info to validate team display name
-	team, _, err := client.GetTeam(ctx, channel.TeamId, "")
+	// Resolve the reply target to the actual thread root
+	rootID, err := resolveThreadRoot(mcpContext, args.ChannelID, args.RootID)
 	if err != nil {
-		return "", fmt.Errorf("error fetching team for validation: %w", err)
-	}
-
-	// Check if team display name matches
-	if team.DisplayName != args.TeamDisplayName {
-		return "", fmt.Errorf("team_display_name mismatch: provided '%s' but team ID '%s' has display name '%s'",
-			args.TeamDisplayName, channel.TeamId, team.DisplayName)
+		return "", err
 	}
 
 	// Upload files if specified
-	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
+	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
+	if err != nil {
+		return "", err
+	}
 
 	// Create the post
 	post := &model.Post{
 		ChannelId: args.ChannelID,
 		Message:   args.Message,
-		RootId:    args.RootID,
+		RootId:    rootID,
 		FileIds:   fileIDs,
 	}
 
@@ -352,7 +405,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	}
 
 	return fmt.Sprintf("Successfully created post in channel '%s' (Team: %s) with ID: %s%s",
-		channel.DisplayName, team.DisplayName, createdPost.Id, attachmentMessage), nil
+		channelDisplayName, teamDisplayName, createdPost.Id, attachmentMessage), nil
 }
 
 // toolCreatePostAsUser implements the create_post_as_user tool with custom authentication
@@ -386,7 +439,10 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	}
 
 	// Upload files if specified
-	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, userClient, args.ChannelID, args.Attachments, mcpContext.AccessMode)
+	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, userClient, args.ChannelID, args.Attachments, mcpContext.AccessMode)
+	if err != nil {
+		return "", err
+	}
 
 	// Create the post
 	post := &model.Post{
@@ -449,13 +505,23 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		return "", fmt.Errorf("error creating direct channel: %w", err)
 	}
 
+	// Resolve the reply target to the actual thread root
+	rootID, err := resolveThreadRoot(mcpContext, dmChannel.Id, args.RootID)
+	if err != nil {
+		return "", err
+	}
+
 	// Upload files if specified
-	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
+	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
+	if err != nil {
+		return "", err
+	}
 
 	// Create the post in the DM channel
 	post := &model.Post{
 		ChannelId: dmChannel.Id,
 		Message:   args.Message,
+		RootId:    rootID,
 		FileIds:   fileIDs,
 	}
 
@@ -521,11 +587,21 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		return "", fmt.Errorf("error creating group channel: %w", err)
 	}
 
-	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
+	// Resolve the reply target to the actual thread root
+	rootID, err := resolveThreadRoot(mcpContext, gmChannel.Id, args.RootID)
+	if err != nil {
+		return "", err
+	}
+
+	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
+	if err != nil {
+		return "", err
+	}
 
 	post := &model.Post{
 		ChannelId: gmChannel.Id,
 		Message:   args.Message,
+		RootId:    rootID,
 		FileIds:   fileIDs,
 	}
 
