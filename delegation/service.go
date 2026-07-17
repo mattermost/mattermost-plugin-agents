@@ -358,8 +358,8 @@ func (s *Service) surface(ctx context.Context, deps serviceDeps, req Request, so
 	}
 	taskPost.AddProp("delegation_from_bot_id", sourceBot.GetMMBot().UserId)
 	taskPost.AddProp(streaming.UnsafeLinksPostProp, "true")
-	if err := s.mmClient.CreatePost(taskPost); err != nil {
-		return nil, fmt.Errorf("failed to create the delegation task post: %w", err)
+	if createErr := s.mmClient.CreatePost(taskPost); createErr != nil {
+		return nil, fmt.Errorf("failed to create the delegation task post: %w", createErr)
 	}
 
 	// Build the sub-turn context once; the system prompt is formatted from
@@ -599,16 +599,16 @@ func (s *Service) permalink(postID string) string {
 
 // Status is the reconciliation view of a delegation for the initiator's UI.
 type Status struct {
-	DelegationID         string `json:"delegation_id"`
-	ParentToolCallID     string `json:"parent_tool_call_id"`
-	Phase                string `json:"phase"`
-	TaskPostID           string `json:"task_post_id"`
-	Permalink            string `json:"permalink"`
-	TargetAgentID        string `json:"target_agent_id"`
-	TargetAgentUsername  string `json:"target_agent_username"`
+	DelegationID           string `json:"delegation_id"`
+	ParentToolCallID       string `json:"parent_tool_call_id"`
+	Phase                  string `json:"phase"`
+	TaskPostID             string `json:"task_post_id"`
+	Permalink              string `json:"permalink"`
+	TargetAgentID          string `json:"target_agent_id"`
+	TargetAgentUsername    string `json:"target_agent_username"`
 	TargetAgentDisplayName string `json:"target_agent_displayname"`
-	CreatedAt            int64  `json:"created_at"`
-	AnswerPreview        string `json:"answer_preview,omitempty"`
+	CreatedAt              int64  `json:"created_at"`
+	AnswerPreview          string `json:"answer_preview,omitempty"`
 }
 
 // StatusByParentToolCall derives the live phase of a delegation for the
@@ -647,16 +647,16 @@ func (s *Service) StatusByParentToolCall(userID, parentToolCallID string) (*Stat
 	}
 
 	return &Status{
-		DelegationID:         record.DelegationID,
-		ParentToolCallID:     record.ParentToolCallID,
-		Phase:                phase,
-		TaskPostID:           record.TaskPostID,
-		Permalink:            s.permalink(record.TaskPostID),
-		TargetAgentID:        record.TargetBotID,
-		TargetAgentUsername:  record.TargetBotUsername,
+		DelegationID:           record.DelegationID,
+		ParentToolCallID:       record.ParentToolCallID,
+		Phase:                  phase,
+		TaskPostID:             record.TaskPostID,
+		Permalink:              s.permalink(record.TaskPostID),
+		TargetAgentID:          record.TargetBotID,
+		TargetAgentUsername:    record.TargetBotUsername,
 		TargetAgentDisplayName: record.TargetBotDisplayName,
-		CreatedAt:            record.CreatedAt,
-		AnswerPreview:        preview,
+		CreatedAt:              record.CreatedAt,
+		AnswerPreview:          preview,
 	}, nil
 }
 
