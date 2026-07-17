@@ -247,6 +247,19 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 	})
 
+	t.Run("GetUserByIDTool", func(t *testing.T) {
+		result, err := executeToolWithMCP(t, suite, "get_user_by_id", map[string]interface{}{
+			"user_id": testData.User.Id,
+		})
+		require.NoError(t, err, "get_user_by_id should succeed")
+		require.NotEmpty(t, result.Content, "get_user_by_id should return content")
+
+		textContent, ok := result.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, textContent.Text, testData.User.Id)
+		assert.Contains(t, textContent.Text, testData.User.Username)
+	})
+
 	t.Run("ReadPostTool", func(t *testing.T) {
 		// Create a test post for reading
 		testPost := testhelpers.CreateTestPost(t, client, testData.Channel.Id, "Test post for reading")
