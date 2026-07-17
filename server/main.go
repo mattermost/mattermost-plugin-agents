@@ -641,24 +641,6 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 	}
 }
 
-func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
-	if p.indexerService == nil {
-		return 0, nil
-	}
-
-	count, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
-	if err != nil {
-		p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
-		return 0, err
-	}
-
-	if count > 0 {
-		p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
-	}
-
-	return count, nil
-}
-
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	p.apiService.ServeHTTP(c, w, r)
 }
