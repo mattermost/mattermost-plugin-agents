@@ -331,6 +331,53 @@ func TestStore(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 2, chunkCount)
 	})
+
+	t.Run("stores batches larger than one multi-row insert statement", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3, // Small dimensions for test
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		// More docs than insertBatchRows (500) forces multiple insert statements
+		const docCount = 1101
+		now := model.GetMillis()
+		postIDs := make([]string, docCount)
+		createAts := make([]int64, docCount)
+		docs := make([]embeddings.PostDocument, docCount)
+		embedVectors := make([][]float32, docCount)
+		for i := range docs {
+			postIDs[i] = fmt.Sprintf("bulk-post%04d", i)
+			createAts[i] = now
+			docs[i] = embeddings.PostDocument{
+				PostID:    postIDs[i],
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   fmt.Sprintf("bulk content %d", i),
+			}
+			embedVectors[i] = []float32{float32(i), 0, 0}
+		}
+		addTestPosts(t, db, postIDs, createAts)
+
+		err = pgVector.Store(context.Background(), docs, embedVectors)
+		require.NoError(t, err)
+
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
+		require.NoError(t, err)
+		assert.Equal(t, docCount, count)
+
+		// Spot-check a row past the first insert statement kept its embedding aligned
+		var content string
+		err = db.Get(&content, "SELECT content FROM llm_posts_embeddings WHERE id = 'bulk-post0700'")
+		require.NoError(t, err)
+		assert.Equal(t, "bulk content 700", content)
+	})
 }
 
 func TestStoreUpdate(t *testing.T) {
