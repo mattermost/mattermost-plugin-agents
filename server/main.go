@@ -515,6 +515,7 @@ func (p *Plugin) OnActivate() error {
 		p.store,
 		getSearchInitError,
 		customPromptsStore,
+		p.store,
 	)
 
 	apiService.SetConversationService(convService)

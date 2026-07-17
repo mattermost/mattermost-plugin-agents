@@ -55,6 +55,7 @@ type TestEnvironment struct {
 	conversationStore *mockConversationStore
 	agentStore        *mockAgentStore
 	mcp               *mockMCPClientManager
+	usageStatsStore   *fakeUsageStatsStore
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -556,6 +557,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mockConvStore := newMockConversationStore()
 	agentStore := newMockAgentStore()
 	mcpMgr := newTestMCPClientManager(t)
+	usageStatsStore := &fakeUsageStatsStore{countsByWindow: map[int]int64{}}
 
 	// Allow arbitrary log calls from subsystems used in tests (e.g. MCP discovery).
 	for i := 1; i <= 20; i++ {
@@ -615,6 +617,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockConvStore,
 		nil,
 		nil,
+		usageStatsStore,
 	)
 
 	return &TestEnvironment{
@@ -626,6 +629,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		conversationStore: mockConvStore,
 		agentStore:        agentStore,
 		mcp:               mcpMgr,
+		usageStatsStore:   usageStatsStore,
 	}
 }
 
@@ -746,6 +750,7 @@ func TestAdminRouter(t *testing.T) {
 		"reindex_status":  "/admin/reindex/status",
 		"mcp_tools":       "/admin/mcp/tools",
 		"mcp_vetted_seed": "/admin/mcp/vetted-tool-seed",
+		"stats":           "/admin/stats",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request

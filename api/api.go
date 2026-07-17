@@ -164,6 +164,7 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+	usageStatsStore       UsageStatsStore
 
 	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
 	// is the only supported entry point for tests.
@@ -205,6 +206,7 @@ func New(
 	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
+	usageStatsStore UsageStatsStore,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -238,6 +240,7 @@ func New(
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
+		usageStatsStore:       usageStatsStore,
 	}
 }
 
@@ -378,6 +381,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
+	adminRouter.GET("/stats", a.handleGetUsageStats)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results
