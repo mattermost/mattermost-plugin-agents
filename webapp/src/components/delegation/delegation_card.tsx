@@ -195,6 +195,7 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                 <HeaderText>
                     <Title>
                         <FormattedMessage
+                            id='ai.delegation.delegating_to'
                             defaultMessage='Delegating to {agent}'
                             values={{agent: agentDisplayName || (agentUsername ? `@${agentUsername}` : '')}}
                         />
@@ -215,16 +216,23 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                     <>
                         <SpinnerHolder><LoadingSpinner/></SpinnerHolder>
                         {phase === 'starting' && (
-                            <FormattedMessage defaultMessage='Starting delegation…'/>
+                            <FormattedMessage
+                                id='ai.delegation.starting'
+                                defaultMessage='Starting delegation…'
+                            />
                         )}
                         {phase === 'running' && liveUpdate?.activity === 'using_tools' && (
                             <FormattedMessage
+                                id='ai.delegation.using_tools'
                                 defaultMessage='Using {tools}…'
                                 values={{tools: liveUpdate?.tools || ''}}
                             />
                         )}
                         {phase === 'running' && liveUpdate?.activity !== 'using_tools' && (
-                            <FormattedMessage defaultMessage='Working on the task…'/>
+                            <FormattedMessage
+                                id='ai.delegation.working'
+                                defaultMessage='Working on the task…'
+                            />
                         )}
                         {elapsedSeconds > 0 && <Elapsed>{formatElapsed(elapsedSeconds)}</Elapsed>}
                     </>
@@ -232,41 +240,62 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                 {phase === 'awaiting_approval' && (
                     <>
                         <NeutralIcon><AlertCircleOutlineIcon size={14}/></NeutralIcon>
-                        <FormattedMessage defaultMessage='Waiting for your approval to delegate this task'/>
+                        <FormattedMessage
+                            id='ai.delegation.awaiting_approval'
+                            defaultMessage='Waiting for your approval to delegate this task'
+                        />
                     </>
                 )}
                 {phase === 'waiting_on_you' && (
                     <>
                         <WarnIcon><AlertCircleOutlineIcon size={14}/></WarnIcon>
                         <strong>
-                            <FormattedMessage defaultMessage='Waiting on you'/>
+                            <FormattedMessage
+                                id='ai.delegation.waiting_on_you'
+                                defaultMessage='Waiting on you'
+                            />
                         </strong>
-                        <FormattedMessage defaultMessage='— the agent needs your input in the delegation conversation.'/>
+                        <FormattedMessage
+                            id='ai.delegation.waiting_on_you_detail'
+                            defaultMessage='— the agent needs your input in the delegation conversation.'
+                        />
                         {elapsedSeconds > 0 && <Elapsed>{formatElapsed(elapsedSeconds)}</Elapsed>}
                     </>
                 )}
                 {phase === 'completed' && (
                     <>
                         <SuccessIcon><CheckCircleIcon size={14}/></SuccessIcon>
-                        <FormattedMessage defaultMessage='Completed'/>
+                        <FormattedMessage
+                            id='ai.delegation.completed'
+                            defaultMessage='Completed'
+                        />
                     </>
                 )}
                 {phase === 'failed' && (
                     <>
                         <ErrorIcon><AlertCircleOutlineIcon size={14}/></ErrorIcon>
-                        <FormattedMessage defaultMessage='Failed'/>
+                        <FormattedMessage
+                            id='ai.delegation.failed'
+                            defaultMessage='Failed'
+                        />
                     </>
                 )}
                 {phase === 'timed_out' && (
                     <>
                         <ErrorIcon><AlertCircleOutlineIcon size={14}/></ErrorIcon>
-                        <FormattedMessage defaultMessage='Timed out'/>
+                        <FormattedMessage
+                            id='ai.delegation.timed_out'
+                            defaultMessage='Timed out'
+                        />
                     </>
                 )}
                 {isRejected && (
                     <>
                         <RejectedIcon><CloseCircleOutlineIcon size={14}/></RejectedIcon>
-                        <FormattedMessage defaultMessage='Rejected'/>
+                        <FormattedMessage
+                            id='ai.delegation.rejected'
+                            defaultMessage='Rejected'
+                        />
                     </>
                 )}
             </StatusLine>
@@ -277,7 +306,10 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                     rel='noreferrer'
                     data-testid='delegation-view-conversation'
                 >
-                    <FormattedMessage defaultMessage='View conversation'/>
+                    <FormattedMessage
+                        id='ai.delegation.view_conversation'
+                        defaultMessage='View conversation'
+                    />
                 </ConversationLink>
             )}
 
@@ -285,7 +317,10 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                 <AnswerSection>
                     <AnswerToggle onClick={() => setAnswerExpanded(!answerExpanded)}>
                         {answerExpanded ? <ChevronDownIcon size={14}/> : <ChevronRightIcon size={14}/>}
-                        <FormattedMessage defaultMessage='Answer'/>
+                        <FormattedMessage
+                            id='ai.delegation.answer'
+                            defaultMessage='Answer'
+                        />
                     </AnswerToggle>
                     {answerExpanded ? (
                         <AnswerBody>{tool.result}</AnswerBody>
@@ -302,26 +337,41 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                 <StatusLine>
                     {localDecision ? <SuccessIcon><CheckCircleIcon size={14}/></SuccessIcon> : <RejectedIcon><CloseCircleOutlineIcon size={14}/></RejectedIcon>}
                     {localDecision ? (
-                        <FormattedMessage defaultMessage='Accepted'/>
+                        <FormattedMessage
+                            id='ai.delegation.accepted'
+                            defaultMessage='Accepted'
+                        />
                     ) : (
-                        <FormattedMessage defaultMessage='Rejected'/>
+                        <FormattedMessage
+                            id='ai.delegation.rejected'
+                            defaultMessage='Rejected'
+                        />
                     )}
                 </StatusLine>
             )}
             {isProcessing && localDecision == null && !inFlight && (
                 <StatusLine>
                     <SpinnerHolder><LoadingSpinner/></SpinnerHolder>
-                    <FormattedMessage defaultMessage='Processing...'/>
+                    <FormattedMessage
+                        id='ai.delegation.processing'
+                        defaultMessage='Processing...'
+                    />
                 </StatusLine>
             )}
 
             {showAcceptReject && !isProcessing && (
                 <ButtonRow>
                     <PrimaryButton onClick={onApprove}>
-                        <FormattedMessage defaultMessage='Accept'/>
+                        <FormattedMessage
+                            id='ai.delegation.accept'
+                            defaultMessage='Accept'
+                        />
                     </PrimaryButton>
                     <SecondaryButton onClick={onReject}>
-                        <FormattedMessage defaultMessage='Reject'/>
+                        <FormattedMessage
+                            id='ai.delegation.reject'
+                            defaultMessage='Reject'
+                        />
                     </SecondaryButton>
                 </ButtonRow>
             )}
@@ -329,11 +379,17 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                 <ButtonRow>
                     <PrimaryButton onClick={onApprove}>
                         <GlobeIcon size={14}/>
-                        <FormattedMessage defaultMessage='Share'/>
+                        <FormattedMessage
+                            id='ai.delegation.share'
+                            defaultMessage='Share'
+                        />
                     </PrimaryButton>
                     <SecondaryButton onClick={onReject}>
                         <LockIcon size={14}/>
-                        <FormattedMessage defaultMessage='Keep private'/>
+                        <FormattedMessage
+                            id='ai.delegation.keep_private'
+                            defaultMessage='Keep private'
+                        />
                     </SecondaryButton>
                 </ButtonRow>
             )}
