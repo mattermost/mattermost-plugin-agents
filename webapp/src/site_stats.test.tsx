@@ -74,31 +74,31 @@ describe('buildSiteStatsRows', () => {
         {
             key: 'agents_active_users_7d',
             icon: 'fa-user',
-            defaultMessage: 'Agents Active Users (Last 7 Days)',
+            defaultMessage: 'Agents Users (Last 7 Days)',
             expectedValue: 10,
         },
         {
             key: 'agents_active_users_60d',
             icon: 'fa-user',
-            defaultMessage: 'Agents Active Users (Last 60 Days)',
+            defaultMessage: 'Agents Users (Last 60 Days)',
             expectedValue: 50,
         },
         {
             key: 'agents_active_users_90d',
             icon: 'fa-user',
-            defaultMessage: 'Agents Active Users (Last 90 Days)',
+            defaultMessage: 'Agents Users (Last 90 Days)',
             expectedValue: 60,
         },
         {
             key: 'agents_tokens_30d',
             icon: 'fa-bar-chart',
-            defaultMessage: 'Agents Tokens Used (Last 30 Days)',
+            defaultMessage: 'Agents Tokens (30 Days)',
             expectedValue: 165000,
         },
         {
             key: 'agents_cost_30d',
-            icon: 'fa-money',
-            defaultMessage: 'Agents Estimated Cost in USD (Last 30 Days)',
+            icon: 'fa-usd',
+            defaultMessage: 'Agents Est. Cost USD (30 Days)',
             expectedValue: 12.35,
         },
     ])('count row $key', ({key, icon, defaultMessage, expectedValue}) => {
@@ -157,7 +157,7 @@ describe('buildSiteStatsRows', () => {
         const line = rows.agents_tokens_per_day;
         expect(line.visualizationType).toBe(AnalyticsVisualizationType.LineChart);
         expect(line.icon).toBeUndefined();
-        expect((line.name as React.ReactElement).props.defaultMessage).toBe('Agents Tokens per Day (Last 30 Days)');
+        expect((line.name as React.ReactElement).props.defaultMessage).toBe('Agents Tokens per Day (Input vs. Output)');
 
         const value = line.value as {
             labels: string[];

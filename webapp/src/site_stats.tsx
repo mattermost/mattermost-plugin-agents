@@ -13,13 +13,13 @@ import type {UsageStatsResponse} from '@/types/usage_stats';
 
 const messages = defineMessages({
     mau: {id: 'agents.site_stats.mau', defaultMessage: 'Agents Monthly Active Users'},
-    activeUsers7d: {id: 'agents.site_stats.active_users_7d', defaultMessage: 'Agents Active Users (Last 7 Days)'},
-    activeUsers60d: {id: 'agents.site_stats.active_users_60d', defaultMessage: 'Agents Active Users (Last 60 Days)'},
-    activeUsers90d: {id: 'agents.site_stats.active_users_90d', defaultMessage: 'Agents Active Users (Last 90 Days)'},
-    tokens30d: {id: 'agents.site_stats.tokens_30d', defaultMessage: 'Agents Tokens Used (Last 30 Days)'},
-    cost30d: {id: 'agents.site_stats.cost_30d', defaultMessage: 'Agents Estimated Cost in USD (Last 30 Days)'},
+    activeUsers7d: {id: 'agents.site_stats.active_users_7d', defaultMessage: 'Agents Users (Last 7 Days)'},
+    activeUsers60d: {id: 'agents.site_stats.active_users_60d', defaultMessage: 'Agents Users (Last 60 Days)'},
+    activeUsers90d: {id: 'agents.site_stats.active_users_90d', defaultMessage: 'Agents Users (Last 90 Days)'},
+    tokens30d: {id: 'agents.site_stats.tokens_30d', defaultMessage: 'Agents Tokens (30 Days)'},
+    cost30d: {id: 'agents.site_stats.cost_30d', defaultMessage: 'Agents Est. Cost USD (30 Days)'},
     mauPerAgent: {id: 'agents.site_stats.mau_per_agent', defaultMessage: 'Monthly Active Users per Agent'},
-    tokensPerDay: {id: 'agents.site_stats.tokens_per_day', defaultMessage: 'Agents Tokens per Day (Last 30 Days)'},
+    tokensPerDay: {id: 'agents.site_stats.tokens_per_day', defaultMessage: 'Agents Tokens per Day (Input vs. Output)'},
     inputTokens: {id: 'agents.site_stats.input_tokens', defaultMessage: 'Input tokens'},
     outputTokens: {id: 'agents.site_stats.output_tokens', defaultMessage: 'Output tokens'},
 });
@@ -71,7 +71,7 @@ export function buildSiteStatsRows(stats: UsageStatsResponse, intl: IntlShape): 
         agents_cost_30d: {
             id: 'agents_cost_30d',
             name: <FormattedMessage {...messages.cost30d}/>,
-            icon: 'fa-money',
+            icon: 'fa-usd',
             value: Math.round((stats.cost_30d ?? 0) * 100) / 100,
             visualizationType: AnalyticsVisualizationType.Count,
         },
