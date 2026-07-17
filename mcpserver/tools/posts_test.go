@@ -308,6 +308,42 @@ func TestApplyPostPriority(t *testing.T) {
 	}
 }
 
+// TestToolCreatePostValidatesPriorityBeforeUpload pins that invalid priority
+// metadata aborts the call before any attachment is uploaded, so validation
+// failures cannot leave orphaned files on the server.
+func TestToolCreatePostValidatesPriorityBeforeUpload(t *testing.T) {
+	channelID := model.NewId()
+	uploadHit := false
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/channels/"+channelID, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.Channel{Id: channelID, Type: model.ChannelTypeDirect})
+	})
+	mux.HandleFunc("/api/v4/files", func(w http.ResponseWriter, r *http.Request) {
+		uploadHit = true
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	provider := newTestProvider(t, ts.URL)
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: newTestClient(ts.URL), AccessMode: AccessModeLocal}
+
+	_, err := provider.toolCreatePost(mcpCtx, CreatePostArgs{
+		ChannelID:          channelID,
+		ChannelDisplayName: "Direct Message",
+		TeamDisplayName:    "N/A",
+		Message:            "hello",
+		Priority:           "critical",
+		Attachments:        []string{"some-file.txt"},
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "priority must be")
+	assert.False(t, uploadHit, "upload endpoint must not be hit when priority validation fails")
+}
+
 func TestToolCreatePostChannelValidation(t *testing.T) {
 	teamID := model.NewId()
 

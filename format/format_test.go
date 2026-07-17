@@ -410,6 +410,22 @@ func TestFormatPost(t *testing.T) {
 			},
 			expected: "**Post 1** by dana:\nPost ID: post1\nAttached files:\n- [File ID: file1234567890123456789012]\nMessage: see file\n\n",
 		},
+		{
+			name: "metadata with only nil file entries falls back to file ids",
+			entry: PostEntry{
+				HeaderLabel: "Post 1",
+				Username:    "dana",
+				Post: &model.Post{
+					Id:      "post1",
+					Message: "see file",
+					FileIds: model.StringArray{"file1234567890123456789012"},
+					Metadata: &model.PostMetadata{
+						Files: []*model.FileInfo{nil},
+					},
+				},
+			},
+			expected: "**Post 1** by dana:\nPost ID: post1\nAttached files:\n- [File ID: file1234567890123456789012]\nMessage: see file\n\n",
+		},
 	}
 
 	for _, tt := range tests {

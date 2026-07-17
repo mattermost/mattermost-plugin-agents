@@ -105,6 +105,10 @@ func isTextLikeMimeType(mimeType string) bool {
 	return false
 }
 
+// maxStandaloneTextBytes bounds how much of a raw text file the standalone
+// fallback downloads into memory, mirroring files.Service's maxDownloadBytes.
+const maxStandaloneTextBytes = 10 * 1024 * 1024
+
 // readFileContentStandalone reads a file's text directly through the user's
 // Mattermost client, for servers that cannot reach the plugin's extraction
 // endpoint. Server-side document extraction (PDF, Office) is unavailable on
@@ -114,12 +118,16 @@ func readFileContentStandalone(mcpContext *MCPToolContext, info *model.FileInfo,
 		return files.Content{Name: info.Name, MimeType: info.MimeType, HasText: false}, nil
 	}
 
+	if info.Size > maxStandaloneTextBytes {
+		return files.Content{}, fmt.Errorf("file %q is %d bytes, larger than the %d-byte limit for direct text reads", info.Name, info.Size, maxStandaloneTextBytes)
+	}
+
 	data, _, err := mcpContext.Client.GetFile(mcpContext.Ctx, info.Id)
 	if err != nil {
 		return files.Content{}, fmt.Errorf("error downloading file: %w", err)
 	}
 
-	return files.Slice(info.Name, info.MimeType, strings.TrimSpace(string(data)), offset, limit), nil
+	return files.Slice(info.Name, info.MimeType, string(data), offset, limit), nil
 }
 
 // toolReadFile implements the read_file tool.
@@ -155,16 +163,21 @@ func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, args R
 	}
 
 	// Prefer the plugin's extraction service (the only source of text for PDF
-	// and Office documents). When it is unavailable — e.g. a standalone server
-	// pointed at a Mattermost without the plugin — fall back to reading raw
-	// bytes for plain-text files.
+	// and Office documents). When it fails for a plain-text file — e.g. a
+	// standalone server pointed at a Mattermost without the plugin — fall back
+	// to reading the raw bytes directly. Extraction failures for other types
+	// are surfaced as errors: the fallback cannot read them, and reporting
+	// "no extractable text" would disguise an outage as an empty file.
 	if p.fileContentService != nil {
 		content, svcErr := p.fileContentService.GetContent(ctx, mcpContext.UserID, args.FileID, args.Offset, args.Limit)
 		if svcErr == nil {
 			return []mcp.Content{&mcp.TextContent{Text: formatFileContent(content)}}, nil
 		}
 		if errors.Is(svcErr, files.ErrForbidden) {
-			return []mcp.Content{&mcp.TextContent{Text: "you do not have permission to read this file"}}, nil
+			return nil, fmt.Errorf("you do not have permission to read this file")
+		}
+		if !isTextLikeMimeType(info.MimeType) {
+			return nil, fmt.Errorf("error reading file %s: %w", args.FileID, svcErr)
 		}
 		p.logger.Debug("file content service unavailable, falling back to direct read", "file_id", args.FileID, "error", svcErr)
 	}

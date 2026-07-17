@@ -411,23 +411,24 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "", err
 	}
 
-	// Upload files if specified
-	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
-	if err != nil {
-		return "", err
-	}
-
-	// Create the post
+	// Build and validate the post before uploading attachments so validation
+	// failures do not leave orphaned uploads on the server.
 	post := &model.Post{
 		ChannelId: args.ChannelID,
 		Message:   args.Message,
 		RootId:    rootID,
-		FileIds:   fileIDs,
 	}
 
 	if err := applyPostPriority(post, args.Priority, args.RequestAck); err != nil {
 		return "", err
 	}
+
+	// Upload files if specified
+	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
+	if err != nil {
+		return "", err
+	}
+	post.FileIds = fileIDs
 
 	p.stampAIGenerated(post, mcpContext, "")
 
@@ -543,23 +544,24 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		return "", err
 	}
 
-	// Upload files if specified
-	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
-	if err != nil {
-		return "", err
-	}
-
-	// Create the post in the DM channel
+	// Build and validate the post before uploading attachments so validation
+	// failures do not leave orphaned uploads on the server.
 	post := &model.Post{
 		ChannelId: dmChannel.Id,
 		Message:   args.Message,
 		RootId:    rootID,
-		FileIds:   fileIDs,
 	}
 
 	if err := applyPostPriority(post, args.Priority, args.RequestAck); err != nil {
 		return "", err
 	}
+
+	// Upload files if specified
+	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
+	if err != nil {
+		return "", err
+	}
+	post.FileIds = fileIDs
 
 	// Set from_webhook only when DM'ing yourself (prevents AI auto-response loop)
 	if dmSelf {
@@ -629,21 +631,23 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		return "", err
 	}
 
-	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
-	if err != nil {
-		return "", err
-	}
-
+	// Build and validate the post before uploading attachments so validation
+	// failures do not leave orphaned uploads on the server.
 	post := &model.Post{
 		ChannelId: gmChannel.Id,
 		Message:   args.Message,
 		RootId:    rootID,
-		FileIds:   fileIDs,
 	}
 
 	if err := applyPostPriority(post, args.Priority, args.RequestAck); err != nil {
 		return "", err
 	}
+
+	fileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
+	if err != nil {
+		return "", err
+	}
+	post.FileIds = fileIDs
 
 	p.stampAIGenerated(post, mcpContext, currentUser.Id)
 
