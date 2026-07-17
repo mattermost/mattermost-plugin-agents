@@ -156,8 +156,8 @@ func TestHandleGetUsageStats(t *testing.T) {
 				e.usageStatsStore.perBot = []store.BotActiveUsers{{BotID: testBotUserID, ActiveUsers: 12}}
 				e.usageStatsStore.totals = store.UsageTotals{InputTokens: 120000, OutputTokens: 45000, Cost: 12.34}
 				e.usageStatsStore.daily = []store.DailyTokens{
-					{Day: today.AddDate(0, 0, -1), InputTokens: 100, OutputTokens: 50},
-					{Day: today, InputTokens: 1200, OutputTokens: 300},
+					{Day: today.AddDate(0, 0, -1).Format(time.DateOnly), InputTokens: 100, OutputTokens: 50},
+					{Day: today.Format(time.DateOnly), InputTokens: 1200, OutputTokens: 300},
 				}
 			},
 			expectedStatus: http.StatusOK,
@@ -394,7 +394,6 @@ func TestTrailingWindowStart(t *testing.T) {
 
 func TestZeroFillDailyTokens(t *testing.T) {
 	now := time.Date(2026, 7, 17, 15, 4, 5, 0, time.UTC)
-	cest := time.FixedZone("CEST", 2*3600)
 
 	tests := []struct {
 		name  string
@@ -421,9 +420,9 @@ func TestZeroFillDailyTokens(t *testing.T) {
 		{
 			name: "sparse rows land on correct keys",
 			rows: []store.DailyTokens{
-				{Day: time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC), InputTokens: 10, OutputTokens: 1},
-				{Day: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), InputTokens: 20, OutputTokens: 2},
-				{Day: time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC), InputTokens: 30, OutputTokens: 3},
+				{Day: "2026-06-18", InputTokens: 10, OutputTokens: 1},
+				{Day: "2026-07-01", InputTokens: 20, OutputTokens: 2},
+				{Day: "2026-07-17", InputTokens: 30, OutputTokens: 3},
 			},
 			check: func(t *testing.T, got []DailyTokenCount) {
 				require.Len(t, got, 30)
@@ -438,10 +437,9 @@ func TestZeroFillDailyTokens(t *testing.T) {
 			},
 		},
 		{
-			name: "non-UTC location for midnight UTC still keys correctly",
+			name: "day strings keyed as-is (no timezone reinterpretation)",
 			rows: []store.DailyTokens{
-				// 2026-07-01T00:00:00Z == 2026-07-01T02:00:00+02:00
-				{Day: time.Date(2026, 7, 1, 2, 0, 0, 0, cest), InputTokens: 7, OutputTokens: 8},
+				{Day: "2026-07-01", InputTokens: 7, OutputTokens: 8},
 			},
 			check: func(t *testing.T, got []DailyTokenCount) {
 				require.Len(t, got, 30)

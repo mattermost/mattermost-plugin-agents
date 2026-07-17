@@ -24,7 +24,7 @@ type DailyUsageDelta struct {
 // dayString converts a wall-clock time to the UTC calendar date string used
 // for the LLM_Usage_Daily.Day DATE column.
 func dayString(t time.Time) string {
-	return t.UTC().Format("2006-01-02")
+	return t.UTC().Format(time.DateOnly)
 }
 
 // IncrementDailyUsage upserts one aggregate row. Token and cost increments are
@@ -111,17 +111,19 @@ WHERE Day >= $1`
 }
 
 // DailyTokens is one point of the tokens-per-day series (all rows, incl. guests/bots).
+// Day is "YYYY-MM-DD" (UTC). Selected as text so the Mattermost plugin DB RPC can
+// encode the value (native DATE/time.Time is not gob-registered across the boundary).
 type DailyTokens struct {
-	Day          time.Time `db:"day"`
-	InputTokens  int64     `db:"inputtokens"`
-	OutputTokens int64     `db:"outputtokens"`
+	Day          string `db:"day"`
+	InputTokens  int64  `db:"inputtokens"`
+	OutputTokens int64  `db:"outputtokens"`
 }
 
 // GetDailyTokenTotals returns SUM(...) GROUP BY Day for Day >= since, ORDER BY Day ASC.
 // Days without rows are absent; the API layer zero-fills the window.
 func (s *Store) GetDailyTokenTotals(ctx context.Context, since time.Time) ([]DailyTokens, error) {
 	const query = `
-SELECT Day AS day, SUM(InputTokens) AS inputtokens, SUM(OutputTokens) AS outputtokens
+SELECT to_char(Day, 'YYYY-MM-DD') AS day, SUM(InputTokens) AS inputtokens, SUM(OutputTokens) AS outputtokens
 FROM LLM_Usage_Daily
 WHERE Day >= $1
 GROUP BY Day

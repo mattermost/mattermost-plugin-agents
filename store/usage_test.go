@@ -369,7 +369,10 @@ func TestGetDailyTokenTotals(t *testing.T) {
 			require.NotNil(t, got)
 			require.Len(t, got, tc.wantLen)
 			for i := range got {
-				assert.Equal(t, tc.wantDays[i], got[i].Day.UTC().Format("2006-01-02"))
+				// Contract: Day is a YYYY-MM-DD string (RPC-safe), not time.Time.
+				_, parseErr := time.Parse(time.DateOnly, got[i].Day)
+				require.NoError(t, parseErr, "Day must be YYYY-MM-DD, got %q", got[i].Day)
+				assert.Equal(t, tc.wantDays[i], got[i].Day)
 				assert.Equal(t, tc.wantIn[i], got[i].InputTokens)
 				assert.Equal(t, tc.wantOut[i], got[i].OutputTokens)
 			}

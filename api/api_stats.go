@@ -81,7 +81,7 @@ func trailingWindowStart(now time.Time, days int) time.Time {
 func zeroFillDailyTokens(now time.Time, days int, rows []store.DailyTokens) []DailyTokenCount {
 	byDay := make(map[string]store.DailyTokens, len(rows))
 	for _, row := range rows {
-		byDay[row.Day.UTC().Format(time.DateOnly)] = row
+		byDay[row.Day] = row
 	}
 
 	out := make([]DailyTokenCount, 0, days)
