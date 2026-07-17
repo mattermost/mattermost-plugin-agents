@@ -21,10 +21,10 @@ type MattermostMCPServer struct {
 }
 
 // registerTools registers all tools using the tool provider.
-// searchService and fileContentService are optional and can be nil when the
-// corresponding capability is unavailable.
-func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) {
-	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService)
+// searchService, fileContentService, and delegationService are optional and
+// can be nil when the corresponding capability is unavailable.
+func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, delegationService tools.DelegationService) {
+	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService, delegationService)
 	toolProvider.ProvideTools(s.mcpServer)
 }
 

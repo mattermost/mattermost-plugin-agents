@@ -144,6 +144,7 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 		tools.AccessModeRemote,
 		searchService,
 		fileContentService,
+		nil, // delegation is embedded-only in v1
 	)
 	toolProvider.ProvideTools(mcpServer)
 

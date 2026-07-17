@@ -250,11 +250,14 @@ func (c *Conversations) regenerateViaConversation(
 	}
 
 	// Regeneration is triggered by the requester clicking the regen control,
-	// so the user is interactively present.
+	// so the user is interactively present. Delegation conversations keep
+	// ask_agent excluded on regen too.
+	regenOpts := []llm.ContextOption{c.contextBuilder.WithLLMContextInteractive()}
+	regenOpts = append(regenOpts, c.delegationConversationContextOptions(conv)...)
 	llmContext := c.buildConversationContextWithTools(
 		ctx, bot, user, channel,
 		"Failed to load user tool preferences on regen, proceeding without filtering",
-		c.contextBuilder.WithLLMContextInteractive(),
+		regenOpts...,
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)

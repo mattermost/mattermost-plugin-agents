@@ -44,9 +44,10 @@ type Conversations struct {
 	licenseChecker    *enterprise.LicenseChecker
 	i18n              *i18n.Bundle
 	meetingsService   MeetingsService
-	configProvider    ConfigProvider
-	toolPolicyChecker mcp.ToolPolicyChecker
-	convService       *conversation.Service
+	configProvider     ConfigProvider
+	toolPolicyChecker  mcp.ToolPolicyChecker
+	convService        *conversation.Service
+	delegationNotifier DelegationNotifier
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations

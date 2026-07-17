@@ -45,3 +45,13 @@ func (m *NoopMetrics) ObserveTokenUsage(botName, teamID, userID string, inputTok
 func (m *NoopMetrics) ObserveMCPDynamicToolEvent(botName, event, result string) {
 	// No-op
 }
+
+// ObserveDelegation is a no-op implementation.
+func (m *NoopMetrics) ObserveDelegation(sourceBot, targetBot, outcome string) {
+	// No-op
+}
+
+// ObserveDelegationDuration is a no-op implementation.
+func (m *NoopMetrics) ObserveDelegationDuration(seconds float64) {
+	// No-op
+}

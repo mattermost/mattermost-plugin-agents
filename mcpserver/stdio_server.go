@@ -73,7 +73,8 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService t
 	}
 
 	// Register tools with local access mode
-	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService)
+	// Delegation is embedded-only in v1; stdio servers do not expose ask_agent.
+	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService, nil)
 
 	return mattermostServer, nil
 }

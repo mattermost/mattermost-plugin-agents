@@ -523,8 +523,9 @@ func (c *Conversations) streamResponseToExistingPost(ctx context.Context, stream
 }
 
 // streamContinuationToExistingPost streams a tool-approval follow-up.
-// See streamingService.StreamContinuationToPost.
-func (c *Conversations) streamContinuationToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel) error {
+// See streamingService.StreamContinuationToPost. onDone, when non-nil, runs
+// after the stream has been fully consumed (success or failure).
+func (c *Conversations) streamContinuationToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel, onDone func()) error {
 	streamCtx, err := c.streamingService.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return err
@@ -532,7 +533,12 @@ func (c *Conversations) streamContinuationToExistingPost(ctx context.Context, st
 
 	locale := c.responseLocale(postingUser, channel)
 	go func() {
-		defer c.streamingService.FinishStreaming(post.Id)
+		defer func() {
+			c.streamingService.FinishStreaming(post.Id)
+			if onDone != nil {
+				onDone()
+			}
+		}()
 		c.streamingService.StreamContinuationToPost(streamCtx, stream, post, locale, postingUser.Id)
 	}()
 
