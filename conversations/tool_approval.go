@@ -140,14 +140,14 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 		detachedCtx := telemetry.DetachContext(ctx)
 		go func() {
-			if execErr := c.executeResolvedToolBatch(detachedCtx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM); execErr != nil {
+			if execErr := c.executeResolvedToolBatch(detachedCtx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM, true); execErr != nil {
 				c.mmClient.LogError("Async tool batch execution failed", "error", execErr, "conversation_id", convID, "post_id", post.Id)
 			}
 		}()
 		return nil
 	}
 
-	return c.executeResolvedToolBatch(ctx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM)
+	return c.executeResolvedToolBatch(ctx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM, false)
 }
 
 // isDelegationToolUseBlock reports whether a persisted tool_use block is the
@@ -223,7 +223,9 @@ func (c *Conversations) persistAcceptedToolDecisions(pendingTurn *store.Turn, bl
 // executeResolvedToolBatch executes the user's approval decisions: it runs
 // approved tools, persists resolved statuses and results, and streams the
 // follow-up. It is the continuation of HandleToolCall, either inline or (for
-// delegation batches) on a detached goroutine.
+// delegation batches) on a detached goroutine. isAsync marks the detached
+// case: clients refetch on the HTTP response for synchronous batches, but an
+// asynchronous batch that settles without a stream must nudge them itself.
 func (c *Conversations) executeResolvedToolBatch(
 	ctx context.Context,
 	bot *bots.Bot,
@@ -238,6 +240,7 @@ func (c *Conversations) executeResolvedToolBatch(
 	interactionResults map[string]string,
 	llmContext *llm.Context,
 	isDM bool,
+	isAsync bool,
 ) error {
 	// Execute approved tools and build results.
 	autoExec := c.shouldAutoExecuteTool(llmContext, isDM)
@@ -403,9 +406,12 @@ func (c *Conversations) executeResolvedToolBatch(
 	if !executedAny {
 		// Rejection-only batches produce no follow-up stream; a waiting
 		// delegation parent must still be told the sub-turn settled, and
-		// open clients need a refetch nudge since no stream event will come.
+		// (async only) open clients need a refetch nudge since neither a
+		// stream event nor an HTTP completion will trigger one.
 		c.notifyDelegationSubTurnCompleted(conv)
-		c.publishConversationUpdated(conv, post)
+		if isAsync {
+			c.publishConversationUpdated(conv, post)
+		}
 		return nil
 	}
 
@@ -417,7 +423,9 @@ func (c *Conversations) executeResolvedToolBatch(
 	// have long since answered their HTTP request, so nudge open clients to
 	// refetch the conversation — that is what reveals the Share decision.
 	if !isDM && needsShareDecision {
-		c.publishConversationUpdated(conv, post)
+		if isAsync {
+			c.publishConversationUpdated(conv, post)
+		}
 		return nil
 	}
 
