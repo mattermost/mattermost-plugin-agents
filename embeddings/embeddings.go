@@ -99,6 +99,19 @@ type VectorStore interface {
 	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
 }
 
+// BulkIndexer drops/rebuilds the ANN index around bulk loads.
+type BulkIndexer interface {
+	PrepareBulkIndex(ctx context.Context) error
+	FinalizeBulkIndex(ctx context.Context) error
+	VectorIndexExists(ctx context.Context) (bool, error)
+}
+
+// BulkIndexerProvider exposes bulk index control from a search service.
+type BulkIndexerProvider interface {
+	// BulkIndexer returns control, or nil if unsupported.
+	BulkIndexer() BulkIndexer
+}
+
 // EmbeddingProvider defines the interface for embedding generation
 type EmbeddingProvider interface {
 	// CreateEmbedding generates embedding for the given text
@@ -129,16 +142,23 @@ const (
 	MaxReindexBatchSize     = 1000
 )
 
+// ReindexIndexStrategy*: maintain updates ANN during load; defer rebuilds after.
+const (
+	ReindexIndexStrategyMaintain = "maintain"
+	ReindexIndexStrategyDefer    = "defer"
+)
+
 // ServiceConfig holds configuration for the embedding search service
 type EmbeddingSearchConfig struct {
-	Type              string           `json:"type"`
-	VectorStore       UpstreamConfig   `json:"vectorStore"`
-	EmbeddingProvider UpstreamConfig   `json:"embeddingProvider"`
-	Parameters        json.RawMessage  `json:"parameters"`
-	Dimensions        int              `json:"dimensions"`
-	ChunkingOptions   chunking.Options `json:"chunkingOptions"`
-	ReindexWorkers    int              `json:"reindexWorkers,omitempty"`
-	ReindexBatchSize  int              `json:"reindexBatchSize,omitempty"`
+	Type                 string           `json:"type"`
+	VectorStore          UpstreamConfig   `json:"vectorStore"`
+	EmbeddingProvider    UpstreamConfig   `json:"embeddingProvider"`
+	Parameters           json.RawMessage  `json:"parameters"`
+	Dimensions           int              `json:"dimensions"`
+	ChunkingOptions      chunking.Options `json:"chunkingOptions"`
+	ReindexWorkers       int              `json:"reindexWorkers,omitempty"`
+	ReindexBatchSize     int              `json:"reindexBatchSize,omitempty"`
+	ReindexIndexStrategy string           `json:"reindexIndexStrategy,omitempty"`
 }
 
 // GetReindexWorkers returns the configured reindex worker count, clamped to
@@ -157,6 +177,16 @@ func (c *EmbeddingSearchConfig) GetReindexBatchSize() int {
 		return DefaultReindexBatchSize
 	}
 	return min(c.ReindexBatchSize, MaxReindexBatchSize)
+}
+
+// EffectiveReindexIndexStrategy: defer if set, otherwise maintain.
+func (c *EmbeddingSearchConfig) EffectiveReindexIndexStrategy() string {
+	switch c.ReindexIndexStrategy {
+	case ReindexIndexStrategyDefer:
+		return ReindexIndexStrategyDefer
+	default:
+		return ReindexIndexStrategyMaintain
+	}
 }
 
 // GetProviderType returns the embedding provider type
