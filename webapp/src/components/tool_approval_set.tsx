@@ -11,6 +11,7 @@ import {invalidateConversation} from '@/hooks/use_conversation';
 import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus, UserInteractionSelect} from './tool_types';
 import ToolCard from './tool_card';
 import QuestionCard, {parseQuestionArgs} from './question_card';
+import DelegationCard, {isAskAgentToolCall} from './delegation/delegation_card';
 
 // Styled components
 const ToolCallsContainer = styled.div`
@@ -309,6 +310,21 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 // normal auto-approved cards once executed.
                 if (tool.status === ToolCallStatus.Pending && tool.would_auto_execute) {
                     return null;
+                }
+
+                if (isAskAgentToolCall(tool)) {
+                    return (
+                        <DelegationCard
+                            key={tool.id}
+                            tool={tool}
+                            approvalStage={props.approvalStage}
+                            isProcessing={isDecisionCall && isSubmitting}
+                            localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
+                            canApprove={isDecisionCall}
+                            onApprove={isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined} // eslint-disable-line no-undefined
+                            onReject={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
+                        />
+                    );
                 }
 
                 if (tool.user_interaction === UserInteractionSelect) {
