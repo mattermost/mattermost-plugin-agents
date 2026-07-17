@@ -48,6 +48,7 @@ import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
+import {getAgentsSiteStats} from './site_stats';
 import {isEnterpriseLicensedOrDevelopment} from './license';
 
 type WebappStore = Store<GlobalState, UnknownAction>
@@ -247,6 +248,11 @@ export default class Plugin {
         }
 
         registry.registerAdminConsoleCustomSetting('Config', Config);
+
+        if (registry.registerSiteStatisticsHandler) {
+            registry.registerSiteStatisticsHandler(async () => getAgentsSiteStats(store));
+        }
+
         const agentsProductLabel = getAgentsProductLabel(store);
 
         if (rhs) {

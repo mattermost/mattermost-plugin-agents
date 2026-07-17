@@ -558,7 +558,7 @@ endif
 ## doesn't apply here.
 .PHONY: i18n-extract
 i18n-extract:
-	cd webapp && $(NPM) run i18n-extract -- --out-file src/i18n/en.json --id-interpolation-pattern '[sha512:contenthash:base64:8]' --format simple src/index.tsx 'src/components/**/*.{ts,tsx}'
+	cd webapp && $(NPM) run i18n-extract -- --out-file src/i18n/en.json --id-interpolation-pattern '[sha512:contenthash:base64:8]' --format simple src/index.tsx src/site_stats.tsx 'src/components/**/*.{ts,tsx}'
 
 ## Disable the plugin.
 .PHONY: disable

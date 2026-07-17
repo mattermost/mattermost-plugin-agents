@@ -11,6 +11,7 @@ import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import type {UsageStatsResponse} from '@/types/usage_stats';
 
 import manifest from './manifest';
 
@@ -827,6 +828,23 @@ export async function getChannelInterval(
 
 export async function getPluginConfig(): Promise<PluginConfig> {
     const url = `${baseRoute()}/admin/config`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getUsageStats(): Promise<UsageStatsResponse> {
+    const url = `${baseRoute()}/admin/stats`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
