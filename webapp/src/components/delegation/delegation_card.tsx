@@ -105,11 +105,13 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
     const isRejected = tool.status === ToolCallStatus.Rejected;
 
     // In-flight: accepted (persisted before async execution) or pending
-    // while executing. Reconcile the precise phase from the server so the
-    // card survives reloads without depending on event delivery.
+    // while executing. Reconcile from the server so the card survives
+    // reloads without depending on event delivery — both for the precise
+    // in-flight phase and for terminal cards' agent identity + permalink.
     const inFlight = !terminalPhase && !isPendingApproval && !isRejected;
+    const wantsReconcile = inFlight || terminalPhase != null;
     useEffect(() => {
-        if (!inFlight || liveUpdate) {
+        if (!wantsReconcile || liveUpdate) {
             return undefined; // eslint-disable-line no-undefined
         }
         let canceled = false;
@@ -124,7 +126,7 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
         return () => {
             canceled = true;
         };
-    }, [inFlight, liveUpdate, tool.id]);
+    }, [wantsReconcile, liveUpdate, tool.id]);
 
     // Elapsed timer while in flight.
     const startedAtRef = useRef<number>(0);
