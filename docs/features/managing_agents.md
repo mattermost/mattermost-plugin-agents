@@ -31,7 +31,7 @@ You can reach the Agents page in three ways:
 - Open the URL `/plug/mattermost-ai/agents` directly.
 - From a conversation, open **AI Actions > Manage agents**.
 
-The **System Console > AI Bots** page no longer hosts the agent editor. Instead, it shows an **AI bot configuration has moved** notice with a link back to the Agents page. System administrators can still set the default bot in the same System Console section, just below the redirect notice — but creating, editing, and deleting agents happens on the Agents page.
+The **System Console > AI Bots** page no longer hosts the agent editor. Instead, it shows an **AI bot configuration has moved** notice with a link back to the Agents page. System administrators can still set the default bot in the same System Console section, just below the redirect notice — but creating, editing, and deleting agents happens on the Agents page. The default bot is the fallback agent for users who have not made an explicit selection; a user's own choice takes precedence.
 
 The Agents page itself shows:
 
