@@ -318,6 +318,7 @@ var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	// Users & profiles
 	"get_me",
 	"get_user",
+	"get_user_by_id",
 	"get_user_by_username",
 	"get_user_by_email",
 	"get_users_by_ids",

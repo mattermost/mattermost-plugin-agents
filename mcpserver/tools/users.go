@@ -78,6 +78,7 @@ func (p *MattermostToolProvider) getUserTools() []MCPTool {
 	return []MCPTool{
 		{Name: "get_me", Description: getMeDescription, Schema: NewJSONSchemaForAccessMode[GetMeArgs](string(p.accessMode)), Resolver: typed("get_me", p.toolGetMe)},
 		{Name: "get_user", Description: getUserDescription, Schema: NewJSONSchemaForAccessMode[GetUserArgs](string(p.accessMode)), Resolver: typed("get_user", p.toolGetUser)},
+		{Name: "get_user_by_id", Description: getUserDescription, Schema: NewJSONSchemaForAccessMode[GetUserArgs](string(p.accessMode)), Resolver: typed("get_user_by_id", p.toolGetUser)},
 		{Name: "get_user_by_username", Description: getUserByUsernameDescription, Schema: NewJSONSchemaForAccessMode[GetUserByUsernameArgs](string(p.accessMode)), Resolver: typed("get_user_by_username", p.toolGetUserByUsername)},
 		{Name: "get_user_by_email", Description: getUserByEmailDescription, Schema: NewJSONSchemaForAccessMode[GetUserByEmailArgs](string(p.accessMode)), Resolver: typed("get_user_by_email", p.toolGetUserByEmail)},
 		{Name: "get_users_by_ids", Description: getUsersByIDsDescription, Schema: NewJSONSchemaForAccessMode[GetUsersByIDsArgs](string(p.accessMode)), Resolver: typed("get_users_by_ids", p.toolGetUsersByIDs)},

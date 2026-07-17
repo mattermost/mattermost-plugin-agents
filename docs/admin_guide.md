@@ -716,7 +716,7 @@ The plugin also registers an extended catalog of read and write tools spanning M
 - **Channels**: get_channel_stats, get_channel_member_counts, search_channels, list_team_channels, list_archived_channels, ⚠ update_channel, ⚠ archive_channel, ⚠ restore_channel, ⚠ convert_channel_privacy
 - **Channel members & settings**: get_channel_member, get_channel_members_by_ids, get_channel_members_by_status, get_user_channel_memberships, get_users_not_in_channel, search_users_in_channel, list_sidebar_categories, ⚠ add_channel_members, ⚠ remove_channel_member, ⚠ set_channel_mute, ⚠ set_channel_favorite, ⚠ update_channel_notify_props
 - **Channel bookmarks**: list_channel_bookmarks, ⚠ create_channel_bookmark, ⚠ update_channel_bookmark, ⚠ delete_channel_bookmark
-- **Users & profiles**: get_me, get_user, get_user_by_username, get_user_by_email, get_users_by_ids, get_users_by_usernames, get_user_stats, get_user_cpa_values, list_cpa_fields, ⚠ update_user
+- **Users & profiles**: get_me, get_user, get_user_by_id, get_user_by_username, get_user_by_email, get_users_by_ids, get_users_by_usernames, get_user_stats, get_user_cpa_values, list_cpa_fields, ⚠ update_user
 - **Status & presence**: get_user_status, get_users_statuses, get_user_custom_status, ⚠ set_status, ⚠ set_dnd
 - **Teams & team members**: get_team_member, get_team_stats, get_user_teams, get_users_in_team, get_users_not_in_team, get_new_users_in_team, get_dm_common_teams, search_teams, search_users_in_team, ⚠ add_team_members, ⚠ remove_team_member, ⚠ update_team, ⚠ invite_users_to_team, ⚠ invite_users_to_team_and_channels
 - **Files & attachments**: get_file_info, get_post_files, get_file_link, search_files, ⚠ upload_file

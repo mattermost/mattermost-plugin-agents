@@ -58,7 +58,7 @@ func TestToolCatalogContainsExpectedFamilies(t *testing.T) {
 		// bookmarks
 		"list_channel_bookmarks", "create_channel_bookmark",
 		// users & profiles
-		"get_me", "get_user", "get_user_by_username", "get_users_by_ids", "list_cpa_fields", "update_user",
+		"get_me", "get_user", "get_user_by_id", "get_user_by_username", "get_users_by_ids", "list_cpa_fields", "update_user",
 		// status
 		"get_user_status", "set_status", "set_dnd",
 		// teams
