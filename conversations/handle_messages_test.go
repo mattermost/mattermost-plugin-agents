@@ -36,7 +36,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mmClient := mocks.NewMockClient(t)
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	botsService := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil, nil)
 
 	conversations := &Conversations{
 		mmClient: mmClient,

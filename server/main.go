@@ -36,6 +36,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/usage"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -199,7 +200,9 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
+	usageRecorder := usage.New(p.store, &pluginAPI.Log)
+
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService, usageRecorder)
 
 	// migrateAndRefresh runs the one-time legacy bot migration, then forces
 	// a bot refresh only if the migration actually created new agents.

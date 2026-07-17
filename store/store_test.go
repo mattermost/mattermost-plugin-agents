@@ -159,6 +159,16 @@ func TestRunMigrations(t *testing.T) {
 					)`)
 				require.NoError(t, err)
 				assert.True(t, exists, "Agents_DB_Migrations tracking table should exist")
+
+				// Check LLM_Usage_Daily table exists
+				err = s.db.Get(&exists, `
+					SELECT EXISTS (
+						SELECT 1 FROM information_schema.tables
+						WHERE table_name = 'llm_usage_daily'
+						AND table_schema = current_schema()
+					)`)
+				require.NoError(t, err)
+				assert.True(t, exists, "LLM_Usage_Daily table should exist")
 			},
 		},
 		{
@@ -176,7 +186,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 9, count, "Should have 9 migration records")
+				assert.Equal(t, 10, count, "Should have 10 migration records")
 			},
 		},
 		{

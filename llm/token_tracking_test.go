@@ -309,7 +309,7 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 			metrics := &observedMetrics{}
 			pluginLogger := &observedPluginLogger{}
 			sinks := makeTestTokenUsageSinks(true, pluginLogger, nil)
-			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, metrics)
+			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, metrics, nil)
 
 			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(tc.stream, nil).Once()
 
@@ -359,7 +359,7 @@ func TestTokenTrackingWrapper_UsageReachesDownstreamAccumulator(t *testing.T) {
 			mockLLM := &MockLanguageModel{}
 			pluginLogger := &observedPluginLogger{}
 			sinks := makeTestTokenUsageSinks(tc.loggingEnabled, pluginLogger, nil)
-			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", sinks, nil)
+			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", sinks, nil, nil)
 
 			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(
 				makeStream(
@@ -518,7 +518,7 @@ func TestTokenTrackingWrapper_DefaultOperationSubType(t *testing.T) {
 			mockLLM := &MockLanguageModel{}
 			pluginLogger := &observedPluginLogger{}
 			sinks := makeTestTokenUsageSinks(true, pluginLogger, nil)
-			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, nil)
+			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, nil, nil)
 
 			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(
 				makeStream(
@@ -549,7 +549,7 @@ func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 	t.Run("delegates to streaming method", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
 		sinks := makeTestTokenUsageSinks(true, &observedPluginLogger{}, nil)
-		wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", sinks, nil)
+		wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", sinks, nil, nil)
 
 		mockStream := make(chan TextStreamEvent, 3)
 		mockStream <- TextStreamEvent{Type: EventTypeText, Value: "Hello world"}
@@ -572,7 +572,7 @@ func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 func TestTokenTrackingWrapper_DelegatedMethods(t *testing.T) {
 	mockLLM := &MockLanguageModel{}
 	sinks := makeTestTokenUsageSinks(true, &observedPluginLogger{}, nil)
-	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-llm", sinks, nil)
+	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-llm", sinks, nil, nil)
 
 	t.Run("CountTokens delegates to wrapped model", func(t *testing.T) {
 		req := CompletionRequest{Posts: []Post{{Role: PostRoleUser, Message: "test text"}}}
@@ -593,4 +593,234 @@ func TestTokenTrackingWrapper_DelegatedMethods(t *testing.T) {
 
 		mockLLM.AssertExpectations(t)
 	})
+}
+
+type fakeTokenUsageRecorder struct {
+	mu      sync.Mutex
+	records []TokenUsageRecord
+}
+
+func (f *fakeTokenUsageRecorder) RecordTokenUsage(_ context.Context, record TokenUsageRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records = append(f.records, record)
+}
+
+func (f *fakeTokenUsageRecorder) Records() []TokenUsageRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := make([]TokenUsageRecord, len(f.records))
+	copy(result, f.records)
+	return result
+}
+
+func TestTokenTrackingWrapper_Recorder(t *testing.T) {
+	usageStream := func() *TextStreamResult {
+		return makeStream(
+			TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 10, OutputTokens: 5, Cost: 0.01}},
+			TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 2, OutputTokens: 3, Cost: 0.02}},
+			TextStreamEvent{Type: EventTypeEnd, Value: nil},
+		)
+	}
+
+	tests := []struct {
+		name            string
+		loggingEnabled  bool
+		recorder        *fakeTokenUsageRecorder
+		request         CompletionRequest
+		stream          *TextStreamResult
+		wantRecords     int
+		wantRecord      *TokenUsageRecord
+		wantMetrics     int
+		wantPluginLogs  int
+		wantPassthrough bool
+		wantForwarded   []TextStreamEvent
+	}{
+		{
+			name:           "recorder called with logging disabled; sinks and metrics stay silent",
+			loggingEnabled: false,
+			recorder:       &fakeTokenUsageRecorder{},
+			request:        CompletionRequest{Context: &Context{}},
+			stream:         usageStream(),
+			wantRecords:    1,
+			wantRecord: &TokenUsageRecord{
+				UserID: "", IsGuest: false, IsBot: true, BotUserID: "", BotUsername: "fallback-bot",
+				Usage: TokenUsage{InputTokens: 12, OutputTokens: 8, Cost: 0.03},
+			},
+			wantMetrics:    0,
+			wantPluginLogs: 0,
+		},
+		{
+			name:           "recorder and sinks both fire when logging enabled",
+			loggingEnabled: true,
+			recorder:       &fakeTokenUsageRecorder{},
+			request:        CompletionRequest{Context: &Context{}},
+			stream:         usageStream(),
+			wantRecords:    1,
+			wantRecord: &TokenUsageRecord{
+				UserID: "", IsGuest: false, IsBot: true, BotUserID: "", BotUsername: "fallback-bot",
+				Usage: TokenUsage{InputTokens: 12, OutputTokens: 8, Cost: 0.03},
+			},
+			wantMetrics:    1,
+			wantPluginLogs: 1,
+		},
+		{
+			name:           "human non-guest user mapping",
+			loggingEnabled: false,
+			recorder:       &fakeTokenUsageRecorder{},
+			request: CompletionRequest{Context: &Context{
+				RequestingUser: &model.User{Id: "user-1", Roles: "system_user"},
+				BotUserID:      "bot-uid-1",
+				BotUsername:    "agent-1",
+			}},
+			stream:      usageStream(),
+			wantRecords: 1,
+			wantRecord: &TokenUsageRecord{
+				UserID: "user-1", IsGuest: false, IsBot: false, BotUserID: "bot-uid-1", BotUsername: "agent-1",
+				Usage: TokenUsage{InputTokens: 12, OutputTokens: 8, Cost: 0.03},
+			},
+		},
+		{
+			name:           "guest user mapping",
+			loggingEnabled: false,
+			recorder:       &fakeTokenUsageRecorder{},
+			request: CompletionRequest{Context: &Context{
+				RequestingUser: &model.User{Id: "guest-1", Roles: model.SystemGuestRoleId},
+			}},
+			stream:      usageStream(),
+			wantRecords: 1,
+			wantRecord: &TokenUsageRecord{
+				UserID: "guest-1", IsGuest: true, IsBot: false, BotUserID: "", BotUsername: "fallback-bot",
+				Usage: TokenUsage{InputTokens: 12, OutputTokens: 8, Cost: 0.03},
+			},
+		},
+		{
+			name:           "bot requesting user mapping",
+			loggingEnabled: false,
+			recorder:       &fakeTokenUsageRecorder{},
+			request: CompletionRequest{Context: &Context{
+				RequestingUser: &model.User{Id: "bot-1", IsBot: true},
+			}},
+			stream:      usageStream(),
+			wantRecords: 1,
+			wantRecord: &TokenUsageRecord{
+				UserID: "bot-1", IsGuest: false, IsBot: true, BotUserID: "", BotUsername: "fallback-bot",
+				Usage: TokenUsage{InputTokens: 12, OutputTokens: 8, Cost: 0.03},
+			},
+		},
+		{
+			name:           "nil requesting user",
+			loggingEnabled: false,
+			recorder:       &fakeTokenUsageRecorder{},
+			request: CompletionRequest{Context: &Context{
+				RequestingUser: nil,
+			}},
+			stream:      usageStream(),
+			wantRecords: 1,
+			wantRecord: &TokenUsageRecord{
+				UserID: "", IsGuest: false, IsBot: true, BotUserID: "", BotUsername: "fallback-bot",
+				Usage: TokenUsage{InputTokens: 12, OutputTokens: 8, Cost: 0.03},
+			},
+		},
+		{
+			name:           "nil context",
+			loggingEnabled: false,
+			recorder:       &fakeTokenUsageRecorder{},
+			request:        CompletionRequest{Context: nil},
+			stream:         usageStream(),
+			wantRecords:    1,
+			wantRecord: &TokenUsageRecord{
+				UserID: "", IsGuest: false, IsBot: true, BotUserID: "", BotUsername: "fallback-bot",
+				Usage: TokenUsage{InputTokens: 12, OutputTokens: 8, Cost: 0.03},
+			},
+		},
+		{
+			name:           "no usage events → recorder not called",
+			loggingEnabled: false,
+			recorder:       &fakeTokenUsageRecorder{},
+			request:        CompletionRequest{Context: &Context{}},
+			stream: makeStream(
+				TextStreamEvent{Type: EventTypeText, Value: "hello"},
+				TextStreamEvent{Type: EventTypeEnd, Value: nil},
+			),
+			wantRecords: 0,
+		},
+		{
+			name:            "nil recorder with logging disabled passes through untouched",
+			loggingEnabled:  false,
+			recorder:        nil,
+			request:         CompletionRequest{Context: &Context{}},
+			stream:          usageStream(),
+			wantPassthrough: true,
+			wantForwarded: []TextStreamEvent{
+				{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 10, OutputTokens: 5, Cost: 0.01}},
+				{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 2, OutputTokens: 3, Cost: 0.02}},
+				{Type: EventTypeEnd, Value: nil},
+			},
+			wantRecords:    0,
+			wantMetrics:    0,
+			wantPluginLogs: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockLLM := &MockLanguageModel{}
+			metrics := &observedMetrics{}
+			pluginLogger := &observedPluginLogger{}
+			sinks := makeTestTokenUsageSinks(tc.loggingEnabled, pluginLogger, nil)
+
+			var recorder TokenUsageRecorder
+			if tc.recorder != nil {
+				recorder = tc.recorder
+			}
+			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, metrics, recorder)
+
+			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(tc.stream, nil).Once()
+
+			result, err := wrapper.ChatCompletion(context.Background(), tc.request)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			forwarded := []TextStreamEvent{}
+			for event := range result.Stream {
+				forwarded = append(forwarded, event)
+			}
+
+			if tc.wantPassthrough {
+				assert.Equal(t, tc.wantForwarded, forwarded)
+				assert.Empty(t, metrics.Calls())
+				assert.Empty(t, pluginLogger.Entries())
+				return
+			}
+
+			require.Eventually(t, func() bool {
+				if tc.recorder == nil {
+					return true
+				}
+				return len(tc.recorder.Records()) == tc.wantRecords
+			}, time.Second, 10*time.Millisecond)
+
+			if tc.recorder != nil {
+				records := tc.recorder.Records()
+				require.Len(t, records, tc.wantRecords)
+				if tc.wantRecord != nil {
+					require.Len(t, records, 1)
+					got := records[0]
+					assert.Equal(t, tc.wantRecord.UserID, got.UserID)
+					assert.Equal(t, tc.wantRecord.IsGuest, got.IsGuest)
+					assert.Equal(t, tc.wantRecord.IsBot, got.IsBot)
+					assert.Equal(t, tc.wantRecord.BotUserID, got.BotUserID)
+					assert.Equal(t, tc.wantRecord.BotUsername, got.BotUsername)
+					assert.Equal(t, tc.wantRecord.Usage.InputTokens, got.Usage.InputTokens)
+					assert.Equal(t, tc.wantRecord.Usage.OutputTokens, got.Usage.OutputTokens)
+					assert.InDelta(t, tc.wantRecord.Usage.Cost, got.Usage.Cost, 1e-9)
+				}
+			}
+
+			assert.Len(t, metrics.Calls(), tc.wantMetrics)
+			assert.Len(t, pluginLogger.Entries(), tc.wantPluginLogs)
+			mockLLM.AssertExpectations(t)
+		})
+	}
 }

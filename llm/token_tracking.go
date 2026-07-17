@@ -28,15 +28,19 @@ type TokenUsageLoggingWrapper struct {
 	botUsername string
 	sinks       *TokenUsageSinks
 	metrics     MetricsObserver
+	recorder    TokenUsageRecorder
 }
 
 // NewTokenUsageLoggingWrapper creates a wrapper using a shared sink controller.
-func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, sinks *TokenUsageSinks, metrics MetricsObserver) *TokenUsageLoggingWrapper {
+// recorder may be nil; when non-nil it receives aggregated usage for every
+// stream regardless of EnableTokenUsageLogging.
+func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, sinks *TokenUsageSinks, metrics MetricsObserver, recorder TokenUsageRecorder) *TokenUsageLoggingWrapper {
 	return &TokenUsageLoggingWrapper{
 		wrapped:     wrapped,
 		botUsername: botUsername,
 		sinks:       sinks,
 		metrics:     metrics,
+		recorder:    recorder,
 	}
 }
 
@@ -75,7 +79,7 @@ func CreateTokenLogger() (*mlog.Logger, error) {
 
 // ChatCompletion intercepts the streaming response to extract and log token usage
 func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
-	if !w.shouldTrackTokenUsage() {
+	if w.recorder == nil && !w.shouldTrackTokenUsage() {
 		return w.wrapped.ChatCompletion(ctx, request, opts...)
 	}
 	if request.OperationSubType == "" {
@@ -90,6 +94,7 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 	interceptedStream := make(chan TextStreamEvent)
 	effectiveModel := extractRequestedModel(opts...)
 	dimensions := extractTokenUsageDimensions(request, w.botUsername, effectiveModel)
+	recordCtx := context.WithoutCancel(ctx)
 
 	go func() {
 		defer close(interceptedStream)
@@ -117,7 +122,7 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 		}
 
 		if hasUsage {
-			w.emitTokenUsage(dimensions, aggregateUsage)
+			w.emitTokenUsage(recordCtx, dimensions, aggregateUsage)
 		}
 	}()
 
@@ -136,9 +141,26 @@ type tokenUsageDimensions struct {
 	serviceType      string
 	operation        string
 	operationSubType string
+	isGuest          bool
+	isBot            bool
 }
 
-func (w *TokenUsageLoggingWrapper) emitTokenUsage(dimensions tokenUsageDimensions, usage TokenUsage) {
+func (w *TokenUsageLoggingWrapper) emitTokenUsage(ctx context.Context, dimensions tokenUsageDimensions, usage TokenUsage) {
+	if w.recorder != nil {
+		w.recorder.RecordTokenUsage(ctx, TokenUsageRecord{
+			UserID:      sentinelToEmpty(dimensions.userID),
+			IsGuest:     dimensions.isGuest,
+			IsBot:       dimensions.isBot,
+			BotUserID:   sentinelToEmpty(dimensions.botUserID),
+			BotUsername: dimensions.botUsername,
+			Usage:       usage,
+		})
+	}
+
+	if !w.shouldTrackTokenUsage() {
+		return
+	}
+
 	fields := buildTokenUsageLogKeyValuePairs(dimensions, usage)
 
 	if pluginLogger := w.sinks.PluginLogger(); pluginLogger != nil {
@@ -158,6 +180,15 @@ func (w *TokenUsageLoggingWrapper) emitTokenUsage(dimensions tokenUsageDimension
 			int64ToInt(usage.OutputTokens),
 		)
 	}
+}
+
+// sentinelToEmpty maps the "unknown" log sentinel back to the empty string for
+// DB persistence (the log sinks keep the sentinel).
+func sentinelToEmpty(value string) string {
+	if value == TokenUsageUnknown {
+		return ""
+	}
+	return value
 }
 
 func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage TokenUsage) []any {
@@ -213,6 +244,7 @@ func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername,
 		serviceType:      TokenUsageUnknown,
 		operation:        request.Operation,
 		operationSubType: request.OperationSubType,
+		isBot:            true,
 	}
 
 	if dimensions.botUsername == "" {
@@ -225,8 +257,12 @@ func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername,
 		dimensions.operationSubType = TokenUsageUnknown
 	}
 	if request.Context != nil {
-		if request.Context.RequestingUser != nil && request.Context.RequestingUser.Id != "" {
-			dimensions.userID = request.Context.RequestingUser.Id
+		if request.Context.RequestingUser != nil {
+			dimensions.isGuest = request.Context.RequestingUser.IsGuest()
+			dimensions.isBot = request.Context.RequestingUser.IsBot
+			if request.Context.RequestingUser.Id != "" {
+				dimensions.userID = request.Context.RequestingUser.Id
+			}
 		}
 
 		if request.Context.Team != nil && request.Context.Team.Id != "" {

@@ -56,6 +56,7 @@ type MMBots struct {
 	llmUpstreamHTTPClient  *http.Client
 	tokenUsageSinks        *llm.TokenUsageSinks
 	metrics                llm.MetricsObserver
+	usageRecorder          llm.TokenUsageRecorder
 
 	tokenSinksMu sync.Mutex
 	botsLock     sync.RWMutex
@@ -73,7 +74,7 @@ type MMBots struct {
 	forceRefresh bool
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver, usageRecorder llm.TokenUsageRecorder) *MMBots {
 	var pluginTokenLogger llm.TokenUsagePluginLogger
 	if pluginAPI != nil {
 		pluginTokenLogger = &pluginAPI.Log
@@ -88,6 +89,7 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
 		tokenUsageSinks:        llm.NewTokenUsageSinks(pluginTokenLogger),
 		metrics:                metrics,
+		usageRecorder:          usageRecorder,
 	}
 }
 
@@ -453,12 +455,13 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	// NOTE: This wrapper converts ChatCompletionNoStream into a streaming call
 	// internally, so any wrapper that needs to intercept ChatCompletionNoStream
 	// must be placed outside (after) this one.
-	if b.tokenUsageSinks != nil || b.metrics != nil {
+	if b.tokenUsageSinks != nil || b.metrics != nil || b.usageRecorder != nil {
 		result = llm.NewTokenUsageLoggingWrapper(
 			result,
 			botConfig.Name,
 			b.tokenUsageSinks,
 			b.metrics,
+			b.usageRecorder,
 		)
 	}
 

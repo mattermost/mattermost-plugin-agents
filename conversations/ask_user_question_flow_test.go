@@ -129,7 +129,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			mockAPI := &plugintest.API{}
 			pluginAPI := pluginapi.NewClient(mockAPI, nil)
 			licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil, nil)
 			lm := &loadedStateLLM{}
 			bot := loadedStateBot(lm)
 			botsService.SetBotsForTesting([]*bots.Bot{bot})
@@ -253,7 +253,7 @@ func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil, nil)
 	lm := &loadedStateLLM{}
 	bot := loadedStateBot(lm)
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
@@ -489,7 +489,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			mockAPI := &plugintest.API{}
 			pluginAPI := pluginapi.NewClient(mockAPI, nil)
 			licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil, nil)
 			lm := &loadedStateLLM{}
 			bot := loadedStateBot(lm)
 			botsService.SetBotsForTesting([]*bots.Bot{bot})

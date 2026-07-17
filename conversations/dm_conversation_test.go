@@ -394,7 +394,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
 	mockAPI.On("GetTeam", teamID).Return(&model.Team{Id: teamID, Name: "test"}, nil).Maybe()
 
-	botsService := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil, nil)
 
 	fLLM := newDMTestLLM(llmResponses...)
 

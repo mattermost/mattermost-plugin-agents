@@ -63,7 +63,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 	pluginClient := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginClient)
 
-	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, nil, &http.Client{}, nil)
+	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, nil, &http.Client{}, nil, nil)
 	bot := bots.NewBot(
 		botConfig,
 		llm.ServiceConfig{},

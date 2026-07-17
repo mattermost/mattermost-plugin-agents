@@ -72,7 +72,7 @@ func newTestMMBots(t *testing.T, cfg *mockConfig) *MMBots {
 	client := pluginapi.NewClient(mockAPI, nil)
 	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	return New(mockAPI, client, licenseChecker, cfg, nil, &http.Client{}, nil)
+	return New(mockAPI, client, licenseChecker, cfg, nil, &http.Client{}, nil, nil)
 }
 
 func loadTestService(raw json.RawMessage) llm.ServiceConfig {
@@ -803,7 +803,7 @@ func TestEnsureBots(t *testing.T) {
 				bots:     tc.cfgBots,
 				services: tc.cfgServices,
 			}
-			mmBots := New(mockAPI, client, licenseChecker, cfg, nil, &http.Client{}, nil)
+			mmBots := New(mockAPI, client, licenseChecker, cfg, nil, &http.Client{}, nil, nil)
 
 			defer mockAPI.AssertExpectations(t)
 
@@ -859,7 +859,7 @@ func TestSnapshotBotsAndServicesDoesNotMutateConfigBots(t *testing.T) {
 			{ID: "db-agent-1", Name: "dbagent1", DisplayName: "DB Agent 1", ServiceID: "svc1"},
 		},
 	}
-	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, agentStore, &http.Client{}, nil)
+	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, agentStore, &http.Client{}, nil, nil)
 
 	_, _, _, err := mmBots.snapshotBotsAndServices()
 	require.NoError(t, err)
@@ -912,7 +912,7 @@ func TestEnsureBotsRebuildsBotWhenServiceInputTokenLimitChanges(t *testing.T) {
 			{ID: "bot1", Name: "openai", DisplayName: "OpenAI", ServiceID: "svc1"},
 		},
 	}
-	mmBots := New(mockAPI, client, licenseChecker, cfg, agentStore, &http.Client{}, nil)
+	mmBots := New(mockAPI, client, licenseChecker, cfg, agentStore, &http.Client{}, nil, nil)
 
 	require.NoError(t, mmBots.EnsureBots())
 	bots := mmBots.GetAllBots()
@@ -995,7 +995,7 @@ func TestEnsureBotsRebuildsBotWhenFallbackServiceChanges(t *testing.T) {
 			{ID: "bot1", Name: "openai", DisplayName: "OpenAI", ServiceID: "svc1"},
 		},
 	}
-	mmBots := New(mockAPI, client, licenseChecker, cfg, agentStore, &http.Client{}, nil)
+	mmBots := New(mockAPI, client, licenseChecker, cfg, agentStore, &http.Client{}, nil, nil)
 
 	require.NoError(t, mmBots.EnsureBots())
 	bots := mmBots.GetAllBots()
@@ -1049,7 +1049,7 @@ func TestEnsureBotsFailsWhenListAgentsFails(t *testing.T) {
 			{ID: "service1", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
 		},
 	}
-	mmBots := New(mockAPI, client, licenseChecker, cfg, failingAgentStore{}, &http.Client{}, nil)
+	mmBots := New(mockAPI, client, licenseChecker, cfg, failingAgentStore{}, &http.Client{}, nil, nil)
 
 	defer mockAPI.AssertExpectations(t)
 
