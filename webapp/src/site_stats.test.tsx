@@ -98,7 +98,7 @@ describe('buildSiteStatsRows', () => {
         {
             key: 'agents_cost_30d',
             icon: 'fa-usd',
-            defaultMessage: 'Agents Est. Cost USD (30 Days)',
+            defaultMessage: 'Agents Cost USD (30 Days)',
             expectedValue: 12.35,
         },
     ])('count row $key', ({key, icon, defaultMessage, expectedValue}) => {

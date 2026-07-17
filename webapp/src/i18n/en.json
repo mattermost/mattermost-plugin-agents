@@ -283,7 +283,7 @@
   "agents.site_stats.active_users_60d": "Agents Users (Last 60 Days)",
   "agents.site_stats.active_users_7d": "Agents Users (Last 7 Days)",
   "agents.site_stats.active_users_90d": "Agents Users (Last 90 Days)",
-  "agents.site_stats.cost_30d": "Agents Est. Cost USD (30 Days)",
+  "agents.site_stats.cost_30d": "Agents Cost USD (30 Days)",
   "agents.site_stats.input_tokens": "Input tokens",
   "agents.site_stats.mau": "Agents Monthly Active Users",
   "agents.site_stats.mau_per_agent": "Monthly Active Users per Agent",

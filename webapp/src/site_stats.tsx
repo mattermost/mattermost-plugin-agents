@@ -17,7 +17,7 @@ const messages = defineMessages({
     activeUsers60d: {id: 'agents.site_stats.active_users_60d', defaultMessage: 'Agents Users (Last 60 Days)'},
     activeUsers90d: {id: 'agents.site_stats.active_users_90d', defaultMessage: 'Agents Users (Last 90 Days)'},
     tokens30d: {id: 'agents.site_stats.tokens_30d', defaultMessage: 'Agents Tokens (30 Days)'},
-    cost30d: {id: 'agents.site_stats.cost_30d', defaultMessage: 'Agents Est. Cost USD (30 Days)'},
+    cost30d: {id: 'agents.site_stats.cost_30d', defaultMessage: 'Agents Cost USD (30 Days)'},
     mauPerAgent: {id: 'agents.site_stats.mau_per_agent', defaultMessage: 'Monthly Active Users per Agent'},
     tokensPerDay: {id: 'agents.site_stats.tokens_per_day', defaultMessage: 'Agents Tokens per Day (Input vs. Output)'},
     inputTokens: {id: 'agents.site_stats.input_tokens', defaultMessage: 'Input tokens'},
