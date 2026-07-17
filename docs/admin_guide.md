@@ -744,6 +744,16 @@ Use **System Console > Plugins > Agents > Model Context Protocol (MCP)** to conf
 
 Configured agents can use these tools subject to their own MCP settings, admin tool policies, user permissions, and any required approval flow.
 
+##### Agent-to-agent delegation (`ask_agent`)
+
+The embedded server includes an `ask_agent` tool that lets one agent delegate a self-contained task to another agent on the user's behalf. The delegated work runs as the requesting user in a visible thread in their direct-message channel with the target agent; the target agent's final answer is returned to the delegating agent as the tool result, and the user can continue the conversation in that thread afterward.
+
+- `ask_agent` defaults to the **ask** approval policy, so the requesting user approves each delegation before it runs; admins can relax this from the MCP **Tools** tab like any other embedded tool.
+- Per-agent enablement follows the normal MCP allowlist rules on each agent's **MCPs** tab.
+- The target agent's own tools and approval policies apply inside the delegation thread, and only the requesting user can approve them. Users who cannot access the target agent (per that agent's **Access** tab) cannot delegate to it.
+- In channels, the delegated answer stays private to the requester until they explicitly share it, like any other tool result.
+- Delegated work is limited to one level: an agent working on a delegated task cannot delegate further.
+
 #### For External Clients
 
 You can enable external MCP clients, such as Claude web, Claude Code, or other MCP-compatible applications, to interact with your Mattermost instance. This HTTP server is separate from the always-on embedded MCP server used by Mattermost Agents.
