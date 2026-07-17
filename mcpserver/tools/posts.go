@@ -25,6 +25,8 @@ type CreatePostArgs struct {
 	TeamDisplayName    string   `json:"team_display_name" jsonschema:"The display name of the team (for context verification),minLength=1"`
 	Message            string   `json:"message" jsonschema:"The message content,minLength=1"`
 	RootID             string   `json:"root_id,omitempty" jsonschema:"Optional root post ID for replies,minLength=26,maxLength=26"`
+	Priority           string   `json:"priority,omitempty" jsonschema:"Optional message priority: 'important' or 'urgent'. Only allowed on new messages, not thread replies.,enum=important,enum=urgent"`
+	RequestAck         bool     `json:"request_ack,omitempty" jsonschema:"Request an acknowledgement from recipients (shown as a check button). Only allowed on new messages, not thread replies. Requires a licensed Mattermost server."`
 	Attachments        []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
 }
 
@@ -44,6 +46,8 @@ type DMArgs struct {
 	Username    string   `json:"username,omitempty" jsonschema:"Target username. If omitted the message is sent to yourself."`
 	Message     string   `json:"message" jsonschema:"The message content to send,minLength=1"`
 	RootID      string   `json:"root_id,omitempty" jsonschema:"Optional post ID to reply in an existing thread of this DM. Any post ID from the thread works; replies always land on the thread root.,maxLength=26"`
+	Priority    string   `json:"priority,omitempty" jsonschema:"Optional message priority: 'important' or 'urgent'. Only allowed on new messages, not thread replies.,enum=important,enum=urgent"`
+	RequestAck  bool     `json:"request_ack,omitempty" jsonschema:"Request an acknowledgement from the recipient (shown as a check button). Only allowed on new messages, not thread replies. Requires a licensed Mattermost server."`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
 }
 
@@ -52,6 +56,8 @@ type GroupMessageArgs struct {
 	Usernames   []string `json:"usernames" jsonschema:"Target usernames (must be at least 2)."`
 	Message     string   `json:"message" jsonschema:"The message content to send,minLength=1"`
 	RootID      string   `json:"root_id,omitempty" jsonschema:"Optional post ID to reply in an existing thread of this group conversation. Any post ID from the thread works; replies always land on the thread root.,maxLength=26"`
+	Priority    string   `json:"priority,omitempty" jsonschema:"Optional message priority: 'important' or 'urgent'. Only allowed on new messages, not thread replies.,enum=important,enum=urgent"`
+	RequestAck  bool     `json:"request_ack,omitempty" jsonschema:"Request an acknowledgement from recipients (shown as a check button). Only allowed on new messages, not thread replies. Requires a licensed Mattermost server."`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
 }
 
@@ -61,11 +67,11 @@ type GroupMessageArgs struct {
 const (
 	readPostDescription = "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}"
 
-	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. For DM and group conversations (which have no display name or team) pass channel_display_name 'Direct Message' or 'Group Message' and team_display_name 'N/A'. Parameters: channel_id (required), message (required), root_id (optional - for replies; any post ID from the thread works)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
+	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. For DM and group conversations (which have no display name or team) pass channel_display_name 'Direct Message' or 'Group Message' and team_display_name 'N/A'. Parameters: channel_id (required), message (required), root_id (optional - for replies; any post ID from the thread works), priority (optional - 'important' or 'urgent', new messages only), request_ack (optional)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
 
-	dmDescriptionFmt = "Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional), root_id (optional - to reply in an existing thread of the DM)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}"
+	dmDescriptionFmt = "Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional), root_id (optional - to reply in an existing thread of the DM), priority (optional - 'important' or 'urgent', new messages only), request_ack (optional)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}"
 
-	groupMessageDescriptionFmt = "Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required), root_id (optional - to reply in an existing thread)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}"
+	groupMessageDescriptionFmt = "Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required), root_id (optional - to reply in an existing thread), priority (optional - 'important' or 'urgent', new messages only), request_ack (optional)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}"
 )
 
 // getPostTools returns all post-related tools
@@ -313,6 +319,28 @@ func resolveThreadRoot(mcpContext *MCPToolContext, channelID, rootID string) (st
 	return rootPost.Id, nil
 }
 
+// applyPostPriority attaches priority metadata (a priority label and/or an
+// acknowledgement request) to a post about to be created. Mattermost only
+// supports priority on thread roots, so posts with a RootId are rejected.
+func applyPostPriority(post *model.Post, priority string, requestAck bool) error {
+	if priority == "" && !requestAck {
+		return nil
+	}
+	if priority != "" && priority != "important" && priority != model.PostPriorityUrgent {
+		return fmt.Errorf("priority must be 'important' or 'urgent', got %q", priority)
+	}
+	if post.RootId != "" {
+		return fmt.Errorf("message priority can only be set on a new message, not on a thread reply - retry without priority/request_ack or without root_id")
+	}
+	post.Metadata = &model.PostMetadata{
+		Priority: &model.PostPriority{
+			Priority:     model.NewPointer(priority),
+			RequestedAck: model.NewPointer(requestAck),
+		},
+	}
+	return nil
+}
+
 // toolCreatePost implements the create_post tool
 func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args CreatePostArgs) (string, error) {
 	// Validate required fields
@@ -395,6 +423,10 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		Message:   args.Message,
 		RootId:    rootID,
 		FileIds:   fileIDs,
+	}
+
+	if err := applyPostPriority(post, args.Priority, args.RequestAck); err != nil {
+		return "", err
 	}
 
 	p.stampAIGenerated(post, mcpContext, "")
@@ -525,6 +557,10 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		FileIds:   fileIDs,
 	}
 
+	if err := applyPostPriority(post, args.Priority, args.RequestAck); err != nil {
+		return "", err
+	}
+
 	// Set from_webhook only when DM'ing yourself (prevents AI auto-response loop)
 	if dmSelf {
 		post.AddProp("from_webhook", "true")
@@ -603,6 +639,10 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		Message:   args.Message,
 		RootId:    rootID,
 		FileIds:   fileIDs,
+	}
+
+	if err := applyPostPriority(post, args.Priority, args.RequestAck); err != nil {
+		return "", err
 	}
 
 	p.stampAIGenerated(post, mcpContext, currentUser.Id)

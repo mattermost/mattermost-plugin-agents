@@ -235,6 +235,79 @@ func TestResolveThreadRoot(t *testing.T) {
 	}
 }
 
+func TestApplyPostPriority(t *testing.T) {
+	tests := []struct {
+		name       string
+		post       *model.Post
+		priority   string
+		requestAck bool
+		wantErr    bool
+		wantMeta   bool
+	}{
+		{
+			name:     "no priority and no ack is a no-op",
+			post:     &model.Post{},
+			wantMeta: false,
+		},
+		{
+			name:     "important priority is applied",
+			post:     &model.Post{},
+			priority: "important",
+			wantMeta: true,
+		},
+		{
+			name:       "urgent with ack is applied",
+			post:       &model.Post{},
+			priority:   "urgent",
+			requestAck: true,
+			wantMeta:   true,
+		},
+		{
+			name:       "ack alone is applied",
+			post:       &model.Post{},
+			requestAck: true,
+			wantMeta:   true,
+		},
+		{
+			name:     "invalid priority value is rejected",
+			post:     &model.Post{},
+			priority: "critical",
+			wantErr:  true,
+		},
+		{
+			name:     "priority on a thread reply is rejected",
+			post:     &model.Post{RootId: model.NewId()},
+			priority: "important",
+			wantErr:  true,
+		},
+		{
+			name:       "ack on a thread reply is rejected",
+			post:       &model.Post{RootId: model.NewId()},
+			requestAck: true,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := applyPostPriority(tt.post, tt.priority, tt.requestAck)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			if !tt.wantMeta {
+				assert.Nil(t, tt.post.Metadata)
+				return
+			}
+			require.NotNil(t, tt.post.Metadata)
+			require.NotNil(t, tt.post.Metadata.Priority)
+			assert.Equal(t, tt.priority, *tt.post.Metadata.Priority.Priority)
+			assert.Equal(t, tt.requestAck, *tt.post.Metadata.Priority.RequestedAck)
+		})
+	}
+}
+
 func TestToolCreatePostChannelValidation(t *testing.T) {
 	teamID := model.NewId()
 
