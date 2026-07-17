@@ -25,21 +25,23 @@ func (a *API) handleGetDelegationStatus(c *gin.Context) {
 	parentToolCallID := c.Param("parenttoolcallid")
 
 	if a.delegationService == nil {
-		c.AbortWithError(http.StatusNotFound, errors.New("delegation service not available"))
+		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 
 	status, err := a.delegationService.StatusByParentToolCall(userID, parentToolCallID)
 	if err != nil {
 		if errors.Is(err, delegation.ErrNotConfigured) {
-			c.AbortWithError(http.StatusNotFound, err)
+			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 	if status == nil {
-		c.AbortWithError(http.StatusNotFound, errors.New("delegation not found"))
+		// Expected for expired records, foreign users, and quick reconcile
+		// races — not an error worth logging.
+		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 
