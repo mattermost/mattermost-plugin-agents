@@ -857,7 +857,8 @@ func TestTokenTrackingWrapper_StreamClosesBeforeRecorderFinishes(t *testing.T) {
 
 	drained := make(chan struct{})
 	go func() {
-		for range result.Stream {
+		for event := range result.Stream {
+			_ = event
 		}
 		close(drained)
 	}()
