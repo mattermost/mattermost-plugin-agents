@@ -71,13 +71,14 @@ type BotActiveUsers struct {
 
 // GetActiveUserCountPerBot returns per-bot distinct active users for Day >= since
 // (same human-user filter as GetActiveUserCount), ordered by ActiveUsers DESC, BotID ASC.
-// Empty BotID rows are intentionally included so the API/webapp can surface them as
-// an "Unknown agent" slice rather than dropping unattributed usage.
+// Rows with an empty BotID are excluded so the per-agent breakdown only includes
+// attributed agents (overall MAU still counts those users via GetActiveUserCount).
 func (s *Store) GetActiveUserCountPerBot(ctx context.Context, since time.Time) ([]BotActiveUsers, error) {
 	const query = `
 SELECT BotID AS botid, COUNT(DISTINCT UserID) AS activeusers
 FROM LLM_Usage_Daily
 WHERE Day >= $1 AND IsGuest = FALSE AND IsBot = FALSE AND UserID <> ''
+  AND BotID <> ''
 GROUP BY BotID
 ORDER BY activeusers DESC, botid ASC`
 	var rows []BotActiveUsers

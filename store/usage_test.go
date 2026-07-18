@@ -213,6 +213,18 @@ func TestGetActiveUserCountPerBot(t *testing.T) {
 			},
 		},
 		{
+			name: "empty BotID rows excluded from per-agent breakdown",
+			seed: []DailyUsageDelta{
+				{Day: day(2026, time.July, 10), UserID: "u1", BotID: "b1"},
+				{Day: day(2026, time.July, 10), UserID: "u2", BotID: ""},
+				{Day: day(2026, time.July, 10), UserID: "u3", BotID: ""},
+			},
+			since: day(2026, time.July, 10),
+			want: []BotActiveUsers{
+				{BotID: "b1", ActiveUsers: 1},
+			},
+		},
+		{
 			name:  "empty table returns empty non-nil slice",
 			seed:  nil,
 			since: day(2026, time.July, 10),
