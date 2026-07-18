@@ -824,3 +824,57 @@ func TestTokenTrackingWrapper_Recorder(t *testing.T) {
 		})
 	}
 }
+
+// blockingTokenUsageRecorder holds RecordTokenUsage until release is closed,
+// signaling via started when the call begins.
+type blockingTokenUsageRecorder struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingTokenUsageRecorder) RecordTokenUsage(_ context.Context, _ TokenUsageRecord) {
+	close(b.started)
+	<-b.release
+}
+
+func TestTokenTrackingWrapper_StreamClosesBeforeRecorderFinishes(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	recorder := &blockingTokenUsageRecorder{started: started, release: release}
+
+	mockLLM := &MockLanguageModel{}
+	sinks := makeTestTokenUsageSinks(false, &observedPluginLogger{}, nil)
+	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, nil, recorder)
+
+	stream := makeStream(
+		TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 1, OutputTokens: 1, Cost: 0.01}},
+		TextStreamEvent{Type: EventTypeEnd, Value: nil},
+	)
+	mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(stream, nil).Once()
+
+	result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{Context: &Context{}})
+	require.NoError(t, err)
+
+	drained := make(chan struct{})
+	go func() {
+		for range result.Stream {
+		}
+		close(drained)
+	}()
+
+	// Stream must end even while the recorder is still blocked on release.
+	select {
+	case <-drained:
+	case <-time.After(2 * time.Second):
+		t.Fatal("intercepted stream did not close while recorder was blocked")
+	}
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("recorder was never invoked")
+	}
+
+	close(release)
+	mockLLM.AssertExpectations(t)
+}

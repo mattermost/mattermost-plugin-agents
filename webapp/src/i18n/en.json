@@ -290,6 +290,7 @@
   "agents.site_stats.output_tokens": "Output tokens",
   "agents.site_stats.tokens_30d": "Agents Tokens (30 Days)",
   "agents.site_stats.tokens_per_day": "Agents Tokens per Day (Input vs. Output)",
+  "agents.site_stats.unknown_agent": "Unknown agent",
   "ah95aAGi": "Action Title",
   "ai.question.accept": "Accept",
   "ai.question.answered": "Answered",

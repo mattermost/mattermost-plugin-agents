@@ -56,12 +56,6 @@ type DailyTokenCount struct {
 	TotalTokens  int64  `json:"total_tokens"`
 }
 
-// unknownAgentDisplayName labels usage rows recorded with an empty BotID.
-// English-only server-side constant per master plan §2.4: the plugin's Go i18n
-// bundle is hand-curated and this admin endpoint has no request-locale plumbing;
-// do NOT add it to i18n/en.json in this phase.
-const unknownAgentDisplayName = "Unknown agent"
-
 const usageStatsWindowDaysMAU = 30 // also used for tokens/cost/series windows
 
 // utcDayStart returns midnight UTC of now's UTC calendar date.
@@ -103,9 +97,10 @@ func zeroFillDailyTokens(now time.Time, days int, rows []store.DailyTokens) []Da
 // resolveAgentDisplayName resolves a bot user ID to a human-readable agent name.
 // Fallback order: live bot registry, Mattermost user record (bots that were
 // deleted from plugin config still have a user), raw bot ID.
+// Empty BotID returns "" so the webapp can localize the visible fallback.
 func (a *API) resolveAgentDisplayName(botID string) string {
 	if botID == "" {
-		return unknownAgentDisplayName
+		return ""
 	}
 	if bot := a.bots.GetBotByID(botID); bot != nil {
 		if mmBot := bot.GetMMBot(); mmBot != nil {

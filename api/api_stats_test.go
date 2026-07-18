@@ -289,7 +289,7 @@ func TestHandleGetUsageStats(t *testing.T) {
 				assert.Equal(t, "Matty", resp.ActiveUsersPerAgent[0].DisplayName)
 				assert.Equal(t, "Old Bot", resp.ActiveUsersPerAgent[1].DisplayName)
 				assert.Equal(t, testNonexistentBot, resp.ActiveUsersPerAgent[2].DisplayName)
-				assert.Equal(t, unknownAgentDisplayName, resp.ActiveUsersPerAgent[3].DisplayName)
+				assert.Equal(t, "", resp.ActiveUsersPerAgent[3].DisplayName)
 			},
 		},
 		{

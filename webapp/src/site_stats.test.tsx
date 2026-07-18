@@ -138,6 +138,18 @@ describe('buildSiteStatsRows', () => {
         expect(value.datasets[0].hoverBackgroundColor).toEqual(['#5AD3D1', '#FFC870']);
     });
 
+    test('doughnut localizes empty display_name as Unknown agent', () => {
+        const doughnut = buildSiteStatsRows(makeStats({
+            active_users_per_agent: [
+                {bot_id: '', display_name: '', active_users: 1},
+                {bot_id: 'bot1', display_name: 'Matty', active_users: 12},
+            ],
+        }), intl).agents_mau_per_agent;
+        const value = doughnut.value as {labels: string[]; datasets: Array<{data: number[]}>};
+        expect(value.labels).toEqual(['Unknown agent', 'Matty']);
+        expect(value.datasets[0].data).toEqual([1, 12]);
+    });
+
     test('doughnut palette cycles when there are more agents than colors', () => {
         const manyAgents = Array.from({length: 10}, (_, i) => ({
             bot_id: `bot${i}`,

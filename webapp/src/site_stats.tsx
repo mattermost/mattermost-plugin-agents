@@ -22,6 +22,7 @@ const messages = defineMessages({
     tokensPerDay: {id: 'agents.site_stats.tokens_per_day', defaultMessage: 'Agents Tokens per Day (Input vs. Output)'},
     inputTokens: {id: 'agents.site_stats.input_tokens', defaultMessage: 'Input tokens'},
     outputTokens: {id: 'agents.site_stats.output_tokens', defaultMessage: 'Output tokens'},
+    unknownAgent: {id: 'agents.site_stats.unknown_agent', defaultMessage: 'Unknown agent'},
 });
 
 const doughnutBackground = ['#46BFBD', '#FDB45C', '#F7464A', '#3CB470', '#502D86', '#949FB1', '#36A2EB', '#4D5360'];
@@ -79,7 +80,7 @@ export function buildSiteStatsRows(stats: UsageStatsResponse, intl: IntlShape): 
             id: 'agents_mau_per_agent',
             name: <FormattedMessage {...messages.mauPerAgent}/>,
             value: {
-                labels: perAgent.map((a) => a.display_name),
+                labels: perAgent.map((a) => a.display_name || intl.formatMessage(messages.unknownAgent)),
                 datasets: [{
                     data: perAgent.map((a) => a.active_users),
                     backgroundColor: perAgent.map((_, i) => doughnutBackground[i % doughnutBackground.length]),
@@ -119,11 +120,20 @@ export function buildSiteStatsRows(stats: UsageStatsResponse, intl: IntlShape): 
     };
 }
 
-type WebappStore = Store<GlobalState, UnknownAction>;
+// Published GlobalState omits entities.i18n; Mattermost webapp still provides it.
+type GlobalStateWithI18n = GlobalState & {
+    entities: GlobalState['entities'] & {
+        i18n?: {
+            locale?: string;
+        };
+    };
+};
+
+type WebappStore = Store<GlobalStateWithI18n, UnknownAction>;
 
 function getSiteStatsIntl(store: WebappStore): IntlShape {
-    const state = store.getState() as any;
-    const locale = state.entities?.i18n?.locale ?? 'en';
+    const state = store.getState();
+    const locale = state.entities.i18n?.locale ?? 'en';
     let msgs: Record<string, string>;
     try {
         // eslint-disable-next-line global-require, import/no-dynamic-require

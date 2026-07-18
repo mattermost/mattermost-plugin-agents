@@ -165,6 +165,6 @@ test.describe.serial('Agents usage statistics', () => {
         await expect(page.getByTestId('mattermost-ai.agents_tokens_30dTitle')).toBeVisible();
 
         await expect(page.getByText('Monthly Active Users per Agent')).toBeVisible();
-        await expect(page.getByText('Agents Tokens per Day (Last 30 Days)')).toBeVisible();
+        await expect(page.getByText('Agents Tokens per Day (Input vs. Output)')).toBeVisible();
     });
 });

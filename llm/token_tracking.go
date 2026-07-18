@@ -97,8 +97,6 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 	recordCtx := context.WithoutCancel(ctx)
 
 	go func() {
-		defer close(interceptedStream)
-
 		var aggregateUsage TokenUsage
 		hasUsage := false
 
@@ -120,6 +118,10 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 			}
 			interceptedStream <- event
 		}
+
+		// Close before persistence so a slow/hung IncrementDailyUsage cannot
+		// block range-based consumers waiting for stream end.
+		close(interceptedStream)
 
 		if hasUsage {
 			w.emitTokenUsage(recordCtx, dimensions, aggregateUsage)
