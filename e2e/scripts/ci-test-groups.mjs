@@ -24,7 +24,7 @@ const groups = {
         'tests/meeting-summary/summary-persistence.spec.ts',
         'tests/channel-analysis/backend-verification/real-api.spec.ts',
         'tests/system-console/live-service-full-flow.spec.ts',
-        'tests/system-console/usage-statistics.spec.ts',
+        'tests/system-console/usage_statistics.spec.ts',
         'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
     ],
     'e2e-shard-2': [
