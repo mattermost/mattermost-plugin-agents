@@ -172,6 +172,15 @@ func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *b
 
 	bridgeContext := llm.NewContext()
 	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
+	// Populate bot identity so token/usage tracking records the agent path
+	// parameter (bot user ID) instead of an empty BotID.
+	if bot != nil {
+		var botUserID string
+		if mmBot := bot.GetMMBot(); mmBot != nil {
+			botUserID = mmBot.UserId
+		}
+		bridgeContext.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+	}
 	if includeTools && a.contextBuilder != nil {
 		a.contextBuilder.WithLLMContextConcreteTools(ctx, bot)(bridgeContext)
 	}
