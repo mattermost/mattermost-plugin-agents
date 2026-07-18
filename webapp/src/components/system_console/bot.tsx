@@ -148,6 +148,19 @@ type ModelInfo = {
     displayName: string
 }
 
+function serviceSupportsNativeTools(service?: LLMService): boolean {
+    if (!service) {
+        return false;
+    }
+    if (service.type === 'openai' || service.type === 'anthropic' || service.type === 'gemini' || service.type === 'vertex') {
+        return true;
+    }
+    if (service.type === 'openaicompatible' || service.type === 'azure') {
+        return service.useResponsesAPI;
+    }
+    return false;
+}
+
 const Bot = (props: Props) => {
     const [open, setOpen] = useState(false);
     const intl = useIntl();
@@ -161,6 +174,8 @@ const Bot = (props: Props) => {
 
     // Find the selected service
     const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
+    const supportsNativeTools = serviceSupportsNativeTools(selectedService);
+    const enabledNativeToolsLength = (props.bot.enabledNativeTools || []).length;
     const supportsModelFetching = selectedService &&
         (selectedService.type === 'anthropic' ||
          selectedService.type === 'openai' ||
@@ -168,6 +183,12 @@ const Bot = (props: Props) => {
          selectedService.type === 'openaicompatible' ||
          selectedService.type === 'gemini' ||
          selectedService.type === 'vertex');
+
+    useEffect(() => {
+        if (selectedService && !supportsNativeTools && enabledNativeToolsLength > 0) {
+            props.onChange({...props.bot, enabledNativeTools: []});
+        }
+    }, [enabledNativeToolsLength, props.bot, props.onChange, selectedService, supportsNativeTools]);
 
     // Fetch models when the service changes
     useEffect(() => {

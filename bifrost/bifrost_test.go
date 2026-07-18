@@ -538,21 +538,29 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 		expected           bool
 	}{
 		{
-			name:               "native tools configured returns true",
+			name:               "OpenAI native tools require Responses API service flag",
 			provider:           schemas.OpenAI,
+			enabledNativeTools: []string{"web_search"},
+			expected:           false,
+		},
+		{
+			name:               "OpenAI native tools with Responses API service flag returns true",
+			provider:           schemas.OpenAI,
+			useResponsesAPI:    true,
 			enabledNativeTools: []string{"web_search"},
 			expected:           true,
 		},
 		{
-			name:               "NativeWebSearchAllowed with web_search enabled returns true",
+			name:               "OpenAI NativeWebSearchAllowed requires Responses API service flag",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
-			expected:           true,
+			expected:           false,
 		},
 		{
-			name:               "NativeWebSearchAllowed without web_search in tools returns true",
+			name:               "OpenAI NativeWebSearchAllowed with Responses API service flag returns true",
 			provider:           schemas.OpenAI,
+			useResponsesAPI:    true,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
 			expected:           true,

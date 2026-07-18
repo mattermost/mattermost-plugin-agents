@@ -52,6 +52,9 @@ func (b *Bot) HasNativeWebSearchEnabled() bool {
 	if !bifrost.SupportsNativeTools(b.service.Type) {
 		return false
 	}
+	if !llm.ServiceUsesResponsesAPI(b.service) && (b.service.Type == llm.ServiceTypeOpenAICompatible || b.service.Type == llm.ServiceTypeAzure) {
+		return false
+	}
 	for _, tool := range b.cfg.EnabledNativeTools {
 		if tool == "web_search" {
 			return true

@@ -64,6 +64,53 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 	}
 }
 
+func TestNativeToolsForService(t *testing.T) {
+	tools := []string{"web_search"}
+
+	tests := []struct {
+		name string
+		svc  llm.ServiceConfig
+		want []string
+	}{
+		{
+			name: "OpenAI compatible without Responses API drops stale native tools",
+			svc:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAICompatible, UseResponsesAPI: false},
+			want: []string{},
+		},
+		{
+			name: "OpenAI compatible with Responses API keeps native tools",
+			svc:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAICompatible, UseResponsesAPI: true},
+			want: tools,
+		},
+		{
+			name: "Azure without Responses API drops stale native tools",
+			svc:  llm.ServiceConfig{Type: llm.ServiceTypeAzure, UseResponsesAPI: false},
+			want: []string{},
+		},
+		{
+			name: "OpenAI direct keeps native tools",
+			svc:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI, UseResponsesAPI: false},
+			want: tools,
+		},
+		{
+			name: "Anthropic keeps native tools",
+			svc:  llm.ServiceConfig{Type: llm.ServiceTypeAnthropic, UseResponsesAPI: false},
+			want: tools,
+		},
+		{
+			name: "unsupported service drops native tools",
+			svc:  llm.ServiceConfig{Type: llm.ServiceTypeCohere, UseResponsesAPI: true},
+			want: []string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nativeToolsForService(tt.svc, tools)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestNewFromServiceConfigOpenAIForcesResponsesAPI(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -95,6 +142,25 @@ func TestNewFromServiceConfigOpenAIForcesResponsesAPI(t *testing.T) {
 			assert.Equal(t, tt.wantUseResponsesAPI, llmInstance.useResponsesAPI)
 		})
 	}
+}
+
+func TestNewFromServiceConfigFiltersNativeToolsWhenResponsesAPIDisabled(t *testing.T) {
+	service := llm.ServiceConfig{
+		ID:              "test",
+		Type:            llm.ServiceTypeOpenAICompatible,
+		APIKey:          "key",
+		APIURL:          "http://localhost",
+		UseResponsesAPI: false,
+	}
+	bot := llm.BotConfig{
+		EnabledNativeTools: []string{"web_search"},
+	}
+
+	llmInstance, err := NewFromServiceConfig(service, bot, nil)
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	assert.Empty(t, llmInstance.enabledNativeTools)
 }
 
 // TestNewFromServiceConfigPropagatesInputTokenLimit pins the contract that a

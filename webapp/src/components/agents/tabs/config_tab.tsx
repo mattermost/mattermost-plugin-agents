@@ -42,6 +42,23 @@ type Props = {
 const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'];
 const openAIStructuredOutputServiceTypes = ['openai', 'openaicompatible', 'azure'];
 
+function serviceSupportsNativeTools(service?: Pick<ServiceInfo, 'type' | 'useResponsesAPI'>): boolean {
+    if (!service) {
+        return false;
+    }
+    if (service.type === 'openai' || service.type === 'anthropic' || service.type === 'gemini' || service.type === 'vertex') {
+        return true;
+    }
+    if (service.type === 'openaicompatible' || service.type === 'azure') {
+        return service.useResponsesAPI;
+    }
+    return false;
+}
+
+function defaultNativeToolsForService(service?: Pick<ServiceInfo, 'type' | 'useResponsesAPI'>): string[] {
+    return serviceSupportsNativeTools(service) ? ['web_search'] : [];
+}
+
 const ConfigTab = (props: Props) => {
     const {draft, onChange, onAvatarChange, services, errors = {}, usernameLocked = false} = props;
     const intl = useIntl();
@@ -74,7 +91,7 @@ const ConfigTab = (props: Props) => {
                 ...(sameServiceType ?
                     {} :
                     {
-                        enabledNativeTools: ['web_search'],
+                        enabledNativeTools: defaultNativeToolsForService(nextSvc),
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
@@ -86,6 +103,13 @@ const ConfigTab = (props: Props) => {
     }, [draft.serviceId, onChange, services]);
 
     const selectedService = services.find((s) => s.id === draft.serviceId);
+    const supportsNativeTools = serviceSupportsNativeTools(selectedService);
+
+    useEffect(() => {
+        if (selectedService && !supportsNativeTools && draft.enabledNativeTools.length > 0) {
+            onChange({enabledNativeTools: []});
+        }
+    }, [draft.enabledNativeTools.length, onChange, selectedService, supportsNativeTools]);
 
     const supportsModelFetching = Boolean(selectedService &&
         (selectedService.type === 'anthropic' ||

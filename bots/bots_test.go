@@ -1079,3 +1079,25 @@ func TestHasNativeWebSearchEnabledSupportedServiceType(t *testing.T) {
 	)
 	require.True(t, b.HasNativeWebSearchEnabled())
 }
+
+func TestHasNativeWebSearchEnabledOpenAICompatibleRequiresResponsesAPI(t *testing.T) {
+	tests := []struct {
+		name            string
+		useResponsesAPI bool
+		want            bool
+	}{
+		{name: "disabled", useResponsesAPI: false, want: false},
+		{name: "enabled", useResponsesAPI: true, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBot(
+				llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+				llm.ServiceConfig{Type: llm.ServiceTypeOpenAICompatible, UseResponsesAPI: tt.useResponsesAPI},
+				&model.Bot{UserId: "b1"},
+				nil,
+			)
+			require.Equal(t, tt.want, b.HasNativeWebSearchEnabled())
+		})
+	}
+}

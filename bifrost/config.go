@@ -78,6 +78,27 @@ func filterNativeToolsForServiceType(serviceType string, tools []string) []strin
 	return filtered
 }
 
+func serviceAllowsNativeTools(svc llm.ServiceConfig) bool {
+	switch svc.Type {
+	case llm.ServiceTypeOpenAI, llm.ServiceTypeAnthropic, llm.ServiceTypeGemini, llm.ServiceTypeVertex:
+		return true
+	case llm.ServiceTypeOpenAICompatible, llm.ServiceTypeAzure:
+		return llm.ServiceUsesResponsesAPI(svc)
+	default:
+		return false
+	}
+}
+
+func nativeToolsForService(svc llm.ServiceConfig, tools []string) []string {
+	if len(tools) == 0 {
+		return tools
+	}
+	if !serviceAllowsNativeTools(svc) {
+		return []string{}
+	}
+	return filterNativeToolsForServiceType(svc.Type, tools)
+}
+
 // NewFromServiceConfig creates a LLM instance from ServiceConfig and BotConfig.
 // fallbackServices is an ordered slice of fallback services resolved from the
 // primary service's fallback chain (see llm.ResolveFallbackChain). Each fallback
@@ -105,7 +126,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		UseResponsesAPI:  llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration
-		EnabledNativeTools: filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools),
+		EnabledNativeTools: nativeToolsForService(serviceConfig, botConfig.EnabledNativeTools),
 		ReasoningEnabled:   botConfig.ReasoningEnabled,
 		ReasoningEffort:    botConfig.ReasoningEffort,
 		ThinkingBudget:     botConfig.ThinkingBudget,

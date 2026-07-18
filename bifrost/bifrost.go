@@ -1585,10 +1585,24 @@ func (b *LLM) providerSupportsNativeTools() bool {
 	return supportsNativeToolsProvider(b.provider)
 }
 
+func (b *LLM) providerCanAutoUseResponsesAPI() bool {
+	switch b.provider {
+	case schemas.OpenAI, schemas.Azure:
+		// Direct OpenAI always sets useResponsesAPI. OpenAI-compatible and Azure
+		// services must not have native tools silently override their service toggle.
+		return b.useResponsesAPI
+	default:
+		return true
+	}
+}
+
 // shouldUseResponsesAPI determines if the Responses API should be used for this request.
 func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.useResponsesAPI {
 		return true
+	}
+	if !b.providerCanAutoUseResponsesAPI() {
+		return false
 	}
 	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
