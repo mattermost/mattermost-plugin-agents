@@ -784,8 +784,21 @@ func TestEnsureBots(t *testing.T) {
 			mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
 			if tc.numCreatedBots > 0 {
 				mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot {
-					if len(tc.cfgServices) > 0 && tc.cfgServices[0].DefaultModel != "" {
-						assert.Equal(t, poweredByDescription(tc.cfgServices[0].Type, tc.cfgServices[0].DefaultModel), bot.Description)
+					for _, botCfg := range tc.cfgBots {
+						if botCfg.Name != bot.Username {
+							continue
+						}
+						for _, svc := range tc.cfgServices {
+							if svc.ID != botCfg.ServiceID {
+								continue
+							}
+							model := botCfg.Model
+							if model == "" {
+								model = svc.DefaultModel
+							}
+							assert.Equal(t, poweredByDescription(svc.Type, model), bot.Description)
+							return bot
+						}
 					}
 					return bot
 				}, nil).Times(tc.numCreatedBots)
