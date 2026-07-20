@@ -853,6 +853,15 @@ func TestBotDescription(t *testing.T) {
 			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI},
 			expected: "Powered by openai",
 		},
+		{
+			name: "oversized description is truncated to the bot description limit",
+			service: llm.ServiceConfig{
+				Name:         strings.Repeat("n", model.BotDescriptionMaxRunes),
+				Type:         llm.ServiceTypeOpenAI,
+				DefaultModel: "gpt-4o",
+			},
+			expected: "Powered by " + strings.Repeat("n", model.BotDescriptionMaxRunes-12) + "…",
+		},
 	}
 
 	for _, tc := range testCases {

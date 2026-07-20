@@ -438,6 +438,12 @@ func botDescription(service llm.ServiceConfig) string {
 	if service.DefaultModel != "" {
 		description += " (" + service.DefaultModel + ")"
 	}
+	// Nothing bounds service names or model identifiers in config, but
+	// Mattermost rejects bot descriptions longer than BotDescriptionMaxRunes.
+	// Truncate so CreateBot/PatchBot can't fail on an oversized description.
+	if runes := []rune(description); len(runes) > model.BotDescriptionMaxRunes {
+		description = string(runes[:model.BotDescriptionMaxRunes-1]) + "…"
+	}
 	return description
 }
 
