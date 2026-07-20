@@ -90,7 +90,7 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 		dimensions:      config.Dimensions,
 		skipVectorIndex: config.SkipVectorIndex,
 	}
-	if err := pv.ensureSchema(context.Background(), !config.SkipVectorIndex); err != nil {
+	if err := pv.ensureSchema(context.Background(), !config.SkipVectorIndex, pv.db); err != nil {
 		return nil, err
 	}
 
@@ -114,9 +114,13 @@ func createEmbeddingsTableQuery(dimensions int) string {
 		)`
 }
 
+type execContexter interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
 // ensureSchema creates the embeddings table and supporting indexes when missing.
-func (pv *PGVector) ensureSchema(ctx context.Context, withVectorIndex bool) error {
-	if _, err := pv.db.ExecContext(ctx, createEmbeddingsTableQuery(pv.dimensions)); err != nil {
+func (pv *PGVector) ensureSchema(ctx context.Context, withVectorIndex bool, ex execContexter) error {
+	if _, err := ex.ExecContext(ctx, createEmbeddingsTableQuery(pv.dimensions)); err != nil {
 		return fmt.Errorf("failed to create llm_posts_embeddings table: %w", err)
 	}
 
@@ -129,7 +133,7 @@ func (pv *PGVector) ensureSchema(ctx context.Context, withVectorIndex bool) erro
 	}
 
 	for _, query := range queries {
-		if _, err := pv.db.ExecContext(ctx, query); err != nil {
+		if _, err := ex.ExecContext(ctx, query); err != nil {
 			return fmt.Errorf("failed to create index: %w", err)
 		}
 	}
@@ -456,7 +460,7 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 
 	// Missing table: create at configured dimensions.
 	if tableDims == 0 {
-		return pv.ensureSchema(ctx, !pv.skipVectorIndex)
+		return pv.ensureSchema(ctx, !pv.skipVectorIndex, pv.db)
 	}
 
 	// Same dimensions: truncate keeps typmod and any existing ANN index.
@@ -473,10 +477,23 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := pv.db.ExecContext(ctx, "DROP TABLE IF EXISTS llm_posts_embeddings CASCADE"); err != nil {
+
+	tx, err := pv.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction for dimension change: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS llm_posts_embeddings"); err != nil {
 		return fmt.Errorf("failed to drop embeddings table for dimension change: %w", err)
 	}
-	return pv.ensureSchema(ctx, hadVectorIndex && !pv.skipVectorIndex)
+	if err := pv.ensureSchema(ctx, hadVectorIndex && !pv.skipVectorIndex, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit dimension change: %w", err)
+	}
+	return nil
 }
 
 // PrepareBulkIndex drops the ANN index for bulk load. Keeps post_id B-tree
