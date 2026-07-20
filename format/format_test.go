@@ -748,3 +748,38 @@ func TestWriteScheduledPost(t *testing.T) {
 	assert.Contains(t, out, "Scheduled for: 2023-11-14T22:13:20Z")
 	assert.Contains(t, out, "Message: scheduled hello")
 }
+
+func TestUnixMillisUTC(t *testing.T) {
+	testCases := []struct {
+		name     string
+		ms       int64
+		expected string
+	}{
+		{
+			name:     "known millis fixture",
+			ms:       1710878490000,
+			expected: "2024-03-19T20:01:30Z",
+		},
+		{
+			name:     "nonzero subsecond millis",
+			ms:       1710878492000,
+			expected: "2024-03-19T20:01:32Z",
+		},
+		{
+			name:     "scheduled post fixture",
+			ms:       1700000000000,
+			expected: "2023-11-14T22:13:20Z",
+		},
+		{
+			name:     "zero",
+			ms:       0,
+			expected: "1970-01-01T00:00:00Z",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, UnixMillisUTC(tc.ms))
+		})
+	}
+}
