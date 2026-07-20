@@ -48,8 +48,7 @@ func ThreadData(data *mmapi.ThreadData) string {
 			username = user.Username
 		}
 		if post.CreateAt > 0 {
-			t := time.Unix(post.CreateAt/1000, (post.CreateAt%1000)*int64(time.Millisecond))
-			result += fmt.Sprintf("%s (%s): %s\n\n", username, t.UTC().Format(time.RFC3339), PostBody(post))
+			result += fmt.Sprintf("%s (%s): %s\n\n", username, UnixMillisUTC(post.CreateAt), PostBody(post))
 		} else {
 			result += fmt.Sprintf("%s: %s\n\n", username, PostBody(post))
 		}
@@ -165,8 +164,7 @@ func WritePost(w *strings.Builder, entry PostEntry) {
 
 	// Timestamp (only when available)
 	if entry.Post.CreateAt > 0 {
-		t := time.Unix(entry.Post.CreateAt/1000, (entry.Post.CreateAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Time: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Time: %s\n", UnixMillisUTC(entry.Post.CreateAt))
 	}
 
 	fmt.Fprintf(w, "Message: %s\n\n", PostBody(entry.Post))
@@ -221,8 +219,7 @@ func WriteScheduledPost(w *strings.Builder, entry ScheduledPostEntry) {
 		fmt.Fprintf(w, "Root ID: %s\n", sp.RootId)
 	}
 	if sp.ScheduledAt > 0 {
-		t := time.Unix(sp.ScheduledAt/1000, (sp.ScheduledAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Scheduled for: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Scheduled for: %s\n", UnixMillisUTC(sp.ScheduledAt))
 	}
 	if sp.ErrorCode != "" {
 		fmt.Fprintf(w, "Error: %s\n", sp.ErrorCode)
@@ -312,8 +309,7 @@ func WriteThreadSummary(w *strings.Builder, entry ThreadSummaryEntry) {
 	fmt.Fprintf(w, "Root Post ID: %s\n", tr.PostId)
 	fmt.Fprintf(w, "Replies: %d (unread: %d, unread mentions: %d)\n", tr.ReplyCount, tr.UnreadReplies, tr.UnreadMentions)
 	if tr.LastReplyAt > 0 {
-		t := time.Unix(tr.LastReplyAt/1000, (tr.LastReplyAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Last reply: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Last reply: %s\n", UnixMillisUTC(tr.LastReplyAt))
 	}
 	if tr.Post != nil {
 		username := entry.Username
@@ -359,8 +355,7 @@ func WriteChannelMember(w *strings.Builder, entry ChannelMemberEntry) {
 	muted := m.NotifyProps != nil && m.NotifyProps[model.MarkUnreadNotifyProp] == model.ChannelMarkUnreadMention
 	fmt.Fprintf(w, "Muted: %t\n", muted)
 	if m.LastViewedAt > 0 {
-		t := time.Unix(m.LastViewedAt/1000, (m.LastViewedAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Last viewed: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Last viewed: %s\n", UnixMillisUTC(m.LastViewedAt))
 	}
 	w.WriteString("\n")
 }
@@ -749,8 +744,7 @@ func WriteChannel(w *strings.Builder, entry ChannelEntry) {
 	}
 
 	if entry.Channel.CreateAt > 0 {
-		t := time.Unix(entry.Channel.CreateAt/1000, (entry.Channel.CreateAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Created: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Created: %s\n", UnixMillisUTC(entry.Channel.CreateAt))
 	}
 
 	if entry.MemberCount >= 0 {
@@ -783,8 +777,7 @@ func WriteTeam(w *strings.Builder, entry TeamEntry) {
 	}
 
 	if entry.Team.CreateAt > 0 {
-		t := time.Unix(entry.Team.CreateAt/1000, (entry.Team.CreateAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Created: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Created: %s\n", UnixMillisUTC(entry.Team.CreateAt))
 	}
 
 	if entry.MemberCount >= 0 {
