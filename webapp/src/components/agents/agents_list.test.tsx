@@ -52,8 +52,11 @@ jest.mock('@/utils/permissions', () => ({
 
 jest.mock('./agent_row', () => ({
     __esModule: true,
-    default: ({agent, onDelete}: {agent: UserAgent; onDelete: (agent: UserAgent) => void}) => (
-        <div data-testid='agent-row'>
+    default: ({agent, servicesLoaded, onDelete}: {agent: UserAgent; servicesLoaded: boolean; onDelete: (agent: UserAgent) => void}) => (
+        <div
+            data-testid='agent-row'
+            data-services-loaded={String(servicesLoaded)}
+        >
             {agent.displayName}
             <button
                 type='button'
@@ -181,6 +184,53 @@ describe('AgentsList create-button gating', () => {
         const button = screen.getByRole('button', {name: 'Create agent'});
         expect((button as HTMLButtonElement).disabled).toBe(false);
         expect(screen.queryByText(tooltipText)).toBeNull();
+    });
+});
+
+describe('AgentsList services loading', () => {
+    test('does not request services for users without agent-management permission', async () => {
+        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+        mockUserHasSystemPermission.mockReturnValue(false);
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
+
+        renderList();
+
+        await screen.findByText('Agent a1');
+        expect(mockGetServices).not.toHaveBeenCalled();
+        expect(screen.queryByText('Failed to load AI services. Using the last loaded list.')).toBeNull();
+
+        // The row must be told the services list is unknown so it never renders
+        // a "Service unavailable" badge for these users.
+        expect(screen.getByTestId('agent-row').getAttribute('data-services-loaded')).toBe('false');
+    });
+
+    test('loads services and shows no warning for a permitted user', async () => {
+        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+
+        // beforeEach grants manage_own_agent, so /services is requested.
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
+        mockGetServices.mockResolvedValue([
+            {id: 'svc-1', name: 'Svc', type: 'openai', defaultModel: 'gpt-4', outputTokenLimit: 0, useResponsesAPI: false},
+        ]);
+
+        renderList();
+
+        await screen.findByText('Agent a1');
+        await waitFor(() => expect(screen.getByTestId('agent-row').getAttribute('data-services-loaded')).toBe('true'));
+        expect(screen.queryByText('Failed to load AI services. Using the last loaded list.')).toBeNull();
+    });
+
+    test('warns when a permitted user cannot load services', async () => {
+        mockUseIsMultiLLMLicensed.mockReturnValue(false);
+
+        // beforeEach grants manage_own_agent, so /services is requested.
+        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1});
+        mockGetServices.mockRejectedValue(new Error('forbidden'));
+
+        renderList();
+
+        await screen.findByText('Failed to load AI services. Using the last loaded list.');
+        expect(mockGetServices).toHaveBeenCalled();
     });
 });
 

@@ -20,6 +20,9 @@ type ReadChannelArgs struct {
 	ChannelID string `json:"channel_id" jsonschema:"The ID of the channel to read from,minLength=26,maxLength=26"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"Number of posts to retrieve (default: 20, max: 100),minimum=1,maximum=100"`
 	Since     string `json:"since,omitempty" jsonschema:"Only get posts since this timestamp (ISO 8601 format),format=date-time"`
+	Before    string `json:"before,omitempty" jsonschema:"Return the page of posts immediately before this post ID (history pagination). Mutually exclusive with after/since.,maxLength=26"`
+	After     string `json:"after,omitempty" jsonschema:"Return the page of posts immediately after this post ID (history pagination). Mutually exclusive with before/since.,maxLength=26"`
+	Page      int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 }
 
 // CreateChannelArgs represents arguments for the create_channel tool
@@ -47,8 +50,8 @@ type GetChannelMembersArgs struct {
 	ExcludeBots *bool  `json:"exclude_bots,omitempty" jsonschema:"Exclude bot accounts from results (default: true)"`
 }
 
-// AddUserToChannelArgs represents arguments for the add_user_to_channel tool
-type AddUserToChannelArgs struct {
+// AddChannelMemberArgs represents arguments for the add_channel_member tool
+type AddChannelMemberArgs struct {
 	UserID    string `json:"user_id" jsonschema:"ID of the user to add,minLength=26,maxLength=26"`
 	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to add user to,minLength=26,maxLength=26"`
 }
@@ -62,7 +65,7 @@ type GetUserChannelsArgs struct {
 
 // Tool description constants for channel-related tools.
 const (
-	readChannelDescription = "Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20), since (ISO 8601 timestamp, optional). Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"since\": \"2024-01-01T00:00:00Z\"}"
+	readChannelDescription = "Read recent posts from a Mattermost channel, with history pagination. Parameters: channel_id (required), limit (1-100, default 20), page (default 0), since (ISO 8601 timestamp), before (post ID), after (post ID). Use before/after with a post ID to page through older/newer history; since/before/after are mutually exclusive. Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"before\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\"}"
 
 	createChannelDescription = "Create a new channel in Mattermost. Parameters: name (URL-friendly), display_name (user-visible), type ('O' for public, 'P' for private), team_id (required), purpose (optional), header (optional). Returns created channel details. Example: {\"name\": \"dev-chat\", \"display_name\": \"Development Chat\", \"type\": \"O\", \"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}"
 
@@ -101,16 +104,70 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 			Resolver:    typed("get_channel_members", p.toolGetChannelMembers),
 		},
 		{
-			Name:        "add_user_to_channel",
-			Description: "Add a user to a channel. Parameters: user_id (required), channel_id (required). Returns confirmation message.",
-			Schema:      NewJSONSchemaForAccessMode[AddUserToChannelArgs](string(p.accessMode)),
-			Resolver:    typed("add_user_to_channel", p.toolAddUserToChannel),
+			Name:        "add_channel_member",
+			Description: "Add a user to a channel (channel membership). Parameters: user_id (required), channel_id (required). Returns confirmation message.",
+			Schema:      NewJSONSchemaForAccessMode[AddChannelMemberArgs](string(p.accessMode)),
+			Resolver:    typed("add_channel_member", p.toolAddChannelMember),
 		},
 		{
 			Name:        "get_user_channels",
 			Description: getUserChannelsDescription,
 			Schema:      NewJSONSchemaForAccessMode[GetUserChannelsArgs](string(p.accessMode)),
 			Resolver:    typed("get_user_channels", p.toolGetUserChannels),
+		},
+		{
+			Name:        "get_channel_stats",
+			Description: getChannelStatsDescription,
+			Schema:      NewJSONSchemaForAccessMode[GetChannelStatsArgs](string(p.accessMode)),
+			Resolver:    typed("get_channel_stats", p.toolGetChannelStats),
+		},
+		{
+			Name:        "get_channel_member_counts",
+			Description: getChannelMemberCountsDescription,
+			Schema:      NewJSONSchemaForAccessMode[GetChannelMemberCountsArgs](string(p.accessMode)),
+			Resolver:    typed("get_channel_member_counts", p.toolGetChannelMemberCounts),
+		},
+		{
+			Name:        "search_channels",
+			Description: searchChannelsDescription,
+			Schema:      NewJSONSchemaForAccessMode[SearchChannelsArgs](string(p.accessMode)),
+			Resolver:    typed("search_channels", p.toolSearchChannels),
+		},
+		{
+			Name:        "list_team_channels",
+			Description: listTeamChannelsDescription,
+			Schema:      NewJSONSchemaForAccessMode[ListTeamChannelsArgs](string(p.accessMode)),
+			Resolver:    typed("list_team_channels", p.toolListTeamChannels),
+		},
+		{
+			Name:        "list_archived_channels",
+			Description: listArchivedChannelsDescription,
+			Schema:      NewJSONSchemaForAccessMode[ListArchivedChannelsArgs](string(p.accessMode)),
+			Resolver:    typed("list_archived_channels", p.toolListArchivedChannels),
+		},
+		{
+			Name:        "update_channel",
+			Description: updateChannelDescription,
+			Schema:      NewJSONSchemaForAccessMode[UpdateChannelArgs](string(p.accessMode)),
+			Resolver:    typed("update_channel", p.toolUpdateChannel),
+		},
+		{
+			Name:        "archive_channel",
+			Description: archiveChannelDescription,
+			Schema:      NewJSONSchemaForAccessMode[ArchiveChannelArgs](string(p.accessMode)),
+			Resolver:    typed("archive_channel", p.toolArchiveChannel),
+		},
+		{
+			Name:        "restore_channel",
+			Description: restoreChannelDescription,
+			Schema:      NewJSONSchemaForAccessMode[RestoreChannelArgs](string(p.accessMode)),
+			Resolver:    typed("restore_channel", p.toolRestoreChannel),
+		},
+		{
+			Name:        "convert_channel_privacy",
+			Description: convertChannelPrivacyDescription,
+			Schema:      NewJSONSchemaForAccessMode[ConvertChannelPrivacyArgs](string(p.accessMode)),
+			Resolver:    typed("convert_channel_privacy", p.toolConvertChannelPrivacy),
 		},
 	}
 }
@@ -131,6 +188,26 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 	if args.Limit > 100 {
 		args.Limit = 100
+	}
+	if args.Page < 0 {
+		args.Page = 0
+	}
+
+	// Validate the optional cursor post IDs and enforce mutual exclusivity.
+	if err := optionalID("before", args.Before); err != nil {
+		return "", err
+	}
+	if err := optionalID("after", args.After); err != nil {
+		return "", err
+	}
+	cursors := 0
+	for _, set := range []bool{args.Before != "", args.After != "", args.Since != ""} {
+		if set {
+			cursors++
+		}
+	}
+	if cursors > 1 {
+		return "", fmt.Errorf("before, after, and since are mutually exclusive — set at most one")
 	}
 
 	// Get client and context
@@ -184,8 +261,17 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		teamDisplayName = team.DisplayName
 	}
 
-	// Get posts from the channel
-	posts, _, err := client.GetPostsForChannel(ctx, args.ChannelID, 0, args.Limit, "", false, false)
+	// Get posts from the channel. before/after page relative to a post ID for
+	// history pagination; otherwise page through the channel from the top.
+	var posts *model.PostList
+	switch {
+	case args.Before != "":
+		posts, _, err = client.GetPostsBefore(ctx, args.ChannelID, args.Before, args.Page, args.Limit, "", false, false)
+	case args.After != "":
+		posts, _, err = client.GetPostsAfter(ctx, args.ChannelID, args.After, args.Page, args.Limit, "", false, false)
+	default:
+		posts, _, err = client.GetPostsForChannel(ctx, args.ChannelID, args.Page, args.Limit, "", false, false)
+	}
 	if err != nil {
 		return "", fmt.Errorf("error fetching posts: %w", err)
 	}
@@ -552,8 +638,8 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	return p.renderMembers(ctx, client, "Channel Members", args.Page, rendered, excludeBots), nil
 }
 
-// toolAddUserToChannel implements the add_user_to_channel tool using the context client
-func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext, args AddUserToChannelArgs) (string, error) {
+// toolAddChannelMember implements the add_channel_member tool using the context client
+func (p *MattermostToolProvider) toolAddChannelMember(mcpContext *MCPToolContext, args AddChannelMemberArgs) (string, error) {
 	// Validate required fields
 	if err := requireID("user_id", args.UserID); err != nil {
 		return "", err
@@ -855,4 +941,307 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	}
 
 	return result.String(), nil
+}
+
+// --- Additional channel tools (stats, search, list, lifecycle) ---
+
+// GetChannelStatsArgs represents arguments for the get_channel_stats tool.
+type GetChannelStatsArgs struct {
+	ChannelID string `json:"channel_id" jsonschema:"The channel to get statistics for,minLength=26,maxLength=26"`
+}
+
+// GetChannelMemberCountsArgs represents arguments for the get_channel_member_counts tool.
+type GetChannelMemberCountsArgs struct {
+	ChannelIDs []string `json:"channel_ids" jsonschema:"The channel IDs to get member counts for"`
+}
+
+// SearchChannelsArgs represents arguments for the search_channels tool.
+type SearchChannelsArgs struct {
+	Term     string `json:"term" jsonschema:"Search term to match against channel names,minLength=1,maxLength=64"`
+	TeamID   string `json:"team_id,omitempty" jsonschema:"Optional team ID; if provided, search is scoped to that team,maxLength=26"`
+	Public   bool   `json:"public,omitempty" jsonschema:"Only public channels (team-scoped search only)"`
+	Private  bool   `json:"private,omitempty" jsonschema:"Only private channels (team-scoped search only)"`
+	Archived bool   `json:"archived,omitempty" jsonschema:"Only archived channels (team-scoped search only)"`
+}
+
+// ListTeamChannelsArgs represents arguments for the list_team_channels tool.
+type ListTeamChannelsArgs struct {
+	TeamID  string `json:"team_id" jsonschema:"The team whose channels to list,minLength=26,maxLength=26"`
+	Page    int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	PerPage int    `json:"per_page,omitempty" jsonschema:"Number of channels per page (default: 60, max: 200),minimum=1,maximum=200"`
+}
+
+// ListArchivedChannelsArgs represents arguments for the list_archived_channels tool.
+type ListArchivedChannelsArgs struct {
+	TeamID  string `json:"team_id" jsonschema:"The team whose archived channels to list,minLength=26,maxLength=26"`
+	Page    int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	PerPage int    `json:"per_page,omitempty" jsonschema:"Number of channels per page (default: 60, max: 200),minimum=1,maximum=200"`
+}
+
+// UpdateChannelArgs represents arguments for the update_channel tool.
+type UpdateChannelArgs struct {
+	ChannelID   string  `json:"channel_id" jsonschema:"The channel to update,minLength=26,maxLength=26"`
+	DisplayName *string `json:"display_name,omitempty" jsonschema:"New display name (optional)"`
+	Name        *string `json:"name,omitempty" jsonschema:"New URL name (optional)"`
+	Header      *string `json:"header,omitempty" jsonschema:"New channel header (optional)"`
+	Purpose     *string `json:"purpose,omitempty" jsonschema:"New channel purpose (optional)"`
+}
+
+// ArchiveChannelArgs represents arguments for the archive_channel tool.
+type ArchiveChannelArgs struct {
+	ChannelID string `json:"channel_id" jsonschema:"The channel to archive,minLength=26,maxLength=26"`
+}
+
+// RestoreChannelArgs represents arguments for the restore_channel tool.
+type RestoreChannelArgs struct {
+	ChannelID string `json:"channel_id" jsonschema:"The archived channel to restore,minLength=26,maxLength=26"`
+}
+
+// ConvertChannelPrivacyArgs represents arguments for the convert_channel_privacy tool.
+type ConvertChannelPrivacyArgs struct {
+	ChannelID string `json:"channel_id" jsonschema:"The channel to convert,minLength=26,maxLength=26"`
+	Privacy   string `json:"privacy" jsonschema:"Target privacy,enum=O,enum=P"`
+}
+
+const (
+	getChannelStatsDescription        = "Get a channel's statistics: member, guest, pinned-post, and file counts. Parameters: channel_id (required)."
+	getChannelMemberCountsDescription = "Get member counts for a batch of channels. Parameters: channel_ids (required list). Returns a count per channel."
+	searchChannelsDescription         = "Search channels by term. Parameters: term (required), team_id (optional), public/private/archived (team-scoped filters). Returns matching channels."
+	listTeamChannelsDescription       = "List a team's public and private channels. Parameters: team_id (required), page, per_page."
+	listArchivedChannelsDescription   = "List a team's archived (deleted) channels. Parameters: team_id (required), page, per_page."
+	updateChannelDescription          = "Update a channel's display name, URL name, header, or purpose. Parameters: channel_id (required), plus any of display_name, name, header, purpose."
+	archiveChannelDescription         = "Archive (soft-delete) a channel. Parameters: channel_id (required)."
+	restoreChannelDescription         = "Restore (unarchive) an archived channel. Parameters: channel_id (required)."
+	convertChannelPrivacyDescription  = "Convert a channel between public (O) and private (P). Parameters: channel_id (required), privacy (O or P)."
+)
+
+// toolGetChannelStats implements the get_channel_stats tool.
+func (p *MattermostToolProvider) toolGetChannelStats(mcpContext *MCPToolContext, args GetChannelStatsArgs) (string, error) {
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
+	}
+
+	stats, _, err := mcpContext.Client.GetChannelStats(mcpContext.Ctx, args.ChannelID, "", false)
+	if err != nil {
+		return "", fmt.Errorf("error fetching channel stats: %w", err)
+	}
+
+	var result strings.Builder
+	format.WriteChannelStats(&result, stats)
+	return result.String(), nil
+}
+
+// toolGetChannelMemberCounts implements the get_channel_member_counts tool.
+func (p *MattermostToolProvider) toolGetChannelMemberCounts(mcpContext *MCPToolContext, args GetChannelMemberCountsArgs) (string, error) {
+	if len(args.ChannelIDs) == 0 {
+		return "", fmt.Errorf("channel_ids cannot be empty")
+	}
+	for _, id := range args.ChannelIDs {
+		if err := requireID("channel_ids", id); err != nil {
+			return "", err
+		}
+	}
+
+	counts, _, err := mcpContext.Client.GetChannelsMemberCount(mcpContext.Ctx, args.ChannelIDs)
+	if err != nil {
+		return "", fmt.Errorf("error fetching channel member counts: %w", err)
+	}
+
+	var result strings.Builder
+	result.WriteString("Channel member counts:\n")
+	for _, id := range args.ChannelIDs {
+		result.WriteString(fmt.Sprintf("%s: %d\n", id, counts[id]))
+	}
+	return result.String(), nil
+}
+
+// toolSearchChannels implements the search_channels tool.
+func (p *MattermostToolProvider) toolSearchChannels(mcpContext *MCPToolContext, args SearchChannelsArgs) (string, error) {
+	if args.Term == "" {
+		return "", fmt.Errorf("term cannot be empty")
+	}
+	if err := optionalID("team_id", args.TeamID); err != nil {
+		return "", err
+	}
+
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	var channels []*model.Channel
+	if args.TeamID != "" {
+		search := &model.ChannelSearch{
+			Term:    args.Term,
+			Public:  args.Public,
+			Private: args.Private,
+			Deleted: args.Archived,
+		}
+		found, _, err := client.SearchChannels(ctx, args.TeamID, search)
+		if err != nil {
+			return "", fmt.Errorf("error searching channels: %w", err)
+		}
+		channels = found
+	} else {
+		found, _, err := client.SearchAllChannelsForUser(ctx, args.Term)
+		if err != nil {
+			return "", fmt.Errorf("error searching channels: %w", err)
+		}
+		for _, ch := range found {
+			channels = append(channels, &ch.Channel)
+		}
+	}
+
+	return p.formatChannelList(ctx, client, channels, fmt.Sprintf("channels matching '%s'", args.Term)), nil
+}
+
+// toolListTeamChannels implements the list_team_channels tool.
+func (p *MattermostToolProvider) toolListTeamChannels(mcpContext *MCPToolContext, args ListTeamChannelsArgs) (string, error) {
+	if err := requireID("team_id", args.TeamID); err != nil {
+		return "", err
+	}
+	page, perPage := normalizePage(args.Page, args.PerPage, 60, 200)
+
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	public, _, err := client.GetPublicChannelsForTeam(ctx, args.TeamID, page, perPage, "")
+	if err != nil {
+		return "", fmt.Errorf("error fetching public channels: %w", err)
+	}
+	private, _, err := client.GetPrivateChannelsForTeam(ctx, args.TeamID, page, perPage, "")
+	if err != nil {
+		// Private channels require additional permission; degrade gracefully.
+		p.logger.Warn("failed to fetch private channels", "error", err)
+	}
+
+	channels := make([]*model.Channel, 0, len(public)+len(private))
+	channels = append(channels, public...)
+	channels = append(channels, private...)
+	return p.formatChannelList(ctx, client, channels, "team channels"), nil
+}
+
+// toolListArchivedChannels implements the list_archived_channels tool.
+func (p *MattermostToolProvider) toolListArchivedChannels(mcpContext *MCPToolContext, args ListArchivedChannelsArgs) (string, error) {
+	if err := requireID("team_id", args.TeamID); err != nil {
+		return "", err
+	}
+	page, perPage := normalizePage(args.Page, args.PerPage, 60, 200)
+
+	channels, _, err := mcpContext.Client.GetDeletedChannelsForTeam(mcpContext.Ctx, args.TeamID, page, perPage, "")
+	if err != nil {
+		return "", fmt.Errorf("error fetching archived channels: %w", err)
+	}
+
+	return p.formatChannelList(mcpContext.Ctx, mcpContext.Client, channels, "archived channels"), nil
+}
+
+// toolUpdateChannel implements the update_channel tool.
+func (p *MattermostToolProvider) toolUpdateChannel(mcpContext *MCPToolContext, args UpdateChannelArgs) (string, error) {
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
+	}
+	if args.DisplayName == nil && args.Name == nil && args.Header == nil && args.Purpose == nil {
+		return "", fmt.Errorf("provide at least one of display_name, name, header, purpose to update")
+	}
+
+	patch := &model.ChannelPatch{
+		DisplayName: args.DisplayName,
+		Name:        args.Name,
+		Header:      args.Header,
+		Purpose:     args.Purpose,
+	}
+	updated, _, err := mcpContext.Client.PatchChannel(mcpContext.Ctx, args.ChannelID, patch)
+	if err != nil {
+		return "", fmt.Errorf("error updating channel: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully updated channel '%s' (ID: %s)", updated.DisplayName, updated.Id), nil
+}
+
+// toolArchiveChannel implements the archive_channel tool.
+func (p *MattermostToolProvider) toolArchiveChannel(mcpContext *MCPToolContext, args ArchiveChannelArgs) (string, error) {
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
+	}
+
+	if _, err := mcpContext.Client.DeleteChannel(mcpContext.Ctx, args.ChannelID); err != nil {
+		return "", fmt.Errorf("error archiving channel: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully archived channel %s", args.ChannelID), nil
+}
+
+// toolRestoreChannel implements the restore_channel tool.
+func (p *MattermostToolProvider) toolRestoreChannel(mcpContext *MCPToolContext, args RestoreChannelArgs) (string, error) {
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
+	}
+
+	restored, _, err := mcpContext.Client.RestoreChannel(mcpContext.Ctx, args.ChannelID)
+	if err != nil {
+		return "", fmt.Errorf("error restoring channel: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully restored channel '%s' (ID: %s)", restored.DisplayName, restored.Id), nil
+}
+
+// toolConvertChannelPrivacy implements the convert_channel_privacy tool.
+func (p *MattermostToolProvider) toolConvertChannelPrivacy(mcpContext *MCPToolContext, args ConvertChannelPrivacyArgs) (string, error) {
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
+	}
+	if args.Privacy != "O" && args.Privacy != "P" {
+		return "", fmt.Errorf("invalid privacy: %s (must be 'O' for public or 'P' for private)", args.Privacy)
+	}
+
+	updated, _, err := mcpContext.Client.UpdateChannelPrivacy(mcpContext.Ctx, args.ChannelID, model.ChannelType(args.Privacy))
+	if err != nil {
+		return "", fmt.Errorf("error converting channel privacy: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully converted channel '%s' to type %s", updated.DisplayName, updated.Type), nil
+}
+
+// formatChannelList renders a slice of channels with team context, resolving team
+// display names via a local cache.
+func (p *MattermostToolProvider) formatChannelList(ctx context.Context, client *model.Client4, channels []*model.Channel, noun string) string {
+	if len(channels) == 0 {
+		return fmt.Sprintf("no %s found", noun)
+	}
+
+	teamCache := make(map[string]string)
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Found %d %s:\n\n", len(channels), noun))
+	for i, channel := range channels {
+		teamName := ""
+		if channel.TeamId != "" {
+			if name, ok := teamCache[channel.TeamId]; ok {
+				teamName = name
+			} else if team, _, err := client.GetTeam(ctx, channel.TeamId, ""); err == nil {
+				teamName = team.DisplayName
+				teamCache[channel.TeamId] = teamName
+			}
+		}
+		format.WriteChannel(&result, format.ChannelEntry{
+			HeaderLabel: fmt.Sprintf("%d. %s", i+1, channel.DisplayName),
+			Channel:     channel,
+			TeamName:    teamName,
+			TeamID:      channel.TeamId,
+			MemberCount: -1,
+		})
+	}
+	return result.String()
+}
+
+// normalizePage applies pagination defaults and caps.
+func normalizePage(page, perPage, defaultPerPage, maxPerPage int) (int, int) {
+	if perPage <= 0 {
+		perPage = defaultPerPage
+	}
+	if perPage > maxPerPage {
+		perPage = maxPerPage
+	}
+	if page < 0 {
+		page = 0
+	}
+	return page, perPage
 }

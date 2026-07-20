@@ -125,10 +125,20 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	// automation plugin is absent.
 	groups := []func() []MCPTool{
 		p.getPostTools,
+		p.getScheduledPostTools,
+		p.getReactionTools,
+		p.getThreadTools,
 		p.getChannelTools,
+		p.getChannelMemberTools,
+		p.getBookmarkTools,
+		p.getUserTools,
+		p.getStatusTools,
 		p.getTeamTools,
 		p.getSearchTools,
 		p.getFileTools,
+		p.getIntegrationTools,
+		p.getGroupTools,
+		p.getRoleTools,
 		p.getAgentTools,
 		p.getAutomationTools,
 	}

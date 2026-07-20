@@ -97,8 +97,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		})
 	})
 
-	t.Run("AddUserToTeamTool", func(t *testing.T) {
-		// Create a test user first
+	t.Run("AddTeamMemberTool", func(t *testing.T) {
+		// add_team_member is now a production tool; it is still callable in dev mode.
 		userArgs := map[string]interface{}{
 			"username": "teamuser",
 			"email":    "teamuser@example.com",
@@ -115,10 +115,10 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"team_id": testData.Team.Id,
 			}
 
-			result, _ := executeDevToolWithMCP(t, suite, "add_user_to_team", args)
+			result, _ := executeDevToolWithMCP(t, suite, "add_team_member", args)
 			// User might already be in team, so we just check the call doesn't crash
 			// Don't require no error since user might already be in team
-			assert.NotNil(t, result, "add_user_to_team should return a result")
+			assert.NotNil(t, result, "add_team_member should return a result")
 		})
 
 		t.Run("InvalidUserID", func(t *testing.T) {
@@ -127,8 +127,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"team_id": testData.Team.Id,
 			}
 
-			_, err := executeDevToolWithMCP(t, suite, "add_user_to_team", args)
-			require.Error(t, err, "add_user_to_team should fail with invalid user ID")
+			_, err := executeDevToolWithMCP(t, suite, "add_team_member", args)
+			require.Error(t, err, "add_team_member should fail with invalid user ID")
 		})
 	})
 
@@ -142,12 +142,12 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		_, err := executeDevToolWithMCP(t, suite, "create_user", userArgs)
 		require.NoError(t, err, "User creation should succeed for post test")
 
-		// Add user to team (using dev tool)
+		// Add user to team (now a production tool)
 		addTeamArgs := map[string]interface{}{
 			"user_id": testData.User.Id, // Using existing user for simplicity
 			"team_id": testData.Team.Id,
 		}
-		_, _ = executeDevToolWithMCP(t, suite, "add_user_to_team", addTeamArgs)
+		_, _ = executeDevToolWithMCP(t, suite, "add_team_member", addTeamArgs)
 
 		// Add user to channel (using helper since it's not a dev tool anymore)
 		testhelpers.AddUserToChannel(t, client, testData.Channel.Id, testData.User.Id)
@@ -191,7 +191,6 @@ func TestDevToolsSecurityGating(t *testing.T) {
 	devTools := []string{
 		"create_user",
 		"create_team",
-		"add_user_to_team",
 		"create_post_as_user",
 	}
 

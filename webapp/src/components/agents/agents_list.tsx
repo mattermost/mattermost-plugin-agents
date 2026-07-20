@@ -36,10 +36,15 @@ const AgentsList = () => {
     const hasManageSystem = useSelector((state: GlobalState) =>
         userHasSystemPermission(state, currentUserId, 'manage_system'));
     const userCanCreateAgent = hasManageOwnAgent || hasManageSystem;
+
+    // Mirrors api.canConfigureAgentServices. Users without these permissions
+    // browse read-only; requesting /services would 403 and wrongly flag every agent.
+    const canViewServices = hasManageOwnAgent || hasManageOthersAgent || hasManageSystem;
     const multiLLMLicensed = useIsMultiLLMLicensed();
 
     const [agents, setAgents] = useState<UserAgent[]>([]);
     const [services, setServices] = useState<ServiceInfo[]>([]);
+    const [servicesLoaded, setServicesLoaded] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [servicesError, setServicesError] = useState<string | null>(null);
@@ -64,18 +69,21 @@ const AgentsList = () => {
             const agentResult = await getAgents();
             setAgents(agentResult.agents || []);
             setActiveAgentCount(agentResult.activeAgentCount ?? null);
-            try {
-                const serviceResult = await getServices();
-                setServices(serviceResult || []);
-            } catch {
-                setServicesError(intl.formatMessage({defaultMessage: 'Failed to load AI services. Using the last loaded list.'}));
+            if (canViewServices) {
+                try {
+                    const serviceResult = await getServices();
+                    setServices(serviceResult || []);
+                    setServicesLoaded(true);
+                } catch {
+                    setServicesError(intl.formatMessage({defaultMessage: 'Failed to load AI services. Using the last loaded list.'}));
+                }
             }
         } catch (e: any) {
             setError(intl.formatMessage({defaultMessage: 'Failed to load agents.'}));
         } finally {
             setLoading(false);
         }
-    }, [intl]);
+    }, [intl, canViewServices]);
 
     useEffect(() => {
         fetchAgents();
@@ -282,6 +290,7 @@ const AgentsList = () => {
                             key={agent.id}
                             agent={agent}
                             services={services}
+                            servicesLoaded={servicesLoaded}
                             canManage={userCanManageAgent(agent)}
                             onEdit={handleEdit}
                             onDelete={handleDeleteRequest}

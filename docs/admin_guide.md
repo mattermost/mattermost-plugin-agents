@@ -285,7 +285,29 @@ Configure chunking options based on your needs:
 | **Chunk Size** | 512-1024 tokens | Varies by strategy |
 | **Chunk Overlap** | 20-50 tokens | For better context continuity |
 
+Bulk reindexing throughput can be tuned for large datasets:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Reindex Worker Count** | 4 (max 32) | Concurrent embedding/storage workers during bulk reindexing. Raise for faster reindexing if your embedding provider rate limits allow (limits are respected automatically via retry with backoff); lower to reduce database and provider load. Values above the maximum are clamped. |
+| **Reindex Batch Size** | 200 (max 1000) | Posts fetched and embedded per batch. Larger batches amortize request overhead; requests are split automatically to stay within provider per-request limits. Values above the maximum are clamped. |
+| **Reindex Index Strategy** | Maintain index during reindex | Controls how the vector similarity index is handled during a full reindex. `maintain` keeps the index up to date on every insert (default). `defer` drops the index up front, bulk-loads without index maintenance, and rebuilds the index once at the end — much faster for large databases, but semantic search is unavailable until the rebuild completes. |
+
+The defaults stay comfortably within OpenAI Tier 1 rate limits. On Azure OpenAI, throughput is capped by your deployment's tokens-per-minute quota — raise it to benefit from higher worker counts.
+
 Run the initial indexing process after configuration.
+
+#### Large database reindexing
+
+For large installations (tens of millions of posts), set **Reindex Index Strategy** to `defer` before a full reindex. Maintaining the HNSW index on every insert dominates cost at scale (especially once it no longer fits in memory); dropping it for the bulk load and rebuilding once afterwards is typically an order of magnitude faster.
+
+Notes on deferred reindex:
+
+- **Semantic search is unavailable** from reindex start until the final index build finishes (API returns HTTP 503). Live posts still index during the bulk load. During the final build (hours on large DBs), live indexing, deletions, and retention pause instead of blocking on CREATE INDEX — catch-up repairs new posts, the repair pass handles edits/deletions, and retention runs on its next schedule.
+- **Repair phase after the build.** Search returns once the index exists; the job then enters a short `repairing` phase to re-embed posts edited while live indexing was paused (catch-up sweeps new posts). If the job stops after the build but before repair finishes, the `repairing` marker stays durable — resume or reindex to finish. Search works in this phase; a few recent edits may be slightly stale until repair completes.
+- **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + 300)` bytes (~1.7 KB/element at 256 dims, ~34 GB for 20M posts). Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`.
+- **Crash recovery.** Lifecycle state is durable. After a restart, **Check Index Health** shows the vector index state and search stays gated until you resume or start a full reindex (the plugin never rebuilds during activation). Any full or resumed reindex rebuilds a dropped index and finishes pending repair, even if strategy was changed back to `maintain`.
+- Strategy applies to full reindexes only. Catch-up never drops the index. Live indexing maintains the index except during the final build.
 
 ### Permission configuration
 
@@ -679,10 +701,28 @@ The built-in Mattermost MCP server provides the following native Mattermost tool
 - **get_team_info**: Retrieve team details by ID or name
 - **search_users**: Find users by username, email, or name
 - **get_channel_members**: List all members of a channel
-- **add_user_to_channel**: Add a user to a channel
+- **add_channel_member**: Add a user to a channel
 - **get_user_channels**: List the channels the current user is a member of
 - **get_team_members**: List all members of a team
+- **add_team_member**: Add a user to a team
 - **list_agents**: List the AI agents (bots) available to the current user, including each agent's ID, display name, and username
+
+The plugin also registers an extended catalog of read and write tools spanning Mattermost's main domains. Because the plugin supports dynamic tool loading, agents discover these on demand via the `search_tools` and `load_tool` meta-tools rather than carrying every schema in context. Write/destructive/permission-sensitive tools are marked with ⚠ and follow each user's Mattermost permissions.
+
+- **Posts & messages**: get_post_info, list_pinned_posts, list_saved_posts, ⚠ update_post, ⚠ delete_post, ⚠ pin_post, ⚠ unpin_post, ⚠ save_post, ⚠ acknowledge_post
+- **Scheduled posts & reminders**: list_scheduled_posts, ⚠ create_scheduled_post, ⚠ update_scheduled_post, ⚠ delete_scheduled_post, ⚠ set_post_reminder
+- **Reactions & emoji**: get_post_reactions, get_bulk_reactions, list_custom_emoji, search_custom_emoji, ⚠ add_reaction, ⚠ remove_reaction
+- **Threads, mentions & unread**: get_threads, get_mentions, get_unread_counts, get_channel_unread, get_posts_around_unread, ⚠ mark_channel_read, ⚠ mark_channels_viewed, ⚠ mark_post_unread, ⚠ set_thread_follow
+- **Channels**: get_channel_stats, get_channel_member_counts, search_channels, list_team_channels, list_archived_channels, ⚠ update_channel, ⚠ archive_channel, ⚠ restore_channel, ⚠ convert_channel_privacy
+- **Channel members & settings**: get_channel_member, get_channel_members_by_ids, get_channel_members_by_status, get_user_channel_memberships, get_users_not_in_channel, search_users_in_channel, list_sidebar_categories, ⚠ add_channel_members, ⚠ remove_channel_member, ⚠ set_channel_mute, ⚠ set_channel_favorite, ⚠ update_channel_notify_props
+- **Channel bookmarks**: list_channel_bookmarks, ⚠ create_channel_bookmark, ⚠ update_channel_bookmark, ⚠ delete_channel_bookmark
+- **Users & profiles**: get_me, get_user, get_user_by_username, get_user_by_email, get_users_by_ids, get_users_by_usernames, get_user_stats, get_user_cpa_values, list_cpa_fields, ⚠ update_user
+- **Status & presence**: get_user_status, get_users_statuses, get_user_custom_status, ⚠ set_status, ⚠ set_dnd
+- **Teams & team members**: get_team_member, get_team_stats, get_user_teams, get_users_in_team, get_users_not_in_team, get_new_users_in_team, get_dm_common_teams, search_teams, search_users_in_team, ⚠ add_team_members, ⚠ remove_team_member, ⚠ update_team, ⚠ invite_users_to_team, ⚠ invite_users_to_team_and_channels
+- **Files & attachments**: get_file_info, get_post_files, get_file_link, search_files, ⚠ upload_file
+- **Integrations**: get_bot, list_bots, list_incoming_webhooks, list_outgoing_webhooks
+- **Groups**: get_group_info, list_groups, get_user_groups, get_channel_groups, get_team_groups, get_users_in_group_channels
+- **Roles & permissions**: get_role, get_channel_moderations, ⚠ update_channel_member_roles, ⚠ update_team_member_roles
 
 When the Channel Automation plugin is installed, the MCP server also exposes the following tools. They proxy requests to that plugin; execution follows the same MCP tool policies as other tools and each user's Mattermost permissions.
 

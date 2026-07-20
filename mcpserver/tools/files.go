@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
+	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 )
 
 // FileContentService reads the text contents of Mattermost file attachments on
@@ -38,6 +39,36 @@ func (p *MattermostToolProvider) getFileTools() []MCPTool {
 			Description: readFileDescription,
 			Schema:      NewJSONSchemaForAccessMode[ReadFileArgs](string(p.accessMode)),
 			Resolver:    typed("read_file", p.toolReadFile),
+		},
+		{
+			Name:        "get_file_info",
+			Description: getFileInfoDescription,
+			Schema:      NewJSONSchemaForAccessMode[GetFileInfoArgs](string(p.accessMode)),
+			Resolver:    typed("get_file_info", p.toolGetFileInfo),
+		},
+		{
+			Name:        "get_post_files",
+			Description: getPostFilesDescription,
+			Schema:      NewJSONSchemaForAccessMode[GetPostFilesArgs](string(p.accessMode)),
+			Resolver:    typed("get_post_files", p.toolGetPostFiles),
+		},
+		{
+			Name:        "get_file_link",
+			Description: getFileLinkDescription,
+			Schema:      NewJSONSchemaForAccessMode[GetFileLinkArgs](string(p.accessMode)),
+			Resolver:    typed("get_file_link", p.toolGetFileLink),
+		},
+		{
+			Name:        "search_files",
+			Description: searchFilesDescription,
+			Schema:      NewJSONSchemaForAccessMode[SearchFilesArgs](string(p.accessMode)),
+			Resolver:    typed("search_files", p.toolSearchFiles),
+		},
+		{
+			Name:        "upload_file",
+			Description: uploadFileDescription,
+			Schema:      NewJSONSchemaForAccessMode[UploadFileArgs](string(p.accessMode)),
+			Resolver:    typed("upload_file", p.toolUploadFile),
 		},
 	}
 }
@@ -86,4 +117,139 @@ func formatFileContent(c files.Content) string {
 	b.WriteString(c.Text)
 
 	return b.String()
+}
+
+// --- Additional file tools (info, post files, link, search, upload) ---
+
+// GetFileInfoArgs represents arguments for the get_file_info tool.
+type GetFileInfoArgs struct {
+	FileID string `json:"file_id" jsonschema:"The file/attachment ID,minLength=26,maxLength=26"`
+}
+
+// GetPostFilesArgs represents arguments for the get_post_files tool.
+type GetPostFilesArgs struct {
+	PostID string `json:"post_id" jsonschema:"The post whose file attachments to list,minLength=26,maxLength=26"`
+}
+
+// GetFileLinkArgs represents arguments for the get_file_link tool.
+type GetFileLinkArgs struct {
+	FileID string `json:"file_id" jsonschema:"The file to get a public permalink for,minLength=26,maxLength=26"`
+}
+
+// SearchFilesArgs represents arguments for the search_files tool.
+type SearchFilesArgs struct {
+	Terms  string `json:"terms" jsonschema:"Search terms to match against file names/content,minLength=1,maxLength=4000"`
+	TeamID string `json:"team_id" jsonschema:"The team to search within,minLength=26,maxLength=26"`
+}
+
+// UploadFileArgs represents arguments for the upload_file tool.
+type UploadFileArgs struct {
+	ChannelID string `json:"channel_id" jsonschema:"The channel to upload the file to,minLength=26,maxLength=26"`
+	Path      string `json:"path" access:"local" jsonschema:"Local file path or URL to upload"`
+}
+
+const (
+	getFileInfoDescription  = "Get metadata for a single file/attachment. Parameters: file_id (required). Returns name, type, size, and File ID."
+	getPostFilesDescription = "Get the file attachments on a post (metadata per file). Parameters: post_id (required)."
+	getFileLinkDescription  = "Get a public permalink URL for a file. Parameters: file_id (required). Requires public links to be enabled on the server."
+	searchFilesDescription  = "Search file attachments by filename/content within a team. Parameters: terms (required), team_id (required)."
+	uploadFileDescription   = "Upload a file from a local path or URL to a channel and return its File ID. Local access only. Parameters: channel_id (required), path (required)."
+)
+
+// toolGetFileInfo implements the get_file_info tool.
+func (p *MattermostToolProvider) toolGetFileInfo(mcpContext *MCPToolContext, args GetFileInfoArgs) (string, error) {
+	if err := requireID("file_id", args.FileID); err != nil {
+		return "", err
+	}
+	info, _, err := mcpContext.Client.GetFileInfo(mcpContext.Ctx, args.FileID)
+	if err != nil {
+		return "", fmt.Errorf("error fetching file info: %w", err)
+	}
+	var result strings.Builder
+	format.WriteFileDescriptor(&result, format.FileDescriptorEntry{FileInfo: info})
+	return result.String(), nil
+}
+
+// toolGetPostFiles implements the get_post_files tool.
+func (p *MattermostToolProvider) toolGetPostFiles(mcpContext *MCPToolContext, args GetPostFilesArgs) (string, error) {
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
+	}
+	infos, _, err := mcpContext.Client.GetFileInfosForPost(mcpContext.Ctx, args.PostID, "")
+	if err != nil {
+		return "", fmt.Errorf("error fetching post files: %w", err)
+	}
+	if len(infos) == 0 {
+		return "no files attached to this post", nil
+	}
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Found %d file(s) on post %s:\n\n", len(infos), args.PostID))
+	for i, info := range infos {
+		format.WriteFileDescriptor(&result, format.FileDescriptorEntry{Number: i + 1, FileInfo: info})
+	}
+	return result.String(), nil
+}
+
+// toolGetFileLink implements the get_file_link tool.
+func (p *MattermostToolProvider) toolGetFileLink(mcpContext *MCPToolContext, args GetFileLinkArgs) (string, error) {
+	if err := requireID("file_id", args.FileID); err != nil {
+		return "", err
+	}
+	link, _, err := mcpContext.Client.GetFileLink(mcpContext.Ctx, args.FileID)
+	if err != nil {
+		return "", fmt.Errorf("error fetching file link (public links may be disabled on the server): %w", err)
+	}
+	return fmt.Sprintf("Public link for file %s:\n%s", args.FileID, link), nil
+}
+
+// toolSearchFiles implements the search_files tool.
+func (p *MattermostToolProvider) toolSearchFiles(mcpContext *MCPToolContext, args SearchFilesArgs) (string, error) {
+	if args.Terms == "" {
+		return "", fmt.Errorf("terms cannot be empty")
+	}
+	if err := requireID("team_id", args.TeamID); err != nil {
+		return "", err
+	}
+
+	results, _, err := mcpContext.Client.SearchFiles(mcpContext.Ctx, args.TeamID, args.Terms, false)
+	if err != nil {
+		return "", fmt.Errorf("error searching files: %w", err)
+	}
+	if results == nil || len(results.Order) == 0 {
+		return fmt.Sprintf("no files found for %q", args.Terms), nil
+	}
+
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Found %d file(s) for %q:\n\n", len(results.Order), args.Terms))
+	for i, id := range results.Order {
+		info := results.FileInfos[id]
+		if info == nil {
+			continue
+		}
+		format.WriteFileDescriptor(&result, format.FileDescriptorEntry{Number: i + 1, FileInfo: info})
+	}
+	return result.String(), nil
+}
+
+// toolUploadFile implements the upload_file tool. File uploads from a path/URL are
+// only supported in local access mode.
+func (p *MattermostToolProvider) toolUploadFile(mcpContext *MCPToolContext, args UploadFileArgs) (string, error) {
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
+	}
+	if mcpContext.AccessMode != AccessModeLocal {
+		return "file uploads from a path or URL are only supported in local access mode", nil
+	}
+	if args.Path == "" {
+		return "", fmt.Errorf("path cannot be empty")
+	}
+
+	fileIDs, err := uploadFilesForLocal(mcpContext.Ctx, mcpContext.Client, args.ChannelID, []string{args.Path}, mcpContext.AccessMode)
+	if err != nil {
+		return "", fmt.Errorf("error uploading file: %w", err)
+	}
+	if len(fileIDs) == 0 {
+		return "", fmt.Errorf("upload produced no file")
+	}
+	return fmt.Sprintf("Successfully uploaded file to channel %s. File ID: %s", args.ChannelID, fileIDs[0]), nil
 }

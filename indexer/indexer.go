@@ -26,6 +26,12 @@ type Indexer struct {
 	bots         *bots.MMBots
 	db           *sqlx.DB
 	clusterMutex cluster.MutexPluginAPI
+
+	// Store retry policy and heartbeat cadence; overridable in tests to
+	// avoid long sleeps.
+	storeRetryAttempts  int
+	storeRetryBaseDelay time.Duration
+	heartbeatInterval   time.Duration
 }
 
 func New(
@@ -37,12 +43,15 @@ func New(
 	clusterMutex cluster.MutexPluginAPI,
 ) *Indexer {
 	return &Indexer{
-		getSearch:    getSearch,
-		configGetter: configGetter,
-		pluginAPI:    pluginAPI,
-		bots:         bots,
-		db:           db,
-		clusterMutex: clusterMutex,
+		getSearch:           getSearch,
+		configGetter:        configGetter,
+		pluginAPI:           pluginAPI,
+		bots:                bots,
+		db:                  db,
+		clusterMutex:        clusterMutex,
+		storeRetryAttempts:  defaultStoreRetryAttempts,
+		storeRetryBaseDelay: defaultStoreRetryBaseDelay,
+		heartbeatInterval:   defaultHeartbeatInterval,
 	}
 }
 
@@ -58,6 +67,12 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 	search := s.getSearch()
 	if search == nil {
 		return nil // Search not configured
+	}
+
+	// Skipped posts: catch-up (new) or repair (edits) after the build.
+	if s.deferredBuildWriteGated() {
+		s.pluginAPI.LogDebug("Skipping live post indexing while the vector index is being rebuilt", "post_id", post.Id)
+		return nil
 	}
 
 	// Create document
@@ -84,6 +99,12 @@ func (s *Indexer) DeletePost(ctx context.Context, postID string) error {
 		return nil // Search not configured
 	}
 
+	// Safe to skip: repair's stale-row DELETE removes them after the build.
+	if s.deferredBuildWriteGated() {
+		s.pluginAPI.LogDebug("Skipping post deletion from the index while the vector index is being rebuilt", "post_id", postID)
+		return nil
+	}
+
 	return search.Delete(ctx, []string{postID})
 }
 
@@ -94,6 +115,12 @@ func (s *Indexer) RunDataRetention(ctx context.Context, nowTime, batchSize int64
 	}
 	search := s.getSearch()
 	if search == nil {
+		return 0, nil
+	}
+
+	// Safe to skip: retention re-runs on schedule.
+	if s.deferredBuildWriteGated() {
+		s.pluginAPI.LogDebug("Skipping embeddings data retention while the vector index is being rebuilt")
 		return 0, nil
 	}
 
@@ -194,10 +221,23 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		}
 	}
 
+	// Claim deferred-index ownership before start; fail if lifecycle unknown.
+	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
+	if deferErr != nil {
+		failedStatus := newJobStatus
+		failedStatus.Status = JobStatusFailed
+		failedStatus.Error = deferErr.Error()
+		failedStatus.CompletedAt = time.Now()
+		if _, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, newJobStatus, failedStatus); casErr != nil {
+			s.pluginAPI.LogError("Failed to record reindex job failure", "error", casErr)
+		}
+		return JobStatus{}, deferErr
+	}
+
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
 	// Start the reindexing job in background
-	go s.runReindexJob(&newJobStatus, clearIndex)
+	go s.runReindexJob(&newJobStatus, clearIndex, deferRun)
 
 	return returnStatus, nil
 }
@@ -368,8 +408,8 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
-	// Start catch-up job (reuses runReindexJob with clearIndex=false)
-	go s.runReindexJob(&newJobStatus, false)
+	// Catch-up never defers the index (small tail only).
+	go s.runReindexJob(&newJobStatus, false, nil)
 
 	return returnStatus, nil
 }
@@ -382,6 +422,11 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 
 	result := HealthCheckResult{
 		CheckedAt: time.Now(),
+	}
+
+	// Surface deferred-index ownership (explains search unavailability).
+	if state, stateErr := s.loadVectorIndexState(); stateErr == nil && state != nil {
+		result.VectorIndexState = state
 	}
 
 	// Get bot user IDs to exclude from count (matching shouldIndexPost behavior)

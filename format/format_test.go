@@ -705,3 +705,46 @@ func TestWriteFileDescriptor(t *testing.T) {
 		})
 	}
 }
+
+func TestWritePostInfo(t *testing.T) {
+	var buf strings.Builder
+	WritePostInfo(&buf, PostInfoEntry{
+		PostID: "post12345678901234567890ab",
+		PostInfo: &model.PostInfo{
+			ChannelId:          "chan12345678901234567890ab",
+			ChannelType:        model.ChannelTypeOpen,
+			ChannelDisplayName: "General",
+			TeamId:             "team12345678901234567890ab",
+			TeamDisplayName:    "Engineering",
+			HasJoinedChannel:   true,
+			HasJoinedTeam:      false,
+		},
+	})
+	out := buf.String()
+	assert.Contains(t, out, "Post ID: post12345678901234567890ab")
+	assert.Contains(t, out, "Channel: General")
+	assert.Contains(t, out, "Team: Engineering (ID: team12345678901234567890ab)")
+	assert.Contains(t, out, "You are a member of this channel: true")
+	assert.Contains(t, out, "You are a member of this team: false")
+}
+
+func TestWriteScheduledPost(t *testing.T) {
+	sp := &model.ScheduledPost{
+		Draft:       model.Draft{ChannelId: "chan12345678901234567890ab", Message: "scheduled hello"},
+		ScheduledAt: 1700000000000,
+	}
+	sp.Id = "sched1234567890123456789ab"
+
+	var buf strings.Builder
+	WriteScheduledPost(&buf, ScheduledPostEntry{
+		HeaderLabel:   "Scheduled Post 1",
+		ScheduledPost: sp,
+		ChannelName:   "Town Square",
+	})
+	out := buf.String()
+	assert.Contains(t, out, "**Scheduled Post 1**:")
+	assert.Contains(t, out, "ID: sched1234567890123456789ab")
+	assert.Contains(t, out, "Channel: Town Square")
+	assert.Contains(t, out, "Scheduled for: 2023-11-14T22:13:20Z")
+	assert.Contains(t, out, "Message: scheduled hello")
+}

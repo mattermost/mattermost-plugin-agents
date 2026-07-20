@@ -5,6 +5,7 @@ package tools
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -103,6 +104,60 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 			Description: groupMessageDesc,
 			Schema:      NewJSONSchemaForAccessMode[GroupMessageArgs](string(p.accessMode)),
 			Resolver:    typed("group_message", p.toolGroupMessage),
+		},
+		{
+			Name:        "get_post_info",
+			Description: getPostInfoDescription,
+			Schema:      NewJSONSchemaForAccessMode[GetPostInfoArgs](string(p.accessMode)),
+			Resolver:    typed("get_post_info", p.toolGetPostInfo),
+		},
+		{
+			Name:        "list_pinned_posts",
+			Description: listPinnedPostsDescription,
+			Schema:      NewJSONSchemaForAccessMode[ListPinnedPostsArgs](string(p.accessMode)),
+			Resolver:    typed("list_pinned_posts", p.toolListPinnedPosts),
+		},
+		{
+			Name:        "list_saved_posts",
+			Description: listSavedPostsDescription,
+			Schema:      NewJSONSchemaForAccessMode[ListSavedPostsArgs](string(p.accessMode)),
+			Resolver:    typed("list_saved_posts", p.toolListSavedPosts),
+		},
+		{
+			Name:        "update_post",
+			Description: updatePostDescription,
+			Schema:      NewJSONSchemaForAccessMode[UpdatePostArgs](string(p.accessMode)),
+			Resolver:    typed("update_post", p.toolUpdatePost),
+		},
+		{
+			Name:        "delete_post",
+			Description: deletePostDescription,
+			Schema:      NewJSONSchemaForAccessMode[DeletePostArgs](string(p.accessMode)),
+			Resolver:    typed("delete_post", p.toolDeletePost),
+		},
+		{
+			Name:        "pin_post",
+			Description: pinPostDescription,
+			Schema:      NewJSONSchemaForAccessMode[PinPostArgs](string(p.accessMode)),
+			Resolver:    typed("pin_post", p.toolPinPost),
+		},
+		{
+			Name:        "unpin_post",
+			Description: unpinPostDescription,
+			Schema:      NewJSONSchemaForAccessMode[UnpinPostArgs](string(p.accessMode)),
+			Resolver:    typed("unpin_post", p.toolUnpinPost),
+		},
+		{
+			Name:        "save_post",
+			Description: savePostDescription,
+			Schema:      NewJSONSchemaForAccessMode[SavePostArgs](string(p.accessMode)),
+			Resolver:    typed("save_post", p.toolSavePost),
+		},
+		{
+			Name:        "acknowledge_post",
+			Description: acknowledgePostDescription,
+			Schema:      NewJSONSchemaForAccessMode[AcknowledgePostArgs](string(p.accessMode)),
+			Resolver:    typed("acknowledge_post", p.toolAcknowledgePost),
 		},
 	}
 }
@@ -489,6 +544,304 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 
 	return fmt.Sprintf("Successfully sent group message to %s with ID: %s%s",
 		strings.Join(usernames, ", "), createdPost.Id, attachmentMessage), nil
+}
+
+// --- Additional post tools (info, pins, saved, edit/delete, acknowledge) ---
+
+// GetPostInfoArgs represents arguments for the get_post_info tool.
+type GetPostInfoArgs struct {
+	PostID string `json:"post_id" jsonschema:"The ID of the post,minLength=26,maxLength=26"`
+}
+
+// ListPinnedPostsArgs represents arguments for the list_pinned_posts tool.
+type ListPinnedPostsArgs struct {
+	ChannelID string `json:"channel_id" jsonschema:"The ID of the channel,minLength=26,maxLength=26"`
+}
+
+// ListSavedPostsArgs represents arguments for the list_saved_posts tool.
+type ListSavedPostsArgs struct {
+	ChannelID string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to scope saved posts to one channel,maxLength=26"`
+	TeamID    string `json:"team_id,omitempty" jsonschema:"Optional team ID to scope saved posts to one team,maxLength=26"`
+	Page      int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	PerPage   int    `json:"per_page,omitempty" jsonschema:"Number of posts per page (default: 30, max: 100),minimum=1,maximum=100"`
+}
+
+// UpdatePostArgs represents arguments for the update_post tool.
+type UpdatePostArgs struct {
+	PostID  string `json:"post_id" jsonschema:"The ID of the post to edit,minLength=26,maxLength=26"`
+	Message string `json:"message" jsonschema:"The new message content,minLength=1"`
+}
+
+// DeletePostArgs represents arguments for the delete_post tool.
+type DeletePostArgs struct {
+	PostID string `json:"post_id" jsonschema:"The ID of the post to delete,minLength=26,maxLength=26"`
+}
+
+// PinPostArgs represents arguments for the pin_post tool.
+type PinPostArgs struct {
+	PostID string `json:"post_id" jsonschema:"The ID of the post to pin,minLength=26,maxLength=26"`
+}
+
+// UnpinPostArgs represents arguments for the unpin_post tool.
+type UnpinPostArgs struct {
+	PostID string `json:"post_id" jsonschema:"The ID of the post to unpin,minLength=26,maxLength=26"`
+}
+
+// SavePostArgs represents arguments for the save_post tool.
+type SavePostArgs struct {
+	PostID string `json:"post_id" jsonschema:"The ID of the post to save (flag) for yourself,minLength=26,maxLength=26"`
+}
+
+// AcknowledgePostArgs represents arguments for the acknowledge_post tool.
+type AcknowledgePostArgs struct {
+	PostID string `json:"post_id" jsonschema:"The ID of the post to acknowledge,minLength=26,maxLength=26"`
+}
+
+const (
+	getPostInfoDescription     = "Get metadata and channel/team context for a single post (without the thread). Parameters: post_id (required). Use read_post to get the full thread content. Returns channel, team, type, and your membership."
+	listPinnedPostsDescription = "List the pinned posts in a channel. Parameters: channel_id (required). Returns each pinned post's author, content, and timestamp."
+	listSavedPostsDescription  = "List your saved (flagged) posts, optionally scoped to a channel or team. Parameters: channel_id (optional), team_id (optional), page, per_page. Returns matching saved posts."
+	updatePostDescription      = "Edit the message text of an existing post. Parameters: post_id (required), message (required). Returns the updated post."
+	deletePostDescription      = "Delete (soft-remove) a post by ID. Parameters: post_id (required). This cannot be undone by the agent."
+	pinPostDescription         = "Pin a post to its channel. Parameters: post_id (required)."
+	unpinPostDescription       = "Unpin a post from its channel. Parameters: post_id (required)."
+	savePostDescription        = "Save (flag) a post for yourself so you can find it later. Parameters: post_id (required)."
+	acknowledgePostDescription = "Add your acknowledgement to a post that requests one. Parameters: post_id (required)."
+)
+
+// toolGetPostInfo implements the get_post_info tool.
+func (p *MattermostToolProvider) toolGetPostInfo(mcpContext *MCPToolContext, args GetPostInfoArgs) (string, error) {
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
+	}
+
+	info, _, err := mcpContext.Client.GetPostInfo(mcpContext.Ctx, args.PostID)
+	if err != nil {
+		return "", fmt.Errorf("error fetching post info: %w", err)
+	}
+
+	var result strings.Builder
+	format.WritePostInfo(&result, format.PostInfoEntry{PostID: args.PostID, PostInfo: info})
+	return result.String(), nil
+}
+
+// toolListPinnedPosts implements the list_pinned_posts tool.
+func (p *MattermostToolProvider) toolListPinnedPosts(mcpContext *MCPToolContext, args ListPinnedPostsArgs) (string, error) {
+	if err := requireID("channel_id", args.ChannelID); err != nil {
+		return "", err
+	}
+
+	postList, _, err := mcpContext.Client.GetPinnedPosts(mcpContext.Ctx, args.ChannelID, "")
+	if err != nil {
+		return "", fmt.Errorf("error fetching pinned posts: %w", err)
+	}
+
+	return p.formatPostListChrono(mcpContext, postList, "pinned posts"), nil
+}
+
+// toolListSavedPosts implements the list_saved_posts tool.
+func (p *MattermostToolProvider) toolListSavedPosts(mcpContext *MCPToolContext, args ListSavedPostsArgs) (string, error) {
+	if err := optionalID("channel_id", args.ChannelID); err != nil {
+		return "", err
+	}
+	if err := optionalID("team_id", args.TeamID); err != nil {
+		return "", err
+	}
+	if args.PerPage <= 0 {
+		args.PerPage = 30
+	}
+	if args.PerPage > 100 {
+		args.PerPage = 100
+	}
+	if args.Page < 0 {
+		args.Page = 0
+	}
+
+	userID, err := p.resolveUserID(mcpContext)
+	if err != nil {
+		return "", err
+	}
+
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	var postList *model.PostList
+	switch {
+	case args.ChannelID != "":
+		postList, _, err = client.GetFlaggedPostsForUserInChannel(ctx, userID, args.ChannelID, args.Page, args.PerPage)
+	case args.TeamID != "":
+		postList, _, err = client.GetFlaggedPostsForUserInTeam(ctx, userID, args.TeamID, args.Page, args.PerPage)
+	default:
+		postList, _, err = client.GetFlaggedPostsForUser(ctx, userID, args.Page, args.PerPage)
+	}
+	if err != nil {
+		return "", fmt.Errorf("error fetching saved posts: %w", err)
+	}
+
+	return p.formatPostListChrono(mcpContext, postList, "saved posts"), nil
+}
+
+// toolUpdatePost implements the update_post tool.
+func (p *MattermostToolProvider) toolUpdatePost(mcpContext *MCPToolContext, args UpdatePostArgs) (string, error) {
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
+	}
+	if args.Message == "" {
+		return "", fmt.Errorf("message cannot be empty")
+	}
+
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	post, _, err := client.GetPost(ctx, args.PostID, "")
+	if err != nil {
+		return "", fmt.Errorf("error fetching post: %w", err)
+	}
+
+	post.Message = args.Message
+	p.stampAIGenerated(post, mcpContext, "")
+
+	updated, _, err := client.UpdatePost(ctx, args.PostID, post)
+	if err != nil {
+		return "", fmt.Errorf("error updating post: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully updated post %s", updated.Id), nil
+}
+
+// toolDeletePost implements the delete_post tool.
+func (p *MattermostToolProvider) toolDeletePost(mcpContext *MCPToolContext, args DeletePostArgs) (string, error) {
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
+	}
+
+	if _, err := mcpContext.Client.DeletePost(mcpContext.Ctx, args.PostID); err != nil {
+		return "", fmt.Errorf("error deleting post: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully deleted post %s", args.PostID), nil
+}
+
+// toolPinPost implements the pin_post tool.
+func (p *MattermostToolProvider) toolPinPost(mcpContext *MCPToolContext, args PinPostArgs) (string, error) {
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
+	}
+
+	if _, err := mcpContext.Client.PinPost(mcpContext.Ctx, args.PostID); err != nil {
+		return "", fmt.Errorf("error pinning post: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully pinned post %s", args.PostID), nil
+}
+
+// toolUnpinPost implements the unpin_post tool.
+func (p *MattermostToolProvider) toolUnpinPost(mcpContext *MCPToolContext, args UnpinPostArgs) (string, error) {
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
+	}
+
+	if _, err := mcpContext.Client.UnpinPost(mcpContext.Ctx, args.PostID); err != nil {
+		return "", fmt.Errorf("error unpinning post: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully unpinned post %s", args.PostID), nil
+}
+
+// toolSavePost implements the save_post tool. There is no dedicated endpoint; a
+// saved (flagged) post is stored as a user preference.
+func (p *MattermostToolProvider) toolSavePost(mcpContext *MCPToolContext, args SavePostArgs) (string, error) {
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
+	}
+
+	userID, err := p.resolveUserID(mcpContext)
+	if err != nil {
+		return "", err
+	}
+
+	preferences := model.Preferences{{
+		UserId:   userID,
+		Category: model.PreferenceCategoryFlaggedPost,
+		Name:     args.PostID,
+		Value:    "true",
+	}}
+
+	if _, err := mcpContext.Client.UpdatePreferences(mcpContext.Ctx, userID, preferences); err != nil {
+		return "", fmt.Errorf("error saving post: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully saved post %s", args.PostID), nil
+}
+
+// toolAcknowledgePost implements the acknowledge_post tool.
+func (p *MattermostToolProvider) toolAcknowledgePost(mcpContext *MCPToolContext, args AcknowledgePostArgs) (string, error) {
+	if err := requireID("post_id", args.PostID); err != nil {
+		return "", err
+	}
+
+	userID, err := p.resolveUserID(mcpContext)
+	if err != nil {
+		return "", err
+	}
+
+	if _, _, err := mcpContext.Client.AcknowledgePost(mcpContext.Ctx, args.PostID, userID); err != nil {
+		return "", fmt.Errorf("error acknowledging post: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully acknowledged post %s", args.PostID), nil
+}
+
+// formatPostListChrono renders a PostList in chronological order with author
+// usernames, reusing the format package. noun labels the listing in the header.
+func (p *MattermostToolProvider) formatPostListChrono(mcpContext *MCPToolContext, postList *model.PostList, noun string) string {
+	if postList == nil || len(postList.Posts) == 0 {
+		return fmt.Sprintf("no %s found", noun)
+	}
+
+	posts := make([]*model.Post, 0, len(postList.Posts))
+	for _, post := range postList.Posts {
+		posts = append(posts, post)
+	}
+	sort.Slice(posts, func(i, j int) bool {
+		return posts[i].CreateAt < posts[j].CreateAt
+	})
+
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	userIDs := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, post := range posts {
+		if !seen[post.UserId] {
+			seen[post.UserId] = true
+			userIDs = append(userIDs, post.UserId)
+		}
+	}
+	userCache := make(map[string]string)
+	if users, _, err := client.GetUsersByIds(ctx, userIDs); err != nil {
+		p.logger.Warn("failed to fetch users by IDs", "error", err)
+	} else {
+		for _, user := range users {
+			userCache[user.Id] = user.Username
+		}
+	}
+
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Found %d %s:\n\n", len(posts), noun))
+	for i, post := range posts {
+		username := userCache[post.UserId]
+		if username == "" {
+			username = "Unknown User"
+		}
+		format.WritePost(&result, format.PostEntry{
+			HeaderLabel: fmt.Sprintf("Post %d", i+1),
+			Username:    username,
+			Post:        post,
+			ShowChannel: true,
+		})
+	}
+	return result.String()
 }
 
 // stampAIGenerated marks a post as AI-generated (the ai_generated_by prop) when

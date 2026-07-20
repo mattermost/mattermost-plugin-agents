@@ -264,18 +264,110 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 })
 
 // Read-only Mattermost tools auto-run in DMs but ask in channels, where results
-// are visible to everyone. read_file belongs here (not auto-run-everywhere): it
-// only checks the caller's own access, so auto-running it in a channel could
-// surface a file the channel can't see.
+// are visible to everyone. Every tool here is a caller-scoped read that only
+// returns data the requesting user can already access, so auto-running it in a
+// private DM surfaces nothing new to that user.
+//
+// Deliberately excluded (left at the runtime default of policy="ask"):
+//   - get_file_link mints a public, unauthenticated bypass link for a file.
+//   - list_incoming_webhooks / list_outgoing_webhooks surface webhook IDs and
+//     tokens that are effectively posting credentials.
+//
+// These mirror the credential-exposing GitHub reads in githubSecurityAskTools.
 var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
+	// Posts & scheduled posts
 	"read_post",
+	"get_post_info",
+	"list_pinned_posts",
+	"list_saved_posts",
+	"list_scheduled_posts",
+
+	// Reactions & emoji
+	"get_post_reactions",
+	"get_bulk_reactions",
+	"list_custom_emoji",
+	"search_custom_emoji",
+
+	// Threads & unread
+	"get_threads",
+	"get_mentions",
+	"get_unread_counts",
+	"get_posts_around_unread",
+	"get_channel_unread",
+	"list_sidebar_categories",
+
+	// Channels
 	"read_channel",
 	"get_channel_info",
+	"get_channel_stats",
+	"get_channel_member_counts",
+	"search_channels",
+	"list_team_channels",
+	"list_archived_channels",
+
+	// Channel members & bookmarks
 	"get_channel_members",
+	"get_channel_member",
+	"get_channel_members_by_ids",
+	"get_channel_members_by_status",
+	"get_users_not_in_channel",
+	"search_users_in_channel",
+	"get_user_channel_memberships",
+	"list_channel_bookmarks",
+
+	// Users & profiles
+	"get_me",
+	"get_user",
+	"get_user_by_username",
+	"get_user_by_email",
+	"get_users_by_ids",
+	"get_users_by_usernames",
+	"get_user_stats",
+	"get_user_channels",
+	"list_cpa_fields",
+	"get_user_cpa_values",
+
+	// Status & presence
+	"get_user_status",
+	"get_users_statuses",
+	"get_user_custom_status",
+
+	// Teams
 	"get_team_info",
 	"get_team_members",
+	"get_team_member",
+	"get_team_stats",
+	"search_teams",
+	"get_users_in_team",
+	"get_users_not_in_team",
+	"get_new_users_in_team",
+	"get_dm_common_teams",
+	"get_user_teams",
+	"search_users_in_team",
+
+	// Search & files. read_file only checks the caller's own access, so it stays
+	// auto-run-in-DM (not auto-run-everywhere): auto-running it in a channel
+	// could surface a file the channel can't see.
 	"search_posts",
 	"search_users",
-	"get_user_channels",
+	"search_files",
+	"get_file_info",
+	"get_post_files",
 	"read_file",
+
+	// Integrations
+	"get_bot",
+	"list_bots",
+
+	// Groups
+	"get_group_info",
+	"list_groups",
+	"get_channel_groups",
+	"get_team_groups",
+	"get_user_groups",
+	"get_users_in_group_channels",
+
+	// Roles
+	"get_role",
+	"get_channel_moderations",
 })

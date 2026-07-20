@@ -21,6 +21,10 @@ type CombinedSearchArgs struct {
 	Query          string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
 	TeamID         string `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
 	ChannelID      string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
+	From           string `json:"from,omitempty" jsonschema:"Optional username — only posts from this user (keyword search only),maxLength=64"`
+	In             string `json:"in,omitempty" jsonschema:"Optional channel name or ID — only posts in this channel (keyword search only),maxLength=64"`
+	Before         string `json:"before,omitempty" jsonschema:"Optional date YYYY-MM-DD — only posts before this date (keyword search only)"`
+	After          string `json:"after,omitempty" jsonschema:"Optional date YYYY-MM-DD — only posts after this date (keyword search only)"`
 	SemanticLimit  int    `json:"semantic_limit,omitempty" jsonschema:"Max results from semantic search (default 10; max 50),minimum=1,maximum=50"`
 	SemanticOffset int    `json:"semantic_offset,omitempty" jsonschema:"Offset for semantic search pagination,minimum=0"`
 	KeywordLimit   int    `json:"keyword_limit,omitempty" jsonschema:"Max results from keyword search (default 10; max 100),minimum=1,maximum=100"`
@@ -32,6 +36,10 @@ type KeywordOnlySearchArgs struct {
 	Query         string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
 	TeamID        string `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
 	ChannelID     string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
+	From          string `json:"from,omitempty" jsonschema:"Optional username — only posts from this user,maxLength=64"`
+	In            string `json:"in,omitempty" jsonschema:"Optional channel name or ID — only posts in this channel,maxLength=64"`
+	Before        string `json:"before,omitempty" jsonschema:"Optional date YYYY-MM-DD — only posts before this date"`
+	After         string `json:"after,omitempty" jsonschema:"Optional date YYYY-MM-DD — only posts after this date"`
 	KeywordLimit  int    `json:"keyword_limit,omitempty" jsonschema:"Max results from keyword search (default 10; max 100),minimum=1,maximum=100"`
 	KeywordOffset int    `json:"keyword_offset,omitempty" jsonschema:"Offset for keyword search pagination,minimum=0"`
 }
@@ -58,6 +66,8 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 
 	mentionHint := "To find posts mentioning a specific person, query their username only (e.g. `john.smith`); at-mentions in posts use the username, never the display name. Do not combine username and display name (e.g. `john.smith John Smith`) in a single query — that requires all of those tokens to co-occur and will miss most posts."
 
+	filterHint := "Optional structured filters (keyword search only): from (username), in (channel name or ID), before/after (YYYY-MM-DD date)."
+
 	if semanticEnabled {
 		schema = NewJSONSchemaForAccessMode[CombinedSearchArgs](string(p.accessMode))
 		description = "Search for posts in Mattermost using both semantic (AI-powered) and keyword search. " +
@@ -68,6 +78,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			"keyword_limit/keyword_offset control keyword results (default: 10). " +
 			"You can make separate calls with different queries optimized for each search type (e.g., a natural language query for semantic and specific keywords for keyword search). " +
 			mentionHint + " " +
+			filterHint + " " +
 			"Returns matching posts with content, author, channel, and relevance score for semantic results. " +
 			contextHint
 	} else {
@@ -77,6 +88,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
 			"keyword_limit/keyword_offset control results (default: 10). " +
 			mentionHint + " " +
+			filterHint + " " +
 			"Returns matching posts with content, author, and channel. " +
 			contextHint
 	}
@@ -100,6 +112,48 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 // buildSearchTermWithChannel prepends an in:channelname modifier to the search query.
 func buildSearchTermWithChannel(query, channelName string) string {
 	return "in:" + channelName + " " + query
+}
+
+// applySearchModifiers prepends Mattermost keyword-search modifiers (from:, in:,
+// before:, after:) derived from the structured filter args. The in: filter accepts
+// either a channel name or a channel ID; an ID is resolved to its URL name so the
+// modifier matches. Modifiers only affect the keyword search leg.
+func (p *MattermostToolProvider) applySearchModifiers(ctx context.Context, client *model.Client4, term string, args CombinedSearchArgs) string {
+	var modifiers []string
+
+	if from := strings.TrimPrefix(strings.TrimSpace(args.From), "@"); from != "" {
+		modifiers = append(modifiers, "from:"+from)
+	}
+
+	if in := strings.TrimSpace(args.In); in != "" {
+		channelName := in
+		resolved := true
+		if model.IsValidId(in) {
+			if channel, _, err := client.GetChannel(ctx, in); err == nil {
+				channelName = channel.Name
+			} else {
+				// A raw ID never matches the in: name filter, so skip the
+				// modifier rather than silently returning zero results.
+				p.logger.Warn("failed to resolve in: channel ID for search modifier", "channel_id", in, "error", err)
+				resolved = false
+			}
+		}
+		if resolved {
+			modifiers = append(modifiers, "in:"+channelName)
+		}
+	}
+
+	if before := strings.TrimSpace(args.Before); before != "" {
+		modifiers = append(modifiers, "before:"+before)
+	}
+	if after := strings.TrimSpace(args.After); after != "" {
+		modifiers = append(modifiers, "after:"+after)
+	}
+
+	if len(modifiers) == 0 {
+		return term
+	}
+	return strings.Join(modifiers, " ") + " " + term
 }
 
 // searchPostResult holds a post result with metadata for deduplication and formatting.
@@ -270,6 +324,10 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 		}
 		teamID = channel.TeamId
 	}
+
+	// Prepend structured search modifiers (Mattermost search grammar). These
+	// constrain the keyword leg only; semantic search ignores them.
+	searchTerm = p.applySearchModifiers(ctx, client, searchTerm, args)
 
 	searchResults, _, err := client.SearchPosts(ctx, teamID, searchTerm, false)
 	if err != nil {

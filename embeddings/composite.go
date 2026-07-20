@@ -100,3 +100,11 @@ func (c *CompositeSearch) Clear(ctx context.Context) error {
 func (c *CompositeSearch) DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error) {
 	return c.store.DeleteOrphaned(ctx, nowTime, batchSize)
 }
+
+// BulkIndexer returns the store's bulk control, or nil.
+func (c *CompositeSearch) BulkIndexer() BulkIndexer {
+	if bulk, ok := c.store.(BulkIndexer); ok {
+		return bulk
+	}
+	return nil
+}

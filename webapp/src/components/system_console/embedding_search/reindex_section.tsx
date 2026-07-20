@@ -195,6 +195,20 @@ const StaleActions = styled.div`
     gap: 8px;
 `;
 
+// Unknown phases get fallback text (may come from a newer plugin version).
+const renderVectorIndexPhase = (phase: string) => {
+    switch (phase) {
+    case 'dropped':
+        return <FormattedMessage defaultMessage='Dropped for bulk load — search unavailable'/>;
+    case 'building':
+        return <FormattedMessage defaultMessage='Rebuilding — search unavailable'/>;
+    case 'repairing':
+        return <FormattedMessage defaultMessage='Re-indexing posts edited during rebuild'/>;
+    default:
+        return <FormattedMessage defaultMessage='Unknown state'/>;
+    }
+};
+
 interface ReindexSectionProps {
     jobStatus: JobStatusType | null;
     statusMessage: StatusMessageType;
@@ -475,6 +489,16 @@ export const ReindexSection = ({
                                         </HealthCheckLabel>
                                         <HealthCheckValue>
                                             {healthCheckResult.missing_posts.toLocaleString()}
+                                        </HealthCheckValue>
+                                    </HealthCheckRow>
+                                )}
+                                {healthCheckResult.vector_index_state && (
+                                    <HealthCheckRow>
+                                        <HealthCheckLabel>
+                                            <FormattedMessage defaultMessage='Vector Index'/>
+                                        </HealthCheckLabel>
+                                        <HealthCheckValue>
+                                            {renderVectorIndexPhase(healthCheckResult.vector_index_state.phase)}
                                         </HealthCheckValue>
                                     </HealthCheckRow>
                                 )}
