@@ -817,6 +817,100 @@ func TestEnsureBots(t *testing.T) {
 	}
 }
 
+func TestBotDescription(t *testing.T) {
+	testCases := []struct {
+		name     string
+		service  llm.ServiceConfig
+		expected string
+	}{
+		{
+			name: "service name and model",
+			service: llm.ServiceConfig{
+				Name:         "My OpenAI",
+				Type:         llm.ServiceTypeOpenAI,
+				DefaultModel: "gpt-4o",
+			},
+			expected: "Powered by My OpenAI (gpt-4o)",
+		},
+		{
+			name: "empty service name falls back to type",
+			service: llm.ServiceConfig{
+				Type:         llm.ServiceTypeAnthropic,
+				DefaultModel: "claude-sonnet-4-20250514",
+			},
+			expected: "Powered by anthropic (claude-sonnet-4-20250514)",
+		},
+		{
+			name: "no model omits the parenthetical",
+			service: llm.ServiceConfig{
+				Name: "My Azure",
+				Type: llm.ServiceTypeAzure,
+			},
+			expected: "Powered by My Azure",
+		},
+		{
+			name:     "empty name and no model",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI},
+			expected: "Powered by openai",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expected, botDescription(tc.service))
+		})
+	}
+}
+
+// TestEnsureBotsDescriptionUsesBotModelOverride pins that the bot description
+// reflects the per-agent model override, not the service's default model.
+func TestEnsureBotsDescriptionUsesBotModelOverride(t *testing.T) {
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+
+	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
+
+	var createdDescription string
+	mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot {
+		createdDescription = bot.Description
+		return bot
+	}, nil).Once()
+	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 0}, nil).Maybe()
+	mockAPI.On("SetProfileImage", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
+	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+
+	cfg := &mockConfig{
+		bots: []llm.BotConfig{
+			{
+				ID:          "bot1",
+				Name:        "testbot1",
+				DisplayName: "Test Bot 1",
+				ServiceID:   "svc1",
+				Model:       "gpt-4o-mini",
+			},
+		},
+		services: []llm.ServiceConfig{
+			{
+				ID:           "svc1",
+				Name:         "My OpenAI",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "key",
+				DefaultModel: "gpt-4o",
+			},
+		},
+	}
+	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, nil, &http.Client{}, nil)
+
+	defer mockAPI.AssertExpectations(t)
+
+	require.NoError(t, mmBots.EnsureBots())
+	require.Equal(t, "Powered by My OpenAI (gpt-4o-mini)", createdDescription)
+}
+
 // stubAgentStore returns a fixed slice. Tests can swap the slice between
 // EnsureBots calls to mimic a config save changing the DB-backed agent.
 type stubAgentStore struct {

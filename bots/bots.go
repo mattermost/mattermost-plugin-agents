@@ -361,7 +361,7 @@ func (b *MMBots) EnsureBots() error {
 	// For each bot in the configuration, try to find an existing bot matching the username.
 	// If it exists, update it to match. Otherwise, create a new bot.
 	for _, bot := range bots {
-		description := "Powered by " + bot.service.Type
+		description := botDescription(bot.service)
 		if prevBot, ok := prevousMMBotsByUsername[bot.cfg.Name]; ok {
 			var err error
 			bot.mmBot, err = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
@@ -422,6 +422,23 @@ func (b *MMBots) EnsureBots() error {
 	b.botsLock.Unlock()
 
 	return nil
+}
+
+// botDescription builds the bot user's description shown in the user popover,
+// e.g. "Powered by My OpenAI (gpt-4o)". The service's Name falls back to its
+// Type when the admin left the name empty (same convention as the admin UI).
+// The service passed in is the bot's resolved copy, so DefaultModel already
+// reflects a per-agent model override when one is set.
+func botDescription(service llm.ServiceConfig) string {
+	name := service.Name
+	if name == "" {
+		name = service.Type
+	}
+	description := "Powered by " + name
+	if service.DefaultModel != "" {
+		description += " (" + service.DefaultModel + ")"
+	}
+	return description
 }
 
 func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
