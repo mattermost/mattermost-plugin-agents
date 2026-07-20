@@ -1,11 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Renderer registry: maps a tool call to the component that renders it. Entries
-// are ordered and the first match wins; no match falls back to the generic
-// ToolCard. Matching is on canonical tool identity (origin kind + bare name)
-// plus a strict parse of the arguments, so a redacted/unexpected payload always
-// degrades to the generic field list rather than a broken rich card.
+// Renderer registry: maps a tool call to the component that renders it. First
+// match wins; no match falls back to the generic ToolCard. Matching requires a
+// strict argument parse, so redacted/unexpected payloads degrade to the
+// generic field list rather than a broken rich card.
 
 import React from 'react';
 
@@ -35,9 +34,8 @@ import {
     parseGetChannelInfo,
 } from './rich_card_parsers';
 
-// Everything tool_approval_set knows about a single tool call. Registry entries
-// pull the subset they need (rich cards need the ToolCard-style props; the
-// QuestionCard entry also needs the question-answer wiring).
+// Everything ToolApprovalSet knows about a single tool call; entries pull the
+// subset they need.
 export interface ToolRenderContext {
     postID: string;
     tool: ToolCall;
@@ -101,10 +99,8 @@ function embeddedEntry(
 
 const registry: RendererEntry[] = [
 
-    // QuestionCard: the proving migration. Matches a user-interaction select
-    // tool whose arguments parse into a renderable question; a redacted payload
-    // yields null and falls through to the generic card (preserving the exact
-    // pre-registry behavior).
+    // QuestionCard: a select-interaction tool whose arguments parse into a
+    // renderable question. Redacted payloads fall through to the generic card.
     {
         match: (tool) =>
             tool.user_interaction === 'select' &&

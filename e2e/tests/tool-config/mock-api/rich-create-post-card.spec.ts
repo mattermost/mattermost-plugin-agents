@@ -12,13 +12,12 @@ import { adminUsername, adminPassword } from 'helpers/system-console-container';
 import { createBotConfigHelper } from 'helpers/bot-config';
 
 /**
- * Test Suite: Rich create_post tool card (Phase 3 renderer registry)
+ * Test Suite: Rich create_post tool card (renderer registry)
  *
  * Uses Smocker to return a synthetic create_post tool call and verifies the
- * rich card renders the resolved channel and the message body (rather than a
- * raw JSON blob), and that the shared "View raw" affordance still exposes the
- * exact arguments payload. The tool is configured with the "ask" policy so the
- * card stays in the pending approval stage (no server-side execution needed).
+ * rich card renders the resolved channel and message body (not a raw JSON
+ * blob), and that "View raw" exposes the exact arguments payload. The "ask"
+ * policy keeps the card in the pending approval stage.
  */
 
 let mattermost: MattermostContainer;

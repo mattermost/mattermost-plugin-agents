@@ -1,12 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Rich per-tool cards for high-traffic embedded Mattermost tools. Each has a
-// strict parse<X>() that returns null on any shape mismatch; the registry only
-// routes to a rich card when its parser succeeds, so a redacted or unexpected
-// payload falls back to the generic ToolCard field list — never a broken card.
-// Cards render only the arguments body; ToolCardShell provides the approval
-// chrome and the View raw affordance.
+// Rich per-tool cards for embedded Mattermost tools. Each renders only the
+// arguments body inside ToolCardShell; the registry routes here only when the
+// tool's strict parser succeeds, so unexpected payloads fall back to the
+// generic ToolCard.
 
 import React from 'react';
 import {FormattedMessage} from 'react-intl';

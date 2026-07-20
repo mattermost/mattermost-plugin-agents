@@ -344,21 +344,15 @@ export interface ToolCardShellProps {
     approvalStage?: ToolApprovalStage;
     isAutoApproved?: boolean;
 
-    // The arguments body: the generic field list (ToolArguments) or a rich
-    // card's custom rendering. The shell owns the surrounding approval chrome,
-    // the result rendering, and the "View raw" affordance so every card — rich
-    // or generic — inherits the same approval flow and exact-payload inspection.
+    // The arguments body: the generic field list or a rich card's rendering.
     children?: React.ReactNode;
 }
 
 /**
- * ToolCardShell renders the shared approval chrome for a tool call: the
- * expandable header (chevron / status icon / display name / auto-approved
- * badge), the arguments body (children) with a "View raw" toggle, the tool
- * result section and result-review callout, and the decision buttons
- * (Accept/Reject and Share/Keep private). Rich cards supply only the arguments
- * body via children; everything else — and therefore every e2e selector and the
- * two-stage approval logic — is shared here.
+ * ToolCardShell renders the shared approval chrome for a tool call: expandable
+ * header, arguments body (children) with a "View raw" toggle, result section,
+ * result-review callout, and decision buttons. Cards supply only the arguments
+ * body, so the approval flow and payload inspection stay in one place.
  */
 const ToolCardShell: React.FC<ToolCardShellProps> = ({
     postID,
@@ -389,9 +383,6 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     const isResultApprovalStage = approvalStage === 'result';
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
 
-    // Prefer the MCP-supplied title (resolved + sanitized server-side); fall
-    // back to the prettified bare name, matching pre-title behavior so built-in
-    // and embedded display names are unchanged. Long titles ellipsize (ToolName).
     const displayName = toolDisplayName(tool);
 
     const canShowRaw = showArguments && hasInspectableArguments(tool.arguments);

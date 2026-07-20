@@ -448,14 +448,10 @@ func isResolvedToolCallsEvent(toolCalls []llm.ToolCall) bool {
 }
 
 // redactToolCalls returns a copy of the tool calls with Arguments, Result, and
-// MCPBareName cleared so that non-requesters see tool identity (name, title,
-// description, origin) and status but not payloads. Title and Description are
-// kept deliberately: they are tool-identity metadata (name-equivalent), and
-// dropping them here — while the persisted path (FilterForNonRequester) keeps
-// them — would make a call render differently live vs. after reload for
-// non-requesters. This construction clears fields by omission, so any new
-// llm.ToolCall field defaults to redacted; the tool-call parity test enforces
-// that this matches the persisted redaction policy.
+// MCPBareName cleared so non-requesters see tool identity and status but not
+// payloads. Must stay in lockstep with conversation.FilterForNonRequester
+// (enforced by tool_call_parity_test.go); new llm.ToolCall fields default to
+// redacted here by omission.
 func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	redacted := make([]llm.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {

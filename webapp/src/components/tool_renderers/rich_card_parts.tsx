@@ -2,9 +2,7 @@
 // See LICENSE.txt for license information.
 
 // Shared building blocks for the rich per-tool cards: layout primitives, a
-// message preview with a Show more toggle, and labeled filter pills. Rich cards
-// render only the "arguments body"; the surrounding approval chrome (header,
-// buttons, result, View raw) is provided by ToolCardShell.
+// message preview with a Show more toggle, and labeled pills.
 
 import React, {useState} from 'react';
 import styled from 'styled-components';
@@ -97,9 +95,8 @@ const PillKey = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
-// MessagePreview shows a (possibly long) message. Long messages clamp with a
-// Show more toggle — the user is approving a message that will be posted, so the
-// full text must always be reachable.
+// MessagePreview clamps long messages behind a Show more toggle; the full text
+// must always be reachable since the user is approving it.
 export const MessagePreview: React.FC<{text: string}> = ({text}) => {
     const [expanded, setExpanded] = useState(false);
     const isLong = text.length > 220 || text.split('\n').length > 4;
@@ -141,8 +138,7 @@ export const LabeledPill: React.FC<LabeledPillData> = ({label, value}) => (
     </LabeledPillEl>
 );
 
-// TagPill is a small standalone indicator pill (e.g. "Reply", "With thread")
-// whose content is an i18n'd node rather than a key/value pair.
+// TagPill is a small indicator pill (e.g. "Reply", "With thread").
 export const TagPill = styled.span`
     display: inline-flex;
     align-items: center;

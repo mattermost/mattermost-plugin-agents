@@ -35,14 +35,12 @@ export interface ToolCall {
     description: string;
     server_origin?: string; // omitempty on the server; present only for MCP tools
 
-    // Resolved human-readable display name supplied by an MCP server
-    // (precedence: title > annotations.title > prettified bare name, resolved
-    // server-side). Absent for built-in tools and MCP tools without a title.
+    // Display name resolved server-side from MCP metadata; absent for
+    // built-in tools and MCP tools without a declared title.
     title?: string;
 
-    // Unprefixed MCP tool name (e.g. "create_post" for "mattermost__create_post").
-    // Present only for MCP tools; used for canonical identity and display-name
-    // prettification. Redacted for non-requesters.
+    // Unprefixed MCP tool name (e.g. "create_post" for
+    // "mattermost__create_post"). Redacted for non-requesters.
     mcp_bare_name?: string;
 
     arguments?: JSONValue;

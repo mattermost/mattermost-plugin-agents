@@ -50,16 +50,11 @@ type ContentBlock struct {
 	Status       string          `json:"status,omitempty"`
 	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
 
-	// Title is the resolved human-readable tool display name (see
-	// llm.ToolCall.Title). Persisted so a reloaded conversation renders the
-	// same tool name that the live websocket event showed. Left visible to
-	// non-requesters (name-equivalent).
-	Title string `json:"title,omitempty"`
-
-	// Description is the tool description (see llm.ToolCall.Description).
-	// Plumbing-only in this pass — persisted for live/persisted parity and
-	// future display, but not rendered anywhere yet. Left visible to
-	// non-requesters (name-equivalent).
+	// Title and Description mirror llm.ToolCall so a reloaded conversation
+	// renders the same tool identity the live websocket event showed. Both
+	// are visible to non-requesters like Name. Description is not rendered
+	// anywhere yet.
+	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
 
 	// UserInteraction is the persisted form of llm.Tool.UserInteraction.
@@ -116,14 +111,11 @@ func BoolPtr(b bool) *bool { return &b }
 func Int64Ptr(v int64) *int64 { return &v }
 
 // FilterForNonRequester returns a new slice of content blocks with private
-// tool data redacted. Tool use blocks with shared != true have their Input
-// and MCPBareName fields cleared. Tool result blocks with shared != true have
-// their Content field set to empty string. Name, Title, ServerOrigin, and
-// Description are intentionally left visible to non-requesters (they are
-// tool-identity metadata, not user/model data — mirroring redactToolCalls on
-// the live path so the two paths render identically). All other block types
-// pass through unchanged. The original slice and its elements are never
-// mutated. Returns nil if the input is nil.
+// tool data redacted. Tool use blocks with shared != true have Input and
+// MCPBareName cleared; tool result blocks with shared != true have Content
+// cleared. Tool identity (Name, Title, Description, ServerOrigin) stays
+// visible, mirroring redactToolCalls on the live path so both paths render
+// identically. The original slice is never mutated; nil in, nil out.
 func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil
@@ -149,12 +141,10 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 
 // SanitizeForDisplay returns a new slice of content blocks with LLM-generated
 // and MCP-server-supplied string fields sanitized against Unicode bidi/spoofing
-// attacks. Tool use blocks have their Input, Title, and Description fields
-// sanitized, and tool result blocks have their Content field sanitized. The
-// Title/Description sanitization is defense in depth: MCP metadata is already
-// sanitized at capture (mcp/user_clients.go GetTools), but old persisted turns
-// predate that and this path also covers any non-MCP writer. The original slice
-// is never mutated. Returns nil if the input is nil.
+// attacks: Input, Title, and Description on tool_use blocks, Content on
+// tool_result blocks. Title/Description are already sanitized at capture; this
+// is defense in depth that also covers older persisted turns. The original
+// slice is never mutated; nil in, nil out.
 func SanitizeForDisplay(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil

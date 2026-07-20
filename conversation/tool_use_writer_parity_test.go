@@ -11,14 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// persistedToolUseFields are the tool_use ContentBlock JSON tags that the
-// approval-path writers must emit so a tool call renders identically live and
-// after reload. This is the conversation-side half of the tool-call parity
-// drift-guard: the live-path writer (streaming.buildContentBlocks), the generic
-// PostToBlocks converter, and the redaction parity are asserted in
-// streaming/tool_call_parity_test.go, which cannot reach the unexported
-// toolUseBlocks writer used for auto-run tool rounds. Keep this list in sync
-// with the persisted==true rows of that package's policy table.
+// persistedToolUseFields are the tool_use ContentBlock JSON tags the writers
+// in this package must emit so a tool call renders identically live and after
+// reload. Keep in sync with the persisted fields in
+// streaming/tool_call_parity_test.go, which covers the live-path writer and
+// redaction parity but cannot reach the unexported toolUseBlocks.
 var persistedToolUseFields = []string{
 	"id",
 	"name",

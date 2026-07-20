@@ -310,10 +310,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     return null;
                 }
 
-                // The renderer registry routes each call to its rich card (or
-                // QuestionCard), falling back to the generic ToolCard. Redacted
-                // calls (non-requesters) have no arguments, so every rich/
-                // question parser returns null and the generic card renders.
+                // The registry routes each call to its rich card or
+                // QuestionCard, falling back to the generic ToolCard.
                 return (
                     <React.Fragment key={tool.id}>
                         {renderToolCall({

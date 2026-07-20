@@ -14,25 +14,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// toolCallFieldPolicy is the per-field parity contract for one JSON field of
-// llm.ToolCall. It is the single source of truth for what the live (websocket)
-// path and the persisted (conversation API) path must agree on, and is enforced
-// by the tests below. When a field is added to llm.ToolCall, the exhaustiveness
-// test fails until it is listed here — forcing an explicit persistence +
-// redaction decision rather than silently diverging the two paths (the class of
-// bug this guards against: Description was historically kept on the persisted
-// path but dropped by omission on the live redaction path).
+// toolCallFieldPolicy is the parity contract for one JSON field of
+// llm.ToolCall: what the live (websocket) and persisted (conversation API)
+// paths must agree on. Adding a field to llm.ToolCall fails the exhaustiveness
+// test until it is listed here, forcing an explicit persistence + redaction
+// decision instead of silently diverging the two paths.
 type toolCallFieldPolicy struct {
-	// blockJSON is the conversation.ContentBlock tool_use JSON tag that
-	// persists this field, or "" if the field is not persisted on the tool_use
-	// block (Result lives on a separate tool_result block; it is not tool
-	// identity/metadata).
+	// blockJSON is the ContentBlock tool_use JSON tag that persists this
+	// field, or "" if not persisted on the tool_use block (Result lives on a
+	// separate tool_result block).
 	blockJSON string
 
-	// visibleToNonRequester is whether the field survives redaction for
-	// non-requesters on BOTH paths: redactToolCalls (live) and
-	// conversation.FilterForNonRequester (persisted). The two must agree, or a
-	// call renders differently live vs. after reload for other channel members.
+	// visibleToNonRequester is whether the field survives redaction on BOTH
+	// paths: redactToolCalls (live) and FilterForNonRequester (persisted).
 	visibleToNonRequester bool
 }
 

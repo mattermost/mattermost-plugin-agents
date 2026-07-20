@@ -33,18 +33,13 @@ type Tool struct {
 	Schema      any
 	Resolver    ToolResolver
 
-	// Title is an optional human-readable display name supplied by an MCP
-	// server (see the MCP spec's display-name precedence: title >
-	// annotations.title > name). Empty for built-in tools and for MCP tools
-	// that do not declare one. Captured from MCP metadata in
-	// mcp/user_clients.go GetTools and Unicode-sanitized at capture.
+	// Title is an optional human-readable display name from MCP metadata,
+	// Unicode-sanitized at capture (mcp.UserClients.GetTools). Empty for
+	// built-in tools and MCP tools that do not declare one.
 	Title string
 
-	// Annotations carries optional MCP tool annotations. Captured from MCP
-	// metadata but not consumed yet: the safety hints are display-only trust
-	// signals that are intentionally not surfaced in this pass (the MCP spec
-	// warns clients not to trust annotations from untrusted servers). Nil for
-	// built-in tools and MCP tools that declare none.
+	// Annotations holds optional MCP tool annotations. The safety hints are
+	// captured but not displayed: the MCP spec warns against trusting them.
 	Annotations *ToolAnnotations
 
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
@@ -64,18 +59,15 @@ type Tool struct {
 	CallMetadata map[string]any
 }
 
-// ToolAnnotations mirrors the subset of the MCP SDK's mcp.ToolAnnotations that
-// this plugin captures. All fields are hints supplied by the MCP server and are
-// NOT trusted for security decisions (per the MCP spec). Title participates in
-// display-name resolution; the safety hints are captured for future use but not
-// displayed in this pass.
+// ToolAnnotations is the subset of MCP tool annotations this plugin captures.
+// All fields are server-supplied hints and must not drive security decisions.
 type ToolAnnotations struct {
-	// Title is a human-readable display name (lower precedence than Tool.Title).
+	// Title is a display name with lower precedence than Tool.Title.
 	Title string
 	// ReadOnlyHint indicates the tool does not modify its environment.
 	ReadOnlyHint bool
-	// DestructiveHint indicates the tool may perform destructive updates.
-	// A nil pointer means the server did not declare the hint.
+	// DestructiveHint indicates the tool may perform destructive updates;
+	// nil means undeclared.
 	DestructiveHint *bool
 }
 
@@ -277,12 +269,9 @@ type ToolCall struct {
 	Status      ToolCallStatus  `json:"status"`
 	MCPBareName string          `json:"mcp_bare_name,omitempty"`
 
-	// Title is the resolved human-readable display name for MCP tools that
-	// declare one (precedence: Tool.Title > Tool.Annotations.Title >
-	// prettified bare name, resolved at capture). Empty for built-in tools and
-	// MCP tools without a declared title; the webapp then prettifies the bare
-	// name. Carried on both the live (websocket) and persisted paths, and left
-	// visible to non-requesters (name-equivalent).
+	// Title is the resolved display name for MCP tools that declare one
+	// (title > annotations.title, resolved at capture). When empty the webapp
+	// prettifies the bare name. Visible to non-requesters like Name.
 	Title string `json:"title,omitempty"`
 
 	// UserInteraction mirrors Tool.UserInteraction so the webapp can render

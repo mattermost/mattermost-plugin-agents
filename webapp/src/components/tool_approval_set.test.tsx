@@ -15,10 +15,8 @@ type MockRenderContext = {
     isAutoApproved?: boolean;
 };
 
-// Mock the renderer registry so these tests focus on ToolApprovalSet's
-// decision logic (which tool gets which callbacks) rather than card rendering,
-// and so the real cards' external deps (react-bootstrap, etc.) aren't loaded.
-// Registry routing itself is covered by registry.test.tsx.
+// Mock the registry so these tests cover ToolApprovalSet's decision logic
+// only; routing is covered by registry.test.tsx.
 const mockRenderToolCall = jest.fn<null, [MockRenderContext]>(() => null);
 
 jest.mock('./tool_renderers/registry', () => ({

@@ -1,14 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Entity chips resolve a channel_id / username referenced in a tool call's
-// arguments to a real Mattermost entity (fetched via the store or the API) and
-// render it with a type icon or avatar. This is the "resolved entity" styling:
-// a chip ALWAYS carries an icon/avatar. On any resolution failure it degrades
-// to plain text (the raw id/username), never to an icon-less chip, so a resolved
-// entity can never be confused with a raw model-supplied value on the approval
-// surface. Chips only ever render for the requester (non-requesters have no
-// arguments and cannot expand the card).
+// Entity chips resolve a channel_id / username from tool arguments to a real
+// Mattermost entity and render it with a type icon or avatar. A chip always
+// carries an icon/avatar; on resolution failure it degrades to plain text
+// (never an icon-less chip), so a resolved entity can't be confused with a raw
+// model-supplied value.
 
 import React, {useEffect, useState} from 'react';
 import styled from 'styled-components';
@@ -42,8 +39,7 @@ const ChipTeam = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
-// Plain-text fallback for an unresolved entity (raw id/username). Deliberately
-// NOT a chip and NOT carrying an icon.
+// Plain-text fallback for an unresolved entity: no chip, no icon.
 const PlainFallback = styled.span`
     font-size: 12px;
     line-height: 18px;
@@ -77,9 +73,8 @@ interface ResolvedUser {
     lastPictureUpdate: number;
 }
 
-// Module-level caches shared across all chip instances so the same channel/user
-// is fetched once per session. A null value records a resolution failure so we
-// don't retry a missing/inaccessible entity on every render.
+// Session-wide caches so each channel/user is fetched once; null records a
+// failure so missing entities are not retried on every render.
 const channelCache = new Map<string, ResolvedChannel | null>();
 const userCache = new Map<string, ResolvedUser | null>();
 
@@ -100,8 +95,7 @@ const ChannelTypeIcon: React.FC<{type?: string}> = ({type}) => {
 interface ChannelChipProps {
     channelId?: string;
 
-    // Fallbacks used as plain text when the channel_id cannot be resolved
-    // (e.g. create_post passes the model-supplied channel/team display names).
+    // Plain-text fallbacks when channel_id cannot be resolved.
     fallbackName?: string;
     fallbackTeam?: string;
 }

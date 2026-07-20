@@ -46,8 +46,8 @@ const FieldLabel = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
-// Plain-text string value. Rendered as text (never through formatText/markdown)
-// so LLM-supplied argument values cannot create a link-spoofing surface.
+// Plain text, never formatText/markdown: LLM-supplied values must not become
+// a link-spoofing surface.
 const StringValue = styled.span<{$clamped: boolean}>`
     font-size: 12px;
     font-weight: 400;
@@ -70,10 +70,9 @@ const PillRow = styled.div`
     gap: 4px;
 `;
 
-// A compact "value pill" for scalars and primitive-array items. Reserved
-// styling: pills NEVER carry an icon/avatar. Phase 3 entity chips (resolved
-// channels/users) always carry one, so "icon = resolved entity, plain pill =
-// raw model-supplied value" stays unambiguous on the approval surface.
+// Compact pill for scalars and primitive-array items. Pills never carry an
+// icon/avatar — that styling is reserved for resolved entity chips, so raw
+// model values can't be mistaken for verified entities.
 const ValuePill = styled.span`
     display: inline-flex;
     align-items: center;
@@ -148,10 +147,8 @@ export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']
         Object.keys(argumentsValue).length === 0;
 }
 
-// hasInspectableArguments reports whether the arguments are a non-empty JSON
-// object worth offering a "View raw" toggle for. Null/empty-object/non-object
-// args have nothing (or nothing extra) to inspect. Used by the card shell to
-// decide whether to render the raw-inspection affordance.
+// hasInspectableArguments reports whether the arguments warrant a "View raw"
+// toggle (a non-empty JSON object).
 export function hasInspectableArguments(argumentsValue: ToolCall['arguments']): boolean {
     return argumentsValue != null &&
         typeof argumentsValue === 'object' &&
@@ -225,9 +222,8 @@ const FieldValue: React.FC<FieldValueProps> = ({value, clamped}) => {
     return <InlineJson $clamped={clamped}>{JSON.stringify(value, null, 2)}</InlineJson>;
 };
 
-// ToolArgumentsRaw renders the exact pretty-printed JSON payload. Hosted by the
-// card shell's "View raw" affordance so both the generic field list and the
-// rich cards expose the identical raw view.
+// ToolArgumentsRaw renders the exact pretty-printed JSON payload, shown by the
+// card shell's "View raw" toggle.
 export const ToolArgumentsRaw: React.FC<{arguments: ToolCall['arguments']}> = ({arguments: args}) => {
     if (args == null) {
         return null;
@@ -244,18 +240,15 @@ interface ToolArgumentsProps {
 }
 
 /**
- * Renders a tool call's arguments as a labeled, readable field list, with a
- * card-level "Show more" that expands all clamped long values at once. All
- * values render as plain text via styled-components; never through
- * formatText/markdown. The "View raw" affordance lives on the shared card shell
- * (ToolCardShell) so rich cards inherit it too.
+ * Renders a tool call's arguments as a labeled field list with a card-level
+ * "Show more" that expands all clamped values at once. Values render as plain
+ * text only. The "View raw" toggle lives on ToolCardShell.
  */
 const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
     const [expanded, setExpanded] = useState(false);
 
-    // Object entries in insertion order — identical on the live and persisted
-    // paths (both JSON.parse the same bytes), so the layout doesn't shift when
-    // a post swaps from websocket state to refetched conversation data.
+    // Insertion key order — identical bytes on the live and persisted paths,
+    // so the layout doesn't shift when a post reloads.
     const entries = useMemo<Array<[string, JSONValue]>>(() => {
         if (args == null || typeof args !== 'object' || Array.isArray(args)) {
             return [];
@@ -286,8 +279,7 @@ const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
         );
     }
 
-    // Top-level arrays/primitives are not the normal tool-args shape (always a
-    // JSON object). Fall back to the raw block so nothing is misrepresented.
+    // Non-object args (unexpected shape): show the raw payload verbatim.
     if (entries.length === 0) {
         return (
             <Container>

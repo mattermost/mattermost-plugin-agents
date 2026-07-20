@@ -2,9 +2,8 @@
 // See LICENSE.txt for license information.
 
 // Strict, pure parsers for the rich per-tool cards. Each returns null on any
-// shape mismatch (including redacted null arguments), which the registry uses to
-// fall back to the generic ToolCard rather than render a broken rich card.
-// Kept free of React/component imports so they can be unit-tested in isolation.
+// shape mismatch (including redacted null arguments) so the registry falls
+// back to the generic ToolCard. Free of React imports for isolated testing.
 
 import {ToolCall} from '../tool_types';
 

@@ -68,9 +68,8 @@ export interface ContentBlock {
     user_interaction?: string;
     would_auto_execute?: boolean;
 
-    // Resolved human-readable tool display name and description supplied by an
-    // MCP server (see llm.ToolCall). title participates in display-name
-    // resolution; description is plumbing-only (not rendered yet).
+    // Tool display name and description from MCP metadata (see llm.ToolCall).
+    // description is not rendered yet.
     title?: string;
     description?: string;
 

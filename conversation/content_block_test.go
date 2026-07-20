@@ -223,9 +223,7 @@ func TestFilterForNonRequesterRedactsApprovalMetadata(t *testing.T) {
 	require.Len(t, result, 1)
 	assert.Nil(t, result[0].Input)
 	assert.Empty(t, result[0].MCPBareName)
-	// Title/Description are tool-identity metadata (name-equivalent): they stay
-	// visible to non-requesters, matching redactToolCalls on the live path so
-	// the call renders identically live and after reload.
+	// Tool identity stays visible to non-requesters, matching redactToolCalls.
 	assert.Equal(t, "Get Issue", result[0].Title)
 	assert.Equal(t, "Get a Jira issue", result[0].Description)
 	assert.Equal(t, "jira__get_issue", result[0].Name)

@@ -1,10 +1,9 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Canonical tool identity helpers shared by the tool cards and the (Phase 3)
-// renderer registry. Identity is derived from the tool's server origin and bare
-// (unprefixed) name so a call routes and renders the same whether it arrives
-// live over the websocket or is rehydrated from the conversation API.
+// Canonical tool identity helpers shared by the tool cards and the renderer
+// registry. Identity is derived from server origin + bare name so a call
+// routes and renders the same live and after reload.
 
 import {ToolCall} from '@/components/tool_types';
 import {stripWirePrefix} from '@/utils/tool_names';
@@ -64,11 +63,9 @@ function prettifyBareName(bareName: string): string {
 }
 
 /**
- * The human-readable display name for a tool call. Uses the MCP-supplied title
- * when present (already Unicode-sanitized and effective-title-resolved
- * server-side); otherwise prettifies the bare name exactly as the tool cards
- * did before titles existed — so built-in and embedded tool names (and every
- * e2e assertion on them) are unchanged.
+ * The display name for a tool call: the MCP-supplied title when present
+ * (sanitized server-side), otherwise the prettified bare name — matching the
+ * pre-title behavior so built-in/embedded names are unchanged.
  */
 export function toolDisplayName(tool: Pick<ToolCall, 'name' | 'mcp_bare_name' | 'title'>): string {
     if (tool.title) {
