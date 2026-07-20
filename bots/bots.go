@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/assets"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
@@ -686,9 +687,15 @@ func (b *MMBots) GetAllBotUserIDs() []string {
 }
 
 // poweredByDescription builds the Mattermost bot description shown in the UI.
-func poweredByDescription(serviceType, model string) string {
-	if model == "" {
-		return "Powered by " + serviceType
+func poweredByDescription(serviceType, modelName string) string {
+	var description string
+	if modelName == "" {
+		description = "Powered by " + serviceType
+	} else {
+		description = "Powered by " + serviceType + " - " + modelName
 	}
-	return "Powered by " + serviceType + " - " + model
+	if utf8.RuneCountInString(description) > model.BotDescriptionMaxRunes {
+		return string([]rune(description)[:model.BotDescriptionMaxRunes])
+	}
+	return description
 }

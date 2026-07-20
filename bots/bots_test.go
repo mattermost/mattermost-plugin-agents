@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -1098,6 +1099,9 @@ func TestHasNativeWebSearchEnabledSupportedServiceType(t *testing.T) {
 }
 
 func TestPoweredByDescription(t *testing.T) {
+	prefix := "Powered by openai - "
+	longModel := strings.Repeat("m", model.BotDescriptionMaxRunes)
+
 	tests := []struct {
 		name        string
 		serviceType string
@@ -1122,11 +1126,19 @@ func TestPoweredByDescription(t *testing.T) {
 			model:       "gpt-4",
 			want:        "Powered by azure - gpt-4",
 		},
+		{
+			name:        "truncates to Mattermost bot description limit",
+			serviceType: "openai",
+			model:       longModel,
+			want:        string([]rune(prefix + longModel)[:model.BotDescriptionMaxRunes]),
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, poweredByDescription(tt.serviceType, tt.model))
+			got := poweredByDescription(tt.serviceType, tt.model)
+			assert.Equal(t, tt.want, got)
+			assert.LessOrEqual(t, utf8.RuneCountInString(got), model.BotDescriptionMaxRunes)
 		})
 	}
 }
