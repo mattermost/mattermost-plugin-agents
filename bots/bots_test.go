@@ -684,9 +684,10 @@ func TestEnsureBots(t *testing.T) {
 			},
 			cfgServices: []llm.ServiceConfig{
 				{
-					ID:     "service1",
-					Type:   llm.ServiceTypeOpenAI,
-					APIKey: "test-api-key",
+					ID:           "service1",
+					Type:         llm.ServiceTypeOpenAI,
+					APIKey:       "test-api-key",
+					DefaultModel: "gpt-4o",
 				},
 			},
 			isMultiLLMLicensed: false,
@@ -783,6 +784,9 @@ func TestEnsureBots(t *testing.T) {
 			mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
 			if tc.numCreatedBots > 0 {
 				mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot {
+					if len(tc.cfgServices) > 0 && tc.cfgServices[0].DefaultModel != "" {
+						assert.Equal(t, poweredByDescription(string(tc.cfgServices[0].Type), tc.cfgServices[0].DefaultModel), bot.Description)
+					}
 					return bot
 				}, nil).Times(tc.numCreatedBots)
 				mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 0}, nil).Times(tc.numCreatedBots)
@@ -1078,4 +1082,38 @@ func TestHasNativeWebSearchEnabledSupportedServiceType(t *testing.T) {
 		nil,
 	)
 	require.True(t, b.HasNativeWebSearchEnabled())
+}
+
+func TestPoweredByDescription(t *testing.T) {
+	tests := []struct {
+		name        string
+		serviceType string
+		model       string
+		want        string
+	}{
+		{
+			name:        "service type and model",
+			serviceType: "openai",
+			model:       "gpt-4o",
+			want:        "Powered by openai - gpt-4o",
+		},
+		{
+			name:        "service type only when model empty",
+			serviceType: "anthropic",
+			model:       "",
+			want:        "Powered by anthropic",
+		},
+		{
+			name:        "azure with deployment model",
+			serviceType: "azure",
+			model:       "gpt-4",
+			want:        "Powered by azure - gpt-4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, poweredByDescription(tt.serviceType, tt.model))
+		})
+	}
 }

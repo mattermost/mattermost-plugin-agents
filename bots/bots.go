@@ -361,7 +361,7 @@ func (b *MMBots) EnsureBots() error {
 	// For each bot in the configuration, try to find an existing bot matching the username.
 	// If it exists, update it to match. Otherwise, create a new bot.
 	for _, bot := range bots {
-		description := "Powered by " + bot.service.Type
+		description := poweredByDescription(bot.service.Type, bot.service.DefaultModel)
 		if prevBot, ok := prevousMMBotsByUsername[bot.cfg.Name]; ok {
 			var err error
 			bot.mmBot, err = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
@@ -683,4 +683,12 @@ func (b *MMBots) GetAllBotUserIDs() []string {
 		}
 	}
 	return ids
+}
+
+// poweredByDescription builds the Mattermost bot description shown in the UI.
+func poweredByDescription(serviceType, model string) string {
+	if model == "" {
+		return "Powered by " + serviceType
+	}
+	return "Powered by " + serviceType + " - " + model
 }
