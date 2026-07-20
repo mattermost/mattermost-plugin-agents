@@ -10,7 +10,7 @@
 import React, {useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {useSelector} from 'react-redux';
-import {PoundIcon, GlobeIcon, LockOutlineIcon, AccountMultipleOutlineIcon, MessageTextOutlineIcon} from '@mattermost/compass-icons/components';
+import {PoundIcon, LockOutlineIcon, AccountMultipleOutlineIcon, MessageTextOutlineIcon} from '@mattermost/compass-icons/components';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -79,15 +79,13 @@ const channelCache = new Map<string, ResolvedChannel | null>();
 const userCache = new Map<string, ResolvedUser | null>();
 
 const ChannelTypeIcon: React.FC<{type?: string}> = ({type}) => {
-    let Icon = PoundIcon; // public channel
+    let Icon = PoundIcon; // public
     if (type === 'P') {
         Icon = LockOutlineIcon;
     } else if (type === 'G') {
         Icon = AccountMultipleOutlineIcon;
     } else if (type === 'D') {
         Icon = MessageTextOutlineIcon;
-    } else if (type && type !== 'O') {
-        Icon = GlobeIcon; // shared/unknown
     }
     return <ChannelIconWrap><Icon size={14}/></ChannelIconWrap>;
 };

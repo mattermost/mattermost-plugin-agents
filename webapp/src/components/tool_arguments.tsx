@@ -281,11 +281,7 @@ const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
 
     // Non-object args (unexpected shape): show the raw payload verbatim.
     if (entries.length === 0) {
-        return (
-            <Container>
-                <RawJson>{JSON.stringify(args, null, 2)}</RawJson>
-            </Container>
-        );
+        return <ToolArgumentsRaw arguments={args}/>;
     }
 
     return (

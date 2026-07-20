@@ -8,11 +8,10 @@
 import {ToolCall} from '@/components/tool_types';
 import {stripWirePrefix} from '@/utils/tool_names';
 
-// EmbeddedServerOrigin mirrors mcp.EmbeddedClientKey on the server: the
-// ServerOrigin stamped on tools from the embedded Mattermost MCP server.
-export const EmbeddedServerOrigin = 'embedded://mattermost';
+// Mirrors mcp.EmbeddedClientKey on the server.
+const EmbeddedServerOrigin = 'embedded://mattermost';
 
-// PluginServerOriginPrefix mirrors mcp.pluginServerOriginKey ("plugin://<id>").
+// Mirrors mcp.pluginServerOriginKey ("plugin://<id>").
 const PluginServerOriginPrefix = 'plugin://';
 
 export type ToolOriginKind = 'builtin' | 'embedded' | 'plugin' | 'external';
@@ -42,15 +41,6 @@ export function originKind(serverOrigin?: string): ToolOriginKind {
  */
 export function bareToolName(tool: Pick<ToolCall, 'name' | 'mcp_bare_name'>): string {
     return tool.mcp_bare_name || stripWirePrefix(tool.name);
-}
-
-/**
- * A stable identity key for a tool call: origin kind + bare name. Used by the
- * renderer registry to match calls to rich cards regardless of MCP server
- * namespacing.
- */
-export function canonicalToolKey(tool: Pick<ToolCall, 'name' | 'mcp_bare_name' | 'server_origin'>): string {
-    return `${originKind(tool.server_origin)}:${bareToolName(tool)}`;
 }
 
 /** Prettify a bare tool name: underscores → spaces, Title Case each word. */

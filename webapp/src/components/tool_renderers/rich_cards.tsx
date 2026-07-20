@@ -2,9 +2,8 @@
 // See LICENSE.txt for license information.
 
 // Rich per-tool cards for embedded Mattermost tools. Each renders only the
-// arguments body inside ToolCardShell; the registry routes here only when the
-// tool's strict parser succeeds, so unexpected payloads fall back to the
-// generic ToolCard.
+// arguments body inside ToolCardShell, and falls back to the generic ToolCard
+// when its strict argument parse fails (e.g. redacted or unexpected payloads).
 
 import React from 'react';
 import {FormattedMessage} from 'react-intl';

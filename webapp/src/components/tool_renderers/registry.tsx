@@ -2,15 +2,15 @@
 // See LICENSE.txt for license information.
 
 // Renderer registry: maps a tool call to the component that renders it. First
-// match wins; no match falls back to the generic ToolCard. Matching requires a
-// strict argument parse, so redacted/unexpected payloads degrade to the
-// generic field list rather than a broken rich card.
+// match wins; no match falls back to the generic ToolCard. Matched components
+// strictly parse their arguments and render the generic ToolCard themselves on
+// any mismatch, so redacted/unexpected payloads never break a rich card.
 
 import React from 'react';
 
 import {originKind, bareToolName} from '@/utils/tool_identity';
 
-import {ToolApprovalStage, ToolCall} from '../tool_types';
+import {ToolApprovalStage, ToolCall, UserInteractionSelect} from '../tool_types';
 import ToolCard from '../tool_card';
 import QuestionCard, {parseQuestionArgs} from '../question_card';
 
@@ -24,15 +24,6 @@ import {
     ReadPostCard,
     GetChannelInfoCard,
 } from './rich_cards';
-import {
-    parseCreatePost,
-    parseDm,
-    parseGroupMessage,
-    parseSearchPosts,
-    parseSearchUsers,
-    parseReadPost,
-    parseGetChannelInfo,
-} from './rich_card_parsers';
 
 // Everything ToolApprovalSet knows about a single tool call; entries pull the
 // subset they need.
@@ -62,37 +53,21 @@ interface RendererEntry {
     render: (ctx: ToolRenderContext) => React.ReactNode;
 }
 
-// Map the render context to the props the generic/rich card shell components take.
+// Strip the question wiring; everything else is card props.
 function toRichProps(ctx: ToolRenderContext): RichCardProps {
-    return {
-        postID: ctx.postID,
-        tool: ctx.tool,
-        isCollapsed: ctx.isCollapsed,
-        isProcessing: ctx.isProcessing,
-        localDecision: ctx.localDecision,
-        onToggleCollapse: ctx.onToggleCollapse,
-        onApprove: ctx.onApprove,
-        onReject: ctx.onReject,
-        canExpand: ctx.canExpand,
-        showArguments: ctx.showArguments,
-        showResults: ctx.showResults,
-        approvalStage: ctx.approvalStage,
-        isAutoApproved: ctx.isAutoApproved,
-    };
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const {canAnswer, onAnswer, onSkip, ...cardProps} = ctx;
+    return cardProps;
 }
 
-// Build a registry entry for an embedded Mattermost tool matched by bare name
-// plus a successful strict parse.
-function embeddedEntry(
-    bareName: string,
-    parse: (args: ToolCall['arguments']) => unknown,
-    Component: React.FC<RichCardProps>,
-): RendererEntry {
+// Build a registry entry for an embedded Mattermost tool. The card itself
+// falls back to the generic ToolCard when its argument parse fails, so the
+// matcher only needs identity.
+function embeddedEntry(bareName: string, Component: React.FC<RichCardProps>): RendererEntry {
     return {
         match: (tool) =>
             originKind(tool.server_origin) === 'embedded' &&
-            bareToolName(tool) === bareName &&
-            parse(tool.arguments) !== null,
+            bareToolName(tool) === bareName,
         render: (ctx) => <Component {...toRichProps(ctx)}/>,
     };
 }
@@ -100,11 +75,9 @@ function embeddedEntry(
 const registry: RendererEntry[] = [
 
     // QuestionCard: a select-interaction tool whose arguments parse into a
-    // renderable question. Redacted payloads fall through to the generic card.
+    // renderable question. Redacted payloads render the generic card.
     {
-        match: (tool) =>
-            tool.user_interaction === 'select' &&
-            parseQuestionArgs(tool.arguments) !== null,
+        match: (tool) => tool.user_interaction === UserInteractionSelect,
         render: (ctx) => {
             const question = parseQuestionArgs(ctx.tool.arguments);
             if (!question) {
@@ -123,13 +96,13 @@ const registry: RendererEntry[] = [
             );
         },
     },
-    embeddedEntry('create_post', parseCreatePost, CreatePostCard),
-    embeddedEntry('dm', parseDm, DmCard),
-    embeddedEntry('group_message', parseGroupMessage, GroupMessageCard),
-    embeddedEntry('search_posts', parseSearchPosts, SearchPostsCard),
-    embeddedEntry('search_users', parseSearchUsers, SearchUsersCard),
-    embeddedEntry('read_post', parseReadPost, ReadPostCard),
-    embeddedEntry('get_channel_info', parseGetChannelInfo, GetChannelInfoCard),
+    embeddedEntry('create_post', CreatePostCard),
+    embeddedEntry('dm', DmCard),
+    embeddedEntry('group_message', GroupMessageCard),
+    embeddedEntry('search_posts', SearchPostsCard),
+    embeddedEntry('search_users', SearchUsersCard),
+    embeddedEntry('read_post', ReadPostCard),
+    embeddedEntry('get_channel_info', GetChannelInfoCard),
 ];
 
 /**
