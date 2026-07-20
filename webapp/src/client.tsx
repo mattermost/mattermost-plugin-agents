@@ -11,6 +11,7 @@ import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import {Automation, AutomationUpdate} from '@/types/automations';
 
 import manifest from './manifest';
 
@@ -1130,4 +1131,90 @@ export async function renderCustomPrompt(id: string, channelId?: string, botUser
         status_code: response.status,
         url,
     });
+}
+
+// --- Automation CRUD (mocked until channel-automation is wired) ---
+
+let mockAutomations: Automation[] = [];
+
+function cloneAutomation(automation: Automation): Automation {
+    return JSON.parse(JSON.stringify(automation));
+}
+
+export async function getAutomations(): Promise<Automation[]> {
+    return mockAutomations.map(cloneAutomation);
+}
+
+export async function getAutomation(id: string): Promise<Automation> {
+    const automation = mockAutomations.find((a) => a.id === id);
+    if (!automation) {
+        throw new ClientError(Client4.url, {
+            message: 'Automation not found',
+            status_code: 404,
+            url: `/automations/${id}`,
+        });
+    }
+    return cloneAutomation(automation);
+}
+
+export async function createAutomation(data: AutomationUpdate): Promise<Automation> {
+    const now = Date.now();
+    let createdBy = '';
+    try {
+        const me = await Client4.getMe();
+        createdBy = me.id;
+    } catch {
+        createdBy = '';
+    }
+    const created: Automation = {
+        id: `mock-${now}`,
+        name: data.name,
+        enabled: data.enabled ?? true,
+        trigger: data.trigger,
+        actions: data.actions,
+        created_at: now,
+        updated_at: now,
+        created_by: createdBy,
+    };
+    mockAutomations = [...mockAutomations, created];
+    return cloneAutomation(created);
+}
+
+export async function updateAutomation(id: string, data: AutomationUpdate): Promise<Automation> {
+    const index = mockAutomations.findIndex((a) => a.id === id);
+    if (index < 0) {
+        throw new ClientError(Client4.url, {
+            message: 'Automation not found',
+            status_code: 404,
+            url: `/automations/${id}`,
+        });
+    }
+
+    const existing = mockAutomations[index];
+    const updated: Automation = {
+        ...existing,
+        name: data.name,
+        trigger: data.trigger,
+        actions: data.actions,
+        updated_at: Date.now(),
+        enabled: data.enabled ?? existing.enabled,
+    };
+    mockAutomations = [
+        ...mockAutomations.slice(0, index),
+        updated,
+        ...mockAutomations.slice(index + 1),
+    ];
+    return cloneAutomation(updated);
+}
+
+export async function deleteAutomation(id: string): Promise<void> {
+    const exists = mockAutomations.some((a) => a.id === id);
+    if (!exists) {
+        throw new ClientError(Client4.url, {
+            message: 'Automation not found',
+            status_code: 404,
+            url: `/automations/${id}`,
+        });
+    }
+    mockAutomations = mockAutomations.filter((a) => a.id !== id);
 }

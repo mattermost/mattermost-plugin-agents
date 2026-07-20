@@ -20,8 +20,7 @@ import {useIsMultiLLMLicensed} from '@/license';
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
-
-type Tab = 'all' | 'yours';
+import FilterTabs, {OwnershipFilter} from './filter_tabs';
 
 // Keep in sync with api.FreeTierAgentLimit (api/api_agents.go).
 const FREE_TIER_AGENT_LIMIT = 1;
@@ -49,7 +48,7 @@ const AgentsList = () => {
     const [error, setError] = useState<string | null>(null);
     const [servicesError, setServicesError] = useState<string | null>(null);
     const [deleteInFlight, setDeleteInFlight] = useState(false);
-    const [activeTab, setActiveTab] = useState<Tab>('all');
+    const [activeTab, setActiveTab] = useState<OwnershipFilter>('all');
     const [deletingAgent, setDeletingAgent] = useState<UserAgent | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [viewOpen, setViewOpen] = useState(false);
@@ -221,20 +220,12 @@ const AgentsList = () => {
                 )}
             </Header>
 
-            <TabBar>
-                <TabButton
-                    $active={activeTab === 'all'}
-                    onClick={() => setActiveTab('all')}
-                >
-                    <FormattedMessage defaultMessage='All agents'/>
-                </TabButton>
-                <TabButton
-                    $active={activeTab === 'yours'}
-                    onClick={() => setActiveTab('yours')}
-                >
-                    <FormattedMessage defaultMessage='Your agents'/>
-                </TabButton>
-            </TabBar>
+            <FilterTabsWrapper>
+                <FilterTabs
+                    value={activeTab}
+                    onChange={setActiveTab}
+                />
+            </FilterTabsWrapper>
 
             <SearchContainer>
                 <SearchInputWrapper>
@@ -391,28 +382,8 @@ const CreateButton = styled(PrimaryButton)`
     flex-shrink: 0;
 `;
 
-const TabBar = styled.div`
-    display: flex;
-    flex-direction: row;
-    gap: 4px;
+const FilterTabsWrapper = styled.div`
     padding-bottom: 16px;
-`;
-
-const TabButton = styled.button<{$active: boolean}>`
-    padding: 4px 10px;
-    border: none;
-    border-radius: 4px;
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
-    cursor: pointer;
-    background: ${(p) => (p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'transparent')};
-    color: ${(p) => (p.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-
-    &:hover {
-        background: ${(p) => (p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
-    }
 `;
 
 const SearchContainer = styled.div`

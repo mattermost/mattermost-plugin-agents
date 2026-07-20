@@ -1,18 +1,14 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useRef, useEffect, useCallback} from 'react';
+import React, {useState, useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {
-    DotsHorizontalIcon,
-    PencilOutlineIcon,
-    TrashCanOutlineIcon,
-} from '@mattermost/compass-icons/components';
-
-import {getProfilePictureUrl} from '@/client';
 
 import {UserAgent, ServiceInfo} from '@/types/agents';
+
+import Avatar from './avatar';
+import RowActionsMenu from './row_actions_menu';
 
 type Props = {
     agent: UserAgent;
@@ -26,10 +22,8 @@ type Props = {
 const AgentRow = (props: Props) => {
     const {agent, services, servicesLoaded, canManage, onEdit, onDelete} = props;
     const [menuOpen, setMenuOpen] = useState(false);
-    const menuRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
 
-    const avatarUrl = getProfilePictureUrl(agent.botUserID ?? '', 0);
     const autoEnableNewMCPTools = agent.autoEnableNewMCPTools ?? false;
     const toolCount = autoEnableNewMCPTools ? 0 : (agent.enabledMCPTools?.length ?? 0);
     const service = services.find((s) => s.id === agent.serviceID);
@@ -56,29 +50,11 @@ const AgentRow = (props: Props) => {
         );
     }
 
-    // Close menu on outside click
-    useEffect(() => {
-        if (!menuOpen) {
-            return () => {
-                // No mousedown listener while menu is closed
-            };
-        }
-        const handler = (e: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-                setMenuOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [menuOpen]);
-
     const handleEdit = useCallback(() => {
-        setMenuOpen(false);
         onEdit(agent);
     }, [agent, onEdit]);
 
     const handleDelete = useCallback(() => {
-        setMenuOpen(false);
         onDelete(agent);
     }, [agent, onDelete]);
 
@@ -102,21 +78,6 @@ const AgentRow = (props: Props) => {
         [canManage, menuOpen, agent, onEdit],
     );
 
-    const handleMenuButtonClick = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-        setMenuOpen((prev) => !prev);
-    }, []);
-
-    const handleMenuItemEdit = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-        handleEdit();
-    }, [handleEdit]);
-
-    const handleMenuItemDelete = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-        handleDelete();
-    }, [handleDelete]);
-
     return (
         <RowContainer
             $clickable={canManage}
@@ -132,11 +93,7 @@ const AgentRow = (props: Props) => {
             } : {})}
         >
             <RowMain>
-                <Avatar
-                    src={avatarUrl}
-                    alt=''
-                    aria-hidden='true'
-                />
+                <Avatar userId={agent.botUserID ?? ''}/>
                 <NameColumn>
                     <DisplayName>{agent.displayName}</DisplayName>
                     <Username>{'@'}{agent.name}</Username>
@@ -151,33 +108,12 @@ const AgentRow = (props: Props) => {
                 </BadgesColumn>
             </RowMain>
             {canManage && (
-                <ActionsColumn ref={menuRef}>
-                    <MenuButton
-                        type='button'
-                        onClick={handleMenuButtonClick}
-                        aria-label={intl.formatMessage({defaultMessage: 'Agent actions'})}
-                    >
-                        <DotsHorizontalIcon size={18}/>
-                    </MenuButton>
-                    {menuOpen && (
-                        <DropdownMenu>
-                            <MenuItem
-                                type='button'
-                                onClick={handleMenuItemEdit}
-                            >
-                                <PencilOutlineIcon size={16}/>
-                                <FormattedMessage defaultMessage='Edit'/>
-                            </MenuItem>
-                            <MenuItemDanger
-                                type='button'
-                                onClick={handleMenuItemDelete}
-                            >
-                                <TrashCanOutlineIcon size={16}/>
-                                <FormattedMessage defaultMessage='Delete'/>
-                            </MenuItemDanger>
-                        </DropdownMenu>
-                    )}
-                </ActionsColumn>
+                <RowActionsMenu
+                    ariaLabel={intl.formatMessage({defaultMessage: 'Agent actions'})}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    onOpenChange={setMenuOpen}
+                />
             )}
         </RowContainer>
     );
@@ -218,13 +154,6 @@ const RowMain = styled.div`
     gap: 8px;
     flex: 1;
     min-width: 0;
-`;
-
-const Avatar = styled.img`
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    flex-shrink: 0;
 `;
 
 const NameColumn = styled.div`
@@ -282,70 +211,6 @@ const Badge = styled.span`
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
     white-space: nowrap;
-`;
-
-const ActionsColumn = styled.div`
-    position: relative;
-    flex-shrink: 0;
-`;
-
-const MenuButton = styled.button`
-    width: 32px;
-    height: 32px;
-    padding: 8px;
-    border: none;
-    background: transparent;
-    border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
-    }
-`;
-
-const DropdownMenu = styled.div`
-    position: absolute;
-    top: 100%;
-    right: 0;
-    z-index: 10;
-    min-width: 160px;
-    padding: 4px 0;
-    margin-top: 4px;
-    background: var(--center-channel-bg, #fff);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
-`;
-
-const MenuItem = styled.button`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 8px 16px;
-    border: none;
-    background: transparent;
-    font-size: 14px;
-    color: var(--center-channel-color);
-    cursor: pointer;
-    text-align: left;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-    }
-`;
-
-const MenuItemDanger = styled(MenuItem)`
-    color: var(--dnd-indicator, #D24B4E);
-
-    &:hover {
-        background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
-    }
 `;
 
 export default AgentRow;

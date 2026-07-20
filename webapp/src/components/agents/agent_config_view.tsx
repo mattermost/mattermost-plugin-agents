@@ -1,17 +1,14 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import styled from 'styled-components';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
-import ConfirmationDialog from '@/components/confirmation_dialog';
 
+import ConfigViewShell, {ConfigViewTab} from './config_view_shell';
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
 import McpsTab from './tabs/mcps_tab';
@@ -203,9 +200,6 @@ const AgentConfigView = (props: Props) => {
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
-    const [showDiscardDialog, setShowDiscardDialog] = useState(false);
-    const showDiscardDialogRef = useRef(false);
-    showDiscardDialogRef.current = showDiscardDialog;
 
     // Leave MCPs tab if tools are disabled
     useEffect(() => {
@@ -218,45 +212,6 @@ const AgentConfigView = (props: Props) => {
         () => avatarFile !== null || !draftsEqual(draft, baselineDraft),
         [draft, baselineDraft, avatarFile],
     );
-
-    const requestBack = useCallback(() => {
-        if (saving) {
-            return;
-        }
-        if (showDiscardDialogRef.current) {
-            return;
-        }
-        if (isDirty) {
-            setShowDiscardDialog(true);
-            return;
-        }
-        onBack();
-    }, [isDirty, onBack, saving]);
-
-    const handleDiscardConfirm = useCallback(() => {
-        setShowDiscardDialog(false);
-        onBack();
-    }, [onBack]);
-
-    const handleDiscardCancel = useCallback(() => {
-        setShowDiscardDialog(false);
-    }, []);
-
-    // Escape key: same as back — confirm when there are unsaved changes
-    useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') {
-                return;
-            }
-            if (showDiscardDialogRef.current) {
-                return;
-            }
-            e.preventDefault();
-            requestBack();
-        };
-        document.addEventListener('keydown', handler);
-        return () => document.removeEventListener('keydown', handler);
-    }, [requestBack]);
 
     const updateDraft = useCallback((updates: Partial<AgentDraft>) => {
         setDraft((prev) => ({...prev, ...updates}));
@@ -353,243 +308,73 @@ const AgentConfigView = (props: Props) => {
         }
     }, [mode, agent, draft, avatarFile, intl, onSaved, validate]);
 
+    const handleTabChange = useCallback((id: string) => {
+        setActiveTab(id as Tab);
+    }, []);
+
     const title = mode === 'create' ? intl.formatMessage({defaultMessage: 'New Agent'}) : draft.displayName || intl.formatMessage({defaultMessage: 'Edit Agent'});
 
+    const tabs: ConfigViewTab[] = useMemo(() => [
+        {
+            id: 'config',
+            label: <FormattedMessage defaultMessage='Configuration'/>,
+        },
+        {
+            id: 'access',
+            label: <FormattedMessage defaultMessage='Access'/>,
+        },
+        {
+            id: 'mcps',
+            label: <FormattedMessage defaultMessage='MCPs'/>,
+            disabled: draft.disableTools,
+            ...(draft.disableTools ? {
+                title: intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}),
+            } : {}),
+        },
+    ], [draft.disableTools, intl]);
+
     return (
-        <>
-            <ViewContainer>
-                <ViewHeader>
-                    <HeaderLeading>
-                        <BackButton
-                            type='button'
-                            onClick={requestBack}
-                            disabled={saving}
-                            aria-label={intl.formatMessage({defaultMessage: 'Back to agents'})}
-                        >
-                            <ArrowLeftIcon size={20}/>
-                        </BackButton>
-                        <ViewTitle>{title}</ViewTitle>
-                    </HeaderLeading>
-                </ViewHeader>
-
-                <TabsContainer>
-                    <TabButton
-                        $active={activeTab === 'config'}
-                        onClick={() => setActiveTab('config')}
-                    >
-                        <FormattedMessage defaultMessage='Configuration'/>
-                    </TabButton>
-                    <TabButton
-                        $active={activeTab === 'access'}
-                        onClick={() => setActiveTab('access')}
-                    >
-                        <FormattedMessage defaultMessage='Access'/>
-                    </TabButton>
-                    <TabButton
-                        $active={activeTab === 'mcps'}
-                        disabled={draft.disableTools}
-                        title={draft.disableTools ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : ''}
-                        onClick={() => {
-                            if (!draft.disableTools) {
-                                setActiveTab('mcps');
-                            }
-                        }}
-                    >
-                        <FormattedMessage defaultMessage='MCPs'/>
-                    </TabButton>
-                </TabsContainer>
-
-                <ViewBody>
-                    {errors.general && <ErrorBanner>{errors.general}</ErrorBanner>}
-
-                    {activeTab === 'config' && (
-                        <ConfigTab
-                            draft={draft}
-                            onChange={updateDraft}
-                            onAvatarChange={setAvatarFile}
-                            botUserId={agent?.botUserID}
-                            services={services}
-                            errors={errors}
-                            usernameLocked={mode === 'edit'}
-                        />
-                    )}
-                    {activeTab === 'access' && (
-                        <AccessTab
-                            draft={draft}
-                            onChange={updateDraft}
-                        />
-                    )}
-                    {activeTab === 'mcps' && (
-                        <McpsTab
-                            enabledTools={draft.enabledTools}
-                            autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
-                            mcpDynamicToolLoading={draft.mcpDynamicToolLoading}
-                            onChange={(updates) => updateDraft(updates)}
-                            onReconcileEnabledTools={reconcileEnabledTools}
-                        />
-                    )}
-                </ViewBody>
-
-                <ViewFooter>
-                    <CancelButton
-                        type='button'
-                        onClick={requestBack}
-                        disabled={saving}
-                    >
-                        <FormattedMessage defaultMessage='Cancel'/>
-                    </CancelButton>
-                    <SaveButton
-                        onClick={handleSave}
-                        disabled={saving}
-                    >
-                        {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
-                        }
-                    </SaveButton>
-                </ViewFooter>
-            </ViewContainer>
-            <ConfirmationDialog
-                show={showDiscardDialog}
-                titleId={DISCARD_CHANGES_TITLE_ID}
-                title={<FormattedMessage defaultMessage='Discard changes?'/>}
-                message={(
-                    <FormattedMessage defaultMessage='You have unsaved changes. If you close now, those changes will be lost.'/>
-                )}
-                confirmButtonText={<FormattedMessage defaultMessage='Discard'/>}
-                cancelButtonText={<FormattedMessage defaultMessage='Keep editing'/>}
-                onConfirm={handleDiscardConfirm}
-                onCancel={handleDiscardCancel}
-                isDestructive={true}
-                managedAccessibility={true}
-                zIndex={2100}
-            />
-        </>
+        <ConfigViewShell
+            title={title}
+            backAriaLabel={intl.formatMessage({defaultMessage: 'Back to agents'})}
+            tabs={tabs}
+            activeTabId={activeTab}
+            onTabChange={handleTabChange}
+            onBack={onBack}
+            onSave={handleSave}
+            isDirty={isDirty}
+            saving={saving}
+            discardTitleId={DISCARD_CHANGES_TITLE_ID}
+            error={errors.general}
+        >
+            {activeTab === 'config' && (
+                <ConfigTab
+                    draft={draft}
+                    onChange={updateDraft}
+                    onAvatarChange={setAvatarFile}
+                    botUserId={agent?.botUserID}
+                    services={services}
+                    errors={errors}
+                    usernameLocked={mode === 'edit'}
+                />
+            )}
+            {activeTab === 'access' && (
+                <AccessTab
+                    draft={draft}
+                    onChange={updateDraft}
+                />
+            )}
+            {activeTab === 'mcps' && (
+                <McpsTab
+                    enabledTools={draft.enabledTools}
+                    autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
+                    mcpDynamicToolLoading={draft.mcpDynamicToolLoading}
+                    onChange={(updates) => updateDraft(updates)}
+                    onReconcileEnabledTools={reconcileEnabledTools}
+                />
+            )}
+        </ConfigViewShell>
     );
 };
-
-// --- Styled Components ---
-
-const ViewContainer = styled.div`
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-    width: 100%;
-`;
-
-const ViewHeader = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 48px 0 16px 0;
-    flex-shrink: 0;
-`;
-
-const HeaderLeading = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-`;
-
-const ViewTitle = styled.h1`
-    font-family: 'Metropolis', sans-serif;
-    font-weight: 600;
-    font-size: 22px;
-    line-height: 28px;
-    color: var(--center-channel-color);
-    margin: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-`;
-
-const BackButton = styled.button`
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 8px;
-    margin-left: -8px;
-    border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-
-    &:hover:not(:disabled) {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: var(--center-channel-color);
-    }
-
-    &:disabled {
-        cursor: not-allowed;
-        opacity: 0.4;
-    }
-`;
-
-const TabsContainer = styled.div`
-    display: flex;
-    box-sizing: border-box;
-    width: 100%;
-    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    flex-shrink: 0;
-`;
-
-const TabButton = styled.button<{$active: boolean}>`
-    padding: 12px 16px;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    color: ${(p) => (p.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-    border-bottom: 2px solid ${(p) => (p.$active ? 'var(--button-bg)' : 'transparent')};
-    transition: color 0.2s ease, border-color 0.2s ease;
-    margin-bottom: -1px;
-
-    &:hover:not(:disabled) {
-        color: ${(p) => (p.$active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
-    }
-
-    &:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-    }
-`;
-
-const ViewBody = styled.div`
-    padding: 32px 16px;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-`;
-
-const ErrorBanner = styled.div`
-    padding: 10px 12px;
-    margin-bottom: 16px;
-    background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3);
-    color: var(--dnd-indicator, #D24B4E);
-    font-size: 14px;
-`;
-
-const ViewFooter = styled.div`
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    padding: 16px 0;
-    gap: 8px;
-    flex-shrink: 0;
-    background: var(--center-channel-bg);
-    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-`;
-
-const CancelButton = styled(TertiaryButton)`
-    height: 40px;
-`;
-
-const SaveButton = styled(PrimaryButton)`
-    height: 40px;
-`;
 
 export default AgentConfigView;

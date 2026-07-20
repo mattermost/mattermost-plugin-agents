@@ -3,8 +3,14 @@
 
 import React, {useState, useEffect, useCallback} from 'react';
 import styled from 'styled-components';
+import Select, {
+    FormatOptionLabelMeta,
+    GroupBase,
+    MultiValue,
+    SingleValue,
+    StylesConfig,
+} from 'react-select';
 import AsyncSelect from 'react-select/async';
-import {StylesConfig, MultiValue} from 'react-select';
 import {LockIcon, GlobeIcon} from '@mattermost/compass-icons/components';
 
 import {UserProfile} from '@mattermost/types/users';
@@ -14,30 +20,30 @@ import {getAutocompleteAllUsers, getChannelById, getProfilePictureUrl, getProfil
 
 import {getPortalTarget} from '../utils/dom';
 
-type Option = {
+export type BaseSelectOption = {
     value: string;
     label: string;
 };
 
-type TeamOption = Option & {
+type TeamOption = BaseSelectOption & {
     isTeam: true;
     displayName: string;
     icon?: string;
 };
 
-type UserOption = Option & {
+type UserOption = BaseSelectOption & {
     isTeam?: false;
     avatar: string;
 };
 
 type UserOrTeamOption = UserOption | TeamOption;
 
-type ChannelOption = Option & {
+type ChannelOption = BaseSelectOption & {
     type: ChannelType;
     teamName: string;
 };
 
-type SelectProps<T extends Option> = {
+type AsyncMultiSelectProps<T extends BaseSelectOption> = {
     value: T[];
     onChange: (newValue: MultiValue<T>) => void;
     loadOptions: (inputValue: string) => Promise<T[]>;
@@ -76,12 +82,8 @@ const ChannelIcon = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
-function SelectComponent<T extends Option>(props: SelectProps<T>) {
-    const loadOptions = async (inputValue: string) => {
-        return props.loadOptions(inputValue);
-    };
-
-    const selectStyles: StylesConfig<T, true> = {
+export function getSelectStyles<Option, IsMulti extends boolean = false>(): StylesConfig<Option, IsMulti> {
+    return {
         control: (base, state) => ({
             ...base,
             minHeight: '38px',
@@ -103,6 +105,10 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
         input: (base) => ({
             ...base,
             margin: '0',
+            color: 'var(--center-channel-color)',
+        }),
+        singleValue: (base) => ({
+            ...base,
             color: 'var(--center-channel-color)',
         }),
         indicatorSeparator: () => ({
@@ -152,6 +158,16 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
             ...base,
             backgroundColor: 'var(--center-channel-bg)',
         }),
+        groupHeading: (base) => ({
+            ...base,
+            padding: '8px 12px 4px',
+            fontSize: '12px',
+            fontWeight: 600,
+            lineHeight: '16px',
+            letterSpacing: '0.02em',
+            textTransform: 'uppercase',
+            color: 'rgba(var(--center-channel-color-rgb), 0.56)',
+        }),
         option: (base, state) => {
             let backgroundColor = 'transparent';
             if (state.isSelected) {
@@ -170,6 +186,49 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
             zIndex: 10000,
         }),
     };
+}
+
+type SingleSelectProps<T extends BaseSelectOption> = {
+    value: T | null;
+    options: ReadonlyArray<T | GroupBase<T>>;
+    onChange: (option: T | null) => void;
+    formatOptionLabel?: (option: T, meta: FormatOptionLabelMeta<T>) => React.ReactNode;
+    placeholder?: string;
+    isDisabled?: boolean;
+    isLoading?: boolean;
+    isSearchable?: boolean;
+    'aria-label'?: string;
+};
+
+export function SingleSelect<T extends BaseSelectOption>(props: SingleSelectProps<T>) {
+    const handleChange = (newValue: SingleValue<T>) => {
+        props.onChange(newValue);
+    };
+
+    return (
+        <Select<T, false, GroupBase<T>>
+            isMulti={false}
+            isClearable={false}
+            isDisabled={props.isDisabled}
+            isLoading={props.isLoading}
+            isSearchable={props.isSearchable ?? true}
+            value={props.value}
+            options={props.options}
+            onChange={handleChange}
+            formatOptionLabel={props.formatOptionLabel}
+            placeholder={props.placeholder}
+            aria-label={props['aria-label']}
+            menuPortalTarget={getPortalTarget()}
+            menuPosition='fixed'
+            styles={getSelectStyles<T, false>()}
+        />
+    );
+}
+
+function SelectComponent<T extends BaseSelectOption>(props: AsyncMultiSelectProps<T>) {
+    const loadOptions = async (inputValue: string) => {
+        return props.loadOptions(inputValue);
+    };
 
     return (
         <AsyncSelect<T, true>
@@ -182,7 +241,7 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
             placeholder={props.placeholder}
             menuPortalTarget={getPortalTarget()}
             menuPosition='fixed'
-            styles={selectStyles}
+            styles={getSelectStyles<T, true>()}
             defaultOptions={true}
         />
     );
@@ -369,6 +428,7 @@ export const SelectChannel = (props: SelectChannelProps) => {
         />
     );
 };
+
 const TeamIndicator = styled.span`
     margin-left: 8px;
     padding: 2px 4px;
