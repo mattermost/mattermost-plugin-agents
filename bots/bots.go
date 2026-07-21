@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/assets"
@@ -367,7 +368,7 @@ func (b *MMBots) EnsureBots() error {
 	// For each bot in the configuration, try to find an existing bot matching the username.
 	// If it exists, update it to match. Otherwise, create a new bot.
 	for _, bot := range bots {
-		description := "Powered by " + bot.service.Type
+		description := poweredByDescription(bot.service.Type, bot.service.DefaultModel)
 		if prevBot, ok := prevousMMBotsByUsername[bot.cfg.Name]; ok {
 			var err error
 			bot.mmBot, err = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
@@ -689,4 +690,18 @@ func (b *MMBots) GetAllBotUserIDs() []string {
 		}
 	}
 	return ids
+}
+
+// poweredByDescription builds the Mattermost bot description shown in the UI.
+func poweredByDescription(serviceType, modelName string) string {
+	var description string
+	if modelName == "" {
+		description = "Powered by " + serviceType
+	} else {
+		description = "Powered by " + serviceType + " - " + modelName
+	}
+	if utf8.RuneCountInString(description) > model.BotDescriptionMaxRunes {
+		return string([]rune(description)[:model.BotDescriptionMaxRunes])
+	}
+	return description
 }

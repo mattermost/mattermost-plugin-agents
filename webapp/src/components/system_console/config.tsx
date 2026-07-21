@@ -16,6 +16,7 @@ import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} fro
 import NoServicesPage from './no_services_page';
 import BotsMovedNotice from './bots_moved_notice';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
+import {REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY} from './embedding_search/types';
 import MCPServers from './mcp_servers';
 import {PluginConfig} from './plugin_config_types';
 import WebSearchPanel from './web_search/web_search_panel';
@@ -126,6 +127,9 @@ const defaultConfig: Config = {
             chunkOverlap: 200,
             chunkingStrategy: 'sentences',
         },
+        reindexWorkers: REINDEX_DEFAULTS.workers,
+        reindexBatchSize: REINDEX_DEFAULTS.batchSize,
+        reindexIndexStrategy: REINDEX_INDEX_STRATEGY.maintain,
     },
     mcp: {
         enabled: true,

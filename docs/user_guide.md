@@ -23,7 +23,7 @@ Access AI features in one of the following ways:
 
 ### Mobile
 
-Start or open a direct message with the Agent bot. If your system admin has configured multiple bots, switch between them by starting or opening each bot by name.
+Start or open a direct message with an agent. If your system admin has configured multiple agents, select one from any agent picker on web or desktop — that choice syncs to mobile. You can also switch agents on mobile by starting or opening a direct message with each agent by name.
 
 ## Conversational AI features
 
@@ -43,7 +43,9 @@ When you attach files in the Agents pane, direct messages, or channel @mentions,
 
 ### Select an agent
 
-If multiple agents are configured for your Mattermost workspace, select your preferred agent in the Agents pane or @mention a specific agent by name in channels.
+If multiple agents are configured for your Mattermost workspace, select your preferred agent from any agent picker — such as the Agents pane, **Custom prompts**, or semantic search. Your choice is saved to your account and syncs across web, desktop, and mobile. Until you choose an agent, Mattermost uses the workspace default configured by your system administrator.
+
+You can also @mention a specific agent by name in channels.
 
 ### Use custom prompt templates
 
