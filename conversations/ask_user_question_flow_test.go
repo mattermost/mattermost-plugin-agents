@@ -393,17 +393,17 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 }
 
 // TestHandleToolCallAutoExecutesPolicyEligiblePendingTools pins the deferred
-// auto-execution contract: a tool paused only because its batch contained a
-// question runs server-side when the user answers — without being in
-// accepted_tool_ids — based on a fresh policy check, with its result terminal
-// and shared like any auto-run round. A policy disabled since the pause must
-// fall back to rejection.
+// auto-execution contract: marked tools run server-side without appearing in
+// accepted_tool_ids, including when an interrupted all-auto batch is resumed
+// with an empty list. A policy disabled since the pause must fall back to
+// rejection.
 func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 	const origin = "https://jira.example.com"
 
 	cases := []struct {
 		name             string
 		wouldAutoExecute bool
+		includeQuestion  bool
 		policyChecker    mapPolicyChecker
 		wantToolStatus   string
 		wantToolResult   string
@@ -411,8 +411,31 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 		wantFollowUp     bool
 	}{
 		{
+			name:             "interrupted all-auto batch resumes with empty accepted list",
+			wouldAutoExecute: true,
+			policyChecker: mapPolicyChecker{
+				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
+			},
+			wantToolStatus: conversation.StatusAutoApproved,
+			wantToolResult: "restored-result",
+			wantToolShared: true,
+			wantFollowUp:   true,
+		},
+		{
+			name:             "interrupted all-auto resume rejects when policy was disabled",
+			wouldAutoExecute: true,
+			policyChecker: mapPolicyChecker{
+				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false}},
+			},
+			wantToolStatus: conversation.StatusRejected,
+			wantToolResult: "Tool call rejected by user",
+			wantToolShared: false,
+			wantFollowUp:   false, // nothing executed, so nothing to follow up on
+		},
+		{
 			name:             "auto_run_everywhere policy executes on resume",
 			wouldAutoExecute: true,
+			includeQuestion:  true,
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
@@ -424,6 +447,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 		{
 			name:             "policy disabled since the pause rejects instead",
 			wouldAutoExecute: true,
+			includeQuestion:  true,
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false}},
 			},
@@ -435,6 +459,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 		{
 			name:             "unmarked tool does not auto-run even if policy flipped to auto",
 			wouldAutoExecute: false,
+			includeQuestion:  true,
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
@@ -451,17 +476,17 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			nextSeq := 1
 			seedLoadToolPair(t, convStore, conv.ID, "load-1", "jira__get_issue", &nextSeq)
 
-			blocks := []conversation.ContentBlock{
-				{
-					Type:             conversation.BlockTypeToolUse,
-					ID:               "tool-use-1",
-					Name:             "jira__get_issue",
-					Input:            json.RawMessage(`{}`),
-					Status:           conversation.StatusPending,
-					Shared:           conversation.BoolPtr(false),
-					WouldAutoExecute: tc.wouldAutoExecute,
-				},
-				{
+			blocks := []conversation.ContentBlock{{
+				Type:             conversation.BlockTypeToolUse,
+				ID:               "tool-use-1",
+				Name:             "jira__get_issue",
+				Input:            json.RawMessage(`{}`),
+				Status:           conversation.StatusPending,
+				Shared:           conversation.BoolPtr(false),
+				WouldAutoExecute: tc.wouldAutoExecute,
+			}}
+			if tc.includeQuestion {
+				blocks = append(blocks, conversation.ContentBlock{
 					Type: conversation.BlockTypeToolUse,
 					ID:   "q-1",
 					Name: "AskUserQuestion",
@@ -472,7 +497,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 					Status:          conversation.StatusPending,
 					UserInteraction: llm.UserInteractionSelect,
 					Shared:          conversation.BoolPtr(false),
-				},
+				})
 			}
 			content, err := json.Marshal(blocks)
 			require.NoError(t, err)
@@ -513,10 +538,15 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 			channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-			// Only the question is in accepted_tool_ids: the paused tool is
-			// hidden in the UI and must be resolved by policy, not by click.
-			answers := map[string]mmtools.UserInteractionAnswer{"q-1": {Selected: []string{"UX Design"}}}
-			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"q-1"}, answers))
+			acceptedIDs := []string{}
+			var answers map[string]mmtools.UserInteractionAnswer
+			if tc.includeQuestion {
+				// Only the question is accepted: the marked tool must be
+				// resolved by policy, not by the user's selection.
+				acceptedIDs = []string{"q-1"}
+				answers = map[string]mmtools.UserInteractionAnswer{"q-1": {Selected: []string{"UX Design"}}}
+			}
+			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, acceptedIDs, answers))
 			streamingService.waitForStreaming()
 
 			turns, err := convStore.GetTurnsForConversation(conv.ID)
@@ -528,16 +558,20 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			assert.Equal(t, tc.wantToolStatus, updatedBlocks[0].Status)
 			require.NotNil(t, updatedBlocks[0].Shared)
 			assert.Equal(t, tc.wantToolShared, *updatedBlocks[0].Shared)
-			assert.Equal(t, conversation.StatusSuccess, updatedBlocks[1].Status)
+			if tc.includeQuestion {
+				assert.Equal(t, conversation.StatusSuccess, updatedBlocks[1].Status)
+			}
 
 			var resultBlocks []conversation.ContentBlock
 			require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
-			require.Len(t, resultBlocks, 2)
+			require.Len(t, resultBlocks, len(blocks))
 			assert.Equal(t, tc.wantToolResult, resultBlocks[0].Content)
 			require.NotNil(t, resultBlocks[0].Shared)
 			assert.Equal(t, tc.wantToolShared, *resultBlocks[0].Shared)
 			assert.NotNil(t, resultBlocks[0].DecidedAt, "auto/rejected results are terminal")
-			assert.NotNil(t, resultBlocks[1].DecidedAt, "answer result is terminal")
+			if tc.includeQuestion {
+				assert.NotNil(t, resultBlocks[1].DecidedAt, "answer result is terminal")
+			}
 
 			if tc.wantFollowUp {
 				assert.Len(t, lm.requests, 1, "expected a follow-up LLM request")

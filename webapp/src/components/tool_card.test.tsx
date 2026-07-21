@@ -7,7 +7,7 @@ import {IntlProvider} from 'react-intl';
 import {useSelector} from 'react-redux';
 
 import ToolCard from './tool_card';
-import {ToolCall, ToolCallStatus} from './tool_types';
+import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
 jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
@@ -32,7 +32,14 @@ function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
     };
 }
 
-function renderComponent(tool: ToolCall) {
+function renderComponent(
+    tool: ToolCall,
+    decisionProps: {
+        onApprove?: () => void;
+        onReject?: () => void;
+        approvalStage?: ToolApprovalStage;
+    } = {},
+) {
     return render(
         <IntlProvider locale='en'>
             <ToolCard
@@ -44,6 +51,7 @@ function renderComponent(tool: ToolCall) {
                 canExpand={false}
                 showArguments={true}
                 showResults={false}
+                {...decisionProps}
             />
         </IntlProvider>,
     );
@@ -90,5 +98,32 @@ describe('ToolCard argument rendering', () => {
         expect(screen.queryByText(/No parameters required/)).toBeNull();
         expect(formatTextMock).not.toHaveBeenCalled();
         expect(messageHtmlToComponentMock).not.toHaveBeenCalled();
+    });
+});
+
+describe('ToolCard pending state', () => {
+    test('shows a spinner without buttons for a live auto-executing tool', () => {
+        const {container} = renderComponent(
+            makeTool({would_auto_execute: true}),
+            {approvalStage: 'done'},
+        );
+
+        expect(container.querySelector('svg')).not.toBeNull();
+        expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Reject'})).toBeNull();
+    });
+
+    test('never shows accept or reject for a policy-approved pending tool', () => {
+        renderComponent(
+            makeTool({would_auto_execute: true}),
+            {
+                approvalStage: 'call',
+                onApprove: jest.fn(),
+                onReject: jest.fn(),
+            },
+        );
+
+        expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Reject'})).toBeNull();
     });
 });

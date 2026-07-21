@@ -302,6 +302,7 @@
   "ai.tool_call.reject_all": "Reject all",
   "ai.tool_call.response": "Response",
   "ai.tool_call.review_tool_response": "Review tool response",
+  "ai.tool_call.run_tools": "Run tools",
   "ai.tool_call.share": "Share",
   "ai.tool_call.status.accepted": "Accepted",
   "ai.tool_call.status.rejected": "Rejected",
