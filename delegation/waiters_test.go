@@ -58,7 +58,9 @@ func TestWaiterRegistry(t *testing.T) {
 			name: "re-registration returns the same channel",
 			run:  func(t *testing.T, r *waiterRegistry) {},
 			check: func(t *testing.T, r *waiterRegistry) {
-				require.True(t, r.register("conv-1") == r.register("conv-1"), "same delegation must share one wake channel")
+				first := r.register("conv-1")
+				second := r.register("conv-1")
+				require.True(t, first == second, "same delegation must share one wake channel")
 			},
 		},
 		{
