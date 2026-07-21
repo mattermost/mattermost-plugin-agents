@@ -155,18 +155,19 @@ func TestDelegateNotConfigured(t *testing.T) {
 // fakeConversationStore backs a real conversation.Service with canned turns.
 type fakeConversationStore struct {
 	conversation.Store
-	turns []store.Turn
+	turns    []store.Turn
+	turnsErr error
 }
 
 func (f *fakeConversationStore) GetTurnsForConversation(string) ([]store.Turn, error) {
-	return f.turns, nil
+	return f.turns, f.turnsErr
 }
 
 // completeForStatusTests wires the minimum dependencies StatusByParentToolCall
 // needs (a conversation service over canned turns).
-func completeForStatusTests(t *testing.T, svc *Service, turns []store.Turn) {
+func completeForStatusTests(t *testing.T, svc *Service, turns []store.Turn, turnsErr error) {
 	t.Helper()
-	convService := conversation.NewService(&fakeConversationStore{turns: turns}, nil, nil, nil)
+	convService := conversation.NewService(&fakeConversationStore{turns: turns, turnsErr: turnsErr}, nil, nil, nil)
 	svc.Complete(
 		convService,
 		conversations.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil),
@@ -209,7 +210,9 @@ func TestStatusByParentToolCall(t *testing.T) {
 		toolCallID  string
 		record      *Record
 		turns       []store.Turn
+		turnsErr    error
 		wantNil     bool
+		wantErr     bool
 		wantPhase   string
 		wantPreview string
 	}{
@@ -254,6 +257,14 @@ func TestStatusByParentToolCall(t *testing.T) {
 			turns:      answerTurns,
 			wantNil:    true,
 		},
+		{
+			name:       "turn store failure propagates instead of reporting a phase",
+			userID:     "alice-id",
+			toolCallID: "ptc-1",
+			record:     &record,
+			turnsErr:   errors.New("db down"),
+			wantErr:    true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -274,10 +285,14 @@ func TestStatusByParentToolCall(t *testing.T) {
 			}
 
 			svc := New(client, newTestBots(t), nil, nil, nil, nil)
-			completeForStatusTests(t, svc, tc.turns)
+			completeForStatusTests(t, svc, tc.turns, tc.turnsErr)
 			client.EXPECT().GetConfig().Return(&model.Config{ServiceSettings: model.ServiceSettings{SiteURL: model.NewPointer("https://mm.example.com")}}).Maybe()
 
 			status, err := svc.StatusByParentToolCall(tc.userID, tc.toolCallID)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
 			require.NoError(t, err)
 
 			if tc.wantNil {
@@ -317,6 +332,7 @@ func TestLatestSubTurnState(t *testing.T) {
 		err       error
 		wantState subTurnState
 		wantText  string
+		wantErr   bool
 	}{
 		{
 			name:      "no turns",
@@ -404,15 +420,28 @@ func TestLatestSubTurnState(t *testing.T) {
 			wantState: subTurnStateNone,
 		},
 		{
-			name:      "turn fetch error",
-			err:       errors.New("db down"),
-			wantState: subTurnStateNone,
+			name:    "turn fetch error propagates",
+			err:     errors.New("db down"),
+			wantErr: true,
+		},
+		{
+			name: "corrupt turn content propagates an error",
+			turns: []store.Turn{
+				turnOf(t, "user", []map[string]any{{"type": "text", "text": "task"}}),
+				{Role: "assistant", Content: json.RawMessage(`{not json`)},
+			},
+			wantErr: true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			state, text := latestSubTurnState(&fakeTurnSource{turns: tc.turns, err: tc.err}, "conv-1")
+			state, text, err := latestSubTurnState(&fakeTurnSource{turns: tc.turns, err: tc.err}, "conv-1")
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
 			require.Equal(t, tc.wantState, state)
 			require.Equal(t, tc.wantText, text)
 		})

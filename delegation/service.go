@@ -418,8 +418,11 @@ func (s *Service) surface(ctx context.Context, deps serviceDeps, req Request, so
 		ChannelID:            dmChannel.Id,
 		CreatedAt:            model.GetMillis(),
 	}
+	// The record is what reload reconciliation, cross-node completion, and
+	// the status endpoint recover state from — without it the delegation
+	// would run in a degraded, unrecoverable mode, so fail up front instead.
 	if err := saveRecord(s.mmClient, record); err != nil {
-		s.mmClient.LogWarn("Failed to persist delegation record", "error", err, "delegation_id", record.DelegationID)
+		return nil, fmt.Errorf("failed to persist the delegation record: %w", err)
 	}
 
 	// Response placeholder the sub-turn streams into.
@@ -485,13 +488,18 @@ func (s *Service) await(ctx context.Context, deps serviceDeps, run *delegationRu
 	defer timer.Stop()
 
 	for {
-		state, finalText := latestSubTurnState(deps.convService, run.record.DelegationID)
-		switch state {
-		case subTurnStateCompleted:
+		state, finalText, stateErr := latestSubTurnState(deps.convService, run.record.DelegationID)
+		switch {
+		case stateErr != nil:
+			// A store hiccup must not be mistaken for a settled delegation;
+			// keep waiting (without emitting a misleading phase) and re-read
+			// on the next wake — or eventually time out.
+			s.mmClient.LogWarn("Failed to derive delegation state; still waiting", "error", stateErr, "delegation_id", run.record.DelegationID)
+		case state == subTurnStateCompleted:
 			return finalText, nil
-		case subTurnStateWaiting:
+		case state == subTurnStateWaiting:
 			run.emit(PhaseWaitingOnYou, "", "")
-		case subTurnStateNone:
+		case state == subTurnStateNone:
 			// The last round settled without a follow-up answer (e.g. the
 			// initiator rejected the sub-agent's only pending action, or the
 			// follow-up failed).
@@ -556,8 +564,8 @@ func (s *Service) emitOrphanedCompletion(conversationID string) {
 	if err != nil || record == nil {
 		return
 	}
-	state, _ := latestSubTurnState(deps.convService, conversationID)
-	if state != subTurnStateCompleted {
+	state, _, stateErr := latestSubTurnState(deps.convService, conversationID)
+	if stateErr != nil || state != subTurnStateCompleted {
 		return
 	}
 	emitUpdate(s.mmClient, *record, PhaseCompleted, "", "", s.permalink(record.TaskPostID))
@@ -631,7 +639,10 @@ func (s *Service) StatusByParentToolCall(userID, parentToolCallID string) (*Stat
 		return nil, nil
 	}
 
-	state, finalText := latestSubTurnState(deps.convService, record.DelegationID)
+	state, finalText, stateErr := latestSubTurnState(deps.convService, record.DelegationID)
+	if stateErr != nil {
+		return nil, stateErr
+	}
 	phase := PhaseRunning
 	preview := ""
 	switch state {
@@ -683,11 +694,13 @@ type turnSource interface {
 // latestSubTurnState inspects the delegation conversation's turns after the
 // last user turn. The database is the single source of truth for the await
 // loop, the reconciliation endpoint, and orphaned-completion flips, so all
-// three agree regardless of which node executed what.
-func latestSubTurnState(src turnSource, conversationID string) (subTurnState, string) {
+// three agree regardless of which node executed what. A non-nil error means
+// the state could not be derived (store failure, corrupt content) — callers
+// must not treat it as a settled delegation.
+func latestSubTurnState(src turnSource, conversationID string) (subTurnState, string, error) {
 	turns, err := src.GetTurns(conversationID)
 	if err != nil {
-		return subTurnStateNone, ""
+		return subTurnStateNone, "", fmt.Errorf("failed to get delegation turns: %w", err)
 	}
 
 	lastUserIdx := -1
@@ -704,12 +717,12 @@ func latestSubTurnState(src turnSource, conversationID string) (subTurnState, st
 		}
 	}
 	if lastAssistantIdx == -1 {
-		return subTurnStateNone, ""
+		return subTurnStateNone, "", nil
 	}
 
 	var blocks []conversation.ContentBlock
 	if err := json.Unmarshal(turns[lastAssistantIdx].Content, &blocks); err != nil {
-		return subTurnStateNone, ""
+		return subTurnStateNone, "", fmt.Errorf("failed to unmarshal delegation turn content: %w", err)
 	}
 
 	hasToolUse := false
@@ -728,12 +741,12 @@ func latestSubTurnState(src turnSource, conversationID string) (subTurnState, st
 	}
 
 	if waiting {
-		return subTurnStateWaiting, ""
+		return subTurnStateWaiting, "", nil
 	}
 	// A turn that called tools is never the final answer — the follow-up
 	// round produces a separate text-only assistant turn.
 	if !hasToolUse && strings.TrimSpace(text.String()) != "" {
-		return subTurnStateCompleted, text.String()
+		return subTurnStateCompleted, text.String(), nil
 	}
-	return subTurnStateNone, ""
+	return subTurnStateNone, "", nil
 }

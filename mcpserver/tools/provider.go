@@ -357,18 +357,15 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		mcpContext.BeforeHookResolver = resolver
 	}
 
-	// Extract bot_user_id from metadata if present (for embedded servers)
-	// Only do this when tracking is enabled
-	if p.trackAIGenerated && metadata != nil {
+	// Extract identity fields from server-injected metadata (embedded servers
+	// only; never model-controlled). BotUserID is calling-agent identity used
+	// by delegation and (separately, gated on trackAIGenerated inside
+	// stampAIGenerated) by AI-content attribution — the tracking setting must
+	// not decide whether identity is available.
+	if metadata != nil {
 		if botUserID, ok := metadata["bot_user_id"].(string); ok {
 			mcpContext.BotUserID = botUserID
 		}
-	}
-
-	// Extract the calling turn's tool call ID (embedded servers only; the
-	// plugin's MCP client injects it server-side, so it is never
-	// model-controlled).
-	if metadata != nil {
 		if parentToolCallID, ok := metadata["parent_tool_call_id"].(string); ok {
 			mcpContext.ParentToolCallID = parentToolCallID
 		}

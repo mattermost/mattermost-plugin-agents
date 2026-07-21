@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/delegation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -106,8 +107,8 @@ func (p *MattermostToolProvider) toolAskAgent(mcpContext *MCPToolContext, args A
 	if task == "" {
 		return "", fmt.Errorf("task is required: provide a self-contained description of the task to delegate")
 	}
-	if len(task) > maxDelegationTaskLength {
-		return "", fmt.Errorf("task is too long (%d characters, maximum %d): shorten the task description", len(task), maxDelegationTaskLength)
+	if taskLength := utf8.RuneCountInString(task); taskLength > maxDelegationTaskLength {
+		return "", fmt.Errorf("task is too long (%d characters, maximum %d): shorten the task description", taskLength, maxDelegationTaskLength)
 	}
 
 	return p.delegationService.Delegate(mcpContext.Ctx, delegation.Request{

@@ -45,7 +45,9 @@ func recordKeyByParentToolCall(parentToolCallID string) string {
 	return "delegation_ptc_" + parentToolCallID
 }
 
-// saveRecord persists the record under both lookup keys.
+// saveRecord persists the record under both lookup keys. On a partial write
+// (second index fails) the first key is deleted again so the two lookups can
+// never disagree about the record's existence.
 func saveRecord(mmClient mmapi.Client, record Record) error {
 	if record.DelegationID == "" {
 		return fmt.Errorf("delegation record requires a delegation ID")
@@ -55,6 +57,9 @@ func saveRecord(mmClient mmapi.Client, record Record) error {
 	}
 	if record.ParentToolCallID != "" {
 		if err := mmClient.KVSetWithExpiry(recordKeyByParentToolCall(record.ParentToolCallID), record, recordTTL); err != nil {
+			if cleanupErr := mmClient.KVDelete(recordKeyByConversation(record.DelegationID)); cleanupErr != nil {
+				mmClient.LogWarn("Failed to clean up partial delegation record", "error", cleanupErr, "delegation_id", record.DelegationID)
+			}
 			return fmt.Errorf("failed to persist delegation record by tool call: %w", err)
 		}
 	}
