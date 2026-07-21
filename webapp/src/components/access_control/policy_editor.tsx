@@ -122,6 +122,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
         let cancelled = false;
         setLoading(true);
         setLoadError('');
+
         // A failed attribute-catalogue fetch fails the whole load: silently
         // rendering an empty catalogue would present an outage as "no
         // attributes" with no error or retry path.
