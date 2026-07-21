@@ -348,13 +348,13 @@ jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_to
 
 ### Post indexing
 
-Post indexing occurs automatically during initial setup and when changing embedding providers:
+Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, or **dimensions** requires a **Full Reindex** (do not use Resume for a dimension change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions change so new vectors match the configured width.
 
 1. Navigate to **System Console > Plugins > Agents > Embedding Search**
 2. Use the reindex controls to:
    
    - Monitor indexing progress during initial setup.
-   - Trigger reindexing when changing embedding providers.
+   - Trigger a Full Reindex when changing embedding providers, models, or dimensions.
    - Check indexing status.
 
 ### Backup and restore
