@@ -243,14 +243,6 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "first write: incoming ID with no stored config rejected",
-			next: []MCPServerConfig{
-				{ID: "invented-id", Name: "srv", BaseURL: "https://one.example.com"},
-			},
-			prev:      nil,
-			expectErr: true,
-		},
-		{
 			name: "first write: ID-less entries stay ID-less for the caller to mint",
 			next: []MCPServerConfig{
 				{Name: "srv", BaseURL: "https://one.example.com"},
@@ -270,7 +262,7 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "fabricated incoming ID rejected",
+			name: "unknown ID colliding with a stored server identity rejected",
 			next: []MCPServerConfig{
 				{ID: "never-issued-id", Name: "srv", BaseURL: "https://one.example.com"},
 			},
@@ -278,6 +270,24 @@ func TestReconcileMCPServerIDs(t *testing.T) {
 				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
 			},
 			expectErr: true,
+		},
+		{
+			name: "unknown ID with unique name and URL is kept (API automation)",
+			next: []MCPServerConfig{
+				{ID: "seeded-by-automation", Name: "new-srv", BaseURL: "https://new.example.com"},
+			},
+			prev: []MCPServerConfig{
+				{ID: "prev-id", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			expectIDs: []string{"seeded-by-automation"},
+		},
+		{
+			name: "caller-chosen IDs on first write are kept",
+			next: []MCPServerConfig{
+				{ID: "seeded-by-automation", Name: "srv", BaseURL: "https://one.example.com"},
+			},
+			prev:      nil,
+			expectIDs: []string{"seeded-by-automation"},
 		},
 		{
 			name: "rename plus URL-change crossing two prev servers rejected",

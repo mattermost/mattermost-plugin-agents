@@ -149,7 +149,11 @@ var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
 // fails open). Matching runs in global phases over the whole payload so the
 // outcome cannot depend on payload order; anything suspicious errors:
 //
-//  1. Explicit-ID claims: each must reference a distinct existing prev entry.
+//  1. Explicit-ID claims: an ID found in prev claims that entry. An ID
+//     unknown to prev is accepted as a caller-chosen ID for a genuinely new
+//     server (admin-API automation seeds its own IDs) — unless the entry's
+//     Name or BaseURL matches a stored server, which means a stale or
+//     corrupt client is trying to swap an existing server's policy identity.
 //  2. Exact (Name, BaseURL) claims against the full stored list; claiming an
 //     already-claimed prev entry is an error, never a silent fallback.
 //  3. Weak claims against the unclaimed remainder: by unique Name or unique
@@ -185,11 +189,22 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MC
 			return nil, fmt.Errorf("%w: server %q duplicates the ID of another entry in the payload", ErrMCPServerIDConflict, next[i].Name)
 		}
 		seenIncoming[id] = true
-		j, ok := prevByID[id]
-		if !ok {
-			return nil, fmt.Errorf("%w: server %q carries ID %q which does not exist in the stored configuration", ErrMCPServerIDConflict, next[i].Name, id)
+		if j, ok := prevByID[id]; ok {
+			claimed[j] = true
+			continue
 		}
-		claimed[j] = true
+		// Unknown ID: legitimate for a genuinely new server seeded by API
+		// automation. A Name or BaseURL collision with a stored
+		// (ID-carrying) server instead means a stale client is swapping
+		// that server's policy identity, which would detach its policy.
+		for k := range prev {
+			if prev[k].ID == "" {
+				continue
+			}
+			if prev[k].Name == next[i].Name || prev[k].BaseURL == next[i].BaseURL {
+				return nil, fmt.Errorf("%w: server %q carries ID %q that the stored configuration never issued", ErrMCPServerIDConflict, next[i].Name, id)
+			}
+		}
 	}
 
 	// Phase 2: exact (Name, BaseURL) claims, resolved for the whole payload

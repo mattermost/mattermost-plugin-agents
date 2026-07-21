@@ -71,7 +71,7 @@ func TestReconcileServiceIDs(t *testing.T) {
 			expectIDs: []string{"prev-id", ""},
 		},
 		{
-			name: "fabricated incoming ID errors",
+			name: "unknown ID colliding with a stored service name errors",
 			next: []llm.ServiceConfig{
 				{ID: "made-up", Name: "svc", Type: "openai"},
 			},
@@ -79,6 +79,24 @@ func TestReconcileServiceIDs(t *testing.T) {
 				{ID: "prev-id", Name: "svc", Type: "openai"},
 			},
 			expectErr: true,
+		},
+		{
+			name: "unknown ID with a unique name is kept (API automation)",
+			next: []llm.ServiceConfig{
+				{ID: "seeded-by-automation", Name: "new-svc", Type: "openai"},
+			},
+			prev: []llm.ServiceConfig{
+				{ID: "prev-id", Name: "svc", Type: "openai"},
+			},
+			expectIDs: []string{"seeded-by-automation"},
+		},
+		{
+			name: "caller-chosen IDs on first write are kept",
+			next: []llm.ServiceConfig{
+				{ID: "seeded-by-automation", Name: "svc", Type: "openai"},
+			},
+			prev:      nil,
+			expectIDs: []string{"seeded-by-automation"},
 		},
 		{
 			name: "duplicate incoming IDs error",

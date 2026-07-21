@@ -735,27 +735,31 @@ func TestHandleSaveConfigRejectsMCPServerIDConflicts(t *testing.T) {
 	}
 }
 
-// TestHandleSaveConfigFirstWriteRejectsIncomingMCPIDs covers the first-write
-// path (no stored config yet): reconciliation must still run against an empty
-// previous list, so fabricated or duplicate incoming MCP server IDs are
-// rejected instead of being persisted unvalidated.
-func TestHandleSaveConfigFirstWriteRejectsIncomingMCPIDs(t *testing.T) {
+// TestHandleSaveConfigFirstWriteIncomingMCPIDs covers the first-write path
+// (no stored config yet): reconciliation must still run against an empty
+// previous list, so duplicate incoming MCP server IDs are rejected, while
+// caller-chosen IDs for genuinely new servers (API automation seeding a
+// fresh install) are kept.
+func TestHandleSaveConfigFirstWriteIncomingMCPIDs(t *testing.T) {
 	tests := []struct {
 		name           string
 		payloadServers []config.MCPServerConfig
+		expectedStatus int
 	}{
 		{
-			name: "fabricated ID on first write",
+			name: "caller-chosen ID on first write is kept",
 			payloadServers: []config.MCPServerConfig{
-				{ID: "invented-by-client", Name: "Jira", BaseURL: "https://jira.example.com"},
+				{ID: "seeded-by-client", Name: "Jira", BaseURL: "https://jira.example.com"},
 			},
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name: "duplicate IDs on first write",
 			payloadServers: []config.MCPServerConfig{
-				{ID: "invented-by-client", Name: "Jira", BaseURL: "https://jira.example.com"},
-				{ID: "invented-by-client", Name: "Copy", BaseURL: "https://copy.example.com"},
+				{ID: "seeded-by-client", Name: "Jira", BaseURL: "https://jira.example.com"},
+				{ID: "seeded-by-client", Name: "Copy", BaseURL: "https://copy.example.com"},
 			},
+			expectedStatus: http.StatusConflict,
 		},
 	}
 
@@ -776,10 +780,16 @@ func TestHandleSaveConfigFirstWriteRejectsIncomingMCPIDs(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
-			require.Equal(t, http.StatusConflict, w.Code)
-			assert.Nil(t, store.cfg, "nothing must be persisted on rejection")
-			assert.Equal(t, 0, updater.callCount)
-			assert.Equal(t, 0, notifier.callCount)
+			require.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedStatus == http.StatusConflict {
+				assert.Nil(t, store.cfg, "nothing must be persisted on rejection")
+				assert.Equal(t, 0, updater.callCount)
+				assert.Equal(t, 0, notifier.callCount)
+			} else {
+				require.NotNil(t, store.cfg)
+				require.Len(t, store.cfg.MCP.Servers, len(tt.payloadServers))
+				assert.Equal(t, tt.payloadServers[0].ID, store.cfg.MCP.Servers[0].ID)
+			}
 		})
 	}
 }

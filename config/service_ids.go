@@ -22,7 +22,11 @@ var ErrServiceIDConflict = errors.New("LLM service identity conflict")
 // Matching runs in global phases over the whole payload so the outcome cannot
 // depend on payload order; anything suspicious errors:
 //
-//  1. Explicit-ID claims: each must reference a distinct existing prev entry.
+//  1. Explicit-ID claims: an ID found in prev claims that entry. An ID
+//     unknown to prev is accepted as a caller-chosen ID for a genuinely new
+//     service (admin-API automation seeds its own IDs) — unless the entry's
+//     Name matches a stored service, which means a stale or corrupt client
+//     is trying to swap an existing service's policy identity.
 //  2. Name claims against the unclaimed remainder: an ID-less entry claims
 //     the single unclaimed prev entry with its Name; any ambiguity or
 //     double-claim is an error.
@@ -57,11 +61,19 @@ func ReconcileServiceIDs(next []llm.ServiceConfig, prev []llm.ServiceConfig) ([]
 			return nil, fmt.Errorf("%w: service %q duplicates the ID of another entry in the payload", ErrServiceIDConflict, next[i].Name)
 		}
 		seenIncoming[id] = true
-		j, ok := prevByID[id]
-		if !ok {
-			return nil, fmt.Errorf("%w: service %q carries ID %q which does not exist in the stored configuration", ErrServiceIDConflict, next[i].Name, id)
+		if j, ok := prevByID[id]; ok {
+			claimed[j] = true
+			continue
 		}
-		claimed[j] = true
+		// Unknown ID: legitimate for a genuinely new service seeded by API
+		// automation. A Name collision with a stored (ID-carrying) service
+		// instead means a stale client is swapping that service's policy
+		// identity, which would detach its policy.
+		for k := range prev {
+			if prev[k].ID != "" && prev[k].Name == next[i].Name {
+				return nil, fmt.Errorf("%w: service %q carries ID %q but a stored service with that name has ID %q", ErrServiceIDConflict, next[i].Name, id, prev[k].ID)
+			}
+		}
 	}
 
 	// Phase 2: Name claims against the unclaimed remainder; every entry sees
