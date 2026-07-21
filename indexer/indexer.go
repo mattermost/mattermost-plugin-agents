@@ -188,16 +188,19 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		NodeID:    s.getNodeID(),
 	}
 
-	// When resuming, preserve CutoffAt, TotalRows, and ProcessedRows from the previous job
-	// so the UI shows accurate progress and catch-up covers posts from original start time
+	// When resuming, preserve CutoffAt, TotalRows, ProcessedRows, and the
+	// start-time model snapshot from the previous job so the UI shows
+	// accurate progress and completion unlocks the model actually indexed.
 	if !clearIndex && hasExisting {
 		newJobStatus.TotalRows = jobStatus.TotalRows
 		newJobStatus.CutoffAt = jobStatus.CutoffAt
 		newJobStatus.ProcessedRows = jobStatus.ProcessedRows
+		newJobStatus.ModelInfo = jobStatus.ModelInfo
 	} else {
-		// Fresh start - calculate new values
+		// Fresh start - calculate new values and snapshot current model.
 		newJobStatus.TotalRows = count
 		newJobStatus.CutoffAt = cutoffTimestamp
+		newJobStatus.ModelInfo = s.getModelInfoFromConfig()
 	}
 
 	// CAS routes through master; the predicate rejects the write if the row
@@ -408,7 +411,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
-	// Catch-up never defers the index (small tail only).
+	// Catch-up never defers the index (small tail only); ModelInfo stays nil.
 	go s.runReindexJob(&newJobStatus, false, nil)
 
 	return returnStatus, nil

@@ -65,6 +65,10 @@ type JobStatus struct {
 	CutoffAt      int64     `json:"cutoff_at,omitempty"`
 	LastUpdatedAt time.Time `json:"last_updated_at,omitempty"`
 	IsStale       bool      `json:"is_stale"`
+	// ModelInfo is captured at job start and written to IndexerModelKey on
+	// successful completion so a resumed run unlocks compatibility for the
+	// model it actually indexed with (not whatever is configured at finish).
+	ModelInfo *ModelInfo `json:"model_info,omitempty"`
 }
 
 // Cursor stores the cursor position for resumable indexing
@@ -400,12 +404,11 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 	// Update last indexed timestamp to now (after catch-up pass)
 	s.saveLastIndexedTimestamp(time.Now().UnixMilli())
 
-	// Save model info after a successful full reindex
-	if clearIndex {
-		if modelInfo := s.getModelInfoFromConfig(); modelInfo != nil {
-			if err := s.SaveModelInfo(*modelInfo); err != nil {
-				s.pluginAPI.LogError("Failed to save model info after reindex", "error", err)
-			}
+	// Write the start-time snapshot (not live config). Catch-up leaves
+	// ModelInfo nil so it cannot unlock compatibility after a model change.
+	if jobStatus.ModelInfo != nil {
+		if err := s.SaveModelInfo(*jobStatus.ModelInfo); err != nil {
+			s.pluginAPI.LogError("Failed to save model info after reindex", "error", err)
 		}
 	}
 
