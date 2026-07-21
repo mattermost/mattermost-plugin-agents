@@ -197,21 +197,22 @@ func (s *Indexer) postFetcher(query string, cutoff int64) fetchFunc {
 }
 
 // runReindexJob runs reindexing. Non-nil deferRun owns the index lifecycle:
-// dropped → drop, bulk load, rebuild on every terminal path; repairing →
-// edit repair only (index already intact).
+// dropped → drop, bulk load, rebuild on success; on cancel/failure while
+// deferPending, leave the dropped claim for resume. repairing → edit repair
+// only (index already intact).
 func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun *deferredRun) {
 	// ownedState is this run's last CAS-written claim (ownership proof).
 	var bulk embeddings.BulkIndexer
 	var ownedState VectorIndexState
-	deferPending := false  // index dropped; must rebuild on exit
+	deferPending := false  // index dropped; leave claim for resume on exit
 	repairPending := false // gated-window edits still need re-indexing
 
 	defer func() {
 		if r := recover(); r != nil {
 			s.pluginAPI.LogError("Reindex job panicked", "panic", r)
 			errMsg := fmt.Sprintf("Job panicked: %v", r)
-			if deferPending && bulk != nil {
-				errMsg = s.restoreDeferredIndex(context.Background(), jobStatus, bulk, ownedState, errMsg)
+			if deferPending {
+				errMsg = appendDroppedIndexNote(errMsg)
 			} else if repairPending {
 				errMsg = appendPendingRepairNote(errMsg)
 			}
@@ -282,10 +283,10 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 			deferPending = true
 			// Drop before bulk load (also clears an interrupted invalid index).
 			if err := bulk.PrepareBulkIndex(ctx); err != nil {
-				errMsg := s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, fmt.Sprintf("Failed to drop vector index: %s", err))
-				deferPending = false
+				// Leave the dropped claim; a resume adopts it, or the next
+				// activation clears a stale claim if DROP never took effect.
 				jobStatus.Status = JobStatusFailed
-				jobStatus.Error = errMsg
+				jobStatus.Error = appendDroppedIndexNote(fmt.Sprintf("Failed to drop vector index: %s", err))
 				jobStatus.CompletedAt = time.Now()
 				s.saveJobStatus(jobStatus)
 				return
@@ -298,8 +299,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 		if err := search.Clear(ctx); err != nil {
 			errMsg := fmt.Sprintf("Failed to clear search index: %s", err)
 			if deferPending {
-				errMsg = s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, errMsg)
-				deferPending = false
+				errMsg = appendDroppedIndexNote(errMsg)
 			}
 			jobStatus.Status = JobStatusFailed
 			jobStatus.Error = errMsg
@@ -317,9 +317,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 	_, watermark, err := s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor, passOptions{workers: workers, batchSize: batchSize})
 	if errors.Is(err, errCancelRequested) {
 		if deferPending {
-			// Rebuild before terminal cancel; surface rebuild errors on status.
-			jobStatus.Error = s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, jobStatus.Error)
-			deferPending = false
+			jobStatus.Error = appendDroppedIndexNote(jobStatus.Error)
 		} else if repairPending {
 			jobStatus.Error = appendPendingRepairNote(jobStatus.Error)
 		}
@@ -329,8 +327,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to index posts: %s", err)
 		if deferPending {
-			errMsg = s.restoreDeferredIndex(ctx, jobStatus, bulk, ownedState, errMsg)
-			deferPending = false
+			errMsg = appendDroppedIndexNote(errMsg)
 		} else if repairPending {
 			errMsg = appendPendingRepairNote(errMsg)
 		}
@@ -346,7 +343,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun 
 		if buildErr != nil {
 			// State stays dropped for health/resume.
 			deferPending = false
-			s.handleJobError(jobStatus, fmt.Sprintf("Failed to rebuild vector index: %s", buildErr), watermark.LastCreateAt, watermark.LastID)
+			s.handleJobError(jobStatus, appendDroppedIndexNote(fmt.Sprintf("Failed to rebuild vector index: %s", buildErr)), watermark.LastCreateAt, watermark.LastID)
 			return
 		}
 		deferPending = false
