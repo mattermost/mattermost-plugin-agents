@@ -297,8 +297,8 @@ test.describe('Agent provider configuration', () => {
         await agentPage.setBooleanField('Structured Output', true);
         await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(0)).toBeChecked();
         await expect(agentPage.getStructuredOutputNote()).toBeVisible({timeout: 10000});
-        await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).not.toBeChecked();
-        await expect(agentPage.getThinkingBudgetInput()).toHaveCount(0);
+        await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).toBeChecked();
+        await expect(agentPage.getThinkingBudgetInput()).toHaveValue('4096');
 
         await agentPage.getModalSaveButton().click();
         await agentPage.waitForModalClosed();
@@ -311,8 +311,8 @@ test.describe('Agent provider configuration', () => {
         await expect(agentPage.getNativeToolCheckbox('Native Claude Tools')).not.toBeChecked();
         await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(0)).toBeChecked();
         await expect(agentPage.getStructuredOutputNote()).toBeVisible({timeout: 10000});
-        await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).not.toBeChecked();
-        await expect(agentPage.getThinkingBudgetInput()).toHaveCount(0);
+        await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).toBeChecked();
+        await expect(agentPage.getThinkingBudgetInput()).toHaveValue('4096');
 
         await agentPage.setBooleanField('Structured Output', false);
         await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(1)).toBeChecked();

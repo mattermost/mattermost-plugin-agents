@@ -146,7 +146,7 @@ Some capabilities depend on the selected Service type and, for OpenAI Compatible
 
 New agents enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
 
-For Anthropic services, **Structured Output** and extended thinking can't be used at the same time.
+For Anthropic services, **Structured Output** and extended thinking can both be enabled on the same agent, but Anthropic doesn't support using them on the same request. Requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
 
 If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
 
