@@ -286,6 +286,15 @@ func (s *Indexer) finalizeDeferredIndex(ctx context.Context, jobStatus *JobStatu
 		return owned, fmt.Errorf("vector index state is no longer owned by this run; skipping index build")
 	}
 
+	// Persist immediately so the UI's short poll sees the phase before the
+	// first heartbeat tick.
+	jobStatus.Phase = JobPhaseBuildingIndex
+	s.saveJobStatus(jobStatus)
+	defer func() {
+		jobStatus.Phase = ""
+		s.saveJobStatus(jobStatus)
+	}()
+
 	// Accepted CAS→DDL TOCTOU (ms-wide); advisory lock would fully serialize.
 	done := make(chan error, 1)
 	go func() {

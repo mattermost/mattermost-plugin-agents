@@ -627,6 +627,7 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	newStatus.Error = fmt.Sprintf("Job orphaned: heartbeat older than %s on node %q",
 		StaleJobThreshold, jobStatus.NodeID)
 	newStatus.CompletedAt = time.Now()
+	newStatus.Phase = "" // phase is live-only; do not leave building_index on a terminal row
 
 	s.pluginAPI.LogWarn("Reclaiming stale reindex job",
 		"job_id", jobStatus.JobID,

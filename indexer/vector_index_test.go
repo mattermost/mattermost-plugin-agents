@@ -1013,6 +1013,75 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		assert.True(t, tracker.wasDeleted())
 	})
 
+	t.Run("finalizeDeferredIndex sets building_index phase for the UI then clears it", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post1', $1, 0, 'Message', '', 'channel1')", now-10000)
+		require.NoError(t, err)
+
+		rec := &callRecorder{}
+		var phaseDuringBuild string
+		var mu sync.Mutex
+		bulk := &fakeBulkIndexer{rec: rec}
+		search := &fakeDeferSearch{rec: rec, bulk: bulk, mainCutoff: now}
+
+		jobID := "job-building-phase"
+		tracker := &vectorStateTracker{}
+		deferRun := seedClaim(tracker, jobID)
+
+		var persisted []JobStatus
+		mockClient := mocks.NewMockClient(t)
+		mockVectorStateOps(mockClient, tracker)
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.JobID = jobID
+				status.Status = JobStatusRunning
+			}).
+			Return(nil).Maybe()
+		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
+			Return(mmapi.ErrKVNotFound).Maybe()
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.AnythingOfType("indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(2).(JobStatus)
+				mu.Lock()
+				persisted = append(persisted, status)
+				mu.Unlock()
+			}).
+			Return(true, nil).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		bulk.onFinalize = func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for i := len(persisted) - 1; i >= 0; i-- {
+				if persisted[i].Phase != "" {
+					phaseDuringBuild = persisted[i].Phase
+					return
+				}
+			}
+		}
+
+		idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, &bots.MMBots{}, db, nil)
+		jobStatus := newDeferJobStatus(jobID, now-5000)
+		idx.runReindexJob(jobStatus, true, deferRun)
+
+		require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+		assert.Equal(t, JobPhaseBuildingIndex, phaseDuringBuild, "phase must be persisted before FinalizeBulkIndex runs")
+		assert.Empty(t, jobStatus.Phase, "phase must be cleared when finalize returns")
+		mu.Lock()
+		defer mu.Unlock()
+		require.NotEmpty(t, persisted)
+		assert.Empty(t, persisted[len(persisted)-1].Phase, "last persisted status must clear the building phase")
+	})
+
 	t.Run("cancel during the build leaves the repairing state with a pending-repair note", func(t *testing.T) {
 		db := testDB(t)
 		defer cleanupDB(t, db)
@@ -1043,6 +1112,9 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 				status.JobID = jobID
 				if buildStarted.Load() {
 					status.Status = JobStatusCancelRequested
+					// Raced row: the phase-clear write was dropped by the
+					// cancel-survival guard, so the KV row still carries it.
+					status.Phase = JobPhaseBuildingIndex
 				} else {
 					status.Status = JobStatusRunning
 				}
@@ -1072,6 +1144,7 @@ func TestRunReindexJobDeferLifecycle(t *testing.T) {
 		// marker plus a pending-repair note must survive it.
 		assert.Contains(t, jobStatus.Error, "pending repair")
 		assert.Contains(t, terminal.Error, "pending repair")
+		assert.Empty(t, terminal.Phase, "phase is live-only and must not survive onto the terminal row")
 		assert.False(t, tracker.wasDeleted(), "the repairing state must be left in place on cancel")
 		current := tracker.currentState()
 		require.NotNil(t, current)

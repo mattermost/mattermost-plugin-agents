@@ -23,6 +23,9 @@ const (
 	JobStatusFailed          = "failed"
 	JobStatusCanceled        = "canceled"
 
+	// JobPhaseBuildingIndex is set while FinalizeBulkIndex (CREATE INDEX) runs.
+	JobPhaseBuildingIndex = "building_index"
+
 	// KV store keys
 	ReindexJobKey         = "reindex_job_status"
 	IndexerCursorKey      = "indexer_cursor"
@@ -65,6 +68,8 @@ type JobStatus struct {
 	CutoffAt      int64     `json:"cutoff_at,omitempty"`
 	LastUpdatedAt time.Time `json:"last_updated_at,omitempty"`
 	IsStale       bool      `json:"is_stale"`
+	// Phase is a short-lived UI hint (e.g. JobPhaseBuildingIndex); empty otherwise.
+	Phase string `json:"phase,omitempty"`
 	// ModelInfo is captured at job start and written to IndexerModelKey on
 	// successful completion so a resumed run unlocks compatibility for the
 	// model it actually indexed with (not whatever is configured at finish).
