@@ -105,6 +105,13 @@ func (s *inMemoryStore) UpdateTurnContent(id string, content json.RawMessage) er
 	return nil
 }
 
+func (s *inMemoryStore) UpdateTurnContentIfMatches(id string, _, updated json.RawMessage) (bool, error) {
+	if err := s.UpdateTurnContent(id, updated); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *inMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	turn, ok := s.turns[id]
 	if !ok {

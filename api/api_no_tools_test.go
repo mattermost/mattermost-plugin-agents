@@ -142,6 +142,10 @@ func (m *mockConvServiceStore) UpdateTurnContent(id string, content json.RawMess
 	return nil
 }
 
+func (m *mockConvServiceStore) UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error) {
+	return true, nil
+}
+
 func (m *mockConvServiceStore) UpdateTurnTokens(_ string, _, _ int64) error {
 	return nil
 }

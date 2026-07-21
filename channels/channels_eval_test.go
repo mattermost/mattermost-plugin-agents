@@ -184,6 +184,10 @@ func (s *evalInMemoryStore) GetTurnsForConversation(conversationID string) ([]st
 	return turns, nil
 }
 
+func (s *evalInMemoryStore) UpdateTurnContentIfMatches(id string, _, updated json.RawMessage) (bool, error) {
+	return true, s.UpdateTurnContent(id, updated)
+}
+
 func (s *evalInMemoryStore) UpdateTurnContent(id string, content json.RawMessage) error {
 	if t, ok := s.turns[id]; ok {
 		t.Content = content

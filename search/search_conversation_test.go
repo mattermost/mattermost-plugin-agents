@@ -100,6 +100,13 @@ func (s *fakeConversationStore) UpdateTurnContent(id string, content json.RawMes
 	return errors.New("turn not found")
 }
 
+func (s *fakeConversationStore) UpdateTurnContentIfMatches(id string, _, updated json.RawMessage) (bool, error) {
+	if err := s.UpdateTurnContent(id, updated); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *fakeConversationStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	for _, t := range s.turns {
 		if t.ID == id {
