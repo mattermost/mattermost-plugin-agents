@@ -164,11 +164,10 @@ func migrateServiceIDsTx(tx *sqlx.Tx, cfg *config.Config, report *ABACIDMigratio
 		report.ServicesRemapped++
 	}
 
-	// No-op (also covers re-run after a crash before the marker write).
-	if len(idMap) == 0 {
-		return nil
-	}
-
+	// Even when no service ID was remapped, keep going: dangling UUID
+	// references (fallbacks, bots, agent rows pointing at services absent
+	// from the active config) must still be detected and reported, or the
+	// one-time marker would permanently suppress the diagnosis.
 	for i := range cfg.Services {
 		fb := cfg.Services[i].FallbackServiceID
 		if fb == "" {

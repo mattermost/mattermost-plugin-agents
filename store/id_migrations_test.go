@@ -281,6 +281,34 @@ func TestMigrateABACIDs(t *testing.T) {
 			},
 		},
 		{
+			name: "dangling references reported even when no service IDs remapped",
+			seed: func(t *testing.T, s *Store) {
+				// Services already carry modern IDs, so the rewrite is a
+				// no-op — dangling UUID references must still be diagnosed.
+				seedConfigRow(t, s, config.Config{
+					Services: []llm.ServiceConfig{
+						{ID: "modern26charidmodern26char", Name: "A", FallbackServiceID: testUUIDDangling},
+					},
+					Bots: []llm.BotConfig{
+						{ID: "bot1", Name: "ai", ServiceID: testUUIDDangling},
+					},
+				}, true)
+				seedAgentRow(t, s, "dangling-agent", testUUIDDangling, 100, 0)
+			},
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.False(t, report.Migrated, "no config rewrite happened")
+				assert.Equal(t, 0, report.ServicesRemapped)
+				assert.Equal(t, int64(0), report.AgentRowsUpdated)
+				assert.Len(t, report.DanglingServiceRefs, 3)
+
+				cfg, err := s.GetConfig()
+				require.NoError(t, err)
+				assert.Equal(t, testUUIDDangling, cfg.Services[0].FallbackServiceID)
+				assert.Equal(t, testUUIDDangling, cfg.Bots[0].ServiceID)
+				assert.Equal(t, testUUIDDangling, getAgentServiceRow(t, s, "dangling-agent").ServiceID)
+			},
+		},
+		{
 			name: "MCP servers get IDs only when missing, other fields preserved",
 			seed: func(t *testing.T, s *Store) {
 				seedConfigRow(t, s, config.Config{
