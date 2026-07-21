@@ -114,11 +114,12 @@ describe('renderToolCall routing', () => {
             arguments: {channel_id: 'chan1', channel_display_name: 'Town Square', team_display_name: 'Eng', message: 'Hello team'},
         }));
 
-        // Rich card sections + the resolved channel chip + message text.
+        // Rich card sections, the resolved channel chip, the message text,
+        // and the header context (channel name appears in both).
         expect(screen.getByText('Channel')).not.toBeNull();
         expect(screen.getByText('Message')).not.toBeNull();
         expect(screen.getByText('Hello team')).not.toBeNull();
-        expect(screen.getByText(/Town Square/)).not.toBeNull();
+        expect(screen.getAllByText(/Town Square/).length).toBeGreaterThanOrEqual(2);
     });
 
     test('routes embedded search_posts to a query + filters card', () => {

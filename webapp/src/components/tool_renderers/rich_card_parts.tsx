@@ -14,25 +14,28 @@ import {ToolCardShellProps} from './tool_card_shell';
 // forward the rest to ToolCardShell.
 export type RichCardProps = Omit<ToolCardShellProps, 'children'>;
 
+// Two-column label/value grid per the tool-card designs (matches the generic
+// field list): bold labels left, values right, columns aligned across rows.
 export const RichBody = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding-left: 24px;
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: minmax(96px, max-content) 1fr;
+    column-gap: 32px;
+    row-gap: 12px;
+    align-items: baseline;
 `;
 
+// display: contents so the label and value become sibling grid cells while
+// each section stays one component. Sections must have exactly two children.
 export const Section = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
+    display: contents;
 `;
 
 export const SectionLabel = styled.span`
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
-    line-height: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
+    line-height: 20px;
+    color: var(--center-channel-color);
 `;
 
 export const SectionRow = styled.div`
@@ -43,10 +46,17 @@ export const SectionRow = styled.div`
     min-width: 0;
 `;
 
+const PreviewWrap = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+`;
+
 const PreviewText = styled.div<{$clamped: boolean}>`
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 400;
-    line-height: 18px;
+    line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.9);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -84,7 +94,7 @@ const LabeledPillEl = styled.span`
     padding: 1px 6px;
     border-radius: 4px;
     background: rgba(var(--center-channel-color-rgb), 0.08);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.9);
     overflow-wrap: anywhere;
@@ -96,13 +106,14 @@ const PillKey = styled.span`
 `;
 
 // MessagePreview clamps long messages behind a Show more toggle; the full text
-// must always be reachable since the user is approving it.
+// must always be reachable since the user is approving it. Wrapped in a single
+// element so it can sit in a grid value cell.
 export const MessagePreview: React.FC<{text: string}> = ({text}) => {
     const [expanded, setExpanded] = useState(false);
     const isLong = text.length > 220 || text.split('\n').length > 4;
 
     return (
-        <>
+        <PreviewWrap>
             <PreviewText $clamped={isLong && !expanded}>{text}</PreviewText>
             {isLong && (
                 <ToggleButton
@@ -122,7 +133,7 @@ export const MessagePreview: React.FC<{text: string}> = ({text}) => {
                     )}
                 </ToggleButton>
             )}
-        </>
+        </PreviewWrap>
     );
 };
 
@@ -145,7 +156,7 @@ export const TagPill = styled.span`
     padding: 1px 6px;
     border-radius: 4px;
     background: rgba(var(--center-channel-color-rgb), 0.08);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.64);

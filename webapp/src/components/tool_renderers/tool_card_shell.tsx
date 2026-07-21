@@ -21,21 +21,22 @@ import {ToolArgumentsRaw, hasInspectableArguments} from '../tool_arguments';
 import LoadingSpinner from '../assets/loading_spinner';
 import IconCheckCircle from '../assets/icon_check_circle';
 
-// Styled components based on the Figma design
+// Bordered card container per the tool-card designs.
 const ToolCallCard = styled.div`
     display: flex;
     flex-direction: column;
     margin-bottom: 4px;
-    padding: 0;
-    border: none;
-    background: transparent;
-    box-shadow: none;
+    padding: 12px 16px;
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    border-radius: 8px;
+    background: var(--center-channel-bg);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 `;
 
 const ToolCallHeader = styled.div<{$canExpand: boolean}>`
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     cursor: ${(props) => (props.$canExpand ? 'pointer' : 'default')};
     user-select: none;
 `;
@@ -58,17 +59,35 @@ const StatusIcon = styled.div`
 `;
 
 const ToolName = styled.span`
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 400;
     line-height: 20px;
-    color: rgba(var(--center-channel-color-rgb), 0.75);
-    flex-grow: 1;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
 
     // MCP-supplied titles can be arbitrarily long; keep the header on one line.
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+`;
+
+// Muted, ellipsized context after the tool name (e.g. the target channel or
+// query). A separate element so the name keeps its exact text.
+const HeaderContext = styled.span`
+    flex: 1 1 auto;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 20px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+`;
+
+// Grows when there is no context so the badge stays right-aligned.
+const HeaderSpacer = styled.span`
+    flex: 1 1 auto;
 `;
 
 const StatusContainer = styled.div`
@@ -153,16 +172,17 @@ const ResponseRejectedIcon = styled(CloseCircleOutlineIcon)`
 const ButtonContainer = styled.div`
     display: flex;
     gap: 8px;
-    margin-top: 4px;
-    padding-left: 24px;
+    margin-top: 12px;
 `;
 
-const AcceptRejectButton = styled.button`
-    background: rgba(var(--button-bg-rgb), 0.08);
-    color: var(--button-bg);
+// Accept renders as the filled primary action, Reject as the tinted secondary
+// (matching the design's confirm-button pair).
+const AcceptRejectButton = styled.button<{$primary?: boolean}>`
+    background: ${(props) => (props.$primary ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.08)')};
+    color: ${(props) => (props.$primary ? 'var(--button-color)' : 'var(--button-bg)')};
     border: none;
-    padding: 4px 10px;
-	height: 24px;
+    padding: 6px 16px;
+	height: 32px;
     border-radius: 4px;
     font-size: 12px;
     font-weight: 600;
@@ -170,11 +190,11 @@ const AcceptRejectButton = styled.button`
     cursor: pointer;
 
     &:hover {
-        background: rgba(var(--button-bg-rgb), 0.12);
+        background: ${(props) => (props.$primary ? 'rgba(var(--button-bg-rgb), 0.88)' : 'rgba(var(--button-bg-rgb), 0.12)')};
     }
 
     &:active {
-        background: rgba(var(--button-bg-rgb), 0.16);
+        background: ${(props) => (props.$primary ? 'rgba(var(--button-bg-rgb), 0.92)' : 'rgba(var(--button-bg-rgb), 0.16)')};
     }
 `;
 
@@ -208,8 +228,6 @@ const ResultReviewCallout = styled.div`
     flex-direction: column;
     gap: 8px;
     margin-top: 12px;
-    margin-bottom: 12px;
-    margin-left: 24px;
     padding: 12px;
     border-radius: 8px;
     border: 1px solid rgba(var(--error-text-color-rgb), 0.16);
@@ -290,17 +308,15 @@ const ResponseLabel = styled.div`
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
-    padding-top: 8px;
-    padding-left: 24px;
+    padding-top: 12px;
 `;
 
 const ResultContainer = styled.div`
     margin: 0;
-    padding-left: 24px;
 
     // Style code blocks rendered by Mattermost
     pre {
@@ -310,8 +326,7 @@ const ResultContainer = styled.div`
 
 const RawToggleRow = styled.div`
     display: flex;
-    padding-left: 24px;
-    margin-top: 8px;
+    margin-top: 10px;
 `;
 
 const RawToggleButton = styled.button`
@@ -344,6 +359,11 @@ export interface ToolCardShellProps {
     approvalStage?: ToolApprovalStage;
     isAutoApproved?: boolean;
 
+    // Optional muted context after the tool name (e.g. the target channel or
+    // query). Rendered as plain text in its own element so the name element
+    // keeps its exact text.
+    headerContext?: string;
+
     // The arguments body: the generic field list or a rich card's rendering.
     children?: React.ReactNode;
 }
@@ -368,6 +388,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     showResults,
     approvalStage = 'call',
     isAutoApproved = false,
+    headerContext,
     children,
 }) => {
     const {formatMessage} = useIntl();
@@ -492,6 +513,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                 ) : (
                     <>
                         <AcceptRejectButton
+                            $primary={true}
                             onClick={onApprove}
                             disabled={isProcessing}
                         >
@@ -563,6 +585,11 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                     {!showProcessingSpinner && isRejected && <SmallRejectedIcon size={16}/>}
                 </StatusIcon>
                 <ToolName title={displayName}>{displayName}</ToolName>
+                {headerContext ? (
+                    <HeaderContext title={headerContext}>{headerContext}</HeaderContext>
+                ) : (
+                    <HeaderSpacer/>
+                )}
                 {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
                     <AutoApprovedBadge>
                         <FormattedMessage

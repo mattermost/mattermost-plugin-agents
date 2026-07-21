@@ -12,46 +12,52 @@ import {JSONValue, ToolCall} from './tool_types';
 const CLAMP_CHAR_THRESHOLD = 160;
 
 const Container = styled.div`
-    margin: 0;
-    padding-left: 24px;
+    margin-top: 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 `;
 
 const NoParams = styled.div`
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 400;
     line-height: 18px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
+// Two-column label/value grid per the tool-card designs: bold labels left,
+// values right, columns aligned across rows.
 const FieldList = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: minmax(96px, max-content) 1fr;
+    column-gap: 32px;
+    row-gap: 12px;
+    align-items: baseline;
 `;
 
+// display: contents so the label and value become sibling grid cells while
+// each field stays one component.
 const Field = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
+    display: contents;
 `;
 
 const FieldLabel = styled.span`
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
-    line-height: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
+    line-height: 20px;
+    color: var(--center-channel-color);
+`;
+
+const ValueCell = styled.div`
+    min-width: 0;
 `;
 
 // Plain text, never formatText/markdown: LLM-supplied values must not become
 // a link-spoofing surface.
 const StringValue = styled.span<{$clamped: boolean}>`
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 400;
-    line-height: 18px;
+    line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.9);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -81,7 +87,7 @@ const ValuePill = styled.span`
     border-radius: 4px;
     background: rgba(var(--center-channel-color-rgb), 0.08);
     font-family: var(--font-family-monospace, monospace);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.9);
     overflow-wrap: anywhere;
@@ -290,10 +296,12 @@ const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
                 {entries.map(([key, value]) => (
                     <Field key={key}>
                         <FieldLabel>{prettifyKey(key)}</FieldLabel>
-                        <FieldValue
-                            value={value}
-                            clamped={!expanded && isLongValue(value)}
-                        />
+                        <ValueCell>
+                            <FieldValue
+                                value={value}
+                                clamped={!expanded && isLongValue(value)}
+                            />
+                        </ValueCell>
                     </Field>
                 ))}
             </FieldList>

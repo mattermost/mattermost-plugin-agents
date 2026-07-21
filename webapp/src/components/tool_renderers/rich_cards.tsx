@@ -90,7 +90,10 @@ const CreatePostCard: React.FC<RichCardProps> = (props) => {
         return <ToolCard {...props}/>;
     }
     return (
-        <ToolCardShell {...props}>
+        <ToolCardShell
+            {...props}
+            headerContext={parsed.channelDisplayName ? `“${parsed.channelDisplayName}”` : undefined} // eslint-disable-line no-undefined
+        >
             <RichBody>
                 <Section>
                     <SectionLabel>
@@ -137,7 +140,10 @@ const DmCard: React.FC<RichCardProps> = (props) => {
         return <ToolCard {...props}/>;
     }
     return (
-        <ToolCardShell {...props}>
+        <ToolCardShell
+            {...props}
+            headerContext={parsed.username ? '@' + parsed.username.replace(/^@/, '') : undefined} // eslint-disable-line no-undefined
+        >
             <RichBody>
                 <Section>
                     <SectionLabel>
@@ -181,7 +187,10 @@ const GroupMessageCard: React.FC<RichCardProps> = (props) => {
         return <ToolCard {...props}/>;
     }
     return (
-        <ToolCardShell {...props}>
+        <ToolCardShell
+            {...props}
+            headerContext={parsed.usernames.map((u) => '@' + u.replace(/^@/, '')).join(', ')}
+        >
             <RichBody>
                 <Section>
                     <SectionLabel>
@@ -254,7 +263,10 @@ const SearchPostsCard: React.FC<RichCardProps> = (props) => {
         return <ToolCard {...props}/>;
     }
     return (
-        <ToolCardShell {...props}>
+        <ToolCardShell
+            {...props}
+            headerContext={`“${parsed.query}”`}
+        >
             <QuerySection
                 query={parsed.query}
                 filters={parsed.filters}
@@ -271,7 +283,10 @@ const SearchUsersCard: React.FC<RichCardProps> = (props) => {
         return <ToolCard {...props}/>;
     }
     return (
-        <ToolCardShell {...props}>
+        <ToolCardShell
+            {...props}
+            headerContext={`“${parsed.term}”`}
+        >
             <QuerySection
                 query={parsed.term}
                 filters={parsed.filters}
@@ -330,7 +345,10 @@ const GetChannelInfoCard: React.FC<RichCardProps> = (props) => {
         return <ToolCard {...props}/>;
     }
     return (
-        <ToolCardShell {...props}>
+        <ToolCardShell
+            {...props}
+            headerContext={parsed.channelName ? `“${parsed.channelName}”` : undefined} // eslint-disable-line no-undefined
+        >
             <RichBody>
                 <Section>
                     <SectionLabel>
