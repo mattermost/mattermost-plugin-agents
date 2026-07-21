@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -136,6 +137,31 @@ func (s *loadedStateFlowStore) UpdateTurnContent(id string, content json.RawMess
 		}
 	}
 	return nil
+}
+
+func (s *loadedStateFlowStore) UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	turn, ok := s.allTurns[id]
+	if !ok {
+		s.mu.Unlock()
+		return false, fmt.Errorf("turn %s not found", id)
+	}
+	// In-memory semantic-equality approximation of the JSONB comparison.
+	var current, want any
+	if err := json.Unmarshal(turn.Content, &current); err != nil {
+		s.mu.Unlock()
+		return false, err
+	}
+	if err := json.Unmarshal(expected, &want); err != nil {
+		s.mu.Unlock()
+		return false, err
+	}
+	if !reflect.DeepEqual(current, want) {
+		s.mu.Unlock()
+		return false, nil
+	}
+	s.mu.Unlock()
+	return true, s.UpdateTurnContent(id, updated)
 }
 
 func (s *loadedStateFlowStore) UpdateTurnPostID(id string, postID *string) error {
