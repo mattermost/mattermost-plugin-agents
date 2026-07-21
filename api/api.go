@@ -214,6 +214,11 @@ func New(
 	customPromptsStore *customprompts.Store,
 	accessChecker *accesscontrol.Checker,
 ) *API {
+	// A nil checker would silently disable authorization gates (e.g. the MCP
+	// server listing); fail at construction rather than becoming a bypass.
+	if accessChecker == nil {
+		panic("api: New requires a non-nil access checker")
+	}
 	return &API{
 		bots:                  bots,
 		conversationsService:  conversationsService,

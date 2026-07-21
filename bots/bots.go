@@ -80,6 +80,11 @@ type MMBots struct {
 // no-policies-anywhere decision behavior pass an accesscontrol.New with the
 // PassthroughClient.
 func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, accessChecker *accesscontrol.Checker, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
+	// Enforce the documented invariant here: a nil checker would otherwise
+	// panic much later, inside a permission check on a live request path.
+	if accessChecker == nil {
+		panic("bots: New requires a non-nil access checker")
+	}
 	var pluginTokenLogger llm.TokenUsagePluginLogger
 	if pluginAPI != nil {
 		pluginTokenLogger = &pluginAPI.Log
