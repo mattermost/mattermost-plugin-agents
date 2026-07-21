@@ -287,6 +287,8 @@
   "ai.delegation.awaiting_approval": "Waiting for your approval to delegate this task",
   "ai.delegation.completed": "Completed",
   "ai.delegation.delegating_to": "Delegating to {agent}",
+  "ai.delegation.elapsed_minutes_seconds": "{minutes}m {seconds}s",
+  "ai.delegation.elapsed_seconds": "{seconds}s",
   "ai.delegation.failed": "Failed",
   "ai.delegation.keep_private": "Keep private",
   "ai.delegation.processing": "Processing...",

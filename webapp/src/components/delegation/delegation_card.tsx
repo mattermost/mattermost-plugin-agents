@@ -3,7 +3,7 @@
 
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 import {
     AlertCircleOutlineIcon,
     CheckCircleIcon,
@@ -87,6 +87,7 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
     onApprove,
     onReject,
 }) => {
+    const {formatMessage} = useIntl();
     const args = parseAskAgentArgs(tool.arguments);
 
     const [liveUpdate, setLiveUpdate] = useState<DelegationUpdate | null>(null);
@@ -128,14 +129,18 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
         };
     }, [wantsReconcile, liveUpdate, tool.id]);
 
-    // Elapsed timer while in flight.
+    // Elapsed timer while in flight. The reconciled server-side creation
+    // time always wins over the locally observed start, so a reloaded
+    // long-running delegation keeps its true elapsed time.
     const startedAtRef = useRef<number>(0);
     useEffect(() => {
         if (!inFlight) {
             return undefined; // eslint-disable-line no-undefined
         }
-        if (startedAtRef.current === 0) {
-            startedAtRef.current = reconciled?.created_at || Date.now();
+        if (reconciled?.created_at) {
+            startedAtRef.current = reconciled.created_at;
+        } else if (startedAtRef.current === 0) {
+            startedAtRef.current = Date.now();
         }
         const tick = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAtRef.current) / 1000)));
         tick();
@@ -172,13 +177,29 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
     const showShareDecision = canApprove && approvalStage === 'result' && Boolean(onApprove && onReject) && localDecision == null && !tool.decided &&
         (tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.Error);
 
+    // Exactly one visual state renders on the status line: a persisted
+    // rejection and a just-made local decision take precedence over any
+    // (stale) phase such as the approval prompt.
+    const statusVariant: 'rejected' | 'local_decision' | 'phase' = (() => {
+        if (isRejected) {
+            return 'rejected';
+        }
+        if (localDecision != null) {
+            return 'local_decision';
+        }
+        return 'phase';
+    })();
+
     const formatElapsed = (seconds: number): string => {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
         if (mins === 0) {
-            return `${secs}s`;
+            return formatMessage({id: 'ai.delegation.elapsed_seconds', defaultMessage: '{seconds}s'}, {seconds: secs});
         }
-        return `${mins}m ${secs.toString().padStart(2, '0')}s`;
+        return formatMessage(
+            {id: 'ai.delegation.elapsed_minutes_seconds', defaultMessage: '{minutes}m {seconds}s'},
+            {minutes: mins, seconds: secs.toString().padStart(2, '0')},
+        );
     };
 
     return (
@@ -200,19 +221,48 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                             values={{agent: agentDisplayName || (agentUsername ? `@${agentUsername}` : '')}}
                         />
                     </Title>
-                    {task !== '' && (
-                        <Task
-                            onClick={taskNeedsClamp ? () => setTaskExpanded(!taskExpanded) : undefined} // eslint-disable-line no-undefined
-                            $clickable={taskNeedsClamp}
+                    {task !== '' && !taskNeedsClamp && (
+                        <Task>{taskText}</Task>
+                    )}
+                    {task !== '' && taskNeedsClamp && (
+                        <TaskToggle
+                            type='button'
+                            aria-expanded={taskExpanded}
+                            onClick={() => setTaskExpanded(!taskExpanded)}
                         >
                             {taskText}
-                        </Task>
+                        </TaskToggle>
                     )}
                 </HeaderText>
             </Header>
 
             <StatusLine data-testid='delegation-status'>
-                {(phase === 'starting' || phase === 'running') && (
+                {statusVariant === 'rejected' && (
+                    <>
+                        <RejectedIcon><CloseCircleOutlineIcon size={14}/></RejectedIcon>
+                        <FormattedMessage
+                            id='ai.delegation.rejected'
+                            defaultMessage='Rejected'
+                        />
+                    </>
+                )}
+                {statusVariant === 'local_decision' && (
+                    <>
+                        {localDecision ? <SuccessIcon><CheckCircleIcon size={14}/></SuccessIcon> : <RejectedIcon><CloseCircleOutlineIcon size={14}/></RejectedIcon>}
+                        {localDecision ? (
+                            <FormattedMessage
+                                id='ai.delegation.accepted'
+                                defaultMessage='Accepted'
+                            />
+                        ) : (
+                            <FormattedMessage
+                                id='ai.delegation.rejected'
+                                defaultMessage='Rejected'
+                            />
+                        )}
+                    </>
+                )}
+                {statusVariant === 'phase' && (phase === 'starting' || phase === 'running') && (
                     <>
                         <SpinnerHolder><LoadingSpinner/></SpinnerHolder>
                         {phase === 'starting' && (
@@ -237,7 +287,7 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                         {elapsedSeconds > 0 && <Elapsed>{formatElapsed(elapsedSeconds)}</Elapsed>}
                     </>
                 )}
-                {phase === 'awaiting_approval' && (
+                {statusVariant === 'phase' && phase === 'awaiting_approval' && (
                     <>
                         <NeutralIcon><AlertCircleOutlineIcon size={14}/></NeutralIcon>
                         <FormattedMessage
@@ -246,7 +296,7 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                         />
                     </>
                 )}
-                {phase === 'waiting_on_you' && (
+                {statusVariant === 'phase' && phase === 'waiting_on_you' && (
                     <>
                         <WarnIcon><AlertCircleOutlineIcon size={14}/></WarnIcon>
                         <strong>
@@ -262,7 +312,7 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                         {elapsedSeconds > 0 && <Elapsed>{formatElapsed(elapsedSeconds)}</Elapsed>}
                     </>
                 )}
-                {phase === 'completed' && (
+                {statusVariant === 'phase' && phase === 'completed' && (
                     <>
                         <SuccessIcon><CheckCircleIcon size={14}/></SuccessIcon>
                         <FormattedMessage
@@ -271,7 +321,7 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                         />
                     </>
                 )}
-                {phase === 'failed' && (
+                {statusVariant === 'phase' && phase === 'failed' && (
                     <>
                         <ErrorIcon><AlertCircleOutlineIcon size={14}/></ErrorIcon>
                         <FormattedMessage
@@ -280,21 +330,12 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                         />
                     </>
                 )}
-                {phase === 'timed_out' && (
+                {statusVariant === 'phase' && phase === 'timed_out' && (
                     <>
                         <ErrorIcon><AlertCircleOutlineIcon size={14}/></ErrorIcon>
                         <FormattedMessage
                             id='ai.delegation.timed_out'
                             defaultMessage='Timed out'
-                        />
-                    </>
-                )}
-                {isRejected && (
-                    <>
-                        <RejectedIcon><CloseCircleOutlineIcon size={14}/></RejectedIcon>
-                        <FormattedMessage
-                            id='ai.delegation.rejected'
-                            defaultMessage='Rejected'
                         />
                     </>
                 )}
@@ -333,22 +374,6 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                 <AnswerPreview data-testid='delegation-error-detail'>{tool.result}</AnswerPreview>
             )}
 
-            {localDecision != null && (
-                <StatusLine>
-                    {localDecision ? <SuccessIcon><CheckCircleIcon size={14}/></SuccessIcon> : <RejectedIcon><CloseCircleOutlineIcon size={14}/></RejectedIcon>}
-                    {localDecision ? (
-                        <FormattedMessage
-                            id='ai.delegation.accepted'
-                            defaultMessage='Accepted'
-                        />
-                    ) : (
-                        <FormattedMessage
-                            id='ai.delegation.rejected'
-                            defaultMessage='Rejected'
-                        />
-                    )}
-                </StatusLine>
-            )}
             {isProcessing && localDecision == null && !inFlight && (
                 <StatusLine>
                     <SpinnerHolder><LoadingSpinner/></SpinnerHolder>
@@ -443,13 +468,25 @@ const Title = styled.div`
     color: var(--center-channel-color);
 `;
 
-const Task = styled.div<{$clickable: boolean}>`
+const Task = styled.div`
     font-size: 12px;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
     white-space: pre-wrap;
     word-break: break-word;
-    cursor: ${(props) => (props.$clickable ? 'pointer' : 'default')};
+`;
+
+const TaskToggle = styled.button`
+    font-size: 12px;
+    line-height: 16px;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    white-space: pre-wrap;
+    word-break: break-word;
+    text-align: left;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
 `;
 
 const StatusLine = styled.div`

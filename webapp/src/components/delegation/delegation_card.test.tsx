@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen, waitFor} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {notifyDelegationUpdate} from '@/hooks/use_delegation_updates';
@@ -151,6 +151,34 @@ describe('DelegationCard', () => {
         expect(screen.getByText('Completed')).not.toBeNull();
         expect(screen.getByText('Answer')).not.toBeNull();
         expect(screen.queryByText('Accept')).toBeNull();
+    });
+
+    it('renders only the rejected state for a rejected call', () => {
+        renderCard(makeTool({status: ToolCallStatus.Rejected}));
+
+        expect(screen.getByText('Rejected')).not.toBeNull();
+        expect(screen.queryByText('Starting delegation…')).toBeNull();
+        expect(screen.queryByText('Waiting for your approval to delegate this task')).toBeNull();
+        expect(screen.queryByText('Accept')).toBeNull();
+    });
+
+    it('local decision replaces the approval prompt', () => {
+        renderCard(makeTool(), {localDecision: true});
+
+        expect(screen.getByText('Accepted')).not.toBeNull();
+        expect(screen.queryByText('Waiting for your approval to delegate this task')).toBeNull();
+        expect(screen.queryByText('Accept')).toBeNull();
+        expect(screen.queryByText('Reject')).toBeNull();
+    });
+
+    it('expands a truncated task via a keyboard-accessible button', () => {
+        const longTask = 'x'.repeat(400);
+        renderCard(makeTool({arguments: {agent: 'projects', task: longTask}}));
+
+        const toggle = screen.getByRole('button', {expanded: false});
+        expect(toggle.textContent).toContain('…');
+        fireEvent.click(toggle);
+        expect(screen.getByRole('button', {expanded: true}).textContent).toContain(longTask);
     });
 
     it('renders failure detail from the tool result', () => {
