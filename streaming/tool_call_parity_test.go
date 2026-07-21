@@ -122,8 +122,10 @@ func TestBuildContentBlocksPersistsPolicyFields(t *testing.T) {
 		if policy.blockJSON == "" {
 			continue
 		}
-		require.Falsef(t, isEmptyJSONValue(blockMap[policy.blockJSON]),
-			"buildContentBlocks dropped persisted field %q (block tag %q)", field, policy.blockJSON)
+		t.Run(field, func(t *testing.T) {
+			require.Falsef(t, isEmptyJSONValue(blockMap[policy.blockJSON]),
+				"buildContentBlocks dropped persisted field %q (block tag %q)", field, policy.blockJSON)
+		})
 	}
 }
 
@@ -149,23 +151,25 @@ func TestToolCallRedactionParity(t *testing.T) {
 	blockMap := toJSONMap(t, persistedRedacted[0])
 
 	for field, policy := range toolCallFieldPolicies {
-		liveVal := liveMap[field]
-		if policy.visibleToNonRequester {
-			require.Falsef(t, isEmptyJSONValue(liveVal),
-				"live redaction dropped visible field %q", field)
-			if policy.blockJSON != "" {
-				require.Falsef(t, isEmptyJSONValue(blockMap[policy.blockJSON]),
-					"persisted redaction dropped visible field %q (block tag %q)", field, policy.blockJSON)
+		t.Run(field, func(t *testing.T) {
+			liveVal := liveMap[field]
+			if policy.visibleToNonRequester {
+				require.Falsef(t, isEmptyJSONValue(liveVal),
+					"live redaction dropped visible field %q", field)
+				if policy.blockJSON != "" {
+					require.Falsef(t, isEmptyJSONValue(blockMap[policy.blockJSON]),
+						"persisted redaction dropped visible field %q (block tag %q)", field, policy.blockJSON)
+				}
+				return
 			}
-			continue
-		}
 
-		require.Truef(t, isEmptyJSONValue(liveVal),
-			"live redaction leaked private field %q", field)
-		if policy.blockJSON != "" {
-			require.Truef(t, isEmptyJSONValue(blockMap[policy.blockJSON]),
-				"persisted redaction leaked private field %q (block tag %q)", field, policy.blockJSON)
-		}
+			require.Truef(t, isEmptyJSONValue(liveVal),
+				"live redaction leaked private field %q", field)
+			if policy.blockJSON != "" {
+				require.Truef(t, isEmptyJSONValue(blockMap[policy.blockJSON]),
+					"persisted redaction leaked private field %q (block tag %q)", field, policy.blockJSON)
+			}
+		})
 	}
 }
 

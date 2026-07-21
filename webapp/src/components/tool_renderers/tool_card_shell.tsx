@@ -541,6 +541,15 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
             <ToolCallHeader
                 $canExpand={canExpand}
                 onClick={canExpand ? onToggleCollapse : undefined} // eslint-disable-line no-undefined
+                role={canExpand ? 'button' : undefined} // eslint-disable-line no-undefined
+                tabIndex={canExpand ? 0 : undefined} // eslint-disable-line no-undefined
+                aria-expanded={canExpand ? !isCollapsed : undefined} // eslint-disable-line no-undefined
+                onKeyDown={canExpand ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onToggleCollapse();
+                    }
+                } : undefined} // eslint-disable-line no-undefined
             >
                 {canExpand && (
                     <StyledChevronIcon>
@@ -553,7 +562,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                     {!showProcessingSpinner && isError && <SmallErrorIcon size={16}/>}
                     {!showProcessingSpinner && isRejected && <SmallRejectedIcon size={16}/>}
                 </StatusIcon>
-                <ToolName>{displayName}</ToolName>
+                <ToolName title={displayName}>{displayName}</ToolName>
                 {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
                     <AutoApprovedBadge>
                         <FormattedMessage

@@ -67,7 +67,7 @@ type ToolAnnotations struct {
 	// ReadOnlyHint indicates the tool does not modify its environment.
 	ReadOnlyHint bool
 	// DestructiveHint indicates the tool may perform destructive updates;
-	// nil means undeclared.
+	// nil means undeclared, which the MCP spec treats as destructive.
 	DestructiveHint *bool
 }
 

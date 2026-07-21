@@ -84,8 +84,8 @@ describe('parseSearchPosts', () => {
         expect(parseSearchPosts({query: 'roadmap', from: 'sysadmin', after: '2026-01-01'})).toEqual({
             query: 'roadmap',
             filters: [
-                {label: 'From', value: 'sysadmin'},
-                {label: 'After', value: '2026-01-01'},
+                {key: 'from', value: 'sysadmin'},
+                {key: 'after', value: '2026-01-01'},
             ],
         });
     });
@@ -100,7 +100,7 @@ describe('parseSearchUsers', () => {
     test('extracts the term and a numeric limit', () => {
         expect(parseSearchUsers({term: 'john', limit: 5})).toEqual({
             term: 'john',
-            filters: [{label: 'Limit', value: '5'}],
+            filters: [{key: 'limit', value: '5'}],
         });
     });
 

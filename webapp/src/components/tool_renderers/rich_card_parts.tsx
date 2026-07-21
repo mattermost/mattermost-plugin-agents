@@ -126,14 +126,14 @@ export const MessagePreview: React.FC<{text: string}> = ({text}) => {
     );
 };
 
-export interface LabeledPillData {
-    label: string;
+interface LabeledPillProps {
+    label: React.ReactNode;
     value: string;
 }
 
-export const LabeledPill: React.FC<LabeledPillData> = ({label, value}) => (
+export const LabeledPill: React.FC<LabeledPillProps> = ({label, value}) => (
     <LabeledPillEl>
-        {label ? <PillKey>{label}</PillKey> : null}
+        <PillKey>{label}</PillKey>
         <span>{value}</span>
     </LabeledPillEl>
 );

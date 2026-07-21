@@ -251,14 +251,14 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 			llmTool := llm.Tool{
 				Name:         runtimeToolName,
 				Description:  llm.SanitizeNonPrintableChars(tool.Description),
-				Title:        llm.SanitizeNonPrintableChars(tool.Title),
+				Title:        sanitizeDisplayTitle(tool.Title),
 				Schema:       tool.InputSchema,
 				Resolver:     c.createToolResolver(client, toolName),
 				ServerOrigin: client.config.BaseURL,
 			}
 			if tool.Annotations != nil {
 				llmTool.Annotations = &llm.ToolAnnotations{
-					Title:           llm.SanitizeNonPrintableChars(tool.Annotations.Title),
+					Title:           sanitizeDisplayTitle(tool.Annotations.Title),
 					ReadOnlyHint:    tool.Annotations.ReadOnlyHint,
 					DestructiveHint: tool.Annotations.DestructiveHint,
 				}
@@ -272,6 +272,13 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 	}
 
 	return tools
+}
+
+// sanitizeDisplayTitle sanitizes a server-supplied display title and treats
+// whitespace-only titles as absent so the webapp falls back to the prettified
+// tool name instead of rendering a blank header.
+func sanitizeDisplayTitle(title string) string {
+	return llm.SanitizeNonPrintableChars(strings.TrimSpace(title))
 }
 
 // prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.

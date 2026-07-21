@@ -73,10 +73,27 @@ interface ResolvedUser {
     lastPictureUpdate: number;
 }
 
-// Session-wide caches so each channel/user is fetched once; null records a
-// failure so missing entities are not retried on every render.
-const channelCache = new Map<string, ResolvedChannel | null>();
-const userCache = new Map<string, ResolvedUser | null>();
+// Session-wide caches so each channel/user is fetched once. A null value
+// records a failure so missing entities are not refetched on every render;
+// failures expire after a short TTL so transient errors recover.
+const FailureTTLMs = 30000;
+
+interface CacheEntry<T> {
+    value: T | null;
+    failedAt?: number;
+}
+
+const channelCache = new Map<string, CacheEntry<ResolvedChannel>>();
+const userCache = new Map<string, CacheEntry<ResolvedUser>>();
+
+function cacheGet<T>(cache: Map<string, CacheEntry<T>>, key: string): CacheEntry<T> | undefined {
+    const entry = cache.get(key);
+    if (entry?.failedAt && Date.now() - entry.failedAt > FailureTTLMs) {
+        cache.delete(key);
+        return undefined; // eslint-disable-line no-undefined
+    }
+    return entry;
+}
 
 const ChannelTypeIcon: React.FC<{type?: string}> = ({type}) => {
     let Icon = PoundIcon; // public
@@ -103,14 +120,15 @@ export const ChannelChip: React.FC<ChannelChipProps> = ({channelId, fallbackName
     const reduxTeam = useSelector((state: GlobalState) => state.entities.teams.teams[reduxChannel?.team_id || '']);
 
     const [resolved, setResolved] = useState<ResolvedChannel | null>(
-        () => (channelId ? channelCache.get(channelId) ?? null : null),
+        () => (channelId ? cacheGet(channelCache, channelId)?.value ?? null : null),
     );
 
     useEffect(() => {
         let cancelled = false;
         if (channelId && !reduxChannel) {
-            if (channelCache.has(channelId)) {
-                setResolved(channelCache.get(channelId) ?? null);
+            const cached = cacheGet(channelCache, channelId);
+            if (cached) {
+                setResolved(cached.value);
             } else {
                 getChannelById(channelId).then((channel) => {
                     const value: ResolvedChannel = {
@@ -118,12 +136,12 @@ export const ChannelChip: React.FC<ChannelChipProps> = ({channelId, fallbackName
                         teamName: channel.team_display_name,
                         type: channel.type,
                     };
-                    channelCache.set(channelId, value);
+                    channelCache.set(channelId, {value});
                     if (!cancelled) {
                         setResolved(value);
                     }
                 }).catch(() => {
-                    channelCache.set(channelId, null);
+                    channelCache.set(channelId, {value: null, failedAt: Date.now()});
                     if (!cancelled) {
                         setResolved(null);
                     }
@@ -170,14 +188,15 @@ export const UserChip: React.FC<UserChipProps> = ({username}) => {
     const cleanUsername = username.replace(/^@/, '');
 
     const [resolved, setResolved] = useState<ResolvedUser | null>(
-        () => userCache.get(cleanUsername) ?? null,
+        () => cacheGet(userCache, cleanUsername)?.value ?? null,
     );
 
     useEffect(() => {
         let cancelled = false;
         if (cleanUsername) {
-            if (userCache.has(cleanUsername)) {
-                setResolved(userCache.get(cleanUsername) ?? null);
+            const cached = cacheGet(userCache, cleanUsername);
+            if (cached) {
+                setResolved(cached.value);
             } else {
                 getProfilesByUsernames([cleanUsername]).then((profiles) => {
                     const profile = profiles[0];
@@ -186,12 +205,13 @@ export const UserChip: React.FC<UserChipProps> = ({username}) => {
                         username: profile.username,
                         lastPictureUpdate: profile.last_picture_update ?? 0,
                     } : null;
-                    userCache.set(cleanUsername, value);
+
+                    userCache.set(cleanUsername, value ? {value} : {value: null, failedAt: Date.now()});
                     if (!cancelled) {
                         setResolved(value);
                     }
                 }).catch(() => {
-                    userCache.set(cleanUsername, null);
+                    userCache.set(cleanUsername, {value: null, failedAt: Date.now()});
                     if (!cancelled) {
                         setResolved(null);
                     }

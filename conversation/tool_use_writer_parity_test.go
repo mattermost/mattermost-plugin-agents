@@ -61,8 +61,10 @@ func TestToolUseBlocksPersistsPolicyFields(t *testing.T) {
 
 	m := toolUseBlockJSONMap(t, blocks[0])
 	for _, field := range persistedToolUseFields {
-		require.Containsf(t, m, field, "toolUseBlocks dropped persisted tool_use field %q", field)
-		require.NotEmptyf(t, m[field], "toolUseBlocks emitted an empty persisted tool_use field %q", field)
+		t.Run(field, func(t *testing.T) {
+			require.Contains(t, m, field, "toolUseBlocks dropped the field")
+			require.NotEmpty(t, m[field], "toolUseBlocks emitted an empty field")
+		})
 	}
 }
 
@@ -81,7 +83,9 @@ func TestPostToBlocksPersistsPolicyFields(t *testing.T) {
 		if field == "user_interaction" {
 			continue
 		}
-		require.Containsf(t, m, field, "PostToBlocks dropped persisted tool_use field %q", field)
-		require.NotEmptyf(t, m[field], "PostToBlocks emitted an empty persisted tool_use field %q", field)
+		t.Run(field, func(t *testing.T) {
+			require.Contains(t, m, field, "PostToBlocks dropped the field")
+			require.NotEmpty(t, m[field], "PostToBlocks emitted an empty field")
+		})
 	}
 }

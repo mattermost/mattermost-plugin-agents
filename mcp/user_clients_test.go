@@ -136,70 +136,95 @@ func TestUserClientsGetToolsEmbeddedToolNamesUseMattermostSlug(t *testing.T) {
 
 func TestUserClientsGetToolsMapsAndSanitizesTitleAndAnnotations(t *testing.T) {
 	destructive := true
-	userClients := &UserClients{
-		userID: "user-id",
-		clients: map[string]*Client{
-			"jira": {
-				config: ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
-				tools: map[string]*gomcp.Tool{
-					// Hostile bidi-override (U+202E) in title/description/
-					// annotations.title must be escaped at capture. Top-level
-					// title takes precedence over annotations.title.
-					"create_issue": {
-						Name:        "create_issue",
-						Description: "Create\u202ean issue",
-						Title:       "Create\u202eIssue",
-						Annotations: &gomcp.ToolAnnotations{
-							Title:           "Annotation\u202eTitle",
-							ReadOnlyHint:    true,
-							DestructiveHint: &destructive,
-						},
-					},
-					// No top-level title: effective title falls back to
-					// annotations.title (also sanitized).
-					"read_issue": {
-						Name:        "read_issue",
-						Description: "Read an issue",
-						Annotations: &gomcp.ToolAnnotations{
-							Title: "Read Issue",
-						},
-					},
-					// No title and no annotations: Title stays empty; webapp
-					// prettifies the bare name.
-					"plain": {
-						Name:        "plain",
-						Description: "Plain tool",
-					},
+
+	tests := []struct {
+		name string
+		tool *gomcp.Tool
+
+		wantTitle       string
+		wantDescription string
+		wantAnnotations *llm.ToolAnnotations
+	}{
+		{
+			// Hostile bidi-override (U+202E) must be escaped at capture, and
+			// the top-level title takes precedence over annotations.title.
+			name: "sanitizes hostile unicode and prefers top-level title",
+			tool: &gomcp.Tool{
+				Name:        "create_issue",
+				Description: "Create\u202ean issue",
+				Title:       "Create\u202eIssue",
+				Annotations: &gomcp.ToolAnnotations{
+					Title:           "Annotation\u202eTitle",
+					ReadOnlyHint:    true,
+					DestructiveHint: &destructive,
 				},
 			},
+			wantTitle:       "Create[U+202E]Issue",
+			wantDescription: "Create[U+202E]an issue",
+			wantAnnotations: &llm.ToolAnnotations{
+				Title:           "Annotation[U+202E]Title",
+				ReadOnlyHint:    true,
+				DestructiveHint: &destructive,
+			},
+		},
+		{
+			name: "effective title falls back to annotations.title",
+			tool: &gomcp.Tool{
+				Name:        "read_issue",
+				Description: "Read an issue",
+				Annotations: &gomcp.ToolAnnotations{Title: "Read Issue"},
+			},
+			wantTitle:       "Read Issue",
+			wantDescription: "Read an issue",
+			wantAnnotations: &llm.ToolAnnotations{Title: "Read Issue"},
+		},
+		{
+			name: "no title or annotations leaves Title empty",
+			tool: &gomcp.Tool{
+				Name:        "plain",
+				Description: "Plain tool",
+			},
+			wantTitle:       "",
+			wantDescription: "Plain tool",
+		},
+		{
+			// A whitespace-only title must not become the display name; the
+			// webapp would render a blank header instead of the bare name.
+			name: "whitespace-only titles are treated as absent",
+			tool: &gomcp.Tool{
+				Name:        "spacey",
+				Description: "Spacey tool",
+				Title:       "  \t ",
+				Annotations: &gomcp.ToolAnnotations{Title: " \t  "},
+			},
+			wantTitle:       "",
+			wantDescription: "Spacey tool",
+			wantAnnotations: &llm.ToolAnnotations{Title: ""},
 		},
 	}
 
-	tools := userClients.GetTools(context.Background())
-	byName := make(map[string]llm.Tool, len(tools))
-	for _, tool := range tools {
-		byName[tool.Name] = tool
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userClients := &UserClients{
+				userID: "user-id",
+				clients: map[string]*Client{
+					"jira": {
+						config: ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+						tools:  map[string]*gomcp.Tool{tt.tool.Name: tt.tool},
+					},
+				},
+			}
+
+			tools := userClients.GetTools(context.Background())
+			require.Len(t, tools, 1)
+			got := tools[0]
+
+			require.Equal(t, "jira__"+tt.tool.Name, got.Name)
+			require.Equal(t, tt.wantTitle, got.Title)
+			require.Equal(t, tt.wantDescription, got.Description)
+			require.Equal(t, tt.wantAnnotations, got.Annotations)
+		})
 	}
-
-	create, ok := byName["jira__create_issue"]
-	require.True(t, ok)
-	require.Equal(t, "Create[U+202E]Issue", create.Title)
-	require.Equal(t, "Create[U+202E]an issue", create.Description)
-	require.NotNil(t, create.Annotations)
-	require.Equal(t, "Annotation[U+202E]Title", create.Annotations.Title)
-	require.True(t, create.Annotations.ReadOnlyHint)
-	require.NotNil(t, create.Annotations.DestructiveHint)
-	require.True(t, *create.Annotations.DestructiveHint)
-
-	read, ok := byName["jira__read_issue"]
-	require.True(t, ok)
-	require.Equal(t, "Read Issue", read.Title, "effective title should fall back to annotations.title")
-	require.NotNil(t, read.Annotations)
-
-	plain, ok := byName["jira__plain"]
-	require.True(t, ok)
-	require.Empty(t, plain.Title)
-	require.Nil(t, plain.Annotations)
 }
 
 func TestUserClientsGetToolsDeterministicSlugCollision(t *testing.T) {

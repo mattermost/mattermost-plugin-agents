@@ -22,7 +22,65 @@ import {
     parseReadPost,
     parseGetChannelInfo,
     SearchFilter,
+    SearchFilterKey,
 } from './rich_card_parsers';
+
+// Localized label for a stable filter key emitted by the parsers.
+const FilterLabel: React.FC<{filterKey: SearchFilterKey}> = ({filterKey}) => {
+    switch (filterKey) {
+    case 'team':
+        return (
+            <FormattedMessage
+                id='ai.tool_card.filter.team'
+                defaultMessage='Team'
+            />
+        );
+    case 'channel':
+        return (
+            <FormattedMessage
+                id='ai.tool_card.filter.channel'
+                defaultMessage='Channel'
+            />
+        );
+    case 'from':
+        return (
+            <FormattedMessage
+                id='ai.tool_card.filter.from'
+                defaultMessage='From'
+            />
+        );
+    case 'in':
+        return (
+            <FormattedMessage
+                id='ai.tool_card.filter.in'
+                defaultMessage='In'
+            />
+        );
+    case 'before':
+        return (
+            <FormattedMessage
+                id='ai.tool_card.filter.before'
+                defaultMessage='Before'
+            />
+        );
+    case 'after':
+        return (
+            <FormattedMessage
+                id='ai.tool_card.filter.after'
+                defaultMessage='After'
+            />
+        );
+    case 'limit':
+        return (
+            <FormattedMessage
+                id='ai.tool_card.filter.limit'
+                defaultMessage='Limit'
+            />
+        );
+    default:
+        return null;
+    }
+};
 
 // ---- create_post -----------------------------------------------------------
 
@@ -179,8 +237,8 @@ const QuerySection: React.FC<{query: string; filters: SearchFilter[]}> = ({query
                 <SectionRow>
                     {filters.map((f) => (
                         <LabeledPill
-                            key={f.label}
-                            label={f.label}
+                            key={f.key}
+                            label={<FilterLabel filterKey={f.key}/>}
                             value={f.value}
                         />
                     ))}
@@ -241,7 +299,12 @@ const ReadPostCard: React.FC<RichCardProps> = (props) => {
                     </SectionLabel>
                     <SectionRow>
                         <LabeledPill
-                            label='ID'
+                            label={
+                                <FormattedMessage
+                                    id='ai.tool_card.post_id'
+                                    defaultMessage='ID'
+                                />
+                            }
                             value={parsed.postId}
                         />
                         {parsed.includeThread !== false && (
@@ -283,13 +346,18 @@ const GetChannelInfoCard: React.FC<RichCardProps> = (props) => {
                             <>
                                 {parsed.channelName && (
                                     <LabeledPill
-                                        label='Name'
+                                        label={
+                                            <FormattedMessage
+                                                id='ai.tool_card.channel_name'
+                                                defaultMessage='Name'
+                                            />
+                                        }
                                         value={parsed.channelName}
                                     />
                                 )}
                                 {parsed.teamId && (
                                     <LabeledPill
-                                        label='Team'
+                                        label={<FilterLabel filterKey='team'/>}
                                         value={parsed.teamId}
                                     />
                                 )}

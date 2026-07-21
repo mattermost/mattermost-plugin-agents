@@ -85,6 +85,32 @@ describe('ChannelChip', () => {
         await waitFor(() => expect(screen.getByText('fetch-chan-3')).not.toBeNull());
         expect(container.querySelector('svg')).toBeNull();
     });
+
+    test('retries a failed lookup after the failure TTL expires', async () => {
+        jest.spyOn(Date, 'now').mockReturnValue(1000000);
+        try {
+            mockGetChannelById.mockRejectedValueOnce(new Error('transient'));
+
+            const first = renderChip(<ChannelChip channelId='fetch-chan-ttl'/>);
+            await waitFor(() => expect(screen.getByText('fetch-chan-ttl')).not.toBeNull());
+            expect(mockGetChannelById).toHaveBeenCalledTimes(1);
+            first.unmount();
+
+            // Within the TTL the failure is cached: no refetch.
+            renderChip(<ChannelChip channelId='fetch-chan-ttl'/>).unmount();
+            expect(mockGetChannelById).toHaveBeenCalledTimes(1);
+
+            // After the TTL the entry expires and the fetch is retried.
+            (Date.now as jest.Mock).mockReturnValue(1000000 + 60000);
+            mockGetChannelById.mockResolvedValue({display_name: 'Recovered', team_display_name: 'Ops', type: 'O'});
+
+            renderChip(<ChannelChip channelId='fetch-chan-ttl'/>);
+            await waitFor(() => expect(screen.getByText('Recovered')).not.toBeNull());
+            expect(mockGetChannelById).toHaveBeenCalledTimes(2);
+        } finally {
+            (Date.now as jest.Mock).mockRestore();
+        }
+    });
 });
 
 describe('UserChip', () => {

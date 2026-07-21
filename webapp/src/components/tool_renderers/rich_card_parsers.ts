@@ -90,18 +90,21 @@ export function parseGroupMessage(args: ToolCall['arguments']): GroupMessagePars
     return {usernames, message};
 }
 
+// Stable filter identifiers; localized labels live at the render site.
+export type SearchFilterKey = 'team' | 'channel' | 'from' | 'in' | 'before' | 'after' | 'limit';
+
 export interface SearchFilter {
-    label: string;
+    key: SearchFilterKey;
     value: string;
 }
 
-const searchFilterKeys: Array<[string, string]> = [
-    ['team_id', 'Team'],
-    ['channel_id', 'Channel'],
-    ['from', 'From'],
-    ['in', 'In'],
-    ['before', 'Before'],
-    ['after', 'After'],
+const searchFilterArgs: Array<[string, SearchFilterKey]> = [
+    ['team_id', 'team'],
+    ['channel_id', 'channel'],
+    ['from', 'from'],
+    ['in', 'in'],
+    ['before', 'before'],
+    ['after', 'after'],
 ];
 
 export interface SearchPostsParsed {
@@ -119,10 +122,10 @@ export function parseSearchPosts(args: ToolCall['arguments']): SearchPostsParsed
         return null;
     }
     const filters: SearchFilter[] = [];
-    for (const [key, label] of searchFilterKeys) {
-        const value = str(obj[key]);
+    for (const [arg, key] of searchFilterArgs) {
+        const value = str(obj[arg]);
         if (value !== undefined) { // eslint-disable-line no-undefined
-            filters.push({label, value});
+            filters.push({key, value});
         }
     }
     return {query, filters};
@@ -144,7 +147,7 @@ export function parseSearchUsers(args: ToolCall['arguments']): SearchUsersParsed
     }
     const filters: SearchFilter[] = [];
     if (typeof obj.limit === 'number') {
-        filters.push({label: 'Limit', value: String(obj.limit)});
+        filters.push({key: 'limit', value: String(obj.limit)});
     }
     return {term, filters};
 }
