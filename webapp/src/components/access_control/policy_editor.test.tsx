@@ -395,6 +395,14 @@ describe('PolicyEditor', () => {
         expect(screen.queryByTestId('table-editor')).toBeNull();
     });
 
+    it('shows a load error when the attribute catalogue fetch fails', async () => {
+        client.getAccessControlFields.mockRejectedValue(new Error('fields outage'));
+        renderEditor();
+
+        expect(await screen.findByText('Failed to load the access policy. Please try again.')).toBeTruthy();
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+    });
+
     it('surfaces a save error and stays editable', async () => {
         client.putAgentAccessPolicy.mockRejectedValue(new Error('save exploded'));
         renderEditor();
