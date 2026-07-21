@@ -117,23 +117,26 @@ func TestDelegationRoutingEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
 	tests := []struct {
-		name           string
-		message        string
-		wantDelegation bool
-		rubrics        []string
+		name             string
+		message          string
+		wantDelegation   bool
+		wantTaskContains string
+		rubrics          []string
 	}{
 		{
-			name:           "explicit delegation request",
-			message:        "Ask the projects agent what shipped last sprint in the Icarus project.",
-			wantDelegation: true,
+			name:             "explicit delegation request",
+			message:          "Ask the projects agent what shipped last sprint in the Icarus project.",
+			wantDelegation:   true,
+			wantTaskContains: "Icarus",
 			rubrics: []string{
 				"mentions the realtime sync engine and the billing dashboard as having shipped",
 			},
 		},
 		{
-			name:           "task in another agent's domain",
-			message:        "I need the current Icarus project status. The projects agent tracks that.",
-			wantDelegation: true,
+			name:             "task in another agent's domain",
+			message:          "I need the current Icarus project status. The projects agent tracks that.",
+			wantDelegation:   true,
+			wantTaskContains: "Icarus",
 			rubrics: []string{
 				"states what shipped in the Icarus project (the realtime sync engine and/or the billing dashboard)",
 			},
@@ -191,6 +194,7 @@ func TestDelegationRoutingEval(t *testing.T) {
 				require.NoError(e.T, json.Unmarshal(recorder.firstArgs("mattermost__ask_agent"), &args))
 				assert.Contains(e.T, args.Agent, "projects", "delegation should target the projects agent")
 				assert.NotEmpty(e.T, args.Task, "delegation task must not be empty")
+				assert.Contains(e.T, args.Task, tc.wantTaskContains, "the delegated task must preserve the user's actual request")
 			} else {
 				assert.False(e.T, recorder.called("mattermost__ask_agent"), "the model should answer directly without delegating")
 			}

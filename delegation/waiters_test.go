@@ -10,59 +10,89 @@ import (
 )
 
 func TestWaiterRegistry(t *testing.T) {
-	t.Run("signal with no waiter reports absent", func(t *testing.T) {
-		r := newWaiterRegistry()
-		require.False(t, r.signal("conv-1"))
-	})
+	tests := []struct {
+		name  string
+		run   func(t *testing.T, r *waiterRegistry)
+		check func(t *testing.T, r *waiterRegistry)
+	}{
+		{
+			name: "signal with no waiter reports absent",
+			run:  func(t *testing.T, r *waiterRegistry) {},
+			check: func(t *testing.T, r *waiterRegistry) {
+				require.False(t, r.signal("conv-1"))
+			},
+		},
+		{
+			name: "signal wakes a registered waiter",
+			run: func(t *testing.T, r *waiterRegistry) {
+				r.register("conv-1")
+			},
+			check: func(t *testing.T, r *waiterRegistry) {
+				require.True(t, r.signal("conv-1"))
+				select {
+				case <-r.register("conv-1"):
+				default:
+					t.Fatal("expected a pending wake signal")
+				}
+			},
+		},
+		{
+			name: "signals coalesce while the waiter is busy",
+			run: func(t *testing.T, r *waiterRegistry) {
+				r.register("conv-1")
+				require.True(t, r.signal("conv-1"))
+				require.True(t, r.signal("conv-1"))
+				require.True(t, r.signal("conv-1"))
+			},
+			check: func(t *testing.T, r *waiterRegistry) {
+				ch := r.register("conv-1")
+				<-ch
+				select {
+				case <-ch:
+					t.Fatal("coalesced signals must deliver exactly one pending wake")
+				default:
+				}
+			},
+		},
+		{
+			name: "re-registration returns the same channel",
+			run:  func(t *testing.T, r *waiterRegistry) {},
+			check: func(t *testing.T, r *waiterRegistry) {
+				require.True(t, r.register("conv-1") == r.register("conv-1"), "same delegation must share one wake channel")
+			},
+		},
+		{
+			name: "deregister removes the waiter",
+			run: func(t *testing.T, r *waiterRegistry) {
+				r.register("conv-1")
+				r.deregister("conv-1")
+			},
+			check: func(t *testing.T, r *waiterRegistry) {
+				require.False(t, r.signal("conv-1"))
+			},
+		},
+		{
+			name: "independent delegations do not cross-signal",
+			run: func(t *testing.T, r *waiterRegistry) {
+				r.register("conv-1")
+				r.register("conv-2")
+				require.True(t, r.signal("conv-2"))
+			},
+			check: func(t *testing.T, r *waiterRegistry) {
+				select {
+				case <-r.register("conv-1"):
+					t.Fatal("conv-1 must not receive conv-2 signals")
+				default:
+				}
+			},
+		},
+	}
 
-	t.Run("signal wakes a registered waiter", func(t *testing.T) {
-		r := newWaiterRegistry()
-		ch := r.register("conv-1")
-		require.True(t, r.signal("conv-1"))
-		select {
-		case <-ch:
-		default:
-			t.Fatal("expected a pending wake signal")
-		}
-	})
-
-	t.Run("signals coalesce while the waiter is busy", func(t *testing.T) {
-		r := newWaiterRegistry()
-		ch := r.register("conv-1")
-		require.True(t, r.signal("conv-1"))
-		require.True(t, r.signal("conv-1"))
-		require.True(t, r.signal("conv-1"))
-		<-ch
-		select {
-		case <-ch:
-			t.Fatal("coalesced signals must deliver exactly one pending wake")
-		default:
-		}
-	})
-
-	t.Run("re-registration returns the same channel", func(t *testing.T) {
-		r := newWaiterRegistry()
-		ch1 := r.register("conv-1")
-		ch2 := r.register("conv-1")
-		require.True(t, ch1 == ch2, "same delegation must share one wake channel")
-	})
-
-	t.Run("deregister removes the waiter", func(t *testing.T) {
-		r := newWaiterRegistry()
-		r.register("conv-1")
-		r.deregister("conv-1")
-		require.False(t, r.signal("conv-1"))
-	})
-
-	t.Run("independent delegations do not cross-signal", func(t *testing.T) {
-		r := newWaiterRegistry()
-		ch1 := r.register("conv-1")
-		r.register("conv-2")
-		require.True(t, r.signal("conv-2"))
-		select {
-		case <-ch1:
-			t.Fatal("conv-1 must not receive conv-2 signals")
-		default:
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newWaiterRegistry()
+			tc.run(t, r)
+			tc.check(t, r)
+		})
+	}
 }
