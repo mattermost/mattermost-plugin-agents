@@ -21,16 +21,16 @@ import {ToolArgumentsRaw, hasInspectableArguments} from '../tool_arguments';
 import LoadingSpinner from '../assets/loading_spinner';
 import IconCheckCircle from '../assets/icon_check_circle';
 
-// Bordered card container per the tool-card designs.
+// Bordered card container; border/radius/shadow match QuestionCard.
 const ToolCallCard = styled.div`
     display: flex;
     flex-direction: column;
     margin-bottom: 4px;
     padding: 12px 16px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: 8px;
+    border-radius: 4px;
     background: var(--center-channel-bg);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08);
 `;
 
 const ToolCallHeader = styled.div<{$canExpand: boolean}>`

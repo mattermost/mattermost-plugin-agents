@@ -10,7 +10,7 @@
 import React, {useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {useSelector} from 'react-redux';
-import {PoundIcon, LockOutlineIcon, AccountMultipleOutlineIcon, MessageTextOutlineIcon} from '@mattermost/compass-icons/components';
+import {GlobeIcon, LockIcon, AccountMultipleOutlineIcon, MessageTextOutlineIcon} from '@mattermost/compass-icons/components';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -95,10 +95,12 @@ function cacheGet<T>(cache: Map<string, CacheEntry<T>>, key: string): CacheEntry
     return entry;
 }
 
+// Globe for public and Lock for private, matching the channel selector
+// (select.tsx) and the Mattermost channel UI.
 const ChannelTypeIcon: React.FC<{type?: string}> = ({type}) => {
-    let Icon = PoundIcon; // public
+    let Icon = GlobeIcon; // public
     if (type === 'P') {
-        Icon = LockOutlineIcon;
+        Icon = LockIcon;
     } else if (type === 'G') {
         Icon = AccountMultipleOutlineIcon;
     } else if (type === 'D') {
