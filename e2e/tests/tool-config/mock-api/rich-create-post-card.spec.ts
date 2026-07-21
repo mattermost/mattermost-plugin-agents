@@ -171,12 +171,15 @@ test.describe('Rich create_post tool card (Mocked LLM)', () => {
         const rhs = page.locator('#rhsContainer');
         const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
 
-        // Rich card header uses the prettified display name.
+        // Rich card header uses the prettified display name plus the muted
+        // channel context.
         await expect(botPost.getByText(createPostLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(botPost.getByText('“Town Square”')).toBeVisible({timeout: 30000});
 
-        // The channel chip resolves channel_id to the Town Square channel, and
-        // the message body renders as readable text (not a JSON blob).
-        await expect(botPost.getByText('Town Square')).toBeVisible({timeout: 30000});
+        // The channel chip resolves channel_id to the Town Square channel
+        // (rendered as "name · team"), and the message body renders as
+        // readable text (not a JSON blob).
+        await expect(botPost.getByText(/Town Square · /)).toBeVisible({timeout: 30000});
         await expect(botPost.getByText(postBody)).toBeVisible({timeout: 30000});
 
         // "ask" policy keeps the call in the approval stage.
