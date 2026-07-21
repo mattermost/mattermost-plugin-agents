@@ -58,6 +58,25 @@ expectAssignable<Parameters<MirrorSearchUsers>>({} as Parameters<HostSearchUsers
 expectAssignable<Parameters<CELHostSearchUsers>>({} as Parameters<CELMirrorSearchUsers>);
 expectAssignable<Parameters<CELMirrorSearchUsers>>({} as Parameters<CELHostSearchUsers>);
 
+// Actual callback return envelopes (not just the standalone result aliases):
+// Promise/ActionResult wrapper drift trips here. The strict users payload
+// stays a wire exception, checked separately below.
+type MirrorSearchUsersResult = Awaited<ReturnType<MirrorSearchUsers>>;
+type HostSearchUsersResult = Awaited<ReturnType<HostSearchUsers>>;
+type CELMirrorSearchUsersResult = Awaited<ReturnType<CELMirrorSearchUsers>>;
+type CELHostSearchUsersResult = Awaited<ReturnType<CELHostSearchUsers>>;
+
+expectAssignable<Omit<HostSearchUsersResult, 'data'>>({} as Omit<MirrorSearchUsersResult, 'data'>);
+expectAssignable<Omit<NonNullable<HostSearchUsersResult['data']>, 'users'>>(
+    {} as Omit<NonNullable<MirrorSearchUsersResult['data']>, 'users'>,
+);
+expectAssignable<Array<object>>({} as NonNullable<HostSearchUsersResult['data']>['users']);
+expectAssignable<Omit<CELHostSearchUsersResult, 'data'>>({} as Omit<CELMirrorSearchUsersResult, 'data'>);
+expectAssignable<Omit<NonNullable<CELHostSearchUsersResult['data']>, 'users'>>(
+    {} as Omit<NonNullable<CELMirrorSearchUsersResult['data']>, 'users'>,
+);
+expectAssignable<Array<object>>({} as NonNullable<CELHostSearchUsersResult['data']>['users']);
+
 // Result envelope matches modulo the users element type (wire exception).
 expectAssignable<Omit<HostAccessControlTestResult, 'users'>>(
     {} as Omit<MirrorAccessControlTestResult, 'users'>,

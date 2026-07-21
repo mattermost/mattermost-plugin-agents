@@ -123,7 +123,10 @@ if (!fs.existsSync(snapshotPath) && !updateSnapshot) {
     process.exit(1);
 }
 
-if (fs.existsSync(snapshotPath)) {
+// In update mode the committed snapshot is about to be regenerated, so a
+// stale snapshot must not block the update; the live-host probe below still
+// validates the mirrors before the new snapshot is written.
+if (fs.existsSync(snapshotPath) && !updateSnapshot) {
     // Self-contained program: only the probe file is listed and tsc pulls its
     // imports transitively. Deliberately NOT src/types/**/* — that would drag
     // in the webapp component tree, including the generated (gitignored)
