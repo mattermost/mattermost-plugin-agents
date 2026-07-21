@@ -303,23 +303,26 @@ func TestIsDelegationToolUseBlock(t *testing.T) {
 	}
 }
 
-// turnContentRecordingStore implements conversation.Store's UpdateTurnContent
-// and panics on anything else — persistAcceptedToolDecisions must only write
-// turn content.
+// turnContentRecordingStore implements conversation.Store's conditional
+// content update and panics on anything else — persistAcceptedToolDecisions
+// must only claim turn content.
 type turnContentRecordingStore struct {
 	conversation.Store
-	updatedTurnID string
+	claimWins     bool
+	claimedTurnID string
+	expected      json.RawMessage
 	updated       json.RawMessage
 }
 
-func (f *turnContentRecordingStore) UpdateTurnContent(id string, content json.RawMessage) error {
-	f.updatedTurnID = id
-	f.updated = content
-	return nil
+func (f *turnContentRecordingStore) UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error) {
+	f.claimedTurnID = id
+	f.expected = expected
+	f.updated = updated
+	return f.claimWins, nil
 }
 
 func TestPersistAcceptedToolDecisions(t *testing.T) {
-	recording := &turnContentRecordingStore{}
+	recording := &turnContentRecordingStore{claimWins: true}
 	c := &Conversations{convService: conversation.NewService(recording, nil, nil, nil)}
 
 	blocks := []conversation.ContentBlock{
@@ -333,11 +336,16 @@ func TestPersistAcceptedToolDecisions(t *testing.T) {
 	autoResumed.WouldAutoExecute = true
 	blocks = append(blocks, autoResumed)
 
-	turn := &store.Turn{ID: "turn-1"}
-	err := c.persistAcceptedToolDecisions(turn, blocks, []string{"d1"}, func(llm.ToolCall) bool { return true })
+	originalContent, err := json.Marshal(blocks)
 	require.NoError(t, err)
 
-	require.Equal(t, "turn-1", recording.updatedTurnID)
+	turn := &store.Turn{ID: "turn-1", Content: originalContent}
+	err = c.persistAcceptedToolDecisions(turn, blocks, []string{"d1"}, func(llm.ToolCall) bool { return true })
+	require.NoError(t, err)
+
+	require.Equal(t, "turn-1", recording.claimedTurnID)
+	assert.Equal(t, originalContent, []byte(recording.expected), "CAS must compare against the content this request read")
+
 	var persisted []conversation.ContentBlock
 	require.NoError(t, json.Unmarshal(recording.updated, &persisted))
 	require.Len(t, persisted, 4)
@@ -352,12 +360,24 @@ func TestPersistAcceptedToolDecisions(t *testing.T) {
 	assert.Equal(t, conversation.StatusPending, blocks[3].Status)
 }
 
+func TestPersistAcceptedToolDecisionsLostClaim(t *testing.T) {
+	recording := &turnContentRecordingStore{claimWins: false}
+	c := &Conversations{convService: conversation.NewService(recording, nil, nil, nil)}
+
+	blocks := []conversation.ContentBlock{delegationBlock("d1", conversation.StatusPending, false)}
+	content, err := json.Marshal(blocks)
+	require.NoError(t, err)
+
+	err = c.persistAcceptedToolDecisions(&store.Turn{ID: "turn-1", Content: content}, blocks, []string{"d1"}, func(llm.ToolCall) bool { return false })
+	require.ErrorIs(t, err, ErrStaleToolClick, "losing the claim must surface as a stale click, never a second execution")
+}
+
 func TestPersistAcceptedToolDecisionsNoChanges(t *testing.T) {
-	recording := &turnContentRecordingStore{}
+	recording := &turnContentRecordingStore{claimWins: true}
 	c := &Conversations{convService: conversation.NewService(recording, nil, nil, nil)}
 
 	blocks := []conversation.ContentBlock{plainBlock("p1", conversation.StatusSuccess)}
 	err := c.persistAcceptedToolDecisions(&store.Turn{ID: "turn-1"}, blocks, []string{"p1"}, func(llm.ToolCall) bool { return false })
 	require.NoError(t, err)
-	assert.Empty(t, recording.updatedTurnID, "nothing to claim means nothing is written")
+	assert.Empty(t, recording.claimedTurnID, "nothing to claim means nothing is written")
 }

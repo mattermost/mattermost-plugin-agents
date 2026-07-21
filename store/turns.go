@@ -87,6 +87,31 @@ func (s *Store) UpdateTurnContent(id string, content json.RawMessage) error {
 	return nil
 }
 
+// UpdateTurnContentIfMatches atomically replaces the Content JSONB column only
+// when the stored content still semantically equals expected. Returns true
+// when this caller won the update. Used as a cross-node claim so two
+// concurrent approval requests can never both execute the same tool batch.
+func (s *Store) UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error) {
+	query, args, err := s.builder.
+		Update("LLM_Turns").
+		Set("Content", string(updated)).
+		Where(sq.Eq{"ID": id}).
+		Where(sq.Expr("Content = ?::jsonb", string(expected))).
+		ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build conditional turn content update query: %w", err)
+	}
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to conditionally update turn content: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read conditional turn content update result: %w", err)
+	}
+	return rows == 1, nil
+}
+
 // GetMaxSequenceForConversation returns the maximum sequence number for turns in the
 // given conversation, or 0 if no turns exist.
 func (s *Store) GetMaxSequenceForConversation(conversationID string) (int, error) {

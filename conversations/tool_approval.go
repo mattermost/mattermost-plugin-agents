@@ -187,11 +187,12 @@ func batchWillExecuteDelegationCall(blocks []conversation.ContentBlock, accepted
 }
 
 // persistAcceptedToolDecisions marks every to-be-executed pending block as
-// accepted and persists the turn content. Called before asynchronous batch
-// execution so a duplicate approval request either finds no pending blocks
-// (stale click) or skips the already-claimed blocks. The in-memory snapshot
-// is left untouched — the asynchronous continuation of THIS request still
-// executes from its pending-state snapshot.
+// accepted and persists the turn content with an atomic compare-and-set
+// against the content this request originally read. Two concurrent approval
+// clicks (any node) both read the pending turn, but only one CAS can win —
+// the loser gets ErrStaleToolClick and never executes. The in-memory snapshot
+// is left untouched: the asynchronous continuation of the winning request
+// still executes from its pending-state snapshot.
 func (c *Conversations) persistAcceptedToolDecisions(pendingTurn *store.Turn, blocks []conversation.ContentBlock, acceptedToolIDs []string, autoExec func(llm.ToolCall) bool) error {
 	persisted := slices.Clone(blocks)
 	changed := false
@@ -214,8 +215,12 @@ func (c *Conversations) persistAcceptedToolDecisions(pendingTurn *store.Turn, bl
 	if err != nil {
 		return fmt.Errorf("failed to marshal accepted blocks: %w", err)
 	}
-	if err := c.convService.UpdateTurnContent(pendingTurn.ID, updatedContent); err != nil {
+	claimed, err := c.convService.ClaimTurnContent(pendingTurn.ID, pendingTurn.Content, updatedContent)
+	if err != nil {
 		return fmt.Errorf("failed to persist accepted tool decisions: %w", err)
+	}
+	if !claimed {
+		return fmt.Errorf("another request already resolved these tool calls: %w", ErrStaleToolClick)
 	}
 	return nil
 }
