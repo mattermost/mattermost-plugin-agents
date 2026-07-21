@@ -405,45 +405,74 @@ func TestCheckUsageRestrictionsDowngradedServer(t *testing.T) {
 		return &TestEnvironment{bots: mmBots, client: client, mockAPI: mockAPI}
 	}
 
-	t.Run("persisted attribute-based agent is denied for every user", func(t *testing.T) {
-		e := setup(t)
-		defer e.Cleanup(t)
+	tests := []struct {
+		name     string
+		check    func(e *TestEnvironment) error
+		wantErrs []error
+	}{
+		{
+			name: "persisted attribute-based agent is denied for every user",
+			check: func(e *TestEnvironment) error {
+				cfg := llm.BotConfig{
+					ID: agentID, ServiceID: serviceID,
+					UserAccessLevel: llm.UserAccessLevelAttributeBased,
+					UserIDs:         []string{userID}, // ignored in attribute-based mode; must not open access
+				}
+				return e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), cfg, userID)
+			},
+			wantErrs: []error{ErrUsageRestriction, accesscontrol.ErrAccessDenied},
+		},
+		{
+			// All → allowed. This also pins the service leg of the composite
+			// gate as unrestricted: CheckUsageRestrictionsForUserConfig calls
+			// CanUseService for cfg.ServiceID and would deny otherwise.
+			name: "legacy all-mode agent stays allowed",
+			check: func(e *TestEnvironment) error {
+				cfg := llm.BotConfig{ID: agentID, ServiceID: serviceID, UserAccessLevel: llm.UserAccessLevelAll}
+				return e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), cfg, userID)
+			},
+		},
+		{
+			name: "legacy block-mode agent keeps denying listed users",
+			check: func(e *TestEnvironment) error {
+				cfg := llm.BotConfig{
+					ID: agentID, ServiceID: serviceID,
+					UserAccessLevel: llm.UserAccessLevelBlock,
+					UserIDs:         []string{userID},
+				}
+				return e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), cfg, userID)
+			},
+			wantErrs: []error{ErrUsageRestriction},
+		},
+		{
+			name: "service is unrestricted",
+			check: func(e *TestEnvironment) error {
+				return e.bots.accessChecker.CanUseService(context.Background(), userID, serviceID)
+			},
+		},
+		{
+			name: "mcp server is unrestricted",
+			check: func(e *TestEnvironment) error {
+				return e.bots.accessChecker.CanUseMCPServer(context.Background(), userID, model.NewId())
+			},
+		},
+	}
 
-		cfg := llm.BotConfig{
-			ID: agentID, ServiceID: serviceID,
-			UserAccessLevel: llm.UserAccessLevelAttributeBased,
-			UserIDs:         []string{userID}, // ignored in attribute-based mode; must not open access
-		}
-		err := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), cfg, userID)
-		require.ErrorIs(t, err, ErrUsageRestriction)
-		require.ErrorIs(t, err, accesscontrol.ErrAccessDenied)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setup(t)
+			defer e.Cleanup(t)
 
-	t.Run("legacy-mode agent keeps legacy behavior", func(t *testing.T) {
-		e := setup(t)
-		defer e.Cleanup(t)
-
-		// All → allowed. This also pins the service leg of the composite
-		// gate as unrestricted: CheckUsageRestrictionsForUserConfig calls
-		// CanUseService for cfg.ServiceID and would deny otherwise.
-		allowed := llm.BotConfig{ID: agentID, ServiceID: serviceID, UserAccessLevel: llm.UserAccessLevelAll}
-		require.NoError(t, e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), allowed, userID))
-
-		// Block with the user listed → denied by the legacy check.
-		blocked := llm.BotConfig{
-			ID: agentID, ServiceID: serviceID,
-			UserAccessLevel: llm.UserAccessLevelBlock,
-			UserIDs:         []string{userID},
-		}
-		err := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), blocked, userID)
-		require.ErrorIs(t, err, ErrUsageRestriction)
-	})
-
-	t.Run("service and mcp server are unrestricted", func(t *testing.T) {
-		checker := accesscontrol.NewLegacyOnly(accesscontrol.NoMCPServerIDs, nil)
-		require.NoError(t, checker.CanUseService(context.Background(), userID, serviceID))
-		require.NoError(t, checker.CanUseMCPServer(context.Background(), userID, model.NewId()))
-	})
+			err := tt.check(e)
+			if len(tt.wantErrs) == 0 {
+				require.NoError(t, err)
+				return
+			}
+			for _, wantErr := range tt.wantErrs {
+				require.ErrorIs(t, err, wantErr)
+			}
+		})
+	}
 }
 
 // abacStubClient answers decision calls per resource type; unlisted types

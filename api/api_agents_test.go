@@ -67,7 +67,14 @@ func (m *mockConfigStore) UpdateConfig(transform func(prev *config.Config) (conf
 	if m.getErr != nil {
 		return config.Config{}, m.getErr
 	}
-	return transform(m.cfg)
+	next, err := transform(m.cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	// Persist like the real store so a subsequent GetConfig observes the update.
+	clone := next
+	m.cfg = &clone
+	return next, nil
 }
 
 // mockLicensed sets up mock expectations so IsMultiLLMLicensed() returns true.
