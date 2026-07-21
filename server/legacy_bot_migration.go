@@ -4,7 +4,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -117,14 +119,26 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 	// Clear Bots atomically against the freshest persisted config: a blind
 	// SaveConfig of the dbCfg snapshot read above could overwrite a concurrent
 	// writer's changes (e.g. an admin save or the ID migration's remapped IDs).
+	// If Bots itself changed since the snapshot the agents were created from,
+	// defer instead of clearing a list that was never migrated; the created
+	// agents are deduplicated by username on the retry.
+	errBotsChanged := errors.New("config bots changed during legacy bot migration")
 	saved, err := st.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		if prev == nil {
 			return config.Config{}, fmt.Errorf("active config disappeared during legacy bot migration")
+		}
+		if !reflect.DeepEqual(prev.Bots, dbCfg.Bots) {
+			return config.Config{}, errBotsChanged
 		}
 		next := *prev
 		next.Bots = nil
 		return next, nil
 	})
+	if errors.Is(err, errBotsChanged) {
+		// Soft defer (not an error): we retry on the next config update.
+		pluginAPI.Log.Warn("Deferring legacy bot migration: config bots changed concurrently")
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("failed to save config after legacy bot migration: %w", err)
 	}
