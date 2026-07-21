@@ -87,18 +87,25 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	}
 
 	// Read-previous → reconcile → normalize → save runs atomically under the
-	// config advisory lock. Reconciliation carries stable MCP server IDs
-	// forward before normalizeAdminConfig mints fresh ones, so clients that
-	// drop the id field cannot rotate IDs on every save; identity conflicts
-	// abort the save entirely.
+	// config advisory lock. Reconciliation carries stable service and MCP
+	// server IDs forward before normalizeAdminConfig mints fresh ones, so
+	// clients that drop the id field cannot rotate IDs on every save;
+	// identity conflicts abort the save entirely.
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		next := cfg
-		// Reconcile even on the first write (empty previous list) so
+		// Reconcile even on the first write (empty previous lists) so
 		// fabricated or duplicate incoming IDs cannot slip in unvalidated.
+		var prevServices []llm.ServiceConfig
 		var prevServers []config.MCPServerConfig
 		if prev != nil {
+			prevServices = prev.Services
 			prevServers = prev.MCP.Servers
 		}
+		reconciledServices, reconcileErr := config.ReconcileServiceIDs(next.Services, prevServices)
+		if reconcileErr != nil {
+			return config.Config{}, reconcileErr
+		}
+		next.Services = reconciledServices
 		reconciled, reconcileErr := config.ReconcileMCPServerIDs(next.MCP.Servers, prevServers)
 		if reconcileErr != nil {
 			return config.Config{}, reconcileErr
@@ -107,9 +114,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return normalizeAdminConfig(next), nil
 	})
 	switch {
-	case errors.Is(err, config.ErrMCPServerIDConflict):
+	case errors.Is(err, config.ErrServiceIDConflict), errors.Is(err, config.ErrMCPServerIDConflict):
 		// Minting fresh IDs here would silently detach existing policies.
-		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload conflicts with the stored MCP server identities; reload the System Console and retry: %w", err))
+		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload conflicts with the stored service or MCP server identities; reload the System Console and retry: %w", err))
 		return
 	case errors.Is(err, store.ErrStaleLegacyServiceIDs):
 		// A pre-upgrade client echoing UUID service IDs would undo the migration.

@@ -226,6 +226,7 @@ func TestHandleGetConfigDoesNotMutateStoredServices(t *testing.T) {
 func TestHandleSaveConfig(t *testing.T) {
 	tests := []struct {
 		name                  string
+		storedCfg             *config.Config
 		requestBody           any
 		clusterErr            error
 		expectedStatus        int
@@ -235,6 +236,11 @@ func TestHandleSaveConfig(t *testing.T) {
 	}{
 		{
 			name: "returns error when cluster notify fails after successful save",
+			storedCfg: &config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-1", Name: "OpenAI", Type: "openai"},
+				},
+			},
 			requestBody: config.Config{
 				DefaultBotName: "ai",
 				Services: []llm.ServiceConfig{
@@ -261,6 +267,11 @@ func TestHandleSaveConfig(t *testing.T) {
 		},
 		{
 			name: "saves valid config",
+			storedCfg: &config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-1", Name: "OpenAI", Type: "openai"},
+				},
+			},
 			requestBody: config.Config{
 				DefaultBotName: "ai",
 				Services: []llm.ServiceConfig{
@@ -337,7 +348,7 @@ func TestHandleSaveConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := &testConfigStore{}
+			store := &testConfigStore{cfg: tt.storedCfg}
 			updater := &testConfigUpdater{}
 			notifier := &testClusterNotifier{err: tt.clusterErr}
 
@@ -527,6 +538,111 @@ func TestHandleSaveConfigCarriesForwardMCPServerIDs(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, w.Code)
 			tt.validate(t, store)
+		})
+	}
+}
+
+// TestHandleSaveConfigCarriesForwardServiceIDs mirrors the MCP server ID
+// reconciliation for LLM services: service IDs are ABAC policy identities, so
+// an ID-less payload from a stale client must reclaim the stored ID instead
+// of rotating it (which would silently detach the service's policy), and
+// unresolvable identities must fail with 409.
+func TestHandleSaveConfigCarriesForwardServiceIDs(t *testing.T) {
+	stored := func() *config.Config {
+		return &config.Config{
+			Services: []llm.ServiceConfig{
+				{ID: "stable-svc-id", Name: "OpenAI", Type: "openai"},
+			},
+		}
+	}
+
+	tests := []struct {
+		name            string
+		storedCfg       *config.Config
+		payloadServices []llm.ServiceConfig
+		expectedStatus  int
+		validate        func(t *testing.T, store *testConfigStore)
+	}{
+		{
+			name:      "payload without id keeps stored id (stale client)",
+			storedCfg: stored(),
+			payloadServices: []llm.ServiceConfig{
+				{Name: "OpenAI", Type: "openai"},
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, store *testConfigStore) {
+				require.Len(t, store.cfg.Services, 1)
+				assert.Equal(t, "stable-svc-id", store.cfg.Services[0].ID)
+			},
+		},
+		{
+			name:      "repeated ID-less saves never rotate the id",
+			storedCfg: stored(),
+			payloadServices: []llm.ServiceConfig{
+				{Name: "OpenAI", Type: "anthropic", APIURL: "https://edited.example.com"},
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, store *testConfigStore) {
+				require.Len(t, store.cfg.Services, 1)
+				assert.Equal(t, "stable-svc-id", store.cfg.Services[0].ID)
+			},
+		},
+		{
+			name:      "brand-new service without match gets a fresh id from the backstop",
+			storedCfg: stored(),
+			payloadServices: []llm.ServiceConfig{
+				{ID: "stable-svc-id", Name: "OpenAI", Type: "openai"},
+				{Name: "Brand New", Type: "anthropic"},
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, store *testConfigStore) {
+				require.Len(t, store.cfg.Services, 2)
+				assert.Equal(t, "stable-svc-id", store.cfg.Services[0].ID)
+				assert.True(t, model.IsValidId(store.cfg.Services[1].ID))
+			},
+		},
+		{
+			name:      "fabricated incoming ID returns 409",
+			storedCfg: stored(),
+			payloadServices: []llm.ServiceConfig{
+				{ID: "invented-by-client", Name: "OpenAI", Type: "openai"},
+			},
+			expectedStatus: http.StatusConflict,
+			validate: func(t *testing.T, store *testConfigStore) {
+				assert.Equal(t, "stable-svc-id", store.cfg.Services[0].ID, "stored config must be untouched on rejection")
+			},
+		},
+		{
+			name:      "no stored config still assigns ids",
+			storedCfg: nil,
+			payloadServices: []llm.ServiceConfig{
+				{Name: "OpenAI", Type: "openai"},
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, store *testConfigStore) {
+				require.Len(t, store.cfg.Services, 1)
+				assert.True(t, model.IsValidId(store.cfg.Services[0].ID))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{cfg: tt.storedCfg}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			body, err := json.Marshal(config.Config{Services: tt.payloadServices})
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.expectedStatus, w.Code)
+			if tt.validate != nil {
+				tt.validate(t, store)
+			}
 		})
 	}
 }
@@ -771,11 +887,12 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, emptyCfg.Services)
 
-	// Step 2: PUT a config
+	// Step 2: PUT a config. The new service arrives ID-less (the backend
+	// mints the stable ID); an unknown incoming ID would be rejected.
 	saveCfg := config.Config{
 		DefaultBotName: "ai",
 		Services: []llm.ServiceConfig{
-			{ID: "svc-1", Name: "OpenAI", Type: "openai", APIKey: "sk-test"},
+			{Name: "OpenAI", Type: "openai", APIKey: "sk-test"},
 		},
 		Bots: []llm.BotConfig{
 			{ID: "bot-1", Name: "ai", ServiceID: "svc-1"},
