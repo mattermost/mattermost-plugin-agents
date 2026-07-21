@@ -72,18 +72,27 @@ func validPolicyResourceType(t string) bool {
 	return false
 }
 
-// bindPolicyBody binds the request body into an AccessControlPolicy with the
-// same size cap as agent writes. Returns nil after aborting on bind failure.
-func bindPolicyBody(c *gin.Context) *model.AccessControlPolicy {
+// bindCappedJSONBody binds the request body into out with the same size cap
+// as agent writes. Returns false after aborting on bind failure.
+func bindCappedJSONBody(c *gin.Context, out any) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
-	var policy model.AccessControlPolicy
-	if err := c.ShouldBindJSON(&policy); err != nil {
+	if err := c.ShouldBindJSON(out); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
-			return nil
+			return false
 		}
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid policy body: %w", err))
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return false
+	}
+	return true
+}
+
+// bindPolicyBody binds the request body into an AccessControlPolicy with the
+// same size cap as agent writes. Returns nil after aborting on bind failure.
+func bindPolicyBody(c *gin.Context) *model.AccessControlPolicy {
+	var policy model.AccessControlPolicy
+	if !bindCappedJSONBody(c, &policy) {
 		return nil
 	}
 	return &policy
@@ -334,8 +343,7 @@ type celExpressionRequest struct {
 
 func (a *API) bindCELExpressionRequest(c *gin.Context) *celExpressionRequest {
 	var req celExpressionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+	if !bindCappedJSONBody(c, &req) {
 		return nil
 	}
 	if !validPolicyResourceType(req.ResourceType) {
@@ -374,8 +382,7 @@ type celTestRequest struct {
 func (a *API) handleCELTest(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	var req celTestRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+	if !bindCappedJSONBody(c, &req) {
 		return
 	}
 	if !validPolicyResourceType(req.ResourceType) {
