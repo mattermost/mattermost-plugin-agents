@@ -324,7 +324,7 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 **Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
 
-- **Agents** — set the agent's user access to **Attribute-based (access policy)** in the agent's Access tab, then author the policy there. In this mode the agent's allow/block user and team lists are ignored; the policy is the only user-access gate. Agent creators and agent admins can author with the simplified (table) editor; system admins additionally get the advanced (CEL) editor.
+- **Agents** — set the agent's user access to **Attribute-based (access policy)** in the agent's Access tab, then author the policy there. In this mode the agent's allow/block user and team lists are ignored; the policy is the only user-access gate. Anyone who can manage the agent — its creator, its agent admins, and users with the manage-others'-agents permission — can author with the simplified (table) editor; system admins additionally get the advanced (CEL) editor.
 - **LLM services** — authored by system admins in **System Console > Plugins > Agents** on the service panel (advanced editor). A service policy restricts every agent backed by that service, on top of any per-agent restrictions.
 - **MCP servers** — authored by system admins on the MCP server panel (advanced editor). Users denied by an MCP server policy silently lose that server's tools; there is no notification in chat, the tools simply don't appear.
 
@@ -332,7 +332,7 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 - No policy exists for a resource → the legacy checks apply unchanged (user/team lists for agents in the legacy access modes; nothing for services/MCP servers), while agents in attribute-based mode allow every user. Installing or upgrading the plugin changes nothing until you author a policy.
 - A policy exists → the policy decides: matching users are allowed, non-matching users are denied.
-- The ABAC engine is unavailable (for example the license lapsed) → the server still resolves whether a policy exists per resource. Resources **with** a policy **fail closed**: users are denied rather than falling back to unrestricted access. Resources with **no** policy behave as if ABAC were never involved — including attribute-based agents, which **fail open** by design (they ignore user/team lists and have no other gate without a policy).
+- The ABAC engine is unavailable (for example, the license lapsed) → the server still resolves whether a policy exists per resource. Resources **with** a policy **fail closed**: users are denied rather than falling back to unrestricted access. Resources with **no** policy behave as if ABAC were never involved — including attribute-based agents, which **fail open** by design (they ignore user/team lists and have no other gate without a policy).
 
 **Resource lifecycle note.** Deleting an agent removes its policy best-effort; deleting a service or MCP server from the configuration does not delete its policy. If you recreate a resource with the same ID, the old policy applies again. Remove the policy first (via the resource's policy editor) if that is not what you want.
 
