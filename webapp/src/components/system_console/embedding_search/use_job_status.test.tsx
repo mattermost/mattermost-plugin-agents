@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {renderHook, waitFor} from '@testing-library/react';
+import {act, renderHook, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {useJobStatus} from './use_job_status';
@@ -35,20 +35,45 @@ beforeEach(() => {
     checkIndexHealth.mockResolvedValue({status: 'not_configured'});
 });
 
+afterEach(() => {
+    jest.useRealTimers();
+});
+
 describe('useJobStatus', () => {
-    test('enables polling when fetch finds a running job', async () => {
-        getReindexStatus.mockResolvedValue({
-            status: 'running',
-            started_at: '2026-01-01T00:00:00Z',
-            processed_rows: 50,
-            total_rows: 100,
-        });
+    test.each(['running', 'cancel_requested'] as const)(
+        'polls repeatedly when fetch finds a %s job',
+        async (status) => {
+            jest.useFakeTimers();
 
-        const {result} = renderHook(() => useJobStatus(), {wrapper});
+            getReindexStatus.mockResolvedValue({
+                status,
+                started_at: '2026-01-01T00:00:00Z',
+                processed_rows: 50,
+                total_rows: 100,
+            });
 
-        await waitFor(() => {
-            expect(result.current.polling).toBe(true);
-        });
-        expect(getReindexStatus).toHaveBeenCalled();
-    });
+            const {result} = renderHook(() => useJobStatus(), {wrapper});
+
+            await waitFor(() => {
+                expect(result.current.polling).toBe(true);
+            });
+
+            const callsAfterMount = getReindexStatus.mock.calls.length;
+            expect(callsAfterMount).toBeGreaterThanOrEqual(1);
+
+            await act(async () => {
+                await jest.advanceTimersByTimeAsync(2000);
+            });
+
+            expect(getReindexStatus.mock.calls.length).toBeGreaterThan(callsAfterMount);
+
+            const callsAfterFirstPoll = getReindexStatus.mock.calls.length;
+
+            await act(async () => {
+                await jest.advanceTimersByTimeAsync(2000);
+            });
+
+            expect(getReindexStatus.mock.calls.length).toBeGreaterThan(callsAfterFirstPoll);
+        },
+    );
 });

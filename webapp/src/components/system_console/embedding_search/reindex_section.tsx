@@ -371,7 +371,7 @@ export const ReindexSection = ({
                                                 values={{
                                                     processed: jobStatus.processed_rows.toLocaleString(),
                                                     total: jobStatus.total_rows.toLocaleString(),
-                                                    percent: jobStatus.total_rows ? Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100) : 0,
+                                                    percent: jobStatus.total_rows ? Math.min(Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100), 100) : 0,
                                                 }}
                                             />
                                         </ProgressText>
@@ -425,7 +425,7 @@ export const ReindexSection = ({
                                     values={{
                                         processed: jobStatus.processed_rows.toLocaleString(),
                                         total: jobStatus.total_rows.toLocaleString(),
-                                        percent: jobStatus.total_rows ? Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100) : 0,
+                                        percent: jobStatus.total_rows ? Math.min(Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100), 100) : 0,
                                     }}
                                 />
                             </ProgressText>
