@@ -42,6 +42,7 @@ type ServerConfig = config.MCPServerConfig
 type EmbeddedServerConfig = config.MCPEmbeddedServerConfig
 type ToolConfig = config.MCPToolConfig
 type PluginServerConfig = config.PluginServerConfig
+type AppsConfig = config.MCPAppsConfig
 
 // DiscoverRemoteServerTools creates a temporary connection to a remote MCP server and discovers its tools
 func DiscoverRemoteServerTools(
