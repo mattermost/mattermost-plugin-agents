@@ -28,6 +28,11 @@ func TestPreviewPostToolMeta(t *testing.T) {
 	require.NotEmpty(t, previewPostHTML)
 	assert.Contains(t, previewPostHTML, "ui/notifications/initialized")
 	assert.Contains(t, previewPostHTML, "preview-post-toggle")
+	assert.Contains(t, previewPostHTML, "protocolVersion")
+	assert.Contains(t, previewPostHTML, "ui/notifications/tool-result")
+	// Params are the CallToolResult itself (AppBridge.sendToolResult), not {result:…}.
+	assert.Contains(t, previewPostHTML, "var result = data.params")
+	assert.NotContains(t, previewPostHTML, "params.result")
 
 	lower := strings.ToLower(previewPostHTML)
 	for _, attr := range []string{`src="http://`, `src="https://`, `href="http://`, `href="https://`} {

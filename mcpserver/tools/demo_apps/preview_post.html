@@ -225,7 +225,9 @@
     }
 
     if (data.method === 'ui/notifications/tool-result') {
-      var result = (data.params && data.params.result) || {};
+      // AppBridge.sendToolResult passes CallToolResult as params directly
+      // (not wrapped in {result: …}).
+      var result = data.params || {};
       var content = Array.isArray(result.content) ? result.content : [];
       var text = '';
       for (var i = 0; i < content.length; i++) {
@@ -243,6 +245,7 @@
     id: 1,
     method: 'ui/initialize',
     params: {
+      protocolVersion: '2025-11-21',
       appInfo: {name: 'preview-post', version: '1.0.0'},
       appCapabilities: {}
     }
