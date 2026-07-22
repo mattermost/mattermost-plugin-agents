@@ -82,7 +82,10 @@ type MCPClientManager interface {
 // ConfigStore provides read/write access to the plugin configuration in the database.
 type ConfigStore interface {
 	GetConfig() (*config.Config, error)
-	SaveConfig(cfg config.Config) error
+	// SaveConfig persists cfg and returns the previous active config (nil if
+	// none). The prior value is read under the same serialized save lock so
+	// audit transitions are exact.
+	SaveConfig(cfg config.Config) (previous *config.Config, err error)
 }
 
 // AgentStore provides CRUD access to user-created agents in the database.

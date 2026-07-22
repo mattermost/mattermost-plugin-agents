@@ -977,12 +977,13 @@ func (s *failingConfigStore) GetConfig() (*config.Config, error) {
 	return s.cfg, s.getErr
 }
 
-func (s *failingConfigStore) SaveConfig(cfg config.Config) error {
+func (s *failingConfigStore) SaveConfig(cfg config.Config) (*config.Config, error) {
 	s.saveCallCount++
 	if s.saveErr != nil {
-		return s.saveErr
+		return nil, s.saveErr
 	}
+	prev := s.cfg
 	clone := cfg
 	s.cfg = &clone
-	return nil
+	return prev, nil
 }

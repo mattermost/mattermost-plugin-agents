@@ -6,7 +6,6 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -15,15 +14,10 @@ import (
 )
 
 // mcpAppsSameOriginSandboxPath is the plugin-route path of the insecure
-// same-origin sandbox page. The webapp receives the absolute URL via the
-// mcpApps bootstrap on GET /ai_bots; it never builds this path itself.
-const mcpAppsSameOriginSandboxPath = "/mcp/apps/sandbox"
-
-// MCPApps disabled reasons (bootstrap contract with Phase 1c).
-const (
-	mcpAppsDisabledReasonOff             = "apps_disabled"
-	mcpAppsDisabledReasonNoSandboxOrigin = "no_sandbox_origin"
-)
+// same-origin sandbox page. Kept equal to sandbox.SameOriginPluginPath.
+// The webapp receives the absolute URL via the mcpApps bootstrap on
+// GET /ai_bots; it never builds this path itself.
+const mcpAppsSameOriginSandboxPath = sandbox.SameOriginPluginPath
 
 // MCPAppsInfo tells the webapp whether MCP Apps rendering is available and
 // where the sandbox page lives. Returned inside AIBotsResponse (camelCase,
@@ -33,63 +27,43 @@ type MCPAppsInfo struct {
 	// SandboxURL is the absolute URL of the sandbox page (ready to be used
 	// as @mcp-ui/client's sandbox.url). Empty when Enabled is false.
 	SandboxURL string `json:"sandboxURL,omitempty"`
-	// DisabledReason is set when Enabled is false: "apps_disabled" or
-	// "no_sandbox_origin".
+	// DisabledReason is set when Enabled is false: "apps_disabled",
+	// "no_sandbox_origin", or "invalid_sandbox_url".
 	DisabledReason string `json:"disabledReason,omitempty"`
 }
 
-// siteURLOrigin returns scheme://host[:port] of the configured Site URL.
-func (a *API) siteURLOrigin() (string, error) {
+func (a *API) siteURLString() string {
 	cfg := a.pluginAPI.Configuration.GetConfig()
-	if cfg.ServiceSettings.SiteURL == nil || *cfg.ServiceSettings.SiteURL == "" {
-		return "", fmt.Errorf("site URL is empty")
+	if cfg.ServiceSettings.SiteURL == nil {
+		return ""
 	}
-	parsed, err := url.Parse(strings.TrimSpace(*cfg.ServiceSettings.SiteURL))
-	if err != nil {
-		return "", fmt.Errorf("invalid site URL: %w", err)
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("site URL must include scheme and host")
-	}
-	return parsed.Scheme + "://" + parsed.Host, nil
+	return strings.TrimSpace(*cfg.ServiceSettings.SiteURL)
 }
 
-// resolveMCPAppsInfo computes the effective MCP Apps state from config.
-// Precedence (Phase 1c contract): apps disabled → off; SandboxURL set →
-// external sandbox page URL; else insecure opt-in → same-origin plugin
-// route; else off with reason.
+// resolveMCPAppsInfo computes the effective MCP Apps state via the
+// canonical sandbox.Resolve (single source of truth for bootstrap, listener,
+// and same-origin route).
 func (a *API) resolveMCPAppsInfo() MCPAppsInfo {
-	apps := a.config.MCP().Apps
-	if !apps.Enabled {
-		return MCPAppsInfo{DisabledReason: mcpAppsDisabledReasonOff}
+	resolved := sandbox.Resolve(a.config.MCP().Apps, a.siteURLString())
+	switch resolved.Mode {
+	case sandbox.ModeExternal, sandbox.ModeSameOrigin:
+		return MCPAppsInfo{Enabled: true, SandboxURL: resolved.PageURL}
+	default:
+		return MCPAppsInfo{Enabled: false, DisabledReason: resolved.DisabledReason}
 	}
-	if sandboxURL := strings.TrimSpace(apps.SandboxURL); sandboxURL != "" {
-		return MCPAppsInfo{Enabled: true, SandboxURL: strings.TrimRight(sandboxURL, "/") + "/sandbox.html"}
-	}
-	if apps.AllowInsecureSameOriginSandbox {
-		origin, err := a.siteURLOrigin()
-		if err != nil {
-			a.pluginAPI.Log.Error("MCP Apps: cannot resolve Site URL origin", "error", err)
-			return MCPAppsInfo{DisabledReason: mcpAppsDisabledReasonNoSandboxOrigin}
-		}
-		return MCPAppsInfo{Enabled: true, SandboxURL: origin + "/plugins/mattermost-ai/mcp/apps/sandbox"}
-	}
-	return MCPAppsInfo{DisabledReason: mcpAppsDisabledReasonNoSandboxOrigin}
 }
 
 // handleGetSameOriginSandbox serves sandbox.html from the Mattermost origin.
-// 404 unless the insecure same-origin mode is the effective mode (apps
-// enabled + opt-in true + no external SandboxURL).
+// 404 unless the insecure same-origin mode is the effective mode.
 func (a *API) handleGetSameOriginSandbox(c *gin.Context) {
-	apps := a.config.MCP().Apps
-	if !apps.Enabled || !apps.AllowInsecureSameOriginSandbox || strings.TrimSpace(apps.SandboxURL) != "" {
+	resolved := sandbox.Resolve(a.config.MCP().Apps, a.siteURLString())
+	if resolved.Mode != sandbox.ModeSameOrigin {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	origin, err := a.siteURLOrigin()
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to resolve site URL origin: %w", err))
+	if resolved.HostOrigin == "" {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to resolve site URL origin"))
 		return
 	}
-	sandbox.ServePage(c.Writer, c.Request, origin, &a.pluginAPI.Log)
+	sandbox.ServePage(c.Writer, c.Request, resolved.HostOrigin, sandbox.PageModeSameOrigin, &a.pluginAPI.Log)
 }

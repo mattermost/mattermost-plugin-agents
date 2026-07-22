@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/sandbox"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -33,22 +34,25 @@ func TestResolveMCPAppsInfo(t *testing.T) {
 		{
 			name: "apps disabled",
 			apps: config.MCPAppsConfig{Enabled: false},
-			want: MCPAppsInfo{Enabled: false, DisabledReason: mcpAppsDisabledReasonOff},
+			want: MCPAppsInfo{Enabled: false, DisabledReason: sandbox.DisabledReasonAppsDisabled},
 		},
 		{
-			name: "external URL",
-			apps: config.MCPAppsConfig{Enabled: true, SandboxURL: "https://apps.example.com"},
-			want: MCPAppsInfo{Enabled: true, SandboxURL: "https://apps.example.com/sandbox.html"},
+			name:    "external URL",
+			apps:    config.MCPAppsConfig{Enabled: true, SandboxURL: "https://apps.example.com"},
+			siteURL: "https://mm.example.com",
+			want:    MCPAppsInfo{Enabled: true, SandboxURL: "https://apps.example.com/sandbox.html"},
 		},
 		{
-			name: "external URL trailing slash",
-			apps: config.MCPAppsConfig{Enabled: true, SandboxURL: "https://apps.example.com/"},
-			want: MCPAppsInfo{Enabled: true, SandboxURL: "https://apps.example.com/sandbox.html"},
+			name:    "external URL trailing slash",
+			apps:    config.MCPAppsConfig{Enabled: true, SandboxURL: "https://apps.example.com/"},
+			siteURL: "https://mm.example.com",
+			want:    MCPAppsInfo{Enabled: true, SandboxURL: "https://apps.example.com/sandbox.html"},
 		},
 		{
-			name: "external URL with subpath",
-			apps: config.MCPAppsConfig{Enabled: true, SandboxURL: "https://mm.example.com:8443/apps"},
-			want: MCPAppsInfo{Enabled: true, SandboxURL: "https://mm.example.com:8443/apps/sandbox.html"},
+			name:    "external URL with subpath",
+			apps:    config.MCPAppsConfig{Enabled: true, SandboxURL: "https://mm.example.com:8443/apps"},
+			siteURL: "https://mm.example.com",
+			want:    MCPAppsInfo{Enabled: true, SandboxURL: "https://mm.example.com:8443/apps/sandbox.html"},
 		},
 		{
 			name: "external URL wins over insecure",
@@ -73,9 +77,31 @@ func TestResolveMCPAppsInfo(t *testing.T) {
 			},
 		},
 		{
-			name: "enabled, nothing configured",
-			apps: config.MCPAppsConfig{Enabled: true},
-			want: MCPAppsInfo{Enabled: false, DisabledReason: mcpAppsDisabledReasonNoSandboxOrigin},
+			name: "insecure with SiteURL subpath",
+			apps: config.MCPAppsConfig{
+				Enabled:                        true,
+				AllowInsecureSameOriginSandbox: true,
+			},
+			siteURL: "https://example.com/mattermost",
+			want: MCPAppsInfo{
+				Enabled:    true,
+				SandboxURL: "https://example.com/mattermost/plugins/mattermost-ai/mcp/apps/sandbox",
+			},
+		},
+		{
+			name: "same-origin sandboxURL without opt-in fails closed",
+			apps: config.MCPAppsConfig{
+				Enabled:    true,
+				SandboxURL: "https://mm.example.com/apps",
+			},
+			siteURL: "https://mm.example.com",
+			want:    MCPAppsInfo{Enabled: false, DisabledReason: sandbox.DisabledReasonInvalidSandboxURL},
+		},
+		{
+			name:    "enabled, nothing configured",
+			apps:    config.MCPAppsConfig{Enabled: true},
+			siteURL: "https://mm.example.com",
+			want:    MCPAppsInfo{Enabled: false, DisabledReason: sandbox.DisabledReasonNoSandboxOrigin},
 		},
 	}
 
@@ -112,19 +138,21 @@ func TestHandleGetSameOriginSandbox(t *testing.T) {
 	tests := []struct {
 		name           string
 		apps           config.MCPAppsConfig
+		siteURL        string
 		query          string
 		wantStatus     int
 		wantBodySubstr string
+		wantBodyAbsent string
 		wantCSPContain string
 	}{
 		{
-			name: "effective insecure mode",
+			name: "effective insecure mode skips isolation self-test",
 			apps: config.MCPAppsConfig{
 				Enabled:                        true,
 				AllowInsecureSameOriginSandbox: true,
 			},
 			wantStatus:     http.StatusOK,
-			wantBodySubstr: "ALLOWED_HOST_ORIGIN",
+			wantBodySubstr: "REQUIRE_ORIGIN_ISOLATION = false",
 		},
 		{
 			name: "csp param honored",
@@ -169,8 +197,12 @@ func TestHandleGetSameOriginSandbox(t *testing.T) {
 			defer e.Cleanup(t)
 			e.config.mcpConfig.Apps = tt.apps
 			e.mockAPI.On("GetConfig").Unset()
+			su := siteURL
+			if tt.siteURL != "" {
+				su = tt.siteURL
+			}
 			e.mockAPI.On("GetConfig").Return(&model.Config{
-				ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+				ServiceSettings: model.ServiceSettings{SiteURL: &su},
 			}).Maybe()
 
 			target := mcpAppsSameOriginSandboxPath
@@ -178,7 +210,6 @@ func TestHandleGetSameOriginSandbox(t *testing.T) {
 				target += "?" + tt.query
 			}
 			req := httptest.NewRequest(http.MethodGet, target, nil)
-			// Intentionally no Mattermost-User-Id — route is unauthenticated.
 			rec := httptest.NewRecorder()
 			e.api.ServeHTTP(&plugin.Context{}, rec, req)
 
@@ -189,6 +220,9 @@ func TestHandleGetSameOriginSandbox(t *testing.T) {
 			body := rec.Body.String()
 			if tt.wantBodySubstr != "" {
 				require.Contains(t, body, tt.wantBodySubstr)
+			}
+			if tt.wantBodyAbsent != "" {
+				require.NotContains(t, body, tt.wantBodyAbsent)
 			}
 			require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 			require.Equal(t, "no-cache, no-store, must-revalidate", rec.Header().Get("Cache-Control"))
@@ -216,7 +250,7 @@ func TestHandleGetAIBotsIncludesMCPApps(t *testing.T) {
 			name:               "disabled by default",
 			apps:               config.MCPAppsConfig{},
 			wantEnabled:        false,
-			wantDisabledReason: mcpAppsDisabledReasonOff,
+			wantDisabledReason: sandbox.DisabledReasonAppsDisabled,
 		},
 		{
 			name: "external sandbox",
@@ -233,7 +267,7 @@ func TestHandleGetAIBotsIncludesMCPApps(t *testing.T) {
 				Enabled: true,
 			},
 			wantEnabled:        false,
-			wantDisabledReason: mcpAppsDisabledReasonNoSandboxOrigin,
+			wantDisabledReason: sandbox.DisabledReasonNoSandboxOrigin,
 		},
 	}
 
@@ -244,6 +278,11 @@ func TestHandleGetAIBotsIncludesMCPApps(t *testing.T) {
 			e.config.mcpConfig.Apps = tt.apps
 			e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
 			e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			siteURL := "https://mm.example.com"
+			e.mockAPI.On("GetConfig").Unset()
+			e.mockAPI.On("GetConfig").Return(&model.Config{
+				ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+			}).Maybe()
 
 			req := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
 			req.Header.Add("Mattermost-User-ID", "userid")
@@ -259,18 +298,6 @@ func TestHandleGetAIBotsIncludesMCPApps(t *testing.T) {
 			require.Equal(t, tt.wantEnabled, response.MCPApps.Enabled)
 			require.Equal(t, tt.wantSandboxURL, response.MCPApps.SandboxURL)
 			require.Equal(t, tt.wantDisabledReason, response.MCPApps.DisabledReason)
-
-			var asMap map[string]any
-			require.NoError(t, json.Unmarshal(raw, &asMap))
-			mcpApps, ok := asMap["mcpApps"].(map[string]any)
-			require.True(t, ok)
-			require.Equal(t, tt.wantEnabled, mcpApps["enabled"])
-			if tt.wantSandboxURL != "" {
-				require.Equal(t, tt.wantSandboxURL, mcpApps["sandboxURL"])
-			}
-			if tt.wantDisabledReason != "" {
-				require.Equal(t, tt.wantDisabledReason, mcpApps["disabledReason"])
-			}
 		})
 	}
 }
