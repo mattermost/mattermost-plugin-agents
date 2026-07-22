@@ -212,6 +212,26 @@ func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*U
 	return m.createAndStoreUserClient(ctx, userID, false)
 }
 
+// connectEmbeddedForUser establishes the embedded MCP session for a user when
+// the manager has an embedded client configured. Failures are logged and
+// non-fatal — the caller proceeds without embedded tools/resources.
+func (m *ClientManager) connectEmbeddedForUser(ctx context.Context, userClient *UserClients, userID string) {
+	if m.embeddedClient == nil {
+		return
+	}
+	ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
+	if ensureErr != nil {
+		m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
+		return
+	}
+	if ensuredSessionID == "" {
+		return
+	}
+	if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
+		m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
+	}
+}
+
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
 func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
@@ -222,16 +242,7 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	// they run per-request and are not cached, so a canceled request should abort
 	// them. Only the remote connect uses cacheableContext(ctx) (in
 	// createAndStoreUserClient) because its result is cached across requests.
-	if m.embeddedClient != nil {
-		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
-		if ensureErr != nil {
-			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
-		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
-				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
-			}
-		}
-	}
+	m.connectEmbeddedForUser(ctx, userClient, userID)
 
 	// Snapshot under RLock, then release before PluginHTTP work.
 	pluginSnap := m.snapshotEnabledPluginServers()

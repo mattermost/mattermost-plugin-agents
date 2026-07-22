@@ -47,6 +47,12 @@ func (e *OAuthNeededError) Unwrap() error {
 	return nil
 }
 
+// NewOAuthNeededError builds an OAuthNeededError with a known auth URL,
+// for callers that detect the needs-auth state outside a live 401 challenge.
+func NewOAuthNeededError(authURL string) *OAuthNeededError {
+	return &OAuthNeededError{authURL: authURL}
+}
+
 // generateState generates a random state parameter for OAuth
 func generateState() (string, error) {
 	b := make([]byte, 16)

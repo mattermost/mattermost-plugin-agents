@@ -578,62 +578,15 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 
 	result, err := c.session.CallTool(ctx, params)
 	if err != nil {
-		if errors.Is(err, mcp.ErrConnectionClosed) {
-			if c.embeddedClient != nil {
-				// Reconnect to embedded server using stored client helper and session ID
-				if c.sessionID == "" {
-					return "", fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
-				}
-
-				newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID)
-				if reconnectErr != nil {
-					return "", fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
-				}
-
-				c.toolsMu.Lock()
-				c.session = newClient.session
-				c.tools = newClient.Tools()
-				c.toolsMu.Unlock()
-				c.log.Debug("Successfully reconnected to embedded MCP server", "userID", c.userID)
-			} else {
-				// Reconnect to remote server
-				newSession, reconnectErr := c.createSession(ctx, c.config)
-				if reconnectErr != nil {
-					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
-				}
-				discoveredTools, listErr := listAllTools(ctx, newSession)
-				if listErr != nil {
-					newSession.Close()
-					return "", fmt.Errorf("failed to list tools after reconnecting to MCP server %s: %w", c.config.Name, listErr)
-				}
-				if len(discoveredTools) == 0 {
-					newSession.Close()
-					return "", fmt.Errorf("no tools found after reconnecting to MCP server %s for user %s", c.config.Name, c.userID)
-				}
-
-				c.toolsMu.Lock()
-				c.session = newSession
-				c.tools = discoveredTools
-				c.toolsMu.Unlock()
-
-				if c.toolsCache != nil && shouldUseSharedToolsCache(c.config) {
-					if cacheErr := c.toolsCache.SetTools(c.config.Name, c.config.Name, c.config.BaseURL, discoveredTools, time.Now()); cacheErr != nil {
-						c.log.Warn("Failed to update tools cache after MCP reconnect",
-							"server", c.config.Name,
-							"userID", c.userID,
-							"error", cacheErr)
-					}
-				}
-				c.log.Debug("Successfully reconnected to MCP server", "userID", c.userID, "server", c.config.Name)
-			}
-
-			// Retry the tool call after reconnecting
-			result, err = c.session.CallTool(ctx, params)
-			if err != nil {
-				return "", fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
-			}
-		} else {
+		if !errors.Is(err, mcp.ErrConnectionClosed) {
 			return "", fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
+		}
+		if reconnectErr := c.reconnect(ctx); reconnectErr != nil {
+			return "", reconnectErr
+		}
+		result, err = c.session.CallTool(ctx, params)
+		if err != nil {
+			return "", fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
 		}
 	}
 	var textBuilder strings.Builder
@@ -660,4 +613,59 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 	}
 
 	return "", fmt.Errorf("no text content found in response from tool %s on server %s", toolName, c.config.Name)
+}
+
+// reconnect re-establishes the session after mcp.ErrConnectionClosed,
+// re-listing tools and updating the shared cache (remote) or recreating the
+// embedded client (embedded). Callers retry their operation once afterwards.
+func (c *Client) reconnect(ctx context.Context) error {
+	if c.embeddedClient != nil {
+		// Reconnect to embedded server using stored client helper and session ID
+		if c.sessionID == "" {
+			return fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
+		}
+
+		newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID)
+		if reconnectErr != nil {
+			return fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
+		}
+
+		c.toolsMu.Lock()
+		c.session = newClient.session
+		c.tools = newClient.Tools()
+		c.toolsMu.Unlock()
+		c.log.Debug("Successfully reconnected to embedded MCP server", "userID", c.userID)
+		return nil
+	}
+
+	// Reconnect to remote server
+	newSession, reconnectErr := c.createSession(ctx, c.config)
+	if reconnectErr != nil {
+		return fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
+	}
+	discoveredTools, listErr := listAllTools(ctx, newSession)
+	if listErr != nil {
+		newSession.Close()
+		return fmt.Errorf("failed to list tools after reconnecting to MCP server %s: %w", c.config.Name, listErr)
+	}
+	if len(discoveredTools) == 0 {
+		newSession.Close()
+		return fmt.Errorf("no tools found after reconnecting to MCP server %s for user %s", c.config.Name, c.userID)
+	}
+
+	c.toolsMu.Lock()
+	c.session = newSession
+	c.tools = discoveredTools
+	c.toolsMu.Unlock()
+
+	if c.toolsCache != nil && shouldUseSharedToolsCache(c.config) {
+		if cacheErr := c.toolsCache.SetTools(c.config.Name, c.config.Name, c.config.BaseURL, discoveredTools, time.Now()); cacheErr != nil {
+			c.log.Warn("Failed to update tools cache after MCP reconnect",
+				"server", c.config.Name,
+				"userID", c.userID,
+				"error", cacheErr)
+		}
+	}
+	c.log.Debug("Successfully reconnected to MCP server", "userID", c.userID, "server", c.config.Name)
+	return nil
 }
