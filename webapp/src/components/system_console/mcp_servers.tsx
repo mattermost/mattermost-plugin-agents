@@ -50,6 +50,24 @@ export type MCPConfig = {
     idleTimeoutMinutes?: number;
 };
 
+// normalizeMCPConfig rebuilds the MCP config literal used by System Console
+// edits. Every field must be restated here — omitted fields are silently
+// dropped on the next onChange/save.
+export const normalizeMCPConfig = (mcpConfig?: MCPConfig): MCPConfig => {
+    const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
+    return {
+        enabled: true,
+        enablePluginServer: mcpConfig?.enablePluginServer ?? false,
+        servers: normalizedServers,
+        embeddedServer: {
+            ...(mcpConfig?.embeddedServer || {}),
+            enabled: true,
+        },
+        apps: mcpConfig?.apps ?? defaultMCPAppsConfig,
+        idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
+    };
+};
+
 type Props = {
     mcpConfig: MCPConfig;
     onChange: (config: MCPConfig) => void;
@@ -421,17 +439,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // MCP client and embedded server are always enabled; users can still
     // disable individual tools but cannot turn off MCP entirely.
-    const config: MCPConfig = {
-        enabled: true,
-        enablePluginServer: mcpConfig?.enablePluginServer ?? false,
-        servers: normalizedServers,
-        embeddedServer: {
-            ...(mcpConfig?.embeddedServer || {}),
-            enabled: true,
-        },
-        apps: mcpConfig?.apps ?? defaultMCPAppsConfig,
-        idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
-    };
+    const config: MCPConfig = normalizeMCPConfig(mcpConfig);
 
     // Generate a server name
     const generateServerName = () => {

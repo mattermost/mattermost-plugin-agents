@@ -5,7 +5,7 @@ import React from 'react';
 import {fireEvent, render, screen} from '@testing-library/react';
 
 import MCPAppsSection, {defaultMCPAppsConfig, MCPAppsConfig} from './mcp_apps';
-import {MCPConfig} from './mcp_servers';
+import {MCPConfig, normalizeMCPConfig} from './mcp_servers';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -114,11 +114,9 @@ describe('MCPAppsSection', () => {
             />,
         );
 
+        // Two BooleanItems when enabled: Enable MCP Apps (radios 0-1), insecure (2-3).
         const radios = screen.getAllByRole('radio');
-
-        // BooleanItem for insecure is the last pair; click its true radio.
-        const insecureTrue = radios[radios.length - 2];
-        fireEvent.click(insecureTrue);
+        fireEvent.click(radios[2]);
 
         expect(onChange).toHaveBeenCalledWith({
             ...value,
@@ -127,10 +125,8 @@ describe('MCPAppsSection', () => {
     });
 });
 
-describe('MCPServers apps field preservation', () => {
-    test('rebuilt config literal from unrelated edit must carry apps', () => {
-        // Guards the mcp_servers.tsx trap: rebuilding config field-by-field
-        // without restating apps silently drops MCP Apps settings on save.
+describe('normalizeMCPConfig apps preservation', () => {
+    test('unrelated enablePluginServer edit retains apps from production normalizer', () => {
         const mcpConfig: MCPConfig = {
             enabled: true,
             enablePluginServer: false,
@@ -142,19 +138,24 @@ describe('MCPServers apps field preservation', () => {
             }),
         };
 
-        const rebuilt: MCPConfig = {
-            enabled: true,
+        const rebuilt = normalizeMCPConfig({
+            ...mcpConfig,
             enablePluginServer: true,
-            servers: mcpConfig.servers ?? [],
-            embeddedServer: {
-                ...(mcpConfig.embeddedServer || {}),
-                enabled: true,
-            },
-            idleTimeoutMinutes: mcpConfig.idleTimeoutMinutes,
-            apps: mcpConfig?.apps ?? defaultMCPAppsConfig,
-        };
+        });
 
         expect(rebuilt.apps).toEqual(mcpConfig.apps);
         expect(rebuilt.enablePluginServer).toBe(true);
+    });
+
+    test('missing apps falls back to defaultMCPAppsConfig', () => {
+        const rebuilt = normalizeMCPConfig({
+            enabled: true,
+            enablePluginServer: false,
+            servers: null,
+            embeddedServer: {enabled: false},
+        });
+        expect(rebuilt.apps).toEqual(defaultMCPAppsConfig);
+        expect(rebuilt.enabled).toBe(true);
+        expect(rebuilt.embeddedServer.enabled).toBe(true);
     });
 });

@@ -39,10 +39,10 @@ const InsecureWarningBanner = styled.div`
     grid-column: 1 / -1;
     padding: 10px 12px;
     margin-bottom: 4px;
-    background: #FFF0F0;
+    background: rgba(var(--error-text-color-rgb), 0.08);
     border-radius: 4px;
-    border: 1px solid rgba(210, 75, 78, 0.3);
-    color: #D24B4E;
+    border: 1px solid rgba(var(--error-text-color-rgb), 0.16);
+    color: var(--error-text);
     font-size: 14px;
 `;
 
