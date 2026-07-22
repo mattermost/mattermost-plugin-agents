@@ -3,7 +3,7 @@
 
 import {test, expect, Page} from '@playwright/test';
 
-import {AgentPageHelper} from 'helpers/agent_page';
+import {AgentPageHelper} from 'helpers/agent-page';
 import {MattermostPage} from 'helpers/mm';
 import MattermostContainer from 'helpers/mmcontainer';
 import {OpenAIMockContainer, RunOpenAIMocks} from 'helpers/openai-mock';

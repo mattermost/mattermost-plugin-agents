@@ -15,7 +15,7 @@ import {
     mockServiceId,
 } from 'helpers/agent-container';
 import { AgentAPIHelper } from 'helpers/agent-api';
-import { AgentPageHelper } from 'helpers/agent_page';
+import { AgentPageHelper } from 'helpers/agent-page';
 import { AIPlugin } from 'helpers/ai-plugin';
 
 /** Matches mcp.EmbeddedClientKey — MCP server origin for the embedded Mattermost tools server. */

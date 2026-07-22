@@ -9,7 +9,7 @@ import {
     mockServiceId,
 } from 'helpers/agent-container';
 import { AgentAPIHelper } from 'helpers/agent-api';
-import { AgentPageHelper } from 'helpers/agent_page';
+import { AgentPageHelper } from 'helpers/agent-page';
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
