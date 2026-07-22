@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -415,4 +416,52 @@ func mustMarshalBlocks(t *testing.T, blocks []conversation.ContentBlock) json.Ra
 	data, err := json.Marshal(blocks)
 	require.NoError(t, err)
 	return data
+}
+
+func TestHandleGetConversationFiltersUIMetaForNonOwner(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	channelID := testChannelID
+	uiMeta := &llm.ToolUIMeta{ResourceURI: "ui://srv/app.html"}
+	blocks := mustMarshalBlocks(t, []conversation.ContentBlock{
+		{
+			Type: conversation.BlockTypeToolUse, ID: "tc_priv", Name: "demo",
+			Input: json.RawMessage(`{}`), Shared: conversation.BoolPtr(false), UIMeta: uiMeta,
+		},
+		{
+			Type: conversation.BlockTypeToolUse, ID: "tc_shared", Name: "demo",
+			Input: json.RawMessage(`{}`), Shared: conversation.BoolPtr(true), UIMeta: uiMeta,
+		},
+	})
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+	e.conversationStore.conversations["conv-ui-meta"] = &store.Conversation{
+		ID:        "conv-ui-meta",
+		UserID:    testUserID,
+		BotID:     testBotUserID,
+		ChannelID: &channelID,
+	}
+	e.conversationStore.turns["conv-ui-meta"] = []store.Turn{
+		{ID: "turn-1", ConversationID: "conv-ui-meta", Role: "assistant", Content: blocks, Sequence: 1},
+	}
+	e.mockAPI.On("HasPermissionToChannel", testOtherUserID, channelID, model.PermissionReadChannel).Return(true)
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+	request := httptest.NewRequest(http.MethodGet, "/conversations/conv-ui-meta", nil)
+	request.Header.Add("Mattermost-User-ID", testOtherUserID)
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var response ConversationResponse
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&response))
+	require.Len(t, response.Turns, 1)
+
+	var got []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(response.Turns[0].Content, &got))
+	require.Len(t, got, 2)
+	assert.Nil(t, got[0].UIMeta, "unshared tool_use must strip ui_meta for non-owner")
+	assert.Equal(t, uiMeta, got[1].UIMeta, "shared tool_use must keep ui_meta for non-owner")
 }
