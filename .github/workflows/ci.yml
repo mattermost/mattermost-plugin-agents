@@ -48,7 +48,7 @@ jobs:
             group: e2e-shard-4
     name: e2e-${{ matrix.shard.name }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermostdevelopment/mattermost-enterprise-edition:release-11.9' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermostdevelopment/mattermost-enterprise-edition:release-11.10' }}
     defaults:
       run:
         working-directory: ./e2e

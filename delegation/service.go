@@ -29,6 +29,11 @@ import (
 )
 
 const (
+	// silentNotificationPostProp is the Mattermost 11.10+ integration post
+	// property that keeps visible delegation artifacts from changing unread
+	// and mention counts or producing notifications.
+	silentNotificationPostProp = "silent_notification"
+
 	// defaultSubTurnRunTimeout bounds one delegated sub-turn run segment (LLM
 	// streaming plus auto-executed tool rounds). Generous by design: approval
 	// waits happen after the stream ends and are not under this timeout.
@@ -358,6 +363,7 @@ func (s *Service) surface(ctx context.Context, deps serviceDeps, req Request, so
 	}
 	taskPost.AddProp("delegation_from_bot_id", sourceBot.GetMMBot().UserId)
 	taskPost.AddProp(streaming.UnsafeLinksPostProp, "true")
+	taskPost.AddProp(silentNotificationPostProp, true)
 	if createErr := s.mmClient.CreatePost(taskPost); createErr != nil {
 		return nil, fmt.Errorf("failed to create the delegation task post: %w", createErr)
 	}
@@ -432,6 +438,7 @@ func (s *Service) surface(ctx context.Context, deps serviceDeps, req Request, so
 	}
 	responsePost.AddProp(streaming.ConversationIDProp, convResult.ConversationID)
 	streaming.ModifyPostForBot(targetBotUserID, initiator.Id, responsePost, taskPost.Id)
+	responsePost.AddProp(silentNotificationPostProp, true)
 	if err := s.mmClient.CreatePost(responsePost); err != nil {
 		return nil, fmt.Errorf("failed to create the delegation response placeholder: %w", err)
 	}

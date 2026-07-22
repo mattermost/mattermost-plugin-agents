@@ -180,6 +180,24 @@ test.describe('Agent delegation (ask_agent)', () => {
         const mm = new MattermostPage(page);
         const baseUrl = mattermost.url();
         await mm.login(baseUrl, username, password);
+
+        // Capture the target-agent DM's unread state while the user remains in
+        // the orchestrator DM. Delegation posts are visible audit artifacts,
+        // but their silent_notification prop must keep these counts unchanged.
+        const userClient = await mattermost.getClient(username, password);
+        const currentUser = await userClient.getMe();
+        const subagentUser = await userClient.getUserByUsername(subagentBot);
+        const delegationDM = await userClient.createDirectChannel([currentUser.id, subagentUser.id]);
+        const channelBefore = await userClient.getChannel(delegationDM.id);
+        const memberBefore = await userClient.getChannelMember(delegationDM.id, currentUser.id);
+        const unreadBefore = {
+            messages: channelBefore.total_msg_count - memberBefore.msg_count,
+            rootMessages: channelBefore.total_msg_count_root - memberBefore.msg_count_root,
+            mentions: memberBefore.mention_count,
+            rootMentions: memberBefore.mention_count_root,
+            urgentMentions: memberBefore.urgent_mention_count,
+        };
+
         await openDMWithBot(page, baseUrl, orchestratorBot);
 
         await mm.sendChannelMessage(promptMarker);
@@ -199,6 +217,16 @@ test.describe('Agent delegation (ask_agent)', () => {
 
         // Orchestrator synthesizes using the sub answer.
         await expect(rhs.getByText(finalText)).toBeVisible({timeout: 120000});
+
+        const channelAfter = await userClient.getChannel(delegationDM.id);
+        const memberAfter = await userClient.getChannelMember(delegationDM.id, currentUser.id);
+        expect({
+            messages: channelAfter.total_msg_count - memberAfter.msg_count,
+            rootMessages: channelAfter.total_msg_count_root - memberAfter.msg_count_root,
+            mentions: memberAfter.mention_count,
+            rootMentions: memberAfter.mention_count_root,
+            urgentMentions: memberAfter.urgent_mention_count,
+        }).toEqual(unreadBefore);
 
         // The delegation thread lives in the initiator's DM with the sub-agent.
         await openDMWithBot(page, baseUrl, subagentBot);
