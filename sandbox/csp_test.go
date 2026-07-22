@@ -15,32 +15,27 @@ import (
 
 const testHostOrigin = "https://mm.example.com"
 
+// Spec mandatory omitted-CSP default + permitted further restrictions.
+// Written literally — do not derive from BuildCSPHeader.
+const specOmittedCSPDefault = "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors https://mm.example.com"
+
 func TestBuildCSPHeader(t *testing.T) {
-	restrictiveDefault := "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors https://mm.example.com"
-
-	longDomain := "https://" + strings.Repeat("a", 300) + ".example.com"
-	manyDomains := make([]string, 40)
-	for i := range manyDomains {
-		manyDomains[i] = "https://d" + strings.Repeat("x", i%5) + ".example.com"
-	}
-
 	tests := []struct {
-		name string
-		csp  *mcp.AppResourceCSP
-		want string
-		// contain / notContain used when full-string equality is awkward
+		name       string
+		csp        *mcp.AppResourceCSP
+		want       string
 		contain    []string
 		notContain []string
 	}{
 		{
-			name: "nil ⇒ restrictive default",
+			name: "nil ⇒ spec omitted-CSP default",
 			csp:  nil,
-			want: restrictiveDefault,
+			want: specOmittedCSPDefault,
 		},
 		{
-			name: "empty struct ⇒ same as nil",
+			name: "empty declared struct includes font-src",
 			csp:  &mcp.AppResourceCSP{},
-			want: restrictiveDefault,
+			want: "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors https://mm.example.com",
 		},
 		{
 			name: "connectDomains only",
@@ -49,10 +44,9 @@ func TestBuildCSPHeader(t *testing.T) {
 			},
 			contain: []string{
 				"connect-src 'self' https://api.example.com wss://rt.example.com",
-				"script-src 'self' 'unsafe-inline';",
-				"style-src 'self' 'unsafe-inline';",
-				"img-src 'self' data:;",
+				"font-src 'self';",
 			},
+			notContain: []string{"font-src 'self' https://"},
 		},
 		{
 			name: "resourceDomains fan-out",
@@ -67,10 +61,6 @@ func TestBuildCSPHeader(t *testing.T) {
 				"media-src 'self' data: https://cdn.example.com",
 				"connect-src 'none'",
 				"frame-src 'none'",
-			},
-			notContain: []string{
-				"connect-src 'self' https://cdn.example.com",
-				"frame-src https://cdn.example.com",
 			},
 		},
 		{
@@ -106,34 +96,6 @@ func TestBuildCSPHeader(t *testing.T) {
 			},
 			contain: []string{"https://*.cloudflare.com"},
 		},
-		{
-			name: "directive injection filtered",
-			csp: &mcp.AppResourceCSP{
-				ConnectDomains: []string{
-					"https://ok.example.com",
-					"https://evil.com; script-src *",
-					"'unsafe-eval'",
-					"a b",
-					"bad,domain",
-					"line\nbreak",
-				},
-			},
-			contain:    []string{"connect-src 'self' https://ok.example.com"},
-			notContain: []string{"evil.com", "unsafe-eval", "bad,domain"},
-		},
-		{
-			name: "all entries filtered ⇒ restrictive branch",
-			csp: &mcp.AppResourceCSP{
-				ConnectDomains: []string{"bad domain"},
-			},
-			contain: []string{"connect-src 'none'"},
-		},
-		{
-			name: "caps enforced",
-			csp: &mcp.AppResourceCSP{
-				ConnectDomains: append(append([]string{}, manyDomains...), longDomain),
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -148,21 +110,62 @@ func TestBuildCSPHeader(t *testing.T) {
 			for _, s := range tt.notContain {
 				require.NotContains(t, got, s)
 			}
-			if tt.name == "caps enforced" {
-				// Extract connect-src list and assert ≤32 entries; long domain dropped.
-				require.NotContains(t, got, longDomain)
-				idx := strings.Index(got, "connect-src ")
-				require.GreaterOrEqual(t, idx, 0)
-				rest := got[idx+len("connect-src "):]
-				semi := strings.Index(rest, ";")
-				require.GreaterOrEqual(t, semi, 0)
-				sources := strings.Fields(rest[:semi])
-				// sources[0] is 'self'
-				require.LessOrEqual(t, len(sources)-1, 32)
-				require.Equal(t, 32, len(sources)-1)
+			if tt.csp == nil {
+				require.NotContains(t, got, "font-src")
 			}
 		})
 	}
+}
+
+func TestCanonicalizeCSPSource(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{name: "https origin", raw: "https://api.example.com", want: "https://api.example.com"},
+		{name: "wss origin", raw: "wss://rt.example.com", want: "wss://rt.example.com"},
+		{name: "wildcard", raw: "https://*.cloudflare.com", want: "https://*.cloudflare.com"},
+		{name: "star rejected", raw: "*", wantErr: true},
+		{name: "data rejected", raw: "data:", wantErr: true},
+		{name: "blob rejected", raw: "blob:", wantErr: true},
+		{name: "scheme-only rejected", raw: "https:", wantErr: true},
+		{name: "userinfo rejected", raw: "https://u:p@evil.com", wantErr: true},
+		{name: "path rejected", raw: "https://a.com/path", wantErr: true},
+		{name: "query rejected", raw: "https://a.com?x=1", wantErr: true},
+		{name: "fragment rejected", raw: "https://a.com#f", wantErr: true},
+		{name: "nul rejected", raw: "https://a.com\x00", wantErr: true},
+		{name: "vt rejected", raw: "https://a.com\x0b", wantErr: true},
+		{name: "crlf rejected", raw: "https://a.com\r\n", wantErr: true},
+		{name: "nbsp rejected", raw: "https://a.com\u00a0", wantErr: true},
+		{name: "line separator rejected", raw: "https://a.com\u2028", wantErr: true},
+		{name: "semicolon rejected", raw: "https://evil.com; script-src *", wantErr: true},
+		{name: "mid wildcard rejected", raw: "https://foo.*.bar.com", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := canonicalizeCSPSource(tt.raw)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCanonicalizeCSPFailsClosedOnAnyInvalid(t *testing.T) {
+	_, err := canonicalizeCSP(&mcp.AppResourceCSP{
+		ConnectDomains: []string{"https://ok.example.com", "data:"},
+	})
+	require.Error(t, err)
+
+	_, err = canonicalizeCSP(&mcp.AppResourceCSP{
+		ConnectDomains: make([]string, maxCSPDomains+1),
+	})
+	require.Error(t, err)
 }
 
 func TestParseCSPParam(t *testing.T) {
@@ -183,60 +186,15 @@ func TestParseCSPParam(t *testing.T) {
 		want   *mcp.AppResourceCSP
 		wantOK bool
 	}{
-		{
-			name:   "empty",
-			raw:    "",
-			want:   nil,
-			wantOK: true,
-		},
-		{
-			name:   "valid JSON",
-			raw:    `{"connectDomains":["https://a"]}`,
-			want:   &mcp.AppResourceCSP{ConnectDomains: []string{"https://a"}},
-			wantOK: true,
-		},
-		{
-			name:   "exactly what AppFrame sends",
-			raw:    string(fullJSON),
-			want:   &fullCSP,
-			wantOK: true,
-		},
-		{
-			name:   "malformed JSON",
-			raw:    `{"connectDomains":`,
-			want:   nil,
-			wantOK: false,
-		},
-		{
-			name:   "non-object JSON string",
-			raw:    `"str"`,
-			want:   nil,
-			wantOK: false,
-		},
-		{
-			name:   "non-object JSON array",
-			raw:    `[1,2]`,
-			want:   nil,
-			wantOK: false,
-		},
-		{
-			name:   "wrong-typed field",
-			raw:    `{"connectDomains":"https://a"}`,
-			want:   nil,
-			wantOK: false,
-		},
-		{
-			name:   "unknown extra keys ignored",
-			raw:    `{"connectDomains":["https://a"],"future":1}`,
-			want:   &mcp.AppResourceCSP{ConnectDomains: []string{"https://a"}},
-			wantOK: true,
-		},
-		{
-			name:   "oversized",
-			raw:    oversized,
-			want:   nil,
-			wantOK: false,
-		},
+		{name: "empty", raw: "", want: nil, wantOK: true},
+		{name: "valid JSON", raw: `{"connectDomains":["https://a"]}`, want: &mcp.AppResourceCSP{ConnectDomains: []string{"https://a"}}, wantOK: true},
+		{name: "exactly what AppFrame sends", raw: string(fullJSON), want: &fullCSP, wantOK: true},
+		{name: "malformed JSON", raw: `{"connectDomains":`, want: nil, wantOK: false},
+		{name: "non-object JSON string", raw: `"str"`, want: nil, wantOK: false},
+		{name: "non-object JSON array", raw: `[1,2]`, want: nil, wantOK: false},
+		{name: "wrong-typed field", raw: `{"connectDomains":"https://a"}`, want: nil, wantOK: false},
+		{name: "unknown extra keys ignored", raw: `{"connectDomains":["https://a"],"future":1}`, want: &mcp.AppResourceCSP{ConnectDomains: []string{"https://a"}}, wantOK: true},
+		{name: "oversized", raw: oversized, want: nil, wantOK: false},
 	}
 
 	for _, tt := range tests {
