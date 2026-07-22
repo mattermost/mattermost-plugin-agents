@@ -709,7 +709,7 @@ The second-port option requires the chosen port open on the load balancer **and*
 
 #### Insecure same-origin fallback
 
-To enable for trials/dev: turn on **Enable MCP Apps**, leave **Sandbox Base URL** empty, and enable **Allow insecure same-origin sandbox**. No listener or reverse proxy is needed; the page is served from `/plugins/mattermost-ai/mcp/apps/sandbox` on the Mattermost origin.
+To enable for trials/dev: turn on **Enable MCP Apps**, leave **Sandbox Base URL** empty, and enable **Allow insecure same-origin sandbox**. No listener or reverse proxy is needed; the page is served from `<SiteURL>/plugins/mattermost-ai/mcp/apps/sandbox` (including any Site URL subpath, e.g. `https://example.com/mattermost/plugins/mattermost-ai/mcp/apps/sandbox`).
 
 This forfeits browser origin isolation between third-party app content and Mattermost. Enabling it emits a server log line at Warn level:
 
