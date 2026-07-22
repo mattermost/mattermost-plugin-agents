@@ -196,6 +196,34 @@ describe('renderToolCall routing', () => {
         expect(mockGetPost).not.toHaveBeenCalled();
     });
 
+    test('the create_post preview is not clickable (the post does not exist yet)', () => {
+        const {container} = renderTool(makeTool({
+            name: 'mattermost__create_post',
+            mcp_bare_name: 'create_post',
+            server_origin: 'embedded://mattermost',
+            arguments: {channel_id: 'chan1', message: 'Deploy is done!'},
+        }));
+
+        const previewBox = screen.getByText('post-preview-box');
+        const wrap = previewBox.parentElement as HTMLElement;
+        expect(getComputedStyle(wrap).pointerEvents).toBe('none');
+
+        // The read_post preview stays interactive: its post is real.
+        container.remove();
+        mockGetPost.mockResolvedValue({id: 'p1', user_id: 'u1', channel_id: 'chan1', message: 'real post'});
+        renderTool(makeTool({
+            id: 'tc2',
+            name: 'mattermost__read_post',
+            mcp_bare_name: 'read_post',
+            server_origin: 'embedded://mattermost',
+            arguments: {post_id: 'p1'},
+        }));
+        return waitFor(() => {
+            const readWrap = screen.getByText('post-preview-box').parentElement as HTMLElement;
+            expect(getComputedStyle(readWrap).pointerEvents).not.toBe('none');
+        });
+    });
+
     test('an executed create_post renders generically — no preview', () => {
         renderTool(makeTool({
             name: 'mattermost__create_post',

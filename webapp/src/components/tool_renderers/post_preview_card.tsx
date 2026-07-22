@@ -21,6 +21,13 @@ const PreviewWrap = styled.div`
     margin-top: 12px;
 `;
 
+// The create_post preview shows a post that does not exist yet, so none of the
+// preview's interactive elements (permalink jump, avatar, username) can lead
+// anywhere real.
+const StaticPreviewWrap = styled(PreviewWrap)`
+    pointer-events: none;
+`;
+
 // The preview cards only render while the call still needs a decision: that is
 // when seeing the post has approval value. Executed calls render the generic
 // card (the response already carries the outcome).
@@ -153,7 +160,7 @@ export const CreatePostPreviewCard: React.FC<RichCardProps> = (props) => {
 
     return (
         <ToolCardShell {...props}>
-            <PreviewWrap>
+            <StaticPreviewWrap>
                 <PostMessagePreview
                     metadata={{
                         channel_display_name: channel?.display_name ?? parsed.channelDisplayName ?? null,
@@ -170,7 +177,7 @@ export const CreatePostPreviewCard: React.FC<RichCardProps> = (props) => {
                         },
                     }}
                 />
-            </PreviewWrap>
+            </StaticPreviewWrap>
         </ToolCardShell>
     );
 };
