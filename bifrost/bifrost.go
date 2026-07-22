@@ -1590,6 +1590,15 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.useResponsesAPI {
 		return true
 	}
+
+	// Direct OpenAI always sets useResponsesAPI during service construction.
+	// A false value for OpenAI-base or Azure providers therefore represents an
+	// explicit operator choice to use Chat Completions and must not be overridden
+	// by native tool configuration.
+	if b.provider == schemas.OpenAI || b.provider == schemas.Azure {
+		return false
+	}
+
 	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
 	}

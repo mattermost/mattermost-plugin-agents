@@ -1098,6 +1098,58 @@ func TestHasNativeWebSearchEnabledSupportedServiceType(t *testing.T) {
 	require.True(t, b.HasNativeWebSearchEnabled())
 }
 
+func TestHasNativeWebSearchEnabledRequiresResponsesAPIForOpenAICompatibleServices(t *testing.T) {
+	tests := []struct {
+		name     string
+		service  llm.ServiceConfig
+		expected bool
+	}{
+		{
+			name:     "OpenAI-compatible disabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAICompatible},
+			expected: false,
+		},
+		{
+			name: "OpenAI-compatible enabled",
+			service: llm.ServiceConfig{
+				Type:            llm.ServiceTypeOpenAICompatible,
+				UseResponsesAPI: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "Azure disabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeAzure},
+			expected: false,
+		},
+		{
+			name: "Azure enabled",
+			service: llm.ServiceConfig{
+				Type:            llm.ServiceTypeAzure,
+				UseResponsesAPI: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "direct OpenAI always enabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBot(
+				llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+				tt.service,
+				&model.Bot{UserId: "b1"},
+				nil,
+			)
+			require.Equal(t, tt.expected, b.HasNativeWebSearchEnabled())
+		})
+	}
+}
+
 func TestPoweredByDescription(t *testing.T) {
 	prefix := "Powered by openai - "
 	longModel := strings.Repeat("m", model.BotDescriptionMaxRunes)
