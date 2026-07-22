@@ -183,6 +183,66 @@ describe('extractToolCallsForPost', () => {
         expect(result[1].ui_meta).toBeUndefined();
     });
 
+    test('does not pair a reused tool-call id with a later response result', () => {
+        const postA = 'posta23456789012345678901a';
+        const postB = 'postb23456789012345678901b';
+        const turns: Turn[] = [
+            makeTurn({
+                id: 'a-use',
+                post_id: postA,
+                sequence: 1,
+                content: [{
+                    type: 'tool_use',
+                    id: 'reuse-x',
+                    name: 'demo',
+                    status: 'success',
+                    ui_meta: {resource_uri: 'ui://srv/a.html'},
+                }],
+            }),
+            makeTurn({
+                id: 'a-result',
+                post_id: null,
+                sequence: 2,
+                role: 'tool_result',
+                content: [{type: 'tool_result', tool_use_id: 'reuse-x', content: 'from-a', status: 'success'}],
+            }),
+            makeTurn({
+                id: 'b-use',
+                post_id: null,
+                sequence: 3,
+                content: [{
+                    type: 'tool_use',
+                    id: 'reuse-x',
+                    name: 'demo',
+                    status: 'success',
+                    ui_meta: {resource_uri: 'ui://srv/b.html'},
+                }],
+            }),
+            makeTurn({
+                id: 'b-result',
+                post_id: null,
+                sequence: 4,
+                role: 'tool_result',
+                content: [{type: 'tool_result', tool_use_id: 'reuse-x', content: 'from-b', status: 'success'}],
+            }),
+            makeTurn({
+                id: 'b-anchor',
+                post_id: postB,
+                sequence: 5,
+                content: [{type: 'text', text: 'done'}],
+            }),
+        ];
+        const conv = makeConversation(turns);
+
+        const callsA = extractToolCallsForPost(conv, postA);
+        expect(callsA).toHaveLength(1);
+        expect(callsA[0].result).toBe('from-a');
+
+        const callsB = extractToolCallsForPost(conv, postB);
+        expect(callsB).toHaveLength(1);
+        expect(callsB[0].result).toBe('from-b');
+    });
+
     test('handles tool_use with null input (redacted)', () => {
         const assistantTurn = makeTurn({
             post_id: 'post_1',

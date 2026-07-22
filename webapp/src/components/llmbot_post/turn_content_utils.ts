@@ -44,11 +44,11 @@ export function statusStringToEnum(status: ConvToolCallStatus | undefined): Tool
 
 /**
  * Collect all turns that belong to the same assistant response as the post
- * identified by `postId`. The anchor is the turn whose post_id matches; the
- * streaming layer creates this turn at finalize with the highest sequence in
- * the response, so tool-round turns that WriteToolTurns persisted during the
- * stream sit BEFORE it. We walk backwards from the anchor, stopping at the
- * user turn that introduced this response, and include the anchor itself.
+ * identified by `postId`. Ownership mirrors conversation.FindToolCallBlocks:
+ * preceding unanchored WriteToolTurns (stop at user / foreign post_id), the
+ * PostID-linked anchor turn(s), then only following tool_result turns for
+ * tool_use IDs already owned by this response (stop at user / next unanchored
+ * assistant round / foreign post_id).
  */
 function collectResponseTurns(
     conversation: ConversationResponse,
@@ -60,7 +60,7 @@ function collectResponseTurns(
         return [];
     }
 
-    const out: Turn[] = [];
+    let start = anchorIdx;
     for (let i = anchorIdx - 1; i >= 0; i--) {
         const t = sorted[i];
         if (t.role === 'user') {
@@ -73,17 +73,63 @@ function collectResponseTurns(
         if (t.post_id && t.post_id !== postId) {
             break;
         }
-        out.unshift(t);
+        start = i;
     }
-    out.push(sorted[anchorIdx]);
+
+    let endExclusive = anchorIdx + 1;
+    while (endExclusive < sorted.length) {
+        const t = sorted[endExclusive];
+        if (t.post_id && t.post_id === postId) {
+            endExclusive += 1;
+            continue;
+        }
+        break;
+    }
+
+    const ownedIDs = new Set<string>();
+    for (let i = start; i < endExclusive; i++) {
+        for (const block of sorted[i].content) {
+            if (block.type === BlockTypeToolUse && block.id) {
+                ownedIDs.add(block.id);
+            }
+        }
+    }
+
+    const out = sorted.slice(start, endExclusive);
+    for (let i = endExclusive; i < sorted.length; i++) {
+        const t = sorted[i];
+        if (t.role === 'user') {
+            break;
+        }
+        if (t.post_id && t.post_id !== postId) {
+            break;
+        }
+        if (t.role === 'assistant') {
+            const hasToolUse = t.content.some((b) => b.type === BlockTypeToolUse);
+            if (hasToolUse || !t.post_id) {
+                break;
+            }
+        }
+        if (t.role === 'tool_result') {
+            const resultIDs = t.content.
+                filter((b) => b.type === BlockTypeToolResult && b.tool_use_id).
+                map((b) => b.tool_use_id as string);
+            if (resultIDs.length === 0 || resultIDs.some((id) => !ownedIDs.has(id))) {
+                break;
+            }
+            out.push(t);
+            continue;
+        }
+        break;
+    }
     return out;
 }
 
-// Index every tool_result block in the conversation by tool_use_id so a
-// tool_use can be paired regardless of which turn its result lives in.
-function buildToolResultMap(conversation: ConversationResponse): Map<string, ContentBlock> {
+// Index tool_result blocks from the owned response turns only — never
+// last-write-wins across a later response that reused a provider tool-call ID.
+function buildToolResultMap(ownedTurns: Turn[]): Map<string, ContentBlock> {
     const resultMap = new Map<string, ContentBlock>();
-    for (const t of conversation.turns) {
+    for (const t of ownedTurns) {
         for (const block of t.content) {
             if (block.type === BlockTypeToolResult && block.tool_use_id) {
                 resultMap.set(block.tool_use_id, block);
@@ -138,7 +184,7 @@ export function extractToolCallsForPost(
         return [];
     }
 
-    const resultMap = buildToolResultMap(conversation);
+    const resultMap = buildToolResultMap(turns);
     return toolUseBlocks.map((block) => toolUseBlockToToolCall(block, resultMap));
 }
 
@@ -292,7 +338,7 @@ export function buildRoundsFromTurns(
         return [];
     }
 
-    const resultMap = buildToolResultMap(conversation);
+    const resultMap = buildToolResultMap(turns);
     const rounds: Round[] = [];
     for (const turn of turns) {
         if (turn.role !== 'assistant') {
