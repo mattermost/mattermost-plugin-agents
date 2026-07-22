@@ -400,8 +400,10 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             await expect(rhs.getByText('Finished reading the unsafe post.')).toBeVisible({timeout: 45000});
 
             await latestBotPost.getByText(embeddedReadPostLabel, {exact: true}).click();
-            await expect(latestBotPost.getByText(seedMessage, {exact: false})).toBeVisible({timeout: 30000});
-            await expect(latestBotPost.getByText('blocked-image')).toBeVisible({timeout: 30000});
+            // The seeded content can appear twice on the expanded card: in the
+            // read_post permalink-style preview and in the tool response body.
+            await expect(latestBotPost.getByText(seedMessage, {exact: false}).first()).toBeVisible({timeout: 30000});
+            await expect(latestBotPost.getByText('blocked-image').first()).toBeVisible({timeout: 30000});
             await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
 
             await page.waitForTimeout(1000);
