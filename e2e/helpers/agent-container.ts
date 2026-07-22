@@ -1,4 +1,4 @@
-import { RunSystemConsoleContainer } from './system-console-container';
+import { RunSystemConsoleContainer, SystemConsolePluginConfig } from './system-console-container';
 import MattermostContainer from './mmcontainer';
 
 export const agentAdminUsername = 'sysadmin';
@@ -17,7 +17,7 @@ export const secondServiceId = 'second-service';
  * - MCP enabled with embedded server (for tool selection tests)
  * - Three users: admin (sysadmin), regularuser, unprivileged (self-service agent perms come from RunSystemConsoleContainer)
  */
-export async function RunAgentContainer(): Promise<MattermostContainer> {
+export async function RunAgentContainer(overrides?: {mcp?: SystemConsolePluginConfig['mcp']}): Promise<MattermostContainer> {
     const mattermost = await RunSystemConsoleContainer({
         services: [
             {
@@ -49,7 +49,7 @@ export async function RunAgentContainer(): Promise<MattermostContainer> {
             },
         ],
         defaultBotName: 'mock',
-        mcp: {
+        mcp: overrides?.mcp ?? {
             enabled: true,
             enablePluginServer: true,
             embeddedServer: { enabled: true },
