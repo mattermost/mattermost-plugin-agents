@@ -50,6 +50,30 @@ func newTestBots(t *testing.T) *bots.MMBots {
 	return mmBots
 }
 
+func TestDelegationSurfacePostsAreSilent(t *testing.T) {
+	tests := []struct {
+		name string
+		post *model.Post
+	}{
+		{
+			name: "task post",
+			post: newDelegationTaskPost("channel-id", "target-bot-id", "source-bot-id", "delegated task"),
+		},
+		{
+			name: "response post",
+			post: newDelegationResponsePost("channel-id", "task-post-id", "conversation-id", "target-bot-id", "requester-id"),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			silent, ok := tc.post.GetProp(silentNotificationPostProp).(bool)
+			require.True(t, ok)
+			require.True(t, silent)
+		})
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name       string

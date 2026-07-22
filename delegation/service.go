@@ -340,6 +340,29 @@ func (r *delegationRun) emit(phase, activity, tools string) {
 	emitUpdate(r.svc.mmClient, r.record, phase, activity, tools, r.permalink)
 }
 
+func newDelegationTaskPost(channelID, targetBotUserID, sourceBotUserID, message string) *model.Post {
+	post := &model.Post{
+		UserId:    targetBotUserID,
+		ChannelId: channelID,
+		Message:   message,
+	}
+	post.AddProp("delegation_from_bot_id", sourceBotUserID)
+	post.AddProp(streaming.UnsafeLinksPostProp, "true")
+	post.AddProp(silentNotificationPostProp, true)
+	return post
+}
+
+func newDelegationResponsePost(channelID, rootPostID, conversationID, targetBotUserID, requesterUserID string) *model.Post {
+	post := &model.Post{
+		ChannelId: channelID,
+		RootId:    rootPostID,
+	}
+	post.AddProp(streaming.ConversationIDProp, conversationID)
+	streaming.ModifyPostForBot(targetBotUserID, requesterUserID, post, rootPostID)
+	post.AddProp(silentNotificationPostProp, true)
+	return post
+}
+
 // surface creates the visible delegation artifacts: the labeled task post in
 // the initiator's DM with the target agent, the delegation conversation, the
 // KV record, and the response placeholder the sub-turn streams into.
@@ -353,17 +376,15 @@ func (s *Service) surface(ctx context.Context, deps serviceDeps, req Request, so
 
 	// Labeled task root post, authored by the target agent.
 	T := i18n.LocalizerFunc(s.i18n, initiator.Locale)
-	taskPost := &model.Post{
-		UserId:    targetBotUserID,
-		ChannelId: dmChannel.Id,
-		Message: fmt.Sprintf("%s\n\n%s",
+	taskPost := newDelegationTaskPost(
+		dmChannel.Id,
+		targetBotUserID,
+		sourceBot.GetMMBot().UserId,
+		fmt.Sprintf("%s\n\n%s",
 			T("agents.delegation_task_from", "Task from @%s on behalf of @%s:", sourceBot.GetConfig().Name, initiator.Username),
 			req.Task,
 		),
-	}
-	taskPost.AddProp("delegation_from_bot_id", sourceBot.GetMMBot().UserId)
-	taskPost.AddProp(streaming.UnsafeLinksPostProp, "true")
-	taskPost.AddProp(silentNotificationPostProp, true)
+	)
 	if createErr := s.mmClient.CreatePost(taskPost); createErr != nil {
 		return nil, fmt.Errorf("failed to create the delegation task post: %w", createErr)
 	}
@@ -432,13 +453,7 @@ func (s *Service) surface(ctx context.Context, deps serviceDeps, req Request, so
 	}
 
 	// Response placeholder the sub-turn streams into.
-	responsePost := &model.Post{
-		ChannelId: dmChannel.Id,
-		RootId:    taskPost.Id,
-	}
-	responsePost.AddProp(streaming.ConversationIDProp, convResult.ConversationID)
-	streaming.ModifyPostForBot(targetBotUserID, initiator.Id, responsePost, taskPost.Id)
-	responsePost.AddProp(silentNotificationPostProp, true)
+	responsePost := newDelegationResponsePost(dmChannel.Id, taskPost.Id, convResult.ConversationID, targetBotUserID, initiator.Id)
 	if err := s.mmClient.CreatePost(responsePost); err != nil {
 		return nil, fmt.Errorf("failed to create the delegation response placeholder: %w", err)
 	}
