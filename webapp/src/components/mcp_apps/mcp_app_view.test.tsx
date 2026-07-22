@@ -5,7 +5,6 @@ import React from 'react';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
-import type {AppRendererProps} from '@mcp-ui/client';
 
 import {MCPAppResourceError} from '@/client';
 import {notifyMCPConnectionUpdated} from '@/hooks/use_mcp_connection_events';
@@ -13,10 +12,11 @@ import manifest from '@/manifest';
 import {ToolCall, ToolCallStatus} from '@/components/tool_types';
 
 import {APP_DEFAULT_HEIGHT, clampAppHeight} from './app_sizing';
+import type {MCPAppRendererProps} from './mcp_app_renderer';
 import MCPAppView from './mcp_app_view';
 
 const mockGetMCPAppResource = jest.fn();
-let capturedRendererProps: AppRendererProps | null = null;
+let capturedRendererProps: MCPAppRendererProps | null = null;
 
 jest.mock('@/client', () => {
     const actual = jest.requireActual('@/client');
@@ -26,8 +26,9 @@ jest.mock('@/client', () => {
     };
 });
 
-jest.mock('@mcp-ui/client', () => ({
-    AppRenderer: (props: AppRendererProps) => {
+jest.mock('./mcp_app_renderer', () => ({
+    __esModule: true,
+    default: (props: MCPAppRendererProps) => {
         capturedRendererProps = props;
         return <div data-testid='app-renderer-stub'/>;
     },

@@ -4,7 +4,7 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {AppRenderer, type AppRendererProps} from '@mcp-ui/client';
+import type {AppRendererProps} from '@mcp-ui/client';
 import {LockIcon} from '@mattermost/compass-icons/components';
 import {useSelector} from 'react-redux';
 
@@ -23,6 +23,7 @@ import LoadingSpinner from '../assets/loading_spinner';
 import {prefersAppBorder} from './app_border';
 import {APP_DEFAULT_HEIGHT, clampAppHeight, maxAppHeight} from './app_sizing';
 import {buildHostStyleVariables, resolveAppTheme} from './host_context';
+import MCPAppRenderer from './mcp_app_renderer';
 import {useMCPAppResource} from './use_mcp_app_resource';
 
 interface MCPAppViewProps {
@@ -295,8 +296,7 @@ const MCPAppView: React.FC<MCPAppViewProps> = ({postID, tool, requesterUserID}) 
             $bordered={prefersAppBorder(resourceUI?.prefersBorder)}
             data-testid='mcp-app-view'
         >
-            <AppRenderer
-                toolName={tool.name}
+            <MCPAppRenderer
                 sandbox={{url: sandboxUrl, csp: resourceUI?.csp}}
                 html={contents.text}
                 toolInput={toolInput}
