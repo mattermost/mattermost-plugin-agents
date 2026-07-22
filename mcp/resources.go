@@ -58,14 +58,15 @@ func (c *Client) ReadAppResource(ctx context.Context, uri string) (*AppResource,
 	)
 	defer span.End()
 
-	if c.session == nil {
+	session := c.currentSession()
+	if session == nil {
 		err := fmt.Errorf("MCP client not connected")
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
-	result, err := c.session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+	result, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
 	if err != nil {
 		if !errors.Is(err, mcp.ErrConnectionClosed) {
 			err = fmt.Errorf("failed to read resource %s on server %s: %w", uri, c.config.Name, err)
@@ -73,12 +74,19 @@ func (c *Client) ReadAppResource(ctx context.Context, uri string) (*AppResource,
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
-		if reconnectErr := c.reconnect(ctx); reconnectErr != nil {
+		if reconnectErr := c.reconnect(ctx, session); reconnectErr != nil {
 			span.RecordError(reconnectErr)
 			span.SetStatus(codes.Error, reconnectErr.Error())
 			return nil, reconnectErr
 		}
-		result, err = c.session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+		session = c.currentSession()
+		if session == nil {
+			err = fmt.Errorf("MCP client not connected after reconnecting")
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, err
+		}
+		result, err = session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
 		if err != nil {
 			err = fmt.Errorf("failed to read resource %s on server %s after reconnecting: %w", uri, c.config.Name, err)
 			span.RecordError(err)

@@ -6,10 +6,14 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
@@ -155,11 +159,99 @@ func TestClientReadAppResourceReconnects(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
-	require.NoError(t, client.session.Close())
+	require.NoError(t, client.currentSession().Close())
 
 	got, err := client.ReadAppResource(context.Background(), uri)
 	require.NoError(t, err)
 	require.Equal(t, "<html>reconnected</html>", got.HTML)
+}
+
+type countingEmbeddedMCPServer struct {
+	fakeEmbeddedMCPServer
+	creates atomic.Int32
+}
+
+func (c *countingEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+	c.creates.Add(1)
+	return c.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, pluginAPI)
+}
+
+func TestClientReconnectSingleFlightUnderConcurrentReads(t *testing.T) {
+	const uri = "ui://embedded/app.html"
+	server := newAppResourceMCPServer(uri, UIResourceMIMEType, "<html>race</html>", nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	pluginAPI := newTestPluginAPIWithSession("session-id")
+
+	counting := &countingEmbeddedMCPServer{fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: ctx, server: server}}
+	embeddedClient := NewEmbeddedServerClient(counting, pluginAPI.Log, pluginAPI)
+	client, err := embeddedClient.CreateClient(context.Background(), "test-user", "session-id")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	require.Equal(t, int32(1), counting.creates.Load())
+
+	require.NoError(t, client.currentSession().Close())
+
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, readErr := client.ReadAppResource(context.Background(), uri)
+			if readErr != nil {
+				errs <- readErr
+				return
+			}
+			if got.HTML != "<html>race</html>" {
+				errs <- fmt.Errorf("unexpected html %q", got.HTML)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	// Initial create + exactly one reconnect.
+	require.Equal(t, int32(2), counting.creates.Load())
+}
+
+func TestClientConcurrentReadAndToolCallAfterClose(t *testing.T) {
+	const uri = "ui://embedded/app.html"
+	server := newAppResourceMCPServer(uri, UIResourceMIMEType, "<html>both</html>", nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	pluginAPI := newTestPluginAPIWithSession("session-id")
+
+	counting := &countingEmbeddedMCPServer{fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: ctx, server: server}}
+	embeddedClient := NewEmbeddedServerClient(counting, pluginAPI.Log, pluginAPI)
+	client, err := embeddedClient.CreateClient(context.Background(), "test-user", "session-id")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	require.NoError(t, client.currentSession().Close())
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, readErr := client.ReadAppResource(context.Background(), uri)
+		errs <- readErr
+	}()
+	go func() {
+		defer wg.Done()
+		_, callErr := client.CallTool(context.Background(), "probe", map[string]any{})
+		errs <- callErr
+	}()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.Equal(t, int32(2), counting.creates.Load())
 }
 
 func TestUserClientsReadAppResourceRouting(t *testing.T) {
