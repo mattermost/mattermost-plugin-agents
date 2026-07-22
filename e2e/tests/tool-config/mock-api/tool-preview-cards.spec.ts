@@ -12,20 +12,22 @@ import { adminUsername, adminPassword } from 'helpers/system-console-container';
 import { createBotConfigHelper } from 'helpers/bot-config';
 
 /**
- * Test Suite: read_post preview card (renderer registry)
+ * Test Suite: post preview cards (renderer registry)
  *
- * Uses Smocker to return a synthetic read_post tool call referencing a seeded
- * post and verifies the pending approval card shows a permalink-style preview
- * of that post (so the user sees what the tool will read before approving),
- * with "View raw" still exposing the exact arguments payload. The "ask" policy
- * keeps the card in the pending approval stage.
+ * Uses Smocker to return synthetic tool calls and verifies the pending
+ * approval cards show permalink-style previews — read_post previews the
+ * referenced (seeded) post, create_post previews the post-to-be from its
+ * arguments — with "View raw" still exposing the exact payloads. The "ask"
+ * policy keeps the cards in the pending approval stage.
  */
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 const embeddedReadPostTool = 'mattermost__read_post';
+const embeddedCreatePostTool = 'mattermost__create_post';
 const readPostLabel = 'Read Post';
+const createPostLabel = 'Create Post';
 
 type EmbeddedToolConfig = {
     name: string;
@@ -87,12 +89,13 @@ async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botNa
     await openThreadForPost(post, timeout);
 }
 
-test.describe('read_post preview card (Mocked LLM)', () => {
+test.describe('post preview cards (Mocked LLM)', () => {
     test.beforeAll(async () => {
         mattermost = await RunToolConfigContainerWithPolicies();
         openAIMock = await RunOpenAIMocks(mattermost.network);
         await setEmbeddedToolPolicies([
             {name: 'read_post', policy: 'ask', enabled: true},
+            {name: 'create_post', policy: 'ask', enabled: true},
         ]);
     });
 
@@ -184,5 +187,85 @@ test.describe('read_post preview card (Mocked LLM)', () => {
         // View raw exposes the exact arguments payload, including the post id.
         await botPost.getByText('View raw', {exact: true}).click();
         await expect(botPost.getByText(new RegExp(seededPost.id))).toBeVisible({timeout: 30000});
+    });
+
+    test('create_post shows a preview of the post-to-be before approval', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const townSquareChannelID = await getTownSquareChannelID();
+        const userMessage = 'Announce the deploy ' + Date.now();
+        const postBody = `Deploy complete announcement ${Date.now()}`;
+        const createPostArgs = {
+            channel_id: townSquareChannelID,
+            channel_display_name: 'Town Square',
+            team_display_name: 'test',
+            message: postBody,
+        };
+
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value:
+                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                    },
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse('Deploy announcement'),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'create_post',
+                    },
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildToolCallResponse(
+                        'call_create_post_preview',
+                        embeddedCreatePostTool,
+                        JSON.stringify(createPostArgs),
+                    ),
+                },
+            },
+        ]);
+
+        const mmPage = new MattermostPage(page);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await mmPage.createAndNavigateToDMWithBot(
+            mattermost,
+            adminUsername,
+            adminPassword,
+            'toolbot',
+        );
+
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', userMessage);
+
+        const rhs = page.locator('#rhsContainer');
+        const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+
+        // Card header + pending approval stage.
+        await expect(botPost.getByText(createPostLabel, {exact: true})).toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /^accept$/i})).toBeVisible({timeout: 30000});
+
+        // The preview shows the post-to-be: its message rendered as a post,
+        // before anything is created.
+        await expect(botPost.getByText(postBody, {exact: false})).toBeVisible({timeout: 30000});
+
+        // View raw exposes the exact arguments payload.
+        await botPost.getByText('View raw', {exact: true}).click();
+        await expect(botPost.getByText(new RegExp(townSquareChannelID))).toBeVisible({timeout: 30000});
     });
 });

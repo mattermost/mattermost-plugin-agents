@@ -35,7 +35,7 @@ const state = {
         general: {config: {SiteURL: 'http://localhost:8065'}},
         teams: {currentTeamId: 'team1', teams: {team1: {id: 'team1', display_name: 'Eng', name: 'eng'}}},
         channels: {channels: {chan1: {id: 'chan1', display_name: 'Town Square', team_id: 'team1', type: 'O'}}},
-        users: {profiles: {}},
+        users: {currentUserId: 'u-self', profiles: {'u-self': {id: 'u-self', username: 'requester'}}},
         posts: {posts: {}},
     },
 };
@@ -166,15 +166,60 @@ describe('renderToolCall routing', () => {
 
     test('an unknown embedded tool renders the generic field list', () => {
         renderTool(makeTool({
-            name: 'mattermost__create_post',
-            mcp_bare_name: 'create_post',
+            name: 'mattermost__archive_channel',
+            mcp_bare_name: 'archive_channel',
             server_origin: 'embedded://mattermost',
-            arguments: {channel_id: 'chan1', message: 'hi'},
+            arguments: {channel_id: 'chan1', reason: 'obsolete'},
         }));
 
         expect(screen.getByText('Channel Id')).not.toBeNull();
-        expect(screen.getByText('Message')).not.toBeNull();
-        expect(screen.getByText('hi')).not.toBeNull();
+        expect(screen.getByText('Reason')).not.toBeNull();
+        expect(screen.getByText('obsolete')).not.toBeNull();
+    });
+
+    test('routes a pending embedded create_post to the post-to-be preview', () => {
+        renderTool(makeTool({
+            name: 'mattermost__create_post',
+            mcp_bare_name: 'create_post',
+            server_origin: 'embedded://mattermost',
+            arguments: {channel_id: 'chan1', channel_display_name: 'Town Square', message: 'Deploy is done!'},
+        }));
+
+        expect(screen.getByText('post-preview-box')).not.toBeNull();
+
+        // The preview is built from the arguments and the requesting user —
+        // no fetch is needed for a post that does not exist yet.
+        const metadata = (postMessagePreviewMock.mock.calls[0][0] as {metadata: any}).metadata;
+        expect(metadata.post.message).toBe('Deploy is done!');
+        expect(metadata.post.user_id).toBe('u-self');
+        expect(metadata.channel_display_name).toBe('Town Square');
+        expect(mockGetPost).not.toHaveBeenCalled();
+    });
+
+    test('an executed create_post renders generically — no preview', () => {
+        renderTool(makeTool({
+            name: 'mattermost__create_post',
+            mcp_bare_name: 'create_post',
+            server_origin: 'embedded://mattermost',
+            status: ToolCallStatus.Success,
+            arguments: {channel_id: 'chan1', message: 'hi'},
+            result: 'Successfully created post',
+        }));
+
+        expect(screen.queryByText('post-preview-box')).toBeNull();
+        expect(screen.getByText('Channel Id')).not.toBeNull();
+    });
+
+    test('create_post without a message falls back to the generic card', () => {
+        renderTool(makeTool({
+            name: 'mattermost__create_post',
+            mcp_bare_name: 'create_post',
+            server_origin: 'embedded://mattermost',
+            arguments: {channel_id: 'chan1'},
+        }));
+
+        expect(screen.queryByText('post-preview-box')).toBeNull();
+        expect(screen.getByText('Channel Id')).not.toBeNull();
     });
 });
 

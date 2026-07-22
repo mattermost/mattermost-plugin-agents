@@ -15,7 +15,7 @@ import ToolCard from '../tool_card';
 import QuestionCard, {parseQuestionArgs} from '../question_card';
 
 import {RichCardProps} from './tool_card_shell';
-import PostPreviewCard from './post_preview_card';
+import PostPreviewCard, {CreatePostPreviewCard} from './post_preview_card';
 
 // Everything ToolApprovalSet knows about a single tool call; entries pull the
 // subset they need.
@@ -88,6 +88,7 @@ const registry: RendererEntry[] = [
         },
     },
     embeddedEntry('read_post', PostPreviewCard),
+    embeddedEntry('create_post', CreatePostPreviewCard),
 ];
 
 /**
