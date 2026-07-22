@@ -98,6 +98,16 @@ func TestResolveMCPAppsInfo(t *testing.T) {
 			want:    MCPAppsInfo{Enabled: false, DisabledReason: sandbox.DisabledReasonInvalidSandboxURL},
 		},
 		{
+			name: "same-origin sandboxURL with opt-in fails closed",
+			apps: config.MCPAppsConfig{
+				Enabled:                        true,
+				SandboxURL:                     "https://mm.example.com/proxy",
+				AllowInsecureSameOriginSandbox: true,
+			},
+			siteURL: "https://mm.example.com",
+			want:    MCPAppsInfo{Enabled: false, DisabledReason: sandbox.DisabledReasonInvalidSandboxURL},
+		},
+		{
 			name:    "enabled, nothing configured",
 			apps:    config.MCPAppsConfig{Enabled: true},
 			siteURL: "https://mm.example.com",

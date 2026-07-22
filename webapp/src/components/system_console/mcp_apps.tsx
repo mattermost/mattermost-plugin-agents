@@ -64,7 +64,7 @@ const MCPAppsSection = ({value, onChange}: Props) => {
                         placeholder='https://mm-apps.example.com'
                         value={value.sandboxURL}
                         onChange={(e) => onChange({...value, sandboxURL: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'Externally reachable base URL, on a different origin than this Mattermost server, that reverse-proxies to the plugin\u2019s sandbox listener. Use a dedicated subdomain or a second port on the same hostname (e.g. https://mm.example.com:8443). Leave empty only if using the insecure fallback below. See the admin guide for proxy examples.'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Externally reachable base URL on a different origin than this Mattermost server that reverse-proxies to the plugin\u2019s sandbox listener. Use a dedicated subdomain or a second port on the same hostname (e.g. https://mm.example.com:8443). Must not be this server\u2019s Site URL origin. Leave empty and enable the insecure fallback below for trials/dev. See the admin guide for proxy examples.'})}
                     />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'Sandbox Listener Address'})}
@@ -82,7 +82,7 @@ const MCPAppsSection = ({value, onChange}: Props) => {
                         }
                         value={value.allowInsecureSameOriginSandbox}
                         onChange={(allowInsecureSameOriginSandbox) => onChange({...value, allowInsecureSameOriginSandbox})}
-                        helpText={intl.formatMessage({defaultMessage: 'Serve app content from this Mattermost server\u2019s own origin when no Sandbox Base URL is set. This removes the browser origin isolation between third-party app content and Mattermost: a malicious app could access your Mattermost session. Only for trials and development. Enabling this is recorded in the server log.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Serve app content from this Mattermost server\u2019s own origin. Requires Sandbox Base URL to be empty (do not point Sandbox Base URL at this server). This removes the browser origin isolation between third-party app content and Mattermost: a malicious app could access your Mattermost session. Only for trials and development. Enabling this is recorded in the server log.'})}
                     />
                     {value.allowInsecureSameOriginSandbox && !value.sandboxURL.trim() && (
                         <InsecureWarningBanner>

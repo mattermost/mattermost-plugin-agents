@@ -484,6 +484,16 @@ func TestHandleSaveConfigMCPAppsValidation(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			wantSaved:      false,
 		},
+		{
+			name: "same-origin sandboxURL with opt-in still rejected",
+			apps: config.MCPAppsConfig{
+				Enabled:                        true,
+				SandboxURL:                     "https://mm.example.com/proxy",
+				AllowInsecureSameOriginSandbox: true,
+			},
+			expectedStatus: http.StatusBadRequest,
+			wantSaved:      false,
+		},
 	}
 
 	for _, tt := range tests {

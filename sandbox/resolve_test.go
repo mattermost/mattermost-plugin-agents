@@ -58,11 +58,17 @@ func TestValidateAppsConfigOriginConstraint(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "same origin with opt-in ok",
+			name: "same origin with opt-in still rejected",
 			apps: config.MCPAppsConfig{
 				SandboxURL:                     "https://mm.example.com/proxy",
 				AllowInsecureSameOriginSandbox: true,
 			},
+			siteURL: "https://mm.example.com",
+			wantErr: true,
+		},
+		{
+			name:    "cleared URL with opt-in ok",
+			apps:    config.MCPAppsConfig{AllowInsecureSameOriginSandbox: true},
 			siteURL: "https://mm.example.com",
 		},
 		{
@@ -134,6 +140,26 @@ func TestResolve(t *testing.T) {
 			apps:    config.MCPAppsConfig{Enabled: true, SandboxURL: "https://mm.example.com/apps"},
 			siteURL: "https://mm.example.com",
 			want:    Resolved{Mode: ModeOff, DisabledReason: DisabledReasonInvalidSandboxURL},
+		},
+		{
+			name: "same-origin sandboxURL with opt-in fails closed (clear URL for fallback)",
+			apps: config.MCPAppsConfig{
+				Enabled:                        true,
+				SandboxURL:                     "https://mm.example.com/proxy",
+				AllowInsecureSameOriginSandbox: true,
+			},
+			siteURL: "https://mm.example.com",
+			want:    Resolved{Mode: ModeOff, DisabledReason: DisabledReasonInvalidSandboxURL},
+		},
+		{
+			name:    "cleared URL with opt-in ⇒ ModeSameOrigin",
+			apps:    config.MCPAppsConfig{Enabled: true, AllowInsecureSameOriginSandbox: true},
+			siteURL: "https://mm.example.com",
+			want: Resolved{
+				Mode:       ModeSameOrigin,
+				PageURL:    "https://mm.example.com/plugins/mattermost-ai/mcp/apps/sandbox",
+				HostOrigin: "https://mm.example.com",
+			},
 		},
 		{
 			name:    "insecure same-origin with subpath SiteURL",

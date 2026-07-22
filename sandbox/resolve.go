@@ -86,8 +86,10 @@ func OriginFromURL(raw string) (string, error) {
 }
 
 // ValidateAppsConfig validates MCP Apps fields including the D1 origin
-// constraint when siteURL is non-empty: a sandboxURL whose browser origin
-// equals the Mattermost origin requires AllowInsecureSameOriginSandbox.
+// constraint when siteURL is non-empty: sandboxURL must be a different
+// browser origin than the Mattermost Site URL. Same-origin values are
+// always rejected — clear Sandbox URL and enable
+// AllowInsecureSameOriginSandbox to use the plugin-route fallback.
 func ValidateAppsConfig(apps config.MCPAppsConfig, siteURL string) error {
 	if err := apps.Validate(); err != nil {
 		return err
@@ -106,8 +108,8 @@ func ValidateAppsConfig(apps config.MCPAppsConfig, siteURL string) error {
 		// Site URL shape is a Mattermost concern; skip origin equality if unparseable.
 		return nil
 	}
-	if sandboxOrigin == siteOrigin && !apps.AllowInsecureSameOriginSandbox {
-		return fmt.Errorf("mcp apps sandboxURL origin must differ from the Mattermost Site URL origin, or enable allowInsecureSameOriginSandbox")
+	if sandboxOrigin == siteOrigin {
+		return fmt.Errorf("mcp apps sandboxURL origin must differ from the Mattermost Site URL origin; clear Sandbox URL to use the insecure same-origin fallback")
 	}
 	return nil
 }
@@ -116,11 +118,11 @@ func ValidateAppsConfig(apps config.MCPAppsConfig, siteURL string) error {
 // the Mattermost Site URL. It is the single source of truth for bootstrap,
 // listener reconciliation, and the same-origin route gate.
 //
-// Precedence: apps disabled → off; sandboxURL set (and origin-safe) →
+// Precedence: apps disabled → off; sandboxURL set on a different origin →
 // external page URL; else insecure opt-in → same-origin plugin route; else
-// off. A sandboxURL on the Mattermost origin without the insecure opt-in
-// fails closed (ModeOff + DisabledReasonInvalidSandboxURL) for pre-existing
-// configs that bypassed save-time validation.
+// off. A sandboxURL on the Mattermost origin always fails closed
+// (ModeOff + DisabledReasonInvalidSandboxURL) — external mode means a
+// genuinely different origin; clear Sandbox URL to select the fallback.
 func Resolve(apps config.MCPAppsConfig, siteURL string) Resolved {
 	if !apps.Enabled {
 		return Resolved{Mode: ModeOff, DisabledReason: DisabledReasonAppsDisabled}
@@ -137,7 +139,7 @@ func Resolve(apps config.MCPAppsConfig, siteURL string) Resolved {
 		if err != nil {
 			return Resolved{Mode: ModeOff, DisabledReason: DisabledReasonInvalidSandboxURL}
 		}
-		if hostErr == nil && sandboxOrigin == hostOrigin && !apps.AllowInsecureSameOriginSandbox {
+		if hostErr == nil && sandboxOrigin == hostOrigin {
 			return Resolved{Mode: ModeOff, DisabledReason: DisabledReasonInvalidSandboxURL}
 		}
 		if hostErr != nil {
