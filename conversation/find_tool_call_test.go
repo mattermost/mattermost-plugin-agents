@@ -97,8 +97,6 @@ func TestFindToolCallBlocksPostAnchored(t *testing.T) {
 	})
 
 	t.Run("preceding WriteToolTurns rounds without PostID are in span", func(t *testing.T) {
-		// Auto-approved tools are persisted by WriteToolTurns before the
-		// final stream turn receives PostID (see streaming finalize).
 		botPost := "postc23456789012345678901c"
 		autoTurns := []store.Turn{
 			{
@@ -132,5 +130,189 @@ func TestFindToolCallBlocksPostAnchored(t *testing.T) {
 		require.Equal(t, uiMeta, toolUse.UIMeta)
 		require.NotNil(t, toolResult)
 		require.Equal(t, `{"message":"hi"}`, toolResult.Content)
+	})
+
+	// A anchor/result → B unanchored use/result → B anchor.
+	// Looking up A must not absorb B's pre-anchor rounds.
+	continuationTurns := []store.Turn{
+		{
+			ID: "a-anchor", PostID: &postA, Role: "assistant", Sequence: 1,
+			Content: mustBlocks([]ContentBlock{{
+				Type: BlockTypeToolUse, ID: "call-a", Name: "demo",
+				ServerOrigin: "http://srv-a/mcp", Shared: BoolPtr(true), UIMeta: uiMeta,
+			}}),
+		},
+		{
+			ID: "a-result", Role: "tool_result", Sequence: 2,
+			Content: mustBlocks([]ContentBlock{{
+				Type: BlockTypeToolResult, ToolUseID: "call-a", Content: "result-a",
+				Shared: BoolPtr(true),
+			}}),
+		},
+		{
+			ID: "b-use", Role: "assistant", Sequence: 3,
+			Content: mustBlocks([]ContentBlock{{
+				Type: BlockTypeToolUse, ID: "call-b", Name: "demo",
+				ServerOrigin: "http://srv-a/mcp", Shared: BoolPtr(true), UIMeta: uiMeta,
+			}}),
+		},
+		{
+			ID: "b-result", Role: "tool_result", Sequence: 4,
+			Content: mustBlocks([]ContentBlock{{
+				Type: BlockTypeToolResult, ToolUseID: "call-b", Content: "result-b",
+				Shared: BoolPtr(true),
+			}}),
+		},
+		{
+			ID: "b-anchor", PostID: &postB, Role: "assistant", Sequence: 5,
+			Content: mustBlocks([]ContentBlock{{
+				Type: BlockTypeText, Text: "done",
+			}}),
+		},
+	}
+
+	t.Run("post A lookup does not resolve B unanchored tool id", func(t *testing.T) {
+		_, _, err := FindToolCallBlocks(continuationTurns, postA, "call-b")
+		require.ErrorIs(t, err, ErrToolCallNotFound)
+	})
+
+	t.Run("post B resolves its own unanchored tool id", func(t *testing.T) {
+		toolUse, toolResult, err := FindToolCallBlocks(continuationTurns, postB, "call-b")
+		require.NoError(t, err)
+		require.NotNil(t, toolUse)
+		require.Equal(t, "call-b", toolUse.ID)
+		require.NotNil(t, toolResult)
+		require.Equal(t, "result-b", toolResult.Content)
+	})
+
+	t.Run("reused id across A and B each resolves its own without spurious ambiguity", func(t *testing.T) {
+		reused := []store.Turn{
+			{
+				ID: "a-anchor", PostID: &postA, Role: "assistant", Sequence: 1,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolUse, ID: "reuse-x", Name: "demo",
+					ServerOrigin: "http://srv-a/mcp", Shared: BoolPtr(true), UIMeta: uiMeta,
+				}}),
+			},
+			{
+				ID: "a-result", Role: "tool_result", Sequence: 2,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolResult, ToolUseID: "reuse-x", Content: "from-a",
+					Shared: BoolPtr(true),
+				}}),
+			},
+			{
+				ID: "b-use", Role: "assistant", Sequence: 3,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolUse, ID: "reuse-x", Name: "demo",
+					ServerOrigin: "http://srv-a/mcp", Shared: BoolPtr(true), UIMeta: uiMeta,
+				}}),
+			},
+			{
+				ID: "b-result", Role: "tool_result", Sequence: 4,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolResult, ToolUseID: "reuse-x", Content: "from-b",
+					Shared: BoolPtr(true),
+				}}),
+			},
+			{
+				ID: "b-anchor", PostID: &postB, Role: "assistant", Sequence: 5,
+				Content: mustBlocks([]ContentBlock{{Type: BlockTypeText, Text: "done"}}),
+			},
+		}
+		useA, resultA, err := FindToolCallBlocks(reused, postA, "reuse-x")
+		require.NoError(t, err)
+		require.Equal(t, "from-a", resultA.Content)
+		require.NotNil(t, useA)
+
+		useB, resultB, err := FindToolCallBlocks(reused, postB, "reuse-x")
+		require.NoError(t, err)
+		require.Equal(t, "from-b", resultB.Content)
+		require.NotNil(t, useB)
+	})
+
+	t.Run("same id within one response owned rounds is ambiguous", func(t *testing.T) {
+		botPost := "postd23456789012345678901d"
+		dupOwned := []store.Turn{
+			{
+				ID: "a1", Role: "assistant", Sequence: 1,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolUse, ID: "dup-owned", Name: "demo",
+					ServerOrigin: "http://srv-a/mcp", UIMeta: uiMeta,
+				}}),
+			},
+			{
+				ID: "r1", Role: "tool_result", Sequence: 2,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolResult, ToolUseID: "dup-owned", Content: "first",
+				}}),
+			},
+			{
+				ID: "a2", Role: "assistant", Sequence: 3,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolUse, ID: "dup-owned", Name: "demo",
+					ServerOrigin: "http://srv-a/mcp", UIMeta: uiMeta,
+				}}),
+			},
+			{
+				ID: "r2", Role: "tool_result", Sequence: 4,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolResult, ToolUseID: "dup-owned", Content: "second",
+				}}),
+			},
+			{
+				ID: "anchor", PostID: &botPost, Role: "assistant", Sequence: 5,
+				Content: mustBlocks([]ContentBlock{{Type: BlockTypeText, Text: "final"}}),
+			},
+		}
+		_, _, err := FindToolCallBlocks(dupOwned, botPost, "dup-owned")
+		require.ErrorIs(t, err, ErrAmbiguousToolCallID)
+	})
+
+	t.Run("user turn stops backward walk before prior response unanchored rounds", func(t *testing.T) {
+		// Fable M2: deleting the Role=="user" stop must make this fail as ambiguous.
+		botPost := "poste23456789012345678901e"
+		separated := []store.Turn{
+			{
+				ID: "old-use", Role: "assistant", Sequence: 1,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolUse, ID: "shared-x", Name: "demo",
+					ServerOrigin: "http://srv-a/mcp", UIMeta: uiMeta,
+				}}),
+			},
+			{
+				ID: "old-result", Role: "tool_result", Sequence: 2,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolResult, ToolUseID: "shared-x", Content: "old",
+				}}),
+			},
+			{
+				ID: "user-2", Role: "user", Sequence: 3,
+				Content: mustBlocks([]ContentBlock{{Type: BlockTypeText, Text: "try again"}}),
+			},
+			{
+				ID: "new-use", Role: "assistant", Sequence: 4,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolUse, ID: "shared-x", Name: "demo",
+					ServerOrigin: "http://srv-a/mcp", Shared: BoolPtr(true), UIMeta: uiMeta,
+				}}),
+			},
+			{
+				ID: "new-result", Role: "tool_result", Sequence: 5,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolResult, ToolUseID: "shared-x", Content: "new",
+					Shared: BoolPtr(true),
+				}}),
+			},
+			{
+				ID: "anchor", PostID: &botPost, Role: "assistant", Sequence: 6,
+				Content: mustBlocks([]ContentBlock{{Type: BlockTypeText, Text: "final"}}),
+			},
+		}
+		toolUse, toolResult, err := FindToolCallBlocks(separated, botPost, "shared-x")
+		require.NoError(t, err)
+		require.NotNil(t, toolUse)
+		require.NotNil(t, toolResult)
+		require.Equal(t, "new", toolResult.Content)
 	})
 }
