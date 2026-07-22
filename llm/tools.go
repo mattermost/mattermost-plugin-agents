@@ -33,14 +33,11 @@ type Tool struct {
 	Schema      any
 	Resolver    ToolResolver
 
-	// Title is an optional human-readable display name from MCP metadata,
-	// Unicode-sanitized at capture (mcp.UserClients.GetTools). Empty for
-	// built-in tools and MCP tools that do not declare one.
+	// Title is an optional human-readable display name resolved from MCP
+	// metadata (title > annotations.title) and Unicode-sanitized at capture
+	// (mcp.UserClients.GetTools). Empty for built-in tools and MCP tools that
+	// do not declare one.
 	Title string
-
-	// Annotations holds optional MCP tool annotations. The safety hints are
-	// captured but not displayed: the MCP spec warns against trusting them.
-	Annotations *ToolAnnotations
 
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
@@ -57,18 +54,6 @@ type Tool struct {
 	// plumb runtime/protocol info (e.g. before-hook keys) that the underlying server
 	// needs but the model shouldn't see or be able to manipulate.
 	CallMetadata map[string]any
-}
-
-// ToolAnnotations is the subset of MCP tool annotations this plugin captures.
-// All fields are server-supplied hints and must not drive security decisions.
-type ToolAnnotations struct {
-	// Title is a display name with lower precedence than Tool.Title.
-	Title string
-	// ReadOnlyHint indicates the tool does not modify its environment.
-	ReadOnlyHint bool
-	// DestructiveHint indicates the tool may perform destructive updates;
-	// nil means undeclared, which the MCP spec treats as destructive.
-	DestructiveHint *bool
 }
 
 // UserInteractionSelect identifies tools answered by the user picking from a

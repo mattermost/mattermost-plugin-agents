@@ -12,19 +12,20 @@ import { adminUsername, adminPassword } from 'helpers/system-console-container';
 import { createBotConfigHelper } from 'helpers/bot-config';
 
 /**
- * Test Suite: Rich create_post tool card (renderer registry)
+ * Test Suite: read_post preview card (renderer registry)
  *
- * Uses Smocker to return a synthetic create_post tool call and verifies the
- * rich card renders the resolved channel and message body (not a raw JSON
- * blob), and that "View raw" exposes the exact arguments payload. The "ask"
- * policy keeps the card in the pending approval stage.
+ * Uses Smocker to return a synthetic read_post tool call referencing a seeded
+ * post and verifies the pending approval card shows a permalink-style preview
+ * of that post (so the user sees what the tool will read before approving),
+ * with "View raw" still exposing the exact arguments payload. The "ask" policy
+ * keeps the card in the pending approval stage.
  */
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-const embeddedCreatePostTool = 'mattermost__create_post';
-const createPostLabel = 'Create Post';
+const embeddedReadPostTool = 'mattermost__read_post';
+const readPostLabel = 'Read Post';
 
 type EmbeddedToolConfig = {
     name: string;
@@ -86,12 +87,12 @@ async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botNa
     await openThreadForPost(post, timeout);
 }
 
-test.describe('Rich create_post tool card (Mocked LLM)', () => {
+test.describe('read_post preview card (Mocked LLM)', () => {
     test.beforeAll(async () => {
         mattermost = await RunToolConfigContainerWithPolicies();
         openAIMock = await RunOpenAIMocks(mattermost.network);
         await setEmbeddedToolPolicies([
-            {name: 'create_post', policy: 'ask', enabled: true},
+            {name: 'read_post', policy: 'ask', enabled: true},
         ]);
     });
 
@@ -100,18 +101,19 @@ test.describe('Rich create_post tool card (Mocked LLM)', () => {
         await mattermost.stop();
     });
 
-    test('renders the resolved channel and message, and View raw shows the exact payload', async ({ page }) => {
+    test('shows a preview of the referenced post before approval, with View raw', async ({ page }) => {
         test.setTimeout(120000);
 
         const townSquareChannelID = await getTownSquareChannelID();
-        const userMessage = 'Post to town square ' + Date.now();
-        const postBody = 'Deploy is complete — thanks everyone!';
-        const createPostArgs = {
+        const adminClient = await mattermost.getAdminClient();
+        const seededMessage = `Post preview seed ${Date.now()}`;
+        const seededPost = await adminClient.createPost({
             channel_id: townSquareChannelID,
-            channel_display_name: 'Town Square',
-            team_display_name: 'test',
-            message: postBody,
-        };
+            message: seededMessage,
+        });
+
+        const userMessage = 'Read that post for me ' + Date.now();
+        const readPostArgs = {post_id: seededPost.id, include_thread: false};
 
         await openAIMock.addMocks([
             {
@@ -128,7 +130,7 @@ test.describe('Rich create_post tool card (Mocked LLM)', () => {
                 response: {
                     status: 200,
                     headers: {'Content-Type': 'text/event-stream'},
-                    body: buildTextResponse('Town square post'),
+                    body: buildTextResponse('Post preview'),
                 },
             },
             {
@@ -137,11 +139,11 @@ test.describe('Rich create_post tool card (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
 
                     // The main turn includes the embedded tools list; title
-                    // generation runs WithToolsDisabled, so "create_post" is a
+                    // generation runs WithToolsDisabled, so "read_post" is a
                     // reliable differentiator for the tool-call request.
                     body: {
                         matcher: 'ShouldContainSubstring',
-                        value: 'create_post',
+                        value: 'read_post',
                     },
                 },
                 context: {times: 1},
@@ -149,9 +151,9 @@ test.describe('Rich create_post tool card (Mocked LLM)', () => {
                     status: 200,
                     headers: {'Content-Type': 'text/event-stream'},
                     body: buildToolCallResponse(
-                        'call_rich_create_post',
-                        embeddedCreatePostTool,
-                        JSON.stringify(createPostArgs),
+                        'call_read_post_preview',
+                        embeddedReadPostTool,
+                        JSON.stringify(readPostArgs),
                     ),
                 },
             },
@@ -171,23 +173,16 @@ test.describe('Rich create_post tool card (Mocked LLM)', () => {
         const rhs = page.locator('#rhsContainer');
         const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
 
-        // Rich card header uses the prettified display name plus the muted
-        // channel context.
-        await expect(botPost.getByText(createPostLabel, {exact: true})).toBeVisible({timeout: 30000});
-        await expect(botPost.getByText('“Town Square”')).toBeVisible({timeout: 30000});
-
-        // The channel chip resolves channel_id to the Town Square channel
-        // (rendered as "name · team"), and the message body renders as
-        // readable text (not a JSON blob).
-        await expect(botPost.getByText(/Town Square · /)).toBeVisible({timeout: 30000});
-        await expect(botPost.getByText(postBody)).toBeVisible({timeout: 30000});
-
-        // "ask" policy keeps the call in the approval stage.
+        // Card header + pending approval stage.
+        await expect(botPost.getByText(readPostLabel, {exact: true})).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).toBeVisible({timeout: 30000});
 
-        // The shared shell exposes View raw, which reveals the exact payload,
-        // including the raw channel_id the chip resolved.
+        // The permalink-style preview shows the seeded post's content before
+        // the call is approved.
+        await expect(botPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
+
+        // View raw exposes the exact arguments payload, including the post id.
         await botPost.getByText('View raw', {exact: true}).click();
-        await expect(botPost.getByText(new RegExp(townSquareChannelID))).toBeVisible({timeout: 30000});
+        await expect(botPost.getByText(new RegExp(seededPost.id))).toBeVisible({timeout: 30000});
     });
 });

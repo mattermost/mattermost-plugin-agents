@@ -134,16 +134,13 @@ func TestUserClientsGetToolsEmbeddedToolNamesUseMattermostSlug(t *testing.T) {
 	requireToolNames(t, tools, "mattermost__search_users")
 }
 
-func TestUserClientsGetToolsMapsAndSanitizesTitleAndAnnotations(t *testing.T) {
-	destructive := true
-
+func TestUserClientsGetToolsResolvesAndSanitizesTitle(t *testing.T) {
 	tests := []struct {
 		name string
 		tool *gomcp.Tool
 
 		wantTitle       string
 		wantDescription string
-		wantAnnotations *llm.ToolAnnotations
 	}{
 		{
 			// Hostile bidi-override (U+202E) must be escaped at capture, and
@@ -153,30 +150,20 @@ func TestUserClientsGetToolsMapsAndSanitizesTitleAndAnnotations(t *testing.T) {
 				Name:        "create_issue",
 				Description: "Create\u202ean issue",
 				Title:       "Create\u202eIssue",
-				Annotations: &gomcp.ToolAnnotations{
-					Title:           "Annotation\u202eTitle",
-					ReadOnlyHint:    true,
-					DestructiveHint: &destructive,
-				},
+				Annotations: &gomcp.ToolAnnotations{Title: "Annotation Title"},
 			},
 			wantTitle:       "Create[U+202E]Issue",
 			wantDescription: "Create[U+202E]an issue",
-			wantAnnotations: &llm.ToolAnnotations{
-				Title:           "Annotation[U+202E]Title",
-				ReadOnlyHint:    true,
-				DestructiveHint: &destructive,
-			},
 		},
 		{
 			name: "effective title falls back to annotations.title",
 			tool: &gomcp.Tool{
 				Name:        "read_issue",
 				Description: "Read an issue",
-				Annotations: &gomcp.ToolAnnotations{Title: "Read Issue"},
+				Annotations: &gomcp.ToolAnnotations{Title: "Read\u202eIssue"},
 			},
-			wantTitle:       "Read Issue",
+			wantTitle:       "Read[U+202E]Issue",
 			wantDescription: "Read an issue",
-			wantAnnotations: &llm.ToolAnnotations{Title: "Read Issue"},
 		},
 		{
 			name: "no title or annotations leaves Title empty",
@@ -199,7 +186,6 @@ func TestUserClientsGetToolsMapsAndSanitizesTitleAndAnnotations(t *testing.T) {
 			},
 			wantTitle:       "",
 			wantDescription: "Spacey tool",
-			wantAnnotations: &llm.ToolAnnotations{Title: ""},
 		},
 	}
 
@@ -222,7 +208,6 @@ func TestUserClientsGetToolsMapsAndSanitizesTitleAndAnnotations(t *testing.T) {
 			require.Equal(t, "jira__"+tt.tool.Name, got.Name)
 			require.Equal(t, tt.wantTitle, got.Title)
 			require.Equal(t, tt.wantDescription, got.Description)
-			require.Equal(t, tt.wantAnnotations, got.Annotations)
 		})
 	}
 }

@@ -248,26 +248,19 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 
 			// Title/Description are server-supplied; sanitize Unicode at this
 			// single capture point for embedded/plugin/external metadata.
-			llmTool := llm.Tool{
+			// MCP display-name precedence: title > annotations.title.
+			title := sanitizeDisplayTitle(tool.Title)
+			if title == "" && tool.Annotations != nil {
+				title = sanitizeDisplayTitle(tool.Annotations.Title)
+			}
+			tools = append(tools, llm.Tool{
 				Name:         runtimeToolName,
 				Description:  llm.SanitizeNonPrintableChars(tool.Description),
-				Title:        sanitizeDisplayTitle(tool.Title),
+				Title:        title,
 				Schema:       tool.InputSchema,
 				Resolver:     c.createToolResolver(client, toolName),
 				ServerOrigin: client.config.BaseURL,
-			}
-			if tool.Annotations != nil {
-				llmTool.Annotations = &llm.ToolAnnotations{
-					Title:           sanitizeDisplayTitle(tool.Annotations.Title),
-					ReadOnlyHint:    tool.Annotations.ReadOnlyHint,
-					DestructiveHint: tool.Annotations.DestructiveHint,
-				}
-				// MCP display-name precedence: title > annotations.title.
-				if llmTool.Title == "" {
-					llmTool.Title = llmTool.Annotations.Title
-				}
-			}
-			tools = append(tools, llmTool)
+			})
 		}
 	}
 

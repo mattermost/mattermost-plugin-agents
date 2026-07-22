@@ -241,54 +241,11 @@ export const ToolArgumentsRaw: React.FC<{arguments: ToolCall['arguments']}> = ({
     );
 };
 
-interface ToolArgumentsProps {
-    arguments: ToolCall['arguments'];
-}
-
-/**
- * Renders a tool call's arguments as a labeled field list with a card-level
- * "Show more" that expands all clamped values at once. Values render as plain
- * text only. The "View raw" toggle lives on ToolCardShell.
- */
-const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
+// Labeled two-column field list over a JSON object, with a single "Show more"
+// that expands all clamped values at once.
+const JsonFieldList: React.FC<{entries: Array<[string, JSONValue]>}> = ({entries}) => {
     const [expanded, setExpanded] = useState(false);
-
-    // Insertion key order — identical bytes on the live and persisted paths,
-    // so the layout doesn't shift when a post reloads.
-    const entries = useMemo<Array<[string, JSONValue]>>(() => {
-        if (args == null || typeof args !== 'object' || Array.isArray(args)) {
-            return [];
-        }
-        return Object.entries(args as {[key: string]: JSONValue});
-    }, [args]);
-
-    const hasClampable = useMemo(
-        () => entries.some(([, value]) => isLongValue(value)),
-        [entries],
-    );
-
-    // Redacted (non-requester) or absent arguments: render nothing.
-    if (args == null) {
-        return null;
-    }
-
-    if (isEmptyToolArgumentsObject(args)) {
-        return (
-            <Container>
-                <NoParams>
-                    <FormattedMessage
-                        id='ai.tool_call.no_parameters_required'
-                        defaultMessage='No parameters required'
-                    />
-                </NoParams>
-            </Container>
-        );
-    }
-
-    // Non-object args (unexpected shape): show the raw payload verbatim.
-    if (entries.length === 0) {
-        return <ToolArgumentsRaw arguments={args}/>;
-    }
+    const hasClampable = entries.some(([, value]) => isLongValue(value));
 
     return (
         <Container>
@@ -328,6 +285,104 @@ const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
             )}
         </Container>
     );
+};
+
+/**
+ * Renders a tool result with the same generic treatment as arguments: a JSON
+ * object result becomes the labeled field list; anything else renders as
+ * clamped plain text (never through formatText/markdown — results can embed
+ * hostile content).
+ */
+export const ToolResultBody: React.FC<{result: string}> = ({result}) => {
+    const [expanded, setExpanded] = useState(false);
+
+    const jsonEntries = useMemo<Array<[string, JSONValue]> | null>(() => {
+        try {
+            const parsed = JSON.parse(result);
+            if (parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return Object.entries(parsed as {[key: string]: JSONValue});
+            }
+        } catch {
+            // Not JSON — plain text below.
+        }
+        return null;
+    }, [result]);
+
+    if (jsonEntries) {
+        return <JsonFieldList entries={jsonEntries}/>;
+    }
+
+    const isLong = result.length > CLAMP_CHAR_THRESHOLD || result.split('\n').length > 3;
+    return (
+        <Container>
+            <StringValue $clamped={isLong && !expanded}>{result}</StringValue>
+            {isLong && (
+                <ToggleRow>
+                    <ToggleButton
+                        type='button'
+                        onClick={() => setExpanded((prev) => !prev)}
+                    >
+                        {expanded ? (
+                            <FormattedMessage
+                                id='ai.tool_call.show_less'
+                                defaultMessage='Show less'
+                            />
+                        ) : (
+                            <FormattedMessage
+                                id='ai.tool_call.show_more'
+                                defaultMessage='Show more'
+                            />
+                        )}
+                    </ToggleButton>
+                </ToggleRow>
+            )}
+        </Container>
+    );
+};
+
+interface ToolArgumentsProps {
+    arguments: ToolCall['arguments'];
+}
+
+/**
+ * Renders a tool call's arguments as a labeled field list with a card-level
+ * "Show more" that expands all clamped values at once. Values render as plain
+ * text only. The "View raw" toggle lives on ToolCardShell.
+ */
+const ToolArguments: React.FC<ToolArgumentsProps> = ({arguments: args}) => {
+    // Insertion key order — identical bytes on the live and persisted paths,
+    // so the layout doesn't shift when a post reloads.
+    const entries = useMemo<Array<[string, JSONValue]>>(() => {
+        if (args == null || typeof args !== 'object' || Array.isArray(args)) {
+            return [];
+        }
+        return Object.entries(args as {[key: string]: JSONValue});
+    }, [args]);
+
+    // Redacted (non-requester) or absent arguments: render nothing.
+    if (args == null) {
+        return null;
+    }
+
+    if (isEmptyToolArgumentsObject(args)) {
+        return (
+            <Container>
+                <NoParams>
+                    <FormattedMessage
+                        id='ai.tool_call.no_parameters_required'
+                        defaultMessage='No parameters required'
+                    />
+                </NoParams>
+            </Container>
+        );
+    }
+
+    // Non-object args (unexpected shape): show the raw payload verbatim.
+    if (entries.length === 0) {
+        return <ToolArgumentsRaw arguments={args}/>;
+    }
+
+    return <JsonFieldList entries={entries}/>;
 };
 
 export default ToolArguments;

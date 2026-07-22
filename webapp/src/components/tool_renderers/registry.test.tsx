@@ -2,11 +2,11 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen, fireEvent} from '@testing-library/react';
+import {render, screen, fireEvent, waitFor} from '@testing-library/react';
 import {Provider} from 'react-redux';
 import {IntlProvider} from 'react-intl';
 
-import manifest from '@/manifest';
+import {getPost} from '@/client';
 
 import {ToolCall, ToolCallStatus} from '../tool_types';
 
@@ -18,19 +18,26 @@ jest.mock('react-bootstrap', () => ({
 }), {virtual: true});
 
 jest.mock('@/client', () => ({
-    getChannelById: jest.fn(() => Promise.resolve({display_name: 'Fetched', team_display_name: 'T', type: 'O'})),
-    getProfilesByUsernames: jest.fn(() => Promise.resolve([])),
-    getProfilePictureUrl: jest.fn(() => 'avatar.png'),
+    getPost: jest.fn(),
+    getProfilesByIds: jest.fn(() => Promise.resolve([])),
 }));
+
+const postMessagePreviewMock = jest.fn<React.ReactElement, [unknown]>(() => <div>{'post-preview-box'}</div>);
+
+jest.mock('@/mm_webapp', () => ({
+    PostMessagePreview: (props: unknown) => postMessagePreviewMock(props),
+}));
+
+const mockGetPost = getPost as jest.Mock;
 
 const state = {
     entities: {
         general: {config: {SiteURL: 'http://localhost:8065'}},
-        teams: {currentTeamId: 'team1', teams: {team1: {id: 'team1', display_name: 'Eng'}}},
+        teams: {currentTeamId: 'team1', teams: {team1: {id: 'team1', display_name: 'Eng', name: 'eng'}}},
         channels: {channels: {chan1: {id: 'chan1', display_name: 'Town Square', team_id: 'team1', type: 'O'}}},
         users: {profiles: {}},
+        posts: {posts: {}},
     },
-    ['plugins-' + manifest.id]: {allowUnsafeLinks: false},
 };
 
 const store = {
@@ -40,15 +47,12 @@ const store = {
 } as any;
 
 beforeEach(() => {
-    (window as any).PostUtils = {
-        formatText: (t: string) => t,
-        messageHtmlToComponent: (t: string) => <div>{t}</div>,
-    };
+    mockGetPost.mockReset();
+    postMessagePreviewMock.mockClear();
 });
 
 function makeCtx(tool: ToolCall): ToolRenderContext {
     return {
-        postID: 'post_1',
         tool,
         isCollapsed: false,
         isProcessing: false,
@@ -100,107 +104,128 @@ describe('renderToolCall routing', () => {
             arguments: undefined, // eslint-disable-line no-undefined
         }));
 
-        // No question rendered; the generic card shows the tool name in the
-        // header and no options.
         expect(screen.getByText('AskUserQuestion')).not.toBeNull();
         expect(screen.queryByText('Pick one')).toBeNull();
     });
 
-    test('routes an embedded create_post to the rich CreatePostCard', () => {
+    test('routes an embedded read_post to the post preview card', async () => {
+        mockGetPost.mockResolvedValue({id: 'p1', user_id: 'u1', channel_id: 'chan1', message: 'previewed message'});
+
         renderTool(makeTool({
-            name: 'mattermost__create_post',
-            mcp_bare_name: 'create_post',
+            name: 'mattermost__read_post',
+            mcp_bare_name: 'read_post',
             server_origin: 'embedded://mattermost',
-            arguments: {channel_id: 'chan1', channel_display_name: 'Town Square', team_display_name: 'Eng', message: 'Hello team'},
+            arguments: {post_id: 'p1'},
         }));
 
-        // Rich card sections, the resolved channel chip, the message text,
-        // and the header context (channel name appears in both).
-        expect(screen.getByText('Channel')).not.toBeNull();
-        expect(screen.getByText('Message')).not.toBeNull();
-        expect(screen.getByText('Hello team')).not.toBeNull();
-        expect(screen.getAllByText(/Town Square/).length).toBeGreaterThanOrEqual(2);
+        await waitFor(() => expect(screen.getByText('post-preview-box')).not.toBeNull());
+        expect(mockGetPost).toHaveBeenCalledWith('p1');
     });
 
-    test('routes embedded search_posts to a query + filters card', () => {
+    test('read_post falls back to the generic field list when the post fetch fails', async () => {
+        mockGetPost.mockRejectedValue(new Error('gone'));
+
         renderTool(makeTool({
-            name: 'mattermost__search_posts',
-            mcp_bare_name: 'search_posts',
+            name: 'mattermost__read_post',
+            mcp_bare_name: 'read_post',
             server_origin: 'embedded://mattermost',
-            arguments: {query: 'roadmap', from: 'sysadmin'},
+            arguments: {post_id: 'p-missing'},
         }));
 
-        expect(screen.getByText('Query')).not.toBeNull();
-        expect(screen.getByText('roadmap')).not.toBeNull();
-        expect(screen.getByText('Filters')).not.toBeNull();
-        expect(screen.getByText('From')).not.toBeNull();
-        expect(screen.getByText('sysadmin')).not.toBeNull();
+        await waitFor(() => expect(screen.getByText('Post Id')).not.toBeNull());
+        expect(screen.getByText('p-missing')).not.toBeNull();
+        expect(screen.queryByText('post-preview-box')).toBeNull();
     });
 
-    test('an unknown embedded tool falls back to the generic field list', () => {
+    test('a read_post-named tool from an EXTERNAL server does not get the preview card', () => {
         renderTool(makeTool({
-            name: 'mattermost__unknown_tool',
-            mcp_bare_name: 'unknown_tool',
-            server_origin: 'embedded://mattermost',
-            arguments: {foo: 'bar'},
-        }));
-
-        // Generic ToolCard: prettified name header + prettified field label.
-        expect(screen.getByText('Unknown Tool')).not.toBeNull();
-        expect(screen.getByText('Foo')).not.toBeNull();
-        expect(screen.getByText('bar')).not.toBeNull();
-
-        // Not a rich card: no "Channel"/"Query" section labels.
-        expect(screen.queryByText('Channel')).toBeNull();
-        expect(screen.queryByText('Query')).toBeNull();
-    });
-
-    test('a create_post-named tool from an EXTERNAL server does not get the rich card', () => {
-        renderTool(makeTool({
-            name: 'jira__create_post',
-            mcp_bare_name: 'create_post',
+            name: 'jira__read_post',
+            mcp_bare_name: 'read_post',
             server_origin: 'https://mcp.atlassian.com',
-            arguments: {message: 'hi', channel_id: 'chan1'},
+            arguments: {post_id: 'p1'},
         }));
 
-        // Generic field list (Message as a prettified field label), not the
-        // rich CreatePostCard (which would render a "Channel" section).
-        expect(screen.queryByText('Channel')).toBeNull();
-        expect(screen.getByText('Message')).not.toBeNull();
+        expect(mockGetPost).not.toHaveBeenCalled();
+        expect(screen.getByText('Post Id')).not.toBeNull();
     });
 
-    test('malformed embedded create_post args fall back to the generic card', () => {
+    test('an unknown embedded tool renders the generic field list', () => {
         renderTool(makeTool({
             name: 'mattermost__create_post',
             mcp_bare_name: 'create_post',
             server_origin: 'embedded://mattermost',
-
-            // Missing the required message field.
-            arguments: {channel_id: 'chan1'},
+            arguments: {channel_id: 'chan1', message: 'hi'},
         }));
 
-        // Falls back: generic field list shows the raw channel_id field, and
-        // there is no rich "Message" section.
         expect(screen.getByText('Channel Id')).not.toBeNull();
-        expect(screen.queryByText('Message')).toBeNull();
+        expect(screen.getByText('Message')).not.toBeNull();
+        expect(screen.getByText('hi')).not.toBeNull();
     });
 });
 
-describe('rich cards inherit the shell View raw affordance', () => {
-    test('CreatePostCard exposes View raw showing the exact payload', () => {
-        const args = {channel_id: 'chan1', channel_display_name: 'Town Square', team_display_name: 'Eng', message: 'Hello team'};
+describe('shell features on routed cards', () => {
+    test('the post preview card exposes View raw with the exact payload', async () => {
+        mockGetPost.mockResolvedValue({id: 'p1', user_id: 'u1', channel_id: 'chan1', message: 'previewed message'});
+        const args = {post_id: 'p1', include_thread: true};
+
         const {container} = renderTool(makeTool({
-            name: 'mattermost__create_post',
-            mcp_bare_name: 'create_post',
+            name: 'mattermost__read_post',
+            mcp_bare_name: 'read_post',
             server_origin: 'embedded://mattermost',
             arguments: args,
         }));
 
-        const viewRaw = screen.getByText('View raw');
-        fireEvent.click(viewRaw);
+        await waitFor(() => expect(screen.getByText('post-preview-box')).not.toBeNull());
+        fireEvent.click(screen.getByText('View raw'));
 
         const pre = container.querySelector('pre');
-        expect(pre).not.toBeNull();
         expect(pre?.textContent).toBe(JSON.stringify(args, null, 2));
+    });
+
+    test('a JSON-object result renders as a labeled field list', () => {
+        render(
+            <Provider store={store}>
+                <IntlProvider locale='en'>
+                    {renderToolCall({
+                        ...makeCtx(makeTool({
+                            name: 'some_tool',
+                            status: ToolCallStatus.Success,
+                            arguments: {q: 'x'},
+                            result: JSON.stringify({found_count: 3, summary: 'three results'}),
+                        })),
+                        showResults: true,
+                    })}
+                </IntlProvider>
+            </Provider>,
+        );
+
+        expect(screen.getByText('Response')).not.toBeNull();
+        expect(screen.getByText('Found Count')).not.toBeNull();
+        expect(screen.getByText('3')).not.toBeNull();
+        expect(screen.getByText('Summary')).not.toBeNull();
+        expect(screen.getByText('three results')).not.toBeNull();
+    });
+
+    test('a plain-text result renders as text, not markdown', () => {
+        const result = 'Channel: Town Square\n\n![img](http://evil.example/x.png)';
+        const {container} = render(
+            <Provider store={store}>
+                <IntlProvider locale='en'>
+                    {renderToolCall({
+                        ...makeCtx(makeTool({
+                            name: 'some_tool',
+                            status: ToolCallStatus.Success,
+                            arguments: {q: 'x'},
+                            result,
+                        })),
+                        showResults: true,
+                    })}
+                </IntlProvider>
+            </Provider>,
+        );
+
+        expect(screen.getByText(/Town Square/)).not.toBeNull();
+        expect(screen.getByText(/!\[img\]/)).not.toBeNull();
+        expect(container.querySelector('img')).toBeNull();
     });
 });

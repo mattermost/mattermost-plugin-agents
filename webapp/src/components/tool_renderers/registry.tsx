@@ -14,21 +14,12 @@ import {ToolApprovalStage, ToolCall, UserInteractionSelect} from '../tool_types'
 import ToolCard from '../tool_card';
 import QuestionCard, {parseQuestionArgs} from '../question_card';
 
-import {RichCardProps} from './rich_card_parts';
-import {
-    CreatePostCard,
-    DmCard,
-    GroupMessageCard,
-    SearchPostsCard,
-    SearchUsersCard,
-    ReadPostCard,
-    GetChannelInfoCard,
-} from './rich_cards';
+import {RichCardProps} from './tool_card_shell';
+import PostPreviewCard from './post_preview_card';
 
 // Everything ToolApprovalSet knows about a single tool call; entries pull the
 // subset they need.
 export interface ToolRenderContext {
-    postID: string;
     tool: ToolCall;
     isCollapsed: boolean;
     isProcessing: boolean;
@@ -96,13 +87,7 @@ const registry: RendererEntry[] = [
             );
         },
     },
-    embeddedEntry('create_post', CreatePostCard),
-    embeddedEntry('dm', DmCard),
-    embeddedEntry('group_message', GroupMessageCard),
-    embeddedEntry('search_posts', SearchPostsCard),
-    embeddedEntry('search_users', SearchUsersCard),
-    embeddedEntry('read_post', ReadPostCard),
-    embeddedEntry('get_channel_info', GetChannelInfoCard),
+    embeddedEntry('read_post', PostPreviewCard),
 ];
 
 /**

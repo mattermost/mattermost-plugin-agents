@@ -1,22 +1,18 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useMemo, useState} from 'react';
+import React, {useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, LockIcon} from '@mattermost/compass-icons/components';
-import {useSelector} from 'react-redux';
 
 // eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
-import {GlobalState} from '@mattermost/types/store';
-
-import manifest from '@/manifest';
 import {toolDisplayName} from '@/utils/tool_identity';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
-import {ToolArgumentsRaw, hasInspectableArguments} from '../tool_arguments';
+import {ToolArgumentsRaw, ToolResultBody, hasInspectableArguments} from '../tool_arguments';
 
 import LoadingSpinner from '../assets/loading_spinner';
 import IconCheckCircle from '../assets/icon_check_circle';
@@ -63,31 +59,13 @@ const ToolName = styled.span`
     font-weight: 400;
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
+    flex-grow: 1;
 
     // MCP-supplied titles can be arbitrarily long; keep the header on one line.
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-`;
-
-// Muted, ellipsized context after the tool name (e.g. the target channel or
-// query). A separate element so the name keeps its exact text.
-const HeaderContext = styled.span`
-    flex: 1 1 auto;
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-`;
-
-// Grows when there is no context so the badge stays right-aligned.
-const HeaderSpacer = styled.span`
-    flex: 1 1 auto;
 `;
 
 const StatusContainer = styled.div`
@@ -317,11 +295,6 @@ const ResponseLabel = styled.div`
 
 const ResultContainer = styled.div`
     margin: 0;
-
-    // Style code blocks rendered by Mattermost
-    pre {
-        margin: 0;
-    }
 `;
 
 const RawToggleRow = styled.div`
@@ -345,7 +318,6 @@ const RawToggleButton = styled.button`
 `;
 
 export interface ToolCardShellProps {
-    postID: string;
     tool: ToolCall;
     isCollapsed: boolean;
     isProcessing: boolean;
@@ -359,14 +331,12 @@ export interface ToolCardShellProps {
     approvalStage?: ToolApprovalStage;
     isAutoApproved?: boolean;
 
-    // Optional muted context after the tool name (e.g. the target channel or
-    // query). Rendered as plain text in its own element so the name element
-    // keeps its exact text.
-    headerContext?: string;
-
     // The arguments body: the generic field list or a rich card's rendering.
     children?: React.ReactNode;
 }
+
+// Props for a card component: everything the shell takes except the body.
+export type RichCardProps = Omit<ToolCardShellProps, 'children'>;
 
 /**
  * ToolCardShell renders the shared approval chrome for a tool call: expandable
@@ -375,7 +345,6 @@ export interface ToolCardShellProps {
  * body, so the approval flow and payload inspection stay in one place.
  */
 const ToolCardShell: React.FC<ToolCardShellProps> = ({
-    postID,
     tool,
     isCollapsed,
     isProcessing,
@@ -388,7 +357,6 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     showResults,
     approvalStage = 'call',
     isAutoApproved = false,
-    headerContext,
     children,
 }) => {
     const {formatMessage} = useIntl();
@@ -407,30 +375,6 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     const displayName = toolDisplayName(tool);
 
     const canShowRaw = showArguments && hasInspectableArguments(tool.arguments);
-
-    const siteURL = useSelector<GlobalState, string | undefined>((state) => state.entities.general.config.SiteURL);
-    const team = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);
-    const allowUnsafeLinks = useSelector<GlobalState, boolean>((state: any) => state['plugins-' + manifest.id]?.allowUnsafeLinks ?? false);
-
-    // @ts-ignore
-    const {formatText, messageHtmlToComponent} = window.PostUtils;
-
-    const markdownOptions = useMemo(() => ({
-        singleline: false,
-        mentionHighlight: false,
-        atMentions: false,
-        team,
-        unsafeLinks: !allowUnsafeLinks,
-        minimumHashtagLength: 1000000000,
-        siteURL,
-    }), [allowUnsafeLinks, siteURL, team]);
-
-    const messageHtmlToComponentOptions = useMemo(() => ({
-        hasPluginTooltips: false,
-        latex: false,
-        inlinelatex: false,
-        postId: postID,
-    }), [postID]);
 
     const hasLocalDecision = localDecision != null;
 
@@ -537,26 +481,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
         );
     };
 
-    const renderedResult = useMemo(() => {
-        if (!showResults || !tool.result) {
-            return null;
-        }
-
-        // Render result as code block - try to detect if it's JSON
-        const resultMarkdown = (() => {
-            try {
-                JSON.parse(tool.result as string);
-                return `\`\`\`json\n${tool.result}\n\`\`\``;
-            } catch {
-                return `\`\`\`\n${tool.result}\n\`\`\``;
-            }
-        })();
-
-        return messageHtmlToComponent(
-            formatText(resultMarkdown, markdownOptions),
-            messageHtmlToComponentOptions,
-        );
-    }, [showResults, tool.result, formatText, markdownOptions, messageHtmlToComponent, messageHtmlToComponentOptions]);
+    const showResultBody = showResults && Boolean(tool.result);
 
     return (
         <ToolCallCard>
@@ -585,11 +510,6 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                     {!showProcessingSpinner && isRejected && <SmallRejectedIcon size={16}/>}
                 </StatusIcon>
                 <ToolName title={displayName}>{displayName}</ToolName>
-                {headerContext ? (
-                    <HeaderContext title={headerContext}>{headerContext}</HeaderContext>
-                ) : (
-                    <HeaderSpacer/>
-                )}
                 {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
                     <AutoApprovedBadge>
                         <FormattedMessage
@@ -625,7 +545,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         </RawToggleRow>
                     )}
 
-                    {showResults && (isSuccess || isError) && renderedResult && (
+                    {showResultBody && (isSuccess || isError) && (
                         <>
                             <ResponseLabel>
                                 {isSuccess && <ResponseSuccessIcon/>}
@@ -635,7 +555,9 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                                     defaultMessage='Response'
                                 />
                             </ResponseLabel>
-                            <ResultContainer>{renderedResult}</ResultContainer>
+                            <ResultContainer>
+                                <ToolResultBody result={tool.result as string}/>
+                            </ResultContainer>
                         </>
                     )}
 

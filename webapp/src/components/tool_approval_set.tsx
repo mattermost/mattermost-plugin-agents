@@ -315,7 +315,6 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 return (
                     <React.Fragment key={tool.id}>
                         {renderToolCall({
-                            postID: props.postID,
                             tool,
                             isCollapsed: isToolCollapsed(tool),
                             isProcessing: isDecisionCall && isSubmitting,
