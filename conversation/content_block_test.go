@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -330,4 +331,41 @@ func TestFilterForNonRequesterDoesNotMutateOriginal(t *testing.T) {
 
 	assert.Equal(t, originalInputCopy, original[0].Input)
 	assert.Equal(t, originalContentCopy, original[1].Content)
+}
+
+func TestFilterForNonRequesterUIMeta(t *testing.T) {
+	uiMeta := &llm.ToolUIMeta{ResourceURI: "ui://srv/app.html"}
+
+	tests := []struct {
+		name       string
+		block      ContentBlock
+		wantUIMeta *llm.ToolUIMeta
+	}{
+		{
+			name: "unshared tool_use clears UIMeta",
+			block: ContentBlock{
+				Type: BlockTypeToolUse, ID: "tc1", Name: "demo",
+				Input: json.RawMessage(`{}`), Shared: BoolPtr(false), UIMeta: uiMeta,
+			},
+			wantUIMeta: nil,
+		},
+		{
+			name: "shared tool_use keeps UIMeta",
+			block: ContentBlock{
+				Type: BlockTypeToolUse, ID: "tc1", Name: "demo",
+				Input: json.RawMessage(`{}`), Shared: BoolPtr(true), UIMeta: uiMeta,
+			},
+			wantUIMeta: uiMeta,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := []ContentBlock{tt.block}
+			result := FilterForNonRequester(original)
+			require.Len(t, result, 1)
+			assert.Equal(t, tt.wantUIMeta, result[0].UIMeta)
+			assert.Equal(t, uiMeta, original[0].UIMeta, "original must not be mutated")
+		})
+	}
 }

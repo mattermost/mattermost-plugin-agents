@@ -1142,3 +1142,48 @@ func TestEnrichToolCallNilSafe(t *testing.T) {
 	assert.Empty(t, tc.Description)
 	assert.Nil(t, tc.Schema)
 }
+
+func TestEnrichToolCallUIMeta(t *testing.T) {
+	storeUIMeta := &ToolUIMeta{ResourceURI: "ui://store/app"}
+	callUIMeta := &ToolUIMeta{ResourceURI: "ui://call/app"}
+
+	tests := []struct {
+		name     string
+		store    *ToolUIMeta
+		tc       *ToolCall
+		wantMeta *ToolUIMeta
+	}{
+		{
+			name:     "fills UIMeta from store when call has none",
+			store:    storeUIMeta,
+			tc:       &ToolCall{Name: "app_tool", ServerOrigin: "https://srv.example"},
+			wantMeta: storeUIMeta,
+		},
+		{
+			name:     "preserves existing UIMeta on the call",
+			store:    storeUIMeta,
+			tc:       &ToolCall{Name: "app_tool", ServerOrigin: "https://srv.example", UIMeta: callUIMeta},
+			wantMeta: callUIMeta,
+		},
+		{
+			name:     "stays nil when store tool has no UIMeta",
+			store:    nil,
+			tc:       &ToolCall{Name: "app_tool", ServerOrigin: "https://srv.example"},
+			wantMeta: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewNoTools()
+			store.AddTools([]Tool{{
+				Name:         "app_tool",
+				Description:  "App tool",
+				ServerOrigin: "https://srv.example",
+				UIMeta:       tt.store,
+			}})
+			EnrichToolCall(tt.tc, store, EnrichToolCallOptions{})
+			assert.Equal(t, tt.wantMeta, tt.tc.UIMeta)
+		})
+	}
+}

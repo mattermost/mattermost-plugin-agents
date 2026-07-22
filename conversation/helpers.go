@@ -112,6 +112,7 @@ func toolUseBlocks(
 			Status:          StatusToString(tc.Status),
 			Shared:          BoolPtr(shared),
 			UserInteraction: tc.UserInteraction,
+			UIMeta:          tc.UIMeta,
 		})
 	}
 

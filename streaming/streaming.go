@@ -156,6 +156,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 			Shared:           conversation.BoolPtr(a.isDM),
 			UserInteraction:  tc.UserInteraction,
 			WouldAutoExecute: tc.WouldAutoExecute,
+			UIMeta:           tc.UIMeta,
 		})
 	}
 
@@ -444,8 +445,10 @@ func isResolvedToolCallsEvent(toolCalls []llm.ToolCall) bool {
 	return true
 }
 
-// redactToolCalls returns a copy of the tool calls with Arguments and Result
-// cleared so that non-requesters see tool names and status but not payloads.
+// redactToolCalls returns a copy of the tool calls with Arguments, Result,
+// and UIMeta cleared so that non-requesters see tool names and status but
+// not payloads or app-resource pointers. Onlookers obtain UIMeta via
+// GET /conversations/:id once the result is shared.
 func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	redacted := make([]llm.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
