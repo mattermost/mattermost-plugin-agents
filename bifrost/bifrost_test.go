@@ -336,6 +336,89 @@ func TestConvertToBifrostRequestOpus47Reasoning(t *testing.T) {
 		"Opus 4.7 does not accept budget_tokens alongside adaptive thinking")
 }
 
+// TestPromptCaching verifies that automatic prompt caching (top-level
+// cache_control) is requested for Anthropic and reaches the Anthropic wire
+// request, but is never attached for other providers or for Anthropic with
+// non-Anthropic fallbacks (where the marker would 400 the fallback request).
+func TestPromptCaching(t *testing.T) {
+	tests := []struct {
+		name      string
+		provider  schemas.ModelProvider
+		fallbacks []schemas.Fallback
+		want      bool
+	}{
+		{
+			name:     "anthropic without fallbacks",
+			provider: schemas.Anthropic,
+			want:     true,
+		},
+		{
+			name:      "anthropic with anthropic custom-provider fallback",
+			provider:  schemas.Anthropic,
+			fallbacks: []schemas.Fallback{{Provider: customProviderName(schemas.Anthropic, "svc2")}},
+			want:      true,
+		},
+		{
+			name:      "anthropic with openai fallback",
+			provider:  schemas.Anthropic,
+			fallbacks: []schemas.Fallback{{Provider: schemas.OpenAI}},
+			want:      false,
+		},
+		{
+			name:     "openai",
+			provider: schemas.OpenAI,
+			want:     false,
+		},
+		{
+			name:     "bedrock",
+			provider: schemas.Bedrock,
+			want:     false,
+		},
+	}
+
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{
+			{Role: llm.PostRoleSystem, Message: "system prompt"},
+			{Role: llm.PostRoleUser, Message: "hello"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: tt.provider, fallbacks: tt.fallbacks}
+			cfg := llm.LanguageModelConfig{Model: "test-model", MaxGeneratedTokens: 100}
+
+			chatReq := b.convertToBifrostRequest(request, cfg)
+			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+			require.NoError(t, err)
+
+			if !tt.want {
+				assert.Nil(t, chatReq.Params.CacheControl)
+				assert.NotContains(t, respReq.Params.ExtraParams, "cache_control")
+				return
+			}
+
+			require.NotNil(t, chatReq.Params.CacheControl)
+			assert.Equal(t, schemas.CacheControlTypeEphemeral, chatReq.Params.CacheControl.Type)
+			require.Contains(t, respReq.Params.ExtraParams, "cache_control")
+
+			// Feed both requests through bifrost's Anthropic converters to
+			// confirm the marker survives onto the wire request.
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			wireChat, err := anthropic.ToAnthropicChatRequest(ctx, chatReq)
+			require.NoError(t, err)
+			require.NotNil(t, wireChat.CacheControl)
+			assert.Equal(t, schemas.CacheControlTypeEphemeral, wireChat.CacheControl.Type)
+
+			wireResponses, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
+			require.NoError(t, err)
+			require.NotNil(t, wireResponses.CacheControl)
+			assert.Equal(t, schemas.CacheControlTypeEphemeral, wireResponses.CacheControl.Type)
+		})
+	}
+}
+
 func TestBuildResponsesReasoning(t *testing.T) {
 	tests := []struct {
 		name             string

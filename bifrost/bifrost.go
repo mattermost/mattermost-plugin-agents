@@ -1198,6 +1198,9 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	if cfg.JSONOutputFormat != nil {
 		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
 	}
+	if b.promptCachingEnabled() {
+		params.CacheControl = &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral}
+	}
 	req.Params = params
 
 	// Attach fallback chain so Bifrost retries with alternative providers on failure.
@@ -1608,6 +1611,27 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	return false
 }
 
+// promptCachingEnabled reports whether to request Anthropic automatic prompt
+// caching (top-level cache_control). Anthropic caches nothing unless asked,
+// so without this every turn re-bills the full system prompt, tool schemas,
+// and history at the base input rate. OpenAI-family and Gemini cache prompt
+// prefixes automatically and need no marker. Bifrost forwards the field
+// unstripped to non-Anthropic providers, so it is only attached when the
+// primary and every fallback are Anthropic; a mixed chain would 400 the
+// fallback request.
+func (b *LLM) promptCachingEnabled() bool {
+	if b.provider != schemas.Anthropic {
+		return false
+	}
+	for _, fb := range b.fallbacks {
+		if fb.Provider != schemas.Anthropic &&
+			!strings.HasPrefix(string(fb.Provider), string(schemas.Anthropic)+"::") {
+			return false
+		}
+	}
+	return true
+}
+
 // isNativeToolEnabled checks if a native tool is enabled by name.
 func (b *LLM) isNativeToolEnabled(name string) bool {
 	for _, t := range b.enabledNativeTools {
@@ -1897,6 +1921,13 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 			return nil, fmt.Errorf("failed to build responses text config: %w", err)
 		}
 		params.Text = textConfig
+	}
+	// The Anthropic provider reads cache_control from ExtraParams on the
+	// Responses path (there is no typed field on ResponsesParameters).
+	if b.promptCachingEnabled() {
+		params.ExtraParams = map[string]interface{}{
+			"cache_control": &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral},
+		}
 	}
 	req.Params = params
 
