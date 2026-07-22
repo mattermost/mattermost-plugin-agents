@@ -276,7 +276,7 @@ describe('MCPAppView', () => {
         renderView();
         await waitFor(() => expect(screen.getByTestId('app-renderer-stub')).not.toBeNull());
         await expect(capturedRendererProps!.onMessage!({role: 'user', content: []}, {} as never)).resolves.toEqual({isError: true});
-        await expect(capturedRendererProps!.onOpenLink!({url: 'javascript:alert(1)'}, {} as never)).resolves.toEqual({isError: true});
+        await expect(capturedRendererProps!.onOpenLink!({url: 'ftp://example.com/file'}, {} as never)).resolves.toEqual({isError: true});
         (window.open as jest.Mock).mockReturnValueOnce(null);
         await expect(capturedRendererProps!.onOpenLink!({url: 'https://example.com'}, {} as never)).resolves.toEqual({isError: true});
     });

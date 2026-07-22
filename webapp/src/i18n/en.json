@@ -134,6 +134,7 @@
   "FPrlDN2w": "Failed to delete prompt. Please try again.",
   "FQJBnSud": "Search initialization failed: {error}",
   "FVXMlTw3": "Retrieval description override",
+  "FazwRldA": "Try again",
   "Fb4wQGGA": "0 tools available",
   "Fz1C4s+t": "({errorCount} with errors)",
   "G/mY0S/x": "Warning: MCP app content will run with the same browser origin as Mattermost. Configure a Sandbox Base URL to restore isolation.",
