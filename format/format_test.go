@@ -4,6 +4,7 @@
 package format
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -747,4 +748,58 @@ func TestWriteScheduledPost(t *testing.T) {
 	assert.Contains(t, out, "Channel: Town Square")
 	assert.Contains(t, out, "Scheduled for: 2023-11-14T22:13:20Z")
 	assert.Contains(t, out, "Message: scheduled hello")
+}
+
+func TestMarshalPostPreview(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry PostPreviewEntry
+		want  map[string]any
+	}{
+		{
+			name: "full entry round-trips",
+			entry: PostPreviewEntry{
+				PostID:             "post12345678901234567890ab",
+				Message:            "hello",
+				Username:           "alice",
+				ChannelDisplayName: "Town Square",
+				CreateAt:           1710878490000,
+			},
+			want: map[string]any{
+				"post_id":              "post12345678901234567890ab",
+				"message":              "hello",
+				"username":             "alice",
+				"channel_display_name": "Town Square",
+				"create_at":            float64(1710878490000),
+			},
+		},
+		{
+			name: "empty username omitted",
+			entry: PostPreviewEntry{
+				PostID:   "post12345678901234567890ab",
+				Message:  "no author",
+				CreateAt: 1,
+			},
+			want: map[string]any{
+				"post_id":   "post12345678901234567890ab",
+				"message":   "no author",
+				"create_at": float64(1),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := MarshalPostPreview(tt.entry)
+			assert.NoError(t, err)
+
+			var got map[string]any
+			assert.NoError(t, json.Unmarshal([]byte(out), &got))
+			assert.Equal(t, tt.want, got)
+			_, hasUsername := got["username"]
+			if tt.entry.Username == "" {
+				assert.False(t, hasUsername)
+			}
+		})
+	}
 }

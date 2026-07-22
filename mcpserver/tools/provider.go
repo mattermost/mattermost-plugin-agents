@@ -67,6 +67,10 @@ type MCPTool struct {
 	Schema      *jsonschema.Schema
 	Resolver    MCPToolResolver
 
+	// Meta is attached verbatim as the tool's `_meta` (e.g. MCP Apps
+	// `ui.resourceUri`). Nil for ordinary tools.
+	Meta mcp.Meta
+
 	// Available, when set, gates the tool's visibility: it is evaluated on each
 	// tools/list request and the tool is hidden when it returns false. Nil means
 	// always available.
@@ -229,6 +233,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		Name:        mcpTool.Name,
 		Description: mcpTool.Description,
 		InputSchema: nil, // Initialize as nil, will be set below if schema is available
+	}
+	if mcpTool.Meta != nil {
+		tool.Meta = mcpTool.Meta
 	}
 
 	// Set the InputSchema from the MCPTool schema
