@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -43,8 +44,10 @@ type MCPAppsConfig struct {
 	AllowInsecureSameOriginSandbox bool `json:"allowInsecureSameOriginSandbox"`
 }
 
-// Validate checks user-supplied MCP Apps fields. Called from the admin
-// config save path; a failure rejects the save with 400.
+// Validate checks user-supplied MCP Apps field shapes. Called from the
+// admin config save path; a failure rejects the save with 400. Origin
+// equality against the Site URL (D1) is enforced separately via
+// sandbox.ValidateAppsConfig, which also calls Validate.
 func (c *MCPAppsConfig) Validate() error {
 	sandboxURL := strings.TrimSpace(c.SandboxURL)
 	if sandboxURL != "" {
@@ -52,13 +55,25 @@ func (c *MCPAppsConfig) Validate() error {
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return fmt.Errorf("mcp apps sandboxURL must be an absolute http(s) URL without query or fragment")
 		}
+		if parsed.User != nil {
+			return fmt.Errorf("mcp apps sandboxURL must not include userinfo")
+		}
 	}
 
 	listenAddr := strings.TrimSpace(c.SandboxListenAddress)
 	if listenAddr != "" {
-		_, port, err := net.SplitHostPort(listenAddr)
-		if err != nil || port == "" {
+		_, portStr, err := net.SplitHostPort(listenAddr)
+		if err != nil || portStr == "" {
 			return fmt.Errorf("mcp apps sandboxListenAddress must be a host:port (e.g. :8066)")
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("mcp apps sandboxListenAddress port must be numeric")
+		}
+		// Port 0 is rejected here: ephemeral binds are test-only via
+		// sandbox.NewServer(":0"), not admin configuration.
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("mcp apps sandboxListenAddress port must be between 1 and 65535")
 		}
 	}
 

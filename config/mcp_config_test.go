@@ -121,6 +121,36 @@ func TestMCPAppsConfigValidate(t *testing.T) {
 			cfg:     MCPAppsConfig{SandboxListenAddress: "not a port"},
 			wantErr: true,
 		},
+		{
+			name:    "listen port 0 rejected",
+			cfg:     MCPAppsConfig{SandboxListenAddress: ":0"},
+			wantErr: true,
+		},
+		{
+			name:    "listen port too high",
+			cfg:     MCPAppsConfig{SandboxListenAddress: ":99999"},
+			wantErr: true,
+		},
+		{
+			name:    "listen non-numeric port",
+			cfg:     MCPAppsConfig{SandboxListenAddress: ":abc"},
+			wantErr: true,
+		},
+		{
+			name:    "listen port 1 ok",
+			cfg:     MCPAppsConfig{SandboxListenAddress: ":1"},
+			wantErr: false,
+		},
+		{
+			name:    "listen port 65535 ok",
+			cfg:     MCPAppsConfig{SandboxListenAddress: ":65535"},
+			wantErr: false,
+		},
+		{
+			name:    "userinfo rejected",
+			cfg:     MCPAppsConfig{SandboxURL: "https://u:p@apps.example.com"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
