@@ -39,6 +39,7 @@ export type MCPServerConfig = {
 export type MCPEmbeddedServerConfig = {
     enabled: boolean;
     tool_configs?: MCPToolConfig[];
+    enableDemoApps?: boolean;
 };
 
 export type MCPConfig = {
