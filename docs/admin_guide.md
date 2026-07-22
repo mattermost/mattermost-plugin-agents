@@ -618,6 +618,105 @@ Dynamic loading applies to normal agent conversation turns. Bridge integrations 
 - **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools, and to add optional retrieval description overrides used by dynamic tool loading search
 - **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
 
+### MCP Apps (interactive tool UIs)
+
+MCP servers can ship interactive HTML UIs (the MCP Apps extension, `io.modelcontextprotocol/ui`) that render inside tool results. App content runs in a double-sandboxed iframe; the outer sandbox page **must** be served from a different browser origin than Mattermost so third-party app content can never touch the Mattermost session.
+
+#### Configuration fields
+
+Configure under **System Console → Plugins → Agents → MCP Servers** (the **MCP Apps** section). Stored keys:
+
+| Field | Config key | Description |
+|---|---|---|
+| Enable MCP Apps | `mcp.apps.enabled` | Master toggle for rendering interactive app UIs |
+| Sandbox Base URL | `mcp.apps.sandboxURL` | Externally reachable base URL (different origin than Site URL) that reverse-proxies the plugin's sandbox listener. The plugin appends `/sandbox.html` |
+| Sandbox Listener Address | `mcp.apps.sandboxListenAddress` | `host:port` the plugin binds (default `:8066`). Every cluster node binds this address |
+| Allow insecure same-origin sandbox | `mcp.apps.allowInsecureSameOriginSandbox` | Opt-in fallback that serves the sandbox from the Mattermost origin when no Sandbox Base URL is set. **Not recommended** |
+
+#### Security model
+
+| Mode | Origin | DNS / cert work | Isolation | Recommended for |
+|---|---|---|---|---|
+| Subdomain (secure) | `https://mm-apps.example.com` | New DNS record + cert (or wildcard) | Full | Production |
+| Second port (secure) | `https://mm.example.com:8443` | None — certs are hostname-bound, not port-bound | Full | Production without DNS control; caveat: some corporate egress firewalls block nonstandard ports |
+| Same-origin fallback (insecure, opt-in) | Mattermost's own origin | None | **None** — app content runs on the Mattermost origin | Trials/dev only; enabling is written to the server log with the acting admin's user ID |
+
+#### Reverse-proxy examples
+
+**nginx, subdomain** — set `sandboxURL` to `https://mm-apps.example.com`:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name mm-apps.example.com;
+    ssl_certificate     /etc/ssl/certs/mm-apps.example.com.crt;
+    ssl_certificate_key /etc/ssl/private/mm-apps.example.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8066;
+        proxy_http_version 1.1;
+    }
+}
+```
+
+**nginx, second port** (reuses the existing `mm.example.com` cert) — set `sandboxURL` to `https://mm.example.com:8443`:
+
+```nginx
+server {
+    listen 8443 ssl;
+    server_name mm.example.com;
+    ssl_certificate     /etc/ssl/certs/mm.example.com.crt;
+    ssl_certificate_key /etc/ssl/private/mm.example.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8066;
+        proxy_http_version 1.1;
+    }
+}
+```
+
+**HAProxy, subdomain** (SNI-routed on the shared `:443` frontend) — set `sandboxURL` to `https://mm-apps.example.com`:
+
+```haproxy
+frontend https-in
+    bind *:443 ssl crt /etc/haproxy/certs/
+    acl is_mcp_apps hdr(host) -i mm-apps.example.com
+    use_backend mcp_apps_sandbox if is_mcp_apps
+    default_backend mattermost
+
+backend mcp_apps_sandbox
+    server sandbox1 127.0.0.1:8066 check
+```
+
+**HAProxy, second port** — set `sandboxURL` to `https://mm.example.com:8443`:
+
+```haproxy
+frontend mcp-apps-in
+    bind *:8443 ssl crt /etc/haproxy/certs/mm.example.com.pem
+    default_backend mcp_apps_sandbox
+
+backend mcp_apps_sandbox
+    server sandbox1 127.0.0.1:8066 check
+```
+
+#### High availability
+
+Every cluster node runs the plugin and binds `sandboxListenAddress`. Sandbox content is static and identical across nodes, so the proxy backend may point at any node or all nodes (add each node as a `server` line / upstream member). Single-host multi-node development setups will hit a port conflict on the second node: the plugin logs an error and disables sandbox serving on that node only (log-and-disable); the rest of the plugin continues normally.
+
+#### Firewall caveat
+
+The second-port option requires the chosen port open on the load balancer **and** reachable from end-user networks. Some corporate egress policies allow only 443 — if app iframes time out after ~10 s for remote users but work in the office, suspect this. The listener itself speaks plain HTTP; TLS terminates at the proxy. Prefer binding `127.0.0.1:8066` when the proxy is co-located with Mattermost.
+
+#### Insecure same-origin fallback
+
+To enable for trials/dev: turn on **Enable MCP Apps**, leave **Sandbox Base URL** empty, and enable **Allow insecure same-origin sandbox**. No listener or reverse proxy is needed; the page is served from `/plugins/mattermost-ai/mcp/apps/sandbox` on the Mattermost origin.
+
+This forfeits browser origin isolation between third-party app content and Mattermost. Enabling it emits a server log line at Warn level:
+
+`MCP Apps: insecure same-origin sandbox fallback ENABLED`
+
+with `actor_user_id` set to the admin who saved the config.
+
 ### OAuth-backed MCP servers
 
 Some MCP servers require OAuth per Mattermost user. For those servers, the plugin exposes `needsOAuth` and `authURL` to the Agents webapp so the UI can show when authorization is required and where to begin the flow. The webapp starts OAuth through the plugin route `GET /plugins/mattermost-ai/mcp/oauth/<server name>/start` and can clear the current user's stored token with `DELETE /plugins/mattermost-ai/mcp/oauth/<server name>`.
