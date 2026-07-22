@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="color-scheme" content="light dark"/>
+  <title>MCP Apps Sandbox</title>
+  <style>
+    html, body { margin: 0; height: 100vh; width: 100vw; background: transparent; }
+    body { display: flex; flex-direction: column; }
+    iframe { border: 0; padding: 0; flex-grow: 1; background: transparent; color-scheme: inherit; }
+  </style>
+</head>
+<body>
+<script>
+  // MCP Apps sandbox proxy (io.modelcontextprotocol/ui, 2026-01-26).
+  // Adapted from ext-apps examples/basic-host/src/sandbox.ts. The allowed
+  // embedder origin is substituted server-side from plugin configuration:
+  // Mattermost serves Referrer-Policy: no-referrer, so document.referrer is
+  // empty here and referrer-based validation cannot work.
+  const ALLOWED_HOST_ORIGIN = {{.HostOriginJS}};
+
+  if (window.self === window.top) {
+    document.body.textContent = 'This page must be embedded as the MCP Apps sandbox iframe.';
+    throw new Error('sandbox page loaded top-level');
+  }
+
+  // Isolation self-test: window.top must be inaccessible from this frame.
+  try {
+    window.top.alert('sandbox breach');
+    throw 'FAIL';
+  } catch (e) {
+    if (e === 'FAIL') throw new Error('Sandbox is NOT isolated — window.top is reachable');
+  }
+
+  const PERMISSION_FEATURES = {
+    camera: 'camera',
+    microphone: 'microphone',
+    geolocation: 'geolocation',
+    clipboardWrite: 'clipboard-write',
+  };
+
+  const inner = document.createElement('iframe');
+  inner.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+  document.body.appendChild(inner);
+
+  window.addEventListener('message', (event) => {
+    if (event.source === window.parent) {
+      if (event.origin !== ALLOWED_HOST_ORIGIN) {
+        console.error('[mcp-apps-sandbox] rejected parent message from', event.origin);
+        return;
+      }
+      const data = event.data;
+      if (data && data.method === 'ui/notifications/sandbox-resource-ready') {
+        const {html, sandbox, permissions} = (data.params || {});
+        if (typeof sandbox === 'string') {
+          inner.setAttribute('sandbox', sandbox);
+        }
+        if (permissions && typeof permissions === 'object') {
+          const allow = Object.keys(PERMISSION_FEATURES).
+            filter((key) => permissions[key]).
+            map((key) => PERMISSION_FEATURES[key]).
+            join(' ');
+          if (allow) {
+            inner.setAttribute('allow', allow);
+          }
+        }
+        if (typeof html === 'string') {
+          const doc = inner.contentDocument;
+          doc.open();
+          doc.write(html);
+          doc.close();
+        }
+      } else if (inner.contentWindow) {
+        inner.contentWindow.postMessage(data, '*'); // host -> guest relay
+      }
+    } else if (event.source === inner.contentWindow) {
+      window.parent.postMessage(event.data, ALLOWED_HOST_ORIGIN); // guest -> host relay
+    }
+  });
+
+  window.parent.postMessage(
+    {jsonrpc: '2.0', method: 'ui/notifications/sandbox-proxy-ready', params: {}},
+    ALLOWED_HOST_ORIGIN,
+  );
+</script>
+</body>
+</html>
