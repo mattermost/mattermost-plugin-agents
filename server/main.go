@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -65,10 +64,7 @@ type Plugin struct {
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
 	telemetryEndpoint    string
-	sandboxMu            sync.Mutex
-	sandboxServer        *sandbox.Server
-	sandboxAddr          string
-	sandboxHostOrigin    string
+	sandboxManager       *sandbox.Manager
 	store                *store.Store
 	configMigrated       bool
 }
@@ -186,7 +182,7 @@ func (p *Plugin) OnActivate() error {
 		}
 
 		// Write to DB (first entry in config history)
-		if saveErr := p.store.SaveConfig(finalCfg); saveErr != nil {
+		if _, saveErr := p.store.SaveConfig(finalCfg); saveErr != nil {
 			mtx2.Unlock()
 			return fmt.Errorf("failed to save migrated config to database: %w", saveErr)
 		}
@@ -496,8 +492,19 @@ func (p *Plugin) OnActivate() error {
 
 	// Start (or stop) the MCP Apps sandbox listener from config and re-apply
 	// on every config change so port/URL changes do not need a plugin restart.
-	p.applySandboxConfig()
-	p.configuration.RegisterUpdateListener(p.applySandboxConfig)
+	p.sandboxManager = sandbox.NewManager(
+		func() (config.MCPAppsConfig, string) {
+			siteURL := ""
+			if s := p.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL; s != nil {
+				siteURL = *s
+			}
+			return p.configuration.MCP().Apps, siteURL
+		},
+		&pluginLogger{service: &p.pluginAPI.Log},
+		nil,
+	)
+	p.sandboxManager.ApplyCurrent()
+	p.configuration.RegisterUpdateListener(p.sandboxManager.ApplyCurrent)
 
 	// Keep only what we need
 	p.apiService = apiService
@@ -521,75 +528,14 @@ func (p *Plugin) OnDeactivate() error {
 	}
 	p.telemetryMu.Unlock()
 
-	p.sandboxMu.Lock()
-	if p.sandboxServer != nil {
-		if err := p.sandboxServer.Shutdown(); err != nil {
-			p.pluginAPI.Log.Error("Failed to shutdown MCP Apps sandbox server", "error", err)
-		}
-		p.sandboxServer = nil
+	if p.sandboxManager != nil {
+		p.sandboxManager.Close()
 	}
-	p.sandboxMu.Unlock()
 
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
 
 	return nil
-}
-
-// applySandboxConfig (re)starts or stops the MCP Apps sandbox listener from
-// the current plugin configuration. Safe to call repeatedly: no-op when the
-// desired listen address and host origin match what is already running.
-// Listen failures (e.g. port conflicts) are logged and leave sandbox serving
-// disabled on this node rather than failing activation (log-and-disable).
-func (p *Plugin) applySandboxConfig() {
-	apps := p.configuration.MCP().Apps
-
-	siteURL := ""
-	if s := p.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL; s != nil {
-		siteURL = *s
-	}
-
-	addr, hostOrigin, enabled, err := sandbox.ListenSpecFromConfig(apps, siteURL)
-	if err != nil {
-		p.pluginAPI.Log.Error("MCP Apps sandbox: cannot derive host origin from Site URL; sandbox server disabled", "error", err)
-		enabled = false
-	}
-
-	p.sandboxMu.Lock()
-	defer p.sandboxMu.Unlock()
-
-	if enabled && p.sandboxServer != nil && p.sandboxAddr == addr && p.sandboxHostOrigin == hostOrigin {
-		return
-	}
-
-	if p.sandboxServer != nil {
-		if shutdownErr := p.sandboxServer.Shutdown(); shutdownErr != nil {
-			p.pluginAPI.Log.Warn("MCP Apps sandbox: error shutting down previous server", "error", shutdownErr)
-		}
-		p.sandboxServer = nil
-		p.sandboxAddr = ""
-		p.sandboxHostOrigin = ""
-	}
-
-	if !enabled {
-		return
-	}
-
-	server, err := sandbox.NewServer(addr, hostOrigin, &pluginLogger{service: &p.pluginAPI.Log})
-	if err != nil {
-		p.pluginAPI.Log.Error("MCP Apps sandbox: failed to start listener; apps sandbox serving is disabled on this node until the configuration changes", "listen_address", addr, "error", err)
-		return
-	}
-	p.sandboxServer = server
-	p.sandboxAddr = addr
-	p.sandboxHostOrigin = hostOrigin
-
-	go func() {
-		if runErr := server.Run(); runErr != nil && !errors.Is(runErr, http.ErrServerClosed) {
-			p.pluginAPI.Log.Error("MCP Apps sandbox server exited", "error", runErr)
-		}
-	}()
-	p.pluginAPI.Log.Info("MCP Apps sandbox server listening", "listen_address", server.Addr(), "host_origin", hostOrigin)
 }
 
 // applyTelemetryConfig (re)initializes the global OpenTelemetry TracerProvider

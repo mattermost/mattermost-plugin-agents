@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -32,7 +31,8 @@ type Server struct {
 // NewServer binds listenAddr immediately so port conflicts surface
 // synchronously (P3: callers log-and-disable instead of failing plugin
 // activation). The returned server serves exactly GET /sandbox.html
-// (templated for hostOrigin, CSP from ?csp=) and 404s everything else.
+// (templated for hostOrigin with strict origin-isolation self-test, CSP
+// from ?csp=) and 404s everything else.
 func NewServer(listenAddr, hostOrigin string, logger Logger) (*Server, error) {
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -44,7 +44,7 @@ func NewServer(listenAddr, hostOrigin string, logger Logger) (*Server, error) {
 			http.NotFound(w, r)
 			return
 		}
-		ServePage(w, r, hostOrigin, logger)
+		ServePage(w, r, hostOrigin, PageModeExternal, logger)
 	})
 
 	return &Server{
@@ -78,38 +78,16 @@ func (s *Server) Shutdown() error {
 }
 
 // ListenSpecFromConfig resolves whether this node should run the sandbox
-// listener and with what parameters. enabled is false when apps are off or
-// no external SandboxURL is configured (the insecure same-origin mode
-// serves from the plugin route and needs no listener, P10).
+// listener and with what parameters. Delegates to Resolve (canonical
+// effective-sandbox source of truth).
 func ListenSpecFromConfig(apps config.MCPAppsConfig, siteURL string) (addr, hostOrigin string, enabled bool, err error) {
-	enabled = apps.Enabled && strings.TrimSpace(apps.SandboxURL) != ""
-	if !enabled {
-		return "", "", false, nil
+	resolved := Resolve(apps, siteURL)
+	if resolved.Mode == ModeOff &&
+		apps.Enabled &&
+		strings.TrimSpace(apps.SandboxURL) != "" &&
+		resolved.DisabledReason == DisabledReasonNoSandboxOrigin {
+		return "", "", false, fmt.Errorf("cannot derive host origin from Site URL")
 	}
-
-	addr = strings.TrimSpace(apps.SandboxListenAddress)
-	if addr == "" {
-		addr = config.DefaultMCPAppsSandboxListenAddress
-	}
-
-	hostOrigin, err = originFromSiteURL(siteURL)
-	if err != nil {
-		return "", "", false, err
-	}
-	return addr, hostOrigin, true, nil
-}
-
-func originFromSiteURL(siteURL string) (string, error) {
-	siteURL = strings.TrimSpace(siteURL)
-	if siteURL == "" {
-		return "", fmt.Errorf("site URL is empty")
-	}
-	parsed, err := url.Parse(siteURL)
-	if err != nil {
-		return "", fmt.Errorf("invalid site URL: %w", err)
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("site URL must include scheme and host")
-	}
-	return parsed.Scheme + "://" + parsed.Host, nil
+	addr, hostOrigin, enabled = ListenSpecFromResolved(resolved)
+	return addr, hostOrigin, enabled, nil
 }
