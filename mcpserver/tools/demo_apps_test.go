@@ -42,11 +42,11 @@ func TestToolPreviewPost(t *testing.T) {
 	missingID := model.NewId()
 
 	tests := []struct {
-		name      string
-		args      PreviewPostArgs
-		wantErr   string
-		wantMsgs  []string
-		setupMux  func(mux *http.ServeMux)
+		name     string
+		args     PreviewPostArgs
+		wantErr  string
+		wantMsgs []string
+		setupMux func(mux *http.ServeMux)
 	}{
 		{
 			name: "post found returns JSON with message and username",

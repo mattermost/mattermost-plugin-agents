@@ -67,6 +67,8 @@ interface ToolApprovalSetProps {
     canExpand: boolean;
     showArguments: boolean;
     showResults: boolean;
+    requesterUserID?: string;
+    appsEligible?: boolean;
 }
 
 // Define a type for tool decisions
@@ -347,6 +349,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         showResults={props.showResults}
                         approvalStage={props.approvalStage}
                         isAutoApproved={tool.status === ToolCallStatus.AutoApproved}
+                        requesterUserID={props.requesterUserID}
+                        appsEligible={props.appsEligible}
                     />
                 );
             })}
