@@ -14,22 +14,32 @@
 <script>
   // MCP Apps sandbox proxy (io.modelcontextprotocol/ui, 2026-01-26).
   // Adapted from ext-apps examples/basic-host/src/sandbox.ts. The allowed
-  // embedder origin is substituted server-side from plugin configuration:
-  // Mattermost serves Referrer-Policy: no-referrer, so document.referrer is
-  // empty here and referrer-based validation cannot work.
+  // embedder origin and isolation mode are substituted server-side from
+  // plugin configuration (never from the request): Mattermost serves
+  // Referrer-Policy: no-referrer, so document.referrer is empty here.
   const ALLOWED_HOST_ORIGIN = {{.HostOriginJS}};
+  const REQUIRE_ORIGIN_ISOLATION = {{.RequireOriginIsolation}};
 
   if (window.self === window.top) {
     document.body.textContent = 'This page must be embedded as the MCP Apps sandbox iframe.';
     throw new Error('sandbox page loaded top-level');
   }
 
-  // Isolation self-test: window.top must be inaccessible from this frame.
-  try {
-    window.top.alert('sandbox breach');
-    throw 'FAIL';
-  } catch (e) {
-    if (e === 'FAIL') throw new Error('Sandbox is NOT isolated — window.top is reachable');
+  if (REQUIRE_ORIGIN_ISOLATION) {
+    // Isolation self-test: window.top must be inaccessible from this frame
+    // when served from an external origin.
+    try {
+      window.top.alert('sandbox breach');
+      throw 'FAIL';
+    } catch (e) {
+      if (e === 'FAIL') throw new Error('Sandbox is NOT isolated — window.top is reachable');
+    }
+  } else {
+    // Same-origin fallback (explicit admin opt-in): AppFrame loads this page
+    // with allow-same-origin on the Mattermost origin, so window.top is
+    // reachable by design. Skipping the strict self-test is required for
+    // sandbox-proxy-ready to fire.
+    console.warn('[mcp-apps-sandbox] same-origin fallback mode: origin isolation self-test skipped');
   }
 
   const PERMISSION_FEATURES = {
@@ -38,6 +48,8 @@
     geolocation: 'geolocation',
     clipboardWrite: 'clipboard-write',
   };
+
+  const OWN_ORIGIN = window.location.origin;
 
   const inner = document.createElement('iframe');
   inner.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
@@ -56,10 +68,12 @@
           inner.setAttribute('sandbox', sandbox);
         }
         if (permissions && typeof permissions === 'object') {
+          // Permissions-Policy iframe allow attribute: semicolon-delimited
+          // (matches @mcp-ui/client buildAllowAttribute).
           const allow = Object.keys(PERMISSION_FEATURES).
             filter((key) => permissions[key]).
             map((key) => PERMISSION_FEATURES[key]).
-            join(' ');
+            join('; ');
           if (allow) {
             inner.setAttribute('allow', allow);
           }
@@ -74,6 +88,13 @@
         inner.contentWindow.postMessage(data, '*'); // host -> guest relay
       }
     } else if (event.source === inner.contentWindow) {
+      // Guest content is document.write'd into about:blank with
+      // allow-same-origin, so it inherits this page's origin. Reject
+      // unexpected origins the way the reference proxy does.
+      if (event.origin !== OWN_ORIGIN) {
+        console.error('[mcp-apps-sandbox] rejected guest message from', event.origin);
+        return;
+      }
       window.parent.postMessage(event.data, ALLOWED_HOST_ORIGIN); // guest -> host relay
     }
   });
