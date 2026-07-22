@@ -1,4 +1,4 @@
-import {test, expect, request} from '@playwright/test';
+import {test, expect, request, type Locator, type Page} from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {
@@ -20,6 +20,21 @@ import {AgentAPIHelper} from 'helpers/agent-api';
 
 /** Matches mcp.EmbeddedClientKey — MCP server origin for the embedded Mattermost tools server. */
 const embeddedMattermostOrigin = 'embedded://mattermost';
+
+async function waitForSentPost(page: Page, message: string, timeout = 30000): Promise<Locator> {
+    const post = page.locator('.post', {hasText: message}).last();
+    await expect(post).toBeVisible({timeout});
+    return post;
+}
+
+async function openThreadForPost(post: Locator, timeout = 30000): Promise<void> {
+    const replyIndicator = post.getByText(/\d+ repl/i);
+    await expect(replyIndicator).toBeVisible({timeout});
+    await replyIndicator.click();
+    const rhs = post.page().locator('#rhsContainer');
+    await rhs.waitFor({state: 'visible', timeout: 10000});
+    await rhs.locator('[data-testid="llm-bot-post"]').first().waitFor({state: 'visible', timeout: 10000});
+}
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
@@ -77,6 +92,7 @@ test.describe('MCP Apps demo app', () => {
 
         const agent = await agentApi.createTestAgent(token, {
             displayName: 'Preview App Agent',
+            username: 'previewappagent',
             serviceID: mockServiceId,
             autoEnableNewMCPTools: false,
             enabledMCPTools: [{server_origin: embeddedMattermostOrigin, tool_name: 'preview_post'}],
@@ -88,7 +104,8 @@ test.describe('MCP Apps demo app', () => {
             message: `MCP Apps demo seeded post ${Date.now()}`,
         });
 
-        const agentSystemPrompt = `You are called ${agent.displayName} with the username ${agent.name}`;
+        const toolCallId = 'call_preview_post_demo';
+        const agentSystemPrompt = 'You are called Preview App Agent with the username previewappagent';
         await openAIMock.addMocks([
             buildChatCompletionMockRule(buildTextResponse('Preview app title'), {
                 bodyContains:
@@ -97,7 +114,7 @@ test.describe('MCP Apps demo app', () => {
             }),
             buildChatCompletionMockRule(
                 buildToolCallResponse(
-                    'call_preview_post_demo',
+                    toolCallId,
                     'preview_post',
                     JSON.stringify({post_id: seededPost.id}),
                 ),
@@ -107,7 +124,7 @@ test.describe('MCP Apps demo app', () => {
                 },
             ),
             buildChatCompletionMockRule(buildTextResponse('The post preview is shown above.'), {
-                bodyContains: 'call_preview_post_demo',
+                bodyContains: toolCallId,
                 times: 1,
             }),
         ]);
@@ -121,14 +138,19 @@ test.describe('MCP Apps demo app', () => {
             agent.name,
         );
 
-        await mmPage.sendChannelMessage(
-            `Use the preview_post tool to preview post ${seededPost.id}. Call the tool now.`,
-        );
+        const promptMessage = `Use the preview_post tool to preview post ${seededPost.id}. Call the tool now.`;
+        await mmPage.sendChannelMessage(promptMessage);
 
-        await expect(page.getByText('The post preview is shown above.')).toBeVisible({timeout: 60000});
+        // Agent DM replies land in a CRT thread; open it to assert on the llmbot post body.
+        const sentPost = await waitForSentPost(page, promptMessage);
+        await openThreadForPost(sentPost, 60000);
 
-        await expect(page.getByTestId('mcp-app-view')).toBeVisible({timeout: 30000});
-        const outer = page.frameLocator('iframe[src*="/plugins/mattermost-ai/mcp/apps/sandbox"]');
+        const rhs = page.locator('#rhsContainer');
+        const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+        await expect(botPost.getByText('The post preview is shown above.')).toBeVisible({timeout: 60000});
+
+        await expect(botPost.getByTestId('mcp-app-view')).toBeVisible({timeout: 30000});
+        const outer = botPost.frameLocator('iframe[src*="/plugins/mattermost-ai/mcp/apps/sandbox"]');
         const inner = outer.frameLocator('iframe');
         await expect(inner.getByTestId('preview-post-message')).toContainText('MCP Apps demo seeded post', {timeout: 30000});
         await expect(inner.getByTestId('preview-post-raw')).not.toBeVisible();

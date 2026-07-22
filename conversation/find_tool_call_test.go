@@ -95,4 +95,42 @@ func TestFindToolCallBlocksPostAnchored(t *testing.T) {
 		_, _, err := FindToolCallBlocks(turns, postA, "missing")
 		require.ErrorIs(t, err, ErrToolCallNotFound)
 	})
+
+	t.Run("preceding WriteToolTurns rounds without PostID are in span", func(t *testing.T) {
+		// Auto-approved tools are persisted by WriteToolTurns before the
+		// final stream turn receives PostID (see streaming finalize).
+		botPost := "postc23456789012345678901c"
+		autoTurns := []store.Turn{
+			{
+				ID: "u1", Role: "user", Sequence: 1,
+				Content: mustBlocks([]ContentBlock{{Type: BlockTypeText, Text: "preview please"}}),
+			},
+			{
+				ID: "a1", Role: "assistant", Sequence: 2,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolUse, ID: "auto1", Name: "preview_post",
+					ServerOrigin: "embedded://mattermost", Shared: BoolPtr(true), UIMeta: uiMeta,
+				}}),
+			},
+			{
+				ID: "r1", Role: "tool_result", Sequence: 3,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeToolResult, ToolUseID: "auto1", Content: `{"message":"hi"}`,
+					Shared: BoolPtr(true),
+				}}),
+			},
+			{
+				ID: "a2", PostID: &botPost, Role: "assistant", Sequence: 4,
+				Content: mustBlocks([]ContentBlock{{
+					Type: BlockTypeText, Text: "The post preview is shown above.",
+				}}),
+			},
+		}
+		toolUse, toolResult, err := FindToolCallBlocks(autoTurns, botPost, "auto1")
+		require.NoError(t, err)
+		require.NotNil(t, toolUse)
+		require.Equal(t, uiMeta, toolUse.UIMeta)
+		require.NotNil(t, toolResult)
+		require.Equal(t, `{"message":"hi"}`, toolResult.Content)
+	})
 }
