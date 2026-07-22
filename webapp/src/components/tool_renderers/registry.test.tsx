@@ -137,6 +137,21 @@ describe('renderToolCall routing', () => {
         expect(screen.queryByText('post-preview-box')).toBeNull();
     });
 
+    test('an executed read_post renders generically — no preview, no post fetch', () => {
+        renderTool(makeTool({
+            name: 'mattermost__read_post',
+            mcp_bare_name: 'read_post',
+            server_origin: 'embedded://mattermost',
+            status: ToolCallStatus.Success,
+            arguments: {post_id: 'p1'},
+            result: 'post content',
+        }));
+
+        expect(mockGetPost).not.toHaveBeenCalled();
+        expect(screen.queryByText('post-preview-box')).toBeNull();
+        expect(screen.getByText('Post Id')).not.toBeNull();
+    });
+
     test('a read_post-named tool from an EXTERNAL server does not get the preview card', () => {
         renderTool(makeTool({
             name: 'jira__read_post',

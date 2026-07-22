@@ -6,7 +6,7 @@ import styled from 'styled-components';
 
 import {getPost} from '@/client';
 
-import {ToolCall} from '../tool_types';
+import {ToolCall, ToolCallStatus} from '../tool_types';
 import ToolCard from '../tool_card';
 import ToolArguments from '../tool_arguments';
 import {PostPreview} from '../post_preview';
@@ -39,14 +39,17 @@ interface FetchedPost {
 }
 
 /**
- * Card for read_post: shows the referenced post as a Mattermost permalink-style
- * preview so the user sees what the tool will actually read. Falls back to the
- * generic card when the arguments don't parse or the post can't be fetched
- * (e.g. deleted or inaccessible).
+ * Card for read_post: while the call awaits approval, shows the referenced
+ * post as a Mattermost permalink-style preview so the user sees what the tool
+ * will actually read. Falls back to the generic card when the call has already
+ * executed (the response carries the content, and a preview would re-render
+ * the post's markdown next to the deliberately-unrendered result), when the
+ * arguments don't parse, or when the post can't be fetched.
  */
 const PostPreviewCard: React.FC<RichCardProps> = (props) => {
     const parsed = parseReadPost(props.tool.arguments);
-    const postId = parsed?.postId;
+    const isAwaitingDecision = props.tool.status === ToolCallStatus.Pending || props.tool.status === ToolCallStatus.Accepted;
+    const postId = isAwaitingDecision ? parsed?.postId : undefined; // eslint-disable-line no-undefined
 
     const [post, setPost] = useState<FetchedPost | null>(null);
     const [failed, setFailed] = useState(false);
@@ -69,7 +72,7 @@ const PostPreviewCard: React.FC<RichCardProps> = (props) => {
         };
     }, [postId]);
 
-    if (!parsed || failed) {
+    if (!parsed || failed || !isAwaitingDecision) {
         return <ToolCard {...props}/>;
     }
 
