@@ -66,12 +66,36 @@ func TestParseToolUIMeta(t *testing.T) {
 			want: &llm.ToolUIMeta{ResourceURI: "ui://nested"},
 		},
 		{
+			name: "nested visibility plus flat URI",
+			meta: map[string]any{
+				"ui":             map[string]any{"visibility": []any{"model", "app"}},
+				"ui/resourceUri": "ui://flat",
+			},
+			want: &llm.ToolUIMeta{ResourceURI: "ui://flat", Visibility: []string{"model", "app"}},
+		},
+		{
+			name: "malformed nested URI plus flat URI",
+			meta: map[string]any{
+				"ui":             map[string]any{"resourceUri": 42, "visibility": []any{"app"}},
+				"ui/resourceUri": "ui://flat",
+			},
+			want: &llm.ToolUIMeta{ResourceURI: "ui://flat", Visibility: []string{"app"}},
+		},
+		{
+			name: "empty nested URI falls back to flat",
+			meta: map[string]any{
+				"ui":             map[string]any{"resourceUri": "", "visibility": []any{"app"}},
+				"ui/resourceUri": "ui://flat",
+			},
+			want: &llm.ToolUIMeta{ResourceURI: "ui://flat", Visibility: []string{"app"}},
+		},
+		{
 			name: "ui not a map",
 			meta: map[string]any{"ui": "junk"},
 			want: nil,
 		},
 		{
-			name: "resourceUri not a string",
+			name: "resourceUri not a string without flat fallback",
 			meta: map[string]any{
 				"ui": map[string]any{"resourceUri": 42},
 			},
@@ -224,6 +248,8 @@ func TestIsUIResourceMIMEType(t *testing.T) {
 		{name: "type and param name case", mimeType: "TEXT/HTML;PROFILE=mcp-app", want: true},
 		// Parameter values are case-sensitive per RFC 2045.
 		{name: "param value case", mimeType: "text/html;profile=MCP-APP", want: false},
+		// Extra parameters (e.g. charset) are ALLOWED; only type+profile matter.
+		{name: "extra charset param allowed", mimeType: "text/html;profile=mcp-app;charset=utf-8", want: true},
 		{name: "no profile", mimeType: "text/html", want: false},
 		{name: "wrong profile", mimeType: "text/html;profile=other", want: false},
 		{name: "wrong type", mimeType: "application/json", want: false},

@@ -5,7 +5,10 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"mime"
+	"net/url"
+	"unicode"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -49,15 +52,17 @@ func uiClientOptions() *mcp.ClientOptions {
 // parseToolUIMeta extracts MCP Apps tool metadata from a tool's _meta map.
 // The canonical nested form (_meta.ui.resourceUri / _meta.ui.visibility) is
 // preferred; the deprecated flat _meta["ui/resourceUri"] is accepted as a
-// fallback because current real-world servers still emit it (spec deprecates
-// it "before GA"). Returns nil when the tool declares no UI.
+// fallback for ResourceURI when the nested form lacks a valid resourceUri
+// (spec deprecates the flat key "before GA"). Nested visibility is kept when
+// present even if the URI comes from the flat key. Returns nil when the tool
+// declares no UI.
 func parseToolUIMeta(meta map[string]any) *llm.ToolUIMeta {
 	if len(meta) == 0 {
 		return nil
 	}
 
+	out := &llm.ToolUIMeta{}
 	if ui, ok := meta["ui"].(map[string]any); ok {
-		out := &llm.ToolUIMeta{}
 		if s, ok := ui["resourceUri"].(string); ok {
 			out.ResourceURI = s
 		}
@@ -68,15 +73,38 @@ func parseToolUIMeta(meta map[string]any) *llm.ToolUIMeta {
 				}
 			}
 		}
-		if out.ResourceURI != "" || len(out.Visibility) > 0 {
-			return out
+	}
+
+	if out.ResourceURI == "" {
+		if s, ok := meta[legacyToolUIResourceURIKey].(string); ok && s != "" {
+			out.ResourceURI = s
 		}
 	}
 
-	if s, ok := meta[legacyToolUIResourceURIKey].(string); ok && s != "" {
-		return &llm.ToolUIMeta{ResourceURI: s}
+	if out.ResourceURI == "" && len(out.Visibility) == 0 {
+		return nil
 	}
+	return out
+}
 
+// validateUIResourceURI reports whether uri is a well-formed ui:// URI without
+// control characters. Valid Unicode in the path/host is preserved.
+func validateUIResourceURI(uri string) error {
+	if uri == "" {
+		return &InvalidAppResourceError{URI: uri, Reason: "empty URI"}
+	}
+	for _, r := range uri {
+		if r < 0x20 || r == 0x7f || unicode.IsControl(r) {
+			return &InvalidAppResourceError{URI: uri, Reason: "URI contains control characters"}
+		}
+	}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return &InvalidAppResourceError{URI: uri, Reason: fmt.Sprintf("invalid URI: %v", err)}
+	}
+	if u.Scheme != "ui" {
+		return &InvalidAppResourceError{URI: uri, Reason: "URI scheme must be ui"}
+	}
 	return nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -16,18 +17,31 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const (
+	// MaxAppResourceBytes is the maximum accepted size of a ui:// app HTML body.
+	MaxAppResourceBytes = 4 << 20 // 4 MiB
+)
+
 // ErrServerNotConnected is returned when the user has no live session to the
 // requested MCP server and none could be established without user action.
 var ErrServerNotConnected = errors.New("no connected MCP client for server")
+
+// ErrServerNotConfigured is returned when the normalized origin matches no
+// currently enabled remote, plugin, or embedded MCP server.
+var ErrServerNotConfigured = errors.New("MCP server is not configured")
 
 // InvalidAppResourceError is returned when a ui:// resource is served with a
 // MIME type other than text/html;profile=mcp-app, or with no content.
 type InvalidAppResourceError struct {
 	URI      string
 	MIMEType string
+	Reason   string
 }
 
 func (e *InvalidAppResourceError) Error() string {
+	if e.Reason != "" {
+		return fmt.Sprintf("resource %s is not a valid MCP App resource: %s", e.URI, e.Reason)
+	}
 	return fmt.Sprintf("resource %s is not a valid MCP App resource (mimeType %q)", e.URI, e.MIMEType)
 }
 
@@ -45,6 +59,49 @@ type AppResource struct {
 	UIMeta *AppResourceUIMeta `json:"ui_meta,omitempty"`
 }
 
+type resolvedMCPOrigin struct {
+	kind       string // "remote", "embedded", "plugin"
+	serverID   string
+	remote     ServerConfig
+	plugin     PluginServerConfig
+	normalized string
+}
+
+// resolveEnabledOrigin maps a server origin to an enabled remote/plugin/embedded
+// target. Returns ErrServerNotConfigured when no enabled match exists.
+func (m *ClientManager) resolveEnabledOrigin(serverOrigin string) (*resolvedMCPOrigin, error) {
+	normalized := llm.NormalizeMCPServerOrigin(serverOrigin)
+	if normalized == "" {
+		return nil, ErrServerNotConfigured
+	}
+
+	if normalized == llm.NormalizeMCPServerOrigin(EmbeddedClientKey) {
+		if m.embeddedClient == nil || !m.config.EmbeddedServer.Enabled {
+			return nil, ErrServerNotConfigured
+		}
+		return &resolvedMCPOrigin{kind: "embedded", serverID: EmbeddedClientKey, normalized: normalized}, nil
+	}
+
+	if strings.HasPrefix(normalized, "plugin://") {
+		for _, cfg := range m.snapshotEnabledPluginServers() {
+			if llm.NormalizeMCPServerOrigin("plugin://"+cfg.PluginID) == normalized {
+				return &resolvedMCPOrigin{kind: "plugin", serverID: "plugin://" + cfg.PluginID, plugin: cfg, normalized: normalized}, nil
+			}
+		}
+		return nil, ErrServerNotConfigured
+	}
+
+	for _, server := range m.config.Servers {
+		if !server.Enabled || server.BaseURL == "" {
+			continue
+		}
+		if llm.NormalizeMCPServerOrigin(server.BaseURL) == normalized {
+			return &resolvedMCPOrigin{kind: "remote", serverID: server.Name, remote: server, normalized: normalized}, nil
+		}
+	}
+	return nil, ErrServerNotConfigured
+}
+
 // ReadAppResource fetches a ui:// resource from this MCP server via
 // resources/read, validates the MCP Apps MIME profile, and returns the HTML
 // plus the resource's _meta.ui. It reuses the client's existing session and
@@ -58,6 +115,12 @@ func (c *Client) ReadAppResource(ctx context.Context, uri string) (*AppResource,
 	)
 	defer span.End()
 
+	if err := validateUIResourceURI(uri); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
 	session := c.currentSession()
 	if session == nil {
 		err := fmt.Errorf("MCP client not connected")
@@ -68,27 +131,33 @@ func (c *Client) ReadAppResource(ctx context.Context, uri string) (*AppResource,
 
 	result, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
 	if err != nil {
-		if !errors.Is(err, mcp.ErrConnectionClosed) {
-			err = fmt.Errorf("failed to read resource %s on server %s: %w", uri, c.config.Name, err)
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return nil, err
+		if errors.Is(err, mcp.ErrConnectionClosed) {
+			if reconnectErr := c.reconnect(ctx, session); reconnectErr != nil {
+				if oauthErr := c.oauthNeededError(reconnectErr); oauthErr != nil {
+					span.RecordError(oauthErr)
+					span.SetStatus(codes.Error, oauthErr.Error())
+					return nil, oauthErr
+				}
+				span.RecordError(reconnectErr)
+				span.SetStatus(codes.Error, reconnectErr.Error())
+				return nil, reconnectErr
+			}
+			session = c.currentSession()
+			if session == nil {
+				err = fmt.Errorf("MCP client not connected after reconnecting")
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return nil, err
+			}
+			result, err = session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
 		}
-		if reconnectErr := c.reconnect(ctx, session); reconnectErr != nil {
-			span.RecordError(reconnectErr)
-			span.SetStatus(codes.Error, reconnectErr.Error())
-			return nil, reconnectErr
-		}
-		session = c.currentSession()
-		if session == nil {
-			err = fmt.Errorf("MCP client not connected after reconnecting")
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return nil, err
-		}
-		result, err = session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
 		if err != nil {
-			err = fmt.Errorf("failed to read resource %s on server %s after reconnecting: %w", uri, c.config.Name, err)
+			if oauthErr := c.oauthNeededError(err); oauthErr != nil {
+				span.RecordError(oauthErr)
+				span.SetStatus(codes.Error, oauthErr.Error())
+				return nil, oauthErr
+			}
+			err = fmt.Errorf("failed to read resource %s on server %s: %w", uri, c.config.Name, err)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
@@ -106,7 +175,7 @@ func (c *Client) ReadAppResource(ctx context.Context, uri string) (*AppResource,
 
 func appResourceFromReadResult(uri string, result *mcp.ReadResourceResult) (*AppResource, error) {
 	if result == nil || len(result.Contents) == 0 {
-		return nil, &InvalidAppResourceError{URI: uri}
+		return nil, &InvalidAppResourceError{URI: uri, Reason: "empty contents"}
 	}
 
 	var contents *mcp.ResourceContents
@@ -117,10 +186,7 @@ func appResourceFromReadResult(uri string, result *mcp.ReadResourceResult) (*App
 		}
 	}
 	if contents == nil {
-		contents = result.Contents[0]
-	}
-	if contents == nil {
-		return nil, &InvalidAppResourceError{URI: uri}
+		return nil, &InvalidAppResourceError{URI: uri, Reason: "no content with matching URI"}
 	}
 
 	if !IsUIResourceMIMEType(contents.MIMEType) {
@@ -129,10 +195,19 @@ func appResourceFromReadResult(uri string, result *mcp.ReadResourceResult) (*App
 
 	html := contents.Text
 	if html == "" && len(contents.Blob) > 0 {
+		if !utf8.Valid(contents.Blob) {
+			return nil, &InvalidAppResourceError{URI: uri, Reason: "invalid UTF-8 blob"}
+		}
 		html = string(contents.Blob)
 	}
 	if html == "" {
-		return nil, &InvalidAppResourceError{URI: uri, MIMEType: contents.MIMEType}
+		return nil, &InvalidAppResourceError{URI: uri, MIMEType: contents.MIMEType, Reason: "empty body"}
+	}
+	if !utf8.ValidString(html) {
+		return nil, &InvalidAppResourceError{URI: uri, Reason: "invalid UTF-8 text"}
+	}
+	if len(html) > MaxAppResourceBytes {
+		return nil, &InvalidAppResourceError{URI: uri, Reason: "resource exceeds size limit"}
 	}
 
 	return &AppResource{
@@ -150,34 +225,48 @@ func (c *UserClients) ReadAppResource(ctx context.Context, serverOrigin, uri str
 	normalized := llm.NormalizeMCPServerOrigin(serverOrigin)
 	for _, entry := range c.snapshotClients() {
 		if llm.NormalizeMCPServerOrigin(entry.client.config.BaseURL) == normalized {
-			return entry.client.ReadAppResource(ctx, uri)
+			res, err := entry.client.ReadAppResource(ctx, uri)
+			if err != nil {
+				c.rememberOAuthNeededForToolCall(entry.client, err)
+			}
+			return res, err
 		}
 	}
 	return nil, ErrServerNotConnected
 }
 
 // ReadUserAppResource fetches a ui:// resource for a user from the MCP server
-// identified by serverOrigin, establishing the user's client set on demand
-// (same connect strategy as GetToolsForUser: cached remote clients, embedded
-// session, plugin servers). Returns *OAuthNeededError when the user must
-// complete OAuth with that server first, and ErrServerNotConnected when the
-// server is unreachable for this user for any other reason.
+// identified by serverOrigin. It connects only that enabled origin into the
+// per-user client set (lazy, targeted) — unlike GetToolsForUser, it does not
+// fan out to every configured server. Returns ErrServerNotConfigured when the
+// origin is unknown or disabled, *OAuthNeededError when the user must complete
+// OAuth first, and ErrServerNotConnected when the server is otherwise unreachable.
 func (m *ClientManager) ReadUserAppResource(ctx context.Context, userID, serverOrigin, uri string) (*AppResource, error) {
-	userClient, mcpErrors := m.getClientForUser(ctx, userID)
-	normalized := llm.NormalizeMCPServerOrigin(serverOrigin)
-
-	if normalized == llm.NormalizeMCPServerOrigin(EmbeddedClientKey) {
-		m.connectEmbeddedForUser(ctx, userClient, userID)
+	target, err := m.resolveEnabledOrigin(serverOrigin)
+	if err != nil {
+		return nil, err
 	}
 
-	if strings.HasPrefix(normalized, "plugin://") {
-		for _, cfg := range m.snapshotEnabledPluginServers() {
-			if llm.NormalizeMCPServerOrigin("plugin://"+cfg.PluginID) == normalized {
-				if connectErr := userClient.ConnectToPluginServer(ctx, cfg, m.sourcePluginAPI); connectErr != nil {
-					m.log.Error("Failed to connect to plugin MCP server for app resource", "userID", userID, "pluginID", cfg.PluginID, "error", connectErr)
-				}
-				break
+	userClient := m.getOrCreateUserClientsShell(userID)
+
+	switch target.kind {
+	case "embedded":
+		m.connectEmbeddedForUser(ctx, userClient, userID)
+	case "plugin":
+		if connectErr := userClient.ConnectToPluginServer(ctx, target.plugin, m.sourcePluginAPI); connectErr != nil {
+			m.log.Error("Failed to connect to plugin MCP server for app resource",
+				"userID", userID, "pluginID", target.plugin.PluginID, "error", connectErr)
+			return nil, fmt.Errorf("%w: %v", ErrServerNotConnected, connectErr)
+		}
+	case "remote":
+		if connectErr := userClient.ConnectToRemoteServer(cacheableContext(ctx), target.remote, false); connectErr != nil {
+			var oauthErr *OAuthNeededError
+			if errors.As(connectErr, &oauthErr) {
+				return nil, oauthErr
 			}
+			m.log.Error("Failed to connect to MCP server for app resource",
+				"userID", userID, "server", target.remote.Name, "error", connectErr)
+			return nil, fmt.Errorf("%w: %v", ErrServerNotConnected, connectErr)
 		}
 	}
 
@@ -185,37 +274,21 @@ func (m *ClientManager) ReadUserAppResource(ctx context.Context, userID, serverO
 	if err == nil {
 		return res, nil
 	}
-	if !errors.Is(err, ErrServerNotConnected) {
-		return nil, err
+	var oauthErr *OAuthNeededError
+	if errors.As(err, &oauthErr) {
+		return nil, oauthErr
 	}
-
-	if mcpErrors != nil {
-		for _, ae := range mcpErrors.ToolAuthErrors {
-			if llm.NormalizeMCPServerOrigin(ae.ServerOrigin) == normalized {
-				return nil, NewOAuthNeededError(ae.AuthURL)
-			}
-		}
-	}
-
-	if m.oauthManager != nil {
-		for _, server := range m.config.Servers {
-			if llm.NormalizeMCPServerOrigin(server.BaseURL) != normalized {
-				continue
-			}
-			state, loadErr := m.oauthManager.LoadAuthNeededState(userID, server.Name)
+	if errors.Is(err, ErrServerNotConnected) {
+		if m.oauthManager != nil && target.kind == "remote" {
+			state, loadErr := m.oauthManager.LoadAuthNeededState(userID, target.remote.Name)
 			if loadErr != nil {
-				m.log.Debug("Failed to load OAuth-needed state for app resource", "userID", userID, "server", server.Name, "error", loadErr)
-				break
-			}
-			if state != nil && state.AuthURL != "" {
+				m.log.Debug("Failed to load OAuth-needed state for app resource",
+					"userID", userID, "server", target.remote.Name, "error", loadErr)
+			} else if state != nil && state.AuthURL != "" {
 				return nil, NewOAuthNeededError(state.AuthURL)
 			}
-			break
 		}
+		return nil, err
 	}
-
-	if mcpErrors != nil && len(mcpErrors.Errors) > 0 {
-		return nil, fmt.Errorf("%w: %v", ErrServerNotConnected, mcpErrors.Errors)
-	}
-	return nil, ErrServerNotConnected
+	return nil, err
 }

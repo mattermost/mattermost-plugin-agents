@@ -131,14 +131,15 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 // Close closes the client manager and all managed clients
 // The client manger should not be used after Close is called
 func (m *ClientManager) Close() {
-	// If already closed, do nothing
-	if m.closeChan == nil {
-		return
+	// Stop the cleanup goroutine when this manager was fully initialized.
+	// Partial test managers may omit closeChan/ticker; still close clients.
+	if m.closeChan != nil {
+		close(m.closeChan)
+		m.closeChan = nil
+		if m.cleanupTicker != nil {
+			m.cleanupTicker.Stop()
+		}
 	}
-	// Stop the cleanup goroutine
-	close(m.closeChan)
-	m.closeChan = nil
-	m.cleanupTicker.Stop()
 
 	// Close all client connections
 	m.clientsMu.Lock()
@@ -212,6 +213,22 @@ func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*U
 	return m.createAndStoreUserClient(ctx, userID, false)
 }
 
+// getOrCreateUserClientsShell returns the cached per-user client set, or creates
+// an empty one without connecting any remote servers. Used by targeted resource
+// reads so viewing one app cannot dial every configured MCP server.
+func (m *ClientManager) getOrCreateUserClientsShell(userID string) *UserClients {
+	m.clientsMu.Lock()
+	defer m.clientsMu.Unlock()
+	if client, exists := m.clients[userID]; exists {
+		m.activity[userID] = time.Now()
+		return client
+	}
+	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
+	m.clients[userID] = userClients
+	m.activity[userID] = time.Now()
+	return userClients
+}
+
 // connectEmbeddedForUser establishes the embedded MCP session for a user when
 // the manager has an embedded client configured. Failures are logged and
 // non-fatal — the caller proceeds without embedded tools/resources.
@@ -234,14 +251,21 @@ func (m *ClientManager) connectEmbeddedForUser(ctx context.Context, userClient *
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
 func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
-	// Get or create client for this user (connects to remote servers only)
-	userClient, initialErrors := m.getClientForUser(ctx, userID)
-	mcpErrors := cloneMCPErrors(initialErrors)
+	// Prefer a shell created by a prior targeted resource read when present; if
+	// remote fan-out has not run yet, connect the full remote list now.
+	userClient := m.getOrCreateUserClientsShell(userID)
+	var mcpErrors *Errors
+	if !userClient.hasRemoteFanOutDone() {
+		mcpErrors = userClient.ConnectToRemoteServers(cacheableContext(ctx), m.config.Servers, false)
+		userClient.setInitialRemoteConnectErrors(mcpErrors)
+	} else {
+		mcpErrors = cloneMCPErrors(userClient.InitialRemoteConnectErrors())
+	}
 
 	// Embedded and plugin connects intentionally receive the raw cancelable ctx:
 	// they run per-request and are not cached, so a canceled request should abort
-	// them. Only the remote connect uses cacheableContext(ctx) (in
-	// createAndStoreUserClient) because its result is cached across requests.
+	// them. Only the remote connect uses cacheableContext(ctx) because its result
+	// is cached across requests.
 	m.connectEmbeddedForUser(ctx, userClient, userID)
 
 	// Snapshot under RLock, then release before PluginHTTP work.
