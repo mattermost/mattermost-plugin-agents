@@ -153,6 +153,36 @@ describe('extractToolCallsForPost', () => {
         expect(result[2].decided).toBe(true);
     });
 
+    test('copies server_origin and ui_meta from tool_use blocks', () => {
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {
+                    type: 'tool_use',
+                    id: 'tc_1',
+                    name: 'preview_post',
+                    status: 'success',
+                    server_origin: 'embedded://mattermost',
+                    ui_meta: {resource_uri: 'ui://mattermost/preview-post.html'},
+                },
+                {
+                    type: 'tool_use',
+                    id: 'tc_2',
+                    name: 'plain_tool',
+                    status: 'success',
+                },
+            ],
+        });
+        const conv = makeConversation([assistantTurn]);
+        const result = extractToolCallsForPost(conv, 'post_1');
+
+        expect(result[0].server_origin).toBe('embedded://mattermost');
+        expect(result[0].ui_meta).toEqual({resource_uri: 'ui://mattermost/preview-post.html'});
+        expect(result[1].server_origin).toBeUndefined();
+        expect(result[1].ui_meta).toBeUndefined();
+    });
+
     test('handles tool_use with null input (redacted)', () => {
         const assistantTurn = makeTurn({
             post_id: 'post_1',

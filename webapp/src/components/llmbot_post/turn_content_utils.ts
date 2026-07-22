@@ -105,6 +105,8 @@ function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, Cont
         user_interaction: block.user_interaction ?? undefined, // eslint-disable-line no-undefined
         would_auto_execute: block.would_auto_execute ?? undefined, // eslint-disable-line no-undefined
         decided: resultBlock?.decided_at != null,
+        server_origin: block.server_origin ?? undefined, // eslint-disable-line no-undefined
+        ui_meta: block.ui_meta ?? undefined, // eslint-disable-line no-undefined
     };
 }
 

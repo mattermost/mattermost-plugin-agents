@@ -5,7 +5,7 @@ import {combineReducers, Dispatch, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
-import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
+import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins, MCPAppsBootstrap} from './client';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
 
@@ -13,6 +13,7 @@ type WebappStore = Store<GlobalState, UnknownAction>
 
 const CallsClickHandler = 'calls_post_button_clicked_handler';
 export const BotsHandler = manifest.id + '_bots';
+export const MCPAppsHandler = 'SET_MCP_APPS';
 export const CustomPromptsHandler = 'SET_CUSTOM_PROMPTS';
 export const PinnedPromptIdsHandler = 'SET_PINNED_PROMPT_IDS';
 export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
@@ -25,6 +26,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         selectedPostId,
         searchEnabled,
         allowUnsafeLinks,
+        mcpApps,
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
@@ -87,6 +89,15 @@ function allowUnsafeLinks(state = false, action: any) {
     switch (action.type) {
     case 'SET_ALLOW_UNSAFE_LINKS':
         return action.allowUnsafeLinks;
+    default:
+        return state;
+    }
+}
+
+function mcpApps(state: MCPAppsBootstrap = {enabled: false}, action: any) {
+    switch (action.type) {
+    case MCPAppsHandler:
+        return action.mcpApps;
     default:
         return state;
     }

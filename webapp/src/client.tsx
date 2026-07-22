@@ -39,6 +39,73 @@ export type UserMCPToolsResponse = {
     servers: UserMCPServerInfo[];
 };
 
+export interface MCPAppsBootstrap {
+    enabled: boolean;
+    sandboxURL?: string;
+    disabledReason?: string;
+}
+
+export interface AppResourceCSP {
+    connectDomains?: string[];
+    resourceDomains?: string[];
+    frameDomains?: string[];
+    baseUriDomains?: string[];
+}
+
+export interface AppResourceUIMeta {
+    csp?: AppResourceCSP;
+    permissions?: Record<string, Record<string, unknown>>;
+    domain?: string;
+    prefersBorder?: boolean;
+}
+
+export interface AppResourceContents {
+    uri: string;
+    mimeType: string;
+    text: string;
+    _meta?: {ui?: AppResourceUIMeta};
+}
+
+// Mirrors MCP ReadResourceResult — returned verbatim to @mcp-ui/client's
+// onReadResource.
+export interface AppResourceResponse {
+    contents: AppResourceContents[];
+}
+
+export class MCPAppResourceError extends Error {
+    status: number;
+    errorCode: string;
+    authURL?: string;
+
+    constructor(status: number, errorCode: string, message: string, authURL?: string) {
+        super(message);
+        this.name = 'MCPAppResourceError';
+        this.status = status;
+        this.errorCode = errorCode;
+        this.authURL = authURL;
+    }
+}
+
+export async function getMCPAppResource(postID: string, toolCallID: string): Promise<AppResourceResponse> {
+    const params = new URLSearchParams({post_id: postID, tool_call_id: toolCallID});
+    const response = await fetch(`${baseRoute()}/mcp/app-resource?${params}`, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.json();
+    }
+    let body: {error_code?: string; message?: string; auth_url?: string} | null = null;
+    try {
+        body = await response.json();
+    } catch {
+        // non-JSON error body (e.g. gin 500) — fall through
+    }
+    throw new MCPAppResourceError(
+        response.status,
+        body?.error_code ?? 'unknown',
+        body?.message ?? 'app resource fetch failed',
+        body?.auth_url,
+    );
+}
+
 // Mirrors components/system_console/mcp_servers.tsx MCPToolConfig; duplicated to
 // avoid client.tsx depending on UI components.
 type MCPToolConfig = {
