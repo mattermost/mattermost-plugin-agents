@@ -179,6 +179,12 @@ func (c *UserClients) connectToServer(ctx context.Context, serverID string, serv
 	}
 	c.clientsMu.Lock()
 	defer c.clientsMu.Unlock()
+	if existing := c.clients[serverID]; existing != nil {
+		// Close the map entry we are about to overwrite. Concurrent cold
+		// ConnectToRemoteServer callers can both pass hasClient and each
+		// create a client; without this the loser leaks.
+		_ = existing.Close()
+	}
 	c.clients[serverID] = serverClient
 	return nil
 }

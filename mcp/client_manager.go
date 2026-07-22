@@ -199,20 +199,6 @@ func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID str
 	return userClients, mcpErrors
 }
 
-// getClientForUser gets or creates an MCP client for a specific user.
-func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*UserClients, *Errors) {
-	m.clientsMu.Lock()
-	client, exists := m.clients[userID]
-	if exists {
-		m.activity[userID] = time.Now()
-		m.clientsMu.Unlock()
-		return client, client.InitialRemoteConnectErrors()
-	}
-	m.clientsMu.Unlock()
-
-	return m.createAndStoreUserClient(ctx, userID, false)
-}
-
 // getOrCreateUserClientsShell returns the cached per-user client set, or creates
 // an empty one without connecting any remote servers. Used by targeted resource
 // reads so viewing one app cannot dial every configured MCP server.
