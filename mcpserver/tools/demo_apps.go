@@ -42,12 +42,9 @@ func (p *MattermostToolProvider) getDemoAppTools() []MCPTool {
 	}}
 }
 
-// ProvideDemoAppTools registers the demo MCP Apps tools and their ui://
-// resources. Called only when EnableDemoApps is set.
-func (p *MattermostToolProvider) ProvideDemoAppTools(mcpServer *mcp.Server) {
-	for _, t := range p.getDemoAppTools() {
-		p.registerDynamicTool(mcpServer, t)
-	}
+// registerDemoAppResources registers the ui:// resources for demo tools once.
+// Tools themselves are aggregated via mcpTools() when enableDemoApps is set.
+func (p *MattermostToolProvider) registerDemoAppResources(mcpServer *mcp.Server) {
 	mcpServer.AddResource(&mcp.Resource{
 		URI:      previewPostResourceURI,
 		Name:     "preview-post-app",

@@ -28,9 +28,9 @@ func TestPreviewPostToolMeta(t *testing.T) {
 	require.NotEmpty(t, previewPostHTML)
 	assert.Contains(t, previewPostHTML, "ui/notifications/initialized")
 	assert.Contains(t, previewPostHTML, "preview-post-toggle")
-	assert.Contains(t, previewPostHTML, "protocolVersion")
 	assert.Contains(t, previewPostHTML, "ui/notifications/tool-result")
 	// Params are the CallToolResult itself (AppBridge.sendToolResult), not {result:…}.
+	// Pin of c61c9097 regression — do not relax to a looser substring.
 	assert.Contains(t, previewPostHTML, "var result = data.params")
 	assert.NotContains(t, previewPostHTML, "params.result")
 
@@ -38,6 +38,28 @@ func TestPreviewPostToolMeta(t *testing.T) {
 	for _, attr := range []string{`src="http://`, `src="https://`, `href="http://`, `href="https://`} {
 		assert.NotContains(t, lower, attr, "demo HTML must not reference external %s", attr)
 	}
+}
+
+func TestPreviewPostGuestProtocolConformance(t *testing.T) {
+	require.NotEmpty(t, previewPostHTML)
+
+	const advertised = "ADVERTISED_PROTOCOL_VERSION = '2026-01-26'"
+	assert.Contains(t, previewPostHTML, advertised, "must match ext-apps SUPPORTED_PROTOCOL_VERSIONS")
+	assert.Contains(t, previewPostHTML, "event.source !== window.parent")
+	assert.Contains(t, previewPostHTML, "data.result.protocolVersion")
+	assert.Contains(t, previewPostHTML, "ResizeObserver")
+	assert.Contains(t, previewPostHTML, "document.documentElement.lang")
+	assert.Contains(t, previewPostHTML, "var STRINGS =")
+}
+
+func TestDemoAppToolsIncludedInProviderToolNames(t *testing.T) {
+	provider := newTestProvider(t, "http://localhost")
+	namesOff := provider.ToolNames()
+	assert.NotContains(t, namesOff, "preview_post")
+
+	provider.SetEnableDemoApps(true)
+	namesOn := provider.ToolNames()
+	assert.Contains(t, namesOn, "preview_post")
 }
 
 func TestToolPreviewPost(t *testing.T) {

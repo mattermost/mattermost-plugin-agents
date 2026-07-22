@@ -84,7 +84,7 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	fileContentService := tools.NewHTTPFileContentService(pluginURL)
 
 	// Register tools with remote access mode
-	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService)
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, false)
 
 	// Create HTTP server with OAuth endpoints and MCP routing
 	addr := fmt.Sprintf("%s:%d", config.HTTPBindAddr, config.HTTPPort)

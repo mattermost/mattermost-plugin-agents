@@ -111,21 +111,36 @@
   </style>
 </head>
 <body>
-  <div id="status">Connecting…</div>
+  <div id="status"></div>
   <div id="card">
     <div class="header">
       <div class="avatar" id="avatar">?</div>
       <div class="meta">
-        <div class="user" id="username">@unknown</div>
+        <div class="user" id="username"></div>
         <div class="sub" id="subtitle"></div>
       </div>
     </div>
     <p id="message" data-testid="preview-post-message"></p>
-    <button type="button" data-testid="preview-post-toggle" id="toggle">Show raw JSON</button>
+    <button type="button" data-testid="preview-post-toggle" id="toggle"></button>
     <pre id="raw" data-testid="preview-post-raw"></pre>
   </div>
   <script>
 (function () {
+  // Current SUPPORTED_PROTOCOL_VERSIONS from @modelcontextprotocol/ext-apps.
+  var ADVERTISED_PROTOCOL_VERSION = '2026-01-26';
+  var negotiatedProtocolVersion = ADVERTISED_PROTOCOL_VERSION;
+
+  var STRINGS = {
+    en: {
+      connecting: 'Connecting…',
+      unknown: 'unknown',
+      rawToolResult: 'Raw tool result',
+      showRaw: 'Show raw JSON',
+      hideRaw: 'Hide raw JSON',
+      initFailed: 'Host handshake failed'
+    }
+  };
+
   var statusEl = document.getElementById('status');
   var cardEl = document.getElementById('card');
   var avatarEl = document.getElementById('avatar');
@@ -136,6 +151,30 @@
   var toggleEl = document.getElementById('toggle');
   var rawText = '';
   var showingRaw = false;
+  var localeTag = 'en';
+
+  function t(key) {
+    var table = STRINGS[localeTag] || STRINGS.en;
+    return table[key] || STRINGS.en[key] || key;
+  }
+
+  function applyLocale(locale) {
+    if (typeof locale === 'string' && locale) {
+      localeTag = locale.split('-')[0].toLowerCase();
+      if (!STRINGS[localeTag]) {
+        localeTag = 'en';
+      }
+      document.documentElement.lang = locale;
+    } else {
+      document.documentElement.lang = 'en';
+      localeTag = 'en';
+    }
+    statusEl.textContent = t('connecting');
+    usernameEl.textContent = '@' + t('unknown');
+    toggleEl.textContent = showingRaw ? t('hideRaw') : t('showRaw');
+  }
+
+  applyLocale('en');
 
   function post(msg) {
     window.parent.postMessage(msg, '*');
@@ -162,7 +201,7 @@
   function formatDate(ms) {
     if (!ms) return '';
     try {
-      return new Date(ms).toLocaleString();
+      return new Date(ms).toLocaleString(document.documentElement.lang || undefined);
     } catch (e) {
       return String(ms);
     }
@@ -177,7 +216,7 @@
     } catch (e) {
       statusEl.style.display = 'none';
       cardEl.style.display = 'block';
-      usernameEl.textContent = 'Raw tool result';
+      usernameEl.textContent = t('rawToolResult');
       subtitleEl.textContent = '';
       avatarEl.textContent = '!';
       messageEl.textContent = rawText;
@@ -185,7 +224,7 @@
       return;
     }
 
-    var username = data.username || 'unknown';
+    var username = data.username || t('unknown');
     var channel = data.channel_display_name || '';
     var created = formatDate(data.create_at);
     usernameEl.textContent = '@' + username;
@@ -200,23 +239,45 @@
   toggleEl.addEventListener('click', function () {
     showingRaw = !showingRaw;
     rawEl.style.display = showingRaw ? 'block' : 'none';
-    toggleEl.textContent = showingRaw ? 'Hide raw JSON' : 'Show raw JSON';
+    toggleEl.textContent = showingRaw ? t('hideRaw') : t('showRaw');
     reportSize();
   });
 
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(function () {
+      reportSize();
+    }).observe(document.documentElement);
+  }
+
   window.addEventListener('message', function (event) {
+    if (event.source !== window.parent) {
+      return;
+    }
     var data = event.data;
     if (!data || typeof data !== 'object') return;
 
-    if (data.id === 1 && data.result) {
-      var hostContext = data.result.hostContext || {};
-      if (hostContext.theme) {
-        document.documentElement.dataset.theme = hostContext.theme;
+    if (data.id === 1) {
+      if (data.error) {
+        statusEl.textContent = t('initFailed');
+        statusEl.style.display = 'block';
+        cardEl.style.display = 'none';
+        reportSize();
+        return;
       }
-      if (hostContext.styles && hostContext.styles.variables) {
-        applyHostStyles(hostContext.styles.variables);
+      if (data.result) {
+        if (typeof data.result.protocolVersion === 'string' && data.result.protocolVersion) {
+          negotiatedProtocolVersion = data.result.protocolVersion;
+        }
+        var hostContext = data.result.hostContext || {};
+        if (hostContext.theme) {
+          document.documentElement.dataset.theme = hostContext.theme;
+        }
+        if (hostContext.styles && hostContext.styles.variables) {
+          applyHostStyles(hostContext.styles.variables);
+        }
+        applyLocale(hostContext.locale);
+        post({jsonrpc: '2.0', method: 'ui/notifications/initialized'});
       }
-      post({jsonrpc: '2.0', method: 'ui/notifications/initialized'});
       return;
     }
 
@@ -225,8 +286,7 @@
     }
 
     if (data.method === 'ui/notifications/tool-result') {
-      // AppBridge.sendToolResult passes CallToolResult as params directly
-      // (not wrapped in {result: …}).
+      // AppBridge.sendToolResult passes CallToolResult as params directly.
       var result = data.params || {};
       var content = Array.isArray(result.content) ? result.content : [];
       var text = '';
@@ -245,7 +305,7 @@
     id: 1,
     method: 'ui/initialize',
     params: {
-      protocolVersion: '2025-11-21',
+      protocolVersion: ADVERTISED_PROTOCOL_VERSION,
       appInfo: {name: 'preview-post', version: '1.0.0'},
       appCapabilities: {}
     }

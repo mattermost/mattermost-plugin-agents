@@ -99,6 +99,13 @@ type MattermostToolProvider struct {
 	trackAIGenerated   bool                  // Whether to add ai_generated_by props to posts
 	searchService      SemanticSearchService // Optional semantic search service, can be nil
 	fileContentService FileContentService    // Optional file content service for read_file, can be nil
+	enableDemoApps     bool                  // Registers demo MCP Apps tools/resources (embedded only)
+}
+
+// SetEnableDemoApps selects the demo MCP Apps tool group for mcpTools/ProvideTools.
+// Config-time gate: tools are omitted entirely when false (not hidden via Available).
+func (p *MattermostToolProvider) SetEnableDemoApps(enabled bool) {
+	p.enableDemoApps = enabled
 }
 
 // NewMattermostToolProvider creates a new tool provider
@@ -152,6 +159,10 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 		groups = append(groups, p.getDevUserTools, p.getDevPostTools, p.getDevTeamTools)
 	}
 
+	if p.enableDemoApps {
+		groups = append(groups, p.getDemoAppTools)
+	}
+
 	var mcpTools []MCPTool
 	for _, group := range groups {
 		mcpTools = append(mcpTools, group()...)
@@ -182,6 +193,10 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	// Hide tools whose Available predicate currently returns false on each
 	// tools/list request (e.g. automation tools when the plugin is absent).
 	mcpServer.AddReceivingMiddleware(toolAvailabilityMiddleware(availability))
+
+	if p.enableDemoApps {
+		p.registerDemoAppResources(mcpServer)
+	}
 }
 
 // toolAvailabilityMiddleware returns MCP receiving middleware that drops any tool
