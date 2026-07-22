@@ -120,6 +120,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
             setMessage(props.post.message);
+            setPrecontent(false);
         }
     }, [props.post.message]);
 
@@ -318,8 +319,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         persistedRounds: stablePersisted,
         liveRounds,
         generating,
+        pendingRefetch,
         currentRound,
-    }), [regenerating, conversationId, stablePersisted, liveRounds, generating, currentRound]);
+    }), [regenerating, conversationId, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
 
     const regnerate = () => {
         setMessage('');
