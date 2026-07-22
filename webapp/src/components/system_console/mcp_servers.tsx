@@ -14,6 +14,7 @@ import {getMCPTools, getVettedToolSeed} from '../../client';
 import manifest from '@/manifest';
 
 import {CopyableTextItem} from './copyable_text_item';
+import MCPAppsSection, {defaultMCPAppsConfig, MCPAppsConfig} from './mcp_apps';
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
 import {BooleanItem, ItemList, TextItem} from './item';
@@ -45,6 +46,7 @@ export type MCPConfig = {
     enablePluginServer: boolean;
     servers: MCPServerConfig[] | null; // server sends nil Go slice as JSON null
     embeddedServer: MCPEmbeddedServerConfig;
+    apps?: MCPAppsConfig;
     idleTimeoutMinutes?: number;
 };
 
@@ -427,6 +429,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
             ...(mcpConfig?.embeddedServer || {}),
             enabled: true,
         },
+        apps: mcpConfig?.apps ?? defaultMCPAppsConfig,
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
     };
 
@@ -554,6 +557,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 helptext={intl.formatMessage({defaultMessage: 'Register this redirect URI in the remote MCP server\u2019s OAuth application so authorization callbacks return to this Mattermost instance.'})}
                             />
                         </ItemList>
+                        <MCPAppsSection
+                            value={config.apps ?? defaultMCPAppsConfig}
+                            onChange={(apps) => onChange({...config, apps})}
+                        />
                         <ServersList>
                             {!Array.isArray(normalizedServers) || normalizedServers.length < 1 ? (
                                 <EmptyState>
