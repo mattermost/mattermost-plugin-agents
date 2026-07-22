@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -373,4 +374,105 @@ func testClientWithTools(name, baseURL string, toolNames ...string) *Client {
 		},
 		tools: tools,
 	}
+}
+
+func TestGetToolsPreservesUIMeta(t *testing.T) {
+	tests := []struct {
+		name       string
+		toolMeta   gomcp.Meta
+		wantAbsent bool
+		wantUIMeta *llm.ToolUIMeta
+	}{
+		{
+			name: "nested ui meta",
+			toolMeta: gomcp.Meta{
+				"ui": map[string]any{"resourceUri": "ui://a/b"},
+			},
+			wantUIMeta: &llm.ToolUIMeta{ResourceURI: "ui://a/b"},
+		},
+		{
+			name: "legacy flat meta",
+			toolMeta: gomcp.Meta{
+				"ui/resourceUri": "ui://a/b",
+			},
+			wantUIMeta: &llm.ToolUIMeta{ResourceURI: "ui://a/b"},
+		},
+		{
+			name:       "no meta",
+			toolMeta:   nil,
+			wantUIMeta: nil,
+		},
+		{
+			name: "app-only tool",
+			toolMeta: gomcp.Meta{
+				"ui": map[string]any{"visibility": []any{"app"}},
+			},
+			wantAbsent: true,
+		},
+		{
+			name: "model+app tool",
+			toolMeta: gomcp.Meta{
+				"ui": map[string]any{
+					"resourceUri": "ui://a/b",
+					"visibility":  []any{"model", "app"},
+				},
+			},
+			wantUIMeta: &llm.ToolUIMeta{
+				ResourceURI: "ui://a/b",
+				Visibility:  []string{"model", "app"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userClients := &UserClients{
+				userID: "user-id",
+				clients: map[string]*Client{
+					"srv": {
+						config: ServerConfig{
+							Name:    "srv",
+							BaseURL: "https://srv.example/mcp",
+							Enabled: true,
+						},
+						tools: map[string]*gomcp.Tool{
+							"demo": {
+								Name:        "demo",
+								Description: "Demo tool",
+								Meta:        tt.toolMeta,
+							},
+						},
+					},
+				},
+			}
+
+			tools := userClients.GetTools(context.Background())
+			if tt.wantAbsent {
+				require.Empty(t, tools)
+				return
+			}
+			require.Len(t, tools, 1)
+			require.Equal(t, tt.wantUIMeta, tools[0].UIMeta)
+		})
+	}
+
+	t.Run("cache round-trips _meta", func(t *testing.T) {
+		cache := newTestToolsCache()
+		tool := &gomcp.Tool{
+			Name:        "cached",
+			Description: "Cached tool",
+			InputSchema: map[string]any{"type": "object"},
+			Meta: gomcp.Meta{
+				"ui": map[string]any{"resourceUri": "ui://cached/app"},
+			},
+		}
+		require.NoError(t, cache.SetTools("srv", "srv", "https://srv.example/mcp", map[string]*gomcp.Tool{
+			"cached": tool,
+		}, time.Now()))
+
+		cached := cache.GetTools("srv")
+		require.NotNil(t, cached)
+		require.Contains(t, cached, "cached")
+		require.Equal(t, "ui://cached/app", parseToolUIMeta(cached["cached"].Meta).ResourceURI)
+	})
 }

@@ -471,3 +471,76 @@ func TestNewClientErrorsOnEmptyRemoteToolCatalog(t *testing.T) {
 	require.Contains(t, err.Error(), "no tools found")
 	require.Nil(t, cache.GetTools("empty"))
 }
+
+func TestClientDeclaresUIExtension(t *testing.T) {
+	assertUICaps := func(t *testing.T, caps *mcp.ClientCapabilities) {
+		t.Helper()
+		require.NotNil(t, caps)
+		// RootsV2 is json:"-" and only used when configuring ClientOptions;
+		// on the wire (and thus in InitializeParams) the deprecated Roots
+		// field is what servers observe.
+		require.True(t, caps.Roots.ListChanged) //nolint:staticcheck // SA1019: wire-visible field
+		ext, ok := caps.Extensions[UIExtensionID].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, []any{UIResourceMIMEType}, ext["mimeTypes"])
+	}
+
+	t.Run("createSession path", func(t *testing.T) {
+		var captured *mcp.ClientCapabilities
+		server := mcp.NewServer(&mcp.Implementation{Name: "cap-server", Version: "1.0"}, nil)
+		server.AddTool(&mcp.Tool{
+			Name:        "probe",
+			Description: "Capture client capabilities",
+			InputSchema: map[string]any{"type": "object"},
+		}, func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if params := req.Session.InitializeParams(); params != nil {
+				captured = params.Capabilities
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "ok"}},
+			}, nil
+		})
+		httpServer := startStreamableMCPServer(t, server)
+		cache := newTestToolsCache()
+
+		client, err := NewClient(context.Background(), "user-id", ServerConfig{
+			Name:    "caps",
+			BaseURL: httpServer.URL,
+			Enabled: true,
+		}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), cache, false)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = client.Close() })
+
+		_, err = client.CallTool(context.Background(), "probe", map[string]any{})
+		require.NoError(t, err)
+		assertUICaps(t, captured)
+	})
+
+	t.Run("embedded CreateClient path", func(t *testing.T) {
+		var captured *mcp.ClientCapabilities
+		server := mcp.NewServer(&mcp.Implementation{Name: "cap-embedded", Version: "1.0"}, nil)
+		server.AddTool(&mcp.Tool{
+			Name:        "probe",
+			Description: "Capture client capabilities",
+			InputSchema: map[string]any{"type": "object"},
+		}, func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if params := req.Session.InitializeParams(); params != nil {
+				captured = params.Capabilities
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "ok"}},
+			}, nil
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		embeddedClient := NewEmbeddedServerClient(&fakeEmbeddedMCPServer{ctx: ctx, server: server}, newTestLogService(), nil)
+		client, err := embeddedClient.CreateClient(context.Background(), "user-id", "")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = client.Close() })
+
+		_, err = client.CallTool(context.Background(), "probe", map[string]any{})
+		require.NoError(t, err)
+		assertUICaps(t, captured)
+	})
+}

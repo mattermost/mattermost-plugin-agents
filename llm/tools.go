@@ -37,6 +37,10 @@ type Tool struct {
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
 
+	// UIMeta is the MCP Apps metadata (_meta.ui) declared on the tool by its
+	// MCP server. Nil for built-in tools and tools without an app UI.
+	UIMeta *ToolUIMeta
+
 	// UserInteraction marks a tool whose pending call is answered by the
 	// requesting user in the Mattermost UI instead of executed by the server;
 	// the Resolver is only an error backstop. Empty for normal tools.

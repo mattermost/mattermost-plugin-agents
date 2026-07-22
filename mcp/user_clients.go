@@ -233,6 +233,12 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 		sort.Strings(toolNames)
 		for _, toolName := range toolNames {
 			tool := clientTools[toolName]
+			uiMeta := parseToolUIMeta(tool.Meta)
+			// Spec: tools whose visibility excludes "model" MUST NOT be
+			// exposed to the agent. App-callable tools are Phase 3.
+			if !uiMeta.VisibleToModel() {
+				continue
+			}
 			runtimeToolName := llm.NamespaceMCPToolName(serverSlug, toolName)
 			// Namespacing should make cross-server duplicate bare names safe. A
 			// final collision means the slug de-dupe or upstream catalog is broken.
@@ -252,6 +258,7 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 				Schema:       tool.InputSchema,
 				Resolver:     c.createToolResolver(client, toolName),
 				ServerOrigin: client.config.BaseURL,
+				UIMeta:       uiMeta,
 			})
 		}
 	}

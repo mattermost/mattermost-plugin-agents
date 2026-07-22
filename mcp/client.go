@@ -182,7 +182,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 			Name:    "mattermost-agents-embedded",
 			Version: "1.0",
 		},
-		nil,
+		uiClientOptions(),
 	)
 
 	// Connect to the embedded server using in-memory transport
@@ -349,7 +349,7 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 			Name:    "mattermost-agents-plugin-bridge",
 			Version: "1.0",
 		},
-		nil,
+		uiClientOptions(),
 	)
 
 	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{
@@ -462,7 +462,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 			Name:    "mattermost-agents",
 			Version: "1.0",
 		},
-		nil,
+		uiClientOptions(),
 	)
 
 	httpClient := c.httpClientForMCP(headers)
