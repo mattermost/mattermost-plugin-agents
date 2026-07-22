@@ -54,6 +54,7 @@ func TestPreviewPostGuestProtocolConformance(t *testing.T) {
 
 func TestDemoAppToolsIncludedInProviderToolNames(t *testing.T) {
 	provider := newTestProvider(t, "http://localhost")
+	provider.accessMode = AccessModeRemote
 	namesOff := provider.ToolNames()
 	assert.NotContains(t, namesOff, "preview_post")
 
