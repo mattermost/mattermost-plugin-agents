@@ -9,8 +9,8 @@ import {doLoopInAgent} from '@/client';
 
 const Hint = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
-    font-size: 13px;
-    line-height: 18px;
+    font-size: 14px;
+    line-height: 20px;
 `;
 
 const ErrorMessage = styled.div`
@@ -89,7 +89,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         <Hint>
             <FormattedMessage
                 id='agents.agent_mention_reminder_body'
-                defaultMessage='To respond to an agent you must @mention them. <link>click here to loop in @{botDisplayName}</link>'
+                defaultMessage='To respond to an agent you must @mention them. <link>Click here to loop in @{botDisplayName}</link>'
                 values={{
                     botDisplayName,
                     link: (chunks: React.ReactNode) => (
