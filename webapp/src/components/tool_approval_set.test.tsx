@@ -79,7 +79,7 @@ beforeEach(() => {
     getDelegationStatusMock.mockReset();
     getDelegationStatusMock.mockRejectedValue(new Error('not found'));
     doToolCallMock.mockReset();
-    doToolCallMock.mockImplementation(async () => {});
+    doToolCallMock.mockImplementation(() => Promise.resolve());
     useConversationMock.mockReset();
     useConversationMock.mockReturnValue({conversation: null, loading: false, error: null});
 });
