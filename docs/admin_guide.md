@@ -804,11 +804,11 @@ The following table outlines which features require a license:
 | Basic agent configuration (single agent) | No license required |
 | Chat with agents in DMs and channels | No license required |
 | Image analysis (vision capabilities) | No license required |
-| Basic tool integrations | No license required |
+| Basic tool integrations (built-in tools and the embedded Mattermost MCP server) | No license required |
 | Multiple agent configurations | Entry, Enterprise, and Enterprise Advanced |
 | Fine-grained access controls | Entry, Enterprise, and Enterprise Advanced |
 | Embedding search (semantic AI search) | Entry, Enterprise, and Enterprise Advanced |
-| MCP Support | Entry, Enterprise, and Enterprise Advanced |
+| MCP Support (remote and external MCP servers) | Entry, Enterprise, and Enterprise Advanced |
 | Usage analytics and token tracking | Entry, Enterprise, and Enterprise Advanced |
 | AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
 | Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |
