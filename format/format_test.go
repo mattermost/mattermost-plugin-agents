@@ -728,6 +728,36 @@ func TestWritePostInfo(t *testing.T) {
 	assert.Contains(t, out, "You are a member of this team: false")
 }
 
+func TestTimeFromMillis(t *testing.T) {
+	tests := []struct {
+		name     string
+		millis   int64
+		expected string
+	}{
+		{
+			name:     "formats as RFC3339 UTC",
+			millis:   1704067200000,
+			expected: "2024-01-01T00:00:00Z",
+		},
+		{
+			name:     "zero returns empty string",
+			millis:   0,
+			expected: "",
+		},
+		{
+			name:     "negative returns empty string",
+			millis:   -1,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, TimeFromMillis(tt.millis))
+		})
+	}
+}
+
 func TestWriteScheduledPost(t *testing.T) {
 	sp := &model.ScheduledPost{
 		Draft:       model.Draft{ChannelId: "chan12345678901234567890ab", Message: "scheduled hello"},
