@@ -1,6 +1,6 @@
 // Agent-to-agent delegation (ask_agent) with deterministic aimock fixtures.
-// Covers: DM happy path with the delegation card, nested approval inside the
-// delegation thread, and the channel-mention flow with the share gate.
+// Covers: DM happy path with the delegation card, nested approval mirrored
+// into the parent thread, and the channel-mention flow with the share gate.
 // seed: tests/seed.spec.ts
 
 import {test, expect, Page} from '@playwright/test';
@@ -235,7 +235,7 @@ test.describe('Agent delegation (ask_agent)', () => {
         await expect(rhs.getByText(subAnswer.slice(0, 40)).last()).toBeVisible({timeout: 30000});
     });
 
-    test('Nested approval: sub-agent tool approval in the delegation thread resumes the parent', async ({page}) => {
+    test('Nested approval: approve the sub-agent tool from the parent thread', async ({page}) => {
         test.setTimeout(300000);
 
         const promptMarker = `delegate nested ${Date.now()}`;
