@@ -9,6 +9,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {TertiaryButton} from '../assets/buttons';
 
 import {useIsMultiLLMLicensed} from '@/license';
+import {generateId} from '@/utils/id';
 
 import Bot, {ChannelAccessLevel, LLMBotConfig, UserAccessLevel} from './bot';
 import EnterpriseChip from './enterprise_chip';
@@ -55,7 +56,7 @@ const Bots = (props: Props) => {
 
     const addNewBot = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
-        const id = crypto.randomUUID();
+        const id = generateId();
         if (props.bots.length === 0) {
             props.onChange([{
                 ...firstNewBot,
