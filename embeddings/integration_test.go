@@ -156,6 +156,11 @@ func addTestPost(t *testing.T, db *sqlx.DB, postID, userID, channelID, message s
 
 // createFullSearchSystem creates a CompositeSearch with mock provider and real PGVector
 func createFullSearchSystem(t *testing.T, db *sqlx.DB, dimensions int) embeddings.EmbeddingSearch {
+	return createFullSearchSystemWithRecency(t, db, dimensions, embeddings.RecencyBiasSettings{})
+}
+
+// createFullSearchSystemWithRecency is createFullSearchSystem with recency bias settings.
+func createFullSearchSystemWithRecency(t *testing.T, db *sqlx.DB, dimensions int, recency embeddings.RecencyBiasSettings) embeddings.EmbeddingSearch {
 	provider := embeddings.NewMockEmbeddingProvider(dimensions)
 
 	pgVectorConfig := postgres.PGVectorConfig{
@@ -170,7 +175,7 @@ func createFullSearchSystem(t *testing.T, db *sqlx.DB, dimensions int) embedding
 		ChunkingStrategy: "sentences",
 	}
 
-	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts, embeddings.RecencyBiasSettings{})
+	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts, recency)
 }
 
 // TestBasicIndexAndSearchMechanics tests that the indexing and search plumbing works
@@ -241,6 +246,52 @@ func TestBasicIndexAndSearchMechanics(t *testing.T) {
 	for _, result := range results2 {
 		assert.Greater(t, result.Document.CreateAt, now+500, "All results should be after filter time")
 	}
+}
+
+// TestRecencyBiasEndToEnd verifies the over-fetch + rerank path against real
+// pgvector: two posts with identical content produce identical similarity
+// (the mock provider is deterministic), so with recency bias enabled the
+// ordering can only come from the time decay.
+func TestRecencyBiasEndToEnd(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	const dimensions = 64
+	search := createFullSearchSystemWithRecency(t, db, dimensions, embeddings.RecencyBiasSettings{
+		Enabled:      true,
+		HalfLifeDays: 7,
+		Floor:        0.7,
+	})
+	ctx := context.Background()
+
+	addTestChannel(t, db, "channel1", "team1", "O", []string{"user1"})
+
+	const content = "How do I configure the deployment pipeline for staging?"
+	now := model.GetMillis()
+	oldCreateAt := now - 90*24*60*60*1000 // 90 days ago
+	freshCreateAt := now - 60*60*1000     // 1 hour ago
+
+	addTestPost(t, db, "old_post", "user1", "channel1", content, oldCreateAt)
+	addTestPost(t, db, "fresh_post", "user1", "channel1", content, freshCreateAt)
+
+	err := search.Store(ctx, []embeddings.PostDocument{
+		{PostID: "old_post", CreateAt: oldCreateAt, TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: content},
+		{PostID: "fresh_post", CreateAt: freshCreateAt, TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: content},
+	})
+	require.NoError(t, err)
+
+	results, err := search.Search(ctx, content, embeddings.SearchOptions{
+		Limit:  2,
+		UserID: "user1",
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	// Identical content means identical raw similarity scores...
+	assert.InDelta(t, float64(results[0].Score), float64(results[1].Score), 1e-6)
+	// ...so the newer post ranking first proves the recency rerank worked.
+	assert.Equal(t, "fresh_post", results[0].Document.PostID)
+	assert.Equal(t, "old_post", results[1].Document.PostID)
 }
 
 // TestReindexWithDimensionMismatch verifies Full Reindex Clear recreates the
