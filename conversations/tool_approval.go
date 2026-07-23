@@ -135,13 +135,14 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// stale click instead of double-executing — and run the batch in a
 	// detached goroutine. All other batches keep the synchronous path.
 	if batchWillExecuteDelegationCall(pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM)) {
-		if err := c.persistAcceptedToolDecisions(pendingTurn, pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM)); err != nil {
+		claimedContent, err := c.persistAsyncToolDecisions(pendingTurn, pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM))
+		if err != nil {
 			return err
 		}
 		detachedCtx := telemetry.DetachContext(ctx)
 		go func() {
 			if execErr := c.executeResolvedToolBatch(detachedCtx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM, true); execErr != nil {
-				c.mmClient.LogError("Async tool batch execution failed", "error", execErr, "conversation_id", convID, "post_id", post.Id)
+				c.handleAsyncToolBatchFailure(conv, pendingTurn.ID, claimedContent, post, execErr)
 			}
 		}()
 		return nil
@@ -186,14 +187,13 @@ func batchWillExecuteDelegationCall(blocks []conversation.ContentBlock, accepted
 	return false
 }
 
-// persistAcceptedToolDecisions marks every to-be-executed pending block as
-// accepted and persists the turn content with an atomic compare-and-set
-// against the content this request originally read. Two concurrent approval
-// clicks (any node) both read the pending turn, but only one CAS can win —
-// the loser gets ErrStaleToolClick and never executes. The in-memory snapshot
-// is left untouched: the asynchronous continuation of the winning request
-// still executes from its pending-state snapshot.
-func (c *Conversations) persistAcceptedToolDecisions(pendingTurn *store.Turn, blocks []conversation.ContentBlock, acceptedToolIDs []string, autoExec func(llm.ToolCall) bool) error {
+// persistAsyncToolDecisions records every decision in an asynchronously
+// executed batch: calls that will run become accepted and every other pending
+// call becomes rejected. The entire batch is persisted with one atomic
+// compare-and-set against the content this request originally read. Two
+// concurrent approval clicks (on any node) can therefore never both execute.
+// The in-memory snapshot stays pending so the winning request can execute it.
+func (c *Conversations) persistAsyncToolDecisions(pendingTurn *store.Turn, blocks []conversation.ContentBlock, acceptedToolIDs []string, autoExec func(llm.ToolCall) bool) (json.RawMessage, error) {
 	persisted := slices.Clone(blocks)
 	changed := false
 	for i := range persisted {
@@ -205,24 +205,87 @@ func (c *Conversations) persistAcceptedToolDecisions(pendingTurn *store.Turn, bl
 			(block.UserInteraction == "" && block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}))
 		if willExecute {
 			block.Status = conversation.StatusAccepted
+		} else {
+			block.Status = conversation.StatusRejected
+		}
+		changed = true
+	}
+	if !changed {
+		return nil, nil
+	}
+	updatedContent, err := json.Marshal(persisted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal tool decisions: %w", err)
+	}
+	claimed, err := c.convService.ClaimTurnContent(pendingTurn.ID, pendingTurn.Content, updatedContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to persist tool decisions: %w", err)
+	}
+	if !claimed {
+		return nil, fmt.Errorf("another request already resolved these tool calls: %w", ErrStaleToolClick)
+	}
+	return updatedContent, nil
+}
+
+// handleAsyncToolBatchFailure terminalizes a claimed batch when detached
+// execution fails before it can durably persist its own resolved statuses.
+// The compare-and-set cannot overwrite a batch that already advanced; either
+// way the delegation waiter is woken to re-read the database.
+func (c *Conversations) handleAsyncToolBatchFailure(conv *store.Conversation, turnID string, claimedContent json.RawMessage, post *model.Post, executionErr error) {
+	conversationID := ""
+	if conv != nil {
+		conversationID = conv.ID
+	}
+	postID := ""
+	if post != nil {
+		postID = post.Id
+	}
+
+	if c.mmClient != nil {
+		c.mmClient.LogError("Async tool batch execution failed", "error", executionErr, "conversation_id", conversationID, "post_id", postID)
+	}
+
+	failedContent, changed, err := failedClaimedToolContent(claimedContent)
+	switch {
+	case err != nil:
+		if c.mmClient != nil {
+			c.mmClient.LogError("Failed to build terminal state for async tool batch", "error", err, "conversation_id", conversationID, "post_id", postID)
+		}
+	case changed:
+		finalized, finalizeErr := c.convService.ClaimTurnContent(turnID, claimedContent, failedContent)
+		if finalizeErr != nil && c.mmClient != nil {
+			c.mmClient.LogError("Failed to persist terminal state for async tool batch", "error", finalizeErr, "conversation_id", conversationID, "post_id", postID)
+		} else if !finalized && c.mmClient != nil {
+			c.mmClient.LogDebug("Async tool batch already advanced before failure finalization", "conversation_id", conversationID, "post_id", postID)
+		}
+	}
+
+	c.notifyDelegationSubTurnCompleted(conv)
+	c.publishConversationUpdated(conv, post)
+}
+
+func failedClaimedToolContent(claimedContent json.RawMessage) (json.RawMessage, bool, error) {
+	var blocks []conversation.ContentBlock
+	if err := json.Unmarshal(claimedContent, &blocks); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal claimed tool decisions: %w", err)
+	}
+
+	changed := false
+	for i := range blocks {
+		if blocks[i].Type == conversation.BlockTypeToolUse && blocks[i].Status == conversation.StatusAccepted {
+			blocks[i].Status = conversation.StatusError
 			changed = true
 		}
 	}
 	if !changed {
-		return nil
+		return claimedContent, false, nil
 	}
-	updatedContent, err := json.Marshal(persisted)
+
+	failedContent, err := json.Marshal(blocks)
 	if err != nil {
-		return fmt.Errorf("failed to marshal accepted blocks: %w", err)
+		return nil, false, fmt.Errorf("failed to marshal failed tool decisions: %w", err)
 	}
-	claimed, err := c.convService.ClaimTurnContent(pendingTurn.ID, pendingTurn.Content, updatedContent)
-	if err != nil {
-		return fmt.Errorf("failed to persist accepted tool decisions: %w", err)
-	}
-	if !claimed {
-		return fmt.Errorf("another request already resolved these tool calls: %w", ErrStaleToolClick)
-	}
-	return nil
+	return failedContent, true, nil
 }
 
 // executeResolvedToolBatch executes the user's approval decisions: it runs
@@ -700,7 +763,8 @@ func (c *Conversations) streamToolFollowUp(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
+	maxRounds := maxToolTurnsForConversation(bot.GetConfig().EffectiveMaxToolTurns(), conv)
+	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(maxRounds))
 	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {

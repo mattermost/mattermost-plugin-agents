@@ -297,7 +297,8 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
+	maxRounds := maxToolTurnsForConversation(bot.GetConfig().EffectiveMaxToolTurns(), conv)
+	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(maxRounds))
 	runResult, runErr := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {

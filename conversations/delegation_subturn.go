@@ -28,6 +28,13 @@ const DelegationMaxToolTurns = 10
 // DelegationAskAgentToolName is the bare name of the embedded delegation tool.
 const DelegationAskAgentToolName = "ask_agent"
 
+func maxToolTurnsForConversation(configured int, conv *store.Conversation) int {
+	if conv != nil && conv.Operation == llm.OperationDelegation && configured > DelegationMaxToolTurns {
+		return DelegationMaxToolTurns
+	}
+	return configured
+}
+
 // DelegationNotifier is notified when a delegated sub-turn finishes a resumed
 // round (e.g. after the initiator approves a tool call in the delegation
 // thread). The delegation service implements this to wake the waiting parent.
@@ -162,11 +169,7 @@ func (c *Conversations) RunDelegatedSubTurn(ctx context.Context, p DelegatedSubT
 		return nil, fmt.Errorf("failed to build delegation completion request: %w", err)
 	}
 
-	maxRounds := p.Bot.GetConfig().EffectiveMaxToolTurns()
-	if maxRounds > DelegationMaxToolTurns {
-		maxRounds = DelegationMaxToolTurns
-	}
-
+	maxRounds := maxToolTurnsForConversation(p.Bot.GetConfig().EffectiveMaxToolTurns(), conv)
 	runner := toolrunner.New(p.Bot.LLM(), toolrunner.WithMaxRounds(maxRounds))
 	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, true), func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(p.ConversationID, turns, true); writeErr != nil {

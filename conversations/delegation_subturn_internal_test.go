@@ -5,6 +5,7 @@ package conversations
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -304,8 +305,8 @@ func TestIsDelegationToolUseBlock(t *testing.T) {
 }
 
 // turnContentRecordingStore implements conversation.Store's conditional
-// content update and panics on anything else — persistAcceptedToolDecisions
-// must only claim turn content.
+// content update and panics on anything else — async decision persistence and
+// failure finalization must only claim turn content.
 type turnContentRecordingStore struct {
 	conversation.Store
 	claimWins     bool
@@ -321,7 +322,7 @@ func (f *turnContentRecordingStore) UpdateTurnContentIfMatches(id string, expect
 	return f.claimWins, nil
 }
 
-func TestPersistAcceptedToolDecisions(t *testing.T) {
+func TestPersistAsyncToolDecisions(t *testing.T) {
 	recording := &turnContentRecordingStore{claimWins: true}
 	c := &Conversations{convService: conversation.NewService(recording, nil, nil, nil)}
 
@@ -340,17 +341,18 @@ func TestPersistAcceptedToolDecisions(t *testing.T) {
 	require.NoError(t, err)
 
 	turn := &store.Turn{ID: "turn-1", Content: originalContent}
-	err = c.persistAcceptedToolDecisions(turn, blocks, []string{"d1"}, func(llm.ToolCall) bool { return true })
+	claimedContent, err := c.persistAsyncToolDecisions(turn, blocks, []string{"d1"}, func(llm.ToolCall) bool { return true })
 	require.NoError(t, err)
 
 	require.Equal(t, "turn-1", recording.claimedTurnID)
 	assert.Equal(t, originalContent, []byte(recording.expected), "CAS must compare against the content this request read")
+	assert.Equal(t, []byte(recording.updated), []byte(claimedContent))
 
 	var persisted []conversation.ContentBlock
 	require.NoError(t, json.Unmarshal(recording.updated, &persisted))
 	require.Len(t, persisted, 4)
 	assert.Equal(t, conversation.StatusAccepted, persisted[0].Status, "accepted delegation block is claimed")
-	assert.Equal(t, conversation.StatusPending, persisted[1].Status, "undecided block stays pending")
+	assert.Equal(t, conversation.StatusRejected, persisted[1].Status, "the full user decision is persisted before detaching")
 	assert.Equal(t, conversation.StatusSuccess, persisted[2].Status, "resolved block is untouched")
 	assert.Equal(t, conversation.StatusAccepted, persisted[3].Status, "auto-resumed block is claimed")
 
@@ -360,7 +362,7 @@ func TestPersistAcceptedToolDecisions(t *testing.T) {
 	assert.Equal(t, conversation.StatusPending, blocks[3].Status)
 }
 
-func TestPersistAcceptedToolDecisionsLostClaim(t *testing.T) {
+func TestPersistAsyncToolDecisionsLostClaim(t *testing.T) {
 	recording := &turnContentRecordingStore{claimWins: false}
 	c := &Conversations{convService: conversation.NewService(recording, nil, nil, nil)}
 
@@ -368,16 +370,71 @@ func TestPersistAcceptedToolDecisionsLostClaim(t *testing.T) {
 	content, err := json.Marshal(blocks)
 	require.NoError(t, err)
 
-	err = c.persistAcceptedToolDecisions(&store.Turn{ID: "turn-1", Content: content}, blocks, []string{"d1"}, func(llm.ToolCall) bool { return false })
+	_, err = c.persistAsyncToolDecisions(&store.Turn{ID: "turn-1", Content: content}, blocks, []string{"d1"}, func(llm.ToolCall) bool { return false })
 	require.ErrorIs(t, err, ErrStaleToolClick, "losing the claim must surface as a stale click, never a second execution")
 }
 
-func TestPersistAcceptedToolDecisionsNoChanges(t *testing.T) {
+func TestPersistAsyncToolDecisionsNoChanges(t *testing.T) {
 	recording := &turnContentRecordingStore{claimWins: true}
 	c := &Conversations{convService: conversation.NewService(recording, nil, nil, nil)}
 
 	blocks := []conversation.ContentBlock{plainBlock("p1", conversation.StatusSuccess)}
-	err := c.persistAcceptedToolDecisions(&store.Turn{ID: "turn-1"}, blocks, []string{"p1"}, func(llm.ToolCall) bool { return false })
+	claimedContent, err := c.persistAsyncToolDecisions(&store.Turn{ID: "turn-1"}, blocks, []string{"p1"}, func(llm.ToolCall) bool { return false })
 	require.NoError(t, err)
+	assert.Nil(t, claimedContent)
 	assert.Empty(t, recording.claimedTurnID, "nothing to claim means nothing is written")
+}
+
+type recordingDelegationNotifier struct {
+	conversationIDs []string
+}
+
+func (n *recordingDelegationNotifier) SubTurnCompleted(conversationID string) {
+	n.conversationIDs = append(n.conversationIDs, conversationID)
+}
+
+func TestHandleAsyncToolBatchFailure(t *testing.T) {
+	recording := &turnContentRecordingStore{claimWins: true}
+	notifier := &recordingDelegationNotifier{}
+	c := &Conversations{
+		convService:        conversation.NewService(recording, nil, nil, nil),
+		delegationNotifier: notifier,
+	}
+
+	claimedContent, err := json.Marshal([]conversation.ContentBlock{
+		delegationBlock("d1", conversation.StatusAccepted, false),
+		plainBlock("p1", conversation.StatusRejected),
+	})
+	require.NoError(t, err)
+
+	conv := &store.Conversation{ID: "conv-1", Operation: llm.OperationDelegation}
+	c.handleAsyncToolBatchFailure(conv, "turn-1", claimedContent, nil, errors.New("persistence failed"))
+
+	assert.Equal(t, []byte(claimedContent), []byte(recording.expected), "failure finalization only applies to the claimed snapshot")
+	var finalized []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(recording.updated, &finalized))
+	require.Len(t, finalized, 2)
+	assert.Equal(t, conversation.StatusError, finalized[0].Status, "accepted work becomes terminal instead of waiting forever")
+	assert.Equal(t, conversation.StatusRejected, finalized[1].Status, "rejected decisions remain intact")
+	assert.Equal(t, []string{"conv-1"}, notifier.conversationIDs, "the waiting parent is always woken")
+}
+
+func TestMaxToolTurnsForConversation(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured int
+		conv       *store.Conversation
+		want       int
+	}{
+		{name: "ordinary conversation keeps configured limit", configured: 30, conv: &store.Conversation{Operation: llm.OperationConversation}, want: 30},
+		{name: "delegation uses lower configured limit", configured: 5, conv: &store.Conversation{Operation: llm.OperationDelegation}, want: 5},
+		{name: "delegation caps higher configured limit", configured: 30, conv: &store.Conversation{Operation: llm.OperationDelegation}, want: DelegationMaxToolTurns},
+		{name: "nil conversation keeps configured limit", configured: 30, want: 30},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, maxToolTurnsForConversation(tc.configured, tc.conv))
+		})
+	}
 }
