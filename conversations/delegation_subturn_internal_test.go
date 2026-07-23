@@ -410,7 +410,7 @@ func TestHandleAsyncToolBatchFailure(t *testing.T) {
 	conv := &store.Conversation{ID: "conv-1", Operation: llm.OperationDelegation}
 	c.handleAsyncToolBatchFailure(conv, "turn-1", claimedContent, nil, errors.New("persistence failed"))
 
-	assert.Equal(t, []byte(claimedContent), []byte(recording.expected), "failure finalization only applies to the claimed snapshot")
+	assert.Equal(t, claimedContent, recording.expected, "failure finalization only applies to the claimed snapshot")
 	var finalized []conversation.ContentBlock
 	require.NoError(t, json.Unmarshal(recording.updated, &finalized))
 	require.Len(t, finalized, 2)
