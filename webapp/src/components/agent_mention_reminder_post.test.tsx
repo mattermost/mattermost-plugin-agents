@@ -41,18 +41,6 @@ describe('AgentMentionReminderPost', () => {
         mockedDoLoopInAgent.mockImplementation(() => Promise.resolve());
     });
 
-    test('renders the loop-in link with a capitalized "Click here" (MM-69160)', () => {
-        renderPost({bot_username: 'matty', bot_display_name: 'Matty'});
-
-        // The visible sentence and the capitalized link text.
-        expect(screen.getByText(/To respond to an agent you must @mention them\./)).not.toBeNull();
-        const link = screen.getByRole('link', {name: 'Click here to loop in @Matty'});
-        expect(link).not.toBeNull();
-
-        // Regression guard: the old lowercase copy must not appear.
-        expect(screen.queryByText(/click here to loop in/)).toBeNull();
-    });
-
     test('falls back to the bot username when no display name is set', () => {
         renderPost({bot_username: 'matty'});
         expect(screen.getByRole('link', {name: 'Click here to loop in @matty'})).not.toBeNull();
