@@ -15,6 +15,7 @@ import {
 } from '@mattermost/compass-icons/components';
 
 import {getDelegationStatus} from '@/client';
+import {invalidateConversation} from '@/hooks/use_conversation';
 import {useDelegationUpdates} from '@/hooks/use_delegation_updates';
 import type {DelegationPhase, DelegationStatus, DelegationUpdate} from '@/types/delegation';
 import {stripWirePrefix} from '@/utils/tool_names';
@@ -62,6 +63,7 @@ interface DelegationCardProps {
     canApprove: boolean;
     onApprove?: () => void;
     onReject?: () => void;
+    renderPendingApprovals?: (delegationID: string) => React.ReactNode;
 }
 
 // deriveTerminalPhase maps a persisted tool call status to a card phase, or
@@ -86,6 +88,7 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
     canApprove,
     onApprove,
     onReject,
+    renderPendingApprovals,
 }) => {
     const {formatMessage} = useIntl();
     const args = parseAskAgentArgs(tool.arguments);
@@ -163,6 +166,16 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
         }
         return 'starting';
     }, [isPendingApproval, terminalPhase, liveUpdate, reconciled]);
+
+    const delegationID = liveUpdate?.delegation_id || reconciled?.delegation_id || '';
+    useEffect(() => {
+        if (phase === 'waiting_on_you' && delegationID) {
+            // The approval may have been produced by a resumed round whose
+            // post stream is mounted only in the target-agent DM. Refresh the
+            // shared conversation cache whenever its parent update arrives.
+            invalidateConversation(delegationID);
+        }
+    }, [phase, delegationID, liveUpdate]);
 
     const agentDisplayName = liveUpdate?.target_agent_displayname || reconciled?.target_agent_displayname || '';
     const agentUsername = liveUpdate?.target_agent_username || reconciled?.target_agent_username || (args?.agent ?? '').replace(/^@/, '');
@@ -305,10 +318,17 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                                 defaultMessage='Waiting on you'
                             />
                         </strong>
-                        <FormattedMessage
-                            id='ai.delegation.waiting_on_you_detail'
-                            defaultMessage='— the agent needs your input in the delegation conversation.'
-                        />
+                        {renderPendingApprovals ? (
+                            <FormattedMessage
+                                id='ai.delegation.waiting_on_you_inline_detail'
+                                defaultMessage='— respond below to continue.'
+                            />
+                        ) : (
+                            <FormattedMessage
+                                id='ai.delegation.waiting_on_you_detail'
+                                defaultMessage='— the agent needs your input in the delegation conversation.'
+                            />
+                        )}
                         {elapsedSeconds > 0 && <Elapsed>{formatElapsed(elapsedSeconds)}</Elapsed>}
                     </>
                 )}
@@ -340,6 +360,8 @@ const DelegationCard: React.FC<DelegationCardProps> = ({
                     </>
                 )}
             </StatusLine>
+
+            {phase === 'waiting_on_you' && delegationID !== '' && renderPendingApprovals?.(delegationID)}
 
             {permalink !== '' && (
                 <ConversationLink

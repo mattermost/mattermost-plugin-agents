@@ -108,6 +108,31 @@ describe('DelegationCard', () => {
         expect(screen.queryByText('Accept')).toBeNull();
     });
 
+    it('renders delegated approval content inline while waiting on the user', async () => {
+        getDelegationStatusMock.mockResolvedValue({
+            delegation_id: 'conv1',
+            parent_tool_call_id: 'toolcall_1',
+            phase: 'waiting_on_you',
+            task_post_id: 'post1',
+            permalink: 'http://localhost:8065/_redirect/pl/post1',
+            target_agent_id: 'bot1',
+            target_agent_username: 'projects',
+            target_agent_displayname: 'Projects Agent',
+            created_at: Date.now(),
+        });
+
+        renderCard(makeTool({status: ToolCallStatus.Accepted}), {
+            renderPendingApprovals: (delegationID) => (
+                <div data-testid='inline-approval'>{delegationID}</div>
+            ),
+        });
+
+        await waitFor(() => {
+            expect(screen.getByTestId('inline-approval').textContent).toBe('conv1');
+        });
+        expect(screen.getByText('— respond below to continue.')).not.toBeNull();
+    });
+
     it('updates phases from live delegation events', async () => {
         renderCard(makeTool({status: ToolCallStatus.Accepted}));
 

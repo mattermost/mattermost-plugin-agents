@@ -219,6 +219,19 @@ export function deriveApprovalStageForPost(
     return anchor?.approval_state ?? 'done';
 }
 
+/** Return the latest response-post anchor that still needs a user decision. */
+export function findApprovalPostID(conversation: ConversationResponse): string | null {
+    const anchor = conversation.turns.
+        filter((turn) =>
+            turn.role === 'assistant' &&
+            turn.post_id != null &&
+            turn.approval_state != null &&
+            turn.approval_state !== 'done',
+        ).
+        sort((a, b) => b.sequence - a.sequence)[0];
+    return anchor?.post_id ?? null;
+}
+
 /** True if any tool_use block across the post's response has auto_approved status. */
 export function hasAutoApprovedToolsForPost(
     conversation: ConversationResponse,

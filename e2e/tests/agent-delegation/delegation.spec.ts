@@ -278,24 +278,24 @@ test.describe('Agent delegation (ask_agent)', () => {
         await card.getByRole('button', {name: 'Accept', exact: true}).click();
 
         // Sub-agent hits the ask-policy tool: the parent card flips to
-        // waiting-on-you while the approval card renders in the delegation thread.
+        // waiting-on-you while mirroring the approval card into this thread.
         await expect(rhs.getByText('Waiting on you')).toBeVisible({timeout: 120000});
 
-        // The parent keeps waiting (no park): approve in the delegation thread.
-        await openDMWithBot(page, baseUrl, subagentBot);
-        await openThreadForMarker(page, taskMarker);
-        const nestedAccept = rhs.getByRole('button', {name: 'Accept', exact: true}).last();
+        // Approve directly from the parent card without leaving the main thread.
+        const embeddedApprovals = rhs.getByTestId('delegation-embedded-approvals');
+        await embeddedApprovals.waitFor({timeout: 60000});
+        const nestedAccept = embeddedApprovals.getByRole('button', {name: 'Accept', exact: true}).last();
         await nestedAccept.waitFor({timeout: 60000});
         await nestedAccept.click();
 
-        // Sub answer streams into the delegation thread.
-        await expect(rhs.getByText(subAnswer)).toBeVisible({timeout: 120000});
-
-        // Parent resumes and synthesizes.
-        await openDMWithBot(page, baseUrl, orchestratorBot);
-        await openThreadForMarker(page, promptMarker);
+        // Parent resumes and synthesizes without navigation.
         await expect(rhs.getByTestId('delegation-card').last().getByText('Completed', {exact: true})).toBeVisible({timeout: 120000});
         await expect(rhs.getByText(finalText)).toBeVisible({timeout: 120000});
+
+        // The delegated thread remains available as a visible audit trail.
+        await openDMWithBot(page, baseUrl, subagentBot);
+        await openThreadForMarker(page, taskMarker);
+        await expect(rhs.getByText(subAnswer)).toBeVisible({timeout: 120000});
     });
 
     test('Channel mention: sub answer stays private until shared', async ({page}) => {
