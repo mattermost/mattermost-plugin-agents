@@ -6,6 +6,7 @@ package embeddings
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 )
@@ -15,14 +16,16 @@ type CompositeSearch struct {
 	store    VectorStore
 	provider EmbeddingProvider
 	options  chunking.Options
+	recency  RecencyBiasSettings
 }
 
 // NewCompositeSearch creates a new CompositeSearch with required chunking options
-func NewCompositeSearch(store VectorStore, provider EmbeddingProvider, options chunking.Options) *CompositeSearch {
+func NewCompositeSearch(store VectorStore, provider EmbeddingProvider, options chunking.Options, recency RecencyBiasSettings) *CompositeSearch {
 	return &CompositeSearch{
 		store:    store,
 		provider: provider,
 		options:  options,
+		recency:  recency,
 	}
 }
 
@@ -77,12 +80,33 @@ func (c *CompositeSearch) Search(ctx context.Context, query string, opts SearchO
 		return nil, err
 	}
 
-	// Search for matching chunks
-	results, err := c.store.Search(ctx, embedding, opts)
+	if !c.recency.Enabled {
+		return c.store.Search(ctx, embedding, opts)
+	}
+
+	// Recency bias: over-fetch candidates by pure similarity (keeps the ANN
+	// index usable), rerank in memory with the time decay, then apply the
+	// caller's offset/limit window to the reranked order.
+	fetchOpts := opts
+	fetchOpts.Offset = 0
+	fetchOpts.Limit = recencyFetchLimit(opts.Limit, opts.Offset)
+
+	results, err := c.store.Search(ctx, embedding, fetchOpts)
 	if err != nil {
 		return nil, err
 	}
 
+	rerankByRecency(results, time.Now().UnixMilli(), c.recency)
+
+	if opts.Offset > 0 {
+		if opts.Offset >= len(results) {
+			return nil, nil
+		}
+		results = results[opts.Offset:]
+	}
+	if opts.Limit > 0 && len(results) > opts.Limit {
+		results = results[:opts.Limit]
+	}
 	return results, nil
 }
 

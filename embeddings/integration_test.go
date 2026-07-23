@@ -170,7 +170,7 @@ func createFullSearchSystem(t *testing.T, db *sqlx.DB, dimensions int) embedding
 		ChunkingStrategy: "sentences",
 	}
 
-	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts)
+	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts, embeddings.RecencyBiasSettings{})
 }
 
 // TestBasicIndexAndSearchMechanics tests that the indexing and search plumbing works
