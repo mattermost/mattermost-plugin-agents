@@ -38,7 +38,7 @@ function renderPost(props?: PostProps, overrides?: {id?: string; message?: strin
 describe('AgentMentionReminderPost', () => {
     beforeEach(() => {
         mockedDoLoopInAgent.mockReset();
-        mockedDoLoopInAgent.mockResolvedValue(undefined as never);
+        mockedDoLoopInAgent.mockImplementation(() => Promise.resolve());
     });
 
     test('renders the loop-in link with a capitalized "Click here" (MM-69160)', () => {
@@ -68,7 +68,7 @@ describe('AgentMentionReminderPost', () => {
     });
 
     test('renders the plain fallback message when no bot username is present', () => {
-        renderPost(undefined, {message: 'To respond to an agent you must @mention them.'});
+        renderPost({}, {message: 'To respond to an agent you must @mention them.'});
         expect(screen.getByText('To respond to an agent you must @mention them.')).not.toBeNull();
         expect(screen.queryByRole('link')).toBeNull();
     });
