@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -105,11 +106,40 @@ func (s *inMemoryStore) UpdateTurnContent(id string, content json.RawMessage) er
 	return nil
 }
 
-func (s *inMemoryStore) UpdateTurnContentIfMatches(id string, _, updated json.RawMessage) (bool, error) {
-	if err := s.UpdateTurnContent(id, updated); err != nil {
+func (s *inMemoryStore) UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error) {
+	turn, ok := s.turns[id]
+	if !ok {
+		return false, nil
+	}
+
+	var current, want any
+	if err := json.Unmarshal(turn.Content, &current); err != nil {
 		return false, err
 	}
+	if err := json.Unmarshal(expected, &want); err != nil {
+		return false, err
+	}
+	if !reflect.DeepEqual(current, want) {
+		return false, nil
+	}
+	turn.Content = updated
 	return true, nil
+}
+
+func TestInMemoryStoreRejectsStaleTurnClaim(t *testing.T) {
+	original := json.RawMessage(`[{"status":"pending"}]`)
+	testStore := newInMemoryStore()
+	require.NoError(t, testStore.CreateTurn(&store.Turn{ID: "turn-1", ConversationID: "conv-1", Content: original}))
+
+	claimed, err := testStore.UpdateTurnContentIfMatches(
+		"turn-1",
+		json.RawMessage(`[{"status":"accepted"}]`),
+		json.RawMessage(`[{"status":"error"}]`),
+	)
+
+	require.NoError(t, err)
+	assert.False(t, claimed)
+	assert.JSONEq(t, string(original), string(testStore.turns["turn-1"].Content))
 }
 
 func (s *inMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
