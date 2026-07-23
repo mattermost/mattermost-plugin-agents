@@ -136,6 +136,7 @@
   "GufXy52F": "Value",
   "H268cSDK": "Enable Mattermost MCP Server (HTTP)",
   "HMUo+5uG": "Enable Vision",
+  "HNQk7eNJ": "Bulk load complete — building the vector index. This can take a while on large workspaces; search stays unavailable until it finishes.",
   "HT6SX7Ez": "Failed to fetch models. Please check the service configuration.",
   "HV19SAg0": "The embedding model configuration has changed ({reason}). Search functionality is disabled until you run a full reindex.",
   "HXmpmymI": "AI services are third-party services. Mattermost is not responsible for service output.",

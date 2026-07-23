@@ -354,6 +354,7 @@ func (s *Indexer) acknowledgeCancel(jobStatus *JobStatus) {
 	canceledStatus.Status = JobStatusCanceled
 	canceledStatus.CompletedAt = time.Now()
 	canceledStatus.ProcessedRows = jobStatus.ProcessedRows
+	canceledStatus.Phase = "" // phase is live-only; do not leave building_index on a terminal row
 	if jobStatus.Error != "" {
 		canceledStatus.Error = jobStatus.Error
 	}
