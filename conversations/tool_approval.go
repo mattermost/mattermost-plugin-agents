@@ -129,26 +129,36 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 
-	// Delegation calls can run (and wait on the user) for a very long time,
-	// so they must not execute inside this HTTP request. Persist the accepted
-	// decisions first — a duplicate click then fails the pending lookup as a
-	// stale click instead of double-executing — and run the batch in a
-	// detached goroutine. All other batches keep the synchronous path.
-	if batchWillExecuteDelegationCall(pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM)) {
-		claimedContent, err := c.persistAsyncToolDecisions(pendingTurn, pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM))
+	// A delegated conversation can render the same approval controls in its
+	// DM and on the parent delegation card. Claim its full decision batch
+	// before executing so only one surface can win. Parent batches that
+	// execute ask_agent need the same claim and then detach because the call
+	// can wait on the sub-agent for a long time.
+	executesDelegation := batchWillExecuteDelegationCall(pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM))
+	claimBeforeExecution := shouldClaimToolDecisions(conv, executesDelegation)
+	var claimedContent json.RawMessage
+	if claimBeforeExecution {
+		claimedContent, err = c.persistToolDecisions(pendingTurn, pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM))
 		if err != nil {
 			return err
 		}
+	}
+
+	if executesDelegation {
 		detachedCtx := telemetry.DetachContext(ctx)
 		go func() {
 			if execErr := c.executeResolvedToolBatch(detachedCtx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM, true); execErr != nil {
-				c.handleAsyncToolBatchFailure(conv, pendingTurn.ID, claimedContent, post, execErr)
+				c.handleClaimedToolBatchFailure(conv, pendingTurn.ID, claimedContent, post, execErr)
 			}
 		}()
 		return nil
 	}
 
-	return c.executeResolvedToolBatch(ctx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM, false)
+	execErr := c.executeResolvedToolBatch(ctx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM, false)
+	if execErr != nil && claimBeforeExecution {
+		c.handleClaimedToolBatchFailure(conv, pendingTurn.ID, claimedContent, post, execErr)
+	}
+	return execErr
 }
 
 // isDelegationToolUseBlock reports whether a persisted tool_use block is the
@@ -187,13 +197,17 @@ func batchWillExecuteDelegationCall(blocks []conversation.ContentBlock, accepted
 	return false
 }
 
-// persistAsyncToolDecisions records every decision in an asynchronously
-// executed batch: calls that will run become accepted and every other pending
-// call becomes rejected. The entire batch is persisted with one atomic
+func shouldClaimToolDecisions(conv *store.Conversation, executesDelegation bool) bool {
+	return executesDelegation || (conv != nil && conv.Operation == llm.OperationDelegation)
+}
+
+// persistToolDecisions records every decision in a claimed batch: calls that
+// will run become accepted and every other pending call becomes rejected. The
+// entire batch is persisted with one atomic
 // compare-and-set against the content this request originally read. Two
 // concurrent approval clicks (on any node) can therefore never both execute.
 // The in-memory snapshot stays pending so the winning request can execute it.
-func (c *Conversations) persistAsyncToolDecisions(pendingTurn *store.Turn, blocks []conversation.ContentBlock, acceptedToolIDs []string, autoExec func(llm.ToolCall) bool) (json.RawMessage, error) {
+func (c *Conversations) persistToolDecisions(pendingTurn *store.Turn, blocks []conversation.ContentBlock, acceptedToolIDs []string, autoExec func(llm.ToolCall) bool) (json.RawMessage, error) {
 	persisted := slices.Clone(blocks)
 	changed := false
 	for i := range persisted {
@@ -227,11 +241,11 @@ func (c *Conversations) persistAsyncToolDecisions(pendingTurn *store.Turn, block
 	return updatedContent, nil
 }
 
-// handleAsyncToolBatchFailure terminalizes a claimed batch when detached
-// execution fails before it can durably persist its own resolved statuses.
+// handleClaimedToolBatchFailure terminalizes a claimed batch when execution
+// fails before it can durably persist its own resolved statuses.
 // The compare-and-set cannot overwrite a batch that already advanced; either
 // way the delegation waiter is woken to re-read the database.
-func (c *Conversations) handleAsyncToolBatchFailure(conv *store.Conversation, turnID string, claimedContent json.RawMessage, post *model.Post, executionErr error) {
+func (c *Conversations) handleClaimedToolBatchFailure(conv *store.Conversation, turnID string, claimedContent json.RawMessage, post *model.Post, executionErr error) {
 	conversationID := ""
 	if conv != nil {
 		conversationID = conv.ID

@@ -269,6 +269,26 @@ func TestBatchWillExecuteDelegationCall(t *testing.T) {
 	}
 }
 
+func TestShouldClaimToolDecisions(t *testing.T) {
+	tests := []struct {
+		name               string
+		conv               *store.Conversation
+		executesDelegation bool
+		want               bool
+	}{
+		{name: "parent ask_agent batch", conv: &store.Conversation{Operation: llm.OperationConversation}, executesDelegation: true, want: true},
+		{name: "delegated approval batch", conv: &store.Conversation{Operation: llm.OperationDelegation}, want: true},
+		{name: "ordinary approval batch", conv: &store.Conversation{Operation: llm.OperationConversation}, want: false},
+		{name: "missing conversation", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, shouldClaimToolDecisions(tc.conv, tc.executesDelegation))
+		})
+	}
+}
+
 func TestIsDelegationToolUseBlock(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -322,7 +342,7 @@ func (f *turnContentRecordingStore) UpdateTurnContentIfMatches(id string, expect
 	return f.claimWins, nil
 }
 
-func TestPersistAsyncToolDecisions(t *testing.T) {
+func TestPersistToolDecisions(t *testing.T) {
 	recording := &turnContentRecordingStore{claimWins: true}
 	c := &Conversations{convService: conversation.NewService(recording, nil, nil, nil)}
 
@@ -341,7 +361,7 @@ func TestPersistAsyncToolDecisions(t *testing.T) {
 	require.NoError(t, err)
 
 	turn := &store.Turn{ID: "turn-1", Content: originalContent}
-	claimedContent, err := c.persistAsyncToolDecisions(turn, blocks, []string{"d1"}, func(llm.ToolCall) bool { return true })
+	claimedContent, err := c.persistToolDecisions(turn, blocks, []string{"d1"}, func(llm.ToolCall) bool { return true })
 	require.NoError(t, err)
 
 	require.Equal(t, "turn-1", recording.claimedTurnID)
@@ -362,7 +382,7 @@ func TestPersistAsyncToolDecisions(t *testing.T) {
 	assert.Equal(t, conversation.StatusPending, blocks[3].Status)
 }
 
-func TestPersistAsyncToolDecisionsLostClaim(t *testing.T) {
+func TestPersistToolDecisionsLostClaim(t *testing.T) {
 	recording := &turnContentRecordingStore{claimWins: false}
 	c := &Conversations{convService: conversation.NewService(recording, nil, nil, nil)}
 
@@ -370,16 +390,16 @@ func TestPersistAsyncToolDecisionsLostClaim(t *testing.T) {
 	content, err := json.Marshal(blocks)
 	require.NoError(t, err)
 
-	_, err = c.persistAsyncToolDecisions(&store.Turn{ID: "turn-1", Content: content}, blocks, []string{"d1"}, func(llm.ToolCall) bool { return false })
+	_, err = c.persistToolDecisions(&store.Turn{ID: "turn-1", Content: content}, blocks, []string{"d1"}, func(llm.ToolCall) bool { return false })
 	require.ErrorIs(t, err, ErrStaleToolClick, "losing the claim must surface as a stale click, never a second execution")
 }
 
-func TestPersistAsyncToolDecisionsNoChanges(t *testing.T) {
+func TestPersistToolDecisionsNoChanges(t *testing.T) {
 	recording := &turnContentRecordingStore{claimWins: true}
 	c := &Conversations{convService: conversation.NewService(recording, nil, nil, nil)}
 
 	blocks := []conversation.ContentBlock{plainBlock("p1", conversation.StatusSuccess)}
-	claimedContent, err := c.persistAsyncToolDecisions(&store.Turn{ID: "turn-1"}, blocks, []string{"p1"}, func(llm.ToolCall) bool { return false })
+	claimedContent, err := c.persistToolDecisions(&store.Turn{ID: "turn-1"}, blocks, []string{"p1"}, func(llm.ToolCall) bool { return false })
 	require.NoError(t, err)
 	assert.Nil(t, claimedContent)
 	assert.Empty(t, recording.claimedTurnID, "nothing to claim means nothing is written")
@@ -393,7 +413,7 @@ func (n *recordingDelegationNotifier) SubTurnCompleted(conversationID string) {
 	n.conversationIDs = append(n.conversationIDs, conversationID)
 }
 
-func TestHandleAsyncToolBatchFailure(t *testing.T) {
+func TestHandleClaimedToolBatchFailure(t *testing.T) {
 	recording := &turnContentRecordingStore{claimWins: true}
 	notifier := &recordingDelegationNotifier{}
 	c := &Conversations{
@@ -408,7 +428,7 @@ func TestHandleAsyncToolBatchFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	conv := &store.Conversation{ID: "conv-1", Operation: llm.OperationDelegation}
-	c.handleAsyncToolBatchFailure(conv, "turn-1", claimedContent, nil, errors.New("persistence failed"))
+	c.handleClaimedToolBatchFailure(conv, "turn-1", claimedContent, nil, errors.New("persistence failed"))
 
 	assert.Equal(t, claimedContent, []byte(recording.expected), "failure finalization only applies to the claimed snapshot")
 	var finalized []conversation.ContentBlock
