@@ -269,7 +269,7 @@ var mattermostVettedToolConfigs = buildMattermostVettedToolConfigs()
 
 func buildMattermostVettedToolConfigs() []ToolConfig {
 	out := append([]ToolConfig{}, mattermostAutoRunInDMToolConfigs...)
-	// ask_agent delegates work to another agent as the requesting user; it can
+	// ask_agent delegates work to an agent as the requesting user; it can
 	// trigger arbitrary downstream tool use, so it is explicitly seeded at
 	// policy "ask" (admins may relax it later).
 	out = append(out, askToolConfigs([]string{"ask_agent"})...)

@@ -313,10 +313,6 @@ func (s *Service) validate(req Request) (sourceBot *bots.Bot, targetBot *bots.Bo
 		return nil, nil, nil, fmt.Errorf("%w: no agent named %q. Use list_agents to discover available agents", ErrUnknownAgent, req.TargetAgent)
 	}
 
-	if targetBot.GetMMBot().UserId == sourceBot.GetMMBot().UserId {
-		return nil, nil, nil, fmt.Errorf("%w: answer directly instead, or pick a different agent with list_agents", ErrSelfDelegation)
-	}
-
 	if restrictionErr := s.bots.CheckUsageRestrictionsForUser(targetBot, initiator.Id); restrictionErr != nil {
 		return nil, nil, nil, fmt.Errorf("%w: @%s cannot be used by this user", ErrAccessDenied, targetBot.GetConfig().Name)
 	}

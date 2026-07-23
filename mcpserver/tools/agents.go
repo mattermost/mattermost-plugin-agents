@@ -54,9 +54,9 @@ type AskAgentArgs struct {
 	Task  string `json:"task" jsonschema:"Self-contained task description for the target agent. Include all necessary context; the target agent cannot see this conversation."`
 }
 
-const askAgentDescription = `Delegate a task to another AI agent on behalf of the user and return its answer.
+const askAgentDescription = `Delegate a task to an AI agent on behalf of the user and return its answer.
 
-Use this when another agent is better suited for the task (different expertise, instructions, knowledge, or configuration). Answer directly instead of delegating when you can handle the request yourself.
+Use this when a separate delegated turn is useful or another agent is better suited for the task (different expertise, instructions, knowledge, or configuration). The target may be your own agent identity, but answer directly when delegation adds no value.
 
 The task must be fully self-contained: the target agent cannot see this conversation, so include every detail it needs. Use list_agents to discover available agents. The delegated work runs as the requesting user in a visible thread in their direct-message channel with the target agent; the target agent's final answer is returned as this tool's result, with a permalink to that thread. The target agent may take a while or ask the user for input, so the call can take some time to return.`
 
@@ -84,7 +84,7 @@ func (p *MattermostToolProvider) delegationAvailable() bool {
 	return p.delegationService != nil && p.delegationService.Available()
 }
 
-// toolAskAgent delegates a task to another agent via the delegation service.
+// toolAskAgent delegates a task to an agent via the delegation service.
 // The initiator identity always comes from the authenticated MCP session and
 // the delegating agent from server-injected call metadata — never from tool
 // arguments.

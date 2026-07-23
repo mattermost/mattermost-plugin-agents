@@ -59,9 +59,6 @@ var (
 	// ErrUnknownAgent indicates the target agent could not be resolved.
 	ErrUnknownAgent = errors.New("unknown agent")
 
-	// ErrSelfDelegation indicates the delegating agent targeted itself.
-	ErrSelfDelegation = errors.New("an agent cannot delegate a task to itself")
-
 	// ErrAccessDenied indicates the initiating user may not use the target agent.
 	ErrAccessDenied = errors.New("the user does not have access to this agent")
 

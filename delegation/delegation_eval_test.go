@@ -78,7 +78,7 @@ func buildEvalToolStore(recorder *callRecorder) *llm.ToolStore {
 	store.AddTools([]llm.Tool{
 		{
 			Name:         "mattermost__ask_agent",
-			Description:  "Delegate a task to another AI agent on behalf of the user and return its answer. Use this when another agent is better suited for the task. The task must be fully self-contained. Use list_agents to discover agents.",
+			Description:  "Delegate a task to an AI agent on behalf of the user and return its answer. The target may be your own agent identity when a separate delegated turn is useful. The task must be fully self-contained. Use list_agents to discover agents.",
 			Schema:       llm.NewJSONSchemaFromStruct[askAgentEvalArgs](),
 			ServerOrigin: mcp.EmbeddedClientKey,
 			Resolver: record("mattermost__ask_agent", func(json.RawMessage) string {

@@ -108,10 +108,10 @@ func TestValidate(t *testing.T) {
 			wantErr: ErrUnknownAgent,
 		},
 		{
-			name:    "self delegation",
-			req:     Request{InitiatorUserID: "user-1", DelegatingBotUserID: "matty-bot-id", TargetAgent: "matty"},
-			user:    &model.User{Id: "user-1", Username: "alice"},
-			wantErr: ErrSelfDelegation,
+			name:       "self delegation",
+			req:        Request{InitiatorUserID: "user-1", DelegatingBotUserID: "matty-bot-id", TargetAgent: "matty"},
+			user:       &model.User{Id: "user-1", Username: "alice"},
+			wantTarget: "matty-bot-id",
 		},
 		{
 			name:    "access denied by target agent restrictions",
