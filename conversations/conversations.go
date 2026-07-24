@@ -248,14 +248,6 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 		if !ok {
 			return false
 		}
-		// Remote MCP tools are part of the licensed "MCP Support" feature;
-		// never auto-execute them on an unlicensed server. They fall back to
-		// the manual approval flow, where acceptance is equally license-gated
-		// but rejection stays possible. Built-in and embedded Mattermost MCP
-		// tools are not license-gated.
-		if isRemoteMCPOrigin(lookup.ServerOrigin) && !c.isRemoteMCPLicensed() {
-			return false
-		}
 		// Interaction tools are answered by the user; auto-executing one
 		// would bypass the question entirely.
 		if lookup.Tool.UserInteraction != "" {

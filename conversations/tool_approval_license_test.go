@@ -68,12 +68,19 @@ func toolLicenseTestBot() *bots.Bot {
 	)
 }
 
-func toolLicenseTestBuilder(t *testing.T) *llmcontext.Builder {
+// toolLicenseTestBuilder builds a context builder whose license state matches
+// the scenario under test: unlicensed builders drop remote MCP tools at
+// supply time, mirroring production.
+func toolLicenseTestBuilder(t *testing.T, licensed bool) *llmcontext.Builder {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	if licensed {
+		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
+	} else {
+		mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	}
 	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 	for i := 1; i <= 10; i++ {
 		args := make([]interface{}, i)
@@ -115,7 +122,7 @@ func toolLicenseConversations(t *testing.T, convStore *loadedStateFlowStore, lic
 
 	return &Conversations{
 		mmClient:       mmClient,
-		contextBuilder: toolLicenseTestBuilder(t),
+		contextBuilder: toolLicenseTestBuilder(t, licensed),
 		bots:           botsService,
 		licenseChecker: licenseChecker,
 		convService:    conversation.NewService(convStore, nil, nil, nil),
@@ -246,57 +253,6 @@ func TestHandleToolCallLicenseGate(t *testing.T) {
 			require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
 			require.Equal(t, conversation.BlockTypeToolResult, resultBlocks[0].Type)
 			require.Equal(t, tc.wantResult, resultBlocks[0].Content)
-		})
-	}
-}
-
-// TestShouldAutoExecuteToolLicenseGate pins that remote MCP tools never
-// auto-execute on an unlicensed server — auto-run policies must not bypass
-// the license gate that covers manual approval. Embedded Mattermost MCP
-// tools and licensed remote tools follow their configured policy.
-func TestShouldAutoExecuteToolLicenseGate(t *testing.T) {
-	tests := []struct {
-		name     string
-		origin   string
-		licensed bool
-		want     bool
-	}{
-		{
-			name:     "remote MCP tool does not auto-execute without license",
-			origin:   toolLicenseRemoteOrigin,
-			licensed: false,
-			want:     false,
-		},
-		{
-			name:     "remote MCP tool auto-executes with license",
-			origin:   toolLicenseRemoteOrigin,
-			licensed: true,
-			want:     true,
-		},
-		{
-			name:     "embedded MCP tool auto-executes without license",
-			origin:   mcp.EmbeddedClientKey,
-			licensed: false,
-			want:     true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			c := &Conversations{
-				toolPolicyChecker: mapPolicyChecker{
-					tc.origin: {
-						"example_tool": {policy: mcp.ToolPolicyAutoRunInDM, enabled: true},
-					},
-				},
-				licenseChecker: toolLicenseChecker(t, tc.licensed),
-			}
-			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
-			llmCtx.Tools.AddTools([]llm.Tool{{Name: "example_tool", ServerOrigin: tc.origin}})
-
-			got := c.shouldAutoExecuteTool(llmCtx, true)(llm.ToolCall{Name: "example_tool", ServerOrigin: tc.origin})
-
-			require.Equal(t, tc.want, got)
 		})
 	}
 }

@@ -434,8 +434,9 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wantFollowUp:   false, // nothing executed, so nothing to follow up on
 		},
 		{
-			// Remote MCP tools are license-gated: on an unlicensed server a
-			// marked remote tool must resolve to rejection on resume, not
+			// Remote MCP tools are license-gated at supply time: an
+			// unlicensed context builder drops them from the tool store, so
+			// a marked remote tool must resolve to rejection on resume — not
 			// execute and not fail the whole submission.
 			name:             "unlicensed remote auto-run resume rejects instead of executing",
 			wouldAutoExecute: true,
@@ -546,10 +547,15 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 
+			contextBuilder := loadedStateBuilder(t)
+			if tc.unlicensed {
+				contextBuilder = newChannelFollowUpTestBuilderWithLicense(t, []llm.Tool{loadedStateTool()}, &channelFollowUpTestConfig{}, false)
+			}
+
 			streamingService := &loadedStateStreamingService{}
 			c := &Conversations{
 				mmClient:          mmClient,
-				contextBuilder:    loadedStateBuilder(t),
+				contextBuilder:    contextBuilder,
 				bots:              botsService,
 				convService:       conversation.NewService(convStore, nil, nil, nil),
 				streamingService:  streamingService,

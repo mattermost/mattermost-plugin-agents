@@ -317,7 +317,6 @@
   "ai.tool_call.visible_to_channel": "Visible to channel",
   "an7oWdi0": "Agents post responses in the right panel which will only be visible to you.",
   "arEJ0/4e": "Invalid Username",
-  "augDqIx1": "Remote MCP servers require a qualifying Mattermost plan. Agents cannot run tools from the servers below until a license is applied. Embedded Mattermost tools remain available without a license.",
   "ayDh7FpN": "Enter the system prompt template",
   "bV+YmcFC": "Default model",
   "ba6Hh5uy": "Failed to create prompt. Please try again.",

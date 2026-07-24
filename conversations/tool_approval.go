@@ -53,17 +53,12 @@ var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool 
 // ServerOrigin) and embedded Mattermost MCP tools (mcp.EmbeddedClientKey) are
 // basic tool integrations and never require a license. The HTTP layer maps
 // this to 403 Forbidden.
+//
+// This gate is the decision-time backstop for pending remote tool calls
+// persisted before a license change; the primary enforcement is at supply
+// time, where llmcontext.Builder drops remote MCP tools from the LLM context
+// entirely on unlicensed servers.
 var ErrRemoteMCPNotLicensed = errors.New("tools from remote MCP servers require a license with MCP support")
-
-// isRemoteMCPOrigin reports whether a tool's ServerOrigin points at a
-// remote/external MCP server. Built-in tools carry an empty origin and the
-// embedded Mattermost MCP server uses mcp.EmbeddedClientKey; neither is
-// license-gated. Every other origin (remote HTTP servers and
-// plugin-registered servers) belongs to the licensed "MCP Support" feature.
-func isRemoteMCPOrigin(origin string) bool {
-	origin = llm.NormalizeMCPServerOrigin(origin)
-	return origin != "" && origin != mcp.EmbeddedClientKey
-}
 
 // isRemoteMCPLicensed reports whether the server license covers remote MCP
 // servers. A nil license checker fails closed.
@@ -133,7 +128,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// unlicensed server, so they resolve to a rejection instead of blocking
 	// the whole submission on a possibly stale marker.
 	for _, b := range pendingBlocks {
-		if b.Type != conversation.BlockTypeToolUse || !isRemoteMCPOrigin(b.ServerOrigin) {
+		if b.Type != conversation.BlockTypeToolUse || !mcp.IsRemoteServerOrigin(b.ServerOrigin) {
 			continue
 		}
 		if b.Status != conversation.StatusPending && b.Status != conversation.StatusAccepted {
@@ -442,7 +437,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 				b.Status == conversation.StatusAutoApproved {
 				clickedPostHasExecutedTool = true
 			}
-			if acceptedSet[b.ID] && isRemoteMCPOrigin(b.ServerOrigin) {
+			if acceptedSet[b.ID] && mcp.IsRemoteServerOrigin(b.ServerOrigin) {
 				acceptedRemoteMCPTool = true
 			}
 		}

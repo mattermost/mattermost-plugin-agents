@@ -546,6 +546,8 @@ The Model Context Protocol (MCP) integration lets Agents use tools exposed by MC
 
 The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers and connection timeout from the MCP UI in the System Console. The **Tools** tab also shows plugin-registered MCP servers, where admins can enable or disable each plugin server and set per-tool enabled state and approval policies. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
 
+Remote and external MCP servers require a license (see [license requirements](#license-requirements)). Without one, the remote server configuration UI is not shown and tools from remote servers are not made available to agents; the embedded Mattermost MCP tools remain available on all plans.
+
 ### Configuration
 
 1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**.
