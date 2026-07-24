@@ -206,6 +206,7 @@
   "PwURQHCn": "Connection Idle Timeout (minutes)",
   "Q4KmmCHl": "Your agents",
   "Q5mEDsVr": "Index Health",
+  "Q88qxzGR": "SearXNG (self-hosted)",
   "QCtRhQQb": "Previous progress: {processed} of {total} posts ({percent}%) - Resume to continue from checkpoint",
   "QQo92qP9": "When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.",
   "QZbWuguo": "Enter users to allow for this bot",

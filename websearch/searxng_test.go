@@ -29,101 +29,119 @@ func searxngPayload(n int) searxngSearchResponse {
 }
 
 func TestSearXNGProvider(t *testing.T) {
-	t.Run("successful search returns trimmed results", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, "GET", r.Method)
-			require.Equal(t, "/search", r.URL.Path)
-			require.Equal(t, "golang programming", r.URL.Query().Get("q"))
-			require.Equal(t, "json", r.URL.Query().Get("format"))
+	tests := []struct {
+		name            string
+		handler         http.HandlerFunc
+		baseURLSuffix   string
+		nilClient       bool
+		limit           int
+		wantErr         bool
+		wantErrContains string
+		wantLen         int
+		checkFirst      *SearchResult
+	}{
+		{
+			name: "successful search returns trimmed results",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(searxngPayload(2))
+			},
+			limit:   5,
+			wantLen: 2,
+			checkFirst: &SearchResult{
+				Title:   "Go Programming Language",
+				URL:     "https://golang.org",
+				Snippet: "Official Go website",
+			},
+		},
+		{
+			name: "truncates results to the requested limit",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(searxngPayload(3))
+			},
+			limit:   2,
+			wantLen: 2,
+		},
+		{
+			name: "trailing slash in base URL is tolerated",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(searxngPayload(1))
+			},
+			baseURLSuffix: "/",
+			limit:         5,
+			wantLen:       1,
+		},
+		{
+			name: "403 hints at the json format allowlist",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+			},
+			limit:           5,
+			wantErr:         true,
+			wantErrContains: "search.formats",
+		},
+		{
+			name: "non-200 status returns error",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+			limit:   5,
+			wantErr: true,
+		},
+		{
+			name: "empty results are returned as empty slice",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(searxngSearchResponse{})
+			},
+			limit:   5,
+			wantLen: 0,
+		},
+		{
+			name:      "nil http client returns error",
+			nilClient: true,
+			limit:     5,
+			wantErr:   true,
+		},
+	}
 
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(searxngPayload(2))
-		}))
-		defer server.Close()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			baseURL := "http://example.invalid"
+			client := http.DefaultClient
+			if tc.nilClient {
+				client = nil
+			} else {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					require.Equal(t, "GET", r.Method)
+					require.Equal(t, "/search", r.URL.Path)
+					require.Equal(t, "golang programming", r.URL.Query().Get("q"))
+					require.Equal(t, "json", r.URL.Query().Get("format"))
+					tc.handler(w, r)
+				}))
+				defer server.Close()
+				baseURL = server.URL + tc.baseURLSuffix
+			}
 
-		provider := NewSearXNGProvider(server.URL, http.DefaultClient, &mockLogger{})
-		resp, err := provider.Search(context.Background(), "golang programming", 5)
+			provider := NewSearXNGProvider(baseURL, client, &mockLogger{})
+			resp, err := provider.Search(context.Background(), "golang programming", tc.limit)
 
-		require.NoError(t, err)
-		require.Len(t, resp.Results, 2)
-		require.Equal(t, "Go Programming Language", resp.Results[0].Title)
-		require.Equal(t, "https://golang.org", resp.Results[0].URL)
-		require.Equal(t, "Official Go website", resp.Results[0].Snippet)
-		require.Empty(t, resp.Answer)
-	})
+			if tc.wantErr {
+				require.Error(t, err)
+				if tc.wantErrContains != "" {
+					require.Contains(t, err.Error(), tc.wantErrContains)
+				}
+				return
+			}
 
-	t.Run("truncates results to the requested limit", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(searxngPayload(3))
-		}))
-		defer server.Close()
-
-		provider := NewSearXNGProvider(server.URL, http.DefaultClient, &mockLogger{})
-		resp, err := provider.Search(context.Background(), "golang", 2)
-
-		require.NoError(t, err)
-		require.Len(t, resp.Results, 2)
-	})
-
-	t.Run("trailing slash in base URL is tolerated", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, "/search", r.URL.Path)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(searxngPayload(1))
-		}))
-		defer server.Close()
-
-		provider := NewSearXNGProvider(server.URL+"/", http.DefaultClient, &mockLogger{})
-		resp, err := provider.Search(context.Background(), "golang", 5)
-
-		require.NoError(t, err)
-		require.Len(t, resp.Results, 1)
-	})
-
-	t.Run("403 hints at the json format allowlist", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusForbidden)
-		}))
-		defer server.Close()
-
-		provider := NewSearXNGProvider(server.URL, http.DefaultClient, &mockLogger{})
-		_, err := provider.Search(context.Background(), "golang", 5)
-
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "search.formats")
-	})
-
-	t.Run("non-200 status returns error", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-		}))
-		defer server.Close()
-
-		provider := NewSearXNGProvider(server.URL, http.DefaultClient, &mockLogger{})
-		_, err := provider.Search(context.Background(), "golang", 5)
-
-		require.Error(t, err)
-	})
-
-	t.Run("empty results are returned as empty slice", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(searxngSearchResponse{})
-		}))
-		defer server.Close()
-
-		provider := NewSearXNGProvider(server.URL, http.DefaultClient, &mockLogger{})
-		resp, err := provider.Search(context.Background(), "golang", 5)
-
-		require.NoError(t, err)
-		require.Empty(t, resp.Results)
-	})
-
-	t.Run("nil http client returns error", func(t *testing.T) {
-		provider := NewSearXNGProvider("http://example.invalid", nil, &mockLogger{})
-		_, err := provider.Search(context.Background(), "golang", 5)
-
-		require.Error(t, err)
-	})
+			require.NoError(t, err)
+			require.Len(t, resp.Results, tc.wantLen)
+			require.Empty(t, resp.Answer)
+			if tc.checkFirst != nil {
+				require.Equal(t, *tc.checkFirst, resp.Results[0])
+			}
+		})
+	}
 }

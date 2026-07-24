@@ -167,12 +167,13 @@ func (s *webSearchService) Tool() *llm.Tool {
 			s.logger,
 		)
 	case "searxng":
-		if webCfg.SearXNG.BaseURL == "" {
+		searxngBaseURL := strings.TrimSpace(webCfg.SearXNG.BaseURL)
+		if searxngBaseURL == "" {
 			s.logWarn("web search misconfigured: missing SearXNG base URL")
 			return nil
 		}
 		s.provider = websearch.NewSearXNGProvider(
-			webCfg.SearXNG.BaseURL,
+			searxngBaseURL,
 			s.httpClient,
 			s.logger,
 		)
@@ -215,7 +216,7 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 			return nil
 		}
 	case "searxng":
-		if webCfg.SearXNG.BaseURL == "" {
+		if strings.TrimSpace(webCfg.SearXNG.BaseURL) == "" {
 			return nil
 		}
 	default:
