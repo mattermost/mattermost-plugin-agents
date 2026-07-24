@@ -13,8 +13,12 @@ import {getMCPTools, getVettedToolSeed} from '../../client';
 
 import manifest from '@/manifest';
 
+import {useIsBasicsLicensed} from '@/license';
+
 import {CopyableTextItem} from './copyable_text_item';
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
+
+import EnterpriseChip from './enterprise_chip';
 
 import {BooleanItem, ItemList, TextItem} from './item';
 
@@ -351,6 +355,7 @@ const MCPServer = ({
 // Main component for MCP servers configuration
 const MCPServers = ({mcpConfig, onChange}: Props) => {
     const intl = useIntl();
+    const isBasicsLicensed = useIsBasicsLicensed();
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
@@ -555,6 +560,11 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                             />
                         </ItemList>
                         <ServersList>
+                            {!isBasicsLicensed && normalizedServers.length > 0 && (
+                                <UnlicensedNotice>
+                                    <FormattedMessage defaultMessage='Remote MCP servers require a qualifying Mattermost plan. Agents cannot run tools from the servers below until a license is applied. Embedded Mattermost tools remain available without a license.'/>
+                                </UnlicensedNotice>
+                            )}
                             {!Array.isArray(normalizedServers) || normalizedServers.length < 1 ? (
                                 <EmptyState>
                                     <FormattedMessage defaultMessage='No remote MCP servers configured. Add a server to connect to external MCP tools.'/>
@@ -575,10 +585,17 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                         <AddServerContainer>
                             <TertiaryButton
                                 onClick={addServer}
+                                disabled={!isBasicsLicensed}
                             >
                                 <PlusServerIcon/>
                                 <FormattedMessage defaultMessage='Add Remote MCP Server'/>
                             </TertiaryButton>
+                            {!isBasicsLicensed && (
+                                <EnterpriseChip
+                                    text={intl.formatMessage({defaultMessage: 'Use remote MCP servers on qualifying Mattermost plans'})}
+                                    subtext={intl.formatMessage({defaultMessage: 'Remote MCP servers require a qualifying Mattermost plan'})}
+                                />
+                            )}
                         </AddServerContainer>
                     </>
                 )}
@@ -815,6 +832,15 @@ const EmptyState = styled.div`
     text-align: center;
     color: rgba(var(--center-channel-color-rgb), 0.64);
     background-color: rgba(var(--center-channel-color-rgb), 0.04);
+    border-radius: 4px;
+`;
+
+const UnlicensedNotice = styled.div`
+    padding: 12px 16px;
+    font-size: 13px;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    background-color: rgba(var(--button-bg-rgb), 0.08);
+    border: 1px solid rgba(var(--button-bg-rgb), 0.16);
     border-radius: 4px;
 `;
 
