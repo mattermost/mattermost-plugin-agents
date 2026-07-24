@@ -53,3 +53,65 @@ func TestFormatTextOnly(t *testing.T) {
 
 	require.Equal(t, expectedFormatTextOnly, subtitles.FormatTextOnly())
 }
+
+func TestNewSubtitlesFromZoomChat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		input           string
+		wantLLM         string
+		wantEmpty       bool
+		wantErrContains string
+	}{
+		{
+			name: "valid zoom chat lines",
+			input: `00:00:01 Alice: Hello everyone
+00:00:05 Bob: Hi Alice`,
+			wantLLM: "00:01 to 00:06 - Alice: Hello everyone\n00:05 to 00:10 - Bob: Hi Alice",
+		},
+		{
+			name: "short continuation lines are skipped",
+			input: `00:00:01 Alice: Hello
+x
+00:00:05 Bob: Hi
+ab`,
+			wantLLM: "00:01 to 00:06 - Alice: Hello\n00:05 to 00:10 - Bob: Hi",
+		},
+		{
+			name:      "only short lines yields empty subtitles",
+			input:     "x\nab\n",
+			wantEmpty: true,
+		},
+		{
+			name:            "invalid timestamp returns error",
+			input:           "not-time More text here",
+			wantErrContains: "parsing time",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var subs *Subtitles
+			var err error
+			require.NotPanics(t, func() {
+				subs, err = NewSubtitlesFromZoomChat(strings.NewReader(tc.input))
+			})
+
+			if tc.wantErrContains != "" {
+				require.ErrorContains(t, err, tc.wantErrContains)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, subs)
+			if tc.wantEmpty {
+				require.True(t, subs.IsEmpty())
+				return
+			}
+			require.Equal(t, tc.wantLLM, subs.FormatForLLM())
+		})
+	}
+}
