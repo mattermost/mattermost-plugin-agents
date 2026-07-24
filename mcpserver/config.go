@@ -91,6 +91,8 @@ func (c HTTPConfig) GetTrackAIGenerated() bool {
 // Used for embedded MCP servers that run within the same process as the plugin
 type InMemoryConfig struct {
 	BaseConfig
+	// EnableDemoApps registers demo MCP Apps tools and ui:// resources.
+	EnableDemoApps bool `json:"enable_demo_apps"`
 }
 
 // GetTrackAIGenerated returns whether to track AI-generated content

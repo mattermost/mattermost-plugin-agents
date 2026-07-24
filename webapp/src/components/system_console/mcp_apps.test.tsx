@@ -158,4 +158,20 @@ describe('normalizeMCPConfig apps preservation', () => {
         expect(rebuilt.enabled).toBe(true);
         expect(rebuilt.embeddedServer.enabled).toBe(true);
     });
+
+    test('embeddedServer.enableDemoApps is preserved by the spread', () => {
+        const mcpConfig: MCPConfig = {
+            enabled: true,
+            enablePluginServer: false,
+            servers: [],
+            embeddedServer: {enabled: true, enableDemoApps: true},
+        };
+
+        const rebuilt = normalizeMCPConfig({
+            ...mcpConfig,
+            enablePluginServer: true,
+        });
+
+        expect(rebuilt.embeddedServer.enableDemoApps).toBe(true);
+    });
 });

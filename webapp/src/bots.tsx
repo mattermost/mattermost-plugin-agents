@@ -11,7 +11,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 import {getAIBots, savePreferences} from '@/client';
 
 import manifest from './manifest';
-import {BotsHandler} from './redux';
+import {BotsHandler, MCPAppsHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 import {EnabledTool} from './types/agents';
 
@@ -90,6 +90,11 @@ export const useBotlist = () => {
             dispatch({
                 type: 'SET_ALLOW_UNSAFE_LINKS',
                 allowUnsafeLinks: Boolean(response.allowUnsafeLinks),
+            });
+
+            dispatch({
+                type: MCPAppsHandler,
+                mcpApps: response.mcpApps ?? {enabled: false},
             });
         };
         if (!bots) {

@@ -819,3 +819,22 @@ func WriteFileDescriptor(w *strings.Builder, entry FileDescriptorEntry) {
 
 	w.WriteString("\n")
 }
+
+// PostPreviewEntry is the payload rendered by the preview_post demo MCP App.
+type PostPreviewEntry struct {
+	PostID             string `json:"post_id"`
+	Message            string `json:"message"`
+	Username           string `json:"username,omitempty"`
+	ChannelDisplayName string `json:"channel_display_name,omitempty"`
+	CreateAt           int64  `json:"create_at"`
+}
+
+// MarshalPostPreview renders a PostPreviewEntry as the JSON tool output the
+// preview_post demo app parses.
+func MarshalPostPreview(entry PostPreviewEntry) (string, error) {
+	b, err := json.Marshal(entry)
+	if err != nil {
+		return "", fmt.Errorf("marshal post preview: %w", err)
+	}
+	return string(b), nil
+}

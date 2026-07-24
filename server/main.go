@@ -363,7 +363,7 @@ func (p *Plugin) OnActivate() error {
 	// have the legacy toggle stored as false.
 	fileContentService := files.New(mmClient)
 	var embeddedMCPServer mcp.EmbeddedMCPServer
-	embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
+	embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, p.configuration.MCP().EmbeddedServer.EnableDemoApps)
 	if err != nil {
 		pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
 		// Continue without embedded server
@@ -381,7 +381,7 @@ func (p *Plugin) OnActivate() error {
 	}
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient)
 	p.configuration.RegisterUpdateListener(func() {
-		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
+		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, p.configuration.MCP().EmbeddedServer.EnableDemoApps)
 		if embeddedErr != nil {
 			pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
 		}

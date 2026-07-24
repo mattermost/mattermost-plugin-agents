@@ -64,7 +64,7 @@ func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchSer
 	)
 
 	// Register tools with remote access mode (embedded clients are treated as remote)
-	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService)
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, config.EnableDemoApps)
 
 	logger.Info("Created in-memory MCP server")
 

@@ -1,6 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import {ToolUIMeta} from '@/components/tool_types';
+
 // Block type discriminator values -- must match Go constants in conversation/content_block.go
 export const BlockTypeText = 'text' as const;
 export const BlockTypeThinking = 'thinking' as const;
@@ -66,6 +68,7 @@ export interface ContentBlock {
     shared?: boolean;
     user_interaction?: string;
     would_auto_execute?: boolean;
+    ui_meta?: ToolUIMeta;
 
     // ToolResult fields
     tool_use_id?: string;

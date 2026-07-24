@@ -29,6 +29,12 @@ export interface ToolAnswer {
     custom?: string;
 }
 
+// Mirrors llm.ToolUIMeta JSON (llm/tools_ui.go).
+export interface ToolUIMeta {
+    resource_uri: string;
+    visibility?: string[];
+}
+
 export interface ToolCall {
     id: string;
     name: string;
@@ -37,6 +43,10 @@ export interface ToolCall {
     arguments?: JSONValue;
     result?: string;
     status: ToolCallStatus;
+
+    // MCP Apps metadata from the tool's _meta.ui. Present only when the tool
+    // declares an app UI and the viewer may see it (requester, or shared).
+    ui_meta?: ToolUIMeta;
 
     // Non-empty for tools answered by the user instead of executed by the
     // server (e.g. AskUserQuestion). See UserInteractionSelect.

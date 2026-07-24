@@ -717,6 +717,10 @@ This forfeits browser origin isolation between third-party app content and Matte
 
 with `actor_user_id` set to the admin who saved the config.
 
+#### Demo apps
+
+For demos, QA, and e2e, set `mcp.embeddedServer.enableDemoApps` to `true` via `PUT /plugins/mattermost-ai/admin/config` (no System Console UI; default `false`). When enabled, the embedded MCP server registers a `preview_post` tool that returns post preview JSON and a companion `ui://mattermost/preview-post.html` MCP App resource. Leave this off in production unless you intentionally want the demo tool available.
+
 ### OAuth-backed MCP servers
 
 Some MCP servers require OAuth per Mattermost user. For those servers, the plugin exposes `needsOAuth` and `authURL` to the Agents webapp so the UI can show when authorization is required and where to begin the flow. The webapp starts OAuth through the plugin route `GET /plugins/mattermost-ai/mcp/oauth/<server name>/start` and can clear the current user's stored token with `DELETE /plugins/mattermost-ai/mcp/oauth/<server name>`.

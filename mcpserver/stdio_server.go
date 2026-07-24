@@ -73,7 +73,7 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService t
 	}
 
 	// Register tools with local access mode
-	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService)
+	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService, false)
 
 	return mattermostServer, nil
 }

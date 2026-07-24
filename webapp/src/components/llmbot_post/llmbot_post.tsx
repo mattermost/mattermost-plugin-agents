@@ -416,6 +416,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             )}
             {renderedRounds.map((round, idx) => {
                 const isLiveRound = round.id === LIVE_ROUND_ID;
+                const appsEligible = !isLiveRound && !round.id.startsWith('live-');
                 const showCursor = generating && isLiveRound && !precontent;
                 const reasoningLoading = isLiveRound && isReasoningLoading;
                 return (
@@ -432,6 +433,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                         reasoningLoading={reasoningLoading}
                         reasoningCollapsed={isReasoningCollapsed(round.id)}
                         onToggleReasoning={(collapsed) => toggleReasoning(round.id, collapsed)}
+                        appsEligible={appsEligible}
+                        requesterUserID={conversation?.user_id}
                     />
                 );
             })}
@@ -471,6 +474,8 @@ interface RoundViewProps {
     reasoningLoading: boolean;
     reasoningCollapsed: boolean;
     onToggleReasoning: (collapsed: boolean) => void;
+    appsEligible?: boolean;
+    requesterUserID?: string;
 }
 
 function RoundView(props: RoundViewProps) {
@@ -506,6 +511,8 @@ function RoundView(props: RoundViewProps) {
                     canExpand={props.canExpand}
                     showArguments={showArguments}
                     showResults={showResults}
+                    appsEligible={props.appsEligible}
+                    requesterUserID={props.requesterUserID}
                 />
             )}
         </RoundContainer>

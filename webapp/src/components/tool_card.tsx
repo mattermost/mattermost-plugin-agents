@@ -16,6 +16,7 @@ import manifest from '@/manifest';
 import {stripWirePrefix} from '@/utils/tool_names';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+import MCPAppView from './mcp_apps/mcp_app_view';
 
 import LoadingSpinner from './assets/loading_spinner';
 import IconCheckCircle from './assets/icon_check_circle';
@@ -325,6 +326,8 @@ interface ToolCardProps {
     showResults: boolean;
     approvalStage?: ToolApprovalStage;
     isAutoApproved?: boolean;
+    requesterUserID?: string;
+    appsEligible?: boolean;
 }
 
 export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']): boolean {
@@ -348,6 +351,8 @@ const ToolCard: React.FC<ToolCardProps> = ({
     showResults,
     approvalStage = 'call',
     isAutoApproved = false,
+    requesterUserID,
+    appsEligible = false,
 }) => {
     const {formatMessage} = useIntl();
 
@@ -564,6 +569,14 @@ const ToolCard: React.FC<ToolCardProps> = ({
                     </AutoApprovedBadge>
                 )}
             </ToolCallHeader>
+
+            {appsEligible && tool.ui_meta?.resource_uri && isSuccess && (
+                <MCPAppView
+                    postID={postID}
+                    tool={tool}
+                    requesterUserID={requesterUserID}
+                />
+            )}
 
             {!isCollapsed && (
                 <>

@@ -22,10 +22,15 @@ type MattermostMCPServer struct {
 
 // registerTools registers all tools using the tool provider.
 // searchService and fileContentService are optional and can be nil when the
-// corresponding capability is unavailable.
-func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) {
+// corresponding capability is unavailable. enableDemoApps selects the demo
+// MCP Apps tool group on the same provider (no second registration lane).
+func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, enableDemoApps bool) {
 	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService)
+	toolProvider.SetEnableDemoApps(enableDemoApps)
 	toolProvider.ProvideTools(s.mcpServer)
+	if enableDemoApps {
+		s.logger.Info("Registered demo MCP Apps tools")
+	}
 }
 
 // GetMCPServer returns the underlying MCP server for testing purposes

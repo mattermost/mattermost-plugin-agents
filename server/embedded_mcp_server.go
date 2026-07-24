@@ -27,7 +27,7 @@ type EmbeddedMCPServer struct {
 // NewEmbeddedMCPServer creates a new embedded MCP server instance
 // searchService and fileContentService are optional and can be nil when the
 // corresponding capability is unavailable
-func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) (*EmbeddedMCPServer, error) {
+func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, enableDemoApps bool) (*EmbeddedMCPServer, error) {
 	// Get site URL from plugin configuration
 	siteURL := ""
 	if config := pluginAPI.Configuration.GetConfig(); config != nil && config.ServiceSettings.SiteURL != nil {
@@ -53,6 +53,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 			MMInternalServerURL: internalServerURL,
 			DevMode:             false,
 		},
+		EnableDemoApps: enableDemoApps,
 	}
 
 	// Create a logger adapter that routes MCP server logs through the plugin's logging system
