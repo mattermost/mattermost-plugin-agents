@@ -88,7 +88,7 @@ func mockLicensed(mockAPI *plugintest.API) {
 		Features: &model.Features{
 			LDAP: model.NewPointer(true),
 		},
-		SkuShortName: "enterprise",
+		SkuShortName: model.LicenseShortSkuEnterprise,
 	})
 }
 

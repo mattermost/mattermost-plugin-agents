@@ -529,12 +529,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			}))
 
 			mockAPI := &plugintest.API{}
-			mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-			if tc.unlicensed {
-				mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
-			} else {
-				mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
-			}
+			mockLicenseState(mockAPI, !tc.unlicensed)
 			pluginAPI := pluginapi.NewClient(mockAPI, nil)
 			licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
 			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)

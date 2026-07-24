@@ -64,6 +64,7 @@
   "5YEOQO6f": "Max tool turns",
   "5cWshZXk": "By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools.",
   "5pgPNiZ1": "Leave empty to use service default",
+  "65+iscu0": "Licensed feature",
   "676UfNaQ": "Allow agents to call Mattermost's built-in web search tool. If your LLM already provides native web search support, leave this disabled.",
   "6B/EINlu": "Unknown state",
   "6PgVSeKg": "Regenerate",

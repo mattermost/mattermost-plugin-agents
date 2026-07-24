@@ -27,18 +27,24 @@ import (
 
 const toolLicenseRemoteOrigin = "https://jira.example.com"
 
-// toolLicenseChecker returns a LicenseChecker whose IsBasicsLicensed reports
-// the requested state.
-func toolLicenseChecker(t *testing.T, licensed bool) *enterprise.LicenseChecker {
-	t.Helper()
-
-	mockAPI := &plugintest.API{}
+// mockLicenseState registers GetConfig/GetLicense expectations reflecting the
+// requested license state (enterprise-licensed or unlicensed).
+func mockLicenseState(mockAPI *plugintest.API, licensed bool) {
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	if licensed {
 		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	} else {
 		mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
 	}
+}
+
+// toolLicenseChecker returns a LicenseChecker whose IsBasicsLicensed reports
+// the requested state.
+func toolLicenseChecker(t *testing.T, licensed bool) *enterprise.LicenseChecker {
+	t.Helper()
+
+	mockAPI := &plugintest.API{}
+	mockLicenseState(mockAPI, licensed)
 	return enterprise.NewLicenseChecker(pluginapi.NewClient(mockAPI, nil))
 }
 
@@ -75,12 +81,7 @@ func toolLicenseTestBuilder(t *testing.T, licensed bool) *llmcontext.Builder {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	if licensed {
-		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
-	} else {
-		mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
-	}
+	mockLicenseState(mockAPI, licensed)
 	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 	for i := 1; i <= 10; i++ {
 		args := make([]interface{}, i)

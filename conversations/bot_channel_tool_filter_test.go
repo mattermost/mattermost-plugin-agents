@@ -99,12 +99,7 @@ func newChannelFollowUpTestBuilderWithLicense(t *testing.T, mcpTools []llm.Tool,
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	if licensed {
-		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
-	} else {
-		mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
-	}
+	mockLicenseState(mockAPI, licensed)
 	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 
 	return llmcontext.NewLLMContextBuilder(

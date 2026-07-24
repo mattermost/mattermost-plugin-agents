@@ -53,6 +53,10 @@ const SubText = styled.div`
 type Props = {
     subtext?: string;
     text?: string;
+
+    // title overrides the tooltip heading. Defaults to 'Enterprise feature';
+    // pass a plan-neutral heading for features available on lower paid tiers.
+    title?: string;
 };
 
 const EnterpriseChip = (props: Props) => {
@@ -61,7 +65,7 @@ const EnterpriseChip = (props: Props) => {
             placement='top'
             overlay={
                 <Tooltip>
-                    <MainText>{'Enterprise feature'}</MainText>
+                    <MainText>{props.title || 'Enterprise feature'}</MainText>
                     <SubText>{props.subtext}</SubText>
                 </Tooltip>
             }

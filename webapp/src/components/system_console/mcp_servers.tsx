@@ -593,6 +593,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                         ) : (
                             <EnterpriseChipRow>
                                 <EnterpriseChip
+                                    title={intl.formatMessage({defaultMessage: 'Licensed feature'})}
                                     text={intl.formatMessage({defaultMessage: 'Use remote MCP servers on qualifying Mattermost plans'})}
                                     subtext={intl.formatMessage({defaultMessage: 'Remote MCP servers require a qualifying Mattermost plan'})}
                                 />
