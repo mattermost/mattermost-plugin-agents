@@ -253,9 +253,8 @@ type ToolCall struct {
 	// the matching interaction UI (e.g. a question card) for pending calls.
 	UserInteraction string `json:"user_interaction,omitempty"`
 
-	// WouldAutoExecute marks a pending call that passed the auto-execution
-	// policy but was paused because another call in the batch needs the user.
-	// Display-only: the webapp hides the approval UI for it, and the server
+	// WouldAutoExecute marks any pending call that passed the auto-execution
+	// policy. The webapp must not show approval controls for it; the server
 	// re-checks the policy before executing it on resume.
 	WouldAutoExecute bool `json:"would_auto_execute,omitempty"`
 
