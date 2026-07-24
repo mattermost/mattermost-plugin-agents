@@ -404,6 +404,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 		name             string
 		wouldAutoExecute bool
 		includeQuestion  bool
+		unlicensed       bool
 		policyChecker    mapPolicyChecker
 		wantToolStatus   string
 		wantToolResult   string
@@ -426,6 +427,21 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wouldAutoExecute: true,
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false}},
+			},
+			wantToolStatus: conversation.StatusRejected,
+			wantToolResult: "Tool call rejected by user",
+			wantToolShared: false,
+			wantFollowUp:   false, // nothing executed, so nothing to follow up on
+		},
+		{
+			// Remote MCP tools are license-gated: on an unlicensed server a
+			// marked remote tool must resolve to rejection on resume, not
+			// execute and not fail the whole submission.
+			name:             "unlicensed remote auto-run resume rejects instead of executing",
+			wouldAutoExecute: true,
+			unlicensed:       true,
+			policyChecker: mapPolicyChecker{
+				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
 			wantToolStatus: conversation.StatusRejected,
 			wantToolResult: "Tool call rejected by user",
@@ -512,6 +528,12 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			}))
 
 			mockAPI := &plugintest.API{}
+			mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+			if tc.unlicensed {
+				mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+			} else {
+				mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
+			}
 			pluginAPI := pluginapi.NewClient(mockAPI, nil)
 			licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
 			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
@@ -531,6 +553,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 				bots:              botsService,
 				convService:       conversation.NewService(convStore, nil, nil, nil),
 				streamingService:  streamingService,
+				licenseChecker:    licenseChecker,
 				toolPolicyChecker: tc.policyChecker,
 			}
 

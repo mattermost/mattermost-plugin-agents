@@ -47,6 +47,7 @@ func TestShouldAutoExecuteTool(t *testing.T) {
 						toolName: {policy: tc.policy, enabled: tc.enabled},
 					},
 				},
+				licenseChecker: toolLicenseChecker(t, true),
 			}
 			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 			llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
@@ -93,6 +94,7 @@ func TestShouldAutoExecuteTool_NamespacedToolUsesBarePolicy(t *testing.T) {
 				"example_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
 			},
 		},
+		licenseChecker: toolLicenseChecker(t, true),
 	}
 	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: "example__example_tool", ServerOrigin: origin}})
@@ -158,7 +160,7 @@ func TestShouldAutoExecuteTool_UnknownToolSkipsPolicyLookup(t *testing.T) {
 
 func TestShouldAutoExecuteTool_KnownToolUsesPolicy(t *testing.T) {
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunInDM, enabled: true}
-	c := &Conversations{toolPolicyChecker: checker}
+	c := &Conversations{toolPolicyChecker: checker, licenseChecker: toolLicenseChecker(t, true)}
 	const origin = "https://mcp.example.com"
 	const toolName = "known_tool"
 	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
@@ -172,7 +174,7 @@ func TestShouldAutoExecuteTool_KnownToolUsesPolicy(t *testing.T) {
 
 func TestShouldAutoExecuteToolDenormalizesNamespacedTool(t *testing.T) {
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
-	c := &Conversations{toolPolicyChecker: checker}
+	c := &Conversations{toolPolicyChecker: checker, licenseChecker: toolLicenseChecker(t, true)}
 	const origin = "https://mcp.atlassian.com"
 	const runtimeToolName = "jira__get_issue"
 	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
@@ -202,7 +204,7 @@ func TestShouldAutoExecuteToolFailsClosedOnAmbiguousBareName(t *testing.T) {
 
 func TestShouldAutoExecuteToolUsesServerOriginToDisambiguateBareName(t *testing.T) {
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
-	c := &Conversations{toolPolicyChecker: checker}
+	c := &Conversations{toolPolicyChecker: checker, licenseChecker: toolLicenseChecker(t, true)}
 	const origin = "https://github.example.com"
 	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{

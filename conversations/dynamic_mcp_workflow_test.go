@@ -148,6 +148,7 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 						"get_issue": {policy: tt.policy, enabled: true},
 					},
 				},
+				licenseChecker: toolLicenseChecker(t, true),
 			}
 
 			streamResult, err := c.ProcessDMRequest(context.Background(), conv.ID, lm, llmContext, 0)

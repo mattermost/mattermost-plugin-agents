@@ -124,10 +124,14 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 
-	// Executing tools from remote/external MCP servers is part of the
+	// Accepting tools from remote/external MCP servers is part of the
 	// licensed "MCP Support" feature. Built-in and embedded Mattermost MCP
 	// tools are basic tool integrations with no license requirement.
-	// Rejections are always allowed — they execute nothing.
+	// Rejections are always allowed — they execute nothing. Blocks marked
+	// WouldAutoExecute are not gated here: their resume re-checks the policy
+	// via shouldAutoExecuteTool, which already refuses remote tools on an
+	// unlicensed server, so they resolve to a rejection instead of blocking
+	// the whole submission on a possibly stale marker.
 	for _, b := range pendingBlocks {
 		if b.Type != conversation.BlockTypeToolUse || !isRemoteMCPOrigin(b.ServerOrigin) {
 			continue
@@ -135,7 +139,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		if b.Status != conversation.StatusPending && b.Status != conversation.StatusAccepted {
 			continue
 		}
-		if (slices.Contains(acceptedToolIDs, b.ID) || b.WouldAutoExecute) && !c.isRemoteMCPLicensed() {
+		if slices.Contains(acceptedToolIDs, b.ID) && !c.isRemoteMCPLicensed() {
 			return ErrRemoteMCPNotLicensed
 		}
 	}

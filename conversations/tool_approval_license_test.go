@@ -250,6 +250,57 @@ func TestHandleToolCallLicenseGate(t *testing.T) {
 	}
 }
 
+// TestShouldAutoExecuteToolLicenseGate pins that remote MCP tools never
+// auto-execute on an unlicensed server — auto-run policies must not bypass
+// the license gate that covers manual approval. Embedded Mattermost MCP
+// tools and licensed remote tools follow their configured policy.
+func TestShouldAutoExecuteToolLicenseGate(t *testing.T) {
+	tests := []struct {
+		name     string
+		origin   string
+		licensed bool
+		want     bool
+	}{
+		{
+			name:     "remote MCP tool does not auto-execute without license",
+			origin:   toolLicenseRemoteOrigin,
+			licensed: false,
+			want:     false,
+		},
+		{
+			name:     "remote MCP tool auto-executes with license",
+			origin:   toolLicenseRemoteOrigin,
+			licensed: true,
+			want:     true,
+		},
+		{
+			name:     "embedded MCP tool auto-executes without license",
+			origin:   mcp.EmbeddedClientKey,
+			licensed: false,
+			want:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Conversations{
+				toolPolicyChecker: mapPolicyChecker{
+					tc.origin: {
+						"example_tool": {policy: mcp.ToolPolicyAutoRunInDM, enabled: true},
+					},
+				},
+				licenseChecker: toolLicenseChecker(t, tc.licensed),
+			}
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: "example_tool", ServerOrigin: tc.origin}})
+
+			got := c.shouldAutoExecuteTool(llmCtx, true)(llm.ToolCall{Name: "example_tool", ServerOrigin: tc.origin})
+
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // TestHandleToolResultLicenseGate pins the license split for the second-stage
 // share/keep-private decision: sharing output from a remote MCP tool requires
 // a license, while embedded Mattermost MCP output and keep-private decisions
