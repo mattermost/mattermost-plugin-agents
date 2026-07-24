@@ -1124,9 +1124,15 @@ type toolCallBuffer struct {
 	arguments strings.Builder
 }
 
+// thinkingBlockedBySchema reports whether extended thinking must be dropped
+// for this request: Anthropic rejects thinking combined with structured output.
+func (b *LLM) thinkingBlockedBySchema(cfg llm.LanguageModelConfig) bool {
+	return b.provider == schemas.Anthropic && cfg.JSONOutputFormat != nil
+}
+
 // buildChatReasoning creates a ChatReasoning configuration if reasoning is enabled.
 func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled {
+	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
 		return nil
 	}
 
@@ -1171,7 +1177,7 @@ func (b *LLM) calculateThinkingBudget(maxGeneratedTokens int) int {
 
 // convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
 func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostChatRequest {
-	messages := b.convertMessages(request.Posts)
+	messages := b.convertMessages(request.Posts, cfg)
 	tools := b.convertTools(request, cfg)
 
 	req := &schemas.BifrostChatRequest{
@@ -1210,7 +1216,7 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 }
 
 // convertMessages converts llm.Post messages to Bifrost ChatMessage format.
-func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
+func (b *LLM) convertMessages(posts []llm.Post, cfg llm.LanguageModelConfig) []schemas.ChatMessage {
 	messages := make([]schemas.ChatMessage, 0, len(posts))
 
 	for _, post := range posts {
@@ -1258,7 +1264,11 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 			// signature arrived, we persist partial reasoning for display only; do
 			// not replay it to Anthropic as an unsigned thinking block. Other
 			// providers may accept unsigned reasoning, so preserve it for them.
-			if post.Reasoning != "" && (b.provider != schemas.Anthropic || post.ReasoningSignature != "") {
+			// Also skip replay when thinking is disabled for this request:
+			// Anthropic rejects input thinking blocks when thinking is off.
+			if post.Reasoning != "" &&
+				(b.provider != schemas.Anthropic || post.ReasoningSignature != "") &&
+				!b.thinkingBlockedBySchema(cfg) {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}
@@ -1843,7 +1853,7 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 
 // buildResponsesReasoning creates a ResponsesParametersReasoning configuration if reasoning is enabled.
 func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.ResponsesParametersReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled {
+	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
 		return nil
 	}
 

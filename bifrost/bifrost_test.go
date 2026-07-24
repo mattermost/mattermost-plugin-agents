@@ -183,6 +183,21 @@ func TestBuildChatReasoning(t *testing.T) {
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
 			expectNil:        true,
 		},
+		{
+			name:             "Anthropic with JSON schema returns nil",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			expectNil:        true,
+		},
+		{
+			name:             "Gemini with JSON schema keeps reasoning",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkEffort:      Ptr("high"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -212,10 +227,18 @@ func TestBuildChatReasoning(t *testing.T) {
 }
 
 func TestConvertMessagesReasoningDetails(t *testing.T) {
+	signedAnthropicPosts := []llm.Post{{
+		Role:               llm.PostRoleBot,
+		Message:            "response",
+		Reasoning:          "thinking",
+		ReasoningSignature: "sig123",
+	}}
+
 	tests := []struct {
 		name              string
 		provider          schemas.ModelProvider
 		posts             []llm.Post
+		cfg               llm.LanguageModelConfig
 		expectedLen       int
 		expectedReasoning string
 		expectedSignature string
@@ -244,14 +267,25 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 			expectedReasoning: "partial thinking",
 		},
 		{
-			name:     "includes signed reasoning",
-			provider: schemas.Anthropic,
-			posts: []llm.Post{{
-				Role:               llm.PostRoleBot,
-				Message:            "response",
-				Reasoning:          "thinking",
-				ReasoningSignature: "sig123",
-			}},
+			name:              "includes signed reasoning",
+			provider:          schemas.Anthropic,
+			posts:             signedAnthropicPosts,
+			expectedLen:       1,
+			expectedReasoning: "thinking",
+			expectedSignature: "sig123",
+		},
+		{
+			name:        "skips signed reasoning for Anthropic when request has JSON schema",
+			provider:    schemas.Anthropic,
+			posts:       signedAnthropicPosts,
+			cfg:         llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			expectedLen: 1,
+		},
+		{
+			name:              "keeps reasoning for non-Anthropic when request has JSON schema",
+			provider:          schemas.OpenAI,
+			posts:             signedAnthropicPosts,
+			cfg:               llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
 			expectedLen:       1,
 			expectedReasoning: "thinking",
 			expectedSignature: "sig123",
@@ -262,7 +296,7 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
 
-			messages := b.convertMessages(tt.posts)
+			messages := b.convertMessages(tt.posts, tt.cfg)
 
 			require.Len(t, messages, tt.expectedLen)
 			if tt.expectedReasoning == "" {
@@ -528,6 +562,22 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
 			expectNil:        true,
 		},
+		{
+			name:             "Anthropic with JSON schema returns nil",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			expectNil:        true,
+		},
+		{
+			name:             "OpenAI with JSON schema keeps reasoning",
+			provider:         schemas.OpenAI,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkEffort:      Ptr("high"),
+			checkSummary:     Ptr("auto"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -773,7 +823,7 @@ func TestConvertMessagesReasoning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
-			messages := b.convertMessages(tt.posts)
+			messages := b.convertMessages(tt.posts, llm.LanguageModelConfig{})
 			require.True(t, len(messages) > tt.checkMessageIndex)
 
 			msg := messages[tt.checkMessageIndex]
@@ -817,7 +867,7 @@ func TestConvertMessagesEmptyToolResult(t *testing.T) {
 			Result:    "",
 		}},
 	}}
-	messages := b.convertMessages(posts)
+	messages := b.convertMessages(posts, llm.LanguageModelConfig{})
 	var toolMsg *schemas.ChatMessage
 	for i := range messages {
 		if messages[i].Role == schemas.ChatMessageRoleTool {
