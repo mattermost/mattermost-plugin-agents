@@ -88,7 +88,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                 >
                     <SelectionItemOption value='google'>{'Google Custom Search'}</SelectionItemOption>
                     <SelectionItemOption value='brave'>{'Brave Search'}</SelectionItemOption>
-                    <SelectionItemOption value='searxng'>{'SearXNG (self-hosted)'}</SelectionItemOption>
+                    <SelectionItemOption value='searxng'><FormattedMessage defaultMessage='SearXNG (self-hosted)'/></SelectionItemOption>
                 </SelectionItem>
                 {value.provider === 'google' && (
                     <>

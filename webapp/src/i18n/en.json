@@ -252,6 +252,7 @@
   "PwURQHCn": "Connection Idle Timeout (minutes)",
   "Q4KmmCHl": "Your agents",
   "Q5mEDsVr": "Index Health",
+  "Q88qxzGR": "SearXNG (self-hosted)",
   "Q9lKUUlv": "Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Requests that ask for structured JSON output will skip extended thinking; all other requests keep using it.",
   "QCtRhQQb": "Previous progress: {processed} of {total} posts ({percent}%) - Resume to continue from checkpoint",
   "QQo92qP9": "When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.",
