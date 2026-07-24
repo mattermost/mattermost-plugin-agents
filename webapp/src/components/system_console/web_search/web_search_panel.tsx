@@ -20,11 +20,17 @@ export type WebSearchBraveConfig = {
     apiURL: string;
 };
 
+export type WebSearchSearXNGConfig = {
+    baseURL: string;
+    resultLimit: number;
+};
+
 export type WebSearchConfig = {
     enabled: boolean;
     provider: string;
     google: WebSearchGoogleConfig;
     brave: WebSearchBraveConfig;
+    searxng: WebSearchSearXNGConfig;
     domainDenylist: string[] | null; // server sends nil Go slice as JSON null
 };
 
@@ -35,6 +41,7 @@ type Props = {
 
 const DEFAULT_GOOGLE_CONFIG = {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''};
 const DEFAULT_BRAVE_CONFIG = {apiKey: '', resultLimit: 5, apiURL: ''};
+const DEFAULT_SEARXNG_CONFIG = {baseURL: '', resultLimit: 5};
 
 const WebSearchPanel = ({value, onChange}: Props) => {
     const intl = useIntl();
@@ -42,6 +49,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
     // Provide defaults for missing config objects
     const google = value.google || DEFAULT_GOOGLE_CONFIG;
     const brave = value.brave || DEFAULT_BRAVE_CONFIG;
+    const searxng = value.searxng || DEFAULT_SEARXNG_CONFIG;
     const domainDenylist = value.domainDenylist || [];
 
     const handleUpdate = (patch: Partial<WebSearchConfig>) => {
@@ -54,6 +62,10 @@ const WebSearchPanel = ({value, onChange}: Props) => {
 
     const handleBraveUpdate = (patch: Partial<WebSearchBraveConfig>) => {
         handleUpdate({brave: {...brave, ...patch}});
+    };
+
+    const handleSearxngUpdate = (patch: Partial<WebSearchSearXNGConfig>) => {
+        handleUpdate({searxng: {...searxng, ...patch}});
     };
 
     return (
@@ -76,6 +88,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                 >
                     <SelectionItemOption value='google'>{'Google Custom Search'}</SelectionItemOption>
                     <SelectionItemOption value='brave'>{'Brave Search'}</SelectionItemOption>
+                    <SelectionItemOption value='searxng'>{'SearXNG (self-hosted)'}</SelectionItemOption>
                 </SelectionItem>
                 {value.provider === 'google' && (
                     <>
@@ -136,6 +149,27 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                             value={brave.apiURL}
                             onChange={(e) => handleBraveUpdate({apiURL: e.target.value})}
                             helptext={intl.formatMessage({defaultMessage: 'Override the default Brave Search endpoint if necessary.'})}
+                            disabled={!value.enabled}
+                        />
+                    </>
+                )}
+                {value.provider === 'searxng' && (
+                    <>
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'SearXNG Base URL'})}
+                            value={searxng.baseURL}
+                            onChange={(e) => handleSearxngUpdate({baseURL: e.target.value})}
+                            helptext={intl.formatMessage({defaultMessage: 'Root URL of your SearXNG instance (e.g. https://searx.example.com). The instance must allow the json format (search.formats in its settings). If the instance is on a private/reserved address, add it to the Mattermost AllowedUntrustedInternalConnections setting.'})}
+                            disabled={!value.enabled}
+                        />
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'SearXNG Result Limit'})}
+                            type='number'
+                            value={searxng.resultLimit.toString()}
+                            onChange={(e) => {
+                                const parsed = parseInt(e.target.value, 10);
+                                handleSearxngUpdate({resultLimit: Number.isNaN(parsed) ? 5 : parsed});
+                            }}
                             disabled={!value.enabled}
                         />
                     </>

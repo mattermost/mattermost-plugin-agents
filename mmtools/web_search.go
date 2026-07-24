@@ -168,6 +168,16 @@ func (s *webSearchService) Tool() *llm.Tool {
 			s.httpClient,
 			s.logger,
 		)
+	case "searxng":
+		if webCfg.SearXNG.BaseURL == "" {
+			s.logWarn("web search misconfigured: missing SearXNG base URL")
+			return nil
+		}
+		s.provider = websearch.NewSearXNGProvider(
+			webCfg.SearXNG.BaseURL,
+			s.httpClient,
+			s.logger,
+		)
 	default:
 		s.logDebug("web search provider not supported", "provider", webCfg.Provider)
 		return nil
@@ -204,6 +214,10 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 		}
 	case "brave":
 		if webCfg.Brave.APIKey == "" {
+			return nil
+		}
+	case "searxng":
+		if webCfg.SearXNG.BaseURL == "" {
 			return nil
 		}
 	default:
@@ -294,6 +308,8 @@ func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context,
 		resultLimit = webCfg.Google.ResultLimit
 	case "brave":
 		resultLimit = webCfg.Brave.ResultLimit
+	case "searxng":
+		resultLimit = webCfg.SearXNG.ResultLimit
 	}
 
 	// Perform the search
