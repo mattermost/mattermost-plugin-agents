@@ -23,6 +23,10 @@ func readZoomChat(chat io.Reader) (*astisub.Subtitles, error) {
 	scanner := bufio.NewScanner(chat)
 	for scanner.Scan() {
 		line := scanner.Text()
+		// Zoom chat lines are "HH:MM:SS <text>". Continuation/short lines lack a timestamp.
+		if len(line) < 9 {
+			continue
+		}
 		text := line[9:]
 		item := &astisub.Item{}
 		startAt, err := time.Parse("15:04:05", line[:8])
