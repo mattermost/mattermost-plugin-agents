@@ -15,11 +15,10 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
-const (
-	CallsRecordingPostType = "custom_calls_recording"
-	CallsBotUsername       = "calls"
-	ZoomBotUsername        = "zoom"
-)
+const CallsRecordingPostType = "custom_calls_recording"
+
+// MeetingBotUsernames is the set of bot usernames whose posts can be summarized as meeting transcriptions.
+var MeetingBotUsernames = []string{"calls", "zoom", "google-meet"}
 
 // Service handles meeting summarization and transcription functionality
 type Service struct {
