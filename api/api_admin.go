@@ -499,7 +499,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	}
 	cfg.MCP.PluginServers = merged
 
-	if err := a.configStore.SaveConfig(*cfg); err != nil {
+	if _, err := a.configStore.SaveConfig(*cfg); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save plugin-server config: %w", err))
 		return
 	}

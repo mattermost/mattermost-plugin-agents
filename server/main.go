@@ -32,6 +32,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/sandbox"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
@@ -63,6 +64,7 @@ type Plugin struct {
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
 	telemetryEndpoint    string
+	sandboxManager       *sandbox.Manager
 	store                *store.Store
 	configMigrated       bool
 }
@@ -180,7 +182,7 @@ func (p *Plugin) OnActivate() error {
 		}
 
 		// Write to DB (first entry in config history)
-		if saveErr := p.store.SaveConfig(finalCfg); saveErr != nil {
+		if _, saveErr := p.store.SaveConfig(finalCfg); saveErr != nil {
 			mtx2.Unlock()
 			return fmt.Errorf("failed to save migrated config to database: %w", saveErr)
 		}
@@ -488,6 +490,22 @@ func (p *Plugin) OnActivate() error {
 	p.applyTelemetryConfig()
 	p.configuration.RegisterUpdateListener(p.applyTelemetryConfig)
 
+	// Start (or stop) the MCP Apps sandbox listener from config and re-apply
+	// on every config change so port/URL changes do not need a plugin restart.
+	p.sandboxManager = sandbox.NewManager(
+		func() (config.MCPAppsConfig, string) {
+			siteURL := ""
+			if s := p.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL; s != nil {
+				siteURL = *s
+			}
+			return p.configuration.MCP().Apps, siteURL
+		},
+		&pluginLogger{service: &p.pluginAPI.Log},
+		nil,
+	)
+	p.sandboxManager.ApplyCurrent()
+	p.configuration.RegisterUpdateListener(p.sandboxManager.ApplyCurrent)
+
 	// Keep only what we need
 	p.apiService = apiService
 	p.bots = bots
@@ -509,6 +527,10 @@ func (p *Plugin) OnDeactivate() error {
 		p.telemetryShutdown = nil
 	}
 	p.telemetryMu.Unlock()
+
+	if p.sandboxManager != nil {
+		p.sandboxManager.Close()
+	}
 
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()

@@ -116,7 +116,7 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 
 	newCfg := *dbCfg
 	newCfg.Bots = nil
-	if saveErr := st.SaveConfig(newCfg); saveErr != nil {
+	if _, saveErr := st.SaveConfig(newCfg); saveErr != nil {
 		return false, fmt.Errorf("failed to save config after legacy bot migration: %w", saveErr)
 	}
 	reloaded, err := st.GetConfig()

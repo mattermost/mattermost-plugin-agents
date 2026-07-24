@@ -113,7 +113,7 @@ func TestConfigStore(t *testing.T) {
 		{
 			name: "save and get round-trip with fully populated config",
 			setup: func(t *testing.T, s *Store) {
-				err := s.SaveConfig(fullTestConfig())
+				_, err := s.SaveConfig(fullTestConfig())
 				require.NoError(t, err)
 			},
 			validate: func(t *testing.T, s *Store) {
@@ -158,7 +158,7 @@ func TestConfigStore(t *testing.T) {
 		{
 			name: "IsConfigMigrated returns true after save",
 			setup: func(t *testing.T, s *Store) {
-				err := s.SaveConfig(fullTestConfig())
+				_, err := s.SaveConfig(fullTestConfig())
 				require.NoError(t, err)
 			},
 			validate: func(t *testing.T, s *Store) {
@@ -170,7 +170,7 @@ func TestConfigStore(t *testing.T) {
 		{
 			name: "overwrite existing config",
 			setup: func(t *testing.T, s *Store) {
-				err := s.SaveConfig(fullTestConfig())
+				_, err := s.SaveConfig(fullTestConfig())
 				require.NoError(t, err)
 
 				// Save a different config
@@ -180,7 +180,7 @@ func TestConfigStore(t *testing.T) {
 						{ID: "new-bot-1", Name: "new-bot", ServiceID: "svc-new"},
 					},
 				}
-				err = s.SaveConfig(newCfg)
+				_, err = s.SaveConfig(newCfg)
 				require.NoError(t, err)
 			},
 			validate: func(t *testing.T, s *Store) {
@@ -214,7 +214,7 @@ func TestConfigStore(t *testing.T) {
 						},
 					},
 				}
-				err := s.SaveConfig(cfg)
+				_, err := s.SaveConfig(cfg)
 				require.NoError(t, err)
 			},
 			validate: func(t *testing.T, s *Store) {
@@ -256,7 +256,7 @@ func TestConfigHistory(t *testing.T) {
 	}
 
 	for _, cfg := range configs {
-		saveErr := s.SaveConfig(cfg)
+		_, saveErr := s.SaveConfig(cfg)
 		require.NoError(t, saveErr)
 	}
 
@@ -292,7 +292,7 @@ func TestConfigDataMigration(t *testing.T) {
 
 	// Step 2: Simulate writing config (as the activation code would)
 	cfg := fullTestConfig()
-	err = s.SaveConfig(cfg)
+	_, err = s.SaveConfig(cfg)
 	require.NoError(t, err)
 
 	// Step 3: Verify IsConfigMigrated = true
@@ -357,7 +357,8 @@ func TestSaveConfigConcurrent(t *testing.T) {
 			defer wg.Done()
 			<-start
 
-			errCh <- workerStore.SaveConfig(config.Config{DefaultBotName: fmt.Sprintf("bot-%d", index)})
+			_, e := workerStore.SaveConfig(config.Config{DefaultBotName: fmt.Sprintf("bot-%d", index)})
+			errCh <- e
 		}(i, workerStores[i])
 	}
 
@@ -404,7 +405,8 @@ func TestSaveConfigWaitsForConfigLock(t *testing.T) {
 
 	saveDone := make(chan error, 1)
 	go func() {
-		saveDone <- saveStore.SaveConfig(config.Config{DefaultBotName: "bot-after-lock"})
+		_, e := saveStore.SaveConfig(config.Config{DefaultBotName: "bot-after-lock"})
+		saveDone <- e
 	}()
 
 	select {
