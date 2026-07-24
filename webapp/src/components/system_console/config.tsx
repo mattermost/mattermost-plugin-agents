@@ -155,6 +155,10 @@ const defaultConfig: Config = {
             resultLimit: 5,
             apiURL: '',
         },
+        searxng: {
+            baseURL: '',
+            resultLimit: 5,
+        },
     },
 };
 
