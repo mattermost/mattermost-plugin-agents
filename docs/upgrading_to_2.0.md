@@ -127,7 +127,7 @@ Defaults that ship with v2.0.0 differ from v1.x in the following ways. None of t
 
 > **Reasoning is on by default for migrated agents.** Migration 000006 backfills `ReasoningEnabled = true` for existing rows. If your environment relies on agents *not* using extended thinking — for example, to reduce token spend or to keep latency predictable for a particular agent — explicitly turn off **Reasoning Enabled** on each affected agent after the upgrade.
 
-> **Anthropic structured output and extended thinking are mutually exclusive.** When Anthropic structured output is enabled, the UI disables extended thinking for that agent — the two cannot be active simultaneously.
+> **Anthropic structured output and extended thinking.** Both toggles can be enabled on the same agent. Because Anthropic doesn't support extended thinking together with structured output, requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
 
 ## 7. Step-by-step upgrade procedure
 

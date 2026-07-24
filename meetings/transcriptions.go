@@ -62,8 +62,8 @@ func (s *Service) HandleSummarizeTranscription(userID string, bot *bots.Bot, pos
 		return nil, fmt.Errorf("unable to get calls user: %w", err)
 	}
 
-	if !targetPostUser.IsBot || (targetPostUser.Username != CallsBotUsername && targetPostUser.Username != ZoomBotUsername) {
-		return nil, errors.New("not a calls or zoom bot post")
+	if !targetPostUser.IsBot || !slices.Contains(MeetingBotUsernames, targetPostUser.Username) {
+		return nil, errors.New("not a meeting bot post")
 	}
 
 	createdPost, err := s.newCallTranscriptionSummaryThread(bot, user, post, channel)

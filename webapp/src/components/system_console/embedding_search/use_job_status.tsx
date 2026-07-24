@@ -45,6 +45,9 @@ export const useJobStatus = () => {
                     message: intl.formatMessage({defaultMessage: 'Reindexing was canceled.'}),
                 });
                 setPolling(false);
+            } else if (status.status === 'running' || status.status === 'cancel_requested') {
+                // Page refresh must re-attach to an in-flight job.
+                setPolling(true);
             }
         } catch (error) {
             // 404 is expected when no job has run yet, don't show an error

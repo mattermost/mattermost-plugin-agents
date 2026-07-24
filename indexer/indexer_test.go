@@ -5,6 +5,7 @@ package indexer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -561,6 +562,310 @@ func TestModelInfoOperations(t *testing.T) {
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		err := indexer.SaveModelInfo(info)
 		require.NoError(t, err)
+	})
+}
+
+// modelCfg builds an EmbeddingSearchConfig with the given provider/model/dims.
+func modelCfg(provider, modelName string, dims int) embeddings.EmbeddingSearchConfig {
+	params, _ := json.Marshal(map[string]string{"embeddingModel": modelName})
+	return embeddings.EmbeddingSearchConfig{
+		Dimensions: dims,
+		EmbeddingProvider: embeddings.UpstreamConfig{
+			Type:       provider,
+			Parameters: params,
+		},
+	}
+}
+
+// jobKVStore is an in-memory plugin KV that JSON-round-trips JobStatus (and
+// related keys) so StartReindexJob resume carry-over exercises the same
+// serialization path as production.
+type jobKVStore struct {
+	mu      sync.Mutex
+	jobJSON []byte
+	model   *ModelInfo
+	cursor  *Cursor
+	lastIdx *int64
+}
+
+func (k *jobKVStore) getJob() (JobStatus, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.jobJSON == nil {
+		return JobStatus{}, mmapi.ErrKVNotFound
+	}
+	var status JobStatus
+	if err := json.Unmarshal(k.jobJSON, &status); err != nil {
+		return JobStatus{}, err
+	}
+	return status, nil
+}
+
+func (k *jobKVStore) wire(mockClient *mocks.MockClient) {
+	mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+		Return(func(key string, value interface{}) error {
+			status, err := k.getJob()
+			if err != nil {
+				return err
+			}
+			*value.(*JobStatus) = status
+			return nil
+		}).Maybe()
+	mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.Anything).
+		Return(func(key string, oldValue, newValue interface{}) (bool, error) {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			if oldValue == nil {
+				if k.jobJSON != nil {
+					return false, nil
+				}
+			} else {
+				old, ok := oldValue.(JobStatus)
+				if !ok || k.jobJSON == nil {
+					return false, nil
+				}
+				var current JobStatus
+				if err := json.Unmarshal(k.jobJSON, &current); err != nil {
+					return false, err
+				}
+				// Compare the durable fields that CAS gating cares about.
+				if current.JobID != old.JobID || current.Status != old.Status {
+					return false, nil
+				}
+			}
+			raw, err := json.Marshal(newValue)
+			if err != nil {
+				return false, err
+			}
+			k.jobJSON = raw
+			return true, nil
+		}).Maybe()
+	mockClient.On("KVGet", IndexerModelKey, mock.AnythingOfType("*indexer.ModelInfo")).
+		Return(func(key string, value interface{}) error {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			if k.model == nil {
+				return mmapi.ErrKVNotFound
+			}
+			*value.(*ModelInfo) = *k.model
+			return nil
+		}).Maybe()
+	mockClient.On("KVSet", IndexerModelKey, mock.AnythingOfType("indexer.ModelInfo")).
+		Return(func(key string, value interface{}) error {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			info := value.(ModelInfo)
+			k.model = &info
+			return nil
+		}).Maybe()
+	mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
+		Return(func(key string, value interface{}) error {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			if k.cursor == nil {
+				return mmapi.ErrKVNotFound
+			}
+			*value.(*Cursor) = *k.cursor
+			return nil
+		}).Maybe()
+	mockClient.On("KVSet", IndexerCursorKey, mock.AnythingOfType("indexer.Cursor")).
+		Return(func(key string, value interface{}) error {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			c := value.(Cursor)
+			k.cursor = &c
+			return nil
+		}).Maybe()
+	mockClient.On("KVDelete", IndexerCursorKey).
+		Return(func(key string) error {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			k.cursor = nil
+			return nil
+		}).Maybe()
+	mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
+		Return(func(key string, value interface{}) error {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			if k.lastIdx == nil {
+				return mmapi.ErrKVNotFound
+			}
+			*value.(*int64) = *k.lastIdx
+			return nil
+		}).Maybe()
+	mockClient.On("KVSet", IndexerLastIndexedKey, mock.AnythingOfType("int64")).
+		Return(func(key string, value interface{}) error {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			ts := value.(int64)
+			k.lastIdx = &ts
+			return nil
+		}).Maybe()
+	mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+	mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+	mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+}
+
+func waitForJobStatus(t *testing.T, store *jobKVStore, want string, timeout time.Duration) JobStatus {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		status, err := store.getJob()
+		if err == nil && status.Status == want {
+			return status
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	status, err := store.getJob()
+	require.NoError(t, err, "job row missing while waiting for %s", want)
+	require.Equal(t, want, status.Status, "timed out waiting for job status %s; last error=%q", want, status.Error)
+	return status
+}
+
+// TestResumeRefreshesModelInfo covers start-time ModelInfo snapshotting:
+// fail mid-pass → resume completes → IndexerModelKey gets the original
+// snapshot (not live config). Also covers catch-up writing nothing.
+func TestResumeRefreshesModelInfo(t *testing.T) {
+	tests := []struct {
+		name                 string
+		changeConfigOnResume bool
+		resumeModelName      string // config after resume start ("" = unchanged)
+		wantStoredModel      string
+		wantCompatible       bool
+		compatAgainst        string // model name used for CheckModelCompatibility
+	}{
+		{
+			name:            "resume writes the start-time snapshot and unlocks search",
+			wantStoredModel: "model-a",
+			wantCompatible:  true,
+			compatAgainst:   "model-a",
+		},
+		{
+			name:                 "resume after config change still writes the original snapshot and stays locked",
+			changeConfigOnResume: true,
+			resumeModelName:      "model-b",
+			wantStoredModel:      "model-a",
+			wantCompatible:       false,
+			compatAgainst:        "model-b",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := testDB(t)
+			defer cleanupDB(t, db)
+
+			now := model.GetMillis()
+			_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+			require.NoError(t, err)
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post1', $1, 0, 'Message', '', 'channel1')", now-10000)
+			require.NoError(t, err)
+
+			var cfgMu sync.Mutex
+			cfg := modelCfg("openai", "model-a", 1536)
+
+			store := &jobKVStore{}
+			// Stale prior index so compatibility starts locked.
+			store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768}
+
+			mockClient := mocks.NewMockClient(t)
+			mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+			mockMutexAPI := &plugintest.API{}
+			mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+			mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+			store.wire(mockClient)
+			mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+			mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+			// First run fails on Store; resume succeeds.
+			mockSearch.On("Clear", mock.Anything).Return(nil).Once()
+			mockSearch.On("Store", mock.Anything, mock.Anything).Return(errors.New("store blew up")).Once()
+			mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+			idx := New(
+				func() embeddings.EmbeddingSearch { return mockSearch },
+				func() embeddings.EmbeddingSearchConfig {
+					cfgMu.Lock()
+					defer cfgMu.Unlock()
+					return cfg
+				},
+				mockClient, &bots.MMBots{}, db, mockMutexAPI,
+			)
+			idx.storeRetryAttempts = 1
+
+			_, err = idx.StartReindexJob(true)
+			require.NoError(t, err)
+			failed := waitForJobStatus(t, store, JobStatusFailed, 5*time.Second)
+			require.NotNil(t, failed.ModelInfo, "failed terminal row must retain the start-time snapshot for resume")
+			assert.Equal(t, "model-a", failed.ModelInfo.ModelName)
+			store.mu.Lock()
+			assert.Equal(t, "old-model", store.model.ModelName, "failed run must not write IndexerModelKey")
+			store.mu.Unlock()
+
+			if tt.changeConfigOnResume {
+				cfgMu.Lock()
+				cfg = modelCfg("openai", tt.resumeModelName, 1536)
+				cfgMu.Unlock()
+			}
+
+			_, err = idx.StartReindexJob(false)
+			require.NoError(t, err)
+			completed := waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+			require.NotNil(t, completed.ModelInfo)
+			assert.Equal(t, "model-a", completed.ModelInfo.ModelName, "resume must carry the original snapshot")
+
+			store.mu.Lock()
+			require.NotNil(t, store.model)
+			assert.Equal(t, tt.wantStoredModel, store.model.ModelName)
+			assert.Equal(t, 1536, store.model.Dimensions)
+			store.mu.Unlock()
+
+			compat := idx.CheckModelCompatibility("openai", 1536, tt.compatAgainst)
+			assert.Equal(t, tt.wantCompatible, compat.Compatible)
+		})
+	}
+
+	t.Run("catch-up does not write model info", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post1', $1, 0, 'Message', '', 'channel1')", now-1000)
+		require.NoError(t, err)
+
+		store := &jobKVStore{}
+		lastIndexed := now - 5000
+		store.lastIdx = &lastIndexed
+		store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768}
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockMutexAPI := &plugintest.API{}
+		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+		store.wire(mockClient)
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		idx := New(
+			func() embeddings.EmbeddingSearch { return mockSearch },
+			func() embeddings.EmbeddingSearchConfig { return modelCfg("openai", "model-a", 1536) },
+			mockClient, &bots.MMBots{}, db, mockMutexAPI,
+		)
+
+		_, err = idx.StartCatchUpJob()
+		require.NoError(t, err)
+		completed := waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+		assert.Nil(t, completed.ModelInfo, "catch-up must not set a model snapshot")
+
+		store.mu.Lock()
+		require.NotNil(t, store.model)
+		assert.Equal(t, "old-model", store.model.ModelName, "catch-up must not rewrite IndexerModelKey")
+		store.mu.Unlock()
 	})
 }
 
