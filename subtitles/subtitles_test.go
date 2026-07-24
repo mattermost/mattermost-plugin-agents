@@ -58,11 +58,10 @@ func TestNewSubtitlesFromZoomChat(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name            string
-		input           string
-		wantLLM         string
-		wantEmpty       bool
-		wantErrContains string
+		name      string
+		input     string
+		wantLLM   string
+		wantEmpty bool
 	}{
 		{
 			name: "valid zoom chat lines",
@@ -71,22 +70,24 @@ func TestNewSubtitlesFromZoomChat(t *testing.T) {
 			wantLLM: "00:01 to 00:06 - Alice: Hello everyone\n00:05 to 00:10 - Bob: Hi Alice",
 		},
 		{
-			name: "short continuation lines are skipped",
+			name: "short continuation lines append to previous item",
 			input: `00:00:01 Alice: Hello
 x
 00:00:05 Bob: Hi
 ab`,
-			wantLLM: "00:01 to 00:06 - Alice: Hello\n00:05 to 00:10 - Bob: Hi",
+			wantLLM: "00:01 to 00:06 - Alice: Hello - x\n00:05 to 00:10 - Bob: Hi - ab",
 		},
 		{
-			name:      "only short lines yields empty subtitles",
-			input:     "x\nab\n",
+			name: "long continuation lines append instead of failing parse",
+			input: `00:00:01 Alice: Hello
+more of the message here
+00:00:05 Bob: Hi`,
+			wantLLM: "00:01 to 00:06 - Alice: Hello - more of the message here\n00:05 to 00:10 - Bob: Hi",
+		},
+		{
+			name:      "only non-timestamp lines yields empty subtitles",
+			input:     "x\nnot-time More text here\n",
 			wantEmpty: true,
-		},
-		{
-			name:            "invalid timestamp returns error",
-			input:           "not-time More text here",
-			wantErrContains: "parsing time",
 		},
 	}
 
@@ -99,11 +100,6 @@ ab`,
 			require.NotPanics(t, func() {
 				subs, err = NewSubtitlesFromZoomChat(strings.NewReader(tc.input))
 			})
-
-			if tc.wantErrContains != "" {
-				require.ErrorContains(t, err, tc.wantErrContains)
-				return
-			}
 
 			require.NoError(t, err)
 			require.NotNil(t, subs)
