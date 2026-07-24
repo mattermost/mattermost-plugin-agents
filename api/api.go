@@ -75,6 +75,8 @@ type MCPClientManager interface {
 	IsPluginRegistered(pluginID string) bool
 
 	DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
+
+	ReadUserAppResource(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error)
 }
 
 // ConfigStore provides read/write access to the plugin configuration in the database.
@@ -307,6 +309,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
 	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
 	router.DELETE("/mcp/oauth/:serverName", a.handleDeleteUserMCPOAuth)
+	router.GET("/mcp/app-resource", a.handleGetMCPAppResource)
 
 	// Agent routes — authenticated. Free-tier instances (no multi-LLM license)
 	// can CRUD up to one self-service agent; the quota is enforced inside

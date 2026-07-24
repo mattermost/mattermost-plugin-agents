@@ -135,6 +135,8 @@ type mockMCPClientManager struct {
 	discoverPluginToolsResponse  []mcp.ToolInfo
 	discoverPluginToolsErr       error
 	discoverPluginToolsCallCount int
+
+	readUserAppResource func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error)
 }
 
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
@@ -256,6 +258,13 @@ func (m *mockMCPClientManager) IsPluginRegistered(pluginID string) bool {
 func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
 	m.discoverPluginToolsCallCount++
 	return m.discoverPluginToolsResponse, m.discoverPluginToolsErr
+}
+
+func (m *mockMCPClientManager) ReadUserAppResource(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+	if m.readUserAppResource != nil {
+		return m.readUserAppResource(ctx, userID, serverOrigin, uri)
+	}
+	return nil, mcp.ErrServerNotConnected
 }
 
 type fakeMCPOAuthClusterNotifier struct {

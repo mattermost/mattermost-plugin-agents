@@ -50,6 +50,9 @@ type ContentBlock struct {
 	Status       string          `json:"status,omitempty"`
 	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
 
+	// UIMeta is the persisted MCP Apps tool metadata (tool_use blocks only).
+	UIMeta *llm.ToolUIMeta `json:"ui_meta,omitempty"`
+
 	// UserInteraction is the persisted form of llm.Tool.UserInteraction.
 	UserInteraction string `json:"user_interaction,omitempty"`
 
@@ -104,11 +107,12 @@ func BoolPtr(b bool) *bool { return &b }
 func Int64Ptr(v int64) *int64 { return &v }
 
 // FilterForNonRequester returns a new slice of content blocks with private
-// tool data redacted. Tool use blocks with shared != true have their Input
-// field set to nil. Tool result blocks with shared != true have their Content
-// field set to empty string. All other block types pass through unchanged.
-// The original slice and its elements are never mutated.
-// Returns nil if the input is nil.
+// tool data redacted. Tool use blocks with shared != true have their Input,
+// MCPBareName, and UIMeta cleared. Tool result blocks with shared != true
+// have their Content field set to empty string. Shared tool_use blocks keep
+// UIMeta so onlookers can detect an app after a share. All other block types
+// pass through unchanged. The original slice and its elements are never
+// mutated. Returns nil if the input is nil.
 func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil
@@ -122,6 +126,7 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 			if block.Shared == nil || !*block.Shared {
 				result[i].Input = nil
 				result[i].MCPBareName = ""
+				result[i].UIMeta = nil
 			}
 		case BlockTypeToolResult:
 			if block.Shared == nil || !*block.Shared {

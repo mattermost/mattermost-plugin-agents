@@ -42,6 +42,11 @@ type UserClients struct {
 	// user client is cached; otherwise callers only see those errors once (first
 	// GetToolsForUser) and lose stable auth-required state on subsequent requests.
 	initialRemoteConnectErrors *Errors
+	// remoteFanOutDone is true after ConnectToRemoteServers has been invoked for
+	// the full configured server list (GetToolsForUser / refresh). Targeted
+	// single-server connects from ReadUserAppResource leave this false so the
+	// next GetToolsForUser still fans out to remaining servers.
+	remoteFanOutDone bool
 }
 
 type userClientSnapshot struct {
@@ -64,6 +69,9 @@ func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuth
 func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []ServerConfig, forceRefresh bool) *Errors {
 	if len(servers) == 0 {
 		c.log.Debug("No remote MCP servers provided for user", "userID", c.userID)
+		c.clientsMu.Lock()
+		c.remoteFanOutDone = true
+		c.clientsMu.Unlock()
 		return nil
 	}
 
@@ -73,6 +81,9 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 	for _, serverConfig := range servers {
 		if serverConfig.BaseURL == "" {
 			c.log.Warn("Skipping MCP server with empty BaseURL", "serverID", serverConfig.Name)
+			continue
+		}
+		if !forceRefresh && c.hasClient(serverConfig.Name) {
 			continue
 		}
 
@@ -99,7 +110,28 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 		}
 	}
 
+	c.clientsMu.Lock()
+	c.remoteFanOutDone = true
+	c.clientsMu.Unlock()
 	return mcpErrors
+}
+
+func (c *UserClients) hasRemoteFanOutDone() bool {
+	c.clientsMu.RLock()
+	defer c.clientsMu.RUnlock()
+	return c.remoteFanOutDone
+}
+
+// ConnectToRemoteServer connects a single remote MCP server into this user's
+// client set when not already present (unless forceRefresh).
+func (c *UserClients) ConnectToRemoteServer(ctx context.Context, serverConfig ServerConfig, forceRefresh bool) error {
+	if serverConfig.BaseURL == "" {
+		return fmt.Errorf("empty BaseURL for MCP server %s", serverConfig.Name)
+	}
+	if !forceRefresh && c.hasClient(serverConfig.Name) {
+		return nil
+	}
+	return c.connectToServer(ctx, serverConfig.Name, serverConfig, forceRefresh)
 }
 
 // ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
@@ -147,6 +179,12 @@ func (c *UserClients) connectToServer(ctx context.Context, serverID string, serv
 	}
 	c.clientsMu.Lock()
 	defer c.clientsMu.Unlock()
+	if existing := c.clients[serverID]; existing != nil {
+		// Close the map entry we are about to overwrite. Concurrent cold
+		// ConnectToRemoteServer callers can both pass hasClient and each
+		// create a client; without this the loser leaks.
+		_ = existing.Close()
+	}
 	c.clients[serverID] = serverClient
 	return nil
 }
@@ -233,6 +271,12 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 		sort.Strings(toolNames)
 		for _, toolName := range toolNames {
 			tool := clientTools[toolName]
+			uiMeta := parseToolUIMeta(tool.Meta)
+			// Spec: tools whose visibility excludes "model" MUST NOT be
+			// exposed to the agent. App-callable tools are Phase 3.
+			if !uiMeta.VisibleToModel() {
+				continue
+			}
 			runtimeToolName := llm.NamespaceMCPToolName(serverSlug, toolName)
 			// Namespacing should make cross-server duplicate bare names safe. A
 			// final collision means the slug de-dupe or upstream catalog is broken.
@@ -252,6 +296,7 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 				Schema:       tool.InputSchema,
 				Resolver:     c.createToolResolver(client, toolName),
 				ServerOrigin: client.config.BaseURL,
+				UIMeta:       uiMeta,
 			})
 		}
 	}

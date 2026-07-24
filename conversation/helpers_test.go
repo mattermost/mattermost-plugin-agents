@@ -79,6 +79,20 @@ func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
 }
 
+func TestToolUseBlocksCarriesUIMeta(t *testing.T) {
+	uiMeta := &llm.ToolUIMeta{ResourceURI: "ui://srv/app.html"}
+	blocks := toolUseBlocks("", llm.ReasoningData{}, []llm.ToolCall{{
+		ID:           "tc1",
+		Name:         "demo",
+		ServerOrigin: "https://srv.example",
+		Status:       llm.ToolCallStatusPending,
+		UIMeta:       uiMeta,
+	}}, true)
+
+	require.Len(t, blocks, 1)
+	assert.Equal(t, uiMeta, blocks[0].UIMeta)
+}
+
 func TestUnmarshalBlocks(t *testing.T) {
 	tests := []struct {
 		name           string
