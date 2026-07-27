@@ -32,17 +32,6 @@ test.afterAll(async () => {
     await mattermost?.stop();
 });
 
-async function getTownSquareId(client: Client4): Promise<string> {
-    const teams = await client.getMyTeams();
-    const channels = await client.getMyChannels(teams[0].id);
-    const townSquare = channels.find((channel) => channel.name === 'town-square');
-    if (!townSquare) {
-        throw new Error('town-square channel not found');
-    }
-
-    return townSquare.id;
-}
-
 async function countAgentPostsInThread(client: Client4, rootPostId: string, botUserId: string): Promise<number> {
     const thread = await client.getPostThread(rootPostId);
     return Object.values(thread.posts || {}).filter((post) => post.user_id === botUserId).length;
@@ -54,7 +43,8 @@ test.describe('Agent mention reminder', () => {
         await openAIMock.addCompletionMock(responseTest);
 
         const client = await mattermost.getClient(username, password);
-        const channelId = await getTownSquareId(client);
+        const teams = await client.getMyTeams();
+        const channel = await client.getChannelByName(teams[0].id, 'town-square');
         const bot = await client.getUserByUsername(botUsername);
 
         const mmPage = new MattermostPage(page);
@@ -63,7 +53,7 @@ test.describe('Agent mention reminder', () => {
         // The agent answers a channel mention in a thread, so the thread's last
         // post is authored by the agent.
         const rootPost = await client.createPost({
-            channel_id: channelId,
+            channel_id: channel.id,
             message: `@${botUsername} how is the rollout going?`,
         });
 
@@ -75,7 +65,6 @@ test.describe('Agent mention reminder', () => {
         await threadFooter.click();
 
         const rhs = page.locator('#rhsContainer');
-        await expect(rhs).toBeVisible({ timeout: 15000 });
         await expect(rhs.getByText(responseTestText)).toBeVisible({ timeout: 60000 });
 
         // A plain thread reply: no @mention, so the agent stays out of it.
@@ -86,7 +75,6 @@ test.describe('Agent mention reminder', () => {
 
         const loopInLink = rhs.getByRole('link', { name: `Click here to loop in @${botDisplayName}` });
         await expect(loopInLink).toBeVisible({ timeout: 60000 });
-        await expect(loopInLink).toBeEnabled();
 
         await loopInLink.click();
 

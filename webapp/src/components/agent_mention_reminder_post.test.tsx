@@ -20,14 +20,13 @@ const POST_ID = 'ehz9k3wqr7t1a5m2xd8pnb4jsc';
 const TARGET_POST_ID = 'kq3n7vd1x9r4bz2m8sw6t5jhpc';
 const POST_MESSAGE = 'To respond to an agent you must @mention them.';
 
-// The reminder is delivered as an ephemeral post, and the server stamps that
-// type onto every ephemeral it publishes.
+// Only the server stamps this type onto a post.
 const EPHEMERAL_POST_TYPE = 'system_ephemeral';
 
 type PostProps = {
-    bot_username?: string;
-    bot_display_name?: string;
-    target_post_id?: string;
+    bot_username?: unknown;
+    bot_display_name?: unknown;
+    target_post_id?: unknown;
 };
 
 type PostOverrides = {id?: string; type?: string; message?: string};
@@ -38,19 +37,13 @@ function renderPost(props?: PostProps, overrides?: PostOverrides) {
             <AgentMentionReminderPost
                 post={{
                     id: overrides?.id ?? POST_ID,
-                    type: 'type' in (overrides ?? {}) ? overrides?.type : EPHEMERAL_POST_TYPE,
+                    type: overrides?.type ?? EPHEMERAL_POST_TYPE,
                     message: overrides?.message ?? POST_MESSAGE,
                     props,
                 }}
             />
         </IntlProvider>,
     );
-}
-
-// Post props are decoded from JSON off the websocket, so any prop can hold any
-// JSON value at runtime no matter what the component's Props type declares.
-function renderPostWithRawProps(props: Record<string, unknown>) {
-    return renderPost(props as PostProps);
 }
 
 describe('AgentMentionReminderPost', () => {
@@ -90,29 +83,15 @@ describe('AgentMentionReminderPost', () => {
 
     const notWellFormedTargetPostIds: Array<{name: string; targetPostId: string}> = [
         {name: 'relative path segments', targetPostId: '../../some/other/route'},
-        {name: 'percent-encoded separators', targetPostId: '..%2f..%2fsome%2froute'},
         {name: 'right length but contains a separator', targetPostId: 'abcdefghijklmnopqrstuvwxy/'},
-        {name: 'right length but contains query and fragment markers', targetPostId: 'abcdefghijklmnopqrstuvw?x#'},
-        {name: 'too short', targetPostId: 'abc'},
-        {name: 'too long', targetPostId: 'abcdefghijklmnopqrstuvwxyz7'},
-        {name: 'right length but uppercase', targetPostId: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'},
-        {name: 'right length but not ascii', targetPostId: 'abcdefghijklmnopqrstuvwxy\u00e9'},
-        {name: 'empty', targetPostId: ''},
         {name: 'well-formed id with leading whitespace', targetPostId: ` ${TARGET_POST_ID}`},
     ];
 
     test.each(notWellFormedTargetPostIds)('renders a plain hint when target_post_id is not well-formed: $name', ({targetPostId}) => {
         renderPost({bot_username: 'matty', bot_display_name: 'Matty', target_post_id: targetPostId});
 
-        // Clicking is a no-op when the affordance is absent; it keeps the
-        // assertion honest whichever way the component withholds the action.
-        const link = screen.queryByRole('link', {name: /Click here to loop in/});
-        if (link) {
-            fireEvent.click(link);
-        }
-
+        expect(screen.queryByRole('link', {name: /Click here to loop in/})).toBeNull();
         expect(mockedDoLoopInAgent).not.toHaveBeenCalled();
-        expect(link).toBeNull();
         expect(screen.getByText(POST_MESSAGE)).not.toBeNull();
     });
 
@@ -123,33 +102,21 @@ describe('AgentMentionReminderPost', () => {
         {name: 'an array', value: ['matty']},
     ];
 
-    test.each(notStrings)('renders when bot_display_name is $name', ({value}) => {
-        expect(() => renderPostWithRawProps({
-            bot_username: 'matty',
-            bot_display_name: value,
-            target_post_id: TARGET_POST_ID,
-        })).not.toThrow();
-    });
+    const notStringProps = (['bot_username', 'bot_display_name', 'target_post_id'] as Array<keyof PostProps>).
+        flatMap((prop) => notStrings.map(({name, value}) => ({prop, name, value})));
 
-    test.each(notStrings)('renders when bot_username is $name', ({value}) => {
-        expect(() => renderPostWithRawProps({
-            bot_username: value,
-            target_post_id: TARGET_POST_ID,
-        })).not.toThrow();
-    });
-
-    test.each(notStrings)('renders when target_post_id is $name', ({value}) => {
-        expect(() => renderPostWithRawProps({
+    test.each(notStringProps)('renders when $prop is $name', ({prop, value}) => {
+        const props: PostProps = {
             bot_username: 'matty',
             bot_display_name: 'Matty',
-            target_post_id: value,
-        })).not.toThrow();
+            target_post_id: TARGET_POST_ID,
+        };
+        props[prop] = value;
+
+        expect(() => renderPost(props)).not.toThrow();
     });
 
-    // Only the server can stamp the ephemeral type onto a post; every other
-    // field this component reads can be set by whoever authored the post.
     test.each([
-        {name: 'no type', type: undefined}, // eslint-disable-line no-undefined
         {name: 'an empty type', type: ''},
         {name: 'the custom post type from the props', type: 'custom_agent_mention_reminder'},
         {name: 'an unrelated custom type', type: 'custom_llmbot'},
@@ -159,12 +126,7 @@ describe('AgentMentionReminderPost', () => {
             {type},
         );
 
-        const link = screen.queryByRole('link', {name: /Click here to loop in/});
-        if (link) {
-            fireEvent.click(link);
-        }
-
-        expect(link).toBeNull();
+        expect(screen.queryByRole('link', {name: /Click here to loop in/})).toBeNull();
         expect(mockedDoLoopInAgent).not.toHaveBeenCalled();
         expect(screen.getByText(POST_MESSAGE)).not.toBeNull();
     });

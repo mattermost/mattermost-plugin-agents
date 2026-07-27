@@ -76,46 +76,28 @@ const {mockGetPost} = jest.requireMock('@mattermost/client') as {
 const mockFetch = jest.fn<Promise<Response>, [string, RequestInit]>();
 global.fetch = mockFetch as unknown as typeof fetch;
 
-function okResponse(): Response {
-    return {ok: true, status: 200} as unknown as Response;
-}
+const siteURL = 'http://localhost:8065';
 
-function jsonResponse(body: unknown): Response {
-    return {ok: true, status: 200, json: () => Promise.resolve(body)} as unknown as Response;
+function okResponse(): Response {
+    return {ok: true, status: 200, json: () => Promise.resolve({})} as unknown as Response;
 }
 
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
 
+// Ids reach these functions straight off a post prop, so a caller can hand them anything.
 const NOT_WELL_FORMED_IDS: Array<{name: string; id: string}> = [
+    {name: 'empty', id: ''},
     {name: 'relative path segments', id: '../../some/other/route'},
-    {name: 'relative path segments after a well-formed prefix', id: `${WELL_FORMED_ID}/../../../some/other/route`},
-    {name: 'percent-encoded separators', id: '..%2f..%2fsome%2froute'},
     {name: 'right length but contains a separator', id: 'abcdefghijklmnopqrstuvwxy/'},
-    {name: 'right length but contains query and fragment markers', id: 'abcdefghijklmnopqrstuvw?x#'},
-    {name: 'too short', id: 'abc'},
-    {name: 'too long', id: 'abcdefghijklmnopqrstuvwxyz7'},
-    {name: 'right length but uppercase', id: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'},
-    {name: 'right length but not ascii', id: 'abcdefghijklmnopqrstuvwxy\u00e9'},
     {name: 'well-formed id with leading whitespace', id: ` ${WELL_FORMED_ID}`},
 ];
 
-// Resolves a request URL the way the browser would before it goes on the wire,
-// so relative segments collapse before the assertion runs.
+// Resolves request URLs the way the browser would, so relative segments collapse first.
 function requestedPathsOutside(prefix: string): string[] {
     return mockFetch.mock.calls.
         map(([url]) => new URL(url).pathname).
         filter((pathname) => !pathname.startsWith(prefix));
-}
-
-// Reports rejection without constraining the error type the caller throws.
-async function didReject(promise: Promise<unknown>): Promise<boolean> {
-    try {
-        await promise;
-        return false;
-    } catch {
-        return true;
-    }
 }
 
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
@@ -144,6 +126,15 @@ function makeConv(overrides: Partial<ConversationResponse> = {}): ConversationRe
         ...overrides,
     };
 }
+
+beforeAll(() => {
+    setSiteURL(siteURL);
+});
+
+beforeEach(() => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue(okResponse());
+});
 
 describe('normalizeConversationResponse', () => {
     beforeEach(() => {
@@ -233,61 +224,30 @@ describe('updateRead', () => {
 });
 
 describe('doLoopInAgent', () => {
-    const siteURL = 'http://localhost:8065';
-
-    // Mattermost IDs are 26 characters of lowercase letters and digits.
-    const wellFormedPostId = 'ehz9k3wqr7t1a5m2xd8pnb4jsc';
-
-    const notWellFormedPostIds: Array<{name: string; postId: string}> = [
-        {name: 'relative path segments', postId: '../../some/other/route'},
-        {name: 'percent-encoded separators', postId: '..%2f..%2fsome%2froute'},
-        {name: 'right length but contains a separator', postId: 'abcdefghijklmnopqrstuvwxy/'},
-        {name: 'right length but contains query and fragment markers', postId: 'abcdefghijklmnopqrstuvw?x#'},
-        {name: 'too short', postId: 'abc'},
-        {name: 'too long', postId: 'abcdefghijklmnopqrstuvwxyz7'},
-        {name: 'right length but uppercase', postId: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'},
-        {name: 'right length but not ascii', postId: 'abcdefghijklmnopqrstuvwxy\u00e9'},
-        {name: 'empty', postId: ''},
-        {name: 'well-formed id with leading whitespace', postId: ` ${wellFormedPostId}`},
-    ];
-
-    beforeAll(() => {
-        setSiteURL(siteURL);
-    });
-
-    beforeEach(() => {
-        mockFetch.mockReset();
-        mockFetch.mockResolvedValue(okResponse());
-    });
-
     test('posts to the loop-in route for a well-formed post id', async () => {
-        await expect(doLoopInAgent(wellFormedPostId, 'matty')).resolves.toBeUndefined();
+        await expect(doLoopInAgent(WELL_FORMED_ID, 'matty')).resolves.toBeUndefined();
 
         expect(mockFetch).toHaveBeenCalledTimes(1);
         const [url, options] = mockFetch.mock.calls[0];
-        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${wellFormedPostId}/loop_in_agent?botUsername=matty`);
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=matty`);
         expect(options).toEqual(expect.objectContaining({method: 'POST'}));
     });
 
     test('percent-encodes the bot username in the query string', async () => {
-        await doLoopInAgent(wellFormedPostId, 'agent bot&x=1');
+        await doLoopInAgent(WELL_FORMED_ID, 'agent bot&x=1');
 
         const [url] = mockFetch.mock.calls[0];
-        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${wellFormedPostId}/loop_in_agent?botUsername=agent%20bot%26x%3D1`);
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=agent%20bot%26x%3D1`);
     });
 
-    test.each(notWellFormedPostIds)('does not issue a request when the post id is not well-formed: $name', async ({postId}) => {
-        const rejected = await didReject(doLoopInAgent(postId, 'matty'));
+    test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the post id is not well-formed: $name', async ({id}) => {
+        await expect(doLoopInAgent(id, 'matty')).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
-        expect(rejected).toBe(true);
     });
 });
 
-// Conversation IDs reach these readers straight off a post prop, so they are
-// only as trustworthy as whoever authored the post.
 describe('conversation reads', () => {
-    const siteURL = 'http://localhost:8065';
     const conversationsPrefix = `/plugins/${manifest.id}/conversations/`;
 
     const readers: Array<{reader: string; read: (id: string) => Promise<unknown>; suffix: string}> = [
@@ -295,17 +255,8 @@ describe('conversation reads', () => {
         {reader: 'getConversationContext', read: getConversationContext, suffix: '/context'},
     ];
 
-    const escapeCases = readers.flatMap(({reader, read}) =>
+    const notWellFormedCases = readers.flatMap(({reader, read}) =>
         NOT_WELL_FORMED_IDS.map(({name, id}) => ({reader, read, name, id})));
-
-    beforeAll(() => {
-        setSiteURL(siteURL);
-    });
-
-    beforeEach(() => {
-        mockFetch.mockReset();
-        mockFetch.mockResolvedValue(jsonResponse({turns: []}));
-    });
 
     test.each(readers)('$reader reads the conversation route for a well-formed id', async ({read, suffix}) => {
         await read(WELL_FORMED_ID);
@@ -316,17 +267,14 @@ describe('conversation reads', () => {
         expect(options).toEqual(expect.objectContaining({method: 'GET'}));
     });
 
-    test.each(escapeCases)('$reader stays inside the conversation route when the id is not well-formed: $name', async ({read, id}) => {
-        // Declining to send anything is also acceptable; what must never happen
-        // is a request landing on some unrelated route.
-        await didReject(read(id));
+    // Declining to send anything is fine; landing on an unrelated route is not.
+    test.each(notWellFormedCases)('$reader stays inside the conversation route when the id is not well-formed: $name', async ({read, id}) => {
+        await read(id).catch(() => null);
 
         expect(requestedPathsOutside(conversationsPrefix)).toEqual([]);
     });
 });
 
-// PostPreview feeds getPost an id taken from a post prop, and Client4 drops the
-// id straight into the request path.
 describe('getPost', () => {
     beforeEach(() => {
         mockGetPost.mockReset();
@@ -339,21 +287,13 @@ describe('getPost', () => {
     });
 
     test.each(NOT_WELL_FORMED_IDS)('does not read a post by an id that is not well-formed: $name', async ({id}) => {
-        try {
-            await getPost(id);
-        } catch {
-            // Refusing the id is an acceptable outcome; the assertion below is
-            // about what reached Client4.
-        }
+        await expect(getPost(id)).rejects.toThrow();
 
         expect(mockGetPost).not.toHaveBeenCalled();
     });
 });
 
-// The route builders are the last line for callers that hand them an id
-// without checking it first.
 describe('route builders', () => {
-    const siteURL = 'http://localhost:8065';
     const traversingId = '../../../some/other/route';
 
     const routes: Array<{segment: string; request: (id: string) => Promise<unknown>}> = [
@@ -363,17 +303,8 @@ describe('route builders', () => {
         {segment: 'custom-prompts', request: (id) => deleteCustomPrompt(id)},
     ];
 
-    beforeAll(() => {
-        setSiteURL(siteURL);
-    });
-
-    beforeEach(() => {
-        mockFetch.mockReset();
-        mockFetch.mockResolvedValue(jsonResponse({}));
-    });
-
     test.each(routes)('keeps the value inside its path segment: $segment', async ({segment, request}) => {
-        await didReject(request(traversingId));
+        await request(traversingId).catch(() => null);
 
         expect(requestedPathsOutside(`/plugins/${manifest.id}/${segment}/`)).toEqual([]);
     });

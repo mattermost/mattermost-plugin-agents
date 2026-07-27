@@ -60,8 +60,7 @@ function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
 }
 
-// Every route builder encodes its id so a value can only ever occupy the path
-// segment it was interpolated into.
+// Route builders encode their id so it can only ever occupy one path segment.
 function postRoute(postid: string): string {
     return `${baseRoute()}/post/${encodeURIComponent(postid)}`;
 }
@@ -72,6 +71,16 @@ function channelRoute(channelid: string): string {
 
 function agentRoute(agentId: string): string {
     return `${baseRoute()}/agents/${encodeURIComponent(agentId)}`;
+}
+
+function requireValidId(id: string, label: string) {
+    if (!isValidId(id)) {
+        throw new ClientError(Client4.url, {
+            message: `Invalid ${label} id`,
+            status_code: 400,
+            url: Client4.url,
+        });
+    }
 }
 
 // readAgentErrorMessage extracts the server-provided error message from an
@@ -281,13 +290,7 @@ export async function doPostbackSummary(postid: string) {
 }
 
 export async function doLoopInAgent(postid: string, botUsername: string) {
-    if (!isValidId(postid)) {
-        throw new ClientError(Client4.url, {
-            message: 'Invalid post id',
-            status_code: 400,
-            url: postRoute(postid),
-        });
-    }
+    requireValidId(postid, 'post');
 
     const url = `${postRoute(postid)}/loop_in_agent?botUsername=${encodeURIComponent(botUsername)}`;
     const response = await fetch(url, Client4.getOptions({
@@ -353,15 +356,9 @@ export function normalizeConversationResponse(raw: ConversationResponse): Conver
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationResponse> {
-    const url = `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}`;
-    if (!isValidId(conversationId)) {
-        throw new ClientError(Client4.url, {
-            message: 'Invalid conversation id',
-            status_code: 400,
-            url,
-        });
-    }
+    requireValidId(conversationId, 'conversation');
 
+    const url = `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -379,15 +376,9 @@ export async function getConversation(conversationId: string): Promise<Conversat
 }
 
 export async function getConversationContext(conversationId: string): Promise<Composition> {
-    const url = `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}/context`;
-    if (!isValidId(conversationId)) {
-        throw new ClientError(Client4.url, {
-            message: 'Invalid conversation id',
-            status_code: 400,
-            url,
-        });
-    }
+    requireValidId(conversationId, 'conversation');
 
+    const url = `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}/context`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -529,13 +520,7 @@ export function getTeamIconUrl(teamId: string, lastTeamIconUpdate: number) {
 }
 
 export async function getPost(postId: string) {
-    if (!isValidId(postId)) {
-        throw new ClientError(Client4.url, {
-            message: 'Invalid post id',
-            status_code: 400,
-            url: Client4.url,
-        });
-    }
+    requireValidId(postId, 'post');
 
     return Client4.getPost(postId);
 }

@@ -29,10 +29,9 @@ const LoopInLink = styled.a<{$pending: boolean}>`
     }
 `;
 
-// Reminders are delivered as ephemeral posts.
+// Only the server sets this type.
 const EphemeralPostType = 'system_ephemeral';
 
-// Props are decoded JSON, so a field declared as a string can hold any value.
 function stringProp(value: unknown): string {
     return typeof value === 'string' ? value : '';
 }

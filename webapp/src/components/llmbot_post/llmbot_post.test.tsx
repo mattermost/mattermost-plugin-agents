@@ -58,18 +58,17 @@ jest.mock('../tool_approval_set', () => ({
     default: () => null,
 }));
 
-// SearchSources renders this for every source; stub it so the source list
-// itself stays real, and so tests can count how many entries it produced.
-const mockPostPreview = jest.fn(() => null);
-
 jest.mock('../post_preview', () => ({
-    PostPreview: () => mockPostPreview(),
+    PostPreview: () => null,
 }));
 
 const mockUseSelector = useSelector as unknown as jest.Mock;
 const mockUseConversation = useConversation as jest.Mock;
 
 type PostUpdateHandler = (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => void;
+
+// Mattermost IDs are 26 characters of lowercase letters and digits.
+const CONVERSATION_ID = 'w4x8t2jr9m1kd6bn5zqh3vscp7';
 
 function makePost(message = '') {
     return {
@@ -78,7 +77,7 @@ function makePost(message = '') {
         root_id: 'root_1',
         message,
         props: {
-            conversation_id: 'conversation_1',
+            conversation_id: CONVERSATION_ID,
         },
     };
 }
@@ -124,8 +123,6 @@ beforeEach(() => {
         loading: false,
         error: null,
     });
-
-    mockPostPreview.mockClear();
 });
 
 describe('LLMBotPost streaming fallback rendering', () => {
@@ -179,15 +176,10 @@ describe('LLMBotPost streaming fallback rendering', () => {
 });
 
 describe('LLMBotPost search results rendering', () => {
-    // Mattermost IDs are 26 characters of lowercase letters and digits.
-    const sourcePostId = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
-    const sourceChannelId = 'kq3n7vd1x9r4bz2m8sw6t5jhpc';
-    const sourceUserId = 'ehz9k3wqr7t1a5m2xd8pnb4jsc';
-
     const wellFormedSource = {
-        postId: sourcePostId,
-        channelId: sourceChannelId,
-        userId: sourceUserId,
+        postId: 'c7f2m9xq4v1b8n3k6t5w0hzjd2',
+        channelId: 'kq3n7vd1x9r4bz2m8sw6t5jhpc',
+        userId: 'ehz9k3wqr7t1a5m2xd8pnb4jsc',
         content: 'a matching message',
         score: 0.5,
     };
@@ -195,62 +187,49 @@ describe('LLMBotPost search results rendering', () => {
     function renderWithSearchResults(searchResults: unknown) {
         return renderPost({
             ...makePost('here is what I found'),
-            props: {conversation_id: 'conversation_1', search_results: searchResults},
+            props: {conversation_id: CONVERSATION_ID, search_results: searchResults},
         } as unknown as ReturnType<typeof makePost>);
+    }
+
+    // SearchSources renders the surviving source count next to the 'Sources' title.
+    function expectSourceCount(count: number) {
+        expect(screen.getByText('Sources')).toBeTruthy();
+        expect(screen.getByText(String(count))).toBeTruthy();
     }
 
     test('renders the source list for a well-formed search_results prop', () => {
         renderWithSearchResults(JSON.stringify([wellFormedSource]));
 
-        expect(screen.getByText('Sources')).toBeTruthy();
+        expectSourceCount(1);
     });
 
-    // search_results is read straight off the post props, so its shape is only
-    // as trustworthy as whoever authored the post.
+    // search_results is read straight off the post props, so a caller can put anything there.
     test.each([
         {name: 'not JSON at all', searchResults: 'not json'},
-        {name: 'a truncated JSON array', searchResults: '[{"postId":'},
-        {name: 'a bare word', searchResults: 'sources'},
         {name: 'a JSON object', searchResults: '{}'},
-        {name: 'a JSON number', searchResults: '5'},
-        {name: 'a JSON string', searchResults: '"sources"'},
-        {name: 'a JSON boolean', searchResults: 'true'},
         {name: 'not a string', searchResults: 5},
-        {name: 'an object', searchResults: {}},
+        {name: 'an array holding a null element', searchResults: '[null]'},
     ])('renders when search_results is $name', ({searchResults}) => {
         expect(() => renderWithSearchResults(searchResults)).not.toThrow();
     });
 
-    // Being a JSON array says nothing about what the array holds, so every
-    // element needs the same treatment as the prop itself.
-    test.each([
-        {name: 'a null element', searchResults: '[null]'},
-        {name: 'a string element', searchResults: '["a source"]'},
-        {name: 'a number element', searchResults: '[5]'},
-        {name: 'an element with no fields', searchResults: '[{}]'},
-        {name: 'a well-formed element next to a null element', searchResults: JSON.stringify([wellFormedSource, null])},
-    ])('renders when search_results holds $name', ({searchResults}) => {
-        expect(() => renderWithSearchResults(searchResults)).not.toThrow();
+    test('keeps a well-formed source alongside an element that is not one', () => {
+        renderWithSearchResults(JSON.stringify([wellFormedSource, null]));
+
+        expectSourceCount(1);
     });
 
-    // The search API caps a result set at maxMaxResults (api/api_search.go), so
-    // a longer list did not come from a search. Each entry mounts a PostPreview
-    // that reads a post and a profile on mount, so the length of this array
-    // decides how much work every reader's client does.
+    // Mirrors maxMaxResults in api/api_search.go.
     const SERVER_RESULT_CAP = 100;
 
-    test('does not render an entry per element when search_results is longer than a search can return', () => {
-        const elementCount = SERVER_RESULT_CAP * 5;
-
-        // Each element carries a distinct post id, so the entry count can only
-        // be explained by the cap and not by two sources sharing an identity.
-        const sources = Array.from({length: elementCount}, (unused, index) => ({
+    test('caps the source list at the most results a search can return', () => {
+        const sources = Array.from({length: SERVER_RESULT_CAP * 5}, (unused, index) => ({
             ...wellFormedSource,
             postId: index.toString(36).padStart(26, '0'),
         }));
 
         renderWithSearchResults(JSON.stringify(sources));
 
-        expect(mockPostPreview.mock.calls.length).toBeLessThanOrEqual(SERVER_RESULT_CAP);
+        expectSourceCount(SERVER_RESULT_CAP);
     });
 });

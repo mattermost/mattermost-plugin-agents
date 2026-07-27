@@ -36,34 +36,24 @@ const SearchResultsPropKey = 'search_results';
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
 
-// Mirrors maxMaxResults in api/api_search.go: the most results a single search
-// can return, and so the most sources a response post can have.
+// Mirrors maxMaxResults in api/api_search.go.
 const SERVER_MAX_SEARCH_RESULTS = 100;
 
-// A source is only usable once it is an object carrying a well-formed post id;
-// the rest of its fields are rendered defensively.
-function isSearchSource(value: unknown): value is Source {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        return false;
-    }
-    return isValidId((value as {postId?: unknown}).postId);
-}
-
-// search_results arrives as a JSON string on the post props. Anything that
-// isn't a JSON array is ignored so the rest of the post still renders, and
-// elements that aren't sources are dropped so well-formed siblings still do.
-function parseSearchSources(raw: unknown): Source[] | null {
+// search_results arrives as a JSON string on the post props; ill-formed values are dropped.
+function parseSearchSources(raw: unknown): Source[] {
     if (typeof raw !== 'string') {
-        return null;
+        return [];
     }
     try {
         const parsed: unknown = JSON.parse(raw);
         if (!Array.isArray(parsed)) {
-            return null;
+            return [];
         }
-        return parsed.filter(isSearchSource).slice(0, SERVER_MAX_SEARCH_RESULTS);
+        return parsed.
+            filter((value): value is Source => isValidId((value as Source | null)?.postId)).
+            slice(0, SERVER_MAX_SEARCH_RESULTS);
     } catch {
-        return null;
+        return [];
     }
 }
 
@@ -100,7 +90,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
 
     const rawConversationId: unknown = props.post.props?.conversation_id;
-    const conversationId = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
+    const conversationId = isValidId(rawConversationId) ? rawConversationId : '';
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
     // Meeting summarization posts have no conversation entity yet; fall back to
@@ -471,11 +461,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     />
                 );
             })}
-            {searchSources && (
-                <SearchSources
-                    sources={searchSources}
-                />
-            )}
+            <SearchSources
+                sources={searchSources}
+            />
             { showPostbackButton &&
             <PostSummaryHelpMessage data-testid='llm-bot-post-summary-help'>
                 <FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>

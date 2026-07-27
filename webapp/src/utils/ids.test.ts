@@ -41,6 +41,6 @@ describe('isValidId', () => {
         {name: 'an empty array', value: []},
         {name: 'an array wrapping a well-formed id', value: [WELL_FORMED_ID]},
     ])('rejects a value that is not a string: $name', ({value}) => {
-        expect(isValidId(value as unknown as string)).toBe(false);
+        expect(isValidId(value)).toBe(false);
     });
 });
