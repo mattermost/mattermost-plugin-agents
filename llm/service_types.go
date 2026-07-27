@@ -14,5 +14,6 @@ const (
 	ServiceTypeScale            = "scale"
 	ServiceTypeGemini           = "gemini"
 	ServiceTypeVertex           = "vertex"
+	ServiceTypeOpenCodeGo       = "opencodego"
 	ServiceTypeLoadTestMock     = "loadtest_mock"
 )

@@ -53,6 +53,7 @@ const missingContentIndex = -1
 // LLM implements the llm.LanguageModel interface using the Bifrost gateway.
 type LLM struct {
 	client           *bifrostcore.Bifrost
+	account          *multiProviderAccount // kept for diagnostics; nil after the constructor returns a fully-constructed *LLM
 	provider         schemas.ModelProvider
 	apiKey           string   // used only to redact configured secrets from provider error surfaces
 	fallbackAPIKeys  []string // fallback provider keys, redacted from error surfaces alongside apiKey
@@ -355,10 +356,23 @@ func readFileData(file llm.File) ([]byte, error) {
 }
 
 // New creates a new LLM instance with the given configuration. It errors when
-// a fallback cannot be registered, so a misconfigured fallback chain fails at
+// a fallback cannot be registered, so a misconfigured chain fails at
 // setup instead of silently shrinking.
 func New(cfg Config) (*LLM, error) {
 	primaryEntry := &providerAccount{ProviderSettings: cfg.ProviderSettings}
+
+	// Wrap an OpenAI-base primary that does not speak the Responses API
+	// (e.g. OpenCode Go, or any openaicompatible with UseResponsesAPI=false)
+	// under its own custom-provider slot so the chat-only AllowedRequests gate
+	// is attached by GetConfigForProvider. With only ChatCompletion and
+	// ChatCompletionStream set to true, Bifrost refuses POSTs to /v1/responses
+	// and /v1/responses/input_tokens (CountTokens returns "unsupported_operation",
+	// which the plugin maps to llm.ErrUnsupportedTokenCount → llm.EstimateTokens
+	// fallback). Mirrors the fallback-wrap branch below.
+	if cfg.Provider == schemas.OpenAI && !cfg.UseResponsesAPI && isCustomCapableProvider(cfg.Provider) {
+		primaryEntry.name = customProviderName(cfg.Provider, "primary")
+		primaryEntry.chatOnly = true
+	}
 
 	account := newMultiProviderAccount()
 	account.addProvider(primaryEntry)
@@ -422,7 +436,8 @@ func New(cfg Config) (*LLM, error) {
 
 	return &LLM{
 		client:             client,
-		provider:           cfg.Provider,
+		account:            account,
+		provider:           primaryEntry.registeredName(),
 		apiKey:             cfg.APIKey,
 		fallbackAPIKeys:    redactKeys[1:],
 		defaultModel:       cfg.DefaultModel,

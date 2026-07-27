@@ -34,6 +34,8 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 		return schemas.Gemini, nil
 	case llm.ServiceTypeVertex:
 		return schemas.Vertex, nil
+	case llm.ServiceTypeOpenCodeGo:
+		return schemas.OpenAI, nil
 	default:
 		return "", fmt.Errorf("unsupported service type: %s", serviceType)
 	}
@@ -44,6 +46,12 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 // and the effective-behavior checks used by built-in Mattermost tools so that
 // built-in fallbacks do not get suppressed when native tools would be stripped.
 func SupportsNativeTools(serviceType string) bool {
+	// OpenCode Go is OpenAI-base, but the gateway is a thin proxy that does
+	// not implement native OpenAI tools; declare them unsupported so we
+	// do not try to send web_search to /v1/chat/completions.
+	if serviceType == llm.ServiceTypeOpenCodeGo {
+		return false
+	}
 	provider, err := MapServiceTypeToProvider(serviceType)
 	if err != nil {
 		return false
@@ -88,6 +96,12 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		return nil, err
 	}
 
+	// Managed providers whose endpoint is fixed and known need their base URL
+	// filled in by us; otherwise the wrapped custom-provider slot Bifrost sees
+	// has an empty BaseURL. The fallback path (serviceConfigToFallbackEntry)
+	// applies the same defaults.
+	applyProviderURLDefaults(&serviceConfig)
+
 	settings := providerSettingsFromService(provider, serviceConfig)
 	if settings.StreamingTimeout <= 0 {
 		settings.StreamingTimeout = DefaultStreamingTimeout
@@ -124,6 +138,24 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	return New(cfg)
 }
 
+// applyProviderURLDefaults fills in the base URL for managed providers whose
+// endpoint is fixed and known. Mutates svc in place. Called from both the
+// primary path (NewFromServiceConfig) and the fallback path
+// (serviceConfigToFallbackEntry) so the two stay in sync.
+func applyProviderURLDefaults(svc *llm.ServiceConfig) {
+	if svc.APIURL != "" {
+		return
+	}
+	switch svc.Type {
+	case llm.ServiceTypeCohere:
+		svc.APIURL = "https://api.cohere.ai/compatibility/v1"
+	case llm.ServiceTypeMistral:
+		svc.APIURL = "https://api.mistral.ai/v1"
+	case llm.ServiceTypeOpenCodeGo:
+		svc.APIURL = "https://opencode.ai/zen/go/v1"
+	}
+}
+
 // providerSettingsFromService maps a ServiceConfig's provider connection fields
 // onto ProviderSettings. It does not fill in per-provider URL defaults; bifrost
 // has its own and they drift.
@@ -152,16 +184,11 @@ func serviceConfigToFallbackEntry(svc llm.ServiceConfig) (FallbackEntry, error) 
 		return FallbackEntry{}, err
 	}
 
-	// Unlike the primary path, fallbacks pin explicit base URLs for Cohere and
-	// Mistral when none is configured.
-	if svc.APIURL == "" {
-		switch svc.Type {
-		case llm.ServiceTypeCohere:
-			svc.APIURL = "https://api.cohere.ai/compatibility/v1"
-		case llm.ServiceTypeMistral:
-			svc.APIURL = "https://api.mistral.ai/v1"
-		}
-	}
+	// Unlike the primary path, fallbacks pin explicit base URLs for Cohere,
+	// Mistral, and OpenCode Go when none is configured. The OpenCode Go URL
+	// has a /v1 suffix; normalizeOpenAIBaseURL below strips it so Bifrost
+	// can prepend /v1/chat/completions (or /v1/responses) without doubling.
+	applyProviderURLDefaults(&svc)
 
 	return FallbackEntry{
 		ProviderSettings: providerSettingsFromService(provider, svc),
@@ -201,7 +228,8 @@ func IsSupported(serviceType string) bool {
 		llm.ServiceTypeCohere,
 		llm.ServiceTypeMistral,
 		llm.ServiceTypeGemini,
-		llm.ServiceTypeVertex:
+		llm.ServiceTypeVertex,
+		llm.ServiceTypeOpenCodeGo:
 		return true
 	default:
 		return false

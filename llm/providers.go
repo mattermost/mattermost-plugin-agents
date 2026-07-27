@@ -41,6 +41,18 @@ var openAICompatibleProviders = map[string]OpenAICompatibleProvider{
 			}
 		},
 	},
+	// OpenCode Go is the managed subscription tier of the OpenCode coding
+	// agent. It exposes an OpenAI-compatible chat-completions endpoint at
+	// https://opencode.ai/zen/go/v1 using standard Bearer auth, so the
+	// default transport is sufficient — no CreateTransport hook is needed.
+	// The 16 model IDs the gateway actually serves (Grok 4.5, GLM-5.2,
+	// GLM-5.1, Kimi K3, Kimi K2.7 Code, Kimi K2.6, MiMo-V2.5-Pro, MiMo-V2.5,
+	// Qwen3.7 Max, Qwen3.7 Plus, Qwen3.6 Plus, MiniMax M2.7, MiniMax M3,
+	// DeepSeek V4 Pro, DeepSeek V4 Flash, Hy3) are lowercase-hyphenated —
+	// e.g. "kimi-k3" — never "gpt-4o" or other upstream-native names.
+	ServiceTypeOpenCodeGo: {
+		DefaultModel: "kimi-k3",
+	},
 }
 
 // GetOpenAICompatibleProvider returns the provider configuration for the given

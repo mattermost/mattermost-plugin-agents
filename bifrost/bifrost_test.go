@@ -2129,6 +2129,35 @@ func TestServiceConfigToFallbackEntry(t *testing.T) {
 			expectedChatOnly: false,
 		},
 		{
+			name: "OpenCode Go service gets default URL and is chat-only",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeOpenCodeGo,
+				APIKey:       "key",
+				DefaultModel: "kimi-k3",
+			},
+			expectedProvider: schemas.OpenAI,
+			expectedModel:    "kimi-k3",
+			// The injected /v1 suffix is stripped by normalizeOpenAIBaseURL so
+			// Bifrost can prepend /v1/chat/completions without doubling up.
+			expectedAPIURL: "https://opencode.ai/zen/go",
+			// OpenCode Go does not speak the OpenAI Responses API; it must be
+			// registered chat-only so Bifrost downgrades Responses-API requests.
+			expectedChatOnly: true,
+		},
+		{
+			name: "OpenCode Go service with explicit API URL is left alone",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeOpenCodeGo,
+				APIKey:       "key",
+				APIURL:       "https://proxy.example.com/go/v1",
+				DefaultModel: "kimi-k3",
+			},
+			expectedProvider: schemas.OpenAI,
+			expectedModel:    "kimi-k3",
+			expectedAPIURL:   "https://proxy.example.com/go",
+			expectedChatOnly: true,
+		},
+		{
 			name: "OpenAI Compatible normalizes URL and is chat-only",
 			svc: llm.ServiceConfig{
 				Type:         llm.ServiceTypeOpenAICompatible,
@@ -2341,6 +2370,10 @@ func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	assert.True(t, cfg.CustomProviderConfig.AllowedRequests.ChatCompletionStream)
 	assert.False(t, cfg.CustomProviderConfig.AllowedRequests.Responses)
 	assert.False(t, cfg.CustomProviderConfig.AllowedRequests.ResponsesStream)
+	// CountTokens must be blocked too — a gateway that omits /v1/responses
+	// cannot serve /v1/responses/input_tokens either (it is the same
+	// auxiliary endpoint Bifrost pings before every chat request).
+	assert.False(t, cfg.CustomProviderConfig.AllowedRequests.CountTokens)
 
 	// A custom provider that does support the Responses API leaves AllowedRequests
 	// unset so all operations remain available.
@@ -2355,6 +2388,108 @@ func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg.CustomProviderConfig)
 	assert.Nil(t, cfg.CustomProviderConfig.AllowedRequests)
+}
+
+// TestNew_OpenCodeGoPrimaryIsWrappedAsChatOnlyCustom pins the contract that an
+// OpenCode Go primary service is registered under a custom-provider slot whose
+// AllowedRequests gate refuses POSTs to /v1/responses and
+// /v1/responses/input_tokens (which the gateway does not implement). Without
+// this gate the Bifrost preflight would 404 on the count-tokens endpoint and
+// crash its HTML-404 response parser.
+func TestNew_OpenCodeGoPrimaryIsWrappedAsChatOnlyCustom(t *testing.T) {
+	primary := llm.ServiceConfig{
+		ID:           "opencodego-primary",
+		Type:         llm.ServiceTypeOpenCodeGo,
+		APIKey:       "key",
+		DefaultModel: "kimi-k3",
+	}
+
+	llmInstance, err := NewFromServiceConfig(primary, llm.BotConfig{}, nil)
+	require.NoError(t, err)
+	defer llmInstance.client.Shutdown()
+
+	// b.provider should now be the registered custom-provider name
+	// "openai::primary", not bare schemas.OpenAI — requests routed through
+	// req.Provider = b.provider must target the wrapped slot.
+	expectedName := customProviderName(schemas.OpenAI, "primary")
+	assert.Equal(t, expectedName, llmInstance.provider,
+		"primary must be registered under the custom-provider name so requests route to the wrapped slot")
+
+	// The bare schemas.OpenAI slot must NOT be registered — only the wrapped
+	// one is. This is the proof that the wrap actually moved the registration.
+	providers, err := llmInstance.account.GetConfiguredProviders()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []schemas.ModelProvider{expectedName}, providers,
+		"bare schemas.OpenAI must not be registered alongside the wrapped primary slot")
+
+	// GetConfigForProvider on the wrapped slot must attach a CustomProviderConfig
+	// whose AllowedRequests allow only ChatCompletion / ChatCompletionStream.
+	wrappedCfg, err := llmInstance.account.GetConfigForProvider(expectedName)
+	require.NoError(t, err)
+	require.NotNil(t, wrappedCfg.CustomProviderConfig,
+		"wrapped primary must declare CustomProviderConfig to attach AllowedRequests")
+	require.NotNil(t, wrappedCfg.CustomProviderConfig.AllowedRequests,
+		"wrapped primary must declare AllowedRequests so /v1/responses and /v1/responses/input_tokens are refused")
+	assert.Equal(t, schemas.OpenAI, wrappedCfg.CustomProviderConfig.BaseProviderType)
+	assert.True(t, wrappedCfg.CustomProviderConfig.AllowedRequests.ChatCompletion)
+	assert.True(t, wrappedCfg.CustomProviderConfig.AllowedRequests.ChatCompletionStream)
+	assert.False(t, wrappedCfg.CustomProviderConfig.AllowedRequests.Responses)
+	assert.False(t, wrappedCfg.CustomProviderConfig.AllowedRequests.ResponsesStream)
+	assert.False(t, wrappedCfg.CustomProviderConfig.AllowedRequests.CountTokens,
+		"CountTokens must be disabled so the Bifrost preflight does not POST to /v1/responses/input_tokens")
+	assert.Equal(t, "https://opencode.ai/zen/go", wrappedCfg.NetworkConfig.BaseURL,
+		"the wrapped slot's base URL must be the auto-applied OpenCode Go default")
+}
+
+// TestNew_DirectOpenAIAndAzurePrimariesRemainStandard guards the inverse of
+// TestNew_OpenCodeGoPrimaryIsWrappedAsChatOnlyCustom: real OpenAI / Azure
+// services continue to register on the bare schemas.OpenAI / schemas.Azure
+// slot (not a custom slot) so all of Bifrost's per-provider quirks — including
+// the Responses-API path — remain available. Only OpenAI-base services with
+// cfg.UseResponsesAPI == false get wrapped.
+func TestNew_DirectOpenAIAndAzurePrimariesRemainStandard(t *testing.T) {
+	cases := []struct {
+		name    string
+		service llm.ServiceConfig
+	}{
+		{
+			name: "direct OpenAI primary keeps the bare schemas.OpenAI slot",
+			service: llm.ServiceConfig{
+				ID:           "openai-direct",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "key",
+				DefaultModel: "gpt-4o",
+			},
+		},
+		{
+			name: "Azure primary keeps the bare schemas.Azure slot",
+			service: llm.ServiceConfig{
+				ID:           "azure",
+				Type:         llm.ServiceTypeAzure,
+				APIKey:       "key",
+				APIURL:       "https://example.openai.azure.com",
+				DefaultModel: "gpt-4o",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			llmInstance, err := NewFromServiceConfig(tc.service, llm.BotConfig{}, nil)
+			require.NoError(t, err)
+			defer llmInstance.client.Shutdown()
+
+			expectedName, err := MapServiceTypeToProvider(tc.service.Type)
+			require.NoError(t, err)
+			assert.Equal(t, expectedName, llmInstance.provider,
+				"standard providers must keep the bare base-type slot so they remain standard")
+
+			cfg, err := llmInstance.account.GetConfigForProvider(expectedName)
+			require.NoError(t, err)
+			assert.Nil(t, cfg.CustomProviderConfig,
+				"standard providers must not be wrapped as custom providers")
+		})
+	}
 }
 
 func TestConvertToBifrostResponsesRequestStructuredOutputStringEnum(t *testing.T) {
@@ -2664,6 +2799,13 @@ func TestCountTokensOmitsMaxOutputTokens(t *testing.T) {
 			StreamingTimeout: 10 * time.Second,
 		},
 		OutputTokenLimit: 8192, // produces MaxGeneratedTokens > 0 → MaxOutputTokens in the request
+		// UseResponsesAPI reflects the production value for direct OpenAI, which
+		// is always forced to true by NewFromServiceConfig (see
+		// llm.ServiceUsesResponsesAPI). The chat-only custom wrap that protects
+		// gateways without /v1/responses (OpenCode Go, openaicompatible with the
+		// toggle off) only fires when UseResponsesAPI is false, so this keeps
+		// CountTokens reaching the backend so the body-shape checks below run.
+		UseResponsesAPI: true,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()

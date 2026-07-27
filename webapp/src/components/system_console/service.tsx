@@ -49,6 +49,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['bedrock', 'AWS Bedrock'],
     ['cohere', 'Cohere'],
     ['mistral', 'Mistral'],
+    ['opencodego', 'OpenCode Go'],
     ['asage', 'asksage (Experimental)'],
     ['gemini', 'Google Gemini'],
     ['vertex', 'Google Vertex AI'],
@@ -82,7 +83,7 @@ type ServiceFieldsProps = {
 export const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
-    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale';
+    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale' || type === 'opencodego';
     const supportsResponsesAPIToggle = type === 'openaicompatible' || type === 'azure';
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
@@ -260,6 +261,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
                 <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
                 <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
+                <SelectionItemOption value='opencodego'>{mapServiceTypeToDisplayName.get('opencodego') || 'OpenCode Go'}</SelectionItemOption>
                 <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
                 <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
             </SelectionItem>
@@ -341,7 +343,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
             )}
             {isOpenAIType && (
                 <>
-                    {!isCohere && !isMistral && (
+                    {!isCohere && !isMistral && type !== 'opencodego' && (
                         <TextItem
                             label={isScale ? intl.formatMessage({defaultMessage: 'Account ID'}) : intl.formatMessage({defaultMessage: 'Organization ID'})}
                             value={props.service.orgId}
