@@ -7,8 +7,13 @@ import {FormattedMessage} from 'react-intl';
 
 import {PostPreview} from './post_preview';
 
-// Utility for formatting relevance scores
-const formatScore = (score: number): string => {
+// Utility for formatting relevance scores. Returns null when the source
+// carries no finite score, leaving nothing to display.
+const formatScore = (score: unknown): string | null => {
+    if (typeof score !== 'number' || !Number.isFinite(score)) {
+        return null;
+    }
+
     // Convert to percentage and round to nearest integer
     return `${Math.round(score * 100)}%`;
 };
@@ -109,14 +114,17 @@ interface SourceItemProps {
 }
 
 const SearchSource = ({source, index}: SourceItemProps & {index: number}) => {
+    const score = formatScore(source.score);
     return (
         <SourceItem>
             <SourceHeader>
                 <SourceNumber>{index + 1}{'.'}</SourceNumber>
-                <RelevanceScore>
-                    <ScoreIcon className='icon icon-check-circle'/>
-                    {formatScore(source.score)}
-                </RelevanceScore>
+                {score !== null && (
+                    <RelevanceScore>
+                        <ScoreIcon className='icon icon-check-circle'/>
+                        {score}
+                    </RelevanceScore>
+                )}
             </SourceHeader>
             <PostPreview
                 postId={source.postId}

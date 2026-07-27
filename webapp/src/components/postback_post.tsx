@@ -14,7 +14,7 @@ interface Props {
 }
 
 export const PostbackPost = (props: Props) => {
-    const editorUsername = useSelector<GlobalState, string>((state) => state.entities.users.profiles[props.post.props.userid]?.username);
+    const editorUsername = useSelector<GlobalState, string>((state) => state.entities.users.profiles[props.post.props?.userid]?.username);
     const botUsername = useSelector<GlobalState, string>((state) => state.entities.users.profiles[props.post.user_id]?.username);
     return (
         <>

@@ -36,15 +36,32 @@ const SearchResultsPropKey = 'search_results';
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
 
+// Mirrors maxMaxResults in api/api_search.go: the most results a single search
+// can return, and so the most sources a response post can have.
+const SERVER_MAX_SEARCH_RESULTS = 100;
+
+// A source is only usable once it is an object carrying a well-formed post id;
+// the rest of its fields are rendered defensively.
+function isSearchSource(value: unknown): value is Source {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return false;
+    }
+    return isValidId((value as {postId?: unknown}).postId);
+}
+
 // search_results arrives as a JSON string on the post props. Anything that
-// isn't a JSON array is ignored so the rest of the post still renders.
+// isn't a JSON array is ignored so the rest of the post still renders, and
+// elements that aren't sources are dropped so well-formed siblings still do.
 function parseSearchSources(raw: unknown): Source[] | null {
     if (typeof raw !== 'string') {
         return null;
     }
     try {
         const parsed: unknown = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed as Source[] : null;
+        if (!Array.isArray(parsed)) {
+            return null;
+        }
+        return parsed.filter(isSearchSource).slice(0, SERVER_MAX_SEARCH_RESULTS);
     } catch {
         return null;
     }

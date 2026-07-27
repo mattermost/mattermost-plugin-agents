@@ -59,9 +59,11 @@ jest.mock('../tool_approval_set', () => ({
 }));
 
 // SearchSources renders this for every source; stub it so the source list
-// itself stays real.
+// itself stays real, and so tests can count how many entries it produced.
+const mockPostPreview = jest.fn(() => null);
+
 jest.mock('../post_preview', () => ({
-    PostPreview: () => null,
+    PostPreview: () => mockPostPreview(),
 }));
 
 const mockUseSelector = useSelector as unknown as jest.Mock;
@@ -122,6 +124,8 @@ beforeEach(() => {
         loading: false,
         error: null,
     });
+
+    mockPostPreview.mockClear();
 });
 
 describe('LLMBotPost streaming fallback rendering', () => {
@@ -180,6 +184,14 @@ describe('LLMBotPost search results rendering', () => {
     const sourceChannelId = 'kq3n7vd1x9r4bz2m8sw6t5jhpc';
     const sourceUserId = 'ehz9k3wqr7t1a5m2xd8pnb4jsc';
 
+    const wellFormedSource = {
+        postId: sourcePostId,
+        channelId: sourceChannelId,
+        userId: sourceUserId,
+        content: 'a matching message',
+        score: 0.5,
+    };
+
     function renderWithSearchResults(searchResults: unknown) {
         return renderPost({
             ...makePost('here is what I found'),
@@ -188,13 +200,7 @@ describe('LLMBotPost search results rendering', () => {
     }
 
     test('renders the source list for a well-formed search_results prop', () => {
-        renderWithSearchResults(JSON.stringify([{
-            postId: sourcePostId,
-            channelId: sourceChannelId,
-            userId: sourceUserId,
-            content: 'a matching message',
-            score: 0.5,
-        }]));
+        renderWithSearchResults(JSON.stringify([wellFormedSource]));
 
         expect(screen.getByText('Sources')).toBeTruthy();
     });
@@ -213,5 +219,31 @@ describe('LLMBotPost search results rendering', () => {
         {name: 'an object', searchResults: {}},
     ])('renders when search_results is $name', ({searchResults}) => {
         expect(() => renderWithSearchResults(searchResults)).not.toThrow();
+    });
+
+    // Being a JSON array says nothing about what the array holds, so every
+    // element needs the same treatment as the prop itself.
+    test.each([
+        {name: 'a null element', searchResults: '[null]'},
+        {name: 'a string element', searchResults: '["a source"]'},
+        {name: 'a number element', searchResults: '[5]'},
+        {name: 'an element with no fields', searchResults: '[{}]'},
+        {name: 'a well-formed element next to a null element', searchResults: JSON.stringify([wellFormedSource, null])},
+    ])('renders when search_results holds $name', ({searchResults}) => {
+        expect(() => renderWithSearchResults(searchResults)).not.toThrow();
+    });
+
+    // The search API caps a result set at maxMaxResults (api/api_search.go), so
+    // a longer list did not come from a search. Each entry mounts a PostPreview
+    // that reads a post and a profile on mount, so the length of this array
+    // decides how much work every reader's client does.
+    const SERVER_RESULT_CAP = 100;
+
+    test('does not render an entry per element when search_results is longer than a search can return', () => {
+        const elementCount = SERVER_RESULT_CAP * 5;
+
+        renderWithSearchResults(JSON.stringify(Array.from({length: elementCount}, () => wellFormedSource)));
+
+        expect(mockPostPreview.mock.calls.length).toBeLessThanOrEqual(SERVER_RESULT_CAP);
     });
 });

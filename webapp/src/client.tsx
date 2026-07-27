@@ -114,7 +114,7 @@ export async function doReaction(postid: string) {
 }
 
 export async function doThreadAnalysis(postid: string, analysisType: string, botUsername: string) {
-    const url = `${postRoute(postid)}/analyze?botUsername=${botUsername}`;
+    const url = `${postRoute(postid)}/analyze?botUsername=${encodeURIComponent(botUsername)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -134,7 +134,7 @@ export async function doThreadAnalysis(postid: string, analysisType: string, bot
 }
 
 export async function doChannelAnalysis(channelId: string, analysisType: string, botUsername: string, options?: any) {
-    const url = `${channelRoute(channelId)}/analyze?botUsername=${botUsername}`;
+    const url = `${channelRoute(channelId)}/analyze?botUsername=${encodeURIComponent(botUsername)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -442,7 +442,7 @@ export async function getBotProfilePictureUrl(username: string) {
 }
 
 export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string): Promise<{postid: string; channelid: string}> {
-    const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${botUsername}` : ''}`;
+    const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${encodeURIComponent(botUsername)}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -838,7 +838,7 @@ export async function getChannelInterval(
     prompt?: string,
     botUsername?: string,
 ): Promise<{postid: string; channelid: string}> {
-    const url = `${channelRoute(channelID)}/interval${botUsername ? `?botUsername=${botUsername}` : ''}`;
+    const url = `${channelRoute(channelID)}/interval${botUsername ? `?botUsername=${encodeURIComponent(botUsername)}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
