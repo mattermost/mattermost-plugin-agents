@@ -4,6 +4,8 @@
 package subtitles
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -89,6 +91,18 @@ more of the message here
 			input:     "x\nnot-time More text here\n",
 			wantEmpty: true,
 		},
+		{
+			name: "tab-separated timestamp lines are accepted",
+			input: "00:00:01\tAlice: Hello\n" +
+				"00:00:05\tBob: Hi",
+			wantLLM: "00:01 to 00:06 - Alice: Hello\n00:05 to 00:10 - Bob: Hi",
+		},
+		{
+			name: "malformed timestamp separator appends as continuation",
+			input: `00:00:01 Alice: Hello
+00:00:05XBob: Hi`,
+			wantLLM: "00:01 to 00:06 - Alice: Hello - 00:00:05XBob: Hi",
+		},
 	}
 
 	for _, tc := range tests {
@@ -110,4 +124,25 @@ more of the message here
 			require.Equal(t, tc.wantLLM, subs.FormatForLLM())
 		})
 	}
+}
+
+func TestNewSubtitlesFromZoomChatScannerError(t *testing.T) {
+	t.Parallel()
+
+	reader := io.MultiReader(
+		strings.NewReader("00:00:01 Alice: Hello\n"),
+		errReader{err: errors.New("read failed")},
+	)
+
+	subs, err := NewSubtitlesFromZoomChat(reader)
+	require.ErrorContains(t, err, "read failed")
+	require.Nil(t, subs)
+}
+
+type errReader struct {
+	err error
+}
+
+func (r errReader) Read([]byte) (int, error) {
+	return 0, r.err
 }

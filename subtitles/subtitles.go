@@ -27,8 +27,8 @@ func readZoomChat(chat io.Reader) (*astisub.Subtitles, error) {
 	scanner := bufio.NewScanner(chat)
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Timestamped Zoom lines are "HH:MM:SS <text>". Anything else is a continuation.
-		if len(line) >= 9 {
+		// Timestamped Zoom lines are "HH:MM:SS <text>" (space or tab separator).
+		if len(line) >= 9 && (line[8] == ' ' || line[8] == '\t') {
 			if startAt, parseErr := time.Parse("15:04:05", line[:8]); parseErr == nil {
 				item := &astisub.Item{
 					StartAt: startAt.Sub(zeroTime),
@@ -44,6 +44,9 @@ func readZoomChat(chat io.Reader) (*astisub.Subtitles, error) {
 		}
 		last := storage.Items[len(storage.Items)-1]
 		last.Lines = append(last.Lines, astisub.Line{Items: []astisub.LineItem{{Text: line}}})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 	return storage, nil
 }
