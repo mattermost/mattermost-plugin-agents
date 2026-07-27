@@ -290,12 +290,10 @@ func (c *Conversations) regenerateViaConversation(
 	// Clear prior attachments so the regenerated response starts clean.
 	// Safe: conversation-flow bot posts only ever carry CreateFile
 	// attachments (meeting-summary regen never reaches this path).
-	if c.db != nil {
-		if unlinkErr := c.db.UnlinkFilesFromPost(post.Id); unlinkErr != nil {
-			c.mmClient.LogError("Failed to unlink prior response files on regen", "error", unlinkErr.Error(), "post_id", post.Id)
-		}
-	}
-	post.FileIds = nil
+	// An explicit empty list — not nil — tells the server's UpdatePost
+	// file-change processing to detach the previous generation's attachments
+	// even if the new run creates none; nil could be treated as "no change".
+	post.FileIds = []string{}
 
 	var opts []llm.LanguageModelOption
 	if toolsDisabled {

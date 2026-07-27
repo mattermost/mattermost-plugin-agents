@@ -17,31 +17,15 @@ import (
 // allows ~10 attachments per post).
 const maxResponseAttachments = 10
 
-// fileLinker links created files to a post; *mmapi.DBClient.LinkFilesToPost
-// is the production implementation. Injected for testability.
-type fileLinker func(fileIDs []string, postID, channelID string) ([]string, error)
-
 // decorateStreamWithCreatedFiles wraps stream so that, when the stream ends
 // cleanly, any files created during the turn (recorded on the given contexts
 // via CreateFile, plus extraFileIDs recovered from persisted turns) are
-// linked to post and announced with an EventTypeFiles event immediately
-// before EventTypeEnd. All other events pass through unchanged.
+// announced with an EventTypeFiles event immediately before EventTypeEnd.
+// The streaming layer merges the IDs into post.FileIds so its final
+// UpdatePost attaches them server-side: AttachToPost only attaches
+// still-unattached files and strips the rest, so over-collection — e.g. from
+// the turn-scan fallback — is safe. All other events pass through unchanged.
 func (c *Conversations) decorateStreamWithCreatedFiles(stream *llm.TextStreamResult, post *model.Post, extraFileIDs []string, contexts ...*llm.Context) *llm.TextStreamResult {
-	if stream == nil {
-		return nil
-	}
-	if c.db == nil {
-		if c.mmClient != nil {
-			c.mmClient.LogDebug("Skipping created-file attachment: no database client configured")
-		}
-		return stream
-	}
-	return c.decorateStreamWithCreatedFilesUsing(c.db.LinkFilesToPost, stream, post, extraFileIDs, contexts...)
-}
-
-// decorateStreamWithCreatedFilesUsing is decorateStreamWithCreatedFiles with
-// the linker injected so tests can stub the database write.
-func (c *Conversations) decorateStreamWithCreatedFilesUsing(link fileLinker, stream *llm.TextStreamResult, post *model.Post, extraFileIDs []string, contexts ...*llm.Context) *llm.TextStreamResult {
 	if stream == nil {
 		return nil
 	}
@@ -55,15 +39,7 @@ func (c *Conversations) decorateStreamWithCreatedFilesUsing(link fileLinker, str
 			// recover them.
 			if event.Type == llm.EventTypeEnd {
 				if ids := c.collectAttachableFileIDs(post, extraFileIDs, contexts); len(ids) > 0 {
-					linked, err := link(ids, post.Id, post.ChannelId)
-					if err != nil && c.mmClient != nil {
-						c.mmClient.LogError("Failed to link created files to response post", "error", err, "post_id", post.Id)
-					}
-					// A partial link (error after some rows updated) still
-					// announces the linked subset so the post reflects it.
-					if len(linked) > 0 {
-						output <- llm.TextStreamEvent{Type: llm.EventTypeFiles, Value: linked}
-					}
+					output <- llm.TextStreamEvent{Type: llm.EventTypeFiles, Value: ids}
 				}
 			}
 			output <- event
@@ -116,8 +92,8 @@ func (c *Conversations) collectAttachableFileIDs(post *model.Post, extraFileIDs 
 // collectCreatedFileIDsFromTurns returns file IDs from successful CreateFile
 // tool results persisted in the turns of the agent run that produced postID
 // (from the initiating user turn onward). Used on cross-request resumes where
-// the in-memory created-file registry is gone. Safe to over-collect: linking
-// only touches still-unattached files.
+// the in-memory created-file registry is gone. Safe to over-collect: the
+// server-side attach only touches still-unattached files and strips the rest.
 func (c *Conversations) collectCreatedFileIDsFromTurns(convID, postID string) []string {
 	if c.convService == nil {
 		return nil
@@ -142,8 +118,8 @@ func (c *Conversations) collectCreatedFileIDsFromTurns(convID, postID string) []
 // one findPendingToolTurn matched) carries postID, so the anchor lookup
 // succeeds there too. When no assistant turn matches postID at all, fall
 // back to scanning from the LAST user turn onward — at worst that
-// over-collects within the newest run, which is safe because linking only
-// touches still-unattached files.
+// over-collects within the newest run, which is safe because the server-side
+// attach only touches still-unattached files and strips the rest.
 func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 	anchorSeq, anchorFound := 0, false
 	for i := range turns {

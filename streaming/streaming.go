@@ -559,9 +559,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					}
 				}
 			case llm.EventTypeFiles:
-				// File IDs created during the turn; the conversations layer
-				// already linked the FileInfo rows. Merge into the post so
-				// the final UpdatePost persists the attachment list.
+				// File IDs created during the turn. Merge into the post so
+				// the final UpdatePost attaches them server-side; the server
+				// strips any ID that is not attachable.
 				if ids, ok := event.Value.([]string); ok {
 					for _, id := range ids {
 						if !slices.Contains(post.FileIds, id) {

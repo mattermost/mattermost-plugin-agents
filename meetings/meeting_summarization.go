@@ -377,10 +377,8 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 }
 
 func (s *Service) updatePostWithFile(post *model.Post, fileinfo *model.FileInfo) error {
-	if _, err := s.db.LinkFilesToPost([]string{fileinfo.Id}, post.Id, post.ChannelId); err != nil {
-		return fmt.Errorf("unable to update file info: %w", err)
-	}
-
+	// The server's UpdatePost attaches the still-unattached file (uploaded
+	// via the plugin API, CreatorId "nouser") when it appears in FileIds.
 	post.FileIds = []string{fileinfo.Id}
 	post.Message = ""
 	if err := s.pluginAPI.Post.UpdatePost(post); err != nil {

@@ -18,25 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// recordingLinker is a hand-rolled fileLinker stub that records every call.
-type recordingLinker struct {
-	calls      [][]string
-	postIDs    []string
-	channelIDs []string
-	// respond overrides the default echo behavior (link everything).
-	respond func(fileIDs []string) ([]string, error)
-}
-
-func (l *recordingLinker) link(fileIDs []string, postID, channelID string) ([]string, error) {
-	l.calls = append(l.calls, append([]string(nil), fileIDs...))
-	l.postIDs = append(l.postIDs, postID)
-	l.channelIDs = append(l.channelIDs, channelID)
-	if l.respond != nil {
-		return l.respond(fileIDs)
-	}
-	return fileIDs, nil
-}
-
 func makeEventStream(events ...llm.TextStreamEvent) *llm.TextStreamResult {
 	ch := make(chan llm.TextStreamEvent, len(events))
 	for _, e := range events {
@@ -77,21 +58,18 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 		contexts       []*llm.Context
 		extraFileIDs   []string
 		postFileIDs    []string
-		respond        func(fileIDs []string) ([]string, error)
-		wantLinkCalls  [][]string
 		wantFilesEvent []string
 		wantEventTypes []llm.EventType
 	}{
 		{
-			name:           "context files linked and announced immediately before end",
+			name:           "context files announced immediately before end",
 			events:         []llm.TextStreamEvent{textEvent, endEvent},
 			contexts:       []*llm.Context{ctxWithCreatedFiles("f1", "f2")},
-			wantLinkCalls:  [][]string{{"f1", "f2"}},
 			wantFilesEvent: []string{"f1", "f2"},
 			wantEventTypes: []llm.EventType{llm.EventTypeText, llm.EventTypeFiles, llm.EventTypeEnd},
 		},
 		{
-			name:           "no created files: linker not called and no files event",
+			name:           "no created files: no files event",
 			events:         []llm.TextStreamEvent{textEvent, endEvent},
 			contexts:       []*llm.Context{ctxWithCreatedFiles()},
 			wantEventTypes: []llm.EventType{llm.EventTypeText, llm.EventTypeEnd},
@@ -100,7 +78,6 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 			name:           "nil contexts tolerated",
 			events:         []llm.TextStreamEvent{textEvent, endEvent},
 			contexts:       []*llm.Context{nil, ctxWithCreatedFiles("f1"), nil},
-			wantLinkCalls:  [][]string{{"f1"}},
 			wantFilesEvent: []string{"f1"},
 			wantEventTypes: []llm.EventType{llm.EventTypeText, llm.EventTypeFiles, llm.EventTypeEnd},
 		},
@@ -110,7 +87,6 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 			contexts:       []*llm.Context{ctxWithCreatedFiles("f1", "f2")},
 			extraFileIDs:   []string{"f2", "f3", "attached", "f1"},
 			postFileIDs:    []string{"attached"},
-			wantLinkCalls:  [][]string{{"f1", "f2", "f3"}},
 			wantFilesEvent: []string{"f1", "f2", "f3"},
 			wantEventTypes: []llm.EventType{llm.EventTypeFiles, llm.EventTypeEnd},
 		},
@@ -119,50 +95,17 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 			events:         []llm.TextStreamEvent{endEvent},
 			contexts:       []*llm.Context{ctxWithCreatedFiles("f1", "f2", "f3", "f4", "f5")},
 			postFileIDs:    manyExisting,
-			wantLinkCalls:  [][]string{{"f1", "f2"}},
 			wantFilesEvent: []string{"f1", "f2"},
 			wantEventTypes: []llm.EventType{llm.EventTypeFiles, llm.EventTypeEnd},
 		},
 		{
-			name:     "linker returning a subset announces only the subset",
-			events:   []llm.TextStreamEvent{endEvent},
-			contexts: []*llm.Context{ctxWithCreatedFiles("f1", "f2")},
-			respond: func([]string) ([]string, error) {
-				return []string{"f2"}, nil
-			},
-			wantLinkCalls:  [][]string{{"f1", "f2"}},
-			wantFilesEvent: []string{"f2"},
-			wantEventTypes: []llm.EventType{llm.EventTypeFiles, llm.EventTypeEnd},
-		},
-		{
-			name:     "linker error with nothing linked: no files event, end still delivered",
-			events:   []llm.TextStreamEvent{textEvent, endEvent},
-			contexts: []*llm.Context{ctxWithCreatedFiles("f1")},
-			respond: func([]string) ([]string, error) {
-				return nil, errors.New("db down")
-			},
-			wantLinkCalls:  [][]string{{"f1"}},
-			wantEventTypes: []llm.EventType{llm.EventTypeText, llm.EventTypeEnd},
-		},
-		{
-			name:     "linker error after a partial link still announces the linked subset",
-			events:   []llm.TextStreamEvent{endEvent},
-			contexts: []*llm.Context{ctxWithCreatedFiles("f1", "f2")},
-			respond: func([]string) ([]string, error) {
-				return []string{"f1"}, errors.New("db down after first row")
-			},
-			wantLinkCalls:  [][]string{{"f1", "f2"}},
-			wantFilesEvent: []string{"f1"},
-			wantEventTypes: []llm.EventType{llm.EventTypeFiles, llm.EventTypeEnd},
-		},
-		{
-			name:           "error stream passes through without linking",
+			name:           "error stream passes through without a files event",
 			events:         []llm.TextStreamEvent{textEvent, {Type: llm.EventTypeError, Value: errors.New("boom")}},
 			contexts:       []*llm.Context{ctxWithCreatedFiles("f1")},
 			wantEventTypes: []llm.EventType{llm.EventTypeText, llm.EventTypeError},
 		},
 		{
-			name:           "channel close without end passes through without linking",
+			name:           "channel close without end passes through without a files event",
 			events:         []llm.TextStreamEvent{textEvent},
 			contexts:       []*llm.Context{ctxWithCreatedFiles("f1")},
 			wantEventTypes: []llm.EventType{llm.EventTypeText},
@@ -173,18 +116,11 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &Conversations{}
 			post := &model.Post{Id: "post-id", ChannelId: "channel-id", FileIds: tt.postFileIDs}
-			linker := &recordingLinker{respond: tt.respond}
 
-			decorated := c.decorateStreamWithCreatedFilesUsing(linker.link, makeEventStream(tt.events...), post, tt.extraFileIDs, tt.contexts...)
+			decorated := c.decorateStreamWithCreatedFiles(makeEventStream(tt.events...), post, tt.extraFileIDs, tt.contexts...)
 			events := drainTextStreamEvents(t, decorated)
 
 			assert.Equal(t, tt.wantEventTypes, eventTypes(events))
-
-			assert.Equal(t, tt.wantLinkCalls, linker.calls)
-			for i := range linker.calls {
-				assert.Equal(t, post.Id, linker.postIDs[i])
-				assert.Equal(t, post.ChannelId, linker.channelIDs[i])
-			}
 
 			var filesEvent *llm.TextStreamEvent
 			for i := range events {
@@ -204,13 +140,6 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 	t.Run("nil stream returns nil", func(t *testing.T) {
 		c := &Conversations{}
 		assert.Nil(t, c.decorateStreamWithCreatedFiles(nil, &model.Post{}, nil))
-		assert.Nil(t, c.decorateStreamWithCreatedFilesUsing(nil, nil, &model.Post{}, nil))
-	})
-
-	t.Run("nil db client returns the stream unchanged", func(t *testing.T) {
-		c := &Conversations{}
-		stream := makeEventStream(endEvent)
-		assert.Same(t, stream, c.decorateStreamWithCreatedFiles(stream, &model.Post{}, nil))
 	})
 }
 
