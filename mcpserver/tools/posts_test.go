@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -218,4 +219,142 @@ func TestReadPostIncludeThread(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestToolCreatePostWithInlineFiles(t *testing.T) {
+	tests := []struct {
+		name        string
+		files       []InlineFile
+		failUploads bool
+		wantErr     string // substring of the returned error; empty means success
+	}{
+		{
+			name:  "creates files and attaches them to the post",
+			files: []InlineFile{{Name: "report.md", Content: "# Report"}, {Name: "data.csv", Content: "a;b"}},
+		},
+		{
+			name:        "failed file creation aborts the post",
+			files:       []InlineFile{{Name: "broken.md", Content: "x"}},
+			failUploads: true,
+			wantErr:     `"broken.md"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			channelID := model.NewId()
+			teamID := model.NewId()
+
+			var uploadedIDs []string
+			postHit := false
+			var postedPost model.Post
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v4/channels/"+channelID, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&model.Channel{Id: channelID, TeamId: teamID, DisplayName: "Town Square"})
+			})
+			mux.HandleFunc("/api/v4/teams/"+teamID, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&model.Team{Id: teamID, DisplayName: "Core Team"})
+			})
+			mux.HandleFunc("/api/v4/files", func(w http.ResponseWriter, _ *http.Request) {
+				if tt.failUploads {
+					http.Error(w, "upload failed", http.StatusInternalServerError)
+					return
+				}
+				id := model.NewId()
+				uploadedIDs = append(uploadedIDs, id)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&model.FileUploadResponse{FileInfos: []*model.FileInfo{{Id: id}}})
+			})
+			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
+				postHit = true
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
+				postedPost.Id = model.NewId()
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&postedPost)
+			})
+
+			ts := httptest.NewServer(mux)
+			defer ts.Close()
+
+			provider := newTestProvider(t, ts.URL)
+			mcpCtx := &MCPToolContext{Ctx: t.Context(), Client: newTestClient(ts.URL), AccessMode: AccessModeRemote}
+
+			result, err := provider.toolCreatePost(mcpCtx, CreatePostArgs{
+				ChannelID:          channelID,
+				ChannelDisplayName: "Town Square",
+				TeamDisplayName:    "Core Team",
+				Message:            "hello",
+				Files:              tt.files,
+			})
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				assert.False(t, postHit, "post endpoint must not be hit when inline file creation fails")
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, postHit, "post endpoint must be hit on success")
+			assert.Equal(t, uploadedIDs, []string(postedPost.FileIds))
+			assert.Contains(t, result, fmt.Sprintf("created and attached %d file(s)", len(tt.files)))
+		})
+	}
+}
+
+func TestToolDMWithInlineFiles(t *testing.T) {
+	meID := model.NewId()
+	targetID := model.NewId()
+	dmChannelID := model.NewId()
+
+	var uploadChannelIDs []string
+	var uploadedIDs []string
+	var postedPost model.Post
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/users/me", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.User{Id: meID, Username: "agent"})
+	})
+	mux.HandleFunc("/api/v4/users/username/john", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.User{Id: targetID, Username: "john"})
+	})
+	mux.HandleFunc("/api/v4/channels/direct", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.Channel{Id: dmChannelID, Type: model.ChannelTypeDirect})
+	})
+	mux.HandleFunc("/api/v4/files", func(w http.ResponseWriter, r *http.Request) {
+		uploadChannelIDs = append(uploadChannelIDs, r.URL.Query().Get("channel_id"))
+		id := model.NewId()
+		uploadedIDs = append(uploadedIDs, id)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.FileUploadResponse{FileInfos: []*model.FileInfo{{Id: id}}})
+	})
+	mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
+		postedPost.Id = model.NewId()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&postedPost)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	mcpCtx := &MCPToolContext{Ctx: t.Context(), Client: newTestClient(ts.URL), AccessMode: AccessModeRemote}
+
+	result, err := provider.toolDM(mcpCtx, DMArgs{
+		Username: "john",
+		Message:  "here is the report",
+		Files:    []InlineFile{{Name: "report.md", Content: "# Report"}},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{dmChannelID}, uploadChannelIDs, "inline files must be uploaded into the DM channel")
+	assert.Equal(t, dmChannelID, postedPost.ChannelId)
+	assert.Equal(t, uploadedIDs, []string(postedPost.FileIds))
+	assert.Contains(t, result, "created and attached 1 file(s)")
 }

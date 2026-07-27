@@ -20,12 +20,13 @@ type ReadPostArgs struct {
 
 // CreatePostArgs represents arguments for the create_post tool
 type CreatePostArgs struct {
-	ChannelID          string   `json:"channel_id" jsonschema:"The ID of the channel to post in,minLength=26,maxLength=26"`
-	ChannelDisplayName string   `json:"channel_display_name" jsonschema:"The display name of the channel (for context verification),minLength=1"`
-	TeamDisplayName    string   `json:"team_display_name" jsonschema:"The display name of the team (for context verification),minLength=1"`
-	Message            string   `json:"message" jsonschema:"The message content,minLength=1"`
-	RootID             string   `json:"root_id,omitempty" jsonschema:"Optional root post ID for replies,minLength=26,maxLength=26"`
-	Attachments        []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
+	ChannelID          string       `json:"channel_id" jsonschema:"The ID of the channel to post in,minLength=26,maxLength=26"`
+	ChannelDisplayName string       `json:"channel_display_name" jsonschema:"The display name of the channel (for context verification),minLength=1"`
+	TeamDisplayName    string       `json:"team_display_name" jsonschema:"The display name of the team (for context verification),minLength=1"`
+	Message            string       `json:"message" jsonschema:"The message content,minLength=1"`
+	RootID             string       `json:"root_id,omitempty" jsonschema:"Optional root post ID for replies,minLength=26,maxLength=26"`
+	Attachments        []string     `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
+	Files              []InlineFile `json:"files,omitempty" jsonschema:"Optional text files to create from inline content and attach to the post (max 10). The file name extension determines the file type."`
 }
 
 // CreatePostAsUserArgs represents arguments for the create_post_as_user tool (dev mode only)
@@ -41,16 +42,18 @@ type CreatePostAsUserArgs struct {
 
 // DMArgs represents arguments for the dm tool
 type DMArgs struct {
-	Username    string   `json:"username,omitempty" jsonschema:"Target username. If omitted the message is sent to yourself."`
-	Message     string   `json:"message" jsonschema:"The message content to send,minLength=1"`
-	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
+	Username    string       `json:"username,omitempty" jsonschema:"Target username. If omitted the message is sent to yourself."`
+	Message     string       `json:"message" jsonschema:"The message content to send,minLength=1"`
+	Attachments []string     `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
+	Files       []InlineFile `json:"files,omitempty" jsonschema:"Optional text files to create from inline content and attach to the post (max 10). The file name extension determines the file type."`
 }
 
 // GroupMessageArgs represents arguments for the group_message tool
 type GroupMessageArgs struct {
-	Usernames   []string `json:"usernames" jsonschema:"Target usernames (must be at least 2)."`
-	Message     string   `json:"message" jsonschema:"The message content to send,minLength=1"`
-	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
+	Usernames   []string     `json:"usernames" jsonschema:"Target usernames (must be at least 2)."`
+	Message     string       `json:"message" jsonschema:"The message content to send,minLength=1"`
+	Attachments []string     `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
+	Files       []InlineFile `json:"files,omitempty" jsonschema:"Optional text files to create from inline content and attach to the post (max 10). The file name extension determines the file type."`
 }
 
 // Tool description constants for post-related tools. The create_post/dm/group_message
@@ -59,11 +62,11 @@ type GroupMessageArgs struct {
 const (
 	readPostDescription = "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}"
 
-	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
+	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies), files (optional: create and attach text files inline by providing name + content; the extension sets the file type; max 10)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
 
-	dmDescriptionFmt = "Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}"
+	dmDescriptionFmt = "Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional), files (optional: create and attach text files inline by providing name + content; the extension sets the file type; max 10)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}"
 
-	groupMessageDescriptionFmt = "Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}"
+	groupMessageDescriptionFmt = "Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required), files (optional: create and attach text files inline by providing name + content; the extension sets the file type; max 10)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}"
 )
 
 // getPostTools returns all post-related tools
@@ -333,8 +336,21 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 			args.TeamDisplayName, channel.TeamId, team.DisplayName)
 	}
 
+	// Create LLM-authored inline files first; a failure aborts the post because a post
+	// missing files the model explicitly asked to create is broken output. (The legacy
+	// local-only attachments handling below intentionally stays best-effort.)
+	inlineFileIDs, err := uploadInlineFiles(ctx, client, args.ChannelID, args.Files)
+	if err != nil {
+		return "", err
+	}
+
 	// Upload files if specified
-	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
+	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
+
+	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
+	if err != nil {
+		return "", err
+	}
 
 	// Create the post
 	post := &model.Post{
@@ -351,8 +367,8 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "", fmt.Errorf("error creating post: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully created post in channel '%s' (Team: %s) with ID: %s%s",
-		channel.DisplayName, team.DisplayName, createdPost.Id, attachmentMessage), nil
+	return fmt.Sprintf("Successfully created post in channel '%s' (Team: %s) with ID: %s%s%s",
+		channel.DisplayName, team.DisplayName, createdPost.Id, attachmentMessage, inlineFilesMessage(len(inlineFileIDs))), nil
 }
 
 // toolCreatePostAsUser implements the create_post_as_user tool with custom authentication
@@ -449,8 +465,20 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		return "", fmt.Errorf("error creating direct channel: %w", err)
 	}
 
+	// Create LLM-authored inline files first; a failure aborts the post because a post
+	// missing files the model explicitly asked to create is broken output.
+	inlineFileIDs, err := uploadInlineFiles(ctx, client, dmChannel.Id, args.Files)
+	if err != nil {
+		return "", err
+	}
+
 	// Upload files if specified
-	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
+	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
+
+	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
+	if err != nil {
+		return "", err
+	}
 
 	// Create the post in the DM channel
 	post := &model.Post{
@@ -472,9 +500,9 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 	}
 
 	if dmSelf {
-		return fmt.Sprintf("Successfully sent DM to yourself with ID: %s%s", createdPost.Id, attachmentMessage), nil
+		return fmt.Sprintf("Successfully sent DM to yourself with ID: %s%s%s", createdPost.Id, attachmentMessage, inlineFilesMessage(len(inlineFileIDs))), nil
 	}
-	return fmt.Sprintf("Successfully sent DM to @%s with ID: %s%s", targetUser.Username, createdPost.Id, attachmentMessage), nil
+	return fmt.Sprintf("Successfully sent DM to @%s with ID: %s%s%s", targetUser.Username, createdPost.Id, attachmentMessage, inlineFilesMessage(len(inlineFileIDs))), nil
 }
 
 // toolGroupMessage implements the group_message tool
@@ -521,7 +549,19 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		return "", fmt.Errorf("error creating group channel: %w", err)
 	}
 
-	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
+	// Create LLM-authored inline files first; a failure aborts the post because a post
+	// missing files the model explicitly asked to create is broken output.
+	inlineFileIDs, err := uploadInlineFiles(ctx, client, gmChannel.Id, args.Files)
+	if err != nil {
+		return "", err
+	}
+
+	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
+
+	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
+	if err != nil {
+		return "", err
+	}
 
 	post := &model.Post{
 		ChannelId: gmChannel.Id,
@@ -542,8 +582,8 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		usernames = append(usernames, "@"+uname)
 	}
 
-	return fmt.Sprintf("Successfully sent group message to %s with ID: %s%s",
-		strings.Join(usernames, ", "), createdPost.Id, attachmentMessage), nil
+	return fmt.Sprintf("Successfully sent group message to %s with ID: %s%s%s",
+		strings.Join(usernames, ", "), createdPost.Id, attachmentMessage, inlineFilesMessage(len(inlineFileIDs))), nil
 }
 
 // --- Additional post tools (info, pins, saved, edit/delete, acknowledge) ---
