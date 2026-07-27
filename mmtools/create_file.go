@@ -22,8 +22,9 @@ const (
 	CreateFileToolName = "CreateFile"
 	// maxCreatedFilesPerTurn caps CreateFile calls per response (Mattermost allows ~10 attachments per post).
 	maxCreatedFilesPerTurn = 10
-	// maxCreateFileContentBytes caps a single created file's content (1 MiB).
-	maxCreateFileContentBytes = 1024 * 1024
+	// fallbackCreateFileContentBytes caps a file's content (1 MiB) when the
+	// server config does not provide FileSettings.MaxFileSize.
+	fallbackCreateFileContentBytes = 1024 * 1024
 	// maxCreateFileNameLength is the longest accepted file name.
 	maxCreateFileNameLength = 255
 
@@ -31,7 +32,8 @@ const (
 		"Use this when the user asks for content as a downloadable file, document, or artifact (markdown, code, CSV, HTML, SVG, etc.), or when the output is too long to paste into the chat. " +
 		"Text content only — binary formats are not supported. The file name's extension determines the file type. " +
 		"The created file is attached to your reply automatically. Call this tool once per file, up to 10 files per reply. " +
-		"Do NOT repeat the file's content in your response text — briefly mention the file instead."
+		"Do NOT repeat the file's content in your response text — briefly mention the file instead. " +
+		"Only state that a file is attached after this tool has returned its file_id."
 
 	// createFileResultNote reminds the model not to duplicate attached content.
 	createFileResultNote = "Attached to your reply automatically — do not repeat the file's content in your response text."
@@ -80,6 +82,11 @@ func resolveCreateFile(client mmapi.Client, llmCtx *llm.Context, argsGetter llm.
 	if llmCtx == nil || llmCtx.Channel == nil || llmCtx.Channel.Id == "" {
 		return "file creation is not available in this context because there is no conversation channel to hold the file", errors.New("CreateFile requires a channel-scoped context")
 	}
+	// Every flow that catalogs CreateFile sets RequestingUser; a nil value is
+	// a bug, so fail closed rather than skip the permission check below.
+	if llmCtx.RequestingUser == nil || llmCtx.RequestingUser.Id == "" {
+		return "file creation is not available in this context", errors.New("CreateFile requires a requesting user")
+	}
 
 	name := filepath.Base(strings.TrimSpace(args.FileName))
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
@@ -92,25 +99,24 @@ func resolveCreateFile(client mmapi.Client, llmCtx *llm.Context, argsGetter llm.
 	if args.Content == "" {
 		return "content must not be empty", errors.New("CreateFile content empty")
 	}
-	if len(args.Content) > maxCreateFileContentBytes {
-		return "content exceeds the 1 MiB limit for a single file; split the content into multiple smaller files", errors.New("CreateFile content too large")
+
+	// UploadFile goes through the admin-level plugin API, which skips the
+	// per-user checks of the api4 upload endpoint, so enforce the server
+	// attachment policy, size limit, and the requesting user's upload
+	// permission here. A nil EnableFileAttachments means enabled (server default).
+	cfg := client.GetConfig()
+	if cfg != nil && cfg.FileSettings.EnableFileAttachments != nil && !*cfg.FileSettings.EnableFileAttachments {
+		return "file attachments are disabled on this server", errors.New("CreateFile rejected: file attachments are disabled by server config")
+	}
+	if limit := createFileContentLimit(cfg); int64(len(args.Content)) > limit {
+		return fmt.Sprintf("content exceeds the %d-byte file size limit; split the content into multiple smaller files", limit), errors.New("CreateFile content too large")
 	}
 
 	if len(llmCtx.CreatedFilesList()) >= maxCreatedFilesPerTurn {
 		return fmt.Sprintf("the limit of %d created files per reply has been reached; do not create more files in this reply", maxCreatedFilesPerTurn), errors.New("CreateFile per-reply cap reached")
 	}
 
-	// UploadFile goes through the admin-level plugin API, which skips the
-	// per-user checks the api4 upload endpoint performs. Enforce the server
-	// attachment policy and the requesting user's upload permission in the
-	// conversation channel explicitly (same pattern as files/files.go for
-	// reads). A nil EnableFileAttachments means the Mattermost default (true).
-	// Unattended/bot flows have no acting user; the channel is the bot's own
-	// reply target, so a nil RequestingUser proceeds.
-	if cfg := client.GetConfig(); cfg != nil && cfg.FileSettings.EnableFileAttachments != nil && !*cfg.FileSettings.EnableFileAttachments {
-		return "file attachments are disabled on this server", errors.New("CreateFile rejected: file attachments are disabled by server config")
-	}
-	if llmCtx.RequestingUser != nil && !client.HasPermissionToChannel(llmCtx.RequestingUser.Id, llmCtx.Channel.Id, model.PermissionUploadFile) {
+	if !client.HasPermissionToChannel(llmCtx.RequestingUser.Id, llmCtx.Channel.Id, model.PermissionUploadFile) {
 		return "you do not have permission to attach files in this channel", errors.New("CreateFile rejected: requesting user lacks upload permission in the channel")
 	}
 
@@ -130,6 +136,15 @@ func resolveCreateFile(client mmapi.Client, llmCtx *llm.Context, argsGetter llm.
 		return "file upload failed", fmt.Errorf("failed to marshal CreateFile result: %w", err)
 	}
 	return string(result), nil
+}
+
+// createFileContentLimit returns the server's max file size, falling back to
+// the package constant when the config does not provide one.
+func createFileContentLimit(cfg *model.Config) int64 {
+	if cfg != nil && cfg.FileSettings.MaxFileSize != nil && *cfg.FileSettings.MaxFileSize > 0 {
+		return *cfg.FileSettings.MaxFileSize
+	}
+	return fallbackCreateFileContentBytes
 }
 
 // ConsumeCreatedFiles returns the files created during this request without

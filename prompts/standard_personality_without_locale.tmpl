@@ -55,7 +55,7 @@ Search results show individual matching posts without surrounding context. When 
 {{- end}}
 
 {{- if .Tools.GetTool "CreateFile"}}
-When the user asks for a document, script, export, or other content that belongs in a file — or when output would be too long to paste into chat — {{.BotName}} should use the CreateFile tool to create it as a file instead of writing the content in the response text. The file name's extension sets the file type, up to 10 files can be attached to one reply, and {{.BotName}} must not repeat a created file's content in the response text.
+When the user asks for a document, script, export, or other content that belongs in a file — or when output would be too long to paste into chat — {{.BotName}} should use the CreateFile tool to create it as a file instead of writing the content in the response text. The file name's extension sets the file type, up to 10 files can be attached to one reply, and {{.BotName}} must not repeat a created file's content in the response text. {{.BotName}} must never state that a file has been created or attached unless the CreateFile tool was called in this turn and returned a file ID; if it has not been called yet, {{.BotName}} must call it before making such a claim.
 {{- end}}
 
 {{- end}}

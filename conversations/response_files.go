@@ -17,14 +17,13 @@ import (
 // allows ~10 attachments per post).
 const maxResponseAttachments = 10
 
-// decorateStreamWithCreatedFiles wraps stream so that, when the stream ends
-// cleanly, any files created during the turn (recorded on the given contexts
-// via CreateFile, plus extraFileIDs recovered from persisted turns) are
-// announced with an EventTypeFiles event immediately before EventTypeEnd.
-// The streaming layer merges the IDs into post.FileIds so its final
-// UpdatePost attaches them server-side: AttachToPost only attaches
-// still-unattached files and strips the rest, so over-collection — e.g. from
-// the turn-scan fallback — is safe. All other events pass through unchanged.
+// decorateStreamWithCreatedFiles wraps stream so that, on a clean end, the
+// files created during the turn (recorded on the given contexts via
+// CreateFile, plus extraFileIDs recovered from persisted turns) are announced
+// with an EventTypeFiles event immediately before EventTypeEnd. The streaming
+// layer merges the IDs into post.FileIds and the server's UpdatePost performs
+// the attach, only touching still-unattached files and stripping the rest —
+// which makes over-collection (e.g. from the turn-scan fallback) safe.
 func (c *Conversations) decorateStreamWithCreatedFiles(stream *llm.TextStreamResult, post *model.Post, extraFileIDs []string, contexts ...*llm.Context) *llm.TextStreamResult {
 	if stream == nil {
 		return nil
@@ -33,10 +32,8 @@ func (c *Conversations) decorateStreamWithCreatedFiles(stream *llm.TextStreamRes
 	go func() {
 		defer close(output)
 		for event := range stream.Stream {
-			// Only a clean end attaches files. Error events and a channel
-			// close without an End event pass through untouched: the created
-			// files stay unattached and a later follow-up's turn scan may
-			// recover them.
+			// Errors and a close without End pass through untouched; the
+			// files stay unattached until a later follow-up's turn scan.
 			if event.Type == llm.EventTypeEnd {
 				if ids := c.collectAttachableFileIDs(post, extraFileIDs, contexts); len(ids) > 0 {
 					output <- llm.TextStreamEvent{Type: llm.EventTypeFiles, Value: ids}
@@ -90,10 +87,8 @@ func (c *Conversations) collectAttachableFileIDs(post *model.Post, extraFileIDs 
 }
 
 // collectCreatedFileIDsFromTurns returns file IDs from successful CreateFile
-// tool results persisted in the turns of the agent run that produced postID
-// (from the initiating user turn onward). Used on cross-request resumes where
-// the in-memory created-file registry is gone. Safe to over-collect: the
-// server-side attach only touches still-unattached files and strips the rest.
+// tool results persisted in the turns of the agent run that produced postID.
+// Used on cross-request resumes where the in-memory registry is gone.
 func (c *Conversations) collectCreatedFileIDsFromTurns(convID, postID string) []string {
 	if c.convService == nil {
 		return nil
@@ -110,16 +105,11 @@ func (c *Conversations) collectCreatedFileIDsFromTurns(convID, postID string) []
 
 // createdFileIDsFromTurnWindow scans the turns of the agent run that produced
 // postID for built-in CreateFile tool_use blocks and their successful
-// results, returning the parsed file IDs in order of appearance.
-//
-// The window mirrors conversation.Service.GetInitiatingUserTurn: locate the
-// assistant turn anchored to postID, then scan every turn after the closest
-// preceding user turn. In the pending-approval resume the anchor turn (the
-// one findPendingToolTurn matched) carries postID, so the anchor lookup
-// succeeds there too. When no assistant turn matches postID at all, fall
-// back to scanning from the LAST user turn onward — at worst that
-// over-collects within the newest run, which is safe because the server-side
-// attach only touches still-unattached files and strips the rest.
+// results, returning the parsed file IDs in order of appearance. The window
+// mirrors conversation.Service.GetInitiatingUserTurn (every turn after the
+// user turn that initiated the run); when no assistant turn matches postID it
+// falls back to scanning from the last user turn onward, which at worst
+// over-collects within the newest run.
 func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 	anchorSeq, anchorFound := 0, false
 	for i := range turns {
@@ -159,9 +149,7 @@ func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 		for _, b := range blocks {
 			switch b.Type {
 			case conversation.BlockTypeToolUse:
-				// Only the built-in CreateFile (empty ServerOrigin) counts: an
-				// MCP tool that happens to share the name must not be trusted
-				// to have produced a real Mattermost file.
+				// Empty ServerOrigin excludes MCP tools that share the name.
 				if turns[i].Role == "assistant" && b.Name == mmtools.CreateFileToolName && b.ServerOrigin == "" && b.ID != "" {
 					createFileUses[b.ID] = true
 				}

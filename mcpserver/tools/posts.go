@@ -336,9 +336,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 			args.TeamDisplayName, channel.TeamId, team.DisplayName)
 	}
 
-	// Resolve legacy local-only attachments first (best-effort; in remote mode they are
-	// skipped and yield no IDs), then enforce the combined attachment cap before creating
-	// any inline files so a cap violation never orphans inline uploads.
+	// Legacy attachments resolve first so checkCombinedFileCap runs before any inline upload.
 	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
 
 	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); capErr != nil {
@@ -470,9 +468,7 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		return "", fmt.Errorf("error creating direct channel: %w", err)
 	}
 
-	// Resolve legacy local-only attachments first (best-effort; in remote mode they are
-	// skipped and yield no IDs), then enforce the combined attachment cap before creating
-	// any inline files so a cap violation never orphans inline uploads.
+	// Legacy attachments resolve first so checkCombinedFileCap runs before any inline upload.
 	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
 
 	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); capErr != nil {
@@ -560,9 +556,7 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		return "", fmt.Errorf("error creating group channel: %w", err)
 	}
 
-	// Resolve legacy local-only attachments first (best-effort; in remote mode they are
-	// skipped and yield no IDs), then enforce the combined attachment cap before creating
-	// any inline files so a cap violation never orphans inline uploads.
+	// Legacy attachments resolve first so checkCombinedFileCap runs before any inline upload.
 	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
 
 	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); capErr != nil {
