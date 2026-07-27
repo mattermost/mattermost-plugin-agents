@@ -11,6 +11,7 @@ import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
 
@@ -278,6 +279,14 @@ export async function doPostbackSummary(postid: string) {
 }
 
 export async function doLoopInAgent(postid: string, botUsername: string) {
+    if (!isValidId(postid)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid post id',
+            status_code: 400,
+            url: postRoute(postid),
+        });
+    }
+
     const url = `${postRoute(postid)}/loop_in_agent?botUsername=${encodeURIComponent(botUsername)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',

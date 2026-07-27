@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
 import {doLoopInAgent} from '@/client';
+import {isValidId} from '@/utils/ids';
 
 const Hint = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
@@ -52,7 +53,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
 
     const onClick = async (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
-        if (pending || status === 'done' || !botUsername || !targetPostId) {
+        if (pending || status === 'done' || !botUsername || !isValidId(targetPostId)) {
             return;
         }
         setStatus('pending');
@@ -65,7 +66,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         }
     };
 
-    if (!botUsername) {
+    if (!botUsername || !isValidId(targetPostId)) {
         return (
             <Hint>{post.message}</Hint>
         );
