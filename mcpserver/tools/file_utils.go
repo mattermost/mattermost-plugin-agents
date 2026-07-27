@@ -334,7 +334,8 @@ func uploadInlineFiles(ctx context.Context, client *model.Client4, channelID str
 // checkCombinedFileCap returns a model-facing error when resolved legacy attachment
 // IDs plus requested inline files would exceed the per-post attachment cap. Resolvers
 // call it after resolving legacy attachments but before uploading any inline file, so
-// a cap violation does not orphan already-uploaded files.
+// a cap violation never orphans inline uploads (best-effort legacy attachment uploads
+// may still be orphaned when the cap trips).
 func checkCombinedFileCap(attachmentIDCount, inlineFileCount int) error {
 	if total := attachmentIDCount + inlineFileCount; total > maxFilesPerPost {
 		return fmt.Errorf("too many attachments: %d files and attachments combined but a post can have at most %d - reduce the number of inline files or attachments", total, maxFilesPerPost)

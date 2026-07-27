@@ -338,7 +338,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 
 	// Resolve legacy local-only attachments first (best-effort; in remote mode they are
 	// skipped and yield no IDs), then enforce the combined attachment cap before creating
-	// any inline files so a cap violation does not orphan already-uploaded files.
+	// any inline files so a cap violation never orphans inline uploads.
 	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
 
 	if err := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); err != nil {
@@ -472,7 +472,7 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 
 	// Resolve legacy local-only attachments first (best-effort; in remote mode they are
 	// skipped and yield no IDs), then enforce the combined attachment cap before creating
-	// any inline files so a cap violation does not orphan already-uploaded files.
+	// any inline files so a cap violation never orphans inline uploads.
 	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
 
 	if err := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); err != nil {
@@ -562,7 +562,7 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 
 	// Resolve legacy local-only attachments first (best-effort; in remote mode they are
 	// skipped and yield no IDs), then enforce the combined attachment cap before creating
-	// any inline files so a cap violation does not orphan already-uploaded files.
+	// any inline files so a cap violation never orphans inline uploads.
 	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
 
 	if err := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); err != nil {
