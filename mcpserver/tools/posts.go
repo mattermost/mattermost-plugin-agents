@@ -341,8 +341,8 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	// any inline files so a cap violation never orphans inline uploads.
 	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
 
-	if err := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); err != nil {
-		return "", err
+	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); capErr != nil {
+		return "", capErr
 	}
 
 	// Create LLM-authored inline files; a failure aborts the post because a post
@@ -475,8 +475,8 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 	// any inline files so a cap violation never orphans inline uploads.
 	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
 
-	if err := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); err != nil {
-		return "", err
+	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); capErr != nil {
+		return "", capErr
 	}
 
 	// Create LLM-authored inline files; a failure aborts the post because a post
@@ -565,8 +565,8 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 	// any inline files so a cap violation never orphans inline uploads.
 	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
 
-	if err := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); err != nil {
-		return "", err
+	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); capErr != nil {
+		return "", capErr
 	}
 
 	// Create LLM-authored inline files; a failure aborts the post because a post
