@@ -100,6 +100,20 @@ func resolveCreateFile(client mmapi.Client, llmCtx *llm.Context, argsGetter llm.
 		return fmt.Sprintf("the limit of %d created files per reply has been reached; do not create more files in this reply", maxCreatedFilesPerTurn), errors.New("CreateFile per-reply cap reached")
 	}
 
+	// UploadFile goes through the admin-level plugin API, which skips the
+	// per-user checks the api4 upload endpoint performs. Enforce the server
+	// attachment policy and the requesting user's upload permission in the
+	// conversation channel explicitly (same pattern as files/files.go for
+	// reads). A nil EnableFileAttachments means the Mattermost default (true).
+	// Unattended/bot flows have no acting user; the channel is the bot's own
+	// reply target, so a nil RequestingUser proceeds.
+	if cfg := client.GetConfig(); cfg != nil && cfg.FileSettings.EnableFileAttachments != nil && !*cfg.FileSettings.EnableFileAttachments {
+		return "file attachments are disabled on this server", errors.New("CreateFile rejected: file attachments are disabled by server config")
+	}
+	if llmCtx.RequestingUser != nil && !client.HasPermissionToChannel(llmCtx.RequestingUser.Id, llmCtx.Channel.Id, model.PermissionUploadFile) {
+		return "you do not have permission to attach files in this channel", errors.New("CreateFile rejected: requesting user lacks upload permission in the channel")
+	}
+
 	info, err := client.UploadFile(strings.NewReader(args.Content), name, llmCtx.Channel.Id)
 	if err != nil {
 		return "file upload failed", fmt.Errorf("CreateFile upload failed: %w", err)

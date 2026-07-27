@@ -5,6 +5,7 @@ package streaming
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
@@ -26,12 +27,18 @@ func TestStreamToPostFilesEvent(t *testing.T) {
 		conversationID = "conv-id"
 	)
 
+	twelveIDs := make([]string, 0, 12)
+	for i := 1; i <= 12; i++ {
+		twelveIDs = append(twelveIDs, fmt.Sprintf("file-%d", i))
+	}
+
 	tests := []struct {
 		name           string
 		initialFileIDs []string
 		events         []llm.TextStreamEvent
 		wantFileIDs    []string
 		wantFallback   bool
+		wantCapWarning bool
 	}{
 		{
 			name: "files event merges IDs onto the post and the final update carries them",
@@ -67,6 +74,15 @@ func TestStreamToPostFilesEvent(t *testing.T) {
 			},
 			wantFallback: true,
 		},
+		{
+			name: "IDs beyond the per-post attachment cap are dropped",
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeFiles, Value: twelveIDs},
+				{Type: llm.EventTypeEnd},
+			},
+			wantFileIDs:    twelveIDs[:maxPostAttachments],
+			wantCapWarning: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -101,6 +117,12 @@ func TestStreamToPostFilesEvent(t *testing.T) {
 				require.Contains(t, finalUpdate.Message, "did not return a result")
 			} else {
 				require.NotContains(t, finalUpdate.Message, "did not return a result")
+			}
+
+			if tt.wantCapWarning {
+				require.NotEmpty(t, client.warnings)
+			} else {
+				require.Empty(t, client.warnings)
 			}
 		})
 	}

@@ -32,8 +32,15 @@ type Client interface {
 	GetConfig() *model.Config
 	KVSet(key string, value interface{}) error
 	LogError(msg string, keyValuePairs ...interface{})
+	LogWarn(msg string, keyValuePairs ...interface{})
 	LogDebug(msg string, keyValuePairs ...interface{})
 }
+
+// maxPostAttachments is an independent hard cap on file IDs merged onto a
+// streamed post, matching the Mattermost per-post attachment limit (~10
+// files per post). It protects post.FileIds from unbounded growth even if an
+// emitter misbehaves.
+const maxPostAttachments = 10
 
 const PostStreamingControlCancel = "cancel"
 const PostStreamingControlEnd = "end"
@@ -536,6 +543,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	var messageBuilder strings.Builder
 	messageBuilder.Grow(4096) // Pre-allocate for typical response size
 	var reasoningBuffer strings.Builder
+	attachmentCapWarned := false
 
 	for {
 		select {
@@ -561,12 +569,24 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			case llm.EventTypeFiles:
 				// File IDs created during the turn. Merge into the post so
 				// the final UpdatePost attaches them server-side; the server
-				// strips any ID that is not attachable.
+				// strips any ID that is not attachable. Cap the merged total
+				// independently of emitter discipline.
 				if ids, ok := event.Value.([]string); ok {
+					dropped := 0
 					for _, id := range ids {
-						if !slices.Contains(post.FileIds, id) {
-							post.FileIds = append(post.FileIds, id)
+						if slices.Contains(post.FileIds, id) {
+							continue
 						}
+						if len(post.FileIds) >= maxPostAttachments {
+							dropped++
+							continue
+						}
+						post.FileIds = append(post.FileIds, id)
+					}
+					if dropped > 0 && !attachmentCapWarned {
+						attachmentCapWarned = true
+						p.mmClient.LogWarn("Streaming truncated attachments over the per-post limit",
+							"post_id", post.Id, "dropped", dropped, "limit", maxPostAttachments)
 					}
 				}
 			case llm.EventTypeEnd:

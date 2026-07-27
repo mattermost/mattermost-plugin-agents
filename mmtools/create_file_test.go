@@ -55,6 +55,7 @@ func TestCreateFileResolverValidation(t *testing.T) {
 		llmCtx     func() *llm.Context
 		args       CreateFileArgs
 		badArgs    bool
+		setup      func(m *mocks.MockClient)
 		wantResult string
 	}{
 		{
@@ -148,13 +149,44 @@ func TestCreateFileResolverValidation(t *testing.T) {
 			args:       validArgs,
 			wantResult: "the limit of 10 created files per reply has been reached; do not create more files in this reply",
 		},
+		{
+			name:   "attachments disabled on the server",
+			llmCtx: validChannelCtx,
+			args:   validArgs,
+			setup: func(m *mocks.MockClient) {
+				m.On("GetConfig").Return(&model.Config{
+					FileSettings: model.FileSettings{EnableFileAttachments: model.NewPointer(false)},
+				})
+			},
+			wantResult: "file attachments are disabled on this server",
+		},
+		{
+			name: "requesting user without upload permission in the channel",
+			llmCtx: func() *llm.Context {
+				ctx := validChannelCtx()
+				ctx.RequestingUser = &model.User{Id: "user-id"}
+				return ctx
+			},
+			args: validArgs,
+			setup: func(m *mocks.MockClient) {
+				m.On("GetConfig").Return(&model.Config{
+					FileSettings: model.FileSettings{EnableFileAttachments: model.NewPointer(true)},
+				})
+				m.On("HasPermissionToChannel", "user-id", "channel-id", model.PermissionUploadFile).Return(false)
+			},
+			wantResult: "you do not have permission to attach files in this channel",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tool := NewCreateFileTool(nil)
 			if !tt.nilClient {
-				tool = NewCreateFileTool(mocks.NewMockClient(t))
+				client := mocks.NewMockClient(t)
+				if tt.setup != nil {
+					tt.setup(client)
+				}
+				tool = NewCreateFileTool(client)
 			}
 
 			argsGetter := createFileArgsGetter(t, tt.args)
@@ -174,15 +206,27 @@ func TestCreateFileResolverUpload(t *testing.T) {
 	const channelID = "channel-id"
 
 	tests := []struct {
-		name         string
-		args         CreateFileArgs
-		uploadedName string
-		uploadErr    error
+		name string
+		args CreateFileArgs
+		// config is what GetConfig returns; nil means a config whose
+		// EnableFileAttachments is unset, which must count as enabled.
+		config         *model.Config
+		requestingUser *model.User
+		uploadedName   string
+		uploadErr      error
 	}{
 		{
-			name:         "happy path",
+			name:         "happy path with nil requesting user (unattended flow)",
 			args:         CreateFileArgs{FileName: "report.md", Content: "# Report\n\nBody."},
+			config:       &model.Config{FileSettings: model.FileSettings{EnableFileAttachments: model.NewPointer(true)}},
 			uploadedName: "report.md",
+		},
+		{
+			name:           "requesting user with upload permission succeeds",
+			args:           CreateFileArgs{FileName: "report.md", Content: "# Report"},
+			config:         &model.Config{FileSettings: model.FileSettings{EnableFileAttachments: model.NewPointer(true)}},
+			requestingUser: &model.User{Id: "user-id"},
+			uploadedName:   "report.md",
 		},
 		{
 			name:         "traversal name uploads the sanitized base name",
@@ -211,6 +255,16 @@ func TestCreateFileResolverUpload(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fileID := model.NewId()
 			client := mocks.NewMockClient(t)
+			config := tt.config
+			if config == nil {
+				// An unset EnableFileAttachments must be treated as enabled
+				// (the Mattermost default).
+				config = &model.Config{}
+			}
+			client.On("GetConfig").Return(config)
+			if tt.requestingUser != nil {
+				client.On("HasPermissionToChannel", tt.requestingUser.Id, channelID, model.PermissionUploadFile).Return(true)
+			}
 			var uploadedContent string
 			call := client.On("UploadFile", mock.Anything, tt.uploadedName, channelID).Run(func(args mock.Arguments) {
 				data, readErr := io.ReadAll(args.Get(0).(io.Reader))
@@ -223,7 +277,7 @@ func TestCreateFileResolverUpload(t *testing.T) {
 				call.Return(&model.FileInfo{Id: fileID, Name: tt.uploadedName}, nil)
 			}
 
-			llmCtx := &llm.Context{Channel: &model.Channel{Id: channelID}}
+			llmCtx := &llm.Context{Channel: &model.Channel{Id: channelID}, RequestingUser: tt.requestingUser}
 			tool := NewCreateFileTool(client)
 
 			result, err := tool.Resolver(context.Background(), llmCtx, createFileArgsGetter(t, tt.args))
