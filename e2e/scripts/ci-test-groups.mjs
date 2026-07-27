@@ -18,6 +18,7 @@ const groups = {
         'tests/action-item-extraction/ui-verification.spec.ts',
         'tests/action-item-extraction/follow-ups.spec.ts',
         'tests/semantic-search/search-bot-selector.spec.ts',
+        'tests/semantic-search/reindex-after-model-change.spec.ts',
         'tests/rhs-core/new-messages-rhs.spec.ts',
         'tests/tool-config/policy-change.spec.ts',
         'tests/tool-config/tab-layout.spec.ts',

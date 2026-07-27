@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, render, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import type {ConversationResponse} from '@/types/conversation';
@@ -10,6 +10,23 @@ import type {DelegationStatus} from '@/types/delegation';
 
 import ToolApprovalSet from './tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+
+const mockDoToolCall = jest.fn();
+const mockInvalidateConversation = jest.fn();
+const getDelegationStatusMock = jest.fn<Promise<DelegationStatus>, [string]>();
+const useConversationMock = jest.fn();
+
+jest.mock('@/client', () => ({
+    doToolCall: (postID: string, toolIDs: string[], toolAnswers: Record<string, unknown>) =>
+        mockDoToolCall(postID, toolIDs, toolAnswers),
+    doToolResult: jest.fn(),
+    getDelegationStatus: (id: string) => getDelegationStatusMock(id),
+}));
+
+jest.mock('@/hooks/use_conversation', () => ({
+    invalidateConversation: (conversationID: string) => mockInvalidateConversation(conversationID),
+    useConversation: (id: string) => useConversationMock(id),
+}));
 
 type MockToolCardProps = {
     tool: ToolCall;
@@ -19,20 +36,6 @@ type MockToolCardProps = {
 };
 
 const mockToolCard = jest.fn<null, [MockToolCardProps]>(() => null);
-const getDelegationStatusMock = jest.fn<Promise<DelegationStatus>, [string]>();
-const doToolCallMock = jest.fn<Promise<void>, [string, string[], Record<string, unknown>?]>();
-const useConversationMock = jest.fn();
-
-jest.mock('@/client', () => ({
-    doToolCall: (...args: [string, string[], Record<string, unknown>?]) => doToolCallMock(...args),
-    doToolResult: jest.fn(),
-    getDelegationStatus: (id: string) => getDelegationStatusMock(id),
-}));
-
-jest.mock('@/hooks/use_conversation', () => ({
-    invalidateConversation: jest.fn(),
-    useConversation: (id: string) => useConversationMock(id),
-}));
 
 jest.mock('./tool_card', () => ({
     __esModule: true,
@@ -51,7 +54,7 @@ function makeTool(overrides: Partial<ToolCall>): ToolCall {
     };
 }
 
-function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage = 'call') {
+function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage = 'call', canApprove = true) {
     return render(
         <IntlProvider locale='en'>
             <ToolApprovalSet
@@ -59,7 +62,7 @@ function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage
                 conversationID='conv_1'
                 toolCalls={toolCalls}
                 approvalStage={approvalStage}
-                canApprove={true}
+                canApprove={canApprove}
                 canExpand={true}
                 showArguments={true}
                 showResults={true}
@@ -76,10 +79,11 @@ function getToolCardProps(toolID: string): MockToolCardProps {
 
 beforeEach(() => {
     mockToolCard.mockClear();
+    mockDoToolCall.mockReset();
+    mockDoToolCall.mockImplementation(() => Promise.resolve());
+    mockInvalidateConversation.mockClear();
     getDelegationStatusMock.mockReset();
     getDelegationStatusMock.mockRejectedValue(new Error('not found'));
-    doToolCallMock.mockReset();
-    doToolCallMock.mockImplementation(() => Promise.resolve());
     useConversationMock.mockReset();
     useConversationMock.mockReturnValue({conversation: null, loading: false, error: null});
 });
@@ -121,6 +125,42 @@ describe('ToolApprovalSet', () => {
         const manualTool = getToolCardProps('tool_manual');
         expect(manualTool.onApprove).toEqual(expect.any(Function));
         expect(manualTool.onReject).toEqual(expect.any(Function));
+    });
+
+    test('renders live pending auto-executing tools without decision controls', () => {
+        renderComponent([
+            makeTool({id: 'tool_auto', would_auto_execute: true}),
+        ], 'done');
+
+        const autoTool = getToolCardProps('tool_auto');
+        expect(autoTool.onApprove).toBeUndefined();
+        expect(autoTool.onReject).toBeUndefined();
+    });
+
+    test('resumes an interrupted all-auto round with an empty accepted list', async () => {
+        const {getByRole} = renderComponent([
+            makeTool({id: 'tool_auto_a', would_auto_execute: true}),
+            makeTool({id: 'tool_auto_b', would_auto_execute: true}),
+        ]);
+
+        expect(getToolCardProps('tool_auto_a').onApprove).toBeUndefined();
+        expect(getToolCardProps('tool_auto_b').onReject).toBeUndefined();
+
+        fireEvent.click(getByRole('button', {name: 'Run tools'}));
+
+        await waitFor(() => {
+            expect(mockDoToolCall).toHaveBeenCalledWith('post_1', [], {});
+        });
+        expect(mockInvalidateConversation).toHaveBeenCalledWith('conv_1');
+    });
+
+    test('does not offer resume to non-owners', () => {
+        const {queryByRole} = renderComponent([
+            makeTool({id: 'tool_auto', would_auto_execute: true}),
+        ], 'call', false);
+
+        expect(getToolCardProps('tool_auto').onApprove).toBeUndefined();
+        expect(queryByRole('button', {name: 'Run tools'})).toBeNull();
     });
 
     test('excludes already-decided results from share decisions', () => {
@@ -208,7 +248,7 @@ describe('ToolApprovalSet', () => {
         });
 
         await waitFor(() => {
-            expect(doToolCallMock).toHaveBeenCalledWith('delegated_response_post', ['nested_tool'], {});
+            expect(mockDoToolCall).toHaveBeenCalledWith('delegated_response_post', ['nested_tool'], {});
         });
     });
 });

@@ -9,8 +9,11 @@ import {
     PencilOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
+//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
+import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
 import {getProfilePictureUrl} from '@/client';
+import {getPortalTarget} from '@/utils/dom';
 
 import {UserAgent, ServiceInfo} from '@/types/agents';
 
@@ -147,6 +150,26 @@ const AgentRow = (props: Props) => {
                             <FormattedMessage defaultMessage='Service unavailable'/>
                         </ServiceWarningBadge>
                     )}
+                    {!canManage && (
+                        <OverlayTrigger
+                            placement='top'
+                            container={getPortalTarget}
+                            overlay={
+                                <Tooltip id={`read-only-agent-tooltip-${agent.id}`}>
+                                    <FormattedMessage
+                                        defaultMessage='Mention @{username} in a channel or direct message to chat with this agent.'
+                                        values={{username: agent.name}}
+                                    />
+                                </Tooltip>
+                            }
+                        >
+                            <ReadOnlyBadgeTrigger tabIndex={0}>
+                                <ReadOnlyBadge>
+                                    <FormattedMessage defaultMessage='Read only'/>
+                                </ReadOnlyBadge>
+                            </ReadOnlyBadgeTrigger>
+                        </OverlayTrigger>
+                    )}
                     {mcpBadge}
                 </BadgesColumn>
             </RowMain>
@@ -272,6 +295,22 @@ const ServiceWarningBadge = styled.span`
     background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
     color: var(--dnd-indicator, #D24B4E);
     font-size: 12px;
+    white-space: nowrap;
+`;
+
+const ReadOnlyBadgeTrigger = styled.span`
+    display: inline-flex;
+    flex-shrink: 0;
+    cursor: default;
+`;
+
+const ReadOnlyBadge = styled.span`
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(var(--center-channel-color-rgb), 0.08);
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    font-size: 12px;
+    font-weight: 600;
     white-space: nowrap;
 `;
 

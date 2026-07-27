@@ -308,7 +308,13 @@ func (r *ToolRunner) runLoop(
 			return
 		}
 
-		// Forward pending tool calls so the UI can show spinners.
+		// All calls passed the policy: stamp them so the pending broadcast
+		// (and, if the stream is interrupted mid-execution, the persisted
+		// blocks) carry the auto-execute signal instead of implying an
+		// approval request, then forward so the UI can show spinners.
+		for i := range toolCalls {
+			toolCalls[i].WouldAutoExecute = true
+		}
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 
 		// Execute each tool call.

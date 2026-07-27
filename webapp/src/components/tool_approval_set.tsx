@@ -110,6 +110,12 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
+    const pendingToolCalls = useMemo(() => {
+        return props.toolCalls.filter((call) => call.status === ToolCallStatus.Pending);
+    }, [props.toolCalls]);
+    const isInterruptedAutoRound = isCallStage &&
+        pendingToolCalls.length > 0 &&
+        pendingToolCalls.every((call) => call.would_auto_execute);
 
     // Approval is per pending tool. Earlier auto-approved tools in the same
     // response should not suppress controls for later manual ones.
@@ -320,11 +326,13 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             {props.toolCalls.map((tool) => {
                 const isDecisionCall = decisionToolIDSet.has(tool.id);
 
-                // Paused-but-auto-approved calls run server-side once the
-                // user resolves the rest of the batch; showing them pending
-                // would look like they need approval. They reappear as
-                // normal auto-approved cards once executed.
-                if (tool.status === ToolCallStatus.Pending && tool.would_auto_execute) {
+                // In a mixed approval batch, policy-approved calls stay
+                // hidden until the user's decisions let the server run them.
+                // Live calls and interrupted all-auto rounds remain visible.
+                if (tool.status === ToolCallStatus.Pending &&
+                    tool.would_auto_execute &&
+                    isCallStage &&
+                    !isInterruptedAutoRound) {
                     return null;
                 }
 
@@ -374,7 +382,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         postID={props.postID}
                         tool={tool}
                         isCollapsed={isToolCollapsed(tool)}
-                        isProcessing={isDecisionCall && isSubmitting}
+                        isProcessing={(isDecisionCall || isInterruptedAutoRound) && isSubmitting}
                         localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
                         onToggleCollapse={() => toggleCollapse(tool.id)}
                         onApprove={isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined} // eslint-disable-line no-undefined
@@ -429,6 +437,29 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                             />
                         </BatchButton>
                     </BatchButtonContainer>
+                </StatusBar>
+            )}
+
+            {isInterruptedAutoRound && effectiveCanApprove && (
+                <StatusBar>
+                    {isSubmitting ? (
+                        <div>
+                            <FormattedMessage
+                                id='ai.tool_call.submitting'
+                                defaultMessage='Submitting...'
+                            />
+                        </div>
+                    ) : (
+                        <BatchButton
+                            type='button'
+                            onClick={() => submitDecisions([])}
+                        >
+                            <FormattedMessage
+                                id='ai.tool_call.run_tools'
+                                defaultMessage='Run tools'
+                            />
+                        </BatchButton>
+                    )}
                 </StatusBar>
             )}
         </ToolCallsContainer>

@@ -3,17 +3,24 @@
 
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {useIntl} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
+import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
 import {fetchModelsForAgentService} from '@/client';
 import {ServiceInfo} from '@/types/agents';
 import {
     BooleanItem,
     ComboboxItem,
+    FormRow,
+    FieldControlRow,
+    InlineCheckbox,
+    ItemLabel,
+    HelpText,
     ItemList,
     TextItem,
     SelectionItem,
     SelectionItemOption,
+    TextFieldContainer,
 } from '@/components/system_console/item';
 import AvatarItem from '@/components/system_console/avatar';
 import {
@@ -45,17 +52,18 @@ const openAIStructuredOutputServiceTypes = ['openai', 'openaicompatible', 'azure
 const ConfigTab = (props: Props) => {
     const {draft, onChange, onAvatarChange, services, errors = {}, usernameLocked = false} = props;
     const intl = useIntl();
+    const [advancedExpanded, setAdvancedExpanded] = useState(false);
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
+
+    useEffect(() => {
+        if (errors.maxToolTurns) {
+            setAdvancedExpanded(true);
+        }
+    }, [errors.maxToolTurns]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState('');
 
-    /** Captures `reasoningEnabled` before turning structured output on so we can restore it when structured output is turned off. */
-    const reasoningBeforeStructuredRef = useRef<boolean | null>(null);
     const prevServiceIdRef = useRef<string | null>(null);
-
-    useEffect(() => {
-        reasoningBeforeStructuredRef.current = null;
-    }, [draft.serviceId]);
 
     // Reset provider-specific fields when the AI service changes (avoid stale model / native tools / reasoning).
     // Skip when `prev` is empty: the edit modal can render once with a stale empty draft before `agentToDraft`
@@ -198,19 +206,44 @@ const ConfigTab = (props: Props) => {
         (isAnthropic || openAIStructuredOutputServiceTypes.includes(selectedService.type)));
 
     const maxTokens = selectedService?.outputTokenLimit || 4096;
+    const serviceDefaultModel = selectedService?.defaultModel?.trim() || '';
+
+    const modelPlaceholder = serviceDefaultModel ?
+        intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) :
+        intl.formatMessage({defaultMessage: 'Leave empty to use service default'});
+
+    const modelHelptext = (() => {
+        if (supportsModelFetching && loadingModels) {
+            return intl.formatMessage({defaultMessage: 'Loading models...'});
+        }
+        if (supportsModelFetching && modelsFetchError) {
+            return modelsFetchError;
+        }
+        if (serviceDefaultModel) {
+            return intl.formatMessage(
+                {defaultMessage: 'Optional: Override the service\'s default model ({defaultModel}) for this agent. Leave empty to use the service default.'},
+                {defaultModel: serviceDefaultModel},
+            );
+        }
+        return intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'});
+    })();
+
+    const comboboxModelHelptext = serviceDefaultModel ?
+        intl.formatMessage(
+            {defaultMessage: 'Optional: Override the service\'s default model ({defaultModel}) for this agent. Select from the list or type a custom model name.'},
+            {defaultModel: serviceDefaultModel},
+        ) :
+        intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Select from the list or type a custom model name.'});
+
+    const comboboxModelPlaceholder = serviceDefaultModel ?
+        intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) :
+        intl.formatMessage({defaultMessage: 'Use service default'});
 
     const handleReasoningBotChange = (bot: LLMBotConfig) => {
-        const re = bot.reasoningEnabled ?? true;
-        let structured = bot.structuredOutputEnabled ?? false;
-        if (re && structured) {
-            structured = false;
-            reasoningBeforeStructuredRef.current = null;
-        }
         onChange({
-            reasoningEnabled: re,
+            reasoningEnabled: bot.reasoningEnabled ?? true,
             reasoningEffort: bot.reasoningEffort || 'medium',
             thinkingBudget: bot.thinkingBudget ?? 0,
-            structuredOutputEnabled: structured,
         });
     };
 
@@ -222,20 +255,20 @@ const ConfigTab = (props: Props) => {
                     value={draft.displayName}
                     onChange={(e) => onChange({displayName: e.target.value})}
                     placeholder={intl.formatMessage({defaultMessage: 'e.g. Sales Assistant'})}
+                    error={errors.displayName}
                 />
-                {errors.displayName && <FieldError>{errors.displayName}</FieldError>}
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Agent username'})}
                     value={draft.username}
                     maxLength={22}
                     disabled={usernameLocked}
                     onChange={(e) => onChange({username: e.target.value})}
+                    error={errors.username}
                     helptext={intl.formatMessage({
                         defaultMessage:
                             'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores. The username cannot be changed after the agent is created.',
                     })}
                 />
-                {errors.username && <FieldError>{errors.username}</FieldError>}
                 <AvatarItem
                     botusername={draft.username}
                     avatarOwnerKey={props.botUserId}
@@ -245,6 +278,11 @@ const ConfigTab = (props: Props) => {
                     label={intl.formatMessage({defaultMessage: 'AI Service'})}
                     value={draft.serviceId}
                     onChange={(e) => onChange({serviceId: e.target.value})}
+                    error={errors.serviceId}
+                    helptext={intl.formatMessage({
+                        defaultMessage:
+                            'Select an AI service to load model suggestions and configure vision, tools, native provider tools, reasoning, and structured output.',
+                    })}
                 >
                     <SelectionItemOption value=''>
                         {intl.formatMessage({defaultMessage: 'Select a service'})}
@@ -266,56 +304,25 @@ const ConfigTab = (props: Props) => {
                         </SelectionItemOption>
                     ))}
                 </SelectionItem>
-                {errors.serviceId && <FieldError>{errors.serviceId}</FieldError>}
-                {!draft.serviceId && (
-                    <ServiceHint>
-                        {intl.formatMessage({
-                            defaultMessage:
-                                'Select an AI service to load model suggestions and configure vision, tools, native provider tools, reasoning, and structured output.',
-                        })}
-                    </ServiceHint>
-                )}
 
                 {supportsModelFetching && availableModels.length > 0 ? (
                     <ComboboxItem
                         label={intl.formatMessage({defaultMessage: 'Model'})}
                         value={draft.model}
                         options={availableModels}
-                        placeholder={intl.formatMessage({defaultMessage: 'Use service default'})}
-                        onChange={(e) => onChange({model: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Select from the list or type a custom model name.'})}
+                        placeholder={comboboxModelPlaceholder}
+                        onChange={(value) => onChange({model: value})}
+                        helptext={comboboxModelHelptext}
                     />
                 ) : (
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'Model'})}
-                        helptext={(() => {
-                            if (supportsModelFetching && loadingModels) {
-                                return intl.formatMessage({defaultMessage: 'Loading models...'});
-                            }
-                            if (supportsModelFetching && modelsFetchError) {
-                                return modelsFetchError;
-                            }
-                            return intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'});
-                        })()}
-                        placeholder={intl.formatMessage({defaultMessage: 'Leave empty to use service default'})}
+                        helptext={modelHelptext}
+                        placeholder={modelPlaceholder}
                         value={draft.model}
                         onChange={(e) => onChange({model: e.target.value})}
                     />
                 )}
-
-                <IntItem
-                    label={intl.formatMessage({defaultMessage: 'Max tool turns'})}
-                    value={draft.maxToolTurns}
-                    min={1}
-                    max={MaxAllowedMaxToolTurns}
-                    allowEmpty={true}
-                    clampOnChange={false}
-                    defaultValue={DefaultMaxToolTurns}
-                    placeholder={String(DefaultMaxToolTurns)}
-                    onChange={(value: number) => onChange({maxToolTurns: value})}
-                    helptext={intl.formatMessage({defaultMessage: 'Maximum number of consecutive tool-call/execute rounds the agent will run before stopping. Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn.'})}
-                />
-                {errors.maxToolTurns && <FieldError>{errors.maxToolTurns}</FieldError>}
 
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Custom instructions'})}
@@ -324,101 +331,139 @@ const ConfigTab = (props: Props) => {
                     value={draft.customInstructions}
                     onChange={(e) => onChange({customInstructions: e.target.value})}
                 />
+            </ItemList>
 
-                {supportsVisionAndTools && (
-                    <>
-                        <BooleanItem
-                            label={intl.formatMessage({defaultMessage: 'Enable Vision'})}
-                            value={draft.enableVision}
-                            onChange={(to: boolean) => onChange({enableVision: to})}
-                            helpText={intl.formatMessage({defaultMessage: 'Enable Vision to allow the bot to process images. Requires a compatible model.'})}
-                        />
-                        <BooleanItem
-                            label={intl.formatMessage({defaultMessage: 'Enable Tools'})}
-                            value={!draft.disableTools}
-                            onChange={(to: boolean) => onChange({disableTools: !to})}
-                            helpText={intl.formatMessage({defaultMessage: 'By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools.'})}
-                        />
-                        {isAnthropic && (
-                            <NativeToolsItem
-                                enabledTools={draft.enabledNativeTools}
-                                onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
-                                provider='anthropic'
-                            />
-                        )}
-                        {isGoogle && (
-                            <NativeToolsItem
-                                enabledTools={draft.enabledNativeTools}
-                                onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
-                                provider='google'
-                            />
-                        )}
-                        {isOpenAIWithResponses && (
-                            <NativeToolsItem
-                                enabledTools={draft.enabledNativeTools}
-                                onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
-                                provider='openai'
-                            />
-                        )}
-                        {selectedServiceAsLLM && (
-                            <ReasoningConfigItem
-                                bot={reasoningBot}
-                                service={selectedServiceAsLLM}
-                                maxTokens={maxTokens}
-                                onChange={handleReasoningBotChange}
-                            />
-                        )}
-                        {supportsStructuredOutput && (
-                            <>
-                                <BooleanItem
-                                    label={intl.formatMessage({defaultMessage: 'Structured Output'})}
-                                    value={draft.structuredOutputEnabled}
-                                    onChange={(to: boolean) => {
-                                        if (isAnthropic && to) {
-                                            reasoningBeforeStructuredRef.current = draft.reasoningEnabled;
-                                            onChange({
-                                                structuredOutputEnabled: true,
-                                                reasoningEnabled: false,
-                                            });
-                                        } else if (isAnthropic) {
-                                            const restore = reasoningBeforeStructuredRef.current;
-                                            reasoningBeforeStructuredRef.current = null;
-                                            onChange({
-                                                structuredOutputEnabled: false,
-                                                reasoningEnabled: restore === null ? true : restore,
-                                            });
-                                        } else {
-                                            onChange({structuredOutputEnabled: to});
-                                        }
-                                    }}
-                                    helpText={isAnthropic ?
-                                        intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Structured output and extended thinking cannot be used simultaneously.'}) :
-                                        intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
-                                    }
-                                />
-                                {isAnthropic && draft.structuredOutputEnabled && (
-                                    <StructuredOutputNote>
+            <AdvancedSection>
+                <AdvancedHeader
+                    type='button'
+                    aria-expanded={advancedExpanded}
+                    onClick={() => setAdvancedExpanded((prev) => !prev)}
+                >
+                    <ChevronContainer aria-hidden={true}>
+                        {advancedExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
+                    </ChevronContainer>
+                    <AdvancedHeaderText>
+                        <FormattedMessage defaultMessage='Advanced configuration'/>
+                    </AdvancedHeaderText>
+                    <AdvancedHeaderHint>
+                        <FormattedMessage defaultMessage='Tool limits, vision, reasoning, and other model-specific options'/>
+                    </AdvancedHeaderHint>
+                </AdvancedHeader>
+                {advancedExpanded && (
+                    <AdvancedContent>
+                        <ItemList>
+                            <FormRow>
+                                <ItemLabel>
+                                    {intl.formatMessage({defaultMessage: 'Dynamic tool loading'})}
+                                </ItemLabel>
+                                <TextFieldContainer>
+                                    <FieldControlRow>
+                                        <InlineCheckbox
+                                            testId='mcp-dynamic-tool-loading'
+                                            inputAriaLabel={intl.formatMessage({defaultMessage: 'Dynamic tool loading'})}
+                                            label={intl.formatMessage({defaultMessage: 'Enable'})}
+                                            checked={draft.mcpDynamicToolLoading}
+                                            onChange={(checked) => onChange({mcpDynamicToolLoading: checked})}
+                                        />
+                                    </FieldControlRow>
+                                    <HelpText>
                                         {intl.formatMessage({
                                             defaultMessage:
-                                                'Extended thinking is turned off while structured output is enabled (Anthropic does not support both at once). Turn structured output off to restore your previous extended thinking setting.',
+                                                'Expose search and load helper tools first, then load MCP tool schemas only when the agent needs them. Disable this to use the full MCP tool list for this agent.',
                                         })}
-                                    </StructuredOutputNote>
-                                )}
-                            </>
-                        )}
-                    </>
+                                    </HelpText>
+                                </TextFieldContainer>
+                            </FormRow>
+                            <IntItem
+                                label={intl.formatMessage({defaultMessage: 'Max tool turns'})}
+                                value={draft.maxToolTurns}
+                                min={1}
+                                max={MaxAllowedMaxToolTurns}
+                                allowEmpty={true}
+                                clampOnChange={false}
+                                defaultValue={DefaultMaxToolTurns}
+                                placeholder={String(DefaultMaxToolTurns)}
+                                onChange={(value: number) => onChange({maxToolTurns: value})}
+                                error={errors.maxToolTurns}
+                                helptext={intl.formatMessage({defaultMessage: 'Maximum number of consecutive tool-call/execute rounds the agent will run before stopping. Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn.'})}
+                            />
+
+                            {supportsVisionAndTools && (
+                                <>
+                                    <BooleanItem
+                                        label={intl.formatMessage({defaultMessage: 'Enable Vision'})}
+                                        value={draft.enableVision}
+                                        onChange={(to: boolean) => onChange({enableVision: to})}
+                                        helpText={intl.formatMessage({defaultMessage: 'Enable Vision to allow the bot to process images. Requires a compatible model.'})}
+                                    />
+                                    <BooleanItem
+                                        label={intl.formatMessage({defaultMessage: 'Enable Tools'})}
+                                        value={!draft.disableTools}
+                                        onChange={(to: boolean) => onChange({disableTools: !to})}
+                                        helpText={intl.formatMessage({defaultMessage: 'By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools.'})}
+                                    />
+                                    {isAnthropic && (
+                                        <NativeToolsItem
+                                            enabledTools={draft.enabledNativeTools}
+                                            onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
+                                            provider='anthropic'
+                                        />
+                                    )}
+                                    {isGoogle && (
+                                        <NativeToolsItem
+                                            enabledTools={draft.enabledNativeTools}
+                                            onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
+                                            provider='google'
+                                        />
+                                    )}
+                                    {isOpenAIWithResponses && (
+                                        <NativeToolsItem
+                                            enabledTools={draft.enabledNativeTools}
+                                            onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
+                                            provider='openai'
+                                        />
+                                    )}
+                                    {selectedServiceAsLLM && (
+                                        <ReasoningConfigItem
+                                            bot={reasoningBot}
+                                            service={selectedServiceAsLLM}
+                                            maxTokens={maxTokens}
+                                            onChange={handleReasoningBotChange}
+                                        />
+                                    )}
+                                    {supportsStructuredOutput && (
+                                        <>
+                                            <BooleanItem
+                                                label={intl.formatMessage({defaultMessage: 'Structured Output'})}
+                                                value={draft.structuredOutputEnabled}
+                                                onChange={(to: boolean) => onChange({structuredOutputEnabled: to})}
+                                                helpText={isAnthropic ?
+                                                    intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+).'}) :
+                                                    intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
+                                                }
+                                            />
+                                            {isAnthropic && draft.structuredOutputEnabled && draft.reasoningEnabled && (
+                                                <FormRow>
+                                                    <span aria-hidden={true}/>
+                                                    <StructuredOutputNote>
+                                                        {intl.formatMessage({
+                                                            defaultMessage:
+                                                                'Anthropic does not support extended thinking together with structured output. Requests that ask for structured JSON output will skip extended thinking; all other requests keep using it.',
+                                                        })}
+                                                    </StructuredOutputNote>
+                                                </FormRow>
+                                            )}
+                                        </>
+                                    )}
+                                </>
+                            )}
+                        </ItemList>
+                    </AdvancedContent>
                 )}
-            </ItemList>
+            </AdvancedSection>
         </FormContainer>
     );
 };
-
-const FieldError = styled.div`
-    grid-column: 2 / -1;
-    color: var(--dnd-indicator, #D24B4E);
-    font-size: 12px;
-    margin-top: -8px;
-`;
 
 const FormContainer = styled.div`
     display: flex;
@@ -426,18 +471,56 @@ const FormContainer = styled.div`
     gap: 24px;
 `;
 
-/** Spans the full width of the ItemList grid (label + field columns). */
-const ServiceHint = styled.div`
-    grid-column: 1 / -1;
-    font-size: 13px;
+const AdvancedSection = styled.div`
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    border-radius: 4px;
+    overflow: hidden;
+`;
+
+const AdvancedHeader = styled.button`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px 16px;
+    border: none;
+    background: rgba(var(--center-channel-color-rgb), 0.04);
+    cursor: pointer;
+    text-align: left;
+
+    &:hover {
+        background: rgba(var(--center-channel-color-rgb), 0.08);
+    }
+`;
+
+const ChevronContainer = styled.span`
+    display: flex;
+    align-items: center;
+    justify-content: center;
     color: rgba(var(--center-channel-color-rgb), 0.64);
+    flex-shrink: 0;
+`;
+
+const AdvancedHeaderText = styled.span`
+    font-size: 14px;
+    font-weight: 600;
     line-height: 20px;
-    margin-top: -8px;
-    margin-bottom: 8px;
+    color: var(--center-channel-color);
+`;
+
+const AdvancedHeaderHint = styled.span`
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    margin-left: auto;
+`;
+
+const AdvancedContent = styled.div`
+    padding: 24px 16px;
 `;
 
 const StructuredOutputNote = styled.div`
-    grid-column: 1 / -1;
     font-size: 13px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
     line-height: 20px;

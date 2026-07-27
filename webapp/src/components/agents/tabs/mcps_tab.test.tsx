@@ -67,7 +67,6 @@ describe('McpsTab', () => {
                         {server_origin: 'embedded://mattermost', tool_name: 'deleted_tool'},
                     ]}
                     autoEnableNewMCPTools={false}
-                    mcpDynamicToolLoading={false}
                     onChange={onChange}
                     onReconcileEnabledTools={onReconcileEnabledTools}
                 />

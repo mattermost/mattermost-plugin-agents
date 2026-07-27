@@ -286,6 +286,15 @@ func (s *Indexer) finalizeDeferredIndex(ctx context.Context, jobStatus *JobStatu
 		return owned, fmt.Errorf("vector index state is no longer owned by this run; skipping index build")
 	}
 
+	// Persist immediately so the UI's short poll sees the phase before the
+	// first heartbeat tick.
+	jobStatus.Phase = JobPhaseBuildingIndex
+	s.saveJobStatus(jobStatus)
+	defer func() {
+		jobStatus.Phase = ""
+		s.saveJobStatus(jobStatus)
+	}()
+
 	// Accepted CAS→DDL TOCTOU (ms-wide); advisory lock would fully serialize.
 	done := make(chan error, 1)
 	go func() {
@@ -345,20 +354,13 @@ func appendPendingRepairNote(errMsg string) string {
 	return errMsg + "; " + pendingRepairNote
 }
 
-// restoreDeferredIndex rebuilds on failure/cancel exit. Success leaves
-// repairing (edits still pending); build failure keeps dropped for resume.
-func (s *Indexer) restoreDeferredIndex(ctx context.Context, jobStatus *JobStatus, bulk embeddings.BulkIndexer, owned VectorIndexState, errMsg string) string {
-	_, rebuildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk, owned)
-	if rebuildErr == nil {
-		s.pluginAPI.LogWarn("Vector index was rebuilt on the exit path; edits from the build window are pending repair",
-			"job_id", jobStatus.JobID)
-		return appendPendingRepairNote(errMsg)
-	}
-	s.pluginAPI.LogError("Failed to rebuild vector index while terminating reindex job", "error", rebuildErr)
+const droppedIndexNote = "The vector index remains dropped for the deferred rebuild; semantic search is unavailable until you resume the job or run a full reindex"
+
+func appendDroppedIndexNote(errMsg string) string {
 	if errMsg == "" {
-		return fmt.Sprintf("Failed to rebuild vector index: %s", rebuildErr)
+		return droppedIndexNote
 	}
-	return fmt.Sprintf("%s; additionally failed to rebuild vector index: %s", errMsg, rebuildErr)
+	return errMsg + "; " + droppedIndexNote
 }
 
 // abandonUndroppedClaim releases a claim when this run never dropped the
