@@ -242,7 +242,14 @@ describe('LLMBotPost search results rendering', () => {
     test('does not render an entry per element when search_results is longer than a search can return', () => {
         const elementCount = SERVER_RESULT_CAP * 5;
 
-        renderWithSearchResults(JSON.stringify(Array.from({length: elementCount}, () => wellFormedSource)));
+        // Each element carries a distinct post id, so the entry count can only
+        // be explained by the cap and not by two sources sharing an identity.
+        const sources = Array.from({length: elementCount}, (unused, index) => ({
+            ...wellFormedSource,
+            postId: index.toString(36).padStart(26, '0'),
+        }));
+
+        renderWithSearchResults(JSON.stringify(sources));
 
         expect(mockPostPreview.mock.calls.length).toBeLessThanOrEqual(SERVER_RESULT_CAP);
     });
