@@ -59,8 +59,8 @@ func (m *mockConfigStore) GetConfig() (*config.Config, error) {
 	return m.cfg, nil
 }
 
-func (m *mockConfigStore) SaveConfig(cfg config.Config) error {
-	return nil
+func (m *mockConfigStore) SaveConfig(cfg config.Config) (*config.Config, error) {
+	return m.cfg, nil
 }
 
 // mockLicensed sets up mock expectations so IsMultiLLMLicensed() returns true.

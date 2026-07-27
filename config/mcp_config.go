@@ -3,11 +3,82 @@
 
 package config
 
+import (
+	"fmt"
+	"net"
+	"net/url"
+	"strconv"
+	"strings"
+)
+
 const (
 	MCPToolPolicyAsk               = "ask"
 	MCPToolPolicyAutoRunInDM       = "auto_run_in_dm"
 	MCPToolPolicyAutoRunEverywhere = "auto_run_everywhere"
+
+	// DefaultMCPAppsSandboxListenAddress is the sandbox listener bind address
+	// used when MCPAppsConfig.SandboxListenAddress is empty.
+	DefaultMCPAppsSandboxListenAddress = ":8066"
 )
+
+// MCPAppsConfig configures MCP Apps (interactive tool UIs, extension
+// io.modelcontextprotocol/ui) rendering support.
+type MCPAppsConfig struct {
+	// Enabled is the master toggle for MCP Apps rendering.
+	Enabled bool `json:"enabled"`
+	// SandboxURL is the externally reachable base URL — on a DIFFERENT
+	// origin than the Mattermost Site URL — where the plugin's sandbox
+	// listener is exposed (via reverse proxy), e.g.
+	// https://mm-apps.example.com or https://mm.example.com:8443.
+	// The plugin appends /sandbox.html. Empty means no external origin is
+	// configured.
+	SandboxURL string `json:"sandboxURL"`
+	// SandboxListenAddress is the host:port the in-process sandbox HTTP
+	// server binds to when SandboxURL is set. Empty means
+	// DefaultMCPAppsSandboxListenAddress.
+	SandboxListenAddress string `json:"sandboxListenAddress"`
+	// AllowInsecureSameOriginSandbox opts into serving the sandbox page
+	// from the Mattermost origin itself when no SandboxURL is configured.
+	// This forfeits origin isolation between app content and Mattermost
+	// (D1). Default false. Enabling is audit-logged at config save.
+	AllowInsecureSameOriginSandbox bool `json:"allowInsecureSameOriginSandbox"`
+}
+
+// Validate checks user-supplied MCP Apps field shapes. Called from the
+// admin config save path; a failure rejects the save with 400. Origin
+// equality against the Site URL (D1) is enforced separately via
+// sandbox.ValidateAppsConfig, which also calls Validate.
+func (c *MCPAppsConfig) Validate() error {
+	sandboxURL := strings.TrimSpace(c.SandboxURL)
+	if sandboxURL != "" {
+		parsed, err := url.Parse(sandboxURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("mcp apps sandboxURL must be an absolute http(s) URL without query or fragment")
+		}
+		if parsed.User != nil {
+			return fmt.Errorf("mcp apps sandboxURL must not include userinfo")
+		}
+	}
+
+	listenAddr := strings.TrimSpace(c.SandboxListenAddress)
+	if listenAddr != "" {
+		_, portStr, err := net.SplitHostPort(listenAddr)
+		if err != nil || portStr == "" {
+			return fmt.Errorf("mcp apps sandboxListenAddress must be a host:port (e.g. :8066)")
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("mcp apps sandboxListenAddress port must be numeric")
+		}
+		// Port 0 is rejected here: ephemeral binds are test-only via
+		// sandbox.NewServer(":0"), not admin configuration.
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("mcp apps sandboxListenAddress port must be between 1 and 65535")
+		}
+	}
+
+	return nil
+}
 
 // MCPToolConfig represents per-tool configuration for an MCP server.
 type MCPToolConfig struct {
@@ -43,6 +114,7 @@ type MCPConfig struct {
 	Servers            []MCPServerConfig       `json:"servers"`
 	PluginServers      []PluginServerConfig    `json:"plugin_servers,omitempty"`
 	EmbeddedServer     MCPEmbeddedServerConfig `json:"embeddedServer"`
+	Apps               MCPAppsConfig           `json:"apps"`
 	IdleTimeoutMinutes int                     `json:"idleTimeoutMinutes"`
 }
 

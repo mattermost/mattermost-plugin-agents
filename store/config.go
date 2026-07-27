@@ -41,15 +41,20 @@ func (s *Store) GetConfig() (*config.Config, error) {
 // SaveConfig persists a new configuration to the database with history.
 // The previous active config is deactivated and a new active row is inserted.
 // All prior configs are preserved with Active = false.
-func (s *Store) SaveConfig(cfg config.Config) error {
+//
+// Under the advisory lock it reads the prior active config and returns it
+// (nil when none existed) so callers can decide audit events from the
+// committed transition. A read failure aborts the save with an error —
+// callers must not invent a false→true transition from unknown prior state.
+func (s *Store) SaveConfig(cfg config.Config) (previous *config.Config, err error) {
 	configBytes, err := json.Marshal(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+		return nil, fmt.Errorf("failed to marshal config: %w", err)
 	}
 
 	tx, err := s.db.Beginx()
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -60,12 +65,29 @@ func (s *Store) SaveConfig(cfg config.Config) error {
 	// Serialize SaveConfig across nodes/processes to avoid races on the partial
 	// unique index for the active row.
 	if _, err = tx.Exec("SELECT pg_advisory_xact_lock($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
-		return fmt.Errorf("failed to lock config save transaction: %w", err)
+		return nil, fmt.Errorf("failed to lock config save transaction: %w", err)
+	}
+
+	var configJSON string
+	readErr := tx.Get(&configJSON, "SELECT Config FROM Agents_ConfigHistory WHERE Active = true LIMIT 1")
+	switch {
+	case errors.Is(readErr, sql.ErrNoRows):
+		previous = nil
+	case readErr != nil:
+		err = fmt.Errorf("failed to read previous active config: %w", readErr)
+		return nil, err
+	default:
+		var prev config.Config
+		if unmarshalErr := json.Unmarshal([]byte(configJSON), &prev); unmarshalErr != nil {
+			err = fmt.Errorf("failed to unmarshal previous config: %w", unmarshalErr)
+			return nil, err
+		}
+		previous = &prev
 	}
 
 	// Deactivate current active config (at most one row, indexed on Active)
 	if _, err = tx.Exec("UPDATE Agents_ConfigHistory SET Active = false WHERE Active = true"); err != nil {
-		return fmt.Errorf("failed to deactivate current config: %w", err)
+		return nil, fmt.Errorf("failed to deactivate current config: %w", err)
 	}
 
 	// Insert new active config
@@ -76,14 +98,14 @@ func (s *Store) SaveConfig(cfg config.Config) error {
 		model.GetMillis(),
 		true,
 	); err != nil {
-		return fmt.Errorf("failed to insert new config: %w", err)
+		return nil, fmt.Errorf("failed to insert new config: %w", err)
 	}
 
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit config save: %w", err)
+		return nil, fmt.Errorf("failed to commit config save: %w", err)
 	}
 
-	return nil
+	return previous, nil
 }
 
 // IsConfigMigrated checks whether any active configuration exists in the database.

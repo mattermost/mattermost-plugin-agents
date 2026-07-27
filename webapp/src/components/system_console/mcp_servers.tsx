@@ -14,6 +14,7 @@ import {getMCPTools, getVettedToolSeed} from '../../client';
 import manifest from '@/manifest';
 
 import {CopyableTextItem} from './copyable_text_item';
+import MCPAppsSection, {defaultMCPAppsConfig, MCPAppsConfig} from './mcp_apps';
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
 import {BooleanItem, ItemList, TextItem} from './item';
@@ -45,7 +46,26 @@ export type MCPConfig = {
     enablePluginServer: boolean;
     servers: MCPServerConfig[] | null; // server sends nil Go slice as JSON null
     embeddedServer: MCPEmbeddedServerConfig;
+    apps?: MCPAppsConfig;
     idleTimeoutMinutes?: number;
+};
+
+// normalizeMCPConfig rebuilds the MCP config literal used by System Console
+// edits. Every field must be restated here — omitted fields are silently
+// dropped on the next onChange/save.
+export const normalizeMCPConfig = (mcpConfig?: MCPConfig): MCPConfig => {
+    const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
+    return {
+        enabled: true,
+        enablePluginServer: mcpConfig?.enablePluginServer ?? false,
+        servers: normalizedServers,
+        embeddedServer: {
+            ...(mcpConfig?.embeddedServer || {}),
+            enabled: true,
+        },
+        apps: mcpConfig?.apps ?? defaultMCPAppsConfig,
+        idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
+    };
 };
 
 type Props = {
@@ -419,16 +439,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // MCP client and embedded server are always enabled; users can still
     // disable individual tools but cannot turn off MCP entirely.
-    const config: MCPConfig = {
-        enabled: true,
-        enablePluginServer: mcpConfig?.enablePluginServer ?? false,
-        servers: normalizedServers,
-        embeddedServer: {
-            ...(mcpConfig?.embeddedServer || {}),
-            enabled: true,
-        },
-        idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
-    };
+    const config: MCPConfig = normalizeMCPConfig(mcpConfig);
 
     // Generate a server name
     const generateServerName = () => {
@@ -554,6 +565,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 helptext={intl.formatMessage({defaultMessage: 'Register this redirect URI in the remote MCP server\u2019s OAuth application so authorization callbacks return to this Mattermost instance.'})}
                             />
                         </ItemList>
+                        <MCPAppsSection
+                            value={config.apps ?? defaultMCPAppsConfig}
+                            onChange={(apps) => onChange({...config, apps})}
+                        />
                         <ServersList>
                             {!Array.isArray(normalizedServers) || normalizedServers.length < 1 ? (
                                 <EmptyState>

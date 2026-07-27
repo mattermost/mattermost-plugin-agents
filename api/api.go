@@ -82,7 +82,10 @@ type MCPClientManager interface {
 // ConfigStore provides read/write access to the plugin configuration in the database.
 type ConfigStore interface {
 	GetConfig() (*config.Config, error)
-	SaveConfig(cfg config.Config) error
+	// SaveConfig persists cfg and returns the previous active config (nil if
+	// none). The prior value is read under the same serialized save lock so
+	// audit transitions are exact.
+	SaveConfig(cfg config.Config) (previous *config.Config, err error)
 }
 
 // AgentStore provides CRUD access to user-created agents in the database.
@@ -294,6 +297,13 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 			a.delegateToMCPHandler(gc, a.mcpHandlers.MCPHandler)
 		})
 	}
+
+	// MCP Apps sandbox page — insecure same-origin fallback (master spec D1).
+	// Deliberately registered BEFORE MattermostAuthorizationRequired: the
+	// page is loaded by an iframe with no Mattermost session context. It
+	// serves only static templated HTML and is gated per-request on the
+	// explicit admin opt-in inside the handler.
+	router.GET(mcpAppsSameOriginSandboxPath, a.handleGetSameOriginSandbox)
 
 	router.Use(a.MattermostAuthorizationRequired)
 
@@ -519,6 +529,7 @@ type AIBotsResponse struct {
 	Bots             []AIBotInfo `json:"bots"`
 	SearchEnabled    bool        `json:"searchEnabled"`
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	MCPApps          MCPAppsInfo `json:"mcpApps"`
 }
 
 // getAIBotsForUser returns all AI bots available to a user
@@ -583,6 +594,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		Bots:             bots,
 		SearchEnabled:    searchEnabled,
 		AllowUnsafeLinks: a.config.AllowUnsafeLinks(),
+		MCPApps:          a.resolveMCPAppsInfo(),
 	})
 }
 
