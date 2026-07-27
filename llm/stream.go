@@ -25,6 +25,10 @@ const (
 	EventTypeAnnotations
 	// EventTypeUsage represents token usage data
 	EventTypeUsage
+	// EventTypeFiles carries the IDs of files created during the turn that
+	// should be attached to the response post. Value is []string of
+	// Mattermost file IDs.
+	EventTypeFiles
 )
 
 // TokenUsage represents token usage statistics for an LLM request. Cached,
@@ -100,7 +104,7 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 		case EventTypeToolCalls:
 			// Tool calls may appear as progress events from auto-run tools; skip them.
 			continue
-		case EventTypeAnnotations, EventTypeReasoning, EventTypeReasoningEnd, EventTypeUsage:
+		case EventTypeAnnotations, EventTypeReasoning, EventTypeReasoningEnd, EventTypeUsage, EventTypeFiles:
 			// These event types are ignored in ReadAll, continue reading text
 			continue
 		}

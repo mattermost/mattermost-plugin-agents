@@ -157,6 +157,66 @@ func TestContextObserveMCPDynamicToolEventBotLabelFallbacks(t *testing.T) {
 	}
 }
 
+func TestContextCreatedFiles(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []CreatedFile
+		want  []CreatedFile
+	}{
+		{
+			name:  "no files added",
+			files: nil,
+			want:  nil,
+		},
+		{
+			name:  "single file",
+			files: []CreatedFile{{ID: "file1", Name: "report.md"}},
+			want:  []CreatedFile{{ID: "file1", Name: "report.md"}},
+		},
+		{
+			name: "order preserved",
+			files: []CreatedFile{
+				{ID: "file1", Name: "a.txt"},
+				{ID: "file2", Name: "b.txt"},
+				{ID: "file3", Name: "c.txt"},
+			},
+			want: []CreatedFile{
+				{ID: "file1", Name: "a.txt"},
+				{ID: "file2", Name: "b.txt"},
+				{ID: "file3", Name: "c.txt"},
+			},
+		},
+		{
+			name: "empty ID skipped",
+			files: []CreatedFile{
+				{ID: "", Name: "no-id.txt"},
+				{ID: "file1", Name: "a.txt"},
+			},
+			want: []CreatedFile{{ID: "file1", Name: "a.txt"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Context{}
+			for _, f := range tt.files {
+				c.AddCreatedFile(f)
+			}
+			assert.Equal(t, tt.want, c.CreatedFilesList())
+		})
+	}
+}
+
+func TestContextCreatedFilesNilReceiver(t *testing.T) {
+	var c *Context
+	c.AddCreatedFile(CreatedFile{ID: "file1", Name: "a.txt"})
+	assert.Nil(t, c.CreatedFilesList())
+
+	var rt *ToolRuntimeContext
+	rt.AddCreatedFile(CreatedFile{ID: "file1", Name: "a.txt"})
+	assert.Nil(t, rt.CreatedFilesList())
+}
+
 func TestContextMCPDynamicSearchLoadCallSuccessState(t *testing.T) {
 	c := &Context{}
 

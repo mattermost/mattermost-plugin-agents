@@ -77,6 +77,19 @@ type ToolCatalogContext struct {
 	// pending tool approvals. Tools that require a user response (see
 	// Tool.UserInteraction) are only cataloged when this is set.
 	InteractiveUserPresent bool
+
+	// ResponseFilesSupported indicates the current flow attaches
+	// ToolRuntime.CreatedFiles to the bot's streamed response post, so
+	// file-creating response tools (CreateFile) may be cataloged. Only
+	// conversation entry points that stream a response post set this.
+	ResponseFilesSupported bool
+}
+
+// CreatedFile identifies a file created by a tool during this turn for
+// attachment to the response post.
+type CreatedFile struct {
+	ID   string
+	Name string
 }
 
 // ToolRuntimeContext holds request-scoped tool runtime state that should not be
@@ -87,6 +100,10 @@ type ToolRuntimeContext struct {
 	MCPDynamicToolSearchUsed                bool
 	MCPDynamicLoadedToolNames               map[string]bool
 	MCPDynamicSearchLoadCallSuccessRecorded map[string]bool
+
+	// CreatedFiles collects files created by tools during this turn for
+	// attachment to the response post.
+	CreatedFiles []CreatedFile
 }
 
 type MCPDynamicToolTelemetry interface {
@@ -217,6 +234,37 @@ func (t *ToolRuntimeContext) ShouldRecordMCPDynamicSearchLoadCallSuccess(name st
 	}
 	t.MCPDynamicSearchLoadCallSuccessRecorded[name] = true
 	return true
+}
+
+// AddCreatedFile records a file created by a tool during this turn so it can
+// be attached to the response post. Files with an empty ID are skipped.
+func (c *Context) AddCreatedFile(f CreatedFile) {
+	if c == nil {
+		return
+	}
+	c.ToolRuntime.AddCreatedFile(f)
+}
+
+func (t *ToolRuntimeContext) AddCreatedFile(f CreatedFile) {
+	if t == nil || f.ID == "" {
+		return
+	}
+	t.CreatedFiles = append(t.CreatedFiles, f)
+}
+
+// CreatedFilesList returns the files created by tools during this turn.
+func (c *Context) CreatedFilesList() []CreatedFile {
+	if c == nil {
+		return nil
+	}
+	return c.ToolRuntime.CreatedFilesList()
+}
+
+func (t *ToolRuntimeContext) CreatedFilesList() []CreatedFile {
+	if t == nil {
+		return nil
+	}
+	return t.CreatedFiles
 }
 
 func (c Context) String() string {

@@ -1635,3 +1635,61 @@ func (_c *MockClient_UpdatePost_Call) RunAndReturn(run func(post *model.Post) er
 	_c.Call.Return(run)
 	return _c
 }
+
+// UploadFile provides a mock function for the type MockClient
+func (_mock *MockClient) UploadFile(content io.Reader, fileName string, channelID string) (*model.FileInfo, error) {
+	ret := _mock.Called(content, fileName, channelID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UploadFile")
+	}
+
+	var r0 *model.FileInfo
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(io.Reader, string, string) (*model.FileInfo, error)); ok {
+		return returnFunc(content, fileName, channelID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(io.Reader, string, string) *model.FileInfo); ok {
+		r0 = returnFunc(content, fileName, channelID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.FileInfo)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(io.Reader, string, string) error); ok {
+		r1 = returnFunc(content, fileName, channelID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClient_UploadFile_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UploadFile'
+type MockClient_UploadFile_Call struct {
+	*mock.Call
+}
+
+// UploadFile is a helper method to define mock.On call
+//   - content
+//   - fileName
+//   - channelID
+func (_e *MockClient_Expecter) UploadFile(content interface{}, fileName interface{}, channelID interface{}) *MockClient_UploadFile_Call {
+	return &MockClient_UploadFile_Call{Call: _e.mock.On("UploadFile", content, fileName, channelID)}
+}
+
+func (_c *MockClient_UploadFile_Call) Run(run func(content io.Reader, fileName string, channelID string)) *MockClient_UploadFile_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(io.Reader), args[1].(string), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *MockClient_UploadFile_Call) Return(fileInfo *model.FileInfo, err error) *MockClient_UploadFile_Call {
+	_c.Call.Return(fileInfo, err)
+	return _c
+}
+
+func (_c *MockClient_UploadFile_Call) RunAndReturn(run func(content io.Reader, fileName string, channelID string) (*model.FileInfo, error)) *MockClient_UploadFile_Call {
+	_c.Call.Return(run)
+	return _c
+}

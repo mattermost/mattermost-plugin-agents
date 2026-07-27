@@ -11,8 +11,6 @@ import (
 	"os/exec"
 	"strings"
 
-	sq "github.com/Masterminds/squirrel"
-
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
@@ -379,14 +377,7 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 }
 
 func (s *Service) updatePostWithFile(post *model.Post, fileinfo *model.FileInfo) error {
-	if _, err := s.db.ExecBuilder(s.db.Builder().
-		Update("FileInfo").
-		Set("PostId", post.Id).
-		Set("ChannelId", post.ChannelId).
-		Where(sq.And{
-			sq.Eq{"Id": fileinfo.Id},
-			sq.Eq{"PostId": ""},
-		})); err != nil {
+	if _, err := s.db.LinkFilesToPost([]string{fileinfo.Id}, post.Id, post.ChannelId); err != nil {
 		return fmt.Errorf("unable to update file info: %w", err)
 	}
 
