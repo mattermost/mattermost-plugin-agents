@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestStreamToPostFilesEvent covers the EventTypeFiles handling: the
-// conversations layer has already linked the FileInfo rows, so the streaming
-// layer only merges the IDs into the post so the final UpdatePost persists
-// the attachment list, and a files-only reply counts as a valid response.
+// TestStreamToPostFilesEvent covers the EventTypeFiles handling: file IDs
+// created during the turn are merged into the post so the final UpdatePost
+// attaches them server-side (the server strips any ID that is not attachable),
+// and a files-only reply counts as a valid response.
 func TestStreamToPostFilesEvent(t *testing.T) {
 	const (
 		postID         = "post-id"

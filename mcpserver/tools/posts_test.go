@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -301,6 +303,161 @@ func TestToolCreatePostWithInlineFiles(t *testing.T) {
 			assert.Equal(t, uploadedIDs, []string(postedPost.FileIds))
 			assert.Contains(t, result, fmt.Sprintf("created and attached %d file(s)", len(tt.files)))
 		})
+	}
+}
+
+// TestPostToolsCombinedAttachmentCap pins the cap-before-upload ordering of the three
+// posting resolvers: when resolved legacy attachment IDs plus requested inline files
+// exceed the per-post cap, the resolver fails before any inline file is uploaded and
+// before any post is created. It also pins that the cap counts RESOLVED attachment
+// IDs: in remote mode attachments are skipped (zero IDs), so a full set of inline
+// files must still be accepted.
+func TestPostToolsCombinedAttachmentCap(t *testing.T) {
+	channelID := model.NewId()
+	teamID := model.NewId()
+	meID := model.NewId()
+	johnID := model.NewId()
+	aliceID := model.NewId()
+	bobID := model.NewId()
+
+	// Legacy attachments are served from the local data directory (local mode only).
+	legacyNames := []string{"legacy-0.txt", "legacy-1.txt", "legacy-2.txt"}
+	dataDir := t.TempDir()
+	for _, name := range legacyNames {
+		require.NoError(t, os.WriteFile(filepath.Join(dataDir, name), []byte("legacy"), 0600))
+	}
+	originalGetDataDirectory := GetDataDirectoryInternal
+	GetDataDirectoryInternal = func() (string, error) { return dataDir, nil }
+	t.Cleanup(func() { GetDataDirectoryInternal = originalGetDataDirectory })
+
+	// inlineNames mirrors the names produced by makeInlineFiles.
+	inlineNames := func(n int) []string {
+		names := make([]string, n)
+		for i := range names {
+			names[i] = fmt.Sprintf("file-%d.txt", i)
+		}
+		return names
+	}
+
+	resolvers := []struct {
+		name string
+		call func(p *MattermostToolProvider, mcpCtx *MCPToolContext, attachments []string, files []InlineFile) (string, error)
+	}{
+		{"create_post", func(p *MattermostToolProvider, mcpCtx *MCPToolContext, attachments []string, files []InlineFile) (string, error) {
+			return p.toolCreatePost(mcpCtx, CreatePostArgs{
+				ChannelID:          channelID,
+				ChannelDisplayName: "Town Square",
+				TeamDisplayName:    "Core Team",
+				Message:            "hello",
+				Attachments:        attachments,
+				Files:              files,
+			})
+		}},
+		{"dm", func(p *MattermostToolProvider, mcpCtx *MCPToolContext, attachments []string, files []InlineFile) (string, error) {
+			return p.toolDM(mcpCtx, DMArgs{Username: "john", Message: "hello", Attachments: attachments, Files: files})
+		}},
+		{"group_message", func(p *MattermostToolProvider, mcpCtx *MCPToolContext, attachments []string, files []InlineFile) (string, error) {
+			return p.toolGroupMessage(mcpCtx, GroupMessageArgs{Usernames: []string{"alice", "bob"}, Message: "hello", Attachments: attachments, Files: files})
+		}},
+	}
+
+	tests := []struct {
+		name        string
+		accessMode  AccessMode
+		attachments []string
+		inlineCount int
+		wantErr     string   // substring of the returned error; empty means success
+		wantUploads []string // exact filenames the upload endpoint must see, in order
+	}{
+		{
+			name:        "over the cap fails before any inline upload",
+			accessMode:  AccessModeLocal,
+			attachments: legacyNames,
+			inlineCount: 8,
+			wantErr:     "at most 10",
+			wantUploads: legacyNames,
+		},
+		{
+			name:        "remote-mode skipped attachments do not count against the cap",
+			accessMode:  AccessModeRemote,
+			attachments: legacyNames,
+			inlineCount: maxFilesPerPost,
+			wantUploads: inlineNames(maxFilesPerPost),
+		},
+	}
+
+	for _, resolver := range resolvers {
+		for _, tt := range tests {
+			t.Run(resolver.name+" "+tt.name, func(t *testing.T) {
+				var uploadedNames []string
+				var uploadedIDs []string
+				postHit := false
+				var postedPost model.Post
+
+				encode := func(w http.ResponseWriter, v any) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(v)
+				}
+
+				mux := http.NewServeMux()
+				mux.HandleFunc("/api/v4/channels/"+channelID, func(w http.ResponseWriter, _ *http.Request) {
+					encode(w, &model.Channel{Id: channelID, TeamId: teamID, DisplayName: "Town Square"})
+				})
+				mux.HandleFunc("/api/v4/teams/"+teamID, func(w http.ResponseWriter, _ *http.Request) {
+					encode(w, &model.Team{Id: teamID, DisplayName: "Core Team"})
+				})
+				mux.HandleFunc("/api/v4/users/me", func(w http.ResponseWriter, _ *http.Request) {
+					encode(w, &model.User{Id: meID, Username: "agent"})
+				})
+				mux.HandleFunc("/api/v4/users/username/john", func(w http.ResponseWriter, _ *http.Request) {
+					encode(w, &model.User{Id: johnID, Username: "john"})
+				})
+				mux.HandleFunc("/api/v4/users/username/alice", func(w http.ResponseWriter, _ *http.Request) {
+					encode(w, &model.User{Id: aliceID, Username: "alice"})
+				})
+				mux.HandleFunc("/api/v4/users/username/bob", func(w http.ResponseWriter, _ *http.Request) {
+					encode(w, &model.User{Id: bobID, Username: "bob"})
+				})
+				mux.HandleFunc("/api/v4/channels/direct", func(w http.ResponseWriter, _ *http.Request) {
+					encode(w, &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect})
+				})
+				mux.HandleFunc("/api/v4/channels/group", func(w http.ResponseWriter, _ *http.Request) {
+					encode(w, &model.Channel{Id: model.NewId(), Type: model.ChannelTypeGroup})
+				})
+				mux.HandleFunc("/api/v4/files", func(w http.ResponseWriter, r *http.Request) {
+					id := model.NewId()
+					uploadedNames = append(uploadedNames, r.URL.Query().Get("filename"))
+					uploadedIDs = append(uploadedIDs, id)
+					encode(w, &model.FileUploadResponse{FileInfos: []*model.FileInfo{{Id: id}}})
+				})
+				mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
+					postHit = true
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&postedPost))
+					postedPost.Id = model.NewId()
+					encode(w, &postedPost)
+				})
+
+				ts := httptest.NewServer(mux)
+				defer ts.Close()
+
+				provider := newTestProvider(t, ts.URL)
+				mcpCtx := &MCPToolContext{Ctx: t.Context(), Client: newTestClient(ts.URL), AccessMode: tt.accessMode}
+
+				result, err := resolver.call(provider, mcpCtx, tt.attachments, makeInlineFiles(tt.inlineCount))
+
+				if tt.wantErr != "" {
+					require.Error(t, err)
+					assert.Contains(t, err.Error(), tt.wantErr)
+					assert.False(t, postHit, "no post may be created when the combined cap is exceeded")
+				} else {
+					require.NoError(t, err)
+					assert.True(t, postHit, "post endpoint must be hit on success")
+					assert.Equal(t, uploadedIDs, []string(postedPost.FileIds))
+					assert.Contains(t, result, fmt.Sprintf("created and attached %d file(s)", tt.inlineCount))
+				}
+				assert.Equal(t, tt.wantUploads, uploadedNames, "upload endpoint must see exactly these filenames")
+			})
+		}
 	}
 }
 

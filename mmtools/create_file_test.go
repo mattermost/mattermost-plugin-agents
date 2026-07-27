@@ -119,6 +119,12 @@ func TestCreateFileResolverValidation(t *testing.T) {
 			wantResult: "file_name must be at most 255 characters",
 		},
 		{
+			name:       "256-rune multibyte file name is rejected",
+			llmCtx:     validChannelCtx,
+			args:       CreateFileArgs{FileName: strings.Repeat("é", 253) + ".md", Content: "hello"},
+			wantResult: "file_name must be at most 255 characters",
+		},
+		{
 			name:       "empty content",
 			llmCtx:     validChannelCtx,
 			args:       CreateFileArgs{FileName: "report.md", Content: ""},
@@ -187,6 +193,11 @@ func TestCreateFileResolverUpload(t *testing.T) {
 			name:         "surrounding whitespace is trimmed",
 			args:         CreateFileArgs{FileName: "  notes.txt  ", Content: "data"},
 			uploadedName: "notes.txt",
+		},
+		{
+			name:         "255-rune multibyte name is accepted because the limit counts characters, not bytes",
+			args:         CreateFileArgs{FileName: strings.Repeat("é", 252) + ".md", Content: "data"},
+			uploadedName: strings.Repeat("é", 252) + ".md",
 		},
 		{
 			name:         "upload error",

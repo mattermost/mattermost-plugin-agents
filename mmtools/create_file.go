@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -84,7 +85,7 @@ func resolveCreateFile(client mmapi.Client, llmCtx *llm.Context, argsGetter llm.
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 		return "file_name must be a plain file name with an optional extension, e.g. report.md or data.csv", errors.New("invalid CreateFile file name")
 	}
-	if len(name) > maxCreateFileNameLength {
+	if utf8.RuneCountInString(name) > maxCreateFileNameLength {
 		return fmt.Sprintf("file_name must be at most %d characters", maxCreateFileNameLength), errors.New("CreateFile file name too long")
 	}
 

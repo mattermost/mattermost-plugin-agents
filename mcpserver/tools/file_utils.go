@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/httpservice"
@@ -304,10 +305,10 @@ func uploadInlineFiles(ctx context.Context, client *model.Client4, channelID str
 	fileIDs := make([]string, 0, len(files))
 	for _, file := range files {
 		name := filepath.Base(strings.TrimSpace(file.Name))
-		if name == "" || name == "." || name == ".." || name == string(filepath.Separator) {
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 			return nil, fmt.Errorf("invalid file name %q: provide a plain file name with an extension such as 'report.md'", file.Name)
 		}
-		if len(name) > 255 {
+		if utf8.RuneCountInString(name) > 255 {
 			return nil, fmt.Errorf("file name %q is too long: file names must be at most 255 characters", name)
 		}
 		if file.Content == "" {
@@ -330,17 +331,28 @@ func uploadInlineFiles(ctx context.Context, client *model.Client4, channelID str
 	return fileIDs, nil
 }
 
-// mergePostFileIDs combines inline-created file IDs with legacy attachment file IDs,
-// enforcing the per-post attachment cap before the post is created.
+// checkCombinedFileCap returns a model-facing error when resolved legacy attachment
+// IDs plus requested inline files would exceed the per-post attachment cap. Resolvers
+// call it after resolving legacy attachments but before uploading any inline file, so
+// a cap violation does not orphan already-uploaded files.
+func checkCombinedFileCap(attachmentIDCount, inlineFileCount int) error {
+	if total := attachmentIDCount + inlineFileCount; total > maxFilesPerPost {
+		return fmt.Errorf("too many attachments: %d files and attachments combined but a post can have at most %d - reduce the number of inline files or attachments", total, maxFilesPerPost)
+	}
+	return nil
+}
+
+// mergePostFileIDs combines inline-created file IDs with legacy attachment file IDs.
+// Resolvers enforce the per-post cap via checkCombinedFileCap before uploading inline
+// files; the re-check here is a defensive invariant.
 func mergePostFileIDs(inlineIDs, attachmentIDs []string) ([]string, error) {
-	total := len(inlineIDs) + len(attachmentIDs)
-	if total > maxFilesPerPost {
-		return nil, fmt.Errorf("too many attachments: %d files and attachments combined but a post can have at most %d - reduce the number of inline files or attachments", total, maxFilesPerPost)
+	if err := checkCombinedFileCap(len(attachmentIDs), len(inlineIDs)); err != nil {
+		return nil, err
 	}
 	if len(inlineIDs) == 0 {
 		return attachmentIDs, nil
 	}
-	return append(append(make([]string, 0, total), inlineIDs...), attachmentIDs...), nil
+	return append(append(make([]string, 0, len(inlineIDs)+len(attachmentIDs)), inlineIDs...), attachmentIDs...), nil
 }
 
 // inlineFilesMessage returns the success-message suffix for created inline files.

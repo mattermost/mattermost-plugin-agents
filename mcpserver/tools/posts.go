@@ -336,16 +336,21 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 			args.TeamDisplayName, channel.TeamId, team.DisplayName)
 	}
 
-	// Create LLM-authored inline files first; a failure aborts the post because a post
-	// missing files the model explicitly asked to create is broken output. (The legacy
-	// local-only attachments handling below intentionally stays best-effort.)
+	// Resolve legacy local-only attachments first (best-effort; in remote mode they are
+	// skipped and yield no IDs), then enforce the combined attachment cap before creating
+	// any inline files so a cap violation does not orphan already-uploaded files.
+	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
+
+	if err := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); err != nil {
+		return "", err
+	}
+
+	// Create LLM-authored inline files; a failure aborts the post because a post
+	// missing files the model explicitly asked to create is broken output.
 	inlineFileIDs, err := uploadInlineFiles(ctx, client, args.ChannelID, args.Files)
 	if err != nil {
 		return "", err
 	}
-
-	// Upload files if specified
-	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
 
 	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
 	if err != nil {
@@ -465,15 +470,21 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		return "", fmt.Errorf("error creating direct channel: %w", err)
 	}
 
-	// Create LLM-authored inline files first; a failure aborts the post because a post
+	// Resolve legacy local-only attachments first (best-effort; in remote mode they are
+	// skipped and yield no IDs), then enforce the combined attachment cap before creating
+	// any inline files so a cap violation does not orphan already-uploaded files.
+	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
+
+	if err := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); err != nil {
+		return "", err
+	}
+
+	// Create LLM-authored inline files; a failure aborts the post because a post
 	// missing files the model explicitly asked to create is broken output.
 	inlineFileIDs, err := uploadInlineFiles(ctx, client, dmChannel.Id, args.Files)
 	if err != nil {
 		return "", err
 	}
-
-	// Upload files if specified
-	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
 
 	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
 	if err != nil {
@@ -549,14 +560,21 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		return "", fmt.Errorf("error creating group channel: %w", err)
 	}
 
-	// Create LLM-authored inline files first; a failure aborts the post because a post
+	// Resolve legacy local-only attachments first (best-effort; in remote mode they are
+	// skipped and yield no IDs), then enforce the combined attachment cap before creating
+	// any inline files so a cap violation does not orphan already-uploaded files.
+	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
+
+	if err := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); err != nil {
+		return "", err
+	}
+
+	// Create LLM-authored inline files; a failure aborts the post because a post
 	// missing files the model explicitly asked to create is broken output.
 	inlineFileIDs, err := uploadInlineFiles(ctx, client, gmChannel.Id, args.Files)
 	if err != nil {
 		return "", err
 	}
-
-	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
 
 	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
 	if err != nil {

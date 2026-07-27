@@ -131,10 +131,26 @@ func TestUploadInlineFiles(t *testing.T) {
 			wantErrContains: []string{"255"},
 		},
 		{
+			name:          "255-rune multibyte name accepted (limit counts characters, not bytes)",
+			files:         []InlineFile{{Name: strings.Repeat("é", 252) + ".md", Content: "x"}},
+			wantFilenames: []string{strings.Repeat("é", 252) + ".md"},
+			wantContents:  []string{"x"},
+		},
+		{
+			name:            "256-rune multibyte name rejected",
+			files:           []InlineFile{{Name: strings.Repeat("é", 253) + ".md", Content: "x"}},
+			wantErrContains: []string{"255"},
+		},
+		{
 			name:          "path traversal uploads under base name",
 			files:         []InlineFile{{Name: "../../etc/passwd", Content: "root"}},
 			wantFilenames: []string{"passwd"},
 			wantContents:  []string{"root"},
+		},
+		{
+			name:            "backslash traversal rejected",
+			files:           []InlineFile{{Name: `..\..\evil.md`, Content: "x"}},
+			wantErrContains: []string{"invalid file name"},
 		},
 		{
 			name:            "empty content rejected",
