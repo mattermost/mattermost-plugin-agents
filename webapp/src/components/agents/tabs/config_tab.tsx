@@ -63,13 +63,7 @@ const ConfigTab = (props: Props) => {
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState('');
 
-    /** Captures `reasoningEnabled` before turning structured output on so we can restore it when structured output is turned off. */
-    const reasoningBeforeStructuredRef = useRef<boolean | null>(null);
     const prevServiceIdRef = useRef<string | null>(null);
-
-    useEffect(() => {
-        reasoningBeforeStructuredRef.current = null;
-    }, [draft.serviceId]);
 
     // Reset provider-specific fields when the AI service changes (avoid stale model / native tools / reasoning).
     // Skip when `prev` is empty: the edit modal can render once with a stale empty draft before `agentToDraft`
@@ -246,17 +240,10 @@ const ConfigTab = (props: Props) => {
         intl.formatMessage({defaultMessage: 'Use service default'});
 
     const handleReasoningBotChange = (bot: LLMBotConfig) => {
-        const re = bot.reasoningEnabled ?? true;
-        let structured = bot.structuredOutputEnabled ?? false;
-        if (re && structured) {
-            structured = false;
-            reasoningBeforeStructuredRef.current = null;
-        }
         onChange({
-            reasoningEnabled: re,
+            reasoningEnabled: bot.reasoningEnabled ?? true,
             reasoningEffort: bot.reasoningEffort || 'medium',
             thinkingBudget: bot.thinkingBudget ?? 0,
-            structuredOutputEnabled: structured,
         });
     };
 
@@ -449,36 +436,19 @@ const ConfigTab = (props: Props) => {
                                             <BooleanItem
                                                 label={intl.formatMessage({defaultMessage: 'Structured Output'})}
                                                 value={draft.structuredOutputEnabled}
-                                                onChange={(to: boolean) => {
-                                                    if (isAnthropic && to) {
-                                                        reasoningBeforeStructuredRef.current = draft.reasoningEnabled;
-                                                        onChange({
-                                                            structuredOutputEnabled: true,
-                                                            reasoningEnabled: false,
-                                                        });
-                                                    } else if (isAnthropic) {
-                                                        const restore = reasoningBeforeStructuredRef.current;
-                                                        reasoningBeforeStructuredRef.current = null;
-                                                        onChange({
-                                                            structuredOutputEnabled: false,
-                                                            reasoningEnabled: restore === null ? true : restore,
-                                                        });
-                                                    } else {
-                                                        onChange({structuredOutputEnabled: to});
-                                                    }
-                                                }}
+                                                onChange={(to: boolean) => onChange({structuredOutputEnabled: to})}
                                                 helpText={isAnthropic ?
-                                                    intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Structured output and extended thinking cannot be used simultaneously.'}) :
+                                                    intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+).'}) :
                                                     intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
                                                 }
                                             />
-                                            {isAnthropic && draft.structuredOutputEnabled && (
+                                            {isAnthropic && draft.structuredOutputEnabled && draft.reasoningEnabled && (
                                                 <FormRow>
                                                     <span aria-hidden={true}/>
                                                     <StructuredOutputNote>
                                                         {intl.formatMessage({
                                                             defaultMessage:
-                                                                'Extended thinking is turned off while structured output is enabled (Anthropic does not support both at once). Turn structured output off to restore your previous extended thinking setting.',
+                                                                'Anthropic does not support extended thinking together with structured output. Requests that ask for structured JSON output will skip extended thinking; all other requests keep using it.',
                                                         })}
                                                     </StructuredOutputNote>
                                                 </FormRow>

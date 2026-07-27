@@ -1124,9 +1124,15 @@ type toolCallBuffer struct {
 	arguments strings.Builder
 }
 
+// thinkingBlockedBySchema reports whether extended thinking must be dropped
+// for this request: Anthropic rejects thinking combined with structured output.
+func (b *LLM) thinkingBlockedBySchema(cfg llm.LanguageModelConfig) bool {
+	return b.provider == schemas.Anthropic && cfg.JSONOutputFormat != nil
+}
+
 // buildChatReasoning creates a ChatReasoning configuration if reasoning is enabled.
 func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled {
+	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
 		return nil
 	}
 
@@ -1171,7 +1177,7 @@ func (b *LLM) calculateThinkingBudget(maxGeneratedTokens int) int {
 
 // convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
 func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostChatRequest {
-	messages := b.convertMessages(request.Posts)
+	messages := b.convertMessages(request.Posts, cfg)
 	tools := b.convertTools(request, cfg)
 
 	req := &schemas.BifrostChatRequest{
@@ -1198,6 +1204,9 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	if cfg.JSONOutputFormat != nil {
 		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
 	}
+	if b.promptCachingEnabled() {
+		params.CacheControl = &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral}
+	}
 	req.Params = params
 
 	// Attach fallback chain so Bifrost retries with alternative providers on failure.
@@ -1207,7 +1216,7 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 }
 
 // convertMessages converts llm.Post messages to Bifrost ChatMessage format.
-func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
+func (b *LLM) convertMessages(posts []llm.Post, cfg llm.LanguageModelConfig) []schemas.ChatMessage {
 	messages := make([]schemas.ChatMessage, 0, len(posts))
 
 	for _, post := range posts {
@@ -1255,7 +1264,11 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 			// signature arrived, we persist partial reasoning for display only; do
 			// not replay it to Anthropic as an unsigned thinking block. Other
 			// providers may accept unsigned reasoning, so preserve it for them.
-			if post.Reasoning != "" && (b.provider != schemas.Anthropic || post.ReasoningSignature != "") {
+			// Also skip replay when thinking is disabled for this request:
+			// Anthropic rejects input thinking blocks when thinking is off.
+			if post.Reasoning != "" &&
+				(b.provider != schemas.Anthropic || post.ReasoningSignature != "") &&
+				!b.thinkingBlockedBySchema(cfg) {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}
@@ -1590,6 +1603,15 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.useResponsesAPI {
 		return true
 	}
+
+	// Direct OpenAI always sets useResponsesAPI during service construction.
+	// A false value for OpenAI-base or Azure providers therefore represents an
+	// explicit operator choice to use Chat Completions and must not be overridden
+	// by native tool configuration.
+	if b.provider == schemas.OpenAI || b.provider == schemas.Azure {
+		return false
+	}
+
 	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
 	}
@@ -1597,6 +1619,27 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 		return true
 	}
 	return false
+}
+
+// promptCachingEnabled reports whether to request Anthropic automatic prompt
+// caching (top-level cache_control). Anthropic caches nothing unless asked,
+// so without this every turn re-bills the full system prompt, tool schemas,
+// and history at the base input rate. OpenAI-family and Gemini cache prompt
+// prefixes automatically and need no marker. Bifrost forwards the field
+// unstripped to non-Anthropic providers, so it is only attached when the
+// primary and every fallback are Anthropic; a mixed chain would 400 the
+// fallback request.
+func (b *LLM) promptCachingEnabled() bool {
+	if b.provider != schemas.Anthropic {
+		return false
+	}
+	for _, fb := range b.fallbacks {
+		if fb.Provider != schemas.Anthropic &&
+			!strings.HasPrefix(string(fb.Provider), string(schemas.Anthropic)+"::") {
+			return false
+		}
+	}
+	return true
 }
 
 // isNativeToolEnabled checks if a native tool is enabled by name.
@@ -1810,7 +1853,7 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 
 // buildResponsesReasoning creates a ResponsesParametersReasoning configuration if reasoning is enabled.
 func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.ResponsesParametersReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled {
+	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
 		return nil
 	}
 
@@ -1888,6 +1931,13 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 			return nil, fmt.Errorf("failed to build responses text config: %w", err)
 		}
 		params.Text = textConfig
+	}
+	// The Anthropic provider reads cache_control from ExtraParams on the
+	// Responses path (there is no typed field on ResponsesParameters).
+	if b.promptCachingEnabled() {
+		params.ExtraParams = map[string]interface{}{
+			"cache_control": &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral},
+		}
 	}
 	req.Params = params
 

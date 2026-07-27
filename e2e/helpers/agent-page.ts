@@ -173,7 +173,7 @@ export class AgentPageHelper {
     }
 
     getStructuredOutputNote(): Locator {
-        return this.page.getByText('Extended thinking is turned off while structured output is enabled', {exact: false});
+        return this.page.getByText('Requests that ask for structured JSON output will skip extended thinking', {exact: false});
     }
 
     getAdvancedConfigurationToggle(): Locator {

@@ -356,9 +356,11 @@ const ToolCard: React.FC<ToolCardProps> = ({
     const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
-    const showDecisionButtons = Boolean(onApprove && onReject);
-    const showProcessingSpinner = isProcessing || isPending || isAccepted;
     const isResultApprovalStage = approvalStage === 'result';
+    const showDecisionButtons = Boolean(onApprove && onReject) &&
+        (isResultApprovalStage ||
+            (approvalStage === 'call' && isPending && !tool.would_auto_execute));
+    const showProcessingSpinner = isProcessing || isPending || isAccepted;
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
 
     // Tool-call cards lack server context, so strip the pluginmcp prefix

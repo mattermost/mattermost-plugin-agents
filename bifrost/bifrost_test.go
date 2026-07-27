@@ -183,6 +183,21 @@ func TestBuildChatReasoning(t *testing.T) {
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
 			expectNil:        true,
 		},
+		{
+			name:             "Anthropic with JSON schema returns nil",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			expectNil:        true,
+		},
+		{
+			name:             "Gemini with JSON schema keeps reasoning",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkEffort:      Ptr("high"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -212,10 +227,18 @@ func TestBuildChatReasoning(t *testing.T) {
 }
 
 func TestConvertMessagesReasoningDetails(t *testing.T) {
+	signedAnthropicPosts := []llm.Post{{
+		Role:               llm.PostRoleBot,
+		Message:            "response",
+		Reasoning:          "thinking",
+		ReasoningSignature: "sig123",
+	}}
+
 	tests := []struct {
 		name              string
 		provider          schemas.ModelProvider
 		posts             []llm.Post
+		cfg               llm.LanguageModelConfig
 		expectedLen       int
 		expectedReasoning string
 		expectedSignature string
@@ -244,14 +267,25 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 			expectedReasoning: "partial thinking",
 		},
 		{
-			name:     "includes signed reasoning",
-			provider: schemas.Anthropic,
-			posts: []llm.Post{{
-				Role:               llm.PostRoleBot,
-				Message:            "response",
-				Reasoning:          "thinking",
-				ReasoningSignature: "sig123",
-			}},
+			name:              "includes signed reasoning",
+			provider:          schemas.Anthropic,
+			posts:             signedAnthropicPosts,
+			expectedLen:       1,
+			expectedReasoning: "thinking",
+			expectedSignature: "sig123",
+		},
+		{
+			name:        "skips signed reasoning for Anthropic when request has JSON schema",
+			provider:    schemas.Anthropic,
+			posts:       signedAnthropicPosts,
+			cfg:         llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			expectedLen: 1,
+		},
+		{
+			name:              "keeps reasoning for non-Anthropic when request has JSON schema",
+			provider:          schemas.OpenAI,
+			posts:             signedAnthropicPosts,
+			cfg:               llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
 			expectedLen:       1,
 			expectedReasoning: "thinking",
 			expectedSignature: "sig123",
@@ -262,7 +296,7 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
 
-			messages := b.convertMessages(tt.posts)
+			messages := b.convertMessages(tt.posts, tt.cfg)
 
 			require.Len(t, messages, tt.expectedLen)
 			if tt.expectedReasoning == "" {
@@ -334,6 +368,89 @@ func TestConvertToBifrostRequestOpus47Reasoning(t *testing.T) {
 		"Opus 4.7 must use thinking.type:adaptive; thinking.type:enabled is rejected by the API")
 	assert.Nil(t, result.Thinking.BudgetTokens,
 		"Opus 4.7 does not accept budget_tokens alongside adaptive thinking")
+}
+
+// TestPromptCaching verifies that automatic prompt caching (top-level
+// cache_control) is requested for Anthropic and reaches the Anthropic wire
+// request, but is never attached for other providers or for Anthropic with
+// non-Anthropic fallbacks (where the marker would 400 the fallback request).
+func TestPromptCaching(t *testing.T) {
+	tests := []struct {
+		name      string
+		provider  schemas.ModelProvider
+		fallbacks []schemas.Fallback
+		want      bool
+	}{
+		{
+			name:     "anthropic without fallbacks",
+			provider: schemas.Anthropic,
+			want:     true,
+		},
+		{
+			name:      "anthropic with anthropic custom-provider fallback",
+			provider:  schemas.Anthropic,
+			fallbacks: []schemas.Fallback{{Provider: customProviderName(schemas.Anthropic, "svc2")}},
+			want:      true,
+		},
+		{
+			name:      "anthropic with openai fallback",
+			provider:  schemas.Anthropic,
+			fallbacks: []schemas.Fallback{{Provider: schemas.OpenAI}},
+			want:      false,
+		},
+		{
+			name:     "openai",
+			provider: schemas.OpenAI,
+			want:     false,
+		},
+		{
+			name:     "bedrock",
+			provider: schemas.Bedrock,
+			want:     false,
+		},
+	}
+
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{
+			{Role: llm.PostRoleSystem, Message: "system prompt"},
+			{Role: llm.PostRoleUser, Message: "hello"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: tt.provider, fallbacks: tt.fallbacks}
+			cfg := llm.LanguageModelConfig{Model: "test-model", MaxGeneratedTokens: 100}
+
+			chatReq := b.convertToBifrostRequest(request, cfg)
+			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+			require.NoError(t, err)
+
+			if !tt.want {
+				assert.Nil(t, chatReq.Params.CacheControl)
+				assert.NotContains(t, respReq.Params.ExtraParams, "cache_control")
+				return
+			}
+
+			require.NotNil(t, chatReq.Params.CacheControl)
+			assert.Equal(t, schemas.CacheControlTypeEphemeral, chatReq.Params.CacheControl.Type)
+			require.Contains(t, respReq.Params.ExtraParams, "cache_control")
+
+			// Feed both requests through bifrost's Anthropic converters to
+			// confirm the marker survives onto the wire request.
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			wireChat, err := anthropic.ToAnthropicChatRequest(ctx, chatReq)
+			require.NoError(t, err)
+			require.NotNil(t, wireChat.CacheControl)
+			assert.Equal(t, schemas.CacheControlTypeEphemeral, wireChat.CacheControl.Type)
+
+			wireResponses, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
+			require.NoError(t, err)
+			require.NotNil(t, wireResponses.CacheControl)
+			assert.Equal(t, schemas.CacheControlTypeEphemeral, wireResponses.CacheControl.Type)
+		})
+	}
 }
 
 func TestBuildResponsesReasoning(t *testing.T) {
@@ -445,6 +562,22 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
 			expectNil:        true,
 		},
+		{
+			name:             "Anthropic with JSON schema returns nil",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			expectNil:        true,
+		},
+		{
+			name:             "OpenAI with JSON schema keeps reasoning",
+			provider:         schemas.OpenAI,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkEffort:      Ptr("high"),
+			checkSummary:     Ptr("auto"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -538,24 +671,24 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 		expected           bool
 	}{
 		{
-			name:               "native tools configured returns true",
+			name:               "OpenAI-compatible native tools do not override disabled Responses API",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
-			expected:           true,
+			expected:           false,
 		},
 		{
-			name:               "NativeWebSearchAllowed with web_search enabled returns true",
+			name:               "OpenAI-compatible native web search does not override disabled Responses API",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
-			expected:           true,
+			expected:           false,
 		},
 		{
-			name:               "NativeWebSearchAllowed without web_search in tools returns true",
+			name:               "OpenAI-compatible request option does not override disabled Responses API",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
-			expected:           true,
+			expected:           false,
 		},
 		{
 			name:               "explicit responses API flag wins for direct OpenAI",
@@ -563,6 +696,19 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 			useResponsesAPI:    true,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{},
+			expected:           true,
+		},
+		{
+			name:               "Azure native tools do not override disabled Responses API",
+			provider:           schemas.Azure,
+			enabledNativeTools: []string{"web_search"},
+			expected:           false,
+		},
+		{
+			name:               "Azure uses Responses API when explicitly enabled",
+			provider:           schemas.Azure,
+			useResponsesAPI:    true,
+			enabledNativeTools: []string{"web_search"},
 			expected:           true,
 		},
 		{
@@ -677,7 +823,7 @@ func TestConvertMessagesReasoning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
-			messages := b.convertMessages(tt.posts)
+			messages := b.convertMessages(tt.posts, llm.LanguageModelConfig{})
 			require.True(t, len(messages) > tt.checkMessageIndex)
 
 			msg := messages[tt.checkMessageIndex]
@@ -721,7 +867,7 @@ func TestConvertMessagesEmptyToolResult(t *testing.T) {
 			Result:    "",
 		}},
 	}}
-	messages := b.convertMessages(posts)
+	messages := b.convertMessages(posts, llm.LanguageModelConfig{})
 	var toolMsg *schemas.ChatMessage
 	for i := range messages {
 		if messages[i].Role == schemas.ChatMessageRoleTool {
@@ -1600,6 +1746,55 @@ func chatCompletionSSE(w http.ResponseWriter, content string) {
 	fmt.Fprintf(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":null}]}\n\n", content)
 	fmt.Fprint(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
 	fmt.Fprint(w, "data: [DONE]\n\n")
+}
+
+func TestOpenAICompatibleResponsesToggleIsHardRoutingGate(t *testing.T) {
+	var chatHit, responsesHit atomic.Bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			chatHit.Store(true)
+			chatCompletionSSE(w, "from-chat-completions")
+		case "/v1/responses":
+			responsesHit.Store(true)
+			http.Error(w, `{"error":"ROUTE NOT SUPPORTED"}`, http.StatusUnprocessableEntity)
+		default:
+			http.Error(w, "unexpected path", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	service := llm.ServiceConfig{
+		ID:              "scaleway",
+		Type:            llm.ServiceTypeOpenAICompatible,
+		APIKey:          "key",
+		APIURL:          server.URL,
+		DefaultModel:    "gemma",
+		UseResponsesAPI: false,
+	}
+	bot := llm.BotConfig{
+		ID:                 "bot-1",
+		ServiceID:          service.ID,
+		DisableTools:       true,
+		EnabledNativeTools: []string{"web_search"},
+	}
+
+	llmInstance, err := NewFromServiceConfig(service, bot, nil)
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(
+		context.Background(),
+		llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}}},
+		llm.WithToolsDisabled(),
+		llm.WithNativeWebSearchAllowed(),
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "from-chat-completions", result)
+	assert.True(t, chatHit.Load(), "request must use /v1/chat/completions")
+	assert.False(t, responsesHit.Load(), "request must not use /v1/responses")
 }
 
 // TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint is the

@@ -243,7 +243,8 @@ func TestBasicIndexAndSearchMechanics(t *testing.T) {
 	}
 }
 
-// TestReindexWithDimensionMismatch tests behavior when dimension changes between indexes
+// TestReindexWithDimensionMismatch verifies Full Reindex Clear recreates the
+// pgvector table when configured dimensions change.
 func TestReindexWithDimensionMismatch(t *testing.T) {
 	db := testDB(t)
 	defer cleanupDB(t, db)
@@ -285,26 +286,15 @@ func TestReindexWithDimensionMismatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, results)
 
-	// Now attempt to create a new search system with different dimensions
-	// This simulates a model configuration change
-	// The pgvector table already exists with 64 dimensions, so this should fail
-	// when trying to store new embeddings with different dimensions
-
-	// First, clear the index to simulate a reindex scenario
-	err = search64.Clear(ctx)
+	// Simulate a config change: new search at 128 dims, then Full Reindex Clear.
+	search128 := createFullSearchSystem(t, db, 128)
+	err = search128.Clear(ctx)
 	require.NoError(t, err)
 
-	// Verify index is cleared
 	var count int
 	err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "Index should be empty after clear")
-
-	// The vector store was created with 64 dimensions and the table column is fixed
-	// A proper reindex requires creating a new vector store with correct dimensions
-
-	// Create search with 128 dimensions - this will fail because the table column is 64 dims
-	search128 := createFullSearchSystem(t, db, 128)
 
 	doc128 := embeddings.PostDocument{
 		PostID:    "post2",
@@ -315,11 +305,20 @@ func TestReindexWithDimensionMismatch(t *testing.T) {
 		Content:   "New content with different dimensions",
 	}
 
-	// This should error because embedding dimensions don't match table
 	addTestPost(t, db, "post2", "user1", "channel1", "New content with different dimensions", now+1000)
 	err = search128.Store(ctx, []embeddings.PostDocument{doc128})
-	assert.Error(t, err, "Storing with mismatched dimensions should fail")
-	assert.Contains(t, err.Error(), "dimensions", "Error should mention dimension mismatch")
+	require.NoError(t, err, "Store after dimension-aware Clear should succeed")
+
+	err = db.Get(&storedDim, "SELECT vector_dims(embedding) FROM llm_posts_embeddings WHERE post_id = 'post2'")
+	require.NoError(t, err)
+	assert.Equal(t, 128, storedDim)
+
+	results, err = search128.Search(ctx, "different dimensions", embeddings.SearchOptions{
+		Limit:  5,
+		UserID: "user1",
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, results)
 }
 
 // Note: Semantic relevance testing with real embeddings is in search/search_eval_test.go
