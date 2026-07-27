@@ -29,14 +29,23 @@ const LoopInLink = styled.a<{$pending: boolean}>`
     }
 `;
 
+// Reminders are delivered as ephemeral posts.
+const EphemeralPostType = 'system_ephemeral';
+
+// Props are decoded JSON, so a field declared as a string can hold any value.
+function stringProp(value: unknown): string {
+    return typeof value === 'string' ? value : '';
+}
+
 interface Props {
     post: {
         id: string;
+        type?: string;
         message: string;
         props?: {
-            bot_username?: string;
-            bot_display_name?: string;
-            target_post_id?: string;
+            bot_username?: unknown;
+            bot_display_name?: unknown;
+            target_post_id?: unknown;
         };
     };
 }
@@ -44,21 +53,23 @@ interface Props {
 type LoopInStatus = 'idle' | 'pending' | 'done' | 'error';
 
 export const AgentMentionReminderPost = ({post}: Props) => {
-    const botUsername = post.props?.bot_username ?? '';
-    const botDisplayName = post.props?.bot_display_name?.trim() || botUsername;
+    const botUsername = stringProp(post.props?.bot_username);
+    const botDisplayName = stringProp(post.props?.bot_display_name).trim() || botUsername;
     const targetPostId = post.props?.target_post_id ?? post.id;
+    const loopInPostId = isValidId(targetPostId) ? targetPostId : '';
+    const canLoopIn = post.type === EphemeralPostType && botUsername !== '' && loopInPostId !== '';
 
     const [status, setStatus] = useState<LoopInStatus>('idle');
     const pending = status === 'pending';
 
     const onClick = async (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
-        if (pending || status === 'done' || !botUsername || !isValidId(targetPostId)) {
+        if (pending || status === 'done' || !canLoopIn) {
             return;
         }
         setStatus('pending');
         try {
-            await doLoopInAgent(targetPostId, botUsername);
+            await doLoopInAgent(loopInPostId, botUsername);
             setStatus('done');
         } catch (err) {
             console.error('Failed to loop in agent:', err); // eslint-disable-line no-console
@@ -66,7 +77,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         }
     };
 
-    if (!botUsername || !isValidId(targetPostId)) {
+    if (!canLoopIn) {
         return (
             <Hint>{post.message}</Hint>
         );

@@ -58,6 +58,12 @@ jest.mock('../tool_approval_set', () => ({
     default: () => null,
 }));
 
+// SearchSources renders this for every source; stub it so the source list
+// itself stays real.
+jest.mock('../post_preview', () => ({
+    PostPreview: () => null,
+}));
+
 const mockUseSelector = useSelector as unknown as jest.Mock;
 const mockUseConversation = useConversation as jest.Mock;
 
@@ -165,5 +171,47 @@ describe('LLMBotPost streaming fallback rendering', () => {
             expect(screen.getByText(errorText)).toBeTruthy();
         });
         expect(screen.queryByText('Starting...')).toBeNull();
+    });
+});
+
+describe('LLMBotPost search results rendering', () => {
+    // Mattermost IDs are 26 characters of lowercase letters and digits.
+    const sourcePostId = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
+    const sourceChannelId = 'kq3n7vd1x9r4bz2m8sw6t5jhpc';
+    const sourceUserId = 'ehz9k3wqr7t1a5m2xd8pnb4jsc';
+
+    function renderWithSearchResults(searchResults: unknown) {
+        return renderPost({
+            ...makePost('here is what I found'),
+            props: {conversation_id: 'conversation_1', search_results: searchResults},
+        } as unknown as ReturnType<typeof makePost>);
+    }
+
+    test('renders the source list for a well-formed search_results prop', () => {
+        renderWithSearchResults(JSON.stringify([{
+            postId: sourcePostId,
+            channelId: sourceChannelId,
+            userId: sourceUserId,
+            content: 'a matching message',
+            score: 0.5,
+        }]));
+
+        expect(screen.getByText('Sources')).toBeTruthy();
+    });
+
+    // search_results is read straight off the post props, so its shape is only
+    // as trustworthy as whoever authored the post.
+    test.each([
+        {name: 'not JSON at all', searchResults: 'not json'},
+        {name: 'a truncated JSON array', searchResults: '[{"postId":'},
+        {name: 'a bare word', searchResults: 'sources'},
+        {name: 'a JSON object', searchResults: '{}'},
+        {name: 'a JSON number', searchResults: '5'},
+        {name: 'a JSON string', searchResults: '"sources"'},
+        {name: 'a JSON boolean', searchResults: 'true'},
+        {name: 'not a string', searchResults: 5},
+        {name: 'an object', searchResults: {}},
+    ])('renders when search_results is $name', ({searchResults}) => {
+        expect(() => renderWithSearchResults(searchResults)).not.toThrow();
     });
 });

@@ -5,8 +5,10 @@
 const ID_PATTERN = /^[a-z0-9]{26}$/;
 
 /**
- * Returns true if the value is a well-formed Mattermost ID.
+ * Returns true if the value is a well-formed Mattermost ID. Takes unknown
+ * because decoded JSON (post props, API payloads) carries no runtime guarantee
+ * that a field typed as a string actually holds one.
  */
-export function isValidId(id: string): boolean {
-    return ID_PATTERN.test(id);
+export function isValidId(id: unknown): id is string {
+    return typeof id === 'string' && ID_PATTERN.test(id);
 }

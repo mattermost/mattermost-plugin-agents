@@ -13,9 +13,10 @@ import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
 import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
+import {isValidId} from '@/utils/ids';
 
 import PostText from '../post_text';
-import {SearchSources} from '../search_sources';
+import {SearchSources, Source} from '../search_sources';
 import ToolApprovalSet from '../tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
@@ -34,6 +35,20 @@ const SearchResultsPropKey = 'search_results';
 
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
+
+// search_results arrives as a JSON string on the post props. Anything that
+// isn't a JSON array is ignored so the rest of the post still renders.
+function parseSearchSources(raw: unknown): Source[] | null {
+    if (typeof raw !== 'string') {
+        return null;
+    }
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed as Source[] : null;
+    } catch {
+        return null;
+    }
+}
 
 export interface PostUpdateWebsocketMessage {
     post_id: string
@@ -67,7 +82,8 @@ function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
 export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
 
-    const conversationId: string | undefined = props.post.props?.conversation_id;
+    const rawConversationId: unknown = props.post.props?.conversation_id;
+    const conversationId = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
     // Meeting summarization posts have no conversation entity yet; fall back to
@@ -323,6 +339,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         currentRound,
     }), [regenerating, conversationId, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
 
+    const rawSearchResults: unknown = props.post.props?.[SearchResultsPropKey];
+    const searchSources = useMemo(() => parseSearchSources(rawSearchResults), [rawSearchResults]);
+
     const regnerate = () => {
         setMessage('');
         setGenerating(false);
@@ -435,9 +454,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     />
                 );
             })}
-            {props.post.props?.[SearchResultsPropKey] && (
+            {searchSources && (
                 <SearchSources
-                    sources={JSON.parse(props.post.props[SearchResultsPropKey])}
+                    sources={searchSources}
                 />
             )}
             { showPostbackButton &&

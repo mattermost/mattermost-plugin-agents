@@ -96,7 +96,7 @@ const SourceItem = styled.div`
     }
 `;
 
-interface Source {
+export interface Source {
     postId: string;
     channelId: string;
     userId: string;

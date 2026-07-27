@@ -60,16 +60,18 @@ function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
 }
 
+// Every route builder encodes its id so a value can only ever occupy the path
+// segment it was interpolated into.
 function postRoute(postid: string): string {
-    return `${baseRoute()}/post/${postid}`;
+    return `${baseRoute()}/post/${encodeURIComponent(postid)}`;
 }
 
 function channelRoute(channelid: string): string {
-    return `${baseRoute()}/channel/${channelid}`;
+    return `${baseRoute()}/channel/${encodeURIComponent(channelid)}`;
 }
 
 function agentRoute(agentId: string): string {
-    return `${baseRoute()}/agents/${agentId}`;
+    return `${baseRoute()}/agents/${encodeURIComponent(agentId)}`;
 }
 
 // readAgentErrorMessage extracts the server-provided error message from an
@@ -153,7 +155,7 @@ export async function doChannelAnalysis(channelId: string, analysisType: string,
 }
 
 export async function doTranscribe(postid: string, fileID: string) {
-    const url = `${postRoute(postid)}/transcribe/file/${fileID}`;
+    const url = `${postRoute(postid)}/transcribe/file/${encodeURIComponent(fileID)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
     }));
@@ -351,7 +353,15 @@ export function normalizeConversationResponse(raw: ConversationResponse): Conver
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationResponse> {
-    const url = `${baseRoute()}/conversations/${conversationId}`;
+    const url = `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}`;
+    if (!isValidId(conversationId)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid conversation id',
+            status_code: 400,
+            url,
+        });
+    }
+
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -369,7 +379,15 @@ export async function getConversation(conversationId: string): Promise<Conversat
 }
 
 export async function getConversationContext(conversationId: string): Promise<Composition> {
-    const url = `${baseRoute()}/conversations/${conversationId}/context`;
+    const url = `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}/context`;
+    if (!isValidId(conversationId)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid conversation id',
+            status_code: 400,
+            url,
+        });
+    }
+
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -510,7 +528,15 @@ export function getTeamIconUrl(teamId: string, lastTeamIconUpdate: number) {
     return Client4.getTeamIconUrl(teamId, lastTeamIconUpdate);
 }
 
-export function getPost(postId: string) {
+export async function getPost(postId: string) {
+    if (!isValidId(postId)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid post id',
+            status_code: 400,
+            url: Client4.url,
+        });
+    }
+
     return Client4.getPost(postId);
 }
 
@@ -1060,7 +1086,7 @@ export async function createCustomPrompt(prompt: {name: string; description: str
 }
 
 export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<void> {
-    const url = `${baseRoute()}/custom-prompts/${id}`;
+    const url = `${baseRoute()}/custom-prompts/${encodeURIComponent(id)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',
         body: JSON.stringify(prompt),
@@ -1076,7 +1102,7 @@ export async function updateCustomPrompt(id: string, prompt: {name: string; desc
 }
 
 export async function deleteCustomPrompt(id: string): Promise<void> {
-    const url = `${baseRoute()}/custom-prompts/${id}`;
+    const url = `${baseRoute()}/custom-prompts/${encodeURIComponent(id)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'DELETE',
     }));
@@ -1124,7 +1150,7 @@ export async function setCustomPromptPin(promptId: string, pinned: boolean): Pro
 }
 
 export async function renderCustomPrompt(id: string, channelId?: string, botUsername?: string): Promise<{rendered: string}> {
-    const url = `${baseRoute()}/custom-prompts/${id}/render`;
+    const url = `${baseRoute()}/custom-prompts/${encodeURIComponent(id)}/render`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({channel_id: channelId, bot_username: botUsername}),
