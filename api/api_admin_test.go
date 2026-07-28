@@ -1347,6 +1347,7 @@ func TestAuditUpdatePluginServer(t *testing.T) {
 		pluginID       string
 		body           string
 		nilStoredCfg   bool
+		getErr         error
 		expectedStatus int
 		validateRecord func(t *testing.T, rec *model.AuditRecord)
 	}{
@@ -1360,6 +1361,7 @@ func TestAuditUpdatePluginServer(t *testing.T) {
 				assert.Equal(t, "com.mattermost.demo", rec.EventData.Parameters[audit.KeyMCPPluginID])
 				assert.Equal(t, false, rec.EventData.Parameters["enabled"])
 				assert.Equal(t, false, rec.EventData.Parameters["tool_configs_changed"])
+				assert.Equal(t, true, rec.EventData.Parameters["persisted"])
 			},
 		},
 		{
@@ -1403,7 +1405,7 @@ func TestAuditUpdatePluginServer(t *testing.T) {
 			},
 		},
 		{
-			name:           "config load failure still records the merged parameters",
+			name:           "nil stored config records a 500 fail with the merged parameters",
 			pluginID:       "com.mattermost.demo",
 			body:           `{"enabled": false}`,
 			nilStoredCfg:   true,
@@ -1414,6 +1416,21 @@ func TestAuditUpdatePluginServer(t *testing.T) {
 				assert.Equal(t, "com.mattermost.demo", rec.EventData.Parameters[audit.KeyMCPPluginID])
 				assert.Equal(t, false, rec.EventData.Parameters["enabled"])
 				assert.Equal(t, false, rec.EventData.Parameters["tool_configs_changed"])
+				assert.NotContains(t, rec.EventData.Parameters, "persisted")
+			},
+		},
+		{
+			name:           "prior-config read failure records a 500 fail with the merged parameters",
+			pluginID:       "com.mattermost.demo",
+			body:           `{"enabled": false}`,
+			getErr:         errors.New("config store unavailable"),
+			expectedStatus: http.StatusInternalServerError,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
+				assert.Equal(t, "com.mattermost.demo", rec.EventData.Parameters[audit.KeyMCPPluginID])
+				assert.Equal(t, false, rec.EventData.Parameters["enabled"])
+				assert.NotContains(t, rec.EventData.Parameters, "persisted")
 			},
 		},
 	}
@@ -1433,7 +1450,7 @@ func TestAuditUpdatePluginServer(t *testing.T) {
 			if !tt.nilStoredCfg {
 				storedCfg = &config.Config{}
 			}
-			e.api.configStore = &testConfigStore{cfg: storedCfg}
+			e.api.configStore = &testConfigStore{cfg: storedCfg, getErr: tt.getErr}
 			e.api.configUpdater = &testConfigUpdater{}
 			e.api.clusterNotifier = &testClusterNotifier{}
 

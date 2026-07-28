@@ -285,7 +285,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 		// Store plugin.Context in gin.Context for MCP endpoints
 		mcpServerGroup.Use(func(gc *gin.Context) {
-			gc.Set("pluginContext", c)
+			gc.Set(pluginContextGinKey, c)
 			gc.Next()
 		})
 

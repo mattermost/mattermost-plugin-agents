@@ -10,10 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin. All 21
-// events are declared here, including ones whose instrumentation lands in
-// later changes, so call sites never use inline string literals and parallel
-// work never edits this file.
+// Audit event names for every state-changing operation in the plugin: 21
+// routed events plus the non-gin MCP session grant. All are declared here,
+// including ones whose instrumentation lands in later changes, so call sites
+// never use inline string literals and parallel work never edits this file.
 //
 // The server stamps the plugin ID into every record's parameters when it is
 // logged, so the names stay unprefixed.

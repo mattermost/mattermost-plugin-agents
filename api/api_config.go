@@ -128,6 +128,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
+	// From here on the config HAS changed in the database. If a later step
+	// fails (cluster notify), the audit record's fail status would otherwise
+	// hide a real mutation — mark it explicitly.
+	audit.AddParam(auditRec(c), "persisted", true)
+
 	// Update in-memory config on this node
 	a.configUpdater.Update(&cfg)
 

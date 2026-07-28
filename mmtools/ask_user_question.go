@@ -123,13 +123,16 @@ func resolveAskUserQuestionAnswer(input json.RawMessage, answer UserInteractionA
 		valid[opt.Label] = true
 	}
 
+	// Error messages here intentionally omit the offending values: they can
+	// carry user-submitted answer text or LLM-generated option labels, and
+	// these errors propagate into audit-record error descriptions.
 	seen := make(map[string]bool, len(selections))
 	for _, sel := range selections {
 		if !valid[sel] {
-			return "", fmt.Errorf("selected option %q is not one of the offered options", sel)
+			return "", errors.New("selected option is not one of the offered options")
 		}
 		if seen[sel] {
-			return "", fmt.Errorf("option %q selected more than once", sel)
+			return "", errors.New("an option was selected more than once")
 		}
 		seen[sel] = true
 	}
@@ -157,8 +160,10 @@ func validateAskUserQuestionArgs(args AskUserQuestionArgs) error {
 		if strings.TrimSpace(opt.Label) == "" {
 			return errors.New("option labels must not be empty")
 		}
+		// Value-free on purpose: option labels are LLM-generated content and
+		// this error reaches audit-record error descriptions.
 		if seen[opt.Label] {
-			return fmt.Errorf("duplicate option label %q", opt.Label)
+			return errors.New("question has duplicate option labels")
 		}
 		seen[opt.Label] = true
 	}

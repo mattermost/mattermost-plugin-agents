@@ -526,6 +526,10 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
+	// The mutation is persisted from here on; a later cluster-notify failure
+	// yields a fail record for a change that actually landed — say so.
+	audit.AddParam(auditRec(c), "persisted", true)
+
 	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to notify cluster of plugin-server config update: %w", err))
 		return

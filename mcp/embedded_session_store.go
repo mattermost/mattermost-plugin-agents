@@ -43,8 +43,9 @@ func (m *ClientManager) deleteEmbeddedSessionID(userID string) error {
 // ensureEmbeddedSessionID ensures there is a valid embedded session for the user
 // It loads from KV, validates via Session.Get, and if missing/invalid, creates a new one
 // The created session is tagged for MCP via Props
-// The second return reports whether a new session was minted (false when an
-// existing session was reused).
+// The second return reports whether the session was granted anew: a fresh
+// mint, or a lapsed session whose expiry was extended. Only silent reuse of a
+// still-valid session returns false — audit logging keys off this.
 func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, bool, error) {
 	user, err := m.pluginAPI.User.Get(userID)
 	if err != nil {
@@ -53,10 +54,12 @@ func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, bool, er
 	if user.DeleteAt != 0 {
 		return "", false, fmt.Errorf("cannot create embedded session for deleted user")
 	}
-	if sessionID, err := m.tryReuseEmbeddedSession(user.Id); err != nil {
-		return "", false, err
-	} else if sessionID != "" {
-		return sessionID, false, nil
+	reusedID, renewed, reuseErr := m.tryReuseEmbeddedSession(user.Id)
+	if reuseErr != nil {
+		return "", false, reuseErr
+	}
+	if reusedID != "" {
+		return reusedID, renewed, nil
 	}
 
 	sessionID, err := m.createEmbeddedSession(user)
@@ -66,15 +69,18 @@ func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, bool, er
 	return sessionID, true, nil
 }
 
-func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
+// tryReuseEmbeddedSession returns the stored session when still usable. The
+// second return reports whether a lapsed session's expiry had to be extended
+// — re-enabling an expired credential is a new grant, not silent reuse.
+func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, bool, error) {
 	stored, err := m.loadEmbeddedSessionID(userID)
 	if err != nil {
 		m.log.Debug("Failed to load embedded session ID", "userID", userID, "error", err)
-		return "", nil
+		return "", false, nil
 	}
 
 	if stored == "" {
-		return "", nil
+		return "", false, nil
 	}
 
 	sess, getErr := m.pluginAPI.Session.Get(stored)
@@ -83,21 +89,21 @@ func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
 		if deleteErr := m.deleteEmbeddedSessionID(userID); deleteErr != nil {
 			m.log.Debug("Failed to delete stale embedded session key", "userID", userID, "error", deleteErr)
 		}
-		return "", nil
+		return "", false, nil
 	}
 
 	if !sess.IsExpired() {
-		return stored, nil
+		return stored, false, nil
 	}
 
 	newExpiry := time.Now().Add(m.sessionLengthDuration()).UnixMilli()
 	if err := m.pluginAPI.Session.ExtendExpiry(stored, newExpiry); err == nil {
 		m.log.Debug("Extended embedded session expiry", "userID", userID)
-		return stored, nil
+		return stored, true, nil
 	}
 
 	m.log.Debug("Failed to extend embedded session", "userID", userID)
-	return "", nil
+	return "", false, nil
 }
 
 func (m *ClientManager) createEmbeddedSession(user *model.User) (string, error) {

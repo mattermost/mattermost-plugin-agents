@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -30,13 +32,15 @@ func TestChangedTopLevelConfigKeys(t *testing.T) {
 		name     string
 		prev     *config.Config
 		next     config.Config
-		expected []string
+		validate func(t *testing.T, got []string)
 	}{
 		{
-			name:     "identical configs report nothing",
-			prev:     &config.Config{DefaultBotName: "ai"},
-			next:     config.Config{DefaultBotName: "ai"},
-			expected: []string{},
+			name: "identical configs report nothing",
+			prev: &config.Config{DefaultBotName: "ai"},
+			next: config.Config{DefaultBotName: "ai"},
+			validate: func(t *testing.T, got []string) {
+				assert.Empty(t, got)
+			},
 		},
 		{
 			name: "only differing sections are reported, sorted",
@@ -45,30 +49,30 @@ func TestChangedTopLevelConfigKeys(t *testing.T) {
 				DefaultBotName: "other",
 				Services:       []llm.ServiceConfig{{ID: "svc1", Type: "openai", APIKey: "sk-secret"}},
 			},
-			expected: []string{"defaultBotName", "services"},
+			validate: func(t *testing.T, got []string) {
+				assert.Equal(t, []string{"defaultBotName", "services"}, got)
+			},
 		},
 		{
 			name: "nil previous config reports every key of the new config",
 			prev: nil,
 			next: config.Config{},
-			expected: func() []string {
-				raw, err := json.Marshal(config.Config{})
-				require.NoError(t, err)
-				var m map[string]json.RawMessage
-				require.NoError(t, json.Unmarshal(raw, &m))
-				keys := make([]string, 0, len(m))
-				for k := range m {
-					keys = append(keys, k)
+			// Independently verifiable properties instead of re-running the
+			// implementation's marshal round-trip: known keys present, sorted,
+			// and covering at least the documented top-level sections.
+			validate: func(t *testing.T, got []string) {
+				assert.True(t, sort.StringsAreSorted(got), "keys must be sorted")
+				assert.GreaterOrEqual(t, len(got), 10)
+				for _, key := range []string{"bots", "defaultBotName", "embeddingSearchConfig", "mcp", "services", "webSearch"} {
+					assert.Contains(t, got, key)
 				}
-				return keys
-			}(),
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := changedTopLevelConfigKeys(tt.prev, tt.next)
-			assert.ElementsMatch(t, tt.expected, got)
+			tt.validate(t, changedTopLevelConfigKeys(tt.prev, tt.next))
 		})
 	}
 }
@@ -99,6 +103,7 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 		userID         string
 		isAdmin        bool
 		body           string
+		getErr         error
 		saveErr        error
 		expectedStatus int
 		validateRecord func(t *testing.T, rec *model.AuditRecord)
@@ -114,10 +119,25 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 				assert.Equal(t, "userid", rec.Actor.UserId)
 				assert.Equal(t, "/admin/config", rec.Meta[model.AuditKeyAPIPath])
 				assert.Equal(t, []string{"defaultBotName", "mcp", "services"}, rec.EventData.Parameters["changed_keys"])
+				assert.Equal(t, true, rec.EventData.Parameters["persisted"])
 
 				raw, err := json.Marshal(rec)
 				require.NoError(t, err)
 				assert.NotContains(t, string(raw), plantedSecret, "audit record must never carry config values")
+			},
+		},
+		{
+			name:           "prior-config read failure still saves and audits, omitting changed_keys",
+			userID:         "userid",
+			isAdmin:        true,
+			body:           requestBody,
+			getErr:         errors.New("kv read exploded"),
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.NotContains(t, rec.EventData.Parameters, "changed_keys",
+					"best-effort diff must be omitted, not fabricated, when the prior config is unreadable")
+				assert.Equal(t, true, rec.EventData.Parameters["persisted"])
 			},
 		},
 		{
@@ -154,6 +174,8 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 				assert.Equal(t, model.AuditStatusFail, rec.Status)
 				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
 				assert.NotEmpty(t, rec.Error.Description)
+				assert.NotContains(t, rec.EventData.Parameters, "persisted",
+					"a save that never landed must not claim persistence")
 			},
 		},
 	}
@@ -162,6 +184,7 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			e, store := setupAuditConfigEnv(t)
 			defer e.Cleanup(t)
+			store.getErr = tt.getErr
 			store.saveErr = tt.saveErr
 
 			if tt.userID != "" {
@@ -183,6 +206,75 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 			assert.Equal(t, "sessionid", rec.Actor.SessionId)
 			assert.Equal(t, "127.0.0.1", rec.Actor.IpAddress)
 			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+// TestAuditRegistryAllRoutesEmit hits every audited route and requires that a
+// record with the registered event name is emitted, whatever the response
+// status. This guards the HandlerName-keyed registry: if a future change
+// wraps a registered handler in a closure at route registration, the route
+// silently stops being audited and only this test notices.
+func TestAuditRegistryAllRoutesEmit(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		event  string
+		method string
+		path   string
+		bridge bool // authenticate as a plugin instead of a user
+	}{
+		{event: AuditEventSaveConfig, method: http.MethodPut, path: "/admin/config"},
+		{event: AuditEventReindexPosts, method: http.MethodPost, path: "/admin/reindex"},
+		{event: AuditEventCancelReindexJob, method: http.MethodPost, path: "/admin/reindex/cancel"},
+		{event: AuditEventCatchUpReindex, method: http.MethodPost, path: "/admin/reindex/catchup"},
+		{event: AuditEventClearMCPToolsCache, method: http.MethodPost, path: "/admin/mcp/tools/cache/clear"},
+		{event: AuditEventUpdateMCPPluginServer, method: http.MethodPut, path: "/admin/mcp/plugin-servers/some.plugin"},
+		{event: AuditEventCreateAgent, method: http.MethodPost, path: "/agents"},
+		{event: AuditEventUpdateAgent, method: http.MethodPut, path: "/agents/agentid"},
+		{event: AuditEventDeleteAgent, method: http.MethodDelete, path: "/agents/agentid"},
+		{event: AuditEventUpdateAgentAvatar, method: http.MethodPost, path: "/agents/agentid/avatar"},
+		{event: AuditEventCreateCustomPrompt, method: http.MethodPost, path: "/custom-prompts"},
+		{event: AuditEventUpdateCustomPrompt, method: http.MethodPut, path: "/custom-prompts/promptid"},
+		{event: AuditEventDeleteCustomPrompt, method: http.MethodDelete, path: "/custom-prompts/promptid"},
+		{event: AuditEventMCPOAuthCallback, method: http.MethodGet, path: "/oauth/callback"},
+		{event: AuditEventMCPOAuthStart, method: http.MethodGet, path: "/mcp/oauth/someserver/start"},
+		{event: AuditEventMCPOAuthDisconnect, method: http.MethodDelete, path: "/mcp/oauth/someserver"},
+		{event: AuditEventUpdateMCPUserPreferences, method: http.MethodPut, path: "/mcp/user-preferences"},
+		{event: AuditEventRegisterMCPPluginServer, method: http.MethodPost, path: "/bridge/v1/mcp/register", bridge: true},
+		{event: AuditEventUnregisterMCPPluginServer, method: http.MethodPost, path: "/bridge/v1/mcp/unregister", bridge: true},
+		{event: AuditEventToolCallApproval, method: http.MethodPost, path: "/post/postid/tool_call"},
+		{event: AuditEventToolResultApproval, method: http.MethodPost, path: "/post/postid/tool_result"},
+	}
+
+	// One case per registry row, no more and no fewer (the session grant is
+	// not routed and is covered by its own tests).
+	require.Len(t, tests, len(buildAuditEventRegistry(&API{})))
+
+	for _, tt := range tests {
+		t.Run(tt.event, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			records := e.CaptureAuditRecords()
+
+			// Generous permission/KV defaults: the point is reaching the
+			// route, not its happy path. Denials and errors emit too.
+			e.mockAPI.On("HasPermissionTo", mock.Anything, mock.Anything).Return(false).Maybe()
+			e.mockAPI.On("KVGet", mock.Anything).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
+			e.mockAPI.On("KVSetWithOptions", mock.Anything, mock.Anything, mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
+
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader("{}"))
+			if tt.bridge {
+				req.Header.Set("Mattermost-Plugin-ID", "some.calling.plugin")
+			} else {
+				req.Header.Set("Mattermost-User-Id", "userid")
+			}
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Len(t, *records, 1, "route must emit exactly one audit record (status %d)", recorder.Result().StatusCode)
+			assert.Equal(t, tt.event, (*records)[0].EventName)
 		})
 	}
 }
