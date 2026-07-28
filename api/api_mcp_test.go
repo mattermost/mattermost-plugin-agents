@@ -15,12 +15,15 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
@@ -996,4 +999,265 @@ func TestHandleOAuthStartAcceptsResourceMetadataMatchingOrigin(t *testing.T) {
 	redirectURL, err := url.Parse(recorder.Result().Header.Get("Location"))
 	require.NoError(t, err)
 	require.Equal(t, "/authorize", redirectURL.Path)
+}
+
+// setupAuditOAuthStartEnv wires a fake OAuth provider (protected-resource and
+// authorization-server metadata endpoints) plus a matching enabled MCP server
+// config so GET /mcp/oauth/:serverName/start reaches its 302 happy path.
+func setupAuditOAuthStartEnv(t *testing.T, e *TestEnvironment) mcp.ServerConfig {
+	t.Helper()
+
+	var authServer *httptest.Server
+	authServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"resource":"` + authServer.URL + `","authorization_servers":["` + authServer.URL + `"]}`))
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"issuer":"` + authServer.URL + `","authorization_endpoint":"` + authServer.URL + `/authorize","token_endpoint":"` + authServer.URL + `/token","response_types_supported":["code"],"grant_types_supported":["authorization_code"],"code_challenge_methods_supported":["S256"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(authServer.Close)
+
+	server := mcp.ServerConfig{
+		Name:         "audit-oauth-server",
+		Enabled:      true,
+		BaseURL:      authServer.URL,
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("KVSetWithExpiry", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession"), mock.Anything).Return(nil)
+
+	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", authServer.Client(), func(serverID string) (mcp.ServerConfig, bool) {
+		if serverID == server.Name {
+			return server, true
+		}
+		return mcp.ServerConfig{}, false
+	})
+
+	e.api.mcpClientManager = &mockMCPClientManager{oauthManager: oauthManager}
+	return server
+}
+
+func TestAuditMCPOAuthStart(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name           string
+		setup          func(t *testing.T, e *TestEnvironment) (startPath, serverName string)
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord, res *http.Response)
+	}{
+		{
+			name: "unknown server records a 404 fail carrying the requested server name",
+			setup: func(t *testing.T, e *TestEnvironment) (string, string) {
+				e.config.mcpConfig = mcp.Config{Enabled: true}
+				return "/mcp/oauth/missing-server/start", "missing-server"
+			},
+			expectedStatus: http.StatusNotFound,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, _ *http.Response) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusNotFound, rec.Error.Code)
+			},
+		},
+		{
+			name: "redirect to the provider records success without the auth URL",
+			setup: func(t *testing.T, e *TestEnvironment) (string, string) {
+				server := setupAuditOAuthStartEnv(t, e)
+				return "/mcp/oauth/" + url.PathEscape(server.Name) + "/start", server.Name
+			},
+			expectedStatus: http.StatusFound,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, res *http.Response) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status, "a 302 redirect is this handler's happy path")
+
+				redirectURL, err := url.Parse(res.Header.Get("Location"))
+				require.NoError(t, err)
+				state := redirectURL.Query().Get("state")
+				require.NotEmpty(t, state)
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), state,
+					"audit record must never carry the provider auth URL or its state")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			startPath, serverName := tt.setup(t, e)
+			records := e.CaptureAuditRecords()
+
+			request := httptest.NewRequest(http.MethodGet, startPath, nil)
+			request.Header.Add("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventMCPOAuthStart, rec.EventName)
+			assert.Equal(t, testUserID, rec.Actor.UserId)
+			assert.Equal(t, serverName, rec.EventData.Parameters[audit.KeyMCPServer])
+			tt.validateRecord(t, rec, recorder.Result())
+		})
+	}
+}
+
+func TestAuditMCPOAuthCallback(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	// Planted OAuth transaction values that must never enter the audit record.
+	const plantedState = "PLANTED-STATE-VALUE"
+	const plantedCode = "PLANTED-CODE-VALUE"
+	const plantedDescription = "PLANTED-DESCRIPTION"
+
+	tests := []struct {
+		name           string
+		query          string
+		session        *mcp.OAuthSession
+		processErr     error
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord, raw string)
+	}{
+		{
+			name:  "success records the granting server and never the state or code",
+			query: "?state=" + plantedState + "&code=" + plantedCode,
+			session: &mcp.OAuthSession{
+				UserID:    testUserID,
+				ServerID:  "someserver",
+				ServerURL: "https://someserver.example.com",
+			},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, raw string) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, "someserver", rec.EventData.Parameters[audit.KeyMCPServer])
+				assert.NotContains(t, raw, plantedState, "audit record must never carry the OAuth state")
+				assert.NotContains(t, raw, plantedCode, "audit record must never carry the OAuth code")
+			},
+		},
+		{
+			name:           "provider error records only the spec-defined error code",
+			query:          "?error=access_denied&error_description=" + plantedDescription,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, raw string) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Equal(t, "access_denied", rec.EventData.Parameters["provider_error"])
+				assert.NotContains(t, raw, plantedDescription,
+					"audit record must never carry provider-controlled error descriptions")
+			},
+		},
+		{
+			name:           "missing parameters record a 400 fail",
+			query:          "",
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, _ string) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.NotContains(t, rec.EventData.Parameters, audit.KeyMCPServer)
+			},
+		},
+		{
+			name:           "callback processing failure records a fail without the state or code",
+			query:          "?state=" + plantedState + "&code=" + plantedCode,
+			processErr:     errors.New("token exchange failed"),
+			expectedStatus: http.StatusInternalServerError,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, raw string) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
+				assert.NotContains(t, raw, plantedState, "audit record must never carry the OAuth state")
+				assert.NotContains(t, raw, plantedCode, "audit record must never carry the OAuth code")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mcp.processOAuthSession = tt.session
+			e.mcp.processOAuthErr = tt.processErr
+			records := e.CaptureAuditRecords()
+
+			request := httptest.NewRequest(http.MethodGet, "/oauth/callback"+tt.query, nil)
+			request.Header.Add("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventMCPOAuthCallback, rec.EventName)
+			assert.Equal(t, testUserID, rec.Actor.UserId)
+			assert.Equal(t, "/oauth/callback", rec.Meta[model.AuditKeyAPIPath],
+				"api_path must exclude the query string, which carries the state and code")
+			raw, err := json.Marshal(rec)
+			require.NoError(t, err)
+			tt.validateRecord(t, rec, string(raw))
+		})
+	}
+}
+
+func TestAuditMCPOAuthDisconnect(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name           string
+		disconnectErr  error
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name:           "successful disconnect records success with the server name",
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+			},
+		},
+		{
+			name:           "disconnect failure records a fail with the server name",
+			disconnectErr:  errors.New("oauth store unavailable"),
+			expectedStatus: http.StatusInternalServerError,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mcp.disconnectErr = tt.disconnectErr
+			records := e.CaptureAuditRecords()
+
+			request := httptest.NewRequest(http.MethodDelete, "/mcp/oauth/TestServer", nil)
+			request.Header.Add("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventMCPOAuthDisconnect, rec.EventName)
+			assert.Equal(t, testUserID, rec.Actor.UserId)
+			assert.Equal(t, "TestServer", rec.EventData.Parameters[audit.KeyMCPServer])
+			tt.validateRecord(t, rec)
+		})
+	}
 }

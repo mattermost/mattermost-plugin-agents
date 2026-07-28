@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -284,6 +285,11 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 		return
 	}
 
+	// Server names are config identifiers, not content, so the normalized
+	// persisted list is safe to audit.
+	audit.AddParam(auditRec(c), "disabled_servers", saved.DisabledServers)
+	audit.AddParam(auditRec(c), "disabled_servers_count", len(saved.DisabledServers))
+
 	c.JSON(http.StatusOK, saved)
 }
 
@@ -292,6 +298,8 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 func (a *API) handleDeleteUserMCPOAuth(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	serverName := c.Param("serverName")
+	// Recorded before validation so every fail path carries the target server.
+	audit.AddParam(auditRec(c), audit.KeyMCPServer, serverName)
 
 	if serverName == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("serverName is required"))
