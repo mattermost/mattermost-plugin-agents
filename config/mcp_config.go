@@ -3,6 +3,8 @@
 
 package config
 
+import "strings"
+
 const (
 	MCPToolPolicyAsk               = "ask"
 	MCPToolPolicyAutoRunInDM       = "auto_run_in_dm"
@@ -48,13 +50,22 @@ type MCPConfig struct {
 
 // MCPServerConfig contains the configuration for a single MCP server
 type MCPServerConfig struct {
-	Name         string            `json:"name"`
-	Enabled      bool              `json:"enabled"`
-	BaseURL      string            `json:"baseURL"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	ClientID     string            `json:"clientID,omitempty"`
-	ClientSecret string            `json:"clientSecret,omitempty"`
-	ToolConfigs  []MCPToolConfig   `json:"tool_configs,omitempty"`
+	Name    string            `json:"name"`
+	Enabled bool              `json:"enabled"`
+	BaseURL string            `json:"baseURL"`
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// ServiceAccountHeaders are static headers (e.g. a PAT Authorization header)
+	// used in place of per-user OAuth when the calling agent has Service Account
+	// authentication enabled (BotConfig.UseServiceAccountAuth). Unlike Headers —
+	// which apply to every connection in both modes — these are sent only on
+	// SA-mode connections. A server with no (non-blank) entries here is excluded
+	// from SA-flagged agents' catalogs entirely (fail closed).
+	ServiceAccountHeaders map[string]string `json:"serviceAccountHeaders,omitempty"`
+
+	ClientID     string          `json:"clientID,omitempty"`
+	ClientSecret string          `json:"clientSecret,omitempty"`
+	ToolConfigs  []MCPToolConfig `json:"tool_configs,omitempty"`
 }
 
 // GetToolPolicy returns the policy and enabled state for a tool.
@@ -99,6 +110,25 @@ func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
 func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	policy, enabled := s.GetToolPolicy(toolName)
 	return IsToolPolicyAutoRunInDM(policy) && enabled
+}
+
+// HasServiceAccountAuth reports whether this server has Service Account
+// authentication configured: at least one ServiceAccountHeaders entry with a
+// non-blank name and a non-blank value. Blank entries (e.g. an empty row saved
+// from the System Console) do not count, so an SA-flagged agent never connects
+// to a server that would effectively send no service credential (fail closed).
+// Enabled is intentionally ignored: enablement is filtered where catalogs are
+// built, this predicate answers only "is SA auth configured".
+func (s *MCPServerConfig) HasServiceAccountAuth() bool {
+	if s == nil {
+		return false
+	}
+	for name, value := range s.ServiceAccountHeaders {
+		if strings.TrimSpace(name) != "" && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // PluginServerConfig describes an MCP server registered by another plugin.

@@ -43,6 +43,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		ThinkingBudget:          10000,
 		StructuredOutputEnabled: true,
 		MaxToolTurns:            42,
+		UseServiceAccountAuth:   true,
 	}
 }
 
@@ -102,6 +103,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, 10000, fetched.ThinkingBudget)
 	assert.True(t, fetched.StructuredOutputEnabled)
 	assert.Equal(t, 42, fetched.MaxToolTurns)
+	assert.True(t, fetched.UseServiceAccountAuth)
 }
 
 // TestAgentMaxToolTurnsDefaultsToThirty verifies that the SQL DEFAULT 30 supplied
@@ -402,6 +404,29 @@ func TestAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, again)
 	assert.True(t, again.MCPDynamicToolLoading)
+}
+
+func TestAgentUseServiceAccountAuthRoundTrip(t *testing.T) {
+	s := setupTestStore(t)
+	err := s.RunMigrations()
+	require.NoError(t, err)
+
+	agent := testAgent("creator-1", "sa-off", "Service Account Off Agent")
+	agent.UseServiceAccountAuth = false
+	require.NoError(t, s.CreateAgent(agent))
+
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.False(t, fetched.UseServiceAccountAuth)
+
+	fetched.UseServiceAccountAuth = true
+	require.NoError(t, s.UpdateAgent(fetched))
+
+	again, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, again)
+	assert.True(t, again.UseServiceAccountAuth)
 }
 
 func TestAgentEnabledMCPToolsBareAndNamespacedRoundTrip(t *testing.T) {

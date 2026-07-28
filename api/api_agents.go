@@ -72,6 +72,7 @@ type CreateAgentRequest struct {
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
 	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
+	UseServiceAccountAuth   bool                 `json:"useServiceAccountAuth"`
 	Model                   string               `json:"model"`
 	EnableVision            bool                 `json:"enableVision"`
 	DisableTools            bool                 `json:"disableTools"`
@@ -99,6 +100,7 @@ type UpdateAgentRequest struct {
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
 	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
+	UseServiceAccountAuth   bool                 `json:"useServiceAccountAuth"`
 	Model                   string               `json:"model"`
 	EnableVision            bool                 `json:"enableVision"`
 	DisableTools            bool                 `json:"disableTools"`
@@ -257,6 +259,7 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 		EnabledMCPTools:         req.EnabledMCPTools,
 		AutoEnableNewMCPTools:   req.AutoEnableNewMCPTools,
 		MCPDynamicToolLoading:   req.MCPDynamicToolLoading,
+		UseServiceAccountAuth:   req.UseServiceAccountAuth,
 		Model:                   req.Model,
 		EnableVision:            req.EnableVision,
 		DisableTools:            req.DisableTools,
@@ -284,6 +287,7 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.EnabledMCPTools = req.EnabledMCPTools
 	cfg.AutoEnableNewMCPTools = req.AutoEnableNewMCPTools
 	cfg.MCPDynamicToolLoading = req.MCPDynamicToolLoading
+	cfg.UseServiceAccountAuth = req.UseServiceAccountAuth
 	cfg.Model = req.Model
 	cfg.EnableVision = req.EnableVision
 	cfg.DisableTools = req.DisableTools

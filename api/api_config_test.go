@@ -410,6 +410,46 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	assert.Equal(t, 1, notifier.callCount)
 }
 
+func TestAdminConfigRoundTripsServiceAccountHeaders(t *testing.T) {
+	store := &testConfigStore{}
+	updater := &testConfigUpdater{}
+	notifier := &testClusterNotifier{}
+	router := setupTestRouter(store, updater, notifier)
+
+	saveCfg := config.Config{
+		MCP: config.MCPConfig{
+			Servers: []config.MCPServerConfig{
+				{
+					Name:                  "Jira",
+					Enabled:               true,
+					BaseURL:               "https://jira.example.com",
+					Headers:               map[string]string{"X-Trace": "on"},
+					ServiceAccountHeaders: map[string]string{"Authorization": "Bearer service-pat"},
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(saveCfg)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/config", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var loadedCfg config.Config
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &loadedCfg))
+	require.Len(t, loadedCfg.MCP.Servers, 1)
+	require.Equal(t, map[string]string{"X-Trace": "on"}, loadedCfg.MCP.Servers[0].Headers)
+	require.Equal(t, map[string]string{"Authorization": "Bearer service-pat"}, loadedCfg.MCP.Servers[0].ServiceAccountHeaders)
+}
+
 func TestAdminConfigRoundTripsMCPRetrievalOverride(t *testing.T) {
 	store := &testConfigStore{}
 	updater := &testConfigUpdater{}

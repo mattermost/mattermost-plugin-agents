@@ -148,6 +148,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"enabledMCPTools":         cfg.EnabledMCPTools,
 		"autoEnableNewMCPTools":   cfg.AutoEnableNewMCPTools,
 		"mcpDynamicToolLoading":   cfg.MCPDynamicToolLoading,
+		"useServiceAccountAuth":   cfg.UseServiceAccountAuth,
 		"model":                   cfg.Model,
 		"enableVision":            cfg.EnableVision,
 		"disableTools":            cfg.DisableTools,
@@ -377,6 +378,50 @@ func TestCreateAgentMCPDynamicToolLoading(t *testing.T) {
 			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
 			assert.Equal(t, tt.expected, agent.MCPDynamicToolLoading)
 			assert.Equal(t, tt.expected, e.agentStore.agents[agent.ID].MCPDynamicToolLoading)
+		})
+	}
+}
+
+func TestCreateAgentUseServiceAccountAuth(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     map[string]any
+		expected bool
+	}{
+		{
+			name:     "persists explicit true",
+			body:     map[string]any{"useServiceAccountAuth": true},
+			expected: true,
+		},
+		{
+			name:     "persists explicit false",
+			body:     map[string]any{"useServiceAccountAuth": false},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+				UserId:      "bot-user-id-created",
+				Username:    "my-agent",
+				DisplayName: "My Agent",
+				Description: "User-created AI agent",
+			}, nil)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(tt.body), testUserID)
+			require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+
+			var agent llm.BotConfig
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+			assert.Equal(t, tt.expected, agent.UseServiceAccountAuth)
+			assert.Equal(t, tt.expected, e.agentStore.agents[agent.ID].UseServiceAccountAuth)
 		})
 	}
 }
@@ -1057,6 +1102,72 @@ func TestUpdateAgentMCPDynamicToolLoading(t *testing.T) {
 			var response llm.BotConfig
 			require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&response))
 			assert.Equal(t, tt.expectedValue, response.MCPDynamicToolLoading)
+		})
+	}
+}
+
+func TestUpdateAgentUseServiceAccountAuth(t *testing.T) {
+	tests := []struct {
+		name          string
+		storedValue   bool
+		body          map[string]any
+		omit          bool
+		expectedValue bool
+	}{
+		{
+			name:          "turns the flag on",
+			storedValue:   false,
+			body:          map[string]any{"useServiceAccountAuth": true},
+			expectedValue: true,
+		},
+		{
+			name:          "turns the flag off",
+			storedValue:   true,
+			body:          map[string]any{"useServiceAccountAuth": false},
+			expectedValue: false,
+		},
+		{
+			name:          "omitting the key clears the flag (full-document replace)",
+			storedValue:   true,
+			omit:          true,
+			expectedValue: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			stored := &llm.BotConfig{
+				ID:                    "agent-1",
+				CreatorID:             testUserID,
+				BotUserID:             "bot-1",
+				DisplayName:           "Agent",
+				Name:                  "my-agent",
+				ServiceID:             "svc-1",
+				UseServiceAccountAuth: tt.storedValue,
+			}
+			e.agentStore.agents["agent-1"] = stored
+
+			body := updateAgentBodyFromStored(stored, tt.body)
+			if tt.omit {
+				delete(body, "useServiceAccountAuth")
+			}
+
+			recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+			updated := e.agentStore.agents["agent-1"]
+			require.NotNil(t, updated)
+			assert.Equal(t, tt.expectedValue, updated.UseServiceAccountAuth)
+
+			var response llm.BotConfig
+			require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&response))
+			assert.Equal(t, tt.expectedValue, response.UseServiceAccountAuth)
 		})
 	}
 }
