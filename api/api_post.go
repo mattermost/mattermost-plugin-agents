@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -304,6 +305,12 @@ func (a *API) handleToolCall(c *gin.Context) {
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
+	// Enrich the audit record as soon as the objects are bound so the
+	// license/permission fail paths below still carry post and channel.
+	rec := auditRec(c)
+	audit.AddParam(rec, audit.KeyPostID, post.Id)
+	audit.AddParam(rec, audit.KeyChannelID, channel.Id)
+
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return
@@ -332,6 +339,9 @@ func (a *API) handleToolCall(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
+
+	// Opaque block IDs only — never the tool answers carried alongside them.
+	audit.AddParam(rec, "accepted_tool_ids", data.AcceptedToolIDs)
 
 	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs, data.ToolAnswers); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
@@ -363,6 +373,12 @@ func (a *API) handleToolResult(c *gin.Context) {
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
+	// Enrich the audit record as soon as the objects are bound so the
+	// license/permission fail paths below still carry post and channel.
+	rec := auditRec(c)
+	audit.AddParam(rec, audit.KeyPostID, post.Id)
+	audit.AddParam(rec, audit.KeyChannelID, channel.Id)
+
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return
@@ -387,6 +403,8 @@ func (a *API) handleToolResult(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
+
+	audit.AddParam(rec, "accepted_tool_ids", data.AcceptedToolIDs)
 
 	if err := a.conversationsService.HandleToolResult(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
