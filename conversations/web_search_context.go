@@ -60,6 +60,12 @@ func (c *Conversations) unmarshalWebSearchContext(webSearchContextJSON string, p
 		return nil
 	}
 
+	// A "null" or absent JSON value unmarshals into a nil map, so ensure the
+	// map is initialized before writing tracking keys below.
+	if params == nil {
+		params = make(map[string]interface{})
+	}
+
 	// Reconstruct proper types for web search context values
 	if raw, ok := params[mmtools.WebSearchContextKey]; ok {
 		// Re-marshal and unmarshal to get proper types
