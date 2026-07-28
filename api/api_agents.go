@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"sort"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -298,41 +297,6 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	return displayNameChanged
 }
 
-// changedAgentConfigFields returns the sorted top-level JSON field names whose
-// values differ between prev and next. It exists for audit enrichment: the
-// agent config carries prompt content (customInstructions), so the audit
-// record may say which fields an update changed but never what they changed to.
-func changedAgentConfigFields(prev, next *llm.BotConfig) []string {
-	toMap := func(cfg *llm.BotConfig) map[string]json.RawMessage {
-		raw, err := json.Marshal(cfg)
-		if err != nil {
-			return nil
-		}
-		var m map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &m); err != nil {
-			return nil
-		}
-		return m
-	}
-
-	prevMap := toMap(prev)
-	nextMap := toMap(next)
-
-	changed := make([]string, 0, len(nextMap))
-	for key, nextVal := range nextMap {
-		if prevVal, ok := prevMap[key]; !ok || !bytes.Equal(prevVal, nextVal) {
-			changed = append(changed, key)
-		}
-	}
-	for key := range prevMap {
-		if _, ok := nextMap[key]; !ok {
-			changed = append(changed, key)
-		}
-	}
-	sort.Strings(changed)
-	return changed
-}
-
 // refreshBotsAndNotify reloads bots on this node, notifies the cluster, and broadcasts so clients refresh bot lists.
 // It returns the error from EnsureBots when a.bots is non-nil, or nil when a.bots is nil; cluster and websocket
 // steps always run regardless.
@@ -499,7 +463,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	agentID := c.Param("agentid")
 
 	// Identify the target early so 404/403 fail records carry it.
-	audit.AddParam(auditRec(c), audit.KeyAgentID, agentID)
+	audit.AddParam(auditRec(c), audit.KeyAgentID, audit.TruncateID(agentID))
 
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
@@ -547,7 +511,9 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 
 	// Audit which fields the update changed — never their values, since
 	// customInstructions carries prompt content.
-	audit.AddParam(auditRec(c), "changed_fields", changedAgentConfigFields(&prev, cfg))
+	// Field names only — the agent config carries prompt content
+	// (customInstructions), so the record never says what values changed to.
+	audit.AddParam(auditRec(c), "changed_fields", audit.ChangedJSONKeys(&prev, cfg))
 
 	if err := cfg.Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
@@ -579,7 +545,7 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	agentID := c.Param("agentid")
 
 	// Identify the target early so 404/403 fail records carry it.
-	audit.AddParam(auditRec(c), audit.KeyAgentID, agentID)
+	audit.AddParam(auditRec(c), audit.KeyAgentID, audit.TruncateID(agentID))
 
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
@@ -623,7 +589,7 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 
 	// Identify the target early so 404/403 fail records carry it. Nothing
 	// about the image itself is ever recorded.
-	audit.AddParam(auditRec(c), audit.KeyAgentID, agentID)
+	audit.AddParam(auditRec(c), audit.KeyAgentID, audit.TruncateID(agentID))
 
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {

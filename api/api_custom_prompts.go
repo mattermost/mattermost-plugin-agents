@@ -67,7 +67,7 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 
 	// Record the target before the ownership check so denial and not-found
 	// failures still identify which prompt was targeted.
-	audit.AddParam(auditRec(c), "prompt_id", promptID)
+	audit.AddParam(auditRec(c), "prompt_id", audit.TruncateID(promptID))
 
 	if _, ok := a.requirePromptOwnership(c, promptID, userID); !ok {
 		return
@@ -106,7 +106,7 @@ func (a *API) handleDeleteCustomPrompt(c *gin.Context) {
 
 	// Record the target before the ownership check so denial and not-found
 	// failures still identify which prompt was targeted.
-	audit.AddParam(auditRec(c), "prompt_id", promptID)
+	audit.AddParam(auditRec(c), "prompt_id", audit.TruncateID(promptID))
 
 	if _, ok := a.requirePromptOwnership(c, promptID, userID); !ok {
 		return

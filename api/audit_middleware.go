@@ -27,6 +27,12 @@ const auditRecordGinKey = "auditRecord"
 // through auditRec (gin layer) or audit.RecordFromContext (service layer).
 // Audit persistence is governed entirely by the server's audit configuration,
 // so the record is emitted unconditionally.
+//
+// Contract for handler authors: on failure the LAST gin error's text becomes
+// the record's error description. TruncateDescription bounds its length, not
+// its content — errors surfaced via c.Error/AbortWithError on audited routes
+// must stay value-free (no secrets, prompt/user content, tokens, or raw
+// request text; see mmtools/ask_user_question.go for the pattern).
 func (a *API) auditMiddleware(pluginCtx *plugin.Context) gin.HandlerFunc {
 	if pluginCtx == nil {
 		pluginCtx = &plugin.Context{}

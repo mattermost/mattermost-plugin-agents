@@ -29,6 +29,30 @@ func TruncateID(s string) string {
 	return truncate(s, maxIDLength)
 }
 
+// maxIDListLength bounds identifier lists recorded from request bodies.
+// Legitimate lists (tool-approval batches) hold at most a handful of entries.
+const maxIDListLength = 64
+
+// TruncateIDs clamps a not-yet-validated identifier list for audit recording:
+// every entry is length-clamped and the list itself is capped, with a marker
+// entry appended when elements were dropped.
+func TruncateIDs(vals []string) []string {
+	n := len(vals)
+	clipped := false
+	if n > maxIDListLength {
+		n = maxIDListLength
+		clipped = true
+	}
+	out := make([]string, 0, n+1)
+	for _, v := range vals[:n] {
+		out = append(out, TruncateID(v))
+	}
+	if clipped {
+		out = append(out, "…(truncated)")
+	}
+	return out
+}
+
 // maxDescriptionLength bounds error descriptions. Long enough for wrapped
 // error chains, short enough that an error embedding request text cannot pump
 // unbounded content into the log.

@@ -336,7 +336,7 @@ func (a *API) handleToolCall(c *gin.Context) {
 	}
 
 	// Opaque block IDs only — never the tool answers carried alongside them.
-	audit.AddParam(rec, "accepted_tool_ids", data.AcceptedToolIDs)
+	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
 
 	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs, data.ToolAnswers); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
@@ -395,7 +395,7 @@ func (a *API) handleToolResult(c *gin.Context) {
 		return
 	}
 
-	audit.AddParam(rec, "accepted_tool_ids", data.AcceptedToolIDs)
+	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
 
 	if err := a.conversationsService.HandleToolResult(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)

@@ -281,6 +281,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 	}
 
+	// Unlike HandleToolResult (which defers these until after its idempotency
+	// gate), the names here describe tools that already executed above — real
+	// side effects, not persisted state — so they stay on the record even if
+	// persisting the resolved turn below fails.
 	audit.AddParam(auditRec, "accepted_tools", acceptedToolNames)
 	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
 

@@ -1278,64 +1278,74 @@ type toolsCacheMCPClientManager struct {
 func (m *toolsCacheMCPClientManager) GetToolsCache() *mcp.ToolsCache { return m.cache }
 
 func TestAuditClearMCPToolsCache(t *testing.T) {
-	t.Run("success records cleared_servers", func(t *testing.T) {
-		e, records := setupAdminAuditTest(t)
-		defer e.Cleanup(t)
+	tests := []struct {
+		name           string
+		setup          func(e *TestEnvironment)
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name: "success records cleared_servers",
+			setup: func(e *TestEnvironment) {
+				// ClearAll lists all KV keys and deletes the cache-prefixed
+				// ones; pluginapi implements Delete as KVSetWithOptions with
+				// a nil value.
+				e.mockAPI.On("KVList", 0, 1000).Return([]string{
+					"mcp_tools_cache_v1_server1",
+					"mcp_tools_cache_v1_server2",
+					"unrelated_key",
+				}, nil)
+				e.mockAPI.On("KVSetWithOptions", "mcp_tools_cache_v1_server1", []byte(nil), model.PluginKVSetOptions{}).Return(true, nil)
+				e.mockAPI.On("KVSetWithOptions", "mcp_tools_cache_v1_server2", []byte(nil), model.PluginKVSetOptions{}).Return(true, nil)
 
-		e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
-		// ClearAll lists all KV keys and deletes the cache-prefixed ones;
-		// pluginapi implements Delete as KVSetWithOptions with a nil value.
-		e.mockAPI.On("KVList", 0, 1000).Return([]string{
-			"mcp_tools_cache_v1_server1",
-			"mcp_tools_cache_v1_server2",
-			"unrelated_key",
-		}, nil)
-		e.mockAPI.On("KVSetWithOptions", "mcp_tools_cache_v1_server1", []byte(nil), model.PluginKVSetOptions{}).Return(true, nil)
-		e.mockAPI.On("KVSetWithOptions", "mcp_tools_cache_v1_server2", []byte(nil), model.PluginKVSetOptions{}).Return(true, nil)
+				e.api.mcpClientManager = &toolsCacheMCPClientManager{
+					mockMCPClientManager: e.mcp,
+					cache:                mcp.NewToolsCache(&e.client.KV, &e.client.Log),
+				}
+			},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, 2, rec.EventData.Parameters["cleared_servers"])
+			},
+		},
+		{
+			name: "missing tools cache records a 500 fail",
+			setup: func(e *TestEnvironment) {
+				// The default mockMCPClientManager returns a nil tools cache.
+			},
+			expectedStatus: http.StatusInternalServerError,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
+				assert.NotEmpty(t, rec.Error.Description)
+				assert.NotContains(t, rec.EventData.Parameters, "cleared_servers")
+			},
+		},
+	}
 
-		e.api.mcpClientManager = &toolsCacheMCPClientManager{
-			mockMCPClientManager: e.mcp,
-			cache:                mcp.NewToolsCache(&e.client.KV, &e.client.Log),
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, records := setupAdminAuditTest(t)
+			defer e.Cleanup(t)
 
-		req := httptest.NewRequest(http.MethodPost, "/admin/mcp/tools/cache/clear", nil)
-		req.Header.Set("Mattermost-User-Id", "userid")
+			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
+			tt.setup(e)
 
-		recorder := httptest.NewRecorder()
-		e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+			req := httptest.NewRequest(http.MethodPost, "/admin/mcp/tools/cache/clear", nil)
+			req.Header.Set("Mattermost-User-Id", "userid")
 
-		require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
-		require.Len(t, *records, 1, "exactly one audit record must be emitted")
-		rec := (*records)[0]
-		assert.Equal(t, AuditEventClearMCPToolsCache, rec.EventName)
-		assert.Equal(t, model.AuditStatusSuccess, rec.Status)
-		assert.Equal(t, "userid", rec.Actor.UserId)
-		assert.Equal(t, 2, rec.EventData.Parameters["cleared_servers"])
-	})
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
 
-	t.Run("missing tools cache records a 500 fail", func(t *testing.T) {
-		e, records := setupAdminAuditTest(t)
-		defer e.Cleanup(t)
-
-		e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
-
-		// The default mockMCPClientManager returns a nil tools cache.
-		req := httptest.NewRequest(http.MethodPost, "/admin/mcp/tools/cache/clear", nil)
-		req.Header.Set("Mattermost-User-Id", "userid")
-
-		recorder := httptest.NewRecorder()
-		e.api.ServeHTTP(&plugin.Context{}, recorder, req)
-
-		require.Equal(t, http.StatusInternalServerError, recorder.Result().StatusCode)
-		require.Len(t, *records, 1, "exactly one audit record must be emitted")
-		rec := (*records)[0]
-		assert.Equal(t, AuditEventClearMCPToolsCache, rec.EventName)
-		assert.Equal(t, model.AuditStatusFail, rec.Status)
-		assert.Equal(t, "userid", rec.Actor.UserId)
-		assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
-		assert.NotEmpty(t, rec.Error.Description)
-		assert.NotContains(t, rec.EventData.Parameters, "cleared_servers")
-	})
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventClearMCPToolsCache, rec.EventName)
+			assert.Equal(t, "userid", rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
 }
 
 func TestAuditUpdatePluginServer(t *testing.T) {

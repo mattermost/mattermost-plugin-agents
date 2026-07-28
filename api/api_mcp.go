@@ -322,8 +322,9 @@ func (a *API) knownMCPServerNames(names []string) []string {
 func (a *API) handleDeleteUserMCPOAuth(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	serverName := c.Param("serverName")
-	// Recorded before validation so every fail path carries the target server.
-	audit.AddParam(auditRec(c), audit.KeyMCPServer, serverName)
+	// Recorded before validation so every fail path carries the target
+	// server; clamped, it is an unvalidated path parameter.
+	audit.AddParam(auditRec(c), audit.KeyMCPServer, audit.TruncateID(serverName))
 
 	if serverName == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("serverName is required"))

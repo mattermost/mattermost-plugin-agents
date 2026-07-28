@@ -19,7 +19,7 @@ func (a *API) handleOAuthStart(c *gin.Context) {
 	// Recorded before any validation so every fail path carries the target
 	// server. Never audit the resource_metadata query value or the provider
 	// auth URL: both can embed client IDs and PKCE parameters.
-	audit.AddParam(auditRec(c), audit.KeyMCPServer, serverName)
+	audit.AddParam(auditRec(c), audit.KeyMCPServer, audit.TruncateID(serverName))
 	if serverName == "" {
 		a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Missing MCP server name.")
 		return

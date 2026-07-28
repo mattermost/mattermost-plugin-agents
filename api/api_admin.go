@@ -463,7 +463,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	}
 
 	// Identify the target plugin as early as possible so fail paths carry it.
-	audit.AddParam(auditRec(c), audit.KeyMCPPluginID, pluginID)
+	audit.AddParam(auditRec(c), audit.KeyMCPPluginID, audit.TruncateID(pluginID))
 
 	var req UpdatePluginServerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

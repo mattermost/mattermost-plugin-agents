@@ -27,7 +27,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-func TestChangedTopLevelConfigKeys(t *testing.T) {
+// TestConfigChangedJSONKeys pins config.Config's behavior through the shared
+// audit.ChangedJSONKeys helper (generic cases live in audit/diff_test.go).
+func TestConfigChangedJSONKeys(t *testing.T) {
 	tests := []struct {
 		name     string
 		prev     *config.Config
@@ -72,7 +74,7 @@ func TestChangedTopLevelConfigKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.validate(t, changedTopLevelConfigKeys(tt.prev, tt.next))
+			tt.validate(t, audit.ChangedJSONKeys(tt.prev, tt.next))
 		})
 	}
 }

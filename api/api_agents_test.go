@@ -1550,7 +1550,10 @@ func TestCanUserAccessAgentCreatorAdminBypass(t *testing.T) {
 	require.Empty(t, agents)
 }
 
-func TestChangedAgentConfigFields(t *testing.T) {
+// TestAgentConfigChangedJSONKeys pins llm.BotConfig's JSON-tag behavior
+// through the shared audit.ChangedJSONKeys helper (generic cases live in
+// audit/diff_test.go).
+func TestAgentConfigChangedJSONKeys(t *testing.T) {
 	tests := []struct {
 		name     string
 		prev     *llm.BotConfig
@@ -1585,7 +1588,7 @@ func TestChangedAgentConfigFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, changedAgentConfigFields(tt.prev, tt.next))
+			assert.Equal(t, tt.expected, audit.ChangedJSONKeys(tt.prev, tt.next))
 		})
 	}
 }

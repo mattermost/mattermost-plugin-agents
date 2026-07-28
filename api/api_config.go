@@ -4,11 +4,8 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -62,45 +59,6 @@ func (a *API) handleGetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg.Clone()))
 }
 
-// changedTopLevelConfigKeys returns the sorted top-level JSON keys whose
-// values differ between prev and next. It exists for audit enrichment: the
-// config carries provider credentials, so the audit record may say which
-// sections changed but never what they changed to. A nil prev (no stored
-// config yet) reports every key of next as changed.
-func changedTopLevelConfigKeys(prev *config.Config, next config.Config) []string {
-	toMap := func(cfg config.Config) map[string]json.RawMessage {
-		raw, err := json.Marshal(cfg)
-		if err != nil {
-			return nil
-		}
-		var m map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &m); err != nil {
-			return nil
-		}
-		return m
-	}
-
-	prevMap := map[string]json.RawMessage{}
-	if prev != nil {
-		prevMap = toMap(*prev)
-	}
-	nextMap := toMap(next)
-
-	changed := make([]string, 0, len(nextMap))
-	for key, nextVal := range nextMap {
-		if prevVal, ok := prevMap[key]; !ok || !bytes.Equal(prevVal, nextVal) {
-			changed = append(changed, key)
-		}
-	}
-	for key := range prevMap {
-		if _, ok := nextMap[key]; !ok {
-			changed = append(changed, key)
-		}
-	}
-	sort.Strings(changed)
-	return changed
-}
-
 // handleSaveConfig saves a new plugin configuration to the database,
 // updates the in-memory configuration, and notifies other cluster nodes.
 // PUT /admin/config
@@ -119,7 +77,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// simply omits changed_keys.
 	if rec := auditRec(c); rec != nil {
 		if prev, err := a.configStore.GetConfig(); err == nil {
-			audit.AddParam(rec, "changed_keys", changedTopLevelConfigKeys(prev, cfg))
+			audit.AddParam(rec, "changed_keys", audit.ChangedJSONKeys(prev, cfg))
 		}
 	}
 
