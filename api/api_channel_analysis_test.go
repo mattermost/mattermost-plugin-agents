@@ -35,6 +35,10 @@ func (p *channelAnalysisMCPProvider) GetToolsForUser(context.Context, string) ([
 	return p.tools, nil
 }
 
+func (p *channelAnalysisMCPProvider) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+	return nil, nil
+}
+
 type channelAnalysisSequenceLLM struct {
 	calls    [][]llm.TextStreamEvent
 	requests []llm.CompletionRequest

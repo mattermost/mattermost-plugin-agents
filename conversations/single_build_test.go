@@ -5,6 +5,7 @@ package conversations
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -22,8 +23,12 @@ import (
 // so single-build refactors can assert there is no second pipeline pass per
 // message.
 type countingMCPToolProvider struct {
-	calls int32
-	tools []llm.Tool
+	calls   int32
+	tools   []llm.Tool
+	saTools []llm.Tool
+
+	mu           sync.Mutex
+	saIdentities []string
 }
 
 func (p *countingMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
@@ -31,8 +36,23 @@ func (p *countingMCPToolProvider) GetToolsForUser(context.Context, string) ([]ll
 	return append([]llm.Tool(nil), p.tools...), nil
 }
 
+func (p *countingMCPToolProvider) GetToolsForServiceAccount(_ context.Context, botUserID string) ([]llm.Tool, *mcp.Errors) {
+	p.mu.Lock()
+	p.saIdentities = append(p.saIdentities, botUserID)
+	p.mu.Unlock()
+	return append([]llm.Tool(nil), p.saTools...), nil
+}
+
 func (p *countingMCPToolProvider) Calls() int {
 	return int(atomic.LoadInt32(&p.calls))
+}
+
+// SAIdentities returns the bot user IDs the service account catalog was built
+// for, in call order.
+func (p *countingMCPToolProvider) SAIdentities() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.saIdentities...)
 }
 
 func newSingleBuildLLMContextBuilder(t *testing.T, mcpProvider llmcontext.MCPToolProvider) *llmcontext.Builder {

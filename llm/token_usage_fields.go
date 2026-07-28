@@ -32,6 +32,13 @@ const (
 	OperationBridgeService            = "bridge_service"
 )
 
+// tool_auth_mode identifies which identity/auth mode the request's tool
+// catalog was built with.
+const (
+	ToolAuthModeUser           = "user"
+	ToolAuthModeServiceAccount = "service_account"
+)
+
 // operation_subtype is a low-cardinality detail for the operation.
 // Typical values represent modality or a small scenario class
 // (for example streaming vs non-streaming, tool calls, or chunk modes).

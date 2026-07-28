@@ -56,6 +56,12 @@ func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(context.Context, st
 	return p.tools, nil
 }
 
+// GetToolsForServiceAccount satisfies llmcontext.MCPToolProvider. The tests
+// sharing this fake only exercise normal (non-service-account) agents.
+func (p *channelFollowUpTestMCPToolProvider) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+	return nil, nil
+}
+
 type channelFollowUpTestConfig struct {
 	enableChannelMentionToolCalling bool
 }

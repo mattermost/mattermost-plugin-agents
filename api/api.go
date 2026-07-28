@@ -509,6 +509,7 @@ type AIBotInfo struct {
 	UserIDs               []string               `json:"userIDs"`
 	EnabledMCPTools       []llm.EnabledMCPTool   `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools bool                   `json:"autoEnableNewMCPTools"`
+	UseServiceAccountAuth bool                   `json:"useServiceAccountAuth"`
 	IsDefault             bool                   `json:"isDefault,omitempty"`
 }
 
@@ -554,6 +555,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			UserIDs:               bot.GetConfig().UserIDs,
 			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
 			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
+			UseServiceAccountAuth: bot.GetConfig().UseServiceAccountAuth,
 			IsDefault:             isDefault,
 		})
 		if isDefault {

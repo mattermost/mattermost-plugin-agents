@@ -50,6 +50,10 @@ func (m *mockMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.T
 	return []llm.Tool{}, nil
 }
 
+func (m *mockMCPClientManager) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+	return []llm.Tool{}, nil
+}
+
 type mockConfigProvider struct{}
 
 func (m *mockConfigProvider) GetServiceByID(id string) (llm.ServiceConfig, bool) {

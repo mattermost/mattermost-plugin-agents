@@ -958,6 +958,7 @@ func TestHandleGetAIBots(t *testing.T) {
 	tests := []struct {
 		name                     string
 		searchService            *search.Search
+		useServiceAccountAuth    bool
 		expectedSearchEnabled    bool
 		expectedAllowUnsafeLinks bool
 		expectedStatus           int
@@ -1007,6 +1008,19 @@ func TestHandleGetAIBots(t *testing.T) {
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
+		{
+			// The webapp reads useServiceAccountAuth to hide per-user MCP
+			// connect prompts and server preferences for these agents.
+			name:                     "service account agent reports its auth mode",
+			searchService:            nil,
+			useServiceAccountAuth:    true,
+			expectedSearchEnabled:    false,
+			expectedAllowUnsafeLinks: false,
+			expectedStatus:           http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -1019,8 +1033,9 @@ func TestHandleGetAIBots(t *testing.T) {
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
-				Name:        "test-bot",
-				DisplayName: "Test Bot",
+				Name:                  "test-bot",
+				DisplayName:           "Test Bot",
+				UseServiceAccountAuth: test.useServiceAccountAuth,
 			})
 
 			// Setup mock expectations
@@ -1047,6 +1062,8 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
+				require.Equal(t, test.useServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,
+					"UseServiceAccountAuth field should mirror the agent configuration")
 			}
 		})
 	}

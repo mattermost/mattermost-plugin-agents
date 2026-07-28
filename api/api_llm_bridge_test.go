@@ -1720,6 +1720,12 @@ func (p *fakeBridgeMCPToolProvider) GetToolsForUser(_ context.Context, _ string)
 	return p.tools, nil
 }
 
+// GetToolsForServiceAccount satisfies llmcontext.MCPToolProvider. These bridge
+// tests only exercise normal (non-service-account) agents.
+func (p *fakeBridgeMCPToolProvider) GetToolsForServiceAccount(_ context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
+	return nil, nil
+}
+
 // setupBridgeMCPProvider wires the context builder with a real MCP tool provider
 // returning the given namespaced tools, so bridge discovery and completion run
 // through getToolsStoreForUser (namespacing + EnabledMCPTools filtering).

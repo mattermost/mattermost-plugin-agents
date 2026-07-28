@@ -186,6 +186,8 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"agent_username":    "testbot",
 				"bot_username":      "testbot",
 				"agent_user_id":     "bot-user-id",
+				"acting_user_id":    "user-123",
+				"tool_auth_mode":    ToolAuthModeUser,
 				"model":             "override-model",
 				"service_type":      "openai",
 				"operation":         OperationConversation,
@@ -193,6 +195,40 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"input_tokens":      int64(12),
 				"output_tokens":     int64(8),
 				"total_tokens":      int64(20),
+			},
+		},
+		{
+			name: "service account requests are attributed to the agent bot",
+			request: CompletionRequest{
+				Context: &Context{
+					RequestingUser: &model.User{Id: "user-123"},
+					Channel:        &model.Channel{Id: "channel-789", Type: model.ChannelTypeOpen},
+					BotUsername:    "testbot",
+					BotUserID:      "bot-user-id",
+					ToolAuthMode:   ToolAuthModeServiceAccount,
+				},
+				Operation:        OperationConversation,
+				OperationSubType: SubTypeStreaming,
+			},
+			stream: makeStream(
+				TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 4, OutputTokens: 6}},
+				TextStreamEvent{Type: EventTypeEnd, Value: nil},
+			),
+			expectedEventTypes: []EventType{EventTypeEnd},
+			expectedMetrics: []observedTokenUsage{
+				{
+					botName:      "testbot",
+					teamID:       TokenUsageUnknown,
+					userID:       "user-123",
+					inputTokens:  4,
+					outputTokens: 6,
+				},
+			},
+			expectedLogFields: map[string]any{
+				"user_id":        "user-123",
+				"agent_user_id":  "bot-user-id",
+				"acting_user_id": "bot-user-id",
+				"tool_auth_mode": ToolAuthModeServiceAccount,
 			},
 		},
 		{
@@ -322,6 +358,8 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 	dimensions := tokenUsageDimensions{
 		userID:           "user-1",
+		actingUserID:     "bot-user-1",
+		toolAuthMode:     ToolAuthModeServiceAccount,
 		teamID:           "team-1",
 		channelID:        "channel-1",
 		channelType:      "open",
@@ -381,7 +419,70 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 			assert.Equal(t, TokenUsageLogEvent, keyed["event"])
 			assert.Equal(t, TokenUsageLogSchemaVersion, keyed["schema_version"])
 			assert.Equal(t, "user-1", keyed["user_id"])
+			assert.Equal(t, "bot-user-1", keyed["acting_user_id"])
+			assert.Equal(t, ToolAuthModeServiceAccount, keyed["tool_auth_mode"])
 			assert.Equal(t, "claude-sonnet-4-5", keyed["model"])
+		})
+	}
+}
+
+// TestExtractTokenUsageDimensionsToolAuthMode pins the acting-identity
+// attribution: which identity external systems saw performing tool actions for
+// this request, and in which auth mode the catalog was built.
+func TestExtractTokenUsageDimensionsToolAuthMode(t *testing.T) {
+	tests := []struct {
+		name             string
+		context          *Context
+		wantUserID       string
+		wantActingUserID string
+		wantToolAuthMode string
+	}{
+		{
+			name: "user mode acts as the requesting user",
+			context: &Context{
+				RequestingUser: &model.User{Id: "user-1"},
+				BotUserID:      "bot-user-1",
+			},
+			wantUserID:       "user-1",
+			wantActingUserID: "user-1",
+			wantToolAuthMode: ToolAuthModeUser,
+		},
+		{
+			name: "service account mode acts as the agent bot",
+			context: &Context{
+				RequestingUser: &model.User{Id: "user-1"},
+				BotUserID:      "bot-user-1",
+				ToolAuthMode:   ToolAuthModeServiceAccount,
+			},
+			wantUserID:       "user-1",
+			wantActingUserID: "bot-user-1",
+			wantToolAuthMode: ToolAuthModeServiceAccount,
+		},
+		{
+			name: "service account mode without a bot user is unknown",
+			context: &Context{
+				RequestingUser: &model.User{Id: "user-1"},
+				ToolAuthMode:   ToolAuthModeServiceAccount,
+			},
+			wantUserID:       "user-1",
+			wantActingUserID: TokenUsageUnknown,
+			wantToolAuthMode: ToolAuthModeServiceAccount,
+		},
+		{
+			name:             "nil context falls back to unknown user mode",
+			wantUserID:       TokenUsageUnknown,
+			wantActingUserID: TokenUsageUnknown,
+			wantToolAuthMode: ToolAuthModeUser,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dimensions := extractTokenUsageDimensions(CompletionRequest{Context: tc.context}, "fallback-bot", "")
+
+			assert.Equal(t, tc.wantUserID, dimensions.userID)
+			assert.Equal(t, tc.wantActingUserID, dimensions.actingUserID)
+			assert.Equal(t, tc.wantToolAuthMode, dimensions.toolAuthMode)
 		})
 	}
 }
