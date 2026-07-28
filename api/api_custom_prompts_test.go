@@ -257,7 +257,7 @@ func TestAuditCustomPrompts(t *testing.T) {
 		event          string
 		buildRequest   func(t *testing.T) (req *http.Request, promptID string)
 		expectedStatus int
-		validateRecord func(t *testing.T, rec *model.AuditRecord, promptID string)
+		validateRecord func(t *testing.T, rec *model.AuditRecord, promptID string, responseBody []byte)
 	}{
 		{
 			name:  "create success records prompt id and sharing flag",
@@ -269,11 +269,17 @@ func TestAuditCustomPrompts(t *testing.T) {
 				return req, ""
 			},
 			expectedStatus: http.StatusCreated,
-			validateRecord: func(t *testing.T, rec *model.AuditRecord, _ string) {
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, _ string, responseBody []byte) {
 				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
 				assert.Equal(t, testUserID, rec.Actor.UserId)
-				assert.NotEmpty(t, rec.EventData.Parameters["prompt_id"])
 				assert.Equal(t, true, rec.EventData.Parameters["is_shared"])
+
+				// The recorded ID must be the created prompt's actual ID, not
+				// just any non-empty string.
+				var created customprompts.CustomPrompt
+				require.NoError(t, json.Unmarshal(responseBody, &created))
+				require.NotEmpty(t, created.ID)
+				assert.Equal(t, created.ID, rec.EventData.Parameters["prompt_id"])
 			},
 		},
 		{
@@ -289,7 +295,7 @@ func TestAuditCustomPrompts(t *testing.T) {
 				return req, ""
 			},
 			expectedStatus: http.StatusBadRequest,
-			validateRecord: func(t *testing.T, rec *model.AuditRecord, _ string) {
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, _ string, _ []byte) {
 				assert.Equal(t, model.AuditStatusFail, rec.Status)
 				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
 				assert.NotContains(t, rec.EventData.Parameters, "prompt_id",
@@ -307,7 +313,7 @@ func TestAuditCustomPrompts(t *testing.T) {
 				return req, prompt.ID
 			},
 			expectedStatus: http.StatusNoContent,
-			validateRecord: func(t *testing.T, rec *model.AuditRecord, promptID string) {
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, promptID string, _ []byte) {
 				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
 				assert.Equal(t, testUserID, rec.Actor.UserId)
 				assert.Equal(t, promptID, rec.EventData.Parameters["prompt_id"])
@@ -325,7 +331,7 @@ func TestAuditCustomPrompts(t *testing.T) {
 				return req, prompt.ID
 			},
 			expectedStatus: http.StatusNotFound,
-			validateRecord: func(t *testing.T, rec *model.AuditRecord, promptID string) {
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, promptID string, _ []byte) {
 				assert.Equal(t, model.AuditStatusFail, rec.Status)
 				assert.Equal(t, testOtherUserID, rec.Actor.UserId)
 				assert.Equal(t, http.StatusNotFound, rec.Error.Code)
@@ -342,7 +348,7 @@ func TestAuditCustomPrompts(t *testing.T) {
 				return req, prompt.ID
 			},
 			expectedStatus: http.StatusNoContent,
-			validateRecord: func(t *testing.T, rec *model.AuditRecord, promptID string) {
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, promptID string, _ []byte) {
 				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
 				assert.Equal(t, testUserID, rec.Actor.UserId)
 				assert.Equal(t, promptID, rec.EventData.Parameters["prompt_id"])
@@ -358,7 +364,7 @@ func TestAuditCustomPrompts(t *testing.T) {
 				return req, prompt.ID
 			},
 			expectedStatus: http.StatusNotFound,
-			validateRecord: func(t *testing.T, rec *model.AuditRecord, promptID string) {
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, promptID string, _ []byte) {
 				assert.Equal(t, model.AuditStatusFail, rec.Status)
 				assert.Equal(t, testOtherUserID, rec.Actor.UserId)
 				assert.Equal(t, http.StatusNotFound, rec.Error.Code)
@@ -380,7 +386,7 @@ func TestAuditCustomPrompts(t *testing.T) {
 			rec := (*records)[0]
 			assert.Equal(t, tt.event, rec.EventName)
 			assert.Equal(t, "sessionid", rec.Actor.SessionId)
-			tt.validateRecord(t, rec, promptID)
+			tt.validateRecord(t, rec, promptID, recorder.Body.Bytes())
 
 			raw, err := json.Marshal(rec)
 			require.NoError(t, err)

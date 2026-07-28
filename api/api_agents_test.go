@@ -1624,6 +1624,23 @@ func TestAuditCreateAgent(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid username records a 400 fail carrying the attempted identifiers",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			},
+			body:           createAgentBody(map[string]any{"username": "Not A Valid Username!"}),
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, _ *TestEnvironment, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				// The failed write attempt is the forensically interesting
+				// record: it must identify what was attempted.
+				assert.Equal(t, "Not A Valid Username!", rec.EventData.Parameters[audit.KeyAgentName])
+				assert.Equal(t, "svc-1", rec.EventData.Parameters["service_id"])
+			},
+		},
+		{
 			name: "permission denial records a 403 fail without request details",
 			setup: func(e *TestEnvironment) {
 				mockLicensed(e.mockAPI)
@@ -1723,6 +1740,29 @@ func TestAuditUpdateAgent(t *testing.T) {
 			},
 		},
 		{
+			name: "slice-field change appears in changed_fields",
+			setup: func(e *TestEnvironment) map[string]any {
+				mockLicensed(e.mockAPI)
+				stored := storedAgent()
+				stored.ChannelAccessLevel = llm.ChannelAccessLevelAllow
+				stored.ChannelIDs = []string{"chan-original-1234567890ab"}
+				e.agentStore.agents["agent-1"] = stored
+				e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+				// Pins the shallow-copy invariant behind the diff: a
+				// slice-typed field replaced by the update request must be
+				// reported, which breaks if the apply ever mutates the
+				// stored slice in place instead of replacing it.
+				return updateAgentBodyFromStored(stored, map[string]any{
+					"channelIDs": []string{"chan-changed-1234567890ab"},
+				})
+			},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, []string{"channelIDs"}, rec.EventData.Parameters["changed_fields"])
+			},
+		},
+		{
 			name: "nonexistent agent records a 404 fail carrying the agent ID",
 			setup: func(e *TestEnvironment) map[string]any {
 				mockLicensed(e.mockAPI)
@@ -1815,6 +1855,26 @@ func TestAuditDeleteAgent(t *testing.T) {
 				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
 				assert.NotContains(t, rec.EventData.Parameters, audit.KeyAgentName)
 				assert.NotContains(t, rec.EventData.Parameters, "bot_user_id")
+			},
+		},
+		{
+			name: "non-owner records a 403 fail identifying the targeted agent",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false)
+				e.agentStore.agents["agent-1"] = &llm.BotConfig{
+					ID: "agent-1", CreatorID: "someone-else", BotUserID: "bot-1",
+					DisplayName: "Protected", Name: "protected", ServiceID: "svc-1",
+				}
+			},
+			expectedStatus: http.StatusForbidden,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusForbidden, rec.Error.Code)
+				// An attempted unauthorized deletion must identify its target.
+				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
+				assert.Equal(t, "protected", rec.EventData.Parameters[audit.KeyAgentName])
+				assert.Equal(t, "bot-1", rec.EventData.Parameters["bot_user_id"])
 			},
 		},
 	}

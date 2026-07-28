@@ -1161,6 +1161,17 @@ func TestAuditMCPOAuthCallback(t *testing.T) {
 			},
 		},
 		{
+			name:           "non-enum provider error is clamped so crafted redirects cannot inject text",
+			query:          "?error=PLANTED-INJECTED-ERROR-TEXT",
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord, raw string) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, "other", rec.EventData.Parameters["provider_error"])
+				assert.NotContains(t, raw, "PLANTED-INJECTED-ERROR-TEXT",
+					"redirect-controlled error text must never reach the audit record")
+			},
+		},
+		{
 			name:           "missing parameters record a 400 fail",
 			query:          "",
 			expectedStatus: http.StatusBadRequest,

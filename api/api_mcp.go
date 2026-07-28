@@ -285,12 +285,36 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 		return
 	}
 
-	// Server names are config identifiers, not content, so the normalized
-	// persisted list is safe to audit.
-	audit.AddParam(auditRec(c), "disabled_servers", saved.DisabledServers)
+	// Only names of actually-known servers are audited: the stored list is
+	// user-supplied free text (up to 256 × 512-rune entries), which would
+	// otherwise be an arbitrary-content injection channel into the audit
+	// log. The count still covers the full persisted list.
+	audit.AddParam(auditRec(c), "disabled_servers", a.knownMCPServerNames(saved.DisabledServers))
 	audit.AddParam(auditRec(c), "disabled_servers_count", len(saved.DisabledServers))
 
 	c.JSON(http.StatusOK, saved)
+}
+
+// knownMCPServerNames filters names down to servers that actually exist:
+// configured remote servers, the embedded server, and registered plugin
+// servers. Order is preserved; unknown entries are dropped.
+func (a *API) knownMCPServerNames(names []string) []string {
+	known := make(map[string]bool)
+	known[mcp.EmbeddedServerName] = true
+	for _, server := range a.config.MCP().Servers {
+		known[server.Name] = true
+	}
+	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+		known[cfg.Name] = true
+	}
+
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if known[name] {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered
 }
 
 // handleDeleteUserMCPOAuth disconnects the current user from an MCP server

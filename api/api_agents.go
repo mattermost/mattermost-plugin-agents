@@ -384,9 +384,10 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	}
 
 	// Identify the requested agent as soon as the body is bound so
-	// validation and persistence fail paths carry it too.
-	audit.AddParam(auditRec(c), audit.KeyAgentName, req.Username)
-	audit.AddParam(auditRec(c), "service_id", req.ServiceID)
+	// validation and persistence fail paths carry it too. Both values are
+	// unvalidated request text at this point, so they are length-clamped.
+	audit.AddParam(auditRec(c), audit.KeyAgentName, audit.TruncateID(req.Username))
+	audit.AddParam(auditRec(c), "service_id", audit.TruncateID(req.ServiceID))
 
 	if !validUsernameRe.MatchString(req.Username) {
 		abortAgentRequest(c, http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
