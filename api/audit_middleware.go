@@ -4,6 +4,8 @@
 package api
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/trace"
 
@@ -51,20 +53,32 @@ func (a *API) auditMiddleware(pluginCtx *plugin.Context) gin.HandlerFunc {
 		c.Set(auditRecordGinKey, rec)
 		c.Request = c.Request.WithContext(audit.WithRecord(c.Request.Context(), rec))
 
-		c.Next()
-
-		status := c.Writer.Status()
-		if status < 400 {
-			// 3xx counts as success: OAuth start answers with a 302.
-			rec.Success()
-		} else {
-			rec.AddErrorCode(status)
-			if last := c.Errors.Last(); last != nil {
-				rec.AddErrorDesc(last.Error())
+		// Emit from a defer so a panicking handler still produces a fail
+		// record; the panic is re-raised for gin's Recovery middleware,
+		// which turns it into the 500 response.
+		defer func() {
+			if r := recover(); r != nil {
+				rec.AddErrorCode(http.StatusInternalServerError)
+				rec.AddErrorDesc("panic during request handling")
+				a.pluginAPI.Audit.Record(rec)
+				panic(r)
 			}
-		}
 
-		a.pluginAPI.Audit.Record(rec)
+			status := c.Writer.Status()
+			if status < 400 {
+				// 3xx counts as success: OAuth start answers with a 302.
+				rec.Success()
+			} else {
+				rec.AddErrorCode(status)
+				if last := c.Errors.Last(); last != nil {
+					rec.AddErrorDesc(last.Error())
+				}
+			}
+
+			a.pluginAPI.Audit.Record(rec)
+		}()
+
+		c.Next()
 	}
 }
 

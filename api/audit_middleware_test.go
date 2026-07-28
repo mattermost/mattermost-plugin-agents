@@ -203,6 +203,36 @@ func TestAuditMiddlewareUnauditedRouteEmitsNothing(t *testing.T) {
 	assert.Empty(t, *records, "read-only routes must not emit audit records")
 }
 
+func TestAuditMiddlewareEmitsFailRecordOnPanic(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+	records := e.CaptureAuditRecords()
+
+	panicky := func(c *gin.Context) { panic("boom") }
+	e.api.auditEvents[handlerFuncName(panicky)] = "panicEvent"
+
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(e.api.auditMiddleware(&plugin.Context{}))
+	router.POST("/panic", panicky)
+
+	req := httptest.NewRequest(http.MethodPost, "/panic", nil)
+	req.Header.Set("Mattermost-User-Id", "userid")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Result().StatusCode)
+	require.Len(t, *records, 1, "a panicking handler must still produce an audit record")
+	rec := (*records)[0]
+	assert.Equal(t, "panicEvent", rec.EventName)
+	assert.Equal(t, model.AuditStatusFail, rec.Status)
+	assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
+	assert.NotContains(t, rec.Error.Description, "boom", "panic values must not leak into the record")
+}
+
 func TestAuditMiddlewareRecordsTraceID(t *testing.T) {
 	// The middleware picks the trace ID off the ambient otelgin span; a real
 	// tracer provider is needed for the span context to carry one.
