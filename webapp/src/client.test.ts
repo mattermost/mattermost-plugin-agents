@@ -6,7 +6,15 @@ import type {OptsSignalExt} from '@mattermost/types/client4';
 
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
-import {normalizeConversationResponse, searchAllChannels, updateRead} from './client';
+import manifest from './manifest';
+
+import {
+    doLoopInAgent,
+    normalizeConversationResponse,
+    searchAllChannels,
+    setSiteURL,
+    updateRead,
+} from './client';
 
 type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
 
@@ -21,8 +29,17 @@ jest.mock('@mattermost/client', () => {
 
         // client.tsx constructs `new Client4()`; the mocked class exposes instance methods.
         Client4: class Client4 {
+            url = '';
             searchAllChannels = mockSearchAllChannels;
             updateThreadReadForUser = mockUpdateThreadReadForUser;
+
+            setUrl(url: string) {
+                this.url = url;
+            }
+
+            getOptions(options: Record<string, unknown>) {
+                return {...options, headers: {'X-Requested-With': 'XMLHttpRequest'}};
+            }
         },
         ClientError: class extends Error {},
         mockSearchAllChannels,
@@ -41,6 +58,26 @@ const {mockUpdateThreadReadForUser} = jest.requireMock('@mattermost/client') as 
         (userId: string, teamId: string, postId: string, timestamp: number) => Promise<void>
     >;
 };
+
+const mockFetch = jest.fn<Promise<Response>, [string, RequestInit]>();
+global.fetch = mockFetch as unknown as typeof fetch;
+
+const siteURL = 'http://localhost:8065';
+
+function okResponse(): Response {
+    return {ok: true, status: 200, json: () => Promise.resolve({})} as unknown as Response;
+}
+
+// Mattermost IDs are 26 characters of lowercase letters and digits.
+const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
+
+// The post id reaches doLoopInAgent straight off a post prop, so a caller can hand it anything.
+const NOT_WELL_FORMED_IDS: Array<{name: string; id: string}> = [
+    {name: 'empty', id: ''},
+    {name: 'relative path segments', id: '../../some/other/route'},
+    {name: 'right length but contains a separator', id: 'abcdefghijklmnopqrstuvwxy/'},
+    {name: 'well-formed id with leading whitespace', id: ` ${WELL_FORMED_ID}`},
+];
 
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
     return {
@@ -68,6 +105,15 @@ function makeConv(overrides: Partial<ConversationResponse> = {}): ConversationRe
         ...overrides,
     };
 }
+
+beforeAll(() => {
+    setSiteURL(siteURL);
+});
+
+beforeEach(() => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue(okResponse());
+});
 
 describe('normalizeConversationResponse', () => {
     beforeEach(() => {
@@ -153,5 +199,29 @@ describe('updateRead', () => {
         mockUpdateThreadReadForUser.mockRejectedValue(error);
 
         await expect(updateRead('user-id', 'team-id', 'post-id', 123)).rejects.toBe(error);
+    });
+});
+
+describe('doLoopInAgent', () => {
+    test('posts to the loop-in route for a well-formed post id', async () => {
+        await expect(doLoopInAgent(WELL_FORMED_ID, 'matty')).resolves.toBeUndefined();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=matty`);
+        expect(options).toEqual(expect.objectContaining({method: 'POST'}));
+    });
+
+    test('percent-encodes the bot username in the query string', async () => {
+        await doLoopInAgent(WELL_FORMED_ID, 'agent bot&x=1');
+
+        const [url] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=agent%20bot%26x%3D1`);
+    });
+
+    test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the post id is not well-formed: $name', async ({id}) => {
+        await expect(doLoopInAgent(id, 'matty')).rejects.toThrow();
+
+        expect(mockFetch).not.toHaveBeenCalled();
     });
 });
