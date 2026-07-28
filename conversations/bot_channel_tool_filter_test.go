@@ -89,11 +89,17 @@ func channelFollowUpTestMCPTool(name, origin, description string) llm.Tool {
 }
 
 func newChannelFollowUpTestBuilder(t *testing.T, mcpTools []llm.Tool, config *channelFollowUpTestConfig) *llmcontext.Builder {
+	return newChannelFollowUpTestBuilderWithLicense(t, mcpTools, config, true)
+}
+
+// newChannelFollowUpTestBuilderWithLicense builds a context builder whose
+// license state controls remote MCP tool supply: unlicensed builders drop
+// remote-origin tools before they reach the LLM context.
+func newChannelFollowUpTestBuilderWithLicense(t *testing.T, mcpTools []llm.Tool, config *channelFollowUpTestConfig, licensed bool) *llmcontext.Builder {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockLicenseState(mockAPI, licensed)
 	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 
 	return llmcontext.NewLLMContextBuilder(

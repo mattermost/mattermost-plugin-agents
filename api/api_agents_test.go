@@ -64,29 +64,38 @@ func (m *mockConfigStore) SaveConfig(cfg config.Config) error {
 	return nil
 }
 
-// mockLicensed sets up mock expectations so IsMultiLLMLicensed() returns true.
-func mockLicensed(mockAPI *plugintest.API) {
+// overrideLicenseMocks replaces any GetConfig/GetLicense expectations already
+// registered (e.g. by SetupTestEnvironment). Testify matches the first
+// registered expectation, so simply adding new ones would not take effect.
+func overrideLicenseMocks(mockAPI *plugintest.API, license *model.License) {
+	filtered := make([]*mock.Call, 0, len(mockAPI.ExpectedCalls))
+	for _, call := range mockAPI.ExpectedCalls {
+		if call.Method != "GetLicense" && call.Method != "GetConfig" {
+			filtered = append(filtered, call)
+		}
+	}
+	mockAPI.ExpectedCalls = filtered
 	mockAPI.On("GetConfig").Return(&model.Config{
 		ServiceSettings: model.ServiceSettings{
 			SiteURL: model.NewPointer("http://localhost"),
 		},
 	}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{
+	mockAPI.On("GetLicense").Return(license).Maybe()
+}
+
+// mockLicensed sets up mock expectations so IsMultiLLMLicensed() returns true.
+func mockLicensed(mockAPI *plugintest.API) {
+	overrideLicenseMocks(mockAPI, &model.License{
 		Features: &model.Features{
 			LDAP: model.NewPointer(true),
 		},
-		SkuShortName: "enterprise",
-	}).Maybe()
+		SkuShortName: model.LicenseShortSkuEnterprise,
+	})
 }
 
 // mockUnlicensed sets up mock expectations so IsMultiLLMLicensed() returns false.
 func mockUnlicensed(mockAPI *plugintest.API) {
-	mockAPI.On("GetConfig").Return(&model.Config{
-		ServiceSettings: model.ServiceSettings{
-			SiteURL: model.NewPointer("http://localhost"),
-		},
-	}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	overrideLicenseMocks(mockAPI, nil)
 }
 
 func doRequest(api *API, method, path string, body interface{}, userID string) *httptest.ResponseRecorder {

@@ -593,9 +593,12 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockAPI.On("LogError", args...).Maybe()
 	}
 
-	// Mock GetConfig and GetLicense for WithLLMContextServerInfo used in bridge context building.
+	// Mock GetConfig and GetLicense for WithLLMContextServerInfo and the
+	// context builder's remote-MCP license gate. Default to a licensed
+	// server so remote MCP tools are supplied; tests asserting unlicensed
+	// behavior override via OverrideLicense.
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 
 	// The audit middleware logs a record for every audited route; accept them
 	// by default so unrelated tests don't have to care. Tests asserting audit

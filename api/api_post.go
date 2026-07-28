@@ -306,15 +306,10 @@ func (a *API) handleToolCall(c *gin.Context) {
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
 	// Enrich the audit record as soon as the objects are bound so the
-	// license/permission fail paths below still carry post and channel.
+	// permission fail paths below still carry post and channel.
 	rec := auditRec(c)
 	audit.AddParam(rec, audit.KeyPostID, post.Id)
 	audit.AddParam(rec, audit.KeyChannelID, channel.Id)
-
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
 
 	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
@@ -353,15 +348,16 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 // toolApprovalHTTPStatus maps errors from HandleToolCall/HandleToolResult to
 // HTTP statuses. Stale-click and missing-conversation cases are client-side
-// issues (400); requester-mismatch is a permission denial (403); everything
-// else falls through to 500.
+// issues (400); requester-mismatch and unlicensed remote MCP use are
+// permission denials (403); everything else falls through to 500.
 func toolApprovalHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrStaleToolClick),
 		errors.Is(err, conversations.ErrPostMissingConversationID),
 		errors.Is(err, conversations.ErrInvalidToolAnswer):
 		return http.StatusBadRequest
-	case errors.Is(err, conversations.ErrNotRequester):
+	case errors.Is(err, conversations.ErrNotRequester),
+		errors.Is(err, conversations.ErrRemoteMCPNotLicensed):
 		return http.StatusForbidden
 	default:
 		return http.StatusInternalServerError
@@ -374,15 +370,10 @@ func (a *API) handleToolResult(c *gin.Context) {
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
 	// Enrich the audit record as soon as the objects are bound so the
-	// license/permission fail paths below still carry post and channel.
+	// permission fail paths below still carry post and channel.
 	rec := auditRec(c)
 	audit.AddParam(rec, audit.KeyPostID, post.Id)
 	audit.AddParam(rec, audit.KeyChannelID, channel.Id)
-
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
 
 	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
