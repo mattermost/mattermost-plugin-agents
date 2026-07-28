@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen, waitFor} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 // Minimal react-intl shim: ts-jest bypasses babel, so FormattedMessage needs an id at runtime.
 jest.mock('react-intl', () => {
@@ -61,12 +61,13 @@ function makeMCPConfig(servers: MCPServerConfig[] = []): MCPConfig {
     };
 }
 
-function makeRemoteServer(): MCPServerConfig {
+function makeRemoteServer(overrides: Partial<MCPServerConfig> = {}): MCPServerConfig {
     return {
         name: 'Jira',
         enabled: true,
         baseURL: 'https://mcp.example.com',
         headers: {},
+        ...overrides,
     };
 }
 
@@ -127,5 +128,87 @@ describe('MCPServers license gating', () => {
         await waitFor(() => {
             expect(screen.queryByText('Use remote MCP servers on qualifying Mattermost plans')).toBeNull();
         });
+    });
+});
+
+describe('MCPServers service account headers', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsBasicsLicensed.mockReturnValue(true);
+    });
+
+    // The two header maps are rendered by the same editor, so rows appear in DOM
+    // order: base Headers first, then Service Account headers.
+    const baseHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[0];
+    const serviceAccountHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[1];
+
+    async function renderOneServer(server: MCPServerConfig) {
+        const rendered = renderServers(makeMCPConfig([server]));
+        await screen.findByText('Service Account Authentication');
+        return rendered;
+    }
+
+    function savedServer(onChange: jest.Mock): MCPServerConfig {
+        expect(onChange).toHaveBeenCalledTimes(1);
+        const saved = (onChange.mock.calls[0][0] as MCPConfig).servers;
+        expect(saved).not.toBeNull();
+        return saved![0];
+    }
+
+    test('renders the Service Account Authentication section with its own header editor', async () => {
+        await renderOneServer(makeRemoteServer());
+
+        expect(screen.getByText('Service Account Authentication')).not.toBeNull();
+        expect(screen.getAllByRole('button', {name: 'Add Header'})).toHaveLength(2);
+    });
+
+    test('adding a service account header emits serviceAccountHeaders and leaves headers untouched', async () => {
+        const {onChange} = await renderOneServer(makeRemoteServer({headers: {'X-Base': 'b'}}));
+
+        fireEvent.click(screen.getAllByRole('button', {name: 'Add Header'})[1]);
+
+        expect(savedServer(onChange)).toEqual(expect.objectContaining({
+            headers: {'X-Base': 'b'},
+            serviceAccountHeaders: {'': ''},
+        }));
+    });
+
+    // Regression: the server card rebuilds the config field by field, so any
+    // unrelated edit used to drop serviceAccountHeaders from the saved document.
+    test('editing an unrelated field preserves serviceAccountHeaders', async () => {
+        const {onChange} = await renderOneServer(makeRemoteServer({
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        }));
+
+        fireEvent.change(screen.getByPlaceholderText('https://mcp.example.com'), {
+            target: {value: 'https://mcp.example.com/v2'},
+        });
+
+        expect(savedServer(onChange)).toEqual(expect.objectContaining({
+            baseURL: 'https://mcp.example.com/v2',
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        }));
+    });
+
+    test('editing one header map leaves the other map untouched', async () => {
+        const server = makeRemoteServer({
+            headers: {'X-Base': 'base-value'},
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        });
+
+        const base = await renderOneServer(server);
+        fireEvent.change(baseHeaderValueInput(), {target: {value: 'base-value-2'}});
+        expect(savedServer(base.onChange)).toEqual(expect.objectContaining({
+            headers: {'X-Base': 'base-value-2'},
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        }));
+        base.unmount();
+
+        const serviceAccount = await renderOneServer(server);
+        fireEvent.change(serviceAccountHeaderValueInput(), {target: {value: 'Bearer rotated'}});
+        expect(savedServer(serviceAccount.onChange)).toEqual(expect.objectContaining({
+            headers: {'X-Base': 'base-value'},
+            serviceAccountHeaders: {Authorization: 'Bearer rotated'},
+        }));
     });
 });

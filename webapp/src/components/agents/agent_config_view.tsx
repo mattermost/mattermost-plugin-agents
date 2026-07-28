@@ -35,6 +35,7 @@ export type AgentDraft = {
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+    useServiceAccountAuth: boolean;
     model: string;
     enableVision: boolean;
     disableTools: boolean;
@@ -66,6 +67,7 @@ const emptyDraft: AgentDraft = {
     enabledTools: [],
     autoEnableNewMCPTools: true,
     mcpDynamicToolLoading: true,
+    useServiceAccountAuth: false,
     model: '',
     enableVision: true,
     disableTools: false,
@@ -112,6 +114,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
+        useServiceAccountAuth: draft.useServiceAccountAuth,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -143,6 +146,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
+        useServiceAccountAuth: draft.useServiceAccountAuth,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -170,6 +174,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         enabledTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools ?? false,
         mcpDynamicToolLoading: agent.mcpDynamicToolLoading ?? true,
+        useServiceAccountAuth: agent.useServiceAccountAuth ?? false,
         model: agent.model ?? '',
         enableVision: agent.enableVision ?? true,
         disableTools: agent.disableTools ?? false,
@@ -432,6 +437,7 @@ const AgentConfigView = (props: Props) => {
                         <McpsTab
                             enabledTools={draft.enabledTools}
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
+                            useServiceAccountAuth={draft.useServiceAccountAuth}
                             onChange={(updates) => updateDraft(updates)}
                             onReconcileEnabledTools={reconcileEnabledTools}
                         />

@@ -50,6 +50,7 @@ export type UserAgent = {
     enabledMCPTools: EnabledTool[] | null;
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading?: boolean;
+    useServiceAccountAuth: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
@@ -91,6 +92,11 @@ export type CreateAgentRequest = {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+
+    // Required, not optional: the backend field has no omitempty and update is a
+    // full-document replace, so a payload omitting the key resets the flag.
+    // Requiring it makes tsc reject any payload builder that forgets it.
+    useServiceAccountAuth: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -121,6 +127,7 @@ export type UpdateAgentRequest = {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+    useServiceAccountAuth: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;

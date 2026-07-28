@@ -93,11 +93,21 @@ jest.mock('./tabs/access_tab', () => ({
 jest.mock('./tabs/mcps_tab', () => ({
     __esModule: true,
     default: ({
+        useServiceAccountAuth,
+        onChange,
         onReconcileEnabledTools,
     }: {
+        useServiceAccountAuth: boolean;
+        onChange: (updates: {useServiceAccountAuth?: boolean}) => void;
         onReconcileEnabledTools?: (cleaned: EnabledTool[]) => void;
     }) => (
         <>
+            <input
+                aria-label='Use service accounts'
+                type='checkbox'
+                checked={useServiceAccountAuth}
+                onChange={(e) => onChange({useServiceAccountAuth: e.target.checked})}
+            />
             <button
                 type='button'
                 onClick={() => onReconcileEnabledTools?.([])}
@@ -140,6 +150,7 @@ const savedAgent = {
     enabledMCPTools: [],
     autoEnableNewMCPTools: true,
     mcpDynamicToolLoading: true,
+    useServiceAccountAuth: false,
     reasoningEnabled: true,
     reasoningEffort: 'medium',
     thinkingBudget: 0,
@@ -232,6 +243,7 @@ describe('AgentConfigView', () => {
                 {server_origin: 'embedded://mattermost', tool_name: 'deleted_tool'},
             ],
             autoEnableNewMCPTools: false,
+            useServiceAccountAuth: false,
             mcpDynamicToolLoading: true,
             reasoningEnabled: true,
             reasoningEffort: 'medium',
@@ -290,6 +302,7 @@ describe('AgentConfigView', () => {
                         enabledNativeTools: ['web_search'],
                         enabledMCPTools: [],
                         autoEnableNewMCPTools: true,
+                        useServiceAccountAuth: false,
                         mcpDynamicToolLoading: true,
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
@@ -334,6 +347,7 @@ describe('AgentConfigView', () => {
                         enabledNativeTools: ['web_search'],
                         enabledMCPTools: [],
                         autoEnableNewMCPTools: true,
+                        useServiceAccountAuth: false,
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
@@ -436,6 +450,7 @@ describe('AgentConfigView', () => {
                         enabledNativeTools: ['web_search'],
                         enabledMCPTools: [],
                         autoEnableNewMCPTools: true,
+                        useServiceAccountAuth: false,
                         mcpDynamicToolLoading: true,
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
@@ -485,6 +500,59 @@ describe('AgentConfigView', () => {
         await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
         expect(mockUpdateAgent).toHaveBeenCalledWith('agent_dynamic_off', expect.objectContaining({
             mcpDynamicToolLoading: false,
+        }));
+    });
+
+    test('create payload carries useServiceAccountAuth from the MCPs tab', async () => {
+        mockCreateAgent.mockResolvedValue({...savedAgent, useServiceAccountAuth: true});
+        renderView();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByLabelText('Use service accounts'));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+        expect(mockCreateAgent).toHaveBeenCalledWith(expect.objectContaining({
+            useServiceAccountAuth: true,
+        }));
+    });
+
+    // PUT /agents/:id replaces the whole document, so an update payload that
+    // dropped the flag would silently turn service account auth back off.
+    test('edit mode hydrates useServiceAccountAuth and the update payload preserves it', async () => {
+        mockUpdateAgent.mockResolvedValue({...savedAgent, useServiceAccountAuth: true});
+        const agent: UserAgent = {
+            ...savedAgent,
+            id: 'agent_service_account',
+            name: 'serviceaccountagent',
+            displayName: 'Service Account Agent',
+            useServiceAccountAuth: true,
+        };
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={agent}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        expect((screen.getByLabelText('Use service accounts') as HTMLInputElement).checked).toBe(true);
+
+        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Service Account Agent Renamed'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent).toHaveBeenCalledWith('agent_service_account', expect.objectContaining({
+            useServiceAccountAuth: true,
         }));
     });
 });

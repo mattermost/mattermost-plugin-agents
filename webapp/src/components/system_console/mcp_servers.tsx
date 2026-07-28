@@ -34,6 +34,12 @@ export type MCPServerConfig = {
     enabled: boolean;
     baseURL: string;
     headers: {[key: string]: string};
+
+    // Static headers sent instead of per-user OAuth for agents with
+    // useServiceAccountAuth enabled. Optional: the backend tag is
+    // `json:"serviceAccountHeaders,omitempty"`, so servers saved before this
+    // feature (or with no entries) omit the key entirely.
+    serviceAccountHeaders?: {[key: string]: string};
     tool_configs?: MCPToolConfig[];
     clientID?: string;
     clientSecret?: string;
@@ -71,8 +77,72 @@ const defaultServerConfig: MCPServerConfig = {
     enabled: true,
     baseURL: '',
     headers: {},
+    serviceAccountHeaders: {},
     clientID: '',
     clientSecret: '',
+};
+
+// Shared key/value editor for the two header maps on a server (base Headers
+// and Service Account headers). Behavior is identical for both: renaming a key
+// deletes the old entry, blank rows are legal (the backend ignores them).
+const HeaderMapEditor = ({
+    headers,
+    onChange,
+}: {
+    headers: {[key: string]: string};
+    onChange: (headers: {[key: string]: string}) => void;
+}) => {
+    const intl = useIntl();
+
+    const addHeader = () => {
+        onChange({...headers, '': ''});
+    };
+
+    const updateHeader = (oldKey: string, newKey: string, value: string) => {
+        const updated = {...headers};
+        if (oldKey !== newKey) {
+            delete updated[oldKey];
+        }
+        updated[newKey] = value;
+        onChange(updated);
+    };
+
+    const removeHeader = (key: string) => {
+        const updated = {...headers};
+        delete updated[key];
+        onChange(updated);
+    };
+
+    return (
+        <>
+            <HeadersList>
+                {Object.entries(headers).map(([key, value], index) => (
+                    <HeaderRow key={index}>
+                        <HeaderInput
+                            placeholder={intl.formatMessage({defaultMessage: 'Header name'})}
+                            value={key}
+                            onChange={(e) => updateHeader(key, e.target.value, value)}
+                        />
+                        <HeaderInput
+                            placeholder={intl.formatMessage({defaultMessage: 'Value'})}
+                            value={value}
+                            onChange={(e) => updateHeader(key, key, e.target.value)}
+                        />
+                        <RemoveHeaderButton
+                            aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
+                            onClick={() => removeHeader(key)}
+                        >
+                            <TrashCanOutlineIcon size={14}/>
+                        </RemoveHeaderButton>
+                    </HeaderRow>
+                ))}
+            </HeadersList>
+            <AddHeaderButton onClick={addHeader}>
+                <PlusIcon size={14}/>
+                <FormattedMessage defaultMessage='Add Header'/>
+            </AddHeaderButton>
+        </>
+    );
 };
 
 // Component for a single MCP server configuration
@@ -98,6 +168,7 @@ const MCPServer = ({
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
+        serviceAccountHeaders: serverConfig.serviceAccountHeaders || {},
         tool_configs: serverConfig.tool_configs,
         clientID: serverConfig.clientID || '',
         clientSecret: serverConfig.clientSecret || '',
@@ -154,47 +225,6 @@ const MCPServer = ({
         onChange(serverIndex, {
             ...config,
             name,
-        });
-    };
-
-    // Add a new header
-    const addHeader = () => {
-        const headers = config.headers || {};
-        onChange(serverIndex, {
-            ...config,
-            headers: {
-                ...headers,
-                '': '',
-            },
-        });
-    };
-
-    // Update a header's key or value
-    const updateHeader = (oldKey: string, newKey: string, value: string) => {
-        const headers = {...(config.headers || {})};
-
-        // If the key has changed, remove the old one
-        if (oldKey !== newKey) {
-            delete headers[oldKey];
-        }
-
-        // Set the new key-value pair
-        headers[newKey] = value;
-
-        onChange(serverIndex, {
-            ...config,
-            headers,
-        });
-    };
-
-    // Remove a header
-    const removeHeader = (key: string) => {
-        const headers = {...(config.headers || {})};
-        delete headers[key];
-
-        onChange(serverIndex, {
-            ...config,
-            headers,
         });
     };
 
@@ -264,35 +294,23 @@ const MCPServer = ({
                 <HeadersSectionTitle>
                     {intl.formatMessage({defaultMessage: 'Headers'})}
                 </HeadersSectionTitle>
+                <HeaderMapEditor
+                    headers={config.headers}
+                    onChange={(headers) => onChange(serverIndex, {...config, headers})}
+                />
+            </HeadersSection>
 
-                <HeadersList>
-                    {Object.entries(config.headers || {}).map(([key, value], index) => (
-                        <HeaderRow key={index}>
-                            <HeaderInput
-                                placeholder={intl.formatMessage({defaultMessage: 'Header name'})}
-                                value={key}
-                                onChange={(e) => updateHeader(key, e.target.value, value)}
-                            />
-                            <HeaderInput
-                                placeholder={intl.formatMessage({defaultMessage: 'Value'})}
-                                value={value}
-                                onChange={(e) => updateHeader(key, key, e.target.value)}
-                            />
-                            <RemoveHeaderButton
-                                onClick={() => removeHeader(key)}
-                            >
-                                <TrashCanOutlineIcon size={14}/>
-                            </RemoveHeaderButton>
-                        </HeaderRow>
-                    ))}
-                </HeadersList>
-
-                <AddHeaderButton
-                    onClick={addHeader}
-                >
-                    <PlusIcon size={14}/>
-                    <FormattedMessage defaultMessage='Add Header'/>
-                </AddHeaderButton>
+            <HeadersSection>
+                <HeadersSectionTitle>
+                    {intl.formatMessage({defaultMessage: 'Service Account Authentication'})}
+                </HeadersSectionTitle>
+                <SectionHelpText>
+                    {intl.formatMessage({defaultMessage: 'Static headers (for example a personal access token) sent in place of per-user OAuth when an agent has "Use service accounts for authentication" enabled. Agents using service accounts can only access servers with at least one header configured here.'})}
+                </SectionHelpText>
+                <HeaderMapEditor
+                    headers={config.serviceAccountHeaders}
+                    onChange={(serviceAccountHeaders) => onChange(serverIndex, {...config, serviceAccountHeaders})}
+                />
             </HeadersSection>
 
             <OAuthSection>
@@ -323,9 +341,9 @@ const MCPServer = ({
                 </OAuthSectionHeader>
                 {isOAuthExpanded && (
                     <OAuthSectionContent id={`oauth-section-content-${serverIndex}`}>
-                        <OAuthHelpText>
+                        <SectionHelpText>
                             {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
-                        </OAuthHelpText>
+                        </SectionHelpText>
                         <TextItem
                             label={intl.formatMessage({defaultMessage: 'Client ID'})}
                             value={config.clientID}
@@ -746,7 +764,7 @@ const OAuthSectionContent = styled.div`
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
-const OAuthHelpText = styled.div`
+const SectionHelpText = styled.div`
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
     margin-bottom: 4px;

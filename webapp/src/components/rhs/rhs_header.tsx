@@ -65,13 +65,17 @@ const RHSHeader = (props: Props) => {
                 )}
                 {props.currentTab === 'new' ? (
                     <>
-                        <ToolProviderPopover
-                            disabledServers={props.disabledServers}
-                            onDisabledServersChange={props.onDisabledServersChange}
-                            preloadedServers={props.preloadedServers}
-                            enabledMCPTools={props.activeBot?.enabledMCPTools}
-                            autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
-                        />
+                        {/* A service account agent has no per-user OAuth connections or
+                            per-user server preferences, which is all the popover controls. */}
+                        {props.activeBot?.useServiceAccountAuth !== true && (
+                            <ToolProviderPopover
+                                disabledServers={props.disabledServers}
+                                onDisabledServersChange={props.onDisabledServersChange}
+                                preloadedServers={props.preloadedServers}
+                                enabledMCPTools={props.activeBot?.enabledMCPTools}
+                                autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
+                            />
+                        )}
                         {props.bots && (
                             <BotDropdown
                                 bots={props.bots}
