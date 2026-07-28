@@ -63,7 +63,7 @@ type MCPClientManager interface {
 	DisconnectUserOAuth(userID, serverName string) error
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
-	EnsureMCPSessionID(userID string) (string, error)
+	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
 	GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors)
 	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
 	GetConfig() mcp.Config

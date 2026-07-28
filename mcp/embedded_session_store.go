@@ -43,21 +43,27 @@ func (m *ClientManager) deleteEmbeddedSessionID(userID string) error {
 // ensureEmbeddedSessionID ensures there is a valid embedded session for the user
 // It loads from KV, validates via Session.Get, and if missing/invalid, creates a new one
 // The created session is tagged for MCP via Props
-func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, error) {
+// The second return reports whether a new session was minted (false when an
+// existing session was reused).
+func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, bool, error) {
 	user, err := m.pluginAPI.User.Get(userID)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch user for embedded session: %w", err)
+		return "", false, fmt.Errorf("failed to fetch user for embedded session: %w", err)
 	}
 	if user.DeleteAt != 0 {
-		return "", fmt.Errorf("cannot create embedded session for deleted user")
+		return "", false, fmt.Errorf("cannot create embedded session for deleted user")
 	}
 	if sessionID, err := m.tryReuseEmbeddedSession(user.Id); err != nil {
-		return "", err
+		return "", false, err
 	} else if sessionID != "" {
-		return sessionID, nil
+		return sessionID, false, nil
 	}
 
-	return m.createEmbeddedSession(user)
+	sessionID, err := m.createEmbeddedSession(user)
+	if err != nil {
+		return "", false, err
+	}
+	return sessionID, true, nil
 }
 
 func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {

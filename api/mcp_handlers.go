@@ -9,8 +9,31 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// mcpSessionGrantRecord builds the audit record for an MCP session grant
+// attempt. A grant is a credential event — an external MCP client obtaining a
+// dedicated session that holds API access as the user — so the record carries
+// the actor identity and trace ID, never the minted session ID itself.
+func mcpSessionGrantRecord(c *gin.Context, userID string) *model.AuditRecord {
+	pluginCtx := &plugin.Context{}
+	if v, exists := c.Get("pluginContext"); exists {
+		if pc, ok := v.(*plugin.Context); ok && pc != nil {
+			pluginCtx = pc
+		}
+	}
+
+	rec := plugin.MakeAuditRecordWithContext(AuditEventMCPSessionGrant, model.AuditStatusFail, pluginCtx, userID, c.Request.URL.Path)
+	if sc := trace.SpanFromContext(c.Request.Context()).SpanContext(); sc.HasTraceID() {
+		rec.AddMeta(audit.MetaTraceID, sc.TraceID().String())
+	}
+	return rec
+}
 
 // delegateToMCPHandler delegates the request to the MCP handler
 // It creates a dedicated MCP session and injects session ID + token resolver into the request context
@@ -31,13 +54,26 @@ func (a *API) delegateToMCPHandler(c *gin.Context, handler http.Handler) {
 	}
 
 	// Get or create dedicated MCP session for this user
-	sessionID, err := a.mcpClientManager.EnsureMCPSessionID(userID)
+	sessionID, created, err := a.mcpClientManager.EnsureMCPSessionID(userID)
 	if err != nil {
 		a.pluginAPI.Log.Error("Failed to ensure MCP session for user",
 			"userId", userID,
 			"error", err)
+		rec := mcpSessionGrantRecord(c, userID)
+		rec.AddErrorCode(http.StatusInternalServerError)
+		rec.AddErrorDesc(err.Error())
+		a.pluginAPI.Audit.Record(rec)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
+	}
+
+	// A newly minted session means an external MCP client just obtained API
+	// access as this user — a credential event worth auditing. Session reuse
+	// on reconnect is intentionally silent so it cannot spam the audit log.
+	if created {
+		rec := mcpSessionGrantRecord(c, userID)
+		rec.Success()
+		a.pluginAPI.Audit.Record(rec)
 	}
 
 	// Create token resolver with closure over pluginAPI

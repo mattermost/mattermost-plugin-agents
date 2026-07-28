@@ -305,3 +305,64 @@ func TestClientManager_GetToolsForUser(t *testing.T) {
 
 	t.Logf("GetToolsForUser returned %d tools", len(tools))
 }
+
+// TestClientManager_EnsureMCPSessionIDCreatedFlag verifies the created return:
+// false when a stored embedded session is reused, true when one is minted.
+func TestClientManager_EnsureMCPSessionIDCreatedFlag(t *testing.T) {
+	suite := GetSharedTestSuite(t)
+	suite.SetupEmbeddedServer()
+
+	tests := []struct {
+		name        string
+		setup       func(t *testing.T) (manager *ClientManager, userID, wantSessionID string)
+		wantCreated bool
+	}{
+		{
+			name: "stored session is reused",
+			setup: func(t *testing.T) (*ClientManager, string, string) {
+				user, session := suite.CreateUserAndSession(t)
+				// CreateClientManager pre-populates KV with the session ID,
+				// so the manager finds and reuses it.
+				manager := suite.CreateClientManager(t, session)
+				return manager, user.Id, session.Id
+			},
+			wantCreated: false,
+		},
+		{
+			name: "missing session is minted",
+			setup: func(t *testing.T) (*ClientManager, string, string) {
+				// No stored session: the generic KVGet mock returns nil for
+				// every key, so the manager must mint a new session.
+				mockPluginAPI := newMockPluginAPI()
+				pluginAPIClient := pluginapi.NewClient(mockPluginAPI, nil)
+				wrapper := &embeddedServerWrapper{
+					server: suite.embeddedServer,
+					api:    mockPluginAPI,
+				}
+				config := Config{
+					EmbeddedServer:     EmbeddedServerConfig{Enabled: true},
+					IdleTimeoutMinutes: 30,
+				}
+				manager := NewClientManager(config, pluginAPIClient.Log, pluginAPIClient, nil, wrapper, nil, nil)
+				// newMockPluginAPI's generic GetUser mock returns this fixed ID.
+				return manager, "test-user-id", ""
+			},
+			wantCreated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, userID, wantSessionID := tt.setup(t)
+			defer manager.Close()
+
+			sessionID, created, err := manager.EnsureMCPSessionID(userID)
+			require.NoError(t, err)
+			require.NotEmpty(t, sessionID)
+			if wantSessionID != "" {
+				assert.Equal(t, wantSessionID, sessionID)
+			}
+			assert.Equal(t, tt.wantCreated, created)
+		})
+	}
+}

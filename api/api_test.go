@@ -109,21 +109,22 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager        *mcp.OAuthManager
-	tools               []llm.Tool
-	mcpErrors           *mcp.Errors
-	config              mcp.Config
-	embeddedServer      mcp.EmbeddedMCPServer
-	processOAuthSession *mcp.OAuthSession
-	processOAuthErr     error
-	disconnectCalls     []mcpDisconnectCall
-	disconnectErr       error
-	oauthNeededCalls    []mcpDisconnectCall
-	refreshErr          error
-	refreshCalls        []string
-	getContexts         []context.Context
-	refreshContexts     []context.Context
-	ensureSessionErr    error
+	oauthManager         *mcp.OAuthManager
+	tools                []llm.Tool
+	mcpErrors            *mcp.Errors
+	config               mcp.Config
+	embeddedServer       mcp.EmbeddedMCPServer
+	processOAuthSession  *mcp.OAuthSession
+	processOAuthErr      error
+	disconnectCalls      []mcpDisconnectCall
+	disconnectErr        error
+	oauthNeededCalls     []mcpDisconnectCall
+	refreshErr           error
+	refreshCalls         []string
+	getContexts          []context.Context
+	refreshContexts      []context.Context
+	ensureSessionErr     error
+	ensureSessionCreated bool
 
 	registerCalls   []mcp.PluginServerConfig
 	unregisterCalls []string
@@ -178,11 +179,11 @@ func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
 	return m.embeddedServer
 }
 
-func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {
+func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, bool, error) {
 	if m.ensureSessionErr != nil {
-		return "", m.ensureSessionErr
+		return "", false, m.ensureSessionErr
 	}
-	return "mock-session-id", nil
+	return "mock-session-id", m.ensureSessionCreated, nil
 }
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
