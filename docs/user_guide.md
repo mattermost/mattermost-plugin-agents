@@ -106,6 +106,8 @@ Tool availability depends on your user permissions, provider connection status, 
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 
+Some agents are configured by an admin to use **service account authentication** instead of per-user connections. When you chat with one of those agents, you're never asked to connect an account, the **Tools** menu isn't shown for that agent, and its tools run under admin-configured credentials — acting as the agent's bot account inside Mattermost — rather than your personal accounts. Tool approval works the same as with any other agent: if a tool call requires review, you still see the **Accept** and **Reject** options.
+
 ## Analyze threads and channels
 
 ### Summarize discussion threads

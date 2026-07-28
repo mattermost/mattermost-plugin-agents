@@ -333,6 +333,8 @@ The Agents plugin can track token usage for all LLM interactions to support bill
 - **User ID**: The Mattermost user who initiated the request
 - **Team ID**: The team context for the request
 - **Bot Username**: Which agent was used for the interaction
+- **Acting User ID**: The identity tool calls acted as — the requesting user, or the agent's bot user ID when the agent uses service account authentication
+- **Tool Auth Mode**: `user` or `service_account`, recording which credential mode built the request's tool catalog
 - **Input Tokens**: Number of tokens in the request to the LLM
 - **Output Tokens**: Number of tokens in the LLM response
 - **Total Tokens**: Combined input and output token count
@@ -356,8 +358,8 @@ jq -s '.' logs/agents/token_usage.log > token_usage.json
 **Convert to CSV format:**
 
 ```bash
-echo "timestamp,user_id,team_id,bot_username,input_tokens,output_tokens,total_tokens,cached_read_tokens,cached_write_tokens,reasoning_tokens,cost" > token_usage.csv
-jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_tokens, .total_tokens, (.cached_read_tokens // 0), (.cached_write_tokens // 0), (.reasoning_tokens // 0), (.cost // 0)] | @csv' logs/agents/token_usage.log >> token_usage.csv
+echo "timestamp,user_id,acting_user_id,tool_auth_mode,team_id,bot_username,input_tokens,output_tokens,total_tokens,cached_read_tokens,cached_write_tokens,reasoning_tokens,cost" > token_usage.csv
+jq -r '[.timestamp, .user_id, .acting_user_id, .tool_auth_mode, .team_id, .bot_username, .input_tokens, .output_tokens, .total_tokens, (.cached_read_tokens // 0), (.cached_write_tokens // 0), (.reasoning_tokens // 0), (.cost // 0)] | @csv' logs/agents/token_usage.log >> token_usage.csv
 ```
 
 ### Post indexing
@@ -555,12 +557,12 @@ Remote and external MCP servers require a license (see [license requirements](#l
 
    - **Enable Mattermost MCP Server (HTTP)**: Optional HTTP endpoint for external MCP clients. See [Mattermost MCP Server](#mattermost-mcp-server).
    - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
-   - Remote MCP servers, including URL, custom headers, OAuth client settings, and per-server enablement.
+   - Remote MCP servers, including URL, custom headers, OAuth client settings, service account headers, and per-server enablement.
 
 3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Expand a tool row to add an optional **Retrieval description override** for dynamic tool loading search; this helps the agent find the tool but does not change the tool schema sent after loading. Plugin-registered MCP servers appear as separate plugin rows in this tab.
 4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools, and whether MCP tool schemas are loaded dynamically or exposed up front.
 
-Agent MCP access is filtered by admin tool policy, the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request.
+Agent MCP access is filtered by admin tool policy, the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request. For agents using [service account authentication](#service-account-authentication), user-disabled provider preferences don't apply.
 
 The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
 
@@ -574,6 +576,7 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 
    - **Server URL**: The endpoint URL for your MCP server.
    - **Custom Headers**: Additional headers required by your MCP server (optional).
+   - **Service Account Authentication**: Static headers used in place of per-user OAuth by agents with **Use service accounts for authentication** enabled (optional). See [Service account authentication](#service-account-authentication).
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
 
 3. Select **Save** to add the server.
@@ -600,6 +603,38 @@ The **Automatically enable all MCP tools** option remains the broadest setting. 
 
 Enabling a server or tool for an agent controls what the agent is allowed to use, but it does not bypass tool approval policies. Tool execution still follows the policy configured in the **Tools** tab and each user's Mattermost and provider permissions.
 
+### Service account authentication
+
+By default, MCP tool calls run with the credentials of the user who triggered the agent: per-user OAuth on external MCP servers, and the requesting user's own identity for embedded Mattermost tools. An agent can instead be switched to **service account authentication**, where every MCP tool call uses shared, admin-configured credentials.
+
+Service account authentication requires a license, the same as remote and external MCP servers (see [license requirements](#license-requirements)). Without a license, the remote MCP server configuration that holds the service account headers is not shown, and enabling the agent setting does not change how that agent's tool calls authenticate.
+
+#### Configure service account headers on an MCP server
+
+1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)** and open the remote MCP server on the **Configuration** tab.
+2. In the **Service Account Authentication** section, add the static headers the server should receive from service account agents — for example, an `Authorization` header carrying a personal access token.
+3. Select **Save**.
+
+These headers are sent **in place of** per-user OAuth, and only for agents that have service account authentication enabled. They are separate from the server's custom headers, which are sent on every connection in both modes; when both define the same header, the service account value wins. Rows with a blank name or value are ignored — a server whose only entries are blank counts as having no service account credentials and stays excluded from service account agents. Like the server's other credentials (custom headers, OAuth client secret), the header values are stored in the plugin configuration and are visible to system admins.
+
+#### Enable service account authentication on an agent
+
+On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**. The setting is all-or-nothing for that agent:
+
+- **External MCP servers**: tool calls send the server's service account headers. Servers without service account headers configured are excluded from this agent entirely — the agent fails closed, with no fallback to any user's personal OAuth connection. To mix personal and service account access, use two agents, or define separate MCP server entries.
+- **Embedded Mattermost tools and plugin-registered MCP servers**: tool calls run as the agent's **bot account** instead of the requesting user.
+- Users are never prompted to connect accounts for this agent, per-user tool provider preferences don't apply, and the Agents RHS **Tools** popover is hidden.
+- Tool approval is unchanged: the person who triggered the agent still approves or rejects tool calls according to the configured tool policies. See [Multiplayer Tool Calling](features/multiplayer_tool_calling.md).
+
+#### Security considerations
+
+Service account authentication flattens permissions: **every user who can use the agent acts with the agent's shared access** — the service account's access on external systems and the bot account's access inside Mattermost.
+
+- **Restrict who can use the agent.** Use the agent's **Access** tab to limit users and channels. The warning shown next to the setting exists because access to the agent is access to its credentials.
+- **The bot's channel membership is the internal access boundary.** Embedded Mattermost tools — reading posts, searching, listing channel members — act as the bot account, so they return what the bot can read rather than what the requesting user can read. Inviting the bot to a sensitive channel grants everyone who can use the agent access to that channel's content through the agent, so add the bot only to channels it should read.
+- **Use one service account per integration.** Prefer a dedicated external service account (and a dedicated MCP server entry) per integration, scoped to the minimum permissions the agent needs, rather than sharing one broadly-scoped credential across agents.
+- **External audit logs show the service account.** Actions the agent performs on an external system are attributed to the service account there, not to the Mattermost user who triggered them. To correlate, enable [token usage tracking](#token-usage-tracking): each record carries the triggering user (`user_id`), the acting identity (`acting_user_id` — the agent's bot user ID for service account agents), and the auth mode (`tool_auth_mode`: `user` or `service_account`).
+
 ### MCP dynamic tool loading
 
 When an agent's MCP dynamic tool loading setting is enabled, the model doesn't receive every full MCP tool schema at once. Instead, it sees `search_tools` and `load_tool` meta-tools, plus any preloaded or internal tools available for that request.
@@ -608,7 +643,7 @@ When an agent's MCP dynamic tool loading setting is enabled, the model doesn't r
 
 After a tool is loaded successfully, it remains available for the rest of the conversation. On later turns, loaded tools are restored from retained conversation history when they are still authorized and available.
 
-The `search_tools` and `load_tool` meta-tools run automatically without approval. The loaded business tool still follows its configured approval policy and the user's Mattermost and provider permissions.
+The `search_tools` and `load_tool` meta-tools run automatically without approval. The loaded business tool still follows its configured approval policy and the user's Mattermost and provider permissions — or, for agents using [service account authentication](#service-account-authentication), the agent's bot account and service account permissions.
 
 Dynamic loading applies to normal agent conversation turns. Bridge integrations and direct tool catalog requests can still request concrete tool schemas directly.
 
@@ -616,9 +651,9 @@ Dynamic loading applies to normal agent conversation turns. Bridge integrations 
 
 - **Connection Management**: The system automatically manages user connections to MCP servers
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
-- **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
+- **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation. Agents using service account authentication instead share one connection per agent, keyed to the agent's bot account
 - **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools, and to add optional retrieval description overrides used by dynamic tool loading search
-- **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
+- **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent, and is hidden entirely for agents using service account authentication (there are no per-user connections or preferences to manage). Tool use is still subject to admin tool policies and the user's Mattermost permissions
 
 ### OAuth-backed MCP servers
 
