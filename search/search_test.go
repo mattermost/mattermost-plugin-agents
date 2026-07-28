@@ -506,6 +506,17 @@ func TestBuildPrompt(t *testing.T) {
 				require.NotContains(t, req.Posts[0].Message, "time=")
 			},
 		},
+		{
+			name:  "negative timestamp omits the time attribute",
+			query: "search query",
+			results: []RAGResult{
+				{PostID: "post1", Content: "undated content", ChannelName: "General", Username: "testuser", Score: 0.95, CreateAt: -1},
+			},
+			expectError: false,
+			validate: func(t *testing.T, req llm.CompletionRequest) {
+				require.NotContains(t, req.Posts[0].Message, "time=")
+			},
+		},
 	}
 
 	for _, tc := range tests {
