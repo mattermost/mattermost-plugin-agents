@@ -523,6 +523,36 @@ func TestCompositeSearch_RecencyBias(t *testing.T) {
 			expectedFetchOffset: 0,
 			expectedOrder:       []string{},
 		},
+		{
+			// The window extends past the store's hard cap, so reranking
+			// cannot serve it; pagination must fall through to the store
+			// (raw similarity order) instead of returning a truncated page.
+			name:                "window beyond store cap falls back to store pagination",
+			recency:             enabled,
+			searchOpts:          SearchOptions{Limit: 5, Offset: MaxSearchResults},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  5,
+			expectedFetchOffset: MaxSearchResults,
+			expectedOrder:       []string{"old-strong", "fresh-mid", "fresh-weak"},
+		},
+		{
+			name:                "unbounded limit with offset falls back to store pagination",
+			recency:             enabled,
+			searchOpts:          SearchOptions{Limit: 0, Offset: 5},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  0,
+			expectedFetchOffset: 5,
+			expectedOrder:       []string{"old-strong", "fresh-mid", "fresh-weak"},
+		},
+		{
+			name:                "unbounded limit without offset reranks everything",
+			recency:             enabled,
+			searchOpts:          SearchOptions{Limit: 0},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  0,
+			expectedFetchOffset: 0,
+			expectedOrder:       []string{"fresh-mid", "fresh-weak", "old-strong"},
+		},
 	}
 
 	for _, tt := range tests {

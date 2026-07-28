@@ -91,6 +91,14 @@ func (c *CompositeSearch) Search(ctx context.Context, query string, opts SearchO
 	fetchOpts.Offset = 0
 	fetchOpts.Limit = recencyFetchLimit(opts.Limit, opts.Offset)
 
+	// The store caps a single search at MaxSearchResults rows, so a window
+	// that extends past the cap cannot be served from the reranked candidate
+	// pool. Fall back to store-side pagination in raw similarity order rather
+	// than silently truncating deep pages.
+	if fetchOpts.Limit > MaxSearchResults || (fetchOpts.Limit == 0 && opts.Offset > 0) {
+		return c.store.Search(ctx, embedding, opts)
+	}
+
 	results, err := c.store.Search(ctx, embedding, fetchOpts)
 	if err != nil {
 		return nil, err

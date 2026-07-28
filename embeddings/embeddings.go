@@ -47,6 +47,10 @@ type SearchResult struct {
 	Score    float32
 }
 
+// MaxSearchResults is the hard cap on rows a vector store returns for a
+// single search; stores clamp unset (<=0) or larger limits to this value.
+const MaxSearchResults = 1000
+
 // SearchOptions contains parameters for search operations
 type SearchOptions struct {
 	Limit         int

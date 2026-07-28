@@ -90,7 +90,10 @@ func rerankByRecency(results []SearchResult, nowMillis int64, settings RecencyBi
 // recencyFetchLimit returns the store-level limit for the candidate
 // over-fetch. Offset is folded in because pagination must apply to the
 // reranked order, not the raw similarity order. 0 means "store maximum"
-// (rerank everything the store would return).
+// (rerank everything the store would return). The result may exceed
+// MaxSearchResults; the caller detects that and falls back to store-side
+// pagination, since the store would silently clamp the fetch and drop the
+// tail of the window.
 func recencyFetchLimit(limit, offset int) int {
 	if limit <= 0 {
 		return 0
