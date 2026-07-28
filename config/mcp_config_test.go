@@ -114,64 +114,79 @@ func TestMCPServerConfigServiceAccountHeadersDecode(t *testing.T) {
 	}
 }
 
-func TestMCPServerConfigHasServiceAccountAuth(t *testing.T) {
+// TestMCPServerConfigServiceAccountHeaderFiltering pins the one blank-filtering
+// rule shared by the accessor and the predicate: HasServiceAccountAuth is true
+// exactly when EffectiveServiceAccountHeaders is non-empty. Blank entries must
+// never be transmitted — Go's HTTP transport rejects a request carrying a blank
+// header name outright.
+func TestMCPServerConfigServiceAccountHeaderFiltering(t *testing.T) {
 	tests := []struct {
 		name         string
 		serverConfig *MCPServerConfig
-		want         bool
+		wantHeaders  map[string]string
 	}{
 		{
 			name:         "nil receiver",
 			serverConfig: nil,
-			want:         false,
 		},
 		{
 			name:         "nil map",
 			serverConfig: &MCPServerConfig{Enabled: true},
-			want:         false,
 		},
 		{
 			name:         "empty map",
 			serverConfig: &MCPServerConfig{Enabled: true, ServiceAccountHeaders: map[string]string{}},
-			want:         false,
 		},
 		{
 			name:         "empty header name",
 			serverConfig: &MCPServerConfig{Enabled: true, ServiceAccountHeaders: map[string]string{"": "Bearer pat"}},
-			want:         false,
 		},
 		{
 			name:         "whitespace header name",
 			serverConfig: &MCPServerConfig{Enabled: true, ServiceAccountHeaders: map[string]string{"   ": "Bearer pat"}},
-			want:         false,
 		},
 		{
 			name:         "empty header value",
 			serverConfig: &MCPServerConfig{Enabled: true, ServiceAccountHeaders: map[string]string{"Authorization": ""}},
-			want:         false,
 		},
 		{
 			name:         "whitespace header value",
 			serverConfig: &MCPServerConfig{Enabled: true, ServiceAccountHeaders: map[string]string{"Authorization": "   "}},
-			want:         false,
+		},
+		{
+			name:         "blank name and blank value",
+			serverConfig: &MCPServerConfig{Enabled: true, ServiceAccountHeaders: map[string]string{"": ""}},
 		},
 		{
 			name:         "one valid entry",
 			serverConfig: &MCPServerConfig{Enabled: true, ServiceAccountHeaders: map[string]string{"Authorization": "Bearer pat"}},
-			want:         true,
+			wantHeaders:  map[string]string{"Authorization": "Bearer pat"},
 		},
 		{
-			name: "blank entry alongside a valid entry",
+			name: "several valid entries are all kept",
 			serverConfig: &MCPServerConfig{
 				Enabled:               true,
-				ServiceAccountHeaders: map[string]string{"": "", "Authorization": "Bearer pat"},
+				ServiceAccountHeaders: map[string]string{"Authorization": "Bearer pat", "X-Tenant": "acme"},
 			},
-			want: true,
+			wantHeaders: map[string]string{"Authorization": "Bearer pat", "X-Tenant": "acme"},
+		},
+		{
+			name: "blank entries alongside a valid entry are dropped",
+			serverConfig: &MCPServerConfig{
+				Enabled: true,
+				ServiceAccountHeaders: map[string]string{
+					"":              "",
+					"   ":           "Bearer pat",
+					"X-Blank-Value": "  ",
+					"Authorization": "Bearer pat",
+				},
+			},
+			wantHeaders: map[string]string{"Authorization": "Bearer pat"},
 		},
 		{
 			name:         "disabled server with a valid entry",
 			serverConfig: &MCPServerConfig{Enabled: false, ServiceAccountHeaders: map[string]string{"Authorization": "Bearer pat"}},
-			want:         true,
+			wantHeaders:  map[string]string{"Authorization": "Bearer pat"},
 		},
 		{
 			name: "base headers do not count as service account auth",
@@ -179,13 +194,13 @@ func TestMCPServerConfigHasServiceAccountAuth(t *testing.T) {
 				Enabled: true,
 				Headers: map[string]string{"Authorization": "Bearer shared"},
 			},
-			want: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, tt.serverConfig.HasServiceAccountAuth())
+			require.Equal(t, tt.wantHeaders, tt.serverConfig.EffectiveServiceAccountHeaders())
+			require.Equal(t, len(tt.wantHeaders) > 0, tt.serverConfig.HasServiceAccountAuth())
 		})
 	}
 }

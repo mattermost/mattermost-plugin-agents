@@ -194,9 +194,15 @@ func newTestPluginAPIWithSession(sessionID string) *pluginapi.Client {
 }
 
 func newTestPluginAPIForEmbeddedManager(userID, sessionID string) *pluginapi.Client {
+	return newTestPluginAPIForEmbeddedUser(&model.User{Id: userID, Roles: "system_user"}, sessionID)
+}
+
+// newTestPluginAPIForEmbeddedUser lets callers control the acting user, e.g. a
+// bot user for service-account mode.
+func newTestPluginAPIForEmbeddedUser(user *model.User, sessionID string) *pluginapi.Client {
 	fakeAPI := &fixedPluginAPI{
 		kvGet: func(key string) ([]byte, *model.AppError) {
-			if key == buildEmbeddedSessionKey(userID) {
+			if key == buildEmbeddedSessionKey(user.Id) {
 				return []byte(sessionID), nil
 			}
 			return nil, nil
@@ -204,16 +210,13 @@ func newTestPluginAPIForEmbeddedManager(userID, sessionID string) *pluginapi.Cli
 		sessionByID: map[string]*model.Session{
 			sessionID: {
 				Id:        sessionID,
-				UserId:    userID,
+				UserId:    user.Id,
 				Token:     "test-token",
 				ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
 			},
 		},
 		userByID: map[string]*model.User{
-			userID: {
-				Id:    userID,
-				Roles: "system_user",
-			},
+			user.Id: user,
 		},
 	}
 	return pluginapi.NewClient(fakeAPI, nil)
@@ -454,6 +457,123 @@ func TestNewClientDoesNotCachePartialPaginationOnError(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, client)
 	require.Nil(t, cache.GetTools("paged"))
+}
+
+func TestRemoteConnectionHeaders(t *testing.T) {
+	adminHeaders := map[string]string{"X-Admin": "admin-value"}
+	saHeaders := map[string]string{"Authorization": "Bearer service-account-pat"}
+
+	testCases := []struct {
+		name            string
+		userID          string
+		serverConfig    ServerConfig
+		serviceAccount  bool
+		expectedHeaders map[string]string
+	}{
+		{
+			name:            "user mode sends only the user ID header",
+			userID:          "user-1",
+			serverConfig:    ServerConfig{Name: "srv"},
+			expectedHeaders: map[string]string{MMUserIDHeader: "user-1"},
+		},
+		{
+			name:         "user mode merges admin headers",
+			userID:       "user-1",
+			serverConfig: ServerConfig{Name: "srv", Headers: adminHeaders},
+			expectedHeaders: map[string]string{
+				MMUserIDHeader: "user-1",
+				"X-Admin":      "admin-value",
+			},
+		},
+		{
+			name:   "user mode lets an admin header override the user ID header",
+			userID: "user-1",
+			serverConfig: ServerConfig{Name: "srv", Headers: map[string]string{
+				MMUserIDHeader: "admin-override",
+			}},
+			expectedHeaders: map[string]string{MMUserIDHeader: "admin-override"},
+		},
+		{
+			name:            "user mode ignores service account headers",
+			userID:          "user-1",
+			serverConfig:    ServerConfig{Name: "srv", ServiceAccountHeaders: saHeaders},
+			expectedHeaders: map[string]string{MMUserIDHeader: "user-1"},
+		},
+		{
+			name:           "service account mode layers bot ID, admin and service account headers",
+			userID:         "bot-1",
+			serverConfig:   ServerConfig{Name: "srv", Headers: adminHeaders, ServiceAccountHeaders: saHeaders},
+			serviceAccount: true,
+			expectedHeaders: map[string]string{
+				MMUserIDHeader:  "bot-1",
+				"X-Admin":       "admin-value",
+				"Authorization": "Bearer service-account-pat",
+			},
+		},
+		{
+			name:   "service account headers win over admin headers on conflict",
+			userID: "bot-1",
+			serverConfig: ServerConfig{
+				Name:                  "srv",
+				Headers:               map[string]string{"Authorization": "Bearer admin"},
+				ServiceAccountHeaders: saHeaders,
+			},
+			serviceAccount: true,
+			expectedHeaders: map[string]string{
+				MMUserIDHeader:  "bot-1",
+				"Authorization": "Bearer service-account-pat",
+			},
+		},
+		{
+			name:            "service account mode without service account headers matches user mode",
+			userID:          "bot-1",
+			serverConfig:    ServerConfig{Name: "srv"},
+			serviceAccount:  true,
+			expectedHeaders: map[string]string{MMUserIDHeader: "bot-1"},
+		},
+		{
+			// A blank header name makes Go's HTTP transport reject the whole
+			// request ("invalid header field name"), so an empty console row
+			// must never reach the wire.
+			name:            "service account mode drops a blank header name",
+			userID:          "bot-1",
+			serverConfig:    ServerConfig{Name: "srv", ServiceAccountHeaders: map[string]string{"": "Bearer pat"}},
+			serviceAccount:  true,
+			expectedHeaders: map[string]string{MMUserIDHeader: "bot-1"},
+		},
+		{
+			name:            "service account mode drops a blank header value",
+			userID:          "bot-1",
+			serverConfig:    ServerConfig{Name: "srv", ServiceAccountHeaders: map[string]string{"X-Token": "   "}},
+			serviceAccount:  true,
+			expectedHeaders: map[string]string{MMUserIDHeader: "bot-1"},
+		},
+		{
+			name:   "service account mode keeps valid headers alongside blank ones",
+			userID: "bot-1",
+			serverConfig: ServerConfig{
+				Name:    "srv",
+				Headers: adminHeaders,
+				ServiceAccountHeaders: map[string]string{
+					"":              "",
+					"X-Token":       "",
+					"Authorization": "Bearer service-account-pat",
+				},
+			},
+			serviceAccount: true,
+			expectedHeaders: map[string]string{
+				MMUserIDHeader:  "bot-1",
+				"X-Admin":       "admin-value",
+				"Authorization": "Bearer service-account-pat",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expectedHeaders, remoteConnectionHeaders(tc.userID, tc.serverConfig, tc.serviceAccount))
+		})
+	}
 }
 
 func TestNewClientErrorsOnEmptyRemoteToolCatalog(t *testing.T) {

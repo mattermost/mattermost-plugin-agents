@@ -67,6 +67,20 @@ type Client struct {
 	toolsCache     *ToolsCache
 	embeddedClient *EmbeddedServerClient // for reconnection (nil for remote servers)
 	sessionID      string                // session ID for embedded server reconnection
+	// serviceAccount marks a connection authenticated with the server's static
+	// ServiceAccountHeaders instead of per-user OAuth. userID is then the acting
+	// bot's user ID, and oauthManager is always nil.
+	serviceAccount bool
+}
+
+// clientParams bundles the dependencies for a remote MCP client connection.
+type clientParams struct {
+	log            pluginapi.LogService
+	oauthManager   *OAuthManager // nil in service-account mode
+	httpClient     *http.Client
+	toolsCache     *ToolsCache
+	forceRefresh   bool
+	serviceAccount bool
 }
 
 // staticOAuthCreds returns static OAuth credentials from a server config, or nil if not configured.
@@ -80,8 +94,54 @@ func staticOAuthCreds(s ServerConfig) *StaticOAuthCredentials {
 	}
 }
 
-func shouldUseSharedToolsCache(serverConfig ServerConfig) bool {
+// sharedToolsCacheAllowedForServer reports whether user-mode connections to this
+// server may read/write the shared tools cache. Static OAuth credentials mean
+// the catalog can be user-specific, so it must not be shared.
+func sharedToolsCacheAllowedForServer(serverConfig ServerConfig) bool {
 	return staticOAuthCreds(serverConfig) == nil
+}
+
+// serviceAccountToolsCacheID namespaces service-account-discovered tool lists
+// away from the user-mode entry (keyed by the bare server name). The catalogs
+// can legitimately differ because the server sees different credentials.
+func serviceAccountToolsCacheID(serverName string) string {
+	return "sa:" + serverName
+}
+
+func (c *Client) toolsCacheServerID() string {
+	if c.serviceAccount {
+		return serviceAccountToolsCacheID(c.config.Name)
+	}
+	return c.config.Name
+}
+
+// useSharedToolsCache reports whether this client may read/write the shared
+// tools cache. Service-account connections always may: their credentials are
+// static and identical for every SA connection to the server, so the SA-scoped
+// entry stays valid even when the server also has static OAuth credentials
+// configured. The static-credential guard exists to avoid caching user-specific
+// OAuth catalogs, which cannot happen in SA mode.
+func (c *Client) useSharedToolsCache() bool {
+	if c.serviceAccount {
+		return true
+	}
+	return sharedToolsCacheAllowedForServer(c.config)
+}
+
+// remoteConnectionHeaders builds the static headers for a remote MCP
+// connection. Later layers win on key conflicts:
+// X-Mattermost-UserID < admin Headers < ServiceAccountHeaders.
+// Admin Headers apply in both modes; ServiceAccountHeaders only in SA mode,
+// where userID is the acting bot's user ID. Only the effective service account
+// headers are sent, so a blank console row cannot poison the request.
+func remoteConnectionHeaders(userID string, serverConfig ServerConfig, serviceAccount bool) map[string]string {
+	headers := make(map[string]string)
+	headers[MMUserIDHeader] = userID
+	maps.Copy(headers, serverConfig.Headers)
+	if serviceAccount {
+		maps.Copy(headers, serverConfig.EffectiveServiceAccountHeaders())
+	}
+	return headers
 }
 
 func invalidateSharedToolsCacheForOAuthDiscovery(toolsCache *ToolsCache, log Logger, userID, serverID string, serverConfig ServerConfig, hasStoredToken bool) {
@@ -102,7 +162,7 @@ func invalidateSharedToolsCacheForOAuthDiscovery(toolsCache *ToolsCache, log Log
 // server when the MCP server uses OAuth and the user has not completed OAuth yet. That avoids
 // ListTools reusing tools discovered before authentication (shared cache is only for non-OAuth servers).
 func maybeInvalidateSharedToolsBeforeOAuthListTools(userID string, serverConfig ServerConfig, log pluginapi.LogService, toolsCache *ToolsCache, oauthManager *OAuthManager) {
-	if shouldUseSharedToolsCache(serverConfig) || toolsCache == nil || oauthManager == nil {
+	if sharedToolsCacheAllowedForServer(serverConfig) || toolsCache == nil || oauthManager == nil {
 		return
 	}
 
@@ -234,20 +294,35 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	return client, nil
 }
 
-// NewClient creates a new MCP client for the given server and user and connects to the specified MCP server.
+// NewClient creates a user-OAuth-mode MCP client for the given server and user and connects to the
+// specified MCP server.
 // forceRefresh bypasses the shared tools cache read. Its sole purpose is to close the race where a concurrent
 // lookup repopulates the cache between a manual refresh's invalidation and this reconnect; a plain
 // post-invalidation rediscovery would otherwise cache-miss on its own.
 func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, forceRefresh bool) (*Client, error) {
-	c := &Client{
-		session:      nil,
-		config:       serverConfig,
-		tools:        make(map[string]*mcp.Tool),
-		userID:       userID,
+	return newClient(ctx, userID, serverConfig, clientParams{
 		log:          log,
 		oauthManager: oauthManager,
 		httpClient:   httpClient,
 		toolsCache:   toolsCache,
+		forceRefresh: forceRefresh,
+	})
+}
+
+// newClient connects to a remote MCP server in either auth mode. In
+// service-account mode p.oauthManager must be nil so no OAuth token loading,
+// OAuthNeededError, or oauth-needed state can occur.
+func newClient(ctx context.Context, userID string, serverConfig ServerConfig, p clientParams) (*Client, error) {
+	c := &Client{
+		session:        nil,
+		config:         serverConfig,
+		tools:          make(map[string]*mcp.Tool),
+		userID:         userID,
+		log:            p.log,
+		oauthManager:   p.oauthManager,
+		httpClient:     p.httpClient,
+		toolsCache:     p.toolsCache,
+		serviceAccount: p.serviceAccount,
 	}
 
 	session, err := c.createSession(ctx, serverConfig)
@@ -255,19 +330,19 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		return nil, fmt.Errorf("failed to create MCP session for server %s: %w", serverConfig.Name, err)
 	}
 
-	useSharedToolsCache := shouldUseSharedToolsCache(serverConfig)
-	maybeInvalidateSharedToolsBeforeOAuthListTools(userID, serverConfig, log, toolsCache, oauthManager)
-	serverID := serverConfig.Name
+	sharedToolsCache := c.useSharedToolsCache()
+	maybeInvalidateSharedToolsBeforeOAuthListTools(userID, serverConfig, p.log, p.toolsCache, p.oauthManager)
+	serverID := c.toolsCacheServerID()
 
 	// Try to get tools from global cache first.
-	if toolsCache != nil && useSharedToolsCache && !forceRefresh {
-		cachedTools := toolsCache.GetTools(serverID)
+	if p.toolsCache != nil && sharedToolsCache && !p.forceRefresh {
+		cachedTools := p.toolsCache.GetTools(serverID)
 		if len(cachedTools) > 0 {
 			// Cache hit - use cached tools
 			c.toolsMu.Lock()
 			c.tools = cachedTools
 			c.toolsMu.Unlock()
-			log.Debug("Using cached tools for MCP server",
+			p.log.Debug("Using cached tools for MCP server",
 				"userID", userID,
 				"server", serverConfig.Name,
 				"toolCount", len(cachedTools))
@@ -296,7 +371,7 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	c.tools = discoveredTools
 	c.toolsMu.Unlock()
 	for _, tool := range discoveredTools {
-		log.Debug("Registered MCP tool",
+		p.log.Debug("Registered MCP tool",
 			"userID", userID,
 			"name", tool.Name,
 			"description", tool.Description,
@@ -304,9 +379,9 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	}
 
 	// Update the global cache with fetched tools.
-	if toolsCache != nil && useSharedToolsCache {
-		if err := toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, discoveredTools, time.Now()); err != nil {
-			log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
+	if p.toolsCache != nil && sharedToolsCache {
+		if err := p.toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, discoveredTools, time.Now()); err != nil {
+			p.log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
 		}
 	}
 
@@ -427,6 +502,14 @@ func (c *Client) oauthNeededError(err error) error {
 		return nil
 	}
 
+	// Service account mode has no per-user OAuth, so it must never classify a
+	// failure as OAuth-needed. Refusing here covers every caller (connect, tool
+	// discovery, reconnect, tool-call state) and keeps an upstream error that
+	// happens to contain the string form below from leaking an OAuth prompt.
+	if c.serviceAccount {
+		return nil
+	}
+
 	var mcpAuthErr *mcpUnauthorized
 	if errors.As(err, &mcpAuthErr) {
 		md := mcpAuthErr.MetadataURL()
@@ -450,9 +533,7 @@ func (c *Client) oauthNeededError(err error) error {
 
 func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (*mcp.ClientSession, error) {
 	// Prepare headers for remote servers
-	headers := make(map[string]string)
-	headers[MMUserIDHeader] = c.userID
-	maps.Copy(headers, serverConfig.Headers)
+	headers := remoteConnectionHeaders(c.userID, serverConfig, c.serviceAccount)
 
 	// TODO: Load and check cached authentication information
 
@@ -616,8 +697,8 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 				c.tools = discoveredTools
 				c.toolsMu.Unlock()
 
-				if c.toolsCache != nil && shouldUseSharedToolsCache(c.config) {
-					if cacheErr := c.toolsCache.SetTools(c.config.Name, c.config.Name, c.config.BaseURL, discoveredTools, time.Now()); cacheErr != nil {
+				if c.toolsCache != nil && c.useSharedToolsCache() {
+					if cacheErr := c.toolsCache.SetTools(c.toolsCacheServerID(), c.config.Name, c.config.BaseURL, discoveredTools, time.Now()); cacheErr != nil {
 						c.log.Warn("Failed to update tools cache after MCP reconnect",
 							"server", c.config.Name,
 							"userID", c.userID,

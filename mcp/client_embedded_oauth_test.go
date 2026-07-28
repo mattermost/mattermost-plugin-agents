@@ -228,7 +228,7 @@ func TestNilCacheHandling(t *testing.T) {
 	require.Nil(t, tools)
 }
 
-func TestShouldUseSharedToolsCache(t *testing.T) {
+func TestSharedToolsCacheAllowedForServer(t *testing.T) {
 	tests := []struct {
 		name         string
 		serverConfig ServerConfig
@@ -256,7 +256,7 @@ func TestShouldUseSharedToolsCache(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.expected, shouldUseSharedToolsCache(tt.serverConfig))
+			require.Equal(t, tt.expected, sharedToolsCacheAllowedForServer(tt.serverConfig))
 		})
 	}
 }

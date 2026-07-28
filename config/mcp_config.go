@@ -112,23 +112,39 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	return IsToolPolicyAutoRunInDM(policy) && enabled
 }
 
-// HasServiceAccountAuth reports whether this server has Service Account
-// authentication configured: at least one ServiceAccountHeaders entry with a
-// non-blank name and a non-blank value. Blank entries (e.g. an empty row saved
-// from the System Console) do not count, so an SA-flagged agent never connects
-// to a server that would effectively send no service credential (fail closed).
-// Enabled is intentionally ignored: enablement is filtered where catalogs are
-// built, this predicate answers only "is SA auth configured".
-func (s *MCPServerConfig) HasServiceAccountAuth() bool {
+// EffectiveServiceAccountHeaders returns the ServiceAccountHeaders entries that
+// are actually usable as HTTP headers: those with a non-blank name and a
+// non-blank value. Blank entries (e.g. an empty row saved from the System
+// Console) are dropped — transmitting one makes Go's HTTP transport reject the
+// whole request with "invalid header field name". Returns nil when the server
+// has no usable Service Account credential. This is the single source of truth
+// for which headers an SA connection sends and for HasServiceAccountAuth.
+func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
 	if s == nil {
-		return false
+		return nil
 	}
+
+	var headers map[string]string
 	for name, value := range s.ServiceAccountHeaders {
-		if strings.TrimSpace(name) != "" && strings.TrimSpace(value) != "" {
-			return true
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
+			continue
 		}
+		if headers == nil {
+			headers = make(map[string]string, len(s.ServiceAccountHeaders))
+		}
+		headers[name] = value
 	}
-	return false
+	return headers
+}
+
+// HasServiceAccountAuth reports whether this server has Service Account
+// authentication configured, i.e. at least one usable header. An SA-flagged
+// agent therefore never connects to a server that would effectively send no
+// service credential (fail closed). Enabled is intentionally ignored:
+// enablement is filtered where catalogs are built, this predicate answers only
+// "is SA auth configured".
+func (s *MCPServerConfig) HasServiceAccountAuth() bool {
+	return len(s.EffectiveServiceAccountHeaders()) > 0
 }
 
 // PluginServerConfig describes an MCP server registered by another plugin.

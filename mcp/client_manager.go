@@ -27,14 +27,23 @@ func cacheableContext(ctx context.Context) context.Context {
 	return context.WithoutCancel(ctx)
 }
 
+// clientKey identifies one pooled client bag. serviceAccount must be part of
+// the key: a bridge caller can create a user-OAuth bag for a bot user ID
+// (non-SA agents accept bot user_ids), which must never collide with a
+// service-account bag for the same bot.
+type clientKey struct {
+	userID         string
+	serviceAccount bool
+}
+
 // ClientManager manages MCP clients for multiple users
 type ClientManager struct {
 	config         Config
 	log            pluginapi.LogService
 	pluginAPI      *pluginapi.Client
 	clientsMu      sync.RWMutex
-	clients        map[string]*UserClients // userID to UserClients
-	activity       map[string]time.Time    // userID to last activity time
+	clients        map[clientKey]*UserClients // identity+auth mode to UserClients
+	activity       map[clientKey]time.Time    // identity+auth mode to last activity time
 	cleanupTicker  *time.Ticker
 	closeChan      chan struct{}
 	clientTimeout  time.Duration
@@ -83,19 +92,24 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 	for {
 		select {
 		case <-ticker.C:
-			m.clientsMu.Lock()
-			now := time.Now()
-			for userID, client := range m.clients {
-				if now.Sub(m.activity[userID]) > m.clientTimeout {
-					m.log.Debug("Closing inactive MCP client", "userID", userID)
-					client.Close()
-					delete(m.clients, userID)
-				}
-			}
-			m.clientsMu.Unlock()
+			m.closeIdleClients(time.Now())
 		case <-closeChan:
 			ticker.Stop()
 			return
+		}
+	}
+}
+
+// closeIdleClients closes and removes client bags (both auth modes) whose last
+// activity is older than clientTimeout.
+func (m *ClientManager) closeIdleClients(now time.Time) {
+	m.clientsMu.Lock()
+	defer m.clientsMu.Unlock()
+	for key, client := range m.clients {
+		if now.Sub(m.activity[key]) > m.clientTimeout {
+			m.log.Debug("Closing inactive MCP client", "userID", key.userID, "serviceAccount", key.serviceAccount)
+			client.Close()
+			delete(m.clients, key)
 		}
 	}
 }
@@ -116,10 +130,10 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 	}
 
 	m.config = config
-	m.clients = make(map[string]*UserClients)
+	m.clients = make(map[clientKey]*UserClients)
 	m.clientTimeout = time.Duration(config.IdleTimeoutMinutes) * time.Minute
 	m.closeChan = make(chan struct{})
-	m.activity = make(map[string]time.Time)
+	m.activity = make(map[clientKey]time.Time)
 
 	m.cleanupTicker = time.NewTicker(5 * time.Minute)
 	go m.cleanupInactiveClients(m.closeChan, m.cleanupTicker)
@@ -149,26 +163,31 @@ func (m *ClientManager) Close() {
 	}
 
 	// Clear the clients map
-	m.clients = make(map[string]*UserClients)
+	m.clients = make(map[clientKey]*UserClients)
 }
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager.
 // When forceRefresh is true the remote connect bypasses the shared tools cache and any
 // existing cached client is replaced.
-func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string, forceRefresh bool) (*UserClients, *Errors) {
+func (m *ClientManager) createAndStoreUserClient(ctx context.Context, key clientKey, forceRefresh bool) (*UserClients, *Errors) {
 	// Unless forcing a refresh, reuse an already-cached client so we skip a
 	// redundant remote connect when another goroutine cached one first.
 	if !forceRefresh {
 		m.clientsMu.Lock()
-		if client, exists := m.clients[userID]; exists {
-			m.activity[userID] = time.Now()
+		if client, exists := m.clients[key]; exists {
+			m.activity[key] = time.Now()
 			m.clientsMu.Unlock()
 			return client, client.InitialRemoteConnectErrors()
 		}
 		m.clientsMu.Unlock()
 	}
 
-	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
+	var userClients *UserClients
+	if key.serviceAccount {
+		userClients = NewServiceAccountClients(key.userID, m.log, m.httpClient, m.toolsCache)
+	} else {
+		userClients = NewUserClients(key.userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
+	}
 
 	// Connect outside the manager lock so remote MCP handshakes do not block other users.
 	// Cacheable client creation must not inherit request cancellation; a canceled
@@ -181,10 +200,10 @@ func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID str
 
 	// Check again in case another goroutine created the client while we were connecting.
 	// On a forced refresh we intentionally replace (and close) any existing client.
-	if client, exists := m.clients[userID]; exists {
+	if client, exists := m.clients[key]; exists {
 		if !forceRefresh {
 			userClients.Close()
-			m.activity[userID] = time.Now()
+			m.activity[key] = time.Now()
 			return client, client.InitialRemoteConnectErrors()
 		}
 		client.Close()
@@ -192,30 +211,44 @@ func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID str
 
 	// Store the client even if some servers failed to connect
 	// This allows partial success - user gets tools from working servers
-	m.clients[userID] = userClients
-	m.activity[userID] = time.Now()
+	m.clients[key] = userClients
+	m.activity[key] = time.Now()
 
 	return userClients, mcpErrors
 }
 
-// getClientForUser gets or creates an MCP client for a specific user.
-func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*UserClients, *Errors) {
+// getClient gets or creates an MCP client bag for a specific identity and auth mode.
+func (m *ClientManager) getClient(ctx context.Context, key clientKey) (*UserClients, *Errors) {
 	m.clientsMu.Lock()
-	client, exists := m.clients[userID]
+	client, exists := m.clients[key]
 	if exists {
-		m.activity[userID] = time.Now()
+		m.activity[key] = time.Now()
 		m.clientsMu.Unlock()
 		return client, client.InitialRemoteConnectErrors()
 	}
 	m.clientsMu.Unlock()
 
-	return m.createAndStoreUserClient(ctx, userID, false)
+	return m.createAndStoreUserClient(ctx, key, false)
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
 func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
-	// Get or create client for this user (connects to remote servers only)
-	userClient, initialErrors := m.getClientForUser(ctx, userID)
+	return m.getToolsForKey(ctx, clientKey{userID: userID})
+}
+
+// GetToolsForServiceAccount returns the tools available to a service-account-
+// flagged agent acting as botUserID. Remote servers connect with their
+// configured ServiceAccountHeaders; servers without ServiceAccountHeaders are
+// excluded entirely (fail closed). Embedded and plugin servers connect as the
+// bot user. The returned Errors never contains ToolAuthErrors: SA mode has no
+// per-user OAuth and never prompts to connect an account.
+func (m *ClientManager) GetToolsForServiceAccount(ctx context.Context, botUserID string) ([]llm.Tool, *Errors) {
+	return m.getToolsForKey(ctx, clientKey{userID: botUserID, serviceAccount: true})
+}
+
+func (m *ClientManager) getToolsForKey(ctx context.Context, key clientKey) ([]llm.Tool, *Errors) {
+	// Get or create the client bag for this identity (connects to remote servers only)
+	userClient, initialErrors := m.getClient(ctx, key)
 	mcpErrors := cloneMCPErrors(initialErrors)
 
 	// Embedded and plugin connects intentionally receive the raw cancelable ctx:
@@ -223,12 +256,12 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	// them. Only the remote connect uses cacheableContext(ctx) (in
 	// createAndStoreUserClient) because its result is cached across requests.
 	if m.embeddedClient != nil {
-		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
+		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(key.userID)
 		if ensureErr != nil {
-			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
+			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", key.userID, "serviceAccount", key.serviceAccount, "error", ensureErr)
 		} else if ensuredSessionID != "" {
 			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
-				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
+				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", key.userID, "serviceAccount", key.serviceAccount, "sessionID", ensuredSessionID, "error", embeddedErr)
 			}
 		}
 	}
@@ -237,7 +270,7 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	pluginSnap := m.snapshotEnabledPluginServers()
 	for _, cfg := range pluginSnap {
 		if connectErr := userClient.ConnectToPluginServer(ctx, cfg, m.sourcePluginAPI); connectErr != nil {
-			m.log.Error("Failed to connect to plugin MCP server", "userID", userID, "pluginID", cfg.PluginID, "error", connectErr)
+			m.log.Error("Failed to connect to plugin MCP server", "userID", key.userID, "serviceAccount", key.serviceAccount, "pluginID", cfg.PluginID, "error", connectErr)
 			mcpErrors = appendMCPError(mcpErrors, connectErr)
 		}
 	}
@@ -261,7 +294,7 @@ func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) 
 	m.InvalidateUserClients(userID)
 	// Pre-warm the user client with a forced remote rediscovery; GetToolsForUser
 	// then reuses this cached client rather than rebuilding it.
-	m.createAndStoreUserClient(ctx, userID, true)
+	m.createAndStoreUserClient(ctx, clientKey{userID: userID}, true)
 
 	tools, mcpErrors := m.GetToolsForUser(ctx, userID)
 	return tools, mcpErrors, nil
@@ -273,12 +306,24 @@ func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
 	}
 
 	var refreshErr error
+	invalidate := func(cacheID string) {
+		if err := m.toolsCache.InvalidateServer(cacheID); err != nil {
+			refreshErr = errors.Join(refreshErr, fmt.Errorf("failed to invalidate tools cache for server %s: %w", cacheID, err))
+		}
+	}
+
 	for _, serverConfig := range m.config.Servers {
-		if !serverConfig.Enabled || serverConfig.BaseURL == "" || !shouldUseSharedToolsCache(serverConfig) {
+		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
 			continue
 		}
-		if err := m.toolsCache.InvalidateServer(serverConfig.Name); err != nil {
-			refreshErr = errors.Join(refreshErr, fmt.Errorf("failed to invalidate tools cache for server %s: %w", serverConfig.Name, err))
+		if sharedToolsCacheAllowedForServer(serverConfig) {
+			invalidate(serverConfig.Name)
+		}
+		// Service-account entries are always shared-cached, including for
+		// servers with static OAuth credentials, so they are invalidated
+		// regardless of the user-mode guard above.
+		if serverConfig.HasServiceAccountAuth() {
+			invalidate(serviceAccountToolsCacheID(serverConfig.Name))
 		}
 	}
 	return refreshErr
@@ -363,7 +408,10 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 	return out
 }
 
-// InvalidateUserClients closes and removes cached MCP clients for a user.
+// InvalidateUserClients closes and removes cached MCP clients for a user, in
+// both auth modes. Every call site means "drop any cached connections for this
+// identity"; dropping a service-account bag on an OAuth event costs one
+// reconnect and is always safe.
 func (m *ClientManager) InvalidateUserClients(userID string) {
 	if userID == "" {
 		return
@@ -372,11 +420,13 @@ func (m *ClientManager) InvalidateUserClients(userID string) {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
-	if uc, ok := m.clients[userID]; ok {
-		uc.Close()
-		delete(m.clients, userID)
+	for _, key := range []clientKey{{userID: userID}, {userID: userID, serviceAccount: true}} {
+		if uc, ok := m.clients[key]; ok {
+			uc.Close()
+			delete(m.clients, key)
+		}
+		delete(m.activity, key)
 	}
-	delete(m.activity, userID)
 }
 
 // ProcessOAuthCallback processes the OAuth callback for a user
