@@ -19,11 +19,9 @@ const MCPServerToolWildcard = '*';
 type Props = {
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
-    mcpDynamicToolLoading: boolean;
     onChange: (updates: {
         enabledTools?: EnabledTool[];
         autoEnableNewMCPTools?: boolean;
-        mcpDynamicToolLoading?: boolean;
     }) => void;
 
     // Optional server-state reconciliation callback. Used when removing entries
@@ -38,7 +36,7 @@ function serverToolsPanelId(serverOrigin: string): string {
 }
 
 const McpsTab = (props: Props) => {
-    const {enabledTools, autoEnableNewMCPTools, mcpDynamicToolLoading, onChange, onReconcileEnabledTools} = props;
+    const {enabledTools, autoEnableNewMCPTools, onChange, onReconcileEnabledTools} = props;
     const intl = useIntl();
     const [servers, setServers] = useState<UserMCPServerInfo[]>([]);
     const [loading, setLoading] = useState(true);
@@ -209,23 +207,6 @@ const McpsTab = (props: Props) => {
 
     return (
         <Container>
-            <AutoEnableRow>
-                <AutoEnableCheckbox
-                    type='checkbox'
-                    id='mcp-dynamic-tool-loading'
-                    checked={mcpDynamicToolLoading}
-                    onChange={(e) => onChange({mcpDynamicToolLoading: e.target.checked})}
-                />
-                <AutoEnableLabel htmlFor='mcp-dynamic-tool-loading'>
-                    <AutoEnableTitle>
-                        <FormattedMessage defaultMessage='Dynamic tool loading'/>
-                    </AutoEnableTitle>
-                    <AutoEnableHint>
-                        <FormattedMessage defaultMessage='Expose search and load helper tools first, then load MCP tool schemas only when the agent needs them. Disable this to use the full MCP tool list for this agent.'/>
-                    </AutoEnableHint>
-                </AutoEnableLabel>
-            </AutoEnableRow>
-
             <AutoEnableRow>
                 <AutoEnableCheckbox
                     type='checkbox'

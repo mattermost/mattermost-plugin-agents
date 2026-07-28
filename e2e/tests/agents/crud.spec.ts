@@ -313,6 +313,8 @@ test.describe('Agent CRUD', () => {
             serviceLabel: 'Mock Service',
         });
 
+        await agentPage.expandAdvancedConfiguration();
+
         const enableToolsLabel = page.getByText('Enable Tools').first();
         await expect(enableToolsLabel).toBeVisible({ timeout: 10000 });
         await enableToolsLabel.locator('xpath=following-sibling::*[1]').locator('input[type="radio"]').nth(1).click();
