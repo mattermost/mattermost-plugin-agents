@@ -77,7 +77,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		TeamSettings:    model.TeamSettings{SiteName: &siteName},
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &countingMCPToolProvider{}
@@ -105,7 +105,7 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 		TeamSettings:    model.TeamSettings{SiteName: &siteName},
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &countingMCPToolProvider{}
@@ -133,7 +133,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 		TeamSettings:    model.TeamSettings{SiteName: &siteName},
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &staticMCPToolProvider{
