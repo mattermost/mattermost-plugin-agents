@@ -5,10 +5,13 @@ import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
 
+import {isValidId} from '@/utils/ids';
+
 /**
  * useConversationIdForThread resolves the plugin's conversation_id from a
  * Mattermost root post id by scanning posts in the thread for the
- * conversation_id prop the plugin writes onto every bot post.
+ * conversation_id prop the plugin writes onto every bot post. Post props are
+ * free-form JSON, so a prop that is not a well-formed id is skipped.
  *
  * Returns an empty string ('') when no bot post is in Redux yet (e.g. a fresh
  * thread the user hasn't opened, or one where the assistant has not replied).
@@ -21,8 +24,8 @@ export function useConversationIdForThread(rootPostId: string | null | undefined
         const posts = state.entities.posts.posts;
 
         const root = posts[rootPostId];
-        const rootConvId = root?.props?.conversation_id;
-        if (typeof rootConvId === 'string' && rootConvId) {
+        const rootConvId: unknown = root?.props?.conversation_id;
+        if (isValidId(rootConvId)) {
             return rootConvId;
         }
 
@@ -31,8 +34,8 @@ export function useConversationIdForThread(rootPostId: string | null | undefined
             return '';
         }
         for (const id of replyIds) {
-            const convId = posts[id]?.props?.conversation_id;
-            if (typeof convId === 'string' && convId) {
+            const convId: unknown = posts[id]?.props?.conversation_id;
+            if (isValidId(convId)) {
                 return convId;
             }
         }
