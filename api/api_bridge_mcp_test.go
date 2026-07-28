@@ -9,13 +9,17 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -838,4 +842,157 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 		require.Equal(t, true, saved.Enabled, "nil configStore: plugin payload preserved")
 		require.Equal(t, false, saved.ExposeExternal, "nil configStore: plugin payload preserved")
 	})
+}
+
+func TestAuditMCPRegister(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	// Planted tool config content that must never leak into the audit record.
+	const plantedToolName = "planted-secret-tool-name"
+	longName := strings.Repeat("n", 200)
+
+	tests := []struct {
+		name            string
+		body            string
+		existingServers []mcp.PluginServerConfig
+		persistedCfg    *config.Config
+		expectedStatus  int
+		validateRecord  func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name: "successful registration records identifiers but never tool configs",
+			body: `{"name":"Playbooks MCP","path":"/mcp","expose_external":true,` +
+				`"tool_configs":[{"name":"` + plantedToolName + `","policy":"ask","enabled":false}]}`,
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, "Playbooks MCP", rec.EventData.Parameters["server_name"])
+				assert.Equal(t, "/mcp", rec.EventData.Parameters["path"])
+				assert.Equal(t, true, rec.EventData.Parameters["expose_external"])
+				// Omitted enabled defaults to true on first registration.
+				assert.Equal(t, true, rec.EventData.Parameters["enabled"])
+				assert.Equal(t, true, rec.EventData.Parameters["tool_configs_provided"])
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedToolName, "audit record must never carry tool config content")
+			},
+		},
+		{
+			name:           "missing name records a 400 fail still carrying the caller id",
+			body:           `{"path":"/mcp"}`,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+			},
+		},
+		{
+			name:           "relative path records a 400 fail still carrying the caller id",
+			body:           `{"name":"Playbooks MCP","path":"mcp"}`,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+			},
+		},
+		{
+			name: "re-register records the preserved live enabled=false, not the request's true",
+			body: `{"name":"Playbooks MCP","path":"/mcp","enabled":true}`,
+			existingServers: []mcp.PluginServerConfig{{
+				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp", Enabled: false,
+			}},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, false, rec.EventData.Parameters["enabled"],
+					"the effective merged value must be recorded, not the request flag")
+			},
+		},
+		{
+			name: "re-register after unregister records the persisted enabled=false, not the request's true",
+			body: `{"name":"Playbooks MCP","path":"/mcp","enabled":true}`,
+			persistedCfg: &config.Config{
+				MCP: config.MCPConfig{
+					PluginServers: []config.PluginServerConfig{{
+						PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp", Enabled: false,
+					}},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, false, rec.EventData.Parameters["enabled"],
+					"the effective persisted value must be recorded, not the request flag")
+			},
+		},
+		{
+			name:           "oversized name is clamped before recording",
+			body:           `{"name":"` + longName + `","path":"/mcp"}`,
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, audit.TruncateID(longName), rec.EventData.Parameters["server_name"])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+			if tt.existingServers != nil {
+				e.mcp.pluginServers = tt.existingServers
+			}
+			if tt.persistedCfg != nil {
+				e.api.configStore = &testConfigStore{cfg: tt.persistedCfg}
+			}
+
+			records := e.CaptureAuditRecords()
+
+			req := httptest.NewRequest(http.MethodPost, "/bridge/v1/mcp/register", strings.NewReader(tt.body))
+			req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+
+			resp := serveAndReturn(e, req)
+			require.Equal(t, tt.expectedStatus, resp.StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventRegisterMCPPluginServer, rec.EventName)
+			assert.Empty(t, rec.Actor.UserId, "bridge calls have no acting user")
+			assert.Equal(t, testCallerPluginID, rec.EventData.Parameters[audit.KeyCallerPluginID])
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+func TestAuditMCPUnregister(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	records := e.CaptureAuditRecords()
+
+	req := mcpUnregisterRequest(t, map[string]string{})
+	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+
+	resp := serveAndReturn(e, req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.Len(t, *records, 1, "exactly one audit record must be emitted")
+	rec := (*records)[0]
+	assert.Equal(t, AuditEventUnregisterMCPPluginServer, rec.EventName)
+	assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+	assert.Empty(t, rec.Actor.UserId, "bridge calls have no acting user")
+	assert.Equal(t, testCallerPluginID, rec.EventData.Parameters[audit.KeyCallerPluginID])
 }
