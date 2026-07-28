@@ -46,16 +46,16 @@ const SourceCount = styled.span`
 	line-height: 16px;
 `;
 
-const CollapseIcon = styled.i<{$isOpen: boolean}>`
+const CollapseIcon = styled.i<{isOpen: boolean}>`
     font-size: 18px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
     margin-left: auto;
-    transform: ${(props) => (props.$isOpen ? 'rotate(180deg)' : 'rotate(0deg)')};
+    transform: ${(props) => (props.isOpen ? 'rotate(180deg)' : 'rotate(0deg)')};
     transition: transform 0.15s ease-in-out;
 `;
 
-const SourcesList = styled.div<{$isOpen: boolean}>`
-    display: ${(props) => (props.$isOpen ? 'flex' : 'none')};
+const SourcesList = styled.div<{isOpen: boolean}>`
+    display: ${(props) => (props.isOpen ? 'flex' : 'none')};
     flex-direction: column;
     margin-top: 8px;
 `;
@@ -96,7 +96,7 @@ const SourceItem = styled.div`
     }
 `;
 
-export interface Source {
+interface Source {
     postId: string;
     channelId: string;
     userId: string;
@@ -113,12 +113,10 @@ const SearchSource = ({source, index}: SourceItemProps & {index: number}) => {
         <SourceItem>
             <SourceHeader>
                 <SourceNumber>{index + 1}{'.'}</SourceNumber>
-                {Number.isFinite(source.score) && (
-                    <RelevanceScore>
-                        <ScoreIcon className='icon icon-check-circle'/>
-                        {formatScore(source.score)}
-                    </RelevanceScore>
-                )}
+                <RelevanceScore>
+                    <ScoreIcon className='icon icon-check-circle'/>
+                    {formatScore(source.score)}
+                </RelevanceScore>
             </SourceHeader>
             <PostPreview
                 postId={source.postId}
@@ -150,10 +148,10 @@ export const SearchSources = ({sources}: Props) => {
                 </SourcesTitle>
                 <CollapseIcon
                     className='icon-chevron-down'
-                    $isOpen={isOpen}
+                    isOpen={isOpen}
                 />
             </SourcesHeader>
-            <SourcesList $isOpen={isOpen}>
+            <SourcesList isOpen={isOpen}>
                 {sources.map((source, index) => (
                     <SearchSource
                         key={source.postId}

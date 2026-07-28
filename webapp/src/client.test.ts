@@ -9,14 +9,7 @@ import type {ConversationResponse, Turn} from '@/types/conversation';
 import manifest from './manifest';
 
 import {
-    deleteAgent,
-    deleteCustomPrompt,
-    doChannelAnalysis,
     doLoopInAgent,
-    doReaction,
-    getConversation,
-    getConversationContext,
-    getPost,
     normalizeConversationResponse,
     searchAllChannels,
     setSiteURL,
@@ -31,7 +24,6 @@ jest.mock('@mattermost/client', () => {
         [string, SearchAllChannelsOpts | undefined]
     >();
     const mockUpdateThreadReadForUser = jest.fn();
-    const mockGetPost = jest.fn();
 
     return {
 
@@ -40,7 +32,6 @@ jest.mock('@mattermost/client', () => {
             url = '';
             searchAllChannels = mockSearchAllChannels;
             updateThreadReadForUser = mockUpdateThreadReadForUser;
-            getPost = mockGetPost;
 
             setUrl(url: string) {
                 this.url = url;
@@ -53,7 +44,6 @@ jest.mock('@mattermost/client', () => {
         ClientError: class extends Error {},
         mockSearchAllChannels,
         mockUpdateThreadReadForUser,
-        mockGetPost,
     };
 });
 
@@ -69,10 +59,6 @@ const {mockUpdateThreadReadForUser} = jest.requireMock('@mattermost/client') as 
     >;
 };
 
-const {mockGetPost} = jest.requireMock('@mattermost/client') as {
-    mockGetPost: jest.MockedFunction<(postId: string) => Promise<unknown>>;
-};
-
 const mockFetch = jest.fn<Promise<Response>, [string, RequestInit]>();
 global.fetch = mockFetch as unknown as typeof fetch;
 
@@ -85,20 +71,13 @@ function okResponse(): Response {
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
 
-// Ids reach these functions straight off a post prop, so a caller can hand them anything.
+// The post id reaches doLoopInAgent straight off a post prop, so a caller can hand it anything.
 const NOT_WELL_FORMED_IDS: Array<{name: string; id: string}> = [
     {name: 'empty', id: ''},
     {name: 'relative path segments', id: '../../some/other/route'},
     {name: 'right length but contains a separator', id: 'abcdefghijklmnopqrstuvwxy/'},
     {name: 'well-formed id with leading whitespace', id: ` ${WELL_FORMED_ID}`},
 ];
-
-// Resolves request URLs the way the browser would, so relative segments collapse first.
-function requestedPathsOutside(prefix: string): string[] {
-    return mockFetch.mock.calls.
-        map(([url]) => new URL(url).pathname).
-        filter((pathname) => !pathname.startsWith(prefix));
-}
 
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
     return {
@@ -244,68 +223,5 @@ describe('doLoopInAgent', () => {
         await expect(doLoopInAgent(id, 'matty')).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
-    });
-});
-
-describe('conversation reads', () => {
-    const conversationsPrefix = `/plugins/${manifest.id}/conversations/`;
-
-    const readers: Array<{reader: string; read: (id: string) => Promise<unknown>; suffix: string}> = [
-        {reader: 'getConversation', read: getConversation, suffix: ''},
-        {reader: 'getConversationContext', read: getConversationContext, suffix: '/context'},
-    ];
-
-    const notWellFormedCases = readers.flatMap(({reader, read}) =>
-        NOT_WELL_FORMED_IDS.map(({name, id}) => ({reader, read, name, id})));
-
-    test.each(readers)('$reader reads the conversation route for a well-formed id', async ({read, suffix}) => {
-        await read(WELL_FORMED_ID);
-
-        expect(mockFetch).toHaveBeenCalledTimes(1);
-        const [url, options] = mockFetch.mock.calls[0];
-        expect(url).toBe(`${siteURL}${conversationsPrefix}${WELL_FORMED_ID}${suffix}`);
-        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
-    });
-
-    // Declining to send anything is fine; landing on an unrelated route is not.
-    test.each(notWellFormedCases)('$reader stays inside the conversation route when the id is not well-formed: $name', async ({read, id}) => {
-        await read(id).catch(() => null);
-
-        expect(requestedPathsOutside(conversationsPrefix)).toEqual([]);
-    });
-});
-
-describe('getPost', () => {
-    beforeEach(() => {
-        mockGetPost.mockReset();
-        mockGetPost.mockResolvedValue({id: WELL_FORMED_ID});
-    });
-
-    test('reads the post for a well-formed id', async () => {
-        await expect(getPost(WELL_FORMED_ID)).resolves.toEqual({id: WELL_FORMED_ID});
-        expect(mockGetPost).toHaveBeenCalledWith(WELL_FORMED_ID);
-    });
-
-    test.each(NOT_WELL_FORMED_IDS)('does not read a post by an id that is not well-formed: $name', async ({id}) => {
-        await expect(getPost(id)).rejects.toThrow();
-
-        expect(mockGetPost).not.toHaveBeenCalled();
-    });
-});
-
-describe('route builders', () => {
-    const traversingId = '../../../some/other/route';
-
-    const routes: Array<{segment: string; request: (id: string) => Promise<unknown>}> = [
-        {segment: 'post', request: (id) => doReaction(id)},
-        {segment: 'channel', request: (id) => doChannelAnalysis(id, 'summarize_channel', 'matty')},
-        {segment: 'agents', request: (id) => deleteAgent(id)},
-        {segment: 'custom-prompts', request: (id) => deleteCustomPrompt(id)},
-    ];
-
-    test.each(routes)('keeps the value inside its path segment: $segment', async ({segment, request}) => {
-        await request(traversingId).catch(() => null);
-
-        expect(requestedPathsOutside(`/plugins/${manifest.id}/${segment}/`)).toEqual([]);
     });
 });

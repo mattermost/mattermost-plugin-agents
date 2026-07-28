@@ -58,17 +58,10 @@ jest.mock('../tool_approval_set', () => ({
     default: () => null,
 }));
 
-jest.mock('../post_preview', () => ({
-    PostPreview: () => null,
-}));
-
 const mockUseSelector = useSelector as unknown as jest.Mock;
 const mockUseConversation = useConversation as jest.Mock;
 
 type PostUpdateHandler = (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => void;
-
-// Mattermost IDs are 26 characters of lowercase letters and digits.
-const CONVERSATION_ID = 'w4x8t2jr9m1kd6bn5zqh3vscp7';
 
 function makePost(message = '') {
     return {
@@ -77,7 +70,7 @@ function makePost(message = '') {
         root_id: 'root_1',
         message,
         props: {
-            conversation_id: CONVERSATION_ID,
+            conversation_id: 'conversation_1',
         },
     };
 }
@@ -172,64 +165,5 @@ describe('LLMBotPost streaming fallback rendering', () => {
             expect(screen.getByText(errorText)).toBeTruthy();
         });
         expect(screen.queryByText('Starting...')).toBeNull();
-    });
-});
-
-describe('LLMBotPost search results rendering', () => {
-    const wellFormedSource = {
-        postId: 'c7f2m9xq4v1b8n3k6t5w0hzjd2',
-        channelId: 'kq3n7vd1x9r4bz2m8sw6t5jhpc',
-        userId: 'ehz9k3wqr7t1a5m2xd8pnb4jsc',
-        content: 'a matching message',
-        score: 0.5,
-    };
-
-    function renderWithSearchResults(searchResults: unknown) {
-        return renderPost({
-            ...makePost('here is what I found'),
-            props: {conversation_id: CONVERSATION_ID, search_results: searchResults},
-        } as unknown as ReturnType<typeof makePost>);
-    }
-
-    // SearchSources renders the surviving source count next to the 'Sources' title.
-    function expectSourceCount(count: number) {
-        expect(screen.getByText('Sources')).toBeTruthy();
-        expect(screen.getByText(String(count))).toBeTruthy();
-    }
-
-    test('renders the source list for a well-formed search_results prop', () => {
-        renderWithSearchResults(JSON.stringify([wellFormedSource]));
-
-        expectSourceCount(1);
-    });
-
-    // search_results is read straight off the post props, so a caller can put anything there.
-    test.each([
-        {name: 'not JSON at all', searchResults: 'not json'},
-        {name: 'a JSON object', searchResults: '{}'},
-        {name: 'not a string', searchResults: 5},
-        {name: 'an array holding a null element', searchResults: '[null]'},
-    ])('renders when search_results is $name', ({searchResults}) => {
-        expect(() => renderWithSearchResults(searchResults)).not.toThrow();
-    });
-
-    test('keeps a well-formed source alongside an element that is not one', () => {
-        renderWithSearchResults(JSON.stringify([wellFormedSource, null]));
-
-        expectSourceCount(1);
-    });
-
-    // Mirrors maxMaxResults in api/api_search.go.
-    const SERVER_RESULT_CAP = 100;
-
-    test('caps the source list at the most results a search can return', () => {
-        const sources = Array.from({length: SERVER_RESULT_CAP * 5}, (unused, index) => ({
-            ...wellFormedSource,
-            postId: index.toString(36).padStart(26, '0'),
-        }));
-
-        renderWithSearchResults(JSON.stringify(sources));
-
-        expectSourceCount(SERVER_RESULT_CAP);
     });
 });

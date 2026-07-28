@@ -60,27 +60,17 @@ function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
 }
 
-// Route builders encode their id so it can only ever occupy one path segment.
+// Encoded so the id can only ever occupy one path segment.
 function postRoute(postid: string): string {
     return `${baseRoute()}/post/${encodeURIComponent(postid)}`;
 }
 
 function channelRoute(channelid: string): string {
-    return `${baseRoute()}/channel/${encodeURIComponent(channelid)}`;
+    return `${baseRoute()}/channel/${channelid}`;
 }
 
 function agentRoute(agentId: string): string {
-    return `${baseRoute()}/agents/${encodeURIComponent(agentId)}`;
-}
-
-function requireValidId(id: string, label: string) {
-    if (!isValidId(id)) {
-        throw new ClientError(Client4.url, {
-            message: `Invalid ${label} id`,
-            status_code: 400,
-            url: Client4.url,
-        });
-    }
+    return `${baseRoute()}/agents/${agentId}`;
 }
 
 // readAgentErrorMessage extracts the server-provided error message from an
@@ -123,7 +113,7 @@ export async function doReaction(postid: string) {
 }
 
 export async function doThreadAnalysis(postid: string, analysisType: string, botUsername: string) {
-    const url = `${postRoute(postid)}/analyze?botUsername=${encodeURIComponent(botUsername)}`;
+    const url = `${postRoute(postid)}/analyze?botUsername=${botUsername}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -143,7 +133,7 @@ export async function doThreadAnalysis(postid: string, analysisType: string, bot
 }
 
 export async function doChannelAnalysis(channelId: string, analysisType: string, botUsername: string, options?: any) {
-    const url = `${channelRoute(channelId)}/analyze?botUsername=${encodeURIComponent(botUsername)}`;
+    const url = `${channelRoute(channelId)}/analyze?botUsername=${botUsername}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -164,7 +154,7 @@ export async function doChannelAnalysis(channelId: string, analysisType: string,
 }
 
 export async function doTranscribe(postid: string, fileID: string) {
-    const url = `${postRoute(postid)}/transcribe/file/${encodeURIComponent(fileID)}`;
+    const url = `${postRoute(postid)}/transcribe/file/${fileID}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
     }));
@@ -290,7 +280,13 @@ export async function doPostbackSummary(postid: string) {
 }
 
 export async function doLoopInAgent(postid: string, botUsername: string) {
-    requireValidId(postid, 'post');
+    if (!isValidId(postid)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid post id',
+            status_code: 400,
+            url: Client4.url,
+        });
+    }
 
     const url = `${postRoute(postid)}/loop_in_agent?botUsername=${encodeURIComponent(botUsername)}`;
     const response = await fetch(url, Client4.getOptions({
@@ -356,9 +352,7 @@ export function normalizeConversationResponse(raw: ConversationResponse): Conver
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationResponse> {
-    requireValidId(conversationId, 'conversation');
-
-    const url = `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}`;
+    const url = `${baseRoute()}/conversations/${conversationId}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -376,9 +370,7 @@ export async function getConversation(conversationId: string): Promise<Conversat
 }
 
 export async function getConversationContext(conversationId: string): Promise<Composition> {
-    requireValidId(conversationId, 'conversation');
-
-    const url = `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}/context`;
+    const url = `${baseRoute()}/conversations/${conversationId}/context`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -433,7 +425,7 @@ export async function getBotProfilePictureUrl(username: string) {
 }
 
 export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string): Promise<{postid: string; channelid: string}> {
-    const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${encodeURIComponent(botUsername)}` : ''}`;
+    const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${botUsername}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -519,9 +511,7 @@ export function getTeamIconUrl(teamId: string, lastTeamIconUpdate: number) {
     return Client4.getTeamIconUrl(teamId, lastTeamIconUpdate);
 }
 
-export async function getPost(postId: string) {
-    requireValidId(postId, 'post');
-
+export function getPost(postId: string) {
     return Client4.getPost(postId);
 }
 
@@ -823,7 +813,7 @@ export async function getChannelInterval(
     prompt?: string,
     botUsername?: string,
 ): Promise<{postid: string; channelid: string}> {
-    const url = `${channelRoute(channelID)}/interval${botUsername ? `?botUsername=${encodeURIComponent(botUsername)}` : ''}`;
+    const url = `${channelRoute(channelID)}/interval${botUsername ? `?botUsername=${botUsername}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -1071,7 +1061,7 @@ export async function createCustomPrompt(prompt: {name: string; description: str
 }
 
 export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<void> {
-    const url = `${baseRoute()}/custom-prompts/${encodeURIComponent(id)}`;
+    const url = `${baseRoute()}/custom-prompts/${id}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',
         body: JSON.stringify(prompt),
@@ -1087,7 +1077,7 @@ export async function updateCustomPrompt(id: string, prompt: {name: string; desc
 }
 
 export async function deleteCustomPrompt(id: string): Promise<void> {
-    const url = `${baseRoute()}/custom-prompts/${encodeURIComponent(id)}`;
+    const url = `${baseRoute()}/custom-prompts/${id}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'DELETE',
     }));
@@ -1135,7 +1125,7 @@ export async function setCustomPromptPin(promptId: string, pinned: boolean): Pro
 }
 
 export async function renderCustomPrompt(id: string, channelId?: string, botUsername?: string): Promise<{rendered: string}> {
-    const url = `${baseRoute()}/custom-prompts/${encodeURIComponent(id)}/render`;
+    const url = `${baseRoute()}/custom-prompts/${id}/render`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({channel_id: channelId, bot_username: botUsername}),

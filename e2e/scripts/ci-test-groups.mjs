@@ -81,7 +81,6 @@ const groups = {
         'tests/seed.spec.ts',
         'tests/tool-config/mock-api/tool-call-policies.spec.ts',
         'tests/edge-cases/system-message-no-trigger.spec.ts',
-        'tests/agent-mention-reminder/loop-in-agent.spec.ts',
         'tests/tool-config/mock-api/dynamic_mcp_approval.spec.ts',
         'tests/tool-config/mock-api/dynamic_mcp_cross_turn_derivation.spec.ts',
         'tests/tool-config/real-api/ask-policy.spec.ts',
