@@ -26,8 +26,22 @@ const maxIDLength = 128
 // TruncateID clamps a not-yet-validated identifier for audit recording so an
 // oversized request body cannot pump arbitrary content into the audit log.
 func TruncateID(s string) string {
-	if len(s) <= maxIDLength {
+	return truncate(s, maxIDLength)
+}
+
+// maxDescriptionLength bounds error descriptions. Long enough for wrapped
+// error chains, short enough that an error embedding request text cannot pump
+// unbounded content into the log.
+const maxDescriptionLength = 500
+
+// TruncateDescription clamps an error description for audit recording.
+func TruncateDescription(s string) string {
+	return truncate(s, maxDescriptionLength)
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxIDLength] + "…(truncated)"
+	return s[:maxLen] + "…(truncated)"
 }

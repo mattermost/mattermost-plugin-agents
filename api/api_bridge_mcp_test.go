@@ -933,7 +933,19 @@ func TestAuditMCPRegister(t *testing.T) {
 			expectedStatus: http.StatusOK,
 			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
 				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
-				assert.Equal(t, audit.TruncateID(longName), rec.EventData.Parameters["server_name"])
+				// Literal expectation, not recomputed via TruncateID, so a
+				// gutted clamp fails this test.
+				assert.Equal(t, strings.Repeat("n", 128)+"…(truncated)",
+					rec.EventData.Parameters["server_name"])
+			},
+		},
+		{
+			name:           "malformed body records a 400 fail still carrying the caller id",
+			body:           `{not-json`,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
 			},
 		},
 	}
@@ -975,24 +987,52 @@ func TestAuditMCPUnregister(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
+	tests := []struct {
+		name           string
+		buildRequest   func(t *testing.T) *http.Request
+		expectedStatus int
+		expectedRecord string
+	}{
+		{
+			name: "success records the calling plugin",
+			buildRequest: func(t *testing.T) *http.Request {
+				return mcpUnregisterRequest(t, map[string]string{})
+			},
+			expectedStatus: http.StatusOK,
+			expectedRecord: model.AuditStatusSuccess,
+		},
+		{
+			name: "malformed body records a 400 fail still carrying the caller id",
+			buildRequest: func(t *testing.T) *http.Request {
+				return httptest.NewRequest(http.MethodPost, "/bridge/v1/mcp/unregister", strings.NewReader(`{bad`))
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedRecord: model.AuditStatusFail,
+		},
+	}
 
-	e.mockAPI.On("LogError", mock.Anything).Maybe()
-	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
 
-	records := e.CaptureAuditRecords()
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 
-	req := mcpUnregisterRequest(t, map[string]string{})
-	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+			records := e.CaptureAuditRecords()
 
-	resp := serveAndReturn(e, req)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+			req := tt.buildRequest(t)
+			req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
 
-	require.Len(t, *records, 1, "exactly one audit record must be emitted")
-	rec := (*records)[0]
-	assert.Equal(t, AuditEventUnregisterMCPPluginServer, rec.EventName)
-	assert.Equal(t, model.AuditStatusSuccess, rec.Status)
-	assert.Empty(t, rec.Actor.UserId, "bridge calls have no acting user")
-	assert.Equal(t, testCallerPluginID, rec.EventData.Parameters[audit.KeyCallerPluginID])
+			resp := serveAndReturn(e, req)
+			require.Equal(t, tt.expectedStatus, resp.StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventUnregisterMCPPluginServer, rec.EventName)
+			assert.Equal(t, tt.expectedRecord, rec.Status)
+			assert.Empty(t, rec.Actor.UserId, "bridge calls have no acting user")
+			assert.Equal(t, testCallerPluginID, rec.EventData.Parameters[audit.KeyCallerPluginID])
+		})
+	}
 }

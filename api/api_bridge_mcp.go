@@ -39,7 +39,7 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	// inter-plugin requests and is the registered PluginID too, so one
 	// parameter covers both the actor and the affected server.
 	trustedPluginID := c.GetHeader("Mattermost-Plugin-ID")
-	audit.AddParam(auditRec(c), audit.KeyCallerPluginID, trustedPluginID)
+	audit.AddParam(auditRec(c), audit.KeyCallerPluginID, audit.TruncateID(trustedPluginID))
 
 	var req struct {
 		PluginID       string           `json:"plugin_id"`
@@ -143,7 +143,7 @@ func (a *API) handleMCPUnregister(c *gin.Context) {
 	// Attribute the caller before anything can fail; the trusted header is
 	// also the PluginID being unregistered.
 	trustedPluginID := c.GetHeader("Mattermost-Plugin-ID")
-	audit.AddParam(auditRec(c), audit.KeyCallerPluginID, trustedPluginID)
+	audit.AddParam(auditRec(c), audit.KeyCallerPluginID, audit.TruncateID(trustedPluginID))
 
 	var req struct{}
 	if err := c.BindJSON(&req); err != nil {

@@ -71,7 +71,10 @@ func (a *API) auditMiddleware(pluginCtx *plugin.Context) gin.HandlerFunc {
 			} else {
 				rec.AddErrorCode(status)
 				if last := c.Errors.Last(); last != nil {
-					rec.AddErrorDesc(last.Error())
+					// Clamped: bind errors and wrapped store errors can
+					// quote fragments of request text, and the description
+					// must never become an unbounded content channel.
+					rec.AddErrorDesc(audit.TruncateDescription(last.Error()))
 				}
 			}
 

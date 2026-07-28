@@ -98,7 +98,7 @@ func (a *API) delegateToMCPHandler(c *gin.Context, handler http.Handler) {
 			"error", err)
 		rec := mcpSessionGrantRecord(c, userID)
 		rec.AddErrorCode(http.StatusInternalServerError)
-		rec.AddErrorDesc(err.Error())
+		rec.AddErrorDesc(audit.TruncateDescription(err.Error()))
 		a.pluginAPI.Audit.Record(rec)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
