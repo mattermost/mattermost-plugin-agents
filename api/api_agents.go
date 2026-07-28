@@ -11,9 +11,11 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -296,6 +298,41 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	return displayNameChanged
 }
 
+// changedAgentConfigFields returns the sorted top-level JSON field names whose
+// values differ between prev and next. It exists for audit enrichment: the
+// agent config carries prompt content (customInstructions), so the audit
+// record may say which fields an update changed but never what they changed to.
+func changedAgentConfigFields(prev, next *llm.BotConfig) []string {
+	toMap := func(cfg *llm.BotConfig) map[string]json.RawMessage {
+		raw, err := json.Marshal(cfg)
+		if err != nil {
+			return nil
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil
+		}
+		return m
+	}
+
+	prevMap := toMap(prev)
+	nextMap := toMap(next)
+
+	changed := make([]string, 0, len(nextMap))
+	for key, nextVal := range nextMap {
+		if prevVal, ok := prevMap[key]; !ok || !bytes.Equal(prevVal, nextVal) {
+			changed = append(changed, key)
+		}
+	}
+	for key := range prevMap {
+		if _, ok := nextMap[key]; !ok {
+			changed = append(changed, key)
+		}
+	}
+	sort.Strings(changed)
+	return changed
+}
+
 // refreshBotsAndNotify reloads bots on this node, notifies the cluster, and broadcasts so clients refresh bot lists.
 // It returns the error from EnsureBots when a.bots is non-nil, or nil when a.bots is nil; cluster and websocket
 // steps always run regardless.
@@ -346,6 +383,11 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	// Identify the requested agent as soon as the body is bound so
+	// validation and persistence fail paths carry it too.
+	audit.AddParam(auditRec(c), audit.KeyAgentName, req.Username)
+	audit.AddParam(auditRec(c), "service_id", req.ServiceID)
+
 	if !validUsernameRe.MatchString(req.Username) {
 		abortAgentRequest(c, http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
 		return
@@ -386,6 +428,10 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
 		return
 	}
+
+	// Both IDs exist only after the bot account and agent config are persisted.
+	audit.AddParam(auditRec(c), audit.KeyAgentID, agent.ID)
+	audit.AddParam(auditRec(c), "bot_user_id", mmBot.UserId)
 
 	_ = a.refreshBotsAndNotify()
 	c.JSON(http.StatusCreated, agent)
@@ -451,6 +497,9 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
 
+	// Identify the target early so 404/403 fail records carry it.
+	audit.AddParam(auditRec(c), audit.KeyAgentID, agentID)
+
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
@@ -460,6 +509,8 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
+
+	audit.AddParam(auditRec(c), audit.KeyAgentName, cfg.Name)
 
 	if !canManageAgent(a.pluginAPI, cfg, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to modify this agent"))
@@ -486,7 +537,16 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
 		return
 	}
+
+	// Snapshot before apply: applyAgentUpdateRequest replaces field values on
+	// cfg (it never mutates the slices in place), so a shallow copy is enough
+	// for the before/after field diff.
+	prev := *cfg
 	displayNameChanged := applyAgentUpdateRequest(cfg, req)
+
+	// Audit which fields the update changed — never their values, since
+	// customInstructions carries prompt content.
+	audit.AddParam(auditRec(c), "changed_fields", changedAgentConfigFields(&prev, cfg))
 
 	if err := cfg.Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
@@ -517,6 +577,9 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
 
+	// Identify the target early so 404/403 fail records carry it.
+	audit.AddParam(auditRec(c), audit.KeyAgentID, agentID)
+
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
@@ -526,6 +589,9 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
+
+	audit.AddParam(auditRec(c), audit.KeyAgentName, cfg.Name)
+	audit.AddParam(auditRec(c), "bot_user_id", cfg.BotUserID)
 
 	if !canManageAgent(a.pluginAPI, cfg, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to delete this agent"))
@@ -554,6 +620,10 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
 
+	// Identify the target early so 404/403 fail records carry it. Nothing
+	// about the image itself is ever recorded.
+	audit.AddParam(auditRec(c), audit.KeyAgentID, agentID)
+
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
@@ -563,6 +633,8 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
+
+	audit.AddParam(auditRec(c), audit.KeyAgentName, cfg.Name)
 
 	if !canManageAgent(a.pluginAPI, cfg, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to modify this agent"))
