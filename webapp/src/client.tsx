@@ -11,6 +11,7 @@ import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
 
@@ -59,8 +60,9 @@ function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
 }
 
+// Encoded so the id can only ever occupy one path segment.
 function postRoute(postid: string): string {
-    return `${baseRoute()}/post/${postid}`;
+    return `${baseRoute()}/post/${encodeURIComponent(postid)}`;
 }
 
 function channelRoute(channelid: string): string {
@@ -278,6 +280,14 @@ export async function doPostbackSummary(postid: string) {
 }
 
 export async function doLoopInAgent(postid: string, botUsername: string) {
+    if (!isValidId(postid)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid post id',
+            status_code: 400,
+            url: Client4.url,
+        });
+    }
+
     const url = `${postRoute(postid)}/loop_in_agent?botUsername=${encodeURIComponent(botUsername)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
