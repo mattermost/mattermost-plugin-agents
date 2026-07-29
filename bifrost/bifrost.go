@@ -19,7 +19,6 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
-	bifrostanthropic "github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -1139,12 +1138,8 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 
 	switch b.provider {
 	case schemas.Anthropic:
-		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
-		// Anthropic requires budget < max_tokens for budget-based extended
-		// thinking. Adaptive-only models (Opus 4.7+, Sonnet 5+, Fable/Mythos)
-		// ignore the budget entirely — Bifrost sends thinking.type "adaptive"
-		// for them — so don't disable thinking on budget overflow there.
-		if budget >= cfg.MaxGeneratedTokens && !bifrostanthropic.IsAdaptiveOnlyThinkingModel(cfg.Model) {
+		budget, ok := b.anthropicThinkingBudget(cfg.MaxGeneratedTokens)
+		if !ok {
 			return nil
 		}
 		return &schemas.ChatReasoning{MaxTokens: Ptr(budget)}
@@ -1170,14 +1165,39 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	}
 }
 
+// Anthropic budget-based extended thinking requires
+// minThinkingBudget <= budget < max_tokens.
+const (
+	minThinkingBudget        = 1024
+	defaultMaxThinkingBudget = 8192
+)
+
 // calculateThinkingBudget computes the thinking budget for Anthropic models.
 func (b *LLM) calculateThinkingBudget(maxGeneratedTokens int) int {
-	const minBudget, maxBudget = 1024, 8192
 	if b.thinkingBudget > 0 {
-		return max(b.thinkingBudget, minBudget)
+		return max(b.thinkingBudget, minThinkingBudget)
 	}
 	budget := maxGeneratedTokens / 4
-	return max(min(budget, maxBudget), minBudget)
+	return max(min(budget, defaultMaxThinkingBudget), minThinkingBudget)
+}
+
+// anthropicThinkingBudget returns the thinking budget to send for an Anthropic
+// request, clamped into the provider's valid range (minThinkingBudget <=
+// budget < max_tokens). Clamping — rather than gating on the primary model's
+// capabilities — keeps the value valid for every Anthropic model that may see
+// it: models that only support adaptive thinking ignore the budget entirely,
+// while budget-based models (including any Anthropic fallback in the request's
+// fallback chain) reject an out-of-range value with a 400. Returns ok=false
+// when no valid budget exists, in which case thinking must be omitted.
+func (b *LLM) anthropicThinkingBudget(maxGeneratedTokens int) (int, bool) {
+	budget := b.calculateThinkingBudget(maxGeneratedTokens)
+	if budget >= maxGeneratedTokens {
+		budget = maxGeneratedTokens - 1
+	}
+	if budget < minThinkingBudget {
+		return 0, false
+	}
+	return budget, true
 }
 
 // convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
@@ -1864,10 +1884,8 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 
 	switch b.provider {
 	case schemas.Anthropic:
-		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
-		// See buildChatReasoning: the budget < max_tokens constraint only
-		// applies to budget-based thinking, not adaptive-only models.
-		if budget >= cfg.MaxGeneratedTokens && !bifrostanthropic.IsAdaptiveOnlyThinkingModel(cfg.Model) {
+		budget, ok := b.anthropicThinkingBudget(cfg.MaxGeneratedTokens)
+		if !ok {
 			return nil
 		}
 		return &schemas.ResponsesParametersReasoning{MaxTokens: Ptr(budget)}

@@ -5,7 +5,7 @@ import React from 'react';
 import {render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import ReasoningConfigItem from './reasoning_config';
+import ReasoningConfigItem, {usesAdaptiveThinking} from './reasoning_config';
 import {LLMBotConfig} from './bot';
 import {type LLMService} from './service';
 
@@ -74,6 +74,43 @@ function renderItem(bot: Partial<LLMBotConfig>, service: Partial<LLMService> = {
 const budgetTooLargeError = /Thinking budget cannot exceed max tokens/;
 const budgetTooSmallError = /Thinking budget must be at least 1024 tokens/;
 const adaptiveHelpText = /adaptive thinking/;
+
+describe('usesAdaptiveThinking model classification', () => {
+    const cases: Array<[string, boolean]> = [
+
+        // Opus dropped budget-based thinking at 4.7.
+        ['claude-opus-4-6', false],
+        ['claude-opus-4-7', true],
+        ['claude-opus-4-8', true],
+        ['claude-opus-4-9', true],
+        ['claude-opus-5', true],
+        ['claude-opus-6', true],
+        ['claude-opus-4-5-20251101', false],
+        ['claude-opus-4-1-20250805', false],
+
+        // Date suffix without a minor version is not a minor version.
+        ['claude-opus-4-20250514', false],
+
+        // Sonnet dropped budget-based thinking at 5.
+        ['claude-sonnet-4-6', false],
+        ['claude-sonnet-4-5-20250929', false],
+        ['claude-sonnet-5', true],
+        ['claude-sonnet-5-1', true],
+
+        // Fable/Mythos are always adaptive-only.
+        ['claude-fable-5', true],
+        ['claude-mythos-5', true],
+
+        // Unknown families and legacy names stay budget-based.
+        ['claude-haiku-4-5-20251001', false],
+        ['claude-3-7-sonnet', false],
+        ['', false],
+    ];
+
+    it.each(cases)('%s -> %s', (model, expected) => {
+        expect(usesAdaptiveThinking(model)).toBe(expected);
+    });
+});
 
 describe('ReasoningConfigItem thinking budget validation', () => {
     const cases = [
