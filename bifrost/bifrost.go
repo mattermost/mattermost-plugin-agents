@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
+	bifrostanthropic "github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -173,7 +174,7 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	}
 
 	key := schemas.Key{
-		Value:  schemas.EnvVar{Val: a.APIKey},
+		Value:  schemas.SecretVar{Val: a.APIKey},
 		Weight: 1.0,
 		// Bifrost v1.5+ requires keys to declare which models they support;
 		// "*" allows any model the configured provider can serve.
@@ -183,16 +184,16 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	// Handle Azure config
 	if a.Provider == schemas.Azure && a.APIURL != "" {
 		key.AzureKeyConfig = &schemas.AzureKeyConfig{
-			Endpoint: schemas.EnvVar{Val: a.APIURL},
+			Endpoint: schemas.SecretVar{Val: a.APIURL},
 		}
 	}
 
 	// Handle Bedrock config
 	if a.Provider == schemas.Bedrock {
-		region := schemas.EnvVar{Val: a.Region}
+		region := schemas.SecretVar{Val: a.Region}
 		key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
-			AccessKey: schemas.EnvVar{Val: a.AWSAccessKeyID},
-			SecretKey: schemas.EnvVar{Val: a.AWSSecretAccessKey},
+			AccessKey: schemas.SecretVar{Val: a.AWSAccessKeyID},
+			SecretKey: schemas.SecretVar{Val: a.AWSSecretAccessKey},
 			Region:    &region,
 		}
 	}
@@ -200,10 +201,10 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	// Handle Vertex config. Empty AuthCredentials signals ADC / attached IAM role.
 	if a.Provider == schemas.Vertex {
 		key.VertexKeyConfig = &schemas.VertexKeyConfig{
-			ProjectID:       schemas.EnvVar{Val: a.VertexProjectID},
-			ProjectNumber:   schemas.EnvVar{Val: a.VertexProjectNumber},
-			Region:          schemas.EnvVar{Val: a.Region},
-			AuthCredentials: schemas.EnvVar{Val: a.VertexAuthCredentials},
+			ProjectID:       schemas.SecretVar{Val: a.VertexProjectID},
+			ProjectNumber:   schemas.SecretVar{Val: a.VertexProjectNumber},
+			Region:          schemas.SecretVar{Val: a.Region},
+			AuthCredentials: schemas.SecretVar{Val: a.VertexAuthCredentials},
 		}
 	}
 
@@ -483,20 +484,20 @@ func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.Respon
 	if typeVal, ok := schemaMap["type"].(string); ok {
 		responseSchema.Type = Ptr(typeVal)
 	} else if typeList, ok := schemaMap["type"].([]interface{}); ok {
-		anyOf := make([]map[string]any, 0, len(typeList))
+		anyOf := make([]schemas.OrderedMap, 0, len(typeList))
 		for i, item := range typeList {
 			typeName, ok := item.(string)
 			if !ok {
 				return nil, fmt.Errorf("responses JSON schema type[%d] must be a string", i)
 			}
-			anyOf = append(anyOf, map[string]any{"type": typeName})
+			anyOf = append(anyOf, *schemas.NewOrderedMapFromPairs(schemas.KV("type", typeName)))
 		}
 		if len(anyOf) > 0 {
 			responseSchema.AnyOf = anyOf
 		}
 	}
 	if properties, ok := schemaMap["properties"].(map[string]interface{}); ok {
-		responseSchema.Properties = &properties
+		responseSchema.Properties = schemas.OrderedMapFromMap(properties)
 	}
 	if required := extractStringSlice(schemaMap["required"]); len(required) > 0 {
 		responseSchema.Required = required
@@ -519,16 +520,16 @@ func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.Respon
 		responseSchema.Name = Ptr(title)
 	}
 	if defs, ok := schemaMap["$defs"].(map[string]interface{}); ok {
-		responseSchema.Defs = &defs
+		responseSchema.Defs = schemas.OrderedMapFromMap(defs)
 	}
 	if definitions, ok := schemaMap["definitions"].(map[string]interface{}); ok {
-		responseSchema.Definitions = &definitions
+		responseSchema.Definitions = schemas.OrderedMapFromMap(definitions)
 	}
 	if ref, ok := schemaMap["$ref"].(string); ok {
 		responseSchema.Ref = Ptr(ref)
 	}
 	if items, ok := schemaMap["items"].(map[string]interface{}); ok {
-		responseSchema.Items = &items
+		responseSchema.Items = schemas.OrderedMapFromMap(items)
 	}
 	if minItems, ok := toInt64(schemaMap["minItems"]); ok {
 		responseSchema.MinItems = &minItems
@@ -636,19 +637,19 @@ func extractStringEnum(value interface{}) ([]string, error) {
 	}
 }
 
-func extractSchemaList(value interface{}) []map[string]any {
+func extractSchemaList(value interface{}) []schemas.OrderedMap {
 	items, ok := value.([]interface{})
 	if !ok {
 		return nil
 	}
 
-	result := make([]map[string]any, 0, len(items))
+	result := make([]schemas.OrderedMap, 0, len(items))
 	for _, item := range items {
 		schemaMap, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		result = append(result, schemaMap)
+		result = append(result, *schemas.OrderedMapFromMap(schemaMap))
 	}
 	if len(result) == 0 {
 		return nil
@@ -1139,8 +1140,12 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	switch b.provider {
 	case schemas.Anthropic:
 		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
-		if budget >= cfg.MaxGeneratedTokens {
-			return nil // Anthropic requires budget < max_tokens
+		// Anthropic requires budget < max_tokens for budget-based extended
+		// thinking. Adaptive-only models (Opus 4.7+, Sonnet 5+, Fable/Mythos)
+		// ignore the budget entirely — Bifrost sends thinking.type "adaptive"
+		// for them — so don't disable thinking on budget overflow there.
+		if budget >= cfg.MaxGeneratedTokens && !bifrostanthropic.IsAdaptiveOnlyThinkingModel(cfg.Model) {
+			return nil
 		}
 		return &schemas.ChatReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
@@ -1860,8 +1865,10 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 	switch b.provider {
 	case schemas.Anthropic:
 		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
-		if budget >= cfg.MaxGeneratedTokens {
-			return nil // Anthropic requires budget < max_tokens
+		// See buildChatReasoning: the budget < max_tokens constraint only
+		// applies to budget-based thinking, not adaptive-only models.
+		if budget >= cfg.MaxGeneratedTokens && !bifrostanthropic.IsAdaptiveOnlyThinkingModel(cfg.Model) {
+			return nil
 		}
 		return &schemas.ResponsesParametersReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:

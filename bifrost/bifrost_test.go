@@ -184,6 +184,22 @@ func TestBuildChatReasoning(t *testing.T) {
 			expectNil:        true,
 		},
 		{
+			name:             "budget >= maxTokens keeps reasoning on adaptive-only model",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			thinkingBudget:   8192,
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-5", MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(8192),
+		},
+		{
+			name:             "budget >= maxTokens returns nil on budget-based model",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			thinkingBudget:   8192,
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-4-5-20250929", MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+		{
 			name:             "Anthropic with JSON schema returns nil",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
@@ -508,6 +524,22 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
 			checkMaxTokens:   Ptr(2048),
+		},
+		{
+			name:             "Anthropic budget >= maxTokens keeps reasoning on adaptive-only model",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			thinkingBudget:   8192,
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-5", MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(8192),
+		},
+		{
+			name:             "Anthropic budget >= maxTokens returns nil on budget-based model",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			thinkingBudget:   8192,
+			cfg:              llm.LanguageModelConfig{Model: "claude-haiku-4-5-20251001", MaxGeneratedTokens: 8192},
+			expectNil:        true,
 		},
 		{
 			name:             "OpenAI uses Effort with summary",
@@ -1366,7 +1398,7 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 				require.NotNil(t, req.Params.Text.Format.JSONSchema.Type)
 				assert.Equal(t, "object", *req.Params.Text.Format.JSONSchema.Type)
 				require.NotNil(t, req.Params.Text.Format.JSONSchema.Properties)
-				assert.Len(t, *req.Params.Text.Format.JSONSchema.Properties, 2)
+				assert.Equal(t, 2, req.Params.Text.Format.JSONSchema.Properties.Len())
 				assert.ElementsMatch(t, []string{"name", "score"}, req.Params.Text.Format.JSONSchema.Required)
 				require.NotNil(t, req.Params.Text.Format.JSONSchema.AdditionalProperties)
 				require.NotNil(t, req.Params.Text.Format.JSONSchema.AdditionalProperties.AdditionalPropertiesBool)
@@ -2423,8 +2455,8 @@ func TestConvertToBifrostResponsesRequestStructuredOutputMultiTypeArray(t *testi
 	js := req.Params.Text.Format.JSONSchema
 	assert.Nil(t, js.Type)
 	require.Len(t, js.AnyOf, 2)
-	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0])
-	assert.Equal(t, map[string]any{"type": "null"}, js.AnyOf[1])
+	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0].ToMap())
+	assert.Equal(t, map[string]any{"type": "null"}, js.AnyOf[1].ToMap())
 }
 
 func TestConvertToBifrostResponsesRequestStructuredOutputTopLevelAnyOf(t *testing.T) {
@@ -2450,8 +2482,8 @@ func TestConvertToBifrostResponsesRequestStructuredOutputTopLevelAnyOf(t *testin
 	require.NotNil(t, req.Params.Text.Format.JSONSchema)
 	js := req.Params.Text.Format.JSONSchema
 	require.Len(t, js.AnyOf, 2)
-	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0])
-	assert.Equal(t, map[string]any{"type": "number"}, js.AnyOf[1])
+	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0].ToMap())
+	assert.Equal(t, map[string]any{"type": "number"}, js.AnyOf[1].ToMap())
 }
 
 func TestChatCompletionNoStreamReturnsErrorForUnsupportedResponsesSchema(t *testing.T) {

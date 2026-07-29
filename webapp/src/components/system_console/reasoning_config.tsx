@@ -102,7 +102,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                 />
                                 <HelpText>
                                     {intl.formatMessage({
-                                        defaultMessage: 'Token budget for extended thinking. Higher values allow deeper reasoning but increase response time and cost. Must be between 1024 and {maxTokens}. Leave blank to use default ({defaultBudget}).',
+                                        defaultMessage: 'Token budget for extended thinking. Higher values allow deeper reasoning but increase response time and cost. Must be between 1024 and {maxTokens}. Leave blank to use default ({defaultBudget}). Ignored by models that use adaptive thinking (Claude Opus 4.7+, Sonnet 5+, Fable).',
                                     }, {
                                         maxTokens: props.maxTokens,
                                         defaultBudget: getDefaultThinkingBudget(),
