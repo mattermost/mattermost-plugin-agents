@@ -93,12 +93,16 @@ const HeaderMapEditor = ({
         onChange({...headers, '': ''});
     };
 
+    // Rebuild in place: appending the renamed entry would reorder rows rendered by index.
     const updateHeader = (oldKey: string, newKey: string, value: string) => {
-        const updated = {...headers};
-        if (oldKey !== newKey) {
-            delete updated[oldKey];
+        const updated: {[key: string]: string} = {};
+        for (const [k, v] of Object.entries(headers)) {
+            if (k === oldKey) {
+                updated[newKey] = value;
+            } else {
+                updated[k] = v;
+            }
         }
-        updated[newKey] = value;
         onChange(updated);
     };
 

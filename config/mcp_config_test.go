@@ -54,7 +54,7 @@ func TestMCPServerConfigServiceAccountHeaderFiltering(t *testing.T) {
 			serverConfig: &MCPServerConfig{Enabled: true, ServiceAccountHeaders: map[string]string{"": "Bearer pat", "Authorization": "   "}},
 		},
 		{
-			name: "blank entries alongside a valid entry are dropped",
+			name: "blank entries are dropped and kept entries are trimmed",
 			serverConfig: &MCPServerConfig{
 				Enabled: true,
 				ServiceAccountHeaders: map[string]string{
@@ -62,9 +62,11 @@ func TestMCPServerConfigServiceAccountHeaderFiltering(t *testing.T) {
 					"   ":           "Bearer pat",
 					"X-Blank-Value": "  ",
 					"Authorization": "Bearer pat",
+					"  X-Api-Key ":  " secret-token\n",
 				},
 			},
-			wantHeaders: map[string]string{"Authorization": "Bearer pat"},
+			// Untrimmed names/values make Go's HTTP transport reject the request.
+			wantHeaders: map[string]string{"Authorization": "Bearer pat", "X-Api-Key": "secret-token"},
 		},
 		{
 			name: "base headers do not count as service account auth",

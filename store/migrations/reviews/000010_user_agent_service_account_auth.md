@@ -33,12 +33,12 @@
 ## Table Locks & Impact
 - Tables affected: `Agents_UserAgents`.
 - Lock types acquired:
-  - `ALTER TABLE … ADD COLUMN`: ACCESS EXCLUSIVE on `Agents_UserAgents`. Metadata-only because the default is constant — returns instantly.
-- Impact to concurrent operations: Negligible.
+  - `ALTER TABLE … ADD COLUMN`: ACCESS EXCLUSIVE on `Agents_UserAgents`. Metadata-only because the default is constant, so the lock is held for a negligible amount of work — but the lock is still requested up front and waits for any transaction already touching the table, and readers arriving during that wait queue behind it.
+- Impact to concurrent operations: Negligible once the lock is granted; bounded by lock-wait duration if a long-running transaction holds a conflicting lock on `Agents_UserAgents`.
 
 ## Zero Downtime
 - Possible: Yes.
-- Reason: Metadata-only ADD COLUMN on an admin-managed table.
+- Reason: Metadata-only ADD COLUMN on an admin-managed table; no table rewrite, so the ACCESS EXCLUSIVE lock is acquired once all preceding conflicting transactions on the table finish, then released almost immediately.
 
 ## Large-Dataset Testing Recommendation
 - **Recommended: No**

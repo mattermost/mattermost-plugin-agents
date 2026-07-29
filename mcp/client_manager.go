@@ -97,6 +97,7 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 					m.log.Debug("Closing inactive MCP client", "userID", key.userID, "serviceAccount", key.serviceAccount)
 					client.Close()
 					delete(m.clients, key)
+					delete(m.activity, key)
 				}
 			}
 			m.clientsMu.Unlock()

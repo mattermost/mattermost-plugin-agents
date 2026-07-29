@@ -109,8 +109,8 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 }
 
 // EffectiveServiceAccountHeaders returns the ServiceAccountHeaders entries with a
-// non-blank name and value; blank System Console rows would make Go's HTTP
-// transport reject the whole request.
+// non-blank name and value, trimmed of surrounding whitespace; blank or padded
+// System Console rows would make Go's HTTP transport reject the whole request.
 func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
 	if s == nil {
 		return nil
@@ -118,13 +118,15 @@ func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
 
 	var headers map[string]string
 	for name, value := range s.ServiceAccountHeaders {
-		if strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
+		trimmedName := strings.TrimSpace(name)
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedName == "" || trimmedValue == "" {
 			continue
 		}
 		if headers == nil {
 			headers = make(map[string]string, len(s.ServiceAccountHeaders))
 		}
-		headers[name] = value
+		headers[trimmedName] = trimmedValue
 	}
 	return headers
 }

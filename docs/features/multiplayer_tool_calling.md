@@ -74,11 +74,11 @@ This is enforced server-side, not just visually. When the **Accept** or **Reject
 
 The reasoning behind initiator-only approval:
 
-- **Side effects belong to the requester.** Because tools run with the initiator's credentials and OAuth scopes (see §3), only the initiator has the standing to consent to side effects executed under their identity.
+- **Side effects belong to the requester.** In per-user authentication mode, tools run with the initiator's credentials and OAuth scopes (see §3), so only the initiator has the standing to consent to side effects executed under their identity. In service account mode, initiator-only approval remains the consent contract even though the service account performs the action.
 - **Multiplayer approval would be confusing under partial trust.** If three members of a channel could each approve the same tool call, the question "whose Jira token did this run with?" becomes ambiguous and the audit trail becomes harder to reason about.
 - **Admins are not implicit approvers.** A workspace admin watching the channel does not automatically gain the ability to consent on the initiator's behalf. Admin authority lives in the per-tool policy (§5), not in the per-call approval.
 
-Initiator-only approval applies in both credential modes (§3). For a service account agent the initiator is still the person asking for the side effect, so their consent is still the one that matters; the admin consented to the credential itself when they enabled it on the agent.
+Initiator-only approval applies in both credential modes (§3). For a service account agent, the initiator is still the person asking for the side effect, so their consent is still the one that matters; the admin consented to the credential itself when they enabled it on the agent.
 
 ### What if the initiator is offline or never returns?
 

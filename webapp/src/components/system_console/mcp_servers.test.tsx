@@ -177,4 +177,15 @@ describe('MCPServers service account headers', () => {
             serviceAccountHeaders: {Authorization: 'Bearer rotated'},
         }));
     });
+
+    // Rows render by index, so a rename that appends would swap rows under the cursor.
+    test('renaming a header keeps its position in the emitted map', async () => {
+        const {onChange} = await renderOneServer(makeRemoteServer({
+            headers: {'X-First': 'one', 'X-Second': 'two'},
+        }));
+
+        fireEvent.change(screen.getAllByPlaceholderText('Header name')[0], {target: {value: 'X-Renamed'}});
+
+        expect(Object.keys(savedServer(onChange).headers)).toEqual(['X-Renamed', 'X-Second']);
+    });
 });
