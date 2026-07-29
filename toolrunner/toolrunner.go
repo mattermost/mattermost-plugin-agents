@@ -547,6 +547,7 @@ func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) 
 			Schema:       tc.Schema,
 			ServerOrigin: tc.ServerOrigin,
 			MCPBareName:  tc.MCPBareName,
+			UIMeta:       tc.UIMeta,
 		}
 		if toolResults[i].IsError {
 			resolved[i].Status = llm.ToolCallStatusError

@@ -37,6 +37,10 @@ type Tool struct {
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
 
+	// UIMeta is the MCP Apps metadata (_meta.ui) declared on the tool by its
+	// MCP server. Nil for built-in tools and tools without an app UI.
+	UIMeta *ToolUIMeta
+
 	// UserInteraction marks a tool whose pending call is answered by the
 	// requesting user in the Mattermost UI instead of executed by the server;
 	// the Resolver is only an error backstop. Empty for normal tools.
@@ -261,6 +265,11 @@ type ToolCall struct {
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in tools. Used for auto-approval decisions.
 	ServerOrigin string `json:"server_origin,omitempty"`
+
+	// UIMeta mirrors Tool.UIMeta so the webapp can detect UI-enabled tool
+	// calls. Nil when the tool has no MCP Apps UI. Redacted for
+	// non-requesters until the result is shared.
+	UIMeta *ToolUIMeta `json:"ui_meta,omitempty"`
 }
 
 // SanitizeNonPrintableChars replaces non-printable Unicode characters with their
@@ -436,9 +445,10 @@ type EnrichToolCallOptions struct {
 	BareNameFallback bool
 }
 
-// EnrichToolCall fills a tool call's Description, Schema, ServerOrigin, and
-// MCPBareName from the resolved store entry. MCPBareName is only set for MCP
-// tools (those with a server origin); builtins are left untouched.
+// EnrichToolCall fills a tool call's Description, Schema, ServerOrigin,
+// MCPBareName, and UIMeta from the resolved store entry. MCPBareName is only
+// set for MCP tools (those with a server origin); builtins are left untouched.
+// UIMeta is filled only when the call does not already carry one.
 func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) {
 	if tc == nil || store == nil {
 		return
@@ -461,6 +471,9 @@ func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) 
 	}
 	if tc.MCPBareName == "" && lookup.ServerOrigin != "" {
 		tc.MCPBareName = lookup.BareName
+	}
+	if tc.UIMeta == nil {
+		tc.UIMeta = tool.UIMeta
 	}
 }
 

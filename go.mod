@@ -7,7 +7,7 @@ require (
 	github.com/asticode/go-astisub v0.39.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
-	github.com/google/jsonschema-go v0.4.2
+	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/jmoiron/sqlx v1.4.0
@@ -16,7 +16,7 @@ require (
 	github.com/mattermost/morph v1.1.0
 	github.com/mattermost/testcontainers-mattermost-go v0.1.0
 	github.com/maximhq/bifrost/core v1.5.18
-	github.com/modelcontextprotocol/go-sdk v1.4.1
+	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/pgvector/pgvector-go v0.3.0
 	github.com/pkg/errors v0.9.1

@@ -904,7 +904,7 @@ func TestCacheableContextIgnoresParentCancellation(t *testing.T) {
 	require.NoError(t, cacheCtx.Err())
 }
 
-func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {
+func TestClientManagerGetOrCreateUserClientsShellExistingConcurrent(t *testing.T) {
 	before := time.Now()
 	userClients := &UserClients{clients: map[string]*Client{}}
 	manager := &ClientManager{
@@ -927,9 +927,9 @@ func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for range iterations {
-				got, errs := manager.getClientForUser(context.Background(), "user-1")
-				if got != userClients || errs != nil {
-					t.Errorf("getClientForUser returned unexpected result: got=%p errs=%v", got, errs)
+				got := manager.getOrCreateUserClientsShell("user-1")
+				if got != userClients {
+					t.Errorf("getOrCreateUserClientsShell returned unexpected result: got=%p", got)
 					return
 				}
 			}

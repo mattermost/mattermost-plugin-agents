@@ -131,14 +131,15 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 // Close closes the client manager and all managed clients
 // The client manger should not be used after Close is called
 func (m *ClientManager) Close() {
-	// If already closed, do nothing
-	if m.closeChan == nil {
-		return
+	// Stop the cleanup goroutine when this manager was fully initialized.
+	// Partial test managers may omit closeChan/ticker; still close clients.
+	if m.closeChan != nil {
+		close(m.closeChan)
+		m.closeChan = nil
+		if m.cleanupTicker != nil {
+			m.cleanupTicker.Stop()
+		}
 	}
-	// Stop the cleanup goroutine
-	close(m.closeChan)
-	m.closeChan = nil
-	m.cleanupTicker.Stop()
 
 	// Close all client connections
 	m.clientsMu.Lock()
@@ -198,40 +199,60 @@ func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID str
 	return userClients, mcpErrors
 }
 
-// getClientForUser gets or creates an MCP client for a specific user.
-func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*UserClients, *Errors) {
+// getOrCreateUserClientsShell returns the cached per-user client set, or creates
+// an empty one without connecting any remote servers. Used by targeted resource
+// reads so viewing one app cannot dial every configured MCP server.
+func (m *ClientManager) getOrCreateUserClientsShell(userID string) *UserClients {
 	m.clientsMu.Lock()
-	client, exists := m.clients[userID]
-	if exists {
+	defer m.clientsMu.Unlock()
+	if client, exists := m.clients[userID]; exists {
 		m.activity[userID] = time.Now()
-		m.clientsMu.Unlock()
-		return client, client.InitialRemoteConnectErrors()
+		return client
 	}
-	m.clientsMu.Unlock()
+	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
+	m.clients[userID] = userClients
+	m.activity[userID] = time.Now()
+	return userClients
+}
 
-	return m.createAndStoreUserClient(ctx, userID, false)
+// connectEmbeddedForUser establishes the embedded MCP session for a user when
+// the manager has an embedded client configured. Failures are logged and
+// non-fatal — the caller proceeds without embedded tools/resources.
+func (m *ClientManager) connectEmbeddedForUser(ctx context.Context, userClient *UserClients, userID string) {
+	if m.embeddedClient == nil {
+		return
+	}
+	ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
+	if ensureErr != nil {
+		m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
+		return
+	}
+	if ensuredSessionID == "" {
+		return
+	}
+	if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
+		m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
+	}
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
 func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
-	// Get or create client for this user (connects to remote servers only)
-	userClient, initialErrors := m.getClientForUser(ctx, userID)
-	mcpErrors := cloneMCPErrors(initialErrors)
+	// Prefer a shell created by a prior targeted resource read when present; if
+	// remote fan-out has not run yet, connect the full remote list now.
+	userClient := m.getOrCreateUserClientsShell(userID)
+	var mcpErrors *Errors
+	if !userClient.hasRemoteFanOutDone() {
+		mcpErrors = userClient.ConnectToRemoteServers(cacheableContext(ctx), m.config.Servers, false)
+		userClient.setInitialRemoteConnectErrors(mcpErrors)
+	} else {
+		mcpErrors = cloneMCPErrors(userClient.InitialRemoteConnectErrors())
+	}
 
 	// Embedded and plugin connects intentionally receive the raw cancelable ctx:
 	// they run per-request and are not cached, so a canceled request should abort
-	// them. Only the remote connect uses cacheableContext(ctx) (in
-	// createAndStoreUserClient) because its result is cached across requests.
-	if m.embeddedClient != nil {
-		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
-		if ensureErr != nil {
-			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
-		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
-				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
-			}
-		}
-	}
+	// them. Only the remote connect uses cacheableContext(ctx) because its result
+	// is cached across requests.
+	m.connectEmbeddedForUser(ctx, userClient, userID)
 
 	// Snapshot under RLock, then release before PluginHTTP work.
 	pluginSnap := m.snapshotEnabledPluginServers()
