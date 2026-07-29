@@ -171,34 +171,57 @@ func TestExtractOAuthMetadataURL(t *testing.T) {
 }
 
 func TestClientOAuthNeededError(t *testing.T) {
-	client := &Client{
-		config: ServerConfig{
-			Name: "OAuth Server",
-		},
-		oauthManager: &OAuthManager{
-			callbackURL: "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback",
-		},
-	}
-
 	tests := []struct {
-		name string
-		err  error
+		name           string
+		err            error
+		serviceAccount bool
+		wantOAuthError bool
 	}{
 		{
 			name: "mcp unauthorized error",
 			err: &mcpUnauthorized{
 				metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
 			},
+			wantOAuthError: true,
 		},
 		{
-			name: "string matched oauth error",
-			err:  fmt.Errorf("OAuth authentication needed for resource at https://oauth.example.com/.well-known/oauth-protected-resource"),
+			name:           "string matched oauth error",
+			err:            fmt.Errorf("OAuth authentication needed for resource at https://oauth.example.com/.well-known/oauth-protected-resource"),
+			wantOAuthError: true,
+		},
+		{
+			name: "service account mode ignores an unauthorized error",
+			err: &mcpUnauthorized{
+				metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
+			},
+			serviceAccount: true,
+		},
+		{
+			name:           "service account mode ignores oauth-shaped error text",
+			err:            fmt.Errorf("OAuth authentication needed for resource at https://oauth.example.com/.well-known/oauth-protected-resource"),
+			serviceAccount: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Service account bags have no OAuth manager in production; keeping one here
+			// pins the mode guard rather than the nil.
+			client := &Client{
+				config: ServerConfig{
+					Name: "OAuth Server",
+				},
+				oauthManager: &OAuthManager{
+					callbackURL: "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback",
+				},
+				serviceAccount: tt.serviceAccount,
+			}
+
 			err := client.oauthNeededError(tt.err)
+			if !tt.wantOAuthError {
+				require.NoError(t, err, "service account mode must never ask the user to connect an account")
+				return
+			}
 			require.Error(t, err)
 
 			var oauthErr *OAuthNeededError

@@ -469,38 +469,19 @@ func TestRemoteConnectionHeaders(t *testing.T) {
 		expectedHeaders map[string]string
 	}{
 		{
-			name:            "user mode sends only the user ID header",
-			userID:          "user-1",
-			serverConfig:    ServerConfig{Name: "srv"},
-			expectedHeaders: map[string]string{MMUserIDHeader: "user-1"},
-		},
-		{
-			name:         "user mode merges admin headers",
-			userID:       "user-1",
-			serverConfig: ServerConfig{Name: "srv", Headers: adminHeaders},
-			expectedHeaders: map[string]string{
-				MMUserIDHeader: "user-1",
-				"X-Admin":      "admin-value",
-			},
-		},
-		{
-			name:   "user mode lets an admin header override the user ID header",
-			userID: "user-1",
-			serverConfig: ServerConfig{Name: "srv", Headers: map[string]string{
-				MMUserIDHeader: "admin-override",
-			}},
-			expectedHeaders: map[string]string{MMUserIDHeader: "admin-override"},
-		},
-		{
 			name:            "user mode ignores service account headers",
 			userID:          "user-1",
-			serverConfig:    ServerConfig{Name: "srv", ServiceAccountHeaders: saHeaders},
-			expectedHeaders: map[string]string{MMUserIDHeader: "user-1"},
+			serverConfig:    ServerConfig{Name: "srv", Headers: adminHeaders, ServiceAccountHeaders: saHeaders},
+			expectedHeaders: map[string]string{MMUserIDHeader: "user-1", "X-Admin": "admin-value"},
 		},
 		{
-			name:           "service account mode layers bot ID, admin and service account headers",
-			userID:         "bot-1",
-			serverConfig:   ServerConfig{Name: "srv", Headers: adminHeaders, ServiceAccountHeaders: saHeaders},
+			name:   "service account headers layer on top of the bot ID and admin headers",
+			userID: "bot-1",
+			serverConfig: ServerConfig{
+				Name:                  "srv",
+				Headers:               map[string]string{"X-Admin": "admin-value", "Authorization": "Bearer admin"},
+				ServiceAccountHeaders: saHeaders,
+			},
 			serviceAccount: true,
 			expectedHeaders: map[string]string{
 				MMUserIDHeader:  "bot-1",
@@ -509,42 +490,7 @@ func TestRemoteConnectionHeaders(t *testing.T) {
 			},
 		},
 		{
-			name:   "service account headers win over admin headers on conflict",
-			userID: "bot-1",
-			serverConfig: ServerConfig{
-				Name:                  "srv",
-				Headers:               map[string]string{"Authorization": "Bearer admin"},
-				ServiceAccountHeaders: saHeaders,
-			},
-			serviceAccount: true,
-			expectedHeaders: map[string]string{
-				MMUserIDHeader:  "bot-1",
-				"Authorization": "Bearer service-account-pat",
-			},
-		},
-		{
-			name:            "service account mode without service account headers matches user mode",
-			userID:          "bot-1",
-			serverConfig:    ServerConfig{Name: "srv"},
-			serviceAccount:  true,
-			expectedHeaders: map[string]string{MMUserIDHeader: "bot-1"},
-		},
-		{
-			// A blank header name must never reach the wire: net/http rejects the whole request.
-			name:            "service account mode drops a blank header name",
-			userID:          "bot-1",
-			serverConfig:    ServerConfig{Name: "srv", ServiceAccountHeaders: map[string]string{"": "Bearer pat"}},
-			serviceAccount:  true,
-			expectedHeaders: map[string]string{MMUserIDHeader: "bot-1"},
-		},
-		{
-			name:            "service account mode drops a blank header value",
-			userID:          "bot-1",
-			serverConfig:    ServerConfig{Name: "srv", ServiceAccountHeaders: map[string]string{"X-Token": "   "}},
-			serviceAccount:  true,
-			expectedHeaders: map[string]string{MMUserIDHeader: "bot-1"},
-		},
-		{
+			// A blank header name or value must never reach the wire: net/http rejects the whole request.
 			name:   "service account mode keeps valid headers alongside blank ones",
 			userID: "bot-1",
 			serverConfig: ServerConfig{

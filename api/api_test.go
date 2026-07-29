@@ -998,25 +998,15 @@ func TestHandleGetAIBots(t *testing.T) {
 			},
 		},
 		{
+			// The webapp reads useServiceAccountAuth to hide per-user MCP connect prompts.
 			name:                     "unsafe links enabled via config",
 			searchService:            nil,
+			useServiceAccountAuth:    true,
 			expectedSearchEnabled:    false,
 			expectedAllowUnsafeLinks: true,
 			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.config.allowUnsafeLinks = true
-				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
-			},
-		},
-		{
-			// The webapp reads useServiceAccountAuth to hide per-user MCP connect prompts.
-			name:                     "service account agent reports its auth mode",
-			searchService:            nil,
-			useServiceAccountAuth:    true,
-			expectedSearchEnabled:    false,
-			expectedAllowUnsafeLinks: false,
-			expectedStatus:           http.StatusOK,
-			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},

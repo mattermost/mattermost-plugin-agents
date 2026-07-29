@@ -6,7 +6,6 @@ import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {getUserMCPTools} from '@/client';
-import {EnabledTool} from '@/types/agents';
 
 import McpsTab from './mcps_tab';
 
@@ -48,20 +47,15 @@ const mattermostServer = {
     ],
 };
 
-function renderTab(props: {
-    enabledTools?: EnabledTool[];
-    autoEnableNewMCPTools?: boolean;
-    useServiceAccountAuth?: boolean;
-    onChange?: jest.Mock;
-} = {}) {
-    const onChange = props.onChange ?? jest.fn();
+function renderTab(useServiceAccountAuth = false) {
+    const onChange = jest.fn();
     return {
         ...render(
             <IntlProvider locale='en'>
                 <McpsTab
-                    enabledTools={props.enabledTools ?? []}
-                    autoEnableNewMCPTools={props.autoEnableNewMCPTools ?? true}
-                    useServiceAccountAuth={props.useServiceAccountAuth ?? false}
+                    enabledTools={[]}
+                    autoEnableNewMCPTools={true}
+                    useServiceAccountAuth={useServiceAccountAuth}
                     onChange={onChange}
                 />
             </IntlProvider>,
@@ -82,20 +76,7 @@ describe('McpsTab', () => {
     // onChange falsely marks the form dirty and causes "Discard changes?" to
     // appear when the user clicks Cancel without making any edits.
     test('routes orphan reconciliation through onReconcileEnabledTools (MM-69185)', async () => {
-        mockedGetUserMCPTools.mockResolvedValue({
-            servers: [
-                {
-                    name: 'Mattermost',
-                    serverOrigin: 'embedded://mattermost',
-                    authenticated: true,
-                    needsOAuth: false,
-                    authEmail: '',
-                    tools: [
-                        {name: 'read_post', description: '', enabled: true, policy: 'auto_run'},
-                    ],
-                },
-            ],
-        });
+        mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
 
         const onChange = jest.fn();
         const onReconcileEnabledTools = jest.fn();
@@ -123,36 +104,26 @@ describe('McpsTab', () => {
         expect(onChange).not.toHaveBeenCalled();
     });
 
-    test('renders the service account toggle and emits onChange when clicked', async () => {
+    test('service account toggle reflects the draft, updates it, and warns while enabled', async () => {
         mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
 
-        const {onChange} = renderTab({useServiceAccountAuth: false});
+        const off = renderTab(false);
         await screen.findByText('Mattermost');
-
         const toggle = screen.getByRole('checkbox', {name: serviceAccountToggleName});
         expect((toggle as HTMLInputElement).checked).toBe(false);
+        expect(screen.queryByText(serviceAccountWarning)).toBeNull();
 
         fireEvent.click(toggle);
+        expect(off.onChange).toHaveBeenCalledWith({useServiceAccountAuth: true});
+        off.unmount();
 
-        expect(onChange).toHaveBeenCalledWith({useServiceAccountAuth: true});
-    });
-
-    test('shows the shared-credential warning only when service account auth is enabled', async () => {
-        mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
-
-        const enabled = renderTab({useServiceAccountAuth: true});
+        renderTab(true);
         await screen.findByText('Mattermost');
-        const checkedToggle = screen.getByRole('checkbox', {name: serviceAccountToggleName});
-        expect((checkedToggle as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByRole('checkbox', {name: serviceAccountToggleName}) as HTMLInputElement).checked).toBe(true);
         expect(screen.getByText(serviceAccountWarning)).not.toBeNull();
-        enabled.unmount();
-
-        renderTab({useServiceAccountAuth: false});
-        await screen.findByText('Mattermost');
-        expect(screen.getByRole('checkbox', {name: serviceAccountToggleName})).not.toBeNull();
-        expect(screen.queryByText(serviceAccountWarning)).toBeNull();
     });
 
+    // The setting must stay reachable even when the catalog renders no servers.
     test('shows the service account toggle when no MCP servers are available', async () => {
         mockedGetUserMCPTools.mockResolvedValue({servers: []});
 

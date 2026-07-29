@@ -315,12 +315,6 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
 	}
 
-	// Tool hook keys are bound to the requesting user but resolve against the connection
-	// identity — the bot user in service account mode — so they can never work; reject up front.
-	if len(req.ToolHooks) > 0 && a.contextBuilder != nil && a.contextBuilder.UsesServiceAccountCatalog(bot) {
-		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("tool_hooks is not supported for agents using service account authentication")
-	}
-
 	toolsRequested := allowedToolNames != nil
 	llmRequest, err := a.convertAgentBridgeRequestToInternal(ctx, bot, req, toolsRequested, operation, operationSubType)
 	if err != nil {

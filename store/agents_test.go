@@ -224,6 +224,7 @@ func TestAgentUpdate(t *testing.T) {
 	agent.ChannelIDs = []string{"ch-3"}
 	agent.EnabledMCPTools = nil
 	agent.ServiceID = "svc-2"
+	agent.UseServiceAccountAuth = false
 
 	require.NoError(t, s.UpdateAgent(agent))
 
@@ -240,6 +241,7 @@ func TestAgentUpdate(t *testing.T) {
 	assert.Equal(t, []string{"ch-3"}, fetched.ChannelIDs)
 	assert.Nil(t, fetched.EnabledMCPTools)
 	assert.Equal(t, "svc-2", fetched.ServiceID)
+	assert.False(t, fetched.UseServiceAccountAuth)
 
 	// Immutable fields should not change
 	assert.Equal(t, agent.CreatorID, fetched.CreatorID)
@@ -404,29 +406,6 @@ func TestAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, again)
 	assert.True(t, again.MCPDynamicToolLoading)
-}
-
-func TestAgentUseServiceAccountAuthRoundTrip(t *testing.T) {
-	s := setupTestStore(t)
-	err := s.RunMigrations()
-	require.NoError(t, err)
-
-	agent := testAgent("creator-1", "sa-off", "Service Account Off Agent")
-	agent.UseServiceAccountAuth = false
-	require.NoError(t, s.CreateAgent(agent))
-
-	fetched, err := s.GetAgent(agent.ID)
-	require.NoError(t, err)
-	require.NotNil(t, fetched)
-	assert.False(t, fetched.UseServiceAccountAuth)
-
-	fetched.UseServiceAccountAuth = true
-	require.NoError(t, s.UpdateAgent(fetched))
-
-	again, err := s.GetAgent(agent.ID)
-	require.NoError(t, err)
-	require.NotNil(t, again)
-	assert.True(t, again.UseServiceAccountAuth)
 }
 
 func TestAgentEnabledMCPToolsBareAndNamespacedRoundTrip(t *testing.T) {

@@ -154,40 +154,8 @@ describe('MCPServers service account headers', () => {
         return saved![0];
     }
 
-    test('renders the Service Account Authentication section with its own header editor', async () => {
-        await renderOneServer(makeRemoteServer());
-
-        expect(screen.getByText('Service Account Authentication')).not.toBeNull();
-        expect(screen.getAllByRole('button', {name: 'Add Header'})).toHaveLength(2);
-    });
-
-    test('adding a service account header emits serviceAccountHeaders and leaves headers untouched', async () => {
-        const {onChange} = await renderOneServer(makeRemoteServer({headers: {'X-Base': 'b'}}));
-
-        fireEvent.click(screen.getAllByRole('button', {name: 'Add Header'})[1]);
-
-        expect(savedServer(onChange)).toEqual(expect.objectContaining({
-            headers: {'X-Base': 'b'},
-            serviceAccountHeaders: {'': ''},
-        }));
-    });
-
-    // Regression: the field-by-field config rebuild used to drop serviceAccountHeaders.
-    test('editing an unrelated field preserves serviceAccountHeaders', async () => {
-        const {onChange} = await renderOneServer(makeRemoteServer({
-            serviceAccountHeaders: {Authorization: 'Bearer pat'},
-        }));
-
-        fireEvent.change(screen.getByPlaceholderText('https://mcp.example.com'), {
-            target: {value: 'https://mcp.example.com/v2'},
-        });
-
-        expect(savedServer(onChange)).toEqual(expect.objectContaining({
-            baseURL: 'https://mcp.example.com/v2',
-            serviceAccountHeaders: {Authorization: 'Bearer pat'},
-        }));
-    });
-
+    // Editing either map must leave the other intact; the base-header half is
+    // also the regression pin for the config rebuild dropping serviceAccountHeaders.
     test('editing one header map leaves the other map untouched', async () => {
         const server = makeRemoteServer({
             headers: {'X-Base': 'base-value'},

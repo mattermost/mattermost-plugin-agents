@@ -63,9 +63,9 @@ func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuth
 	}
 }
 
-// NewServiceAccountClients creates a client bag for service-account mode acting as
+// newServiceAccountClients creates a client bag for service-account mode acting as
 // botUserID; it has no OAuthManager, so no OAuth flow can occur.
-func NewServiceAccountClients(botUserID string, log pluginapi.LogService, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+func newServiceAccountClients(botUserID string, log pluginapi.LogService, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
 	userClients := NewUserClients(botUserID, log, nil, httpClient, toolsCache)
 	userClients.serviceAccount = true
 	return userClients

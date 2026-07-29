@@ -90,23 +90,19 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 	for {
 		select {
 		case <-ticker.C:
-			m.closeIdleClients(time.Now())
+			m.clientsMu.Lock()
+			now := time.Now()
+			for key, client := range m.clients {
+				if now.Sub(m.activity[key]) > m.clientTimeout {
+					m.log.Debug("Closing inactive MCP client", "userID", key.userID, "serviceAccount", key.serviceAccount)
+					client.Close()
+					delete(m.clients, key)
+				}
+			}
+			m.clientsMu.Unlock()
 		case <-closeChan:
 			ticker.Stop()
 			return
-		}
-	}
-}
-
-// closeIdleClients closes and removes client bags idle longer than clientTimeout.
-func (m *ClientManager) closeIdleClients(now time.Time) {
-	m.clientsMu.Lock()
-	defer m.clientsMu.Unlock()
-	for key, client := range m.clients {
-		if now.Sub(m.activity[key]) > m.clientTimeout {
-			m.log.Debug("Closing inactive MCP client", "userID", key.userID, "serviceAccount", key.serviceAccount)
-			client.Close()
-			delete(m.clients, key)
 		}
 	}
 }
@@ -181,7 +177,7 @@ func (m *ClientManager) createAndStoreUserClient(ctx context.Context, key client
 
 	var userClients *UserClients
 	if key.serviceAccount {
-		userClients = NewServiceAccountClients(key.userID, m.log, m.httpClient, m.toolsCache)
+		userClients = newServiceAccountClients(key.userID, m.log, m.httpClient, m.toolsCache)
 	} else {
 		userClients = NewUserClients(key.userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 	}

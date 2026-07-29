@@ -261,6 +261,8 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"agent_username":    "fallback-bot",
 				"bot_username":      "fallback-bot",
 				"agent_user_id":     TokenUsageUnknown,
+				"acting_user_id":    TokenUsageUnknown,
+				"tool_auth_mode":    ToolAuthModeUser,
 				"model":             TokenUsageUnknown,
 				"service_type":      TokenUsageUnknown,
 				"operation":         TokenUsageUnknown,
@@ -422,64 +424,6 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 			assert.Equal(t, "bot-user-1", keyed["acting_user_id"])
 			assert.Equal(t, ToolAuthModeServiceAccount, keyed["tool_auth_mode"])
 			assert.Equal(t, "claude-sonnet-4-5", keyed["model"])
-		})
-	}
-}
-
-func TestExtractTokenUsageDimensionsToolAuthMode(t *testing.T) {
-	tests := []struct {
-		name             string
-		context          *Context
-		wantUserID       string
-		wantActingUserID string
-		wantToolAuthMode string
-	}{
-		{
-			name: "user mode acts as the requesting user",
-			context: &Context{
-				RequestingUser: &model.User{Id: "user-1"},
-				BotUserID:      "bot-user-1",
-			},
-			wantUserID:       "user-1",
-			wantActingUserID: "user-1",
-			wantToolAuthMode: ToolAuthModeUser,
-		},
-		{
-			name: "service account mode acts as the agent bot",
-			context: &Context{
-				RequestingUser: &model.User{Id: "user-1"},
-				BotUserID:      "bot-user-1",
-				ToolAuthMode:   ToolAuthModeServiceAccount,
-			},
-			wantUserID:       "user-1",
-			wantActingUserID: "bot-user-1",
-			wantToolAuthMode: ToolAuthModeServiceAccount,
-		},
-		{
-			name: "service account mode without a bot user is unknown",
-			context: &Context{
-				RequestingUser: &model.User{Id: "user-1"},
-				ToolAuthMode:   ToolAuthModeServiceAccount,
-			},
-			wantUserID:       "user-1",
-			wantActingUserID: TokenUsageUnknown,
-			wantToolAuthMode: ToolAuthModeServiceAccount,
-		},
-		{
-			name:             "nil context falls back to unknown user mode",
-			wantUserID:       TokenUsageUnknown,
-			wantActingUserID: TokenUsageUnknown,
-			wantToolAuthMode: ToolAuthModeUser,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			dimensions := extractTokenUsageDimensions(CompletionRequest{Context: tc.context}, "fallback-bot", "")
-
-			assert.Equal(t, tc.wantUserID, dimensions.userID)
-			assert.Equal(t, tc.wantActingUserID, dimensions.actingUserID)
-			assert.Equal(t, tc.wantToolAuthMode, dimensions.toolAuthMode)
 		})
 	}
 }

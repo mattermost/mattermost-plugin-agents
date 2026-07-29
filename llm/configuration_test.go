@@ -665,50 +665,10 @@ func TestBotConfigMCPDynamicToolLoadingDefaulting(t *testing.T) {
 		})
 	}
 
-	raw, err := json.Marshal(BotConfig{MCPDynamicToolLoading: false})
+	// The webapp relies on both flags being present even when false.
+	raw, err := json.Marshal(BotConfig{MCPDynamicToolLoading: false, UseServiceAccountAuth: false})
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"mcpDynamicToolLoading":false`)
-}
-
-func TestBotConfigUseServiceAccountAuthJSON(t *testing.T) {
-	tests := []struct {
-		name                      string
-		payload                   string
-		want                      bool
-		wantMCPDynamicToolLoading bool
-	}{
-		{
-			name:                      "omitted defaults false without disturbing dynamic tool loading",
-			payload:                   `{"id":"bot1","name":"bot1","displayName":"Bot One","serviceID":"svc-1"}`,
-			want:                      false,
-			wantMCPDynamicToolLoading: true,
-		},
-		{
-			name:                      "explicit true survives",
-			payload:                   `{"id":"bot1","name":"bot1","displayName":"Bot One","serviceID":"svc-1","useServiceAccountAuth":true}`,
-			want:                      true,
-			wantMCPDynamicToolLoading: true,
-		},
-		{
-			name:                      "explicit false survives",
-			payload:                   `{"id":"bot1","name":"bot1","displayName":"Bot One","serviceID":"svc-1","useServiceAccountAuth":false,"mcpDynamicToolLoading":false}`,
-			want:                      false,
-			wantMCPDynamicToolLoading: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var cfg BotConfig
-			require.NoError(t, json.Unmarshal([]byte(tt.payload), &cfg))
-			assert.Equal(t, tt.want, cfg.UseServiceAccountAuth)
-			assert.Equal(t, tt.wantMCPDynamicToolLoading, cfg.MCPDynamicToolLoading)
-		})
-	}
-
-	// The webapp relies on the flag being present even when false.
-	raw, err := json.Marshal(BotConfig{UseServiceAccountAuth: false})
-	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"useServiceAccountAuth":false`)
 }
 

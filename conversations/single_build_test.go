@@ -9,9 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -100,18 +102,62 @@ func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) 
 
 // TestBuildConversationContextWithTools_DMShapeBuildsOnce mirrors the DM path:
 // the helper applies user MCP preferences (DM/group) and builds tools once.
+// Service account agents share one catalog, so their preferences never apply.
 func TestBuildConversationContextWithTools_DMShapeBuildsOnce(t *testing.T) {
-	provider := &countingMCPToolProvider{}
-	builder := newSingleBuildLLMContextBuilder(t, provider)
+	const disabledOrigin = "https://jira.example.com"
 
-	c := &Conversations{contextBuilder: builder}
-	bot := loadedStateBot(nil)
-	user := &model.User{Id: "user-id", Username: "user"}
-	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	tests := []struct {
+		name                string
+		bot                 *bots.Bot
+		wantPrefsLoaded     bool
+		wantUserCalls       int
+		wantSAIdentities    []string
+		wantDisabledOrigins []string
+	}{
+		{
+			name:                "normal agent applies per-user server preferences",
+			bot:                 loadedStateBot(nil),
+			wantPrefsLoaded:     true,
+			wantUserCalls:       1,
+			wantDisabledOrigins: []string{disabledOrigin},
+		},
+		{
+			name:             "service account agent ignores per-user server preferences",
+			bot:              serviceAccountTestBot(true),
+			wantSAIdentities: []string{serviceAccountBotUserID},
+		},
+	}
 
-	llmCtx := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "Failed to load user tool preferences")
-	require.NotNil(t, llmCtx)
-	require.Equal(t, 1, provider.Calls(), "DM build should call GetToolsForUser exactly once")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &countingMCPToolProvider{}
+
+			// A missing expectation fails the test if the preferences are read anyway.
+			mmClient := mocks.NewMockClient(t)
+			if tc.wantPrefsLoaded {
+				mmClient.On("KVGet", "user_tool_providers_user-id", mock.AnythingOfType("*mcp.UserToolProviderPreferences")).
+					Run(func(args mock.Arguments) {
+						prefs := args.Get(1).(*mcp.UserToolProviderPreferences)
+						prefs.DisabledServers = []string{disabledOrigin}
+					}).
+					Return(nil).
+					Once()
+			}
+
+			c := &Conversations{
+				mmClient:       mmClient,
+				contextBuilder: newSingleBuildLLMContextBuilder(t, provider),
+			}
+			user := &model.User{Id: "user-id", Username: "user"}
+			channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+
+			llmCtx := c.buildConversationContextWithTools(context.Background(), tc.bot, user, channel, "Failed to load user tool preferences")
+			require.NotNil(t, llmCtx)
+			require.Equal(t, tc.wantUserCalls, provider.Calls(), "per-user catalog builds")
+			require.Equal(t, tc.wantSAIdentities, provider.SAIdentities(), "service account catalog builds")
+			require.ElementsMatch(t, tc.wantDisabledOrigins, llmCtx.ToolCatalog.DisabledMCPServerOrigins)
+		})
+	}
 }
 
 // TestBuildConversationContextWithTools_DoesNotMaterializeDynamicMCPTools pins

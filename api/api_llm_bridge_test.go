@@ -1750,20 +1750,12 @@ func (e *TestEnvironment) setupBridgeMCPProviderSA(userTools, saTools []llm.Tool
 
 // bridgeMCPTool builds a namespaced MCP tool (slug__bare) with the given origin.
 func bridgeMCPTool(serverSlug, bareName, serverOrigin string) llm.Tool {
-	return bridgeMCPToolRecording(serverSlug, bareName, serverOrigin, nil)
-}
-
-// bridgeMCPToolRecording is bridgeMCPTool with a resolver that counts its invocations.
-func bridgeMCPToolRecording(serverSlug, bareName, serverOrigin string, calls *int) llm.Tool {
 	return llm.Tool{
 		Name:         llm.NamespaceMCPToolName(serverSlug, bareName),
 		ServerOrigin: serverOrigin,
 		Description:  bareName,
 		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-			if calls != nil {
-				*calls++
-			}
 			return "ok", nil
 		},
 	}

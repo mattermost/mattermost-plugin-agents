@@ -169,24 +169,10 @@ of per-user credentials. For bridge callers this changes what `UserID` means:
 - **`UserID` is still used for permission checks and attribution.** Passing `UserID` still
   enforces the agent's user and channel access rules and is recorded in token usage logs; it just
   no longer selects credentials.
-- **`GetAgentTools` works without a `userID`** for service account agents and returns the same
-  list either way.
-- **`AllowedTools` still requires `UserID`**, in both modes.
-- **`ToolHooks` is rejected.** Requests that set `tool_hooks` for a service account agent fail
-  with `400 Bad Request` (`tool_hooks is not supported for agents using service account
-  authentication`): before-hook keys are bound to the requesting user, but a service account
-  agent's embedded MCP connection authenticates as its bot. Integrations that need per-user
-  before-hooks must target an agent that uses per-user authentication.
-- **Re-discover instead of retrying.** If an admin removes a server's service account headers, its
-  tools disappear from the agent's catalog. Treat a `tool "x" is not eligible or not available for
-  this agent` error on a stored allowlist as a signal to call `GetAgentTools` again, not as a
-  transient failure to retry.
+- **`UserID` is still required for `AllowedTools`**, in both modes.
 
-For agents without service account authentication, bridge behavior is unchanged: the
-caller-asserted `user_id` selects per-user MCP credentials (including when `user_id` is a bot's
-user ID). The same applies on a server without an appropriate license: service account
-authentication requires one, so an agent flagged for it falls back to per-user behavior
-(including accepted `ToolHooks`) until the server is licensed.
+Service account authentication requires a license. Without one, an agent flagged for it behaves
+like any other agent: the caller-asserted `user_id` selects per-user MCP credentials.
 
 ## Token Usage Dimensions
 

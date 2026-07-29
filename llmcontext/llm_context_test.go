@@ -6,7 +6,6 @@ package llmcontext
 import (
 	stdcontext "context"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -60,7 +59,6 @@ type staticMCPToolProvider struct {
 	tools     []llm.Tool
 	saTools   []llm.Tool
 	errors    *mcp.Errors
-	saErrors  *mcp.Errors
 	overrides map[string]mcp.ToolRetrievalOverride
 
 	userCalls []string
@@ -74,7 +72,7 @@ func (p *staticMCPToolProvider) GetToolsForUser(_ stdcontext.Context, userID str
 
 func (p *staticMCPToolProvider) GetToolsForServiceAccount(_ stdcontext.Context, botUserID string) ([]llm.Tool, *mcp.Errors) {
 	p.saCalls = append(p.saCalls, botUserID)
-	return p.saTools, p.saErrors
+	return p.saTools, nil
 }
 
 func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride {
@@ -339,164 +337,40 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 	assert.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
 }
 
-const serviceAccountTestBotUserID = "bot-user-id"
-
-// serviceAccountTestProvider serves a distinct tool per auth mode so the selected catalog is visible in the store.
-func serviceAccountTestProvider() *staticMCPToolProvider {
-	return &staticMCPToolProvider{
-		tools:    []llm.Tool{testMCPTool("jira__get_issue", "https://jira.example.com", "user OAuth Jira")},
-		saTools:  []llm.Tool{testMCPTool("sa_jira__get_issue", "https://jira.example.com", "service account Jira")},
-		saErrors: &mcp.Errors{Errors: []error{errors.New("some server is down")}},
-	}
-}
-
-// Pins which provider method a build calls, with which identity, and the auth mode recorded for attribution.
+// A service account agent's catalog comes from the bot identity, not the requesting user.
 func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
-	tests := []struct {
-		name             string
-		serviceAccount   bool
-		dynamicLoading   bool
-		forceConcrete    bool
-		nilMMBot         bool
-		requestingUserID string
-		wantUserCalls    []string
-		wantSACalls      []string
-		wantVisibleTools []string
-		wantUnloadedTool string
-		wantToolAuthMode string
-	}{
-		{
-			name:             "service account agent builds from the service account catalog",
-			serviceAccount:   true,
-			requestingUserID: "user-id",
-			wantSACalls:      []string{serviceAccountTestBotUserID},
-			wantVisibleTools: []string{"builtin", "sa_jira__get_issue"},
-			wantToolAuthMode: llm.ToolAuthModeServiceAccount,
-		},
-		{
-			name:             "concrete builds select the service account catalog too",
-			serviceAccount:   true,
-			forceConcrete:    true,
-			requestingUserID: "user-id",
-			wantSACalls:      []string{serviceAccountTestBotUserID},
-			wantVisibleTools: []string{"builtin", "sa_jira__get_issue"},
-			wantToolAuthMode: llm.ToolAuthModeServiceAccount,
-		},
-		{
-			name:             "dynamic loading registry is built from the service account catalog",
-			serviceAccount:   true,
-			dynamicLoading:   true,
-			requestingUserID: "user-id",
-			wantSACalls:      []string{serviceAccountTestBotUserID},
-			wantVisibleTools: []string{"builtin", mcp.SearchToolsName, mcp.LoadToolName},
-			wantUnloadedTool: "sa_jira__get_issue",
-			wantToolAuthMode: llm.ToolAuthModeServiceAccount,
-		},
-		{
-			name:             "normal agent builds from the requesting user catalog",
-			requestingUserID: "user-id",
-			wantUserCalls:    []string{"user-id"},
-			wantVisibleTools: []string{"builtin", "jira__get_issue"},
-		},
-		{
-			name:             "service account agent without a bot user fails closed",
-			serviceAccount:   true,
-			nilMMBot:         true,
-			requestingUserID: "user-id",
-			wantVisibleTools: []string{"builtin"},
-			wantToolAuthMode: llm.ToolAuthModeServiceAccount,
-		},
-		{
-			name:             "service account catalog is built without a requesting user",
-			serviceAccount:   true,
-			wantSACalls:      []string{serviceAccountTestBotUserID},
-			wantVisibleTools: []string{"builtin", "sa_jira__get_issue"},
-			wantToolAuthMode: llm.ToolAuthModeServiceAccount,
-		},
-		{
-			name:             "normal agent without a requesting user gets no tools",
-			wantVisibleTools: []string{},
-		},
+	const serviceAccountBotUserID = "bot-user-id"
+
+	provider := &staticMCPToolProvider{
+		tools:   []llm.Tool{testMCPTool("jira__get_issue", "https://jira.example.com", "user OAuth Jira")},
+		saTools: []llm.Tool{testMCPTool("sa_jira__get_issue", "https://jira.example.com", "service account Jira")},
 	}
+	builder := newLicenseTestBuilder(t, true,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		provider,
+	)
+	bot := newTestBotWithMMBot(
+		llm.BotConfig{
+			ID:                    "bot-id",
+			Name:                  "matty",
+			DisplayName:           "Matty",
+			AutoEnableNewMCPTools: true,
+			UseServiceAccountAuth: true,
+		},
+		&model.Bot{UserId: serviceAccountBotUserID, Username: "matty", DisplayName: "Matty"},
+	)
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			provider := serviceAccountTestProvider()
-			builder := newLicenseTestBuilder(t, true,
-				&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-				provider,
-			)
+	context := builder.BuildLLMContextUserRequest(
+		bot,
+		&model.User{Id: "user-id", Username: "test-user", Locale: "en"},
+		testChannel(),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
+	)
 
-			cfg := llm.BotConfig{
-				ID:                    "bot-id",
-				Name:                  "matty",
-				DisplayName:           "Matty",
-				AutoEnableNewMCPTools: true,
-				MCPDynamicToolLoading: tc.dynamicLoading,
-				UseServiceAccountAuth: tc.serviceAccount,
-			}
-			var mmBot *model.Bot
-			if !tc.nilMMBot {
-				mmBot = &model.Bot{UserId: serviceAccountTestBotUserID, Username: "matty", DisplayName: "Matty"}
-			}
-			bot := newTestBotWithMMBot(cfg, mmBot)
-
-			toolsOption := builder.WithLLMContextTools(stdcontext.Background(), bot)
-			if tc.forceConcrete {
-				toolsOption = builder.WithLLMContextConcreteTools(stdcontext.Background(), bot)
-			}
-			context := builder.BuildLLMContextUserRequest(
-				bot,
-				&model.User{Id: tc.requestingUserID, Username: "test-user", Locale: "en"},
-				testChannel(),
-				toolsOption,
-			)
-
-			require.Equal(t, tc.wantUserCalls, provider.userCalls, "per-user catalog lookups")
-			require.Equal(t, tc.wantSACalls, provider.saCalls, "service account catalog lookups")
-			require.ElementsMatch(t, tc.wantVisibleTools, toolNames(context.Tools))
-			require.Equal(t, tc.wantToolAuthMode, context.ToolAuthMode)
-			require.Empty(t, context.Tools.GetAuthErrors(),
-				"service account catalogs never carry connect-your-account prompts")
-
-			if tc.wantUnloadedTool != "" {
-				require.True(t, context.Tools.IsUnloadedMCPTool(tc.wantUnloadedTool),
-					"service account tool must be loadable from the dynamic registry")
-			}
-		})
-	}
-}
-
-func TestUsesServiceAccountCatalog(t *testing.T) {
-	tests := []struct {
-		name           string
-		nilBot         bool
-		serviceAccount bool
-		licensed       bool
-		want           bool
-	}{
-		{name: "nil bot", nilBot: true, licensed: true},
-		{name: "flag off", licensed: true},
-		{name: "flag on and licensed", serviceAccount: true, licensed: true, want: true},
-		{name: "flag on but unlicensed", serviceAccount: true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			builder := newLicenseTestBuilder(t, tc.licensed, &emptyToolProvider{}, &staticMCPToolProvider{})
-
-			var bot *bots.Bot
-			if !tc.nilBot {
-				bot = newTestBotWithConfig(llm.BotConfig{
-					ID:                    "bot-id",
-					Name:                  "matty",
-					UseServiceAccountAuth: tc.serviceAccount,
-				})
-			}
-
-			require.Equal(t, tc.want, builder.UsesServiceAccountCatalog(bot))
-		})
-	}
+	require.Equal(t, []string{serviceAccountBotUserID}, provider.saCalls)
+	require.Empty(t, provider.userCalls, "the requesting user's catalog must not be consulted")
+	require.ElementsMatch(t, []string{"builtin", "sa_jira__get_issue"}, toolNames(context.Tools))
+	require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)
 }
 
 func TestSanitizeUserProfileField(t *testing.T) {

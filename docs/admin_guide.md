@@ -607,33 +607,21 @@ Enabling a server or tool for an agent controls what the agent is allowed to use
 
 By default, MCP tool calls run with the credentials of the user who triggered the agent: per-user OAuth on external MCP servers, and the requesting user's own identity for embedded Mattermost tools. An agent can instead be switched to **service account authentication**, where every MCP tool call uses shared, admin-configured credentials.
 
-Service account authentication requires a license, the same as remote and external MCP servers (see [license requirements](#license-requirements)). Without a license, the remote MCP server configuration that holds the service account headers is not shown, and enabling the agent setting does not change how that agent's tool calls authenticate.
+To set it up:
 
-#### Configure service account headers on an MCP server
+1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**, open the remote MCP server on the **Configuration** tab, and add the static headers the server should receive from service account agents in the **Service Account Authentication** section — for example, an `Authorization` header carrying a personal access token. Rows with a blank name or value are ignored, so a server whose entries are all blank counts as having no service account credentials. Select **Save**.
+2. On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**.
 
-1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)** and open the remote MCP server on the **Configuration** tab.
-2. In the **Service Account Authentication** section, add the static headers the server should receive from service account agents — for example, an `Authorization` header carrying a personal access token.
-3. Select **Save**.
+The agent setting is all-or-nothing:
 
-These headers are sent **in place of** per-user OAuth, and only for agents that have service account authentication enabled. They are separate from the server's custom headers, which are sent on every connection in both modes; when both define the same header, the service account value wins. Rows with a blank name or value are ignored — a server whose only entries are blank counts as having no service account credentials and stays excluded from service account agents. Like the server's other credentials (custom headers, OAuth client secret), the header values are stored in the plugin configuration and are visible to system admins.
-
-#### Enable service account authentication on an agent
-
-On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**. The setting is all-or-nothing for that agent:
-
-- **External MCP servers**: tool calls send the server's service account headers. Servers without service account headers configured are excluded from this agent entirely — the agent fails closed, with no fallback to any user's personal OAuth connection. To mix personal and service account access, use two agents, or define separate MCP server entries.
-- **Embedded Mattermost tools and plugin-registered MCP servers**: tool calls run as the agent's **bot account** instead of the requesting user.
+- **External MCP servers**: connections send the server's service account headers in place of per-user OAuth. The server's custom headers are still sent in both modes; when both define the same header, the service account value wins. Servers without service account headers are excluded from this agent entirely — it fails closed, with no fallback to any user's personal OAuth connection. To mix personal and service account access, use two agents or separate MCP server entries.
+- **Embedded Mattermost tools and plugin-registered MCP servers**: tool calls run as the agent's **bot account** instead of the requesting user, so the bot's channel membership is the internal access boundary — reading posts, searching, and listing channel members return what the bot can read. Add the bot only to channels the agent should read.
 - Users are never prompted to connect accounts for this agent, per-user tool provider preferences don't apply, and the Agents RHS **Tools** popover is hidden.
 - Tool approval is unchanged: the person who triggered the agent still approves or rejects tool calls according to the configured tool policies. See [Multiplayer Tool Calling](features/multiplayer_tool_calling.md).
 
-#### Security considerations
+> **Warning:** Service account authentication flattens permissions — **every user who can use the agent acts with the agent's shared access**. Restrict who can use the agent on its **Access** tab, and prefer a dedicated service account (and MCP server entry) per integration, scoped to the minimum permissions the agent needs. External systems attribute the agent's actions to the service account, not to the Mattermost user who triggered them; to correlate, enable [token usage tracking](#token-usage-tracking), where each record carries the triggering user (`user_id`), the acting identity (`acting_user_id`), and the auth mode (`tool_auth_mode`). Header values are stored in the plugin configuration and are visible to system admins, like the server's other credentials.
 
-Service account authentication flattens permissions: **every user who can use the agent acts with the agent's shared access** — the service account's access on external systems and the bot account's access inside Mattermost.
-
-- **Restrict who can use the agent.** Use the agent's **Access** tab to limit users and channels. The warning shown next to the setting exists because access to the agent is access to its credentials.
-- **The bot's channel membership is the internal access boundary.** Embedded Mattermost tools — reading posts, searching, listing channel members — act as the bot account, so they return what the bot can read rather than what the requesting user can read. Inviting the bot to a sensitive channel grants everyone who can use the agent access to that channel's content through the agent, so add the bot only to channels it should read.
-- **Use one service account per integration.** Prefer a dedicated external service account (and a dedicated MCP server entry) per integration, scoped to the minimum permissions the agent needs, rather than sharing one broadly-scoped credential across agents.
-- **External audit logs show the service account.** Actions the agent performs on an external system are attributed to the service account there, not to the Mattermost user who triggered them. To correlate, enable [token usage tracking](#token-usage-tracking): each record carries the triggering user (`user_id`), the acting identity (`acting_user_id` — the agent's bot user ID for service account agents), and the auth mode (`tool_auth_mode`: `user` or `service_account`).
+Service account authentication requires a license, the same as remote and external MCP servers (see [license requirements](#license-requirements)). Without a license, the service account header configuration is not shown and the agent setting doesn't change how tool calls authenticate.
 
 ### MCP dynamic tool loading
 

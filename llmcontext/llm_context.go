@@ -234,17 +234,16 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		return llm.NewNoTools()
 	}
 
+	// Check for empty userID, which is unexpected
+	if userID == "" {
+		b.pluginAPI.Log.Error("Unexpected empty userID when getting tool store for user")
+		return llm.NewNoTools()
+	}
+
 	// useServiceAccount implies remoteMCPLicensed, so the license filter below
 	// never strips service account catalogs.
 	remoteMCPLicensed := b.isRemoteMCPLicensed()
 	useServiceAccount := b.UsesServiceAccountCatalog(bot)
-
-	// SA catalogs derive from the bot identity; bridge discovery may legitimately
-	// omit user_id for SA agents.
-	if userID == "" && !useServiceAccount {
-		b.pluginAPI.Log.Error("Unexpected empty userID when getting tool store for user")
-		return llm.NewNoTools()
-	}
 
 	// Check if tools are disabled for this bot
 	if bot.GetConfig().DisableTools {

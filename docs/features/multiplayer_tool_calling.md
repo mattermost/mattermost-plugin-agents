@@ -32,8 +32,6 @@ Concrete example: Maya `@`-mentions `@copilot` in `~team-eng` and asks it to loo
 - **Executor:** Maya's identity / Maya's Jira OAuth token
 - **Observer:** Raj
 
-This example assumes per-user authentication, the default mode. §3 describes service account agents, where the executor differs but every other role is the same.
-
 These roles do not change mid-conversation. If Maya hands the keyboard to a teammate, the teammate is still posting as Maya from Mattermost's perspective and is therefore still the initiator.
 
 ## 3. The credential model
@@ -66,9 +64,7 @@ An agent can instead be switched to **service account authentication** — the *
 
 **The approval contract does not change: the human approves, the service account executes.** The initiator is still the only person who can accept or reject a pending tool call (§4), per-tool policies (§5) still decide which calls need approval, and the Share / Keep Private flow (§6) still belongs to the initiator. What changes is only whose credentials perform the side effect once consent is given.
 
-This mode deliberately flattens permissions: every user who can use the agent acts with the same service account access externally and the same bot access internally. The external system's audit log shows the service account, not the human; Mattermost's token usage logs record the triggering user alongside the acting identity (`acting_user_id`, `tool_auth_mode`) so the two can be correlated. Admins should restrict who can use such agents and prefer one service account per integration — configuration and hardening guidance live in the [admin guide](../admin_guide.md#service-account-authentication).
-
-Service account authentication requires the same license as remote MCP servers. Without that license the setting does not change how tools authenticate: the agent's tool calls keep using per-user credentials.
+This mode deliberately flattens permissions: every user who can use the agent acts with the same service account access externally and the same bot access internally. The external system's audit log shows the service account, not the human; Mattermost's token usage logs record the triggering user alongside the acting identity (`acting_user_id`, `tool_auth_mode`) so the two can be correlated. It requires the same license as remote MCP servers; without that license the agent's tool calls keep using per-user credentials. Configuration and hardening guidance live in the [admin guide](../admin_guide.md#service-account-authentication).
 
 ## 4. Approval ownership
 
@@ -82,7 +78,7 @@ The reasoning behind initiator-only approval:
 - **Multiplayer approval would be confusing under partial trust.** If three members of a channel could each approve the same tool call, the question "whose Jira token did this run with?" becomes ambiguous and the audit trail becomes harder to reason about.
 - **Admins are not implicit approvers.** A workspace admin watching the channel does not automatically gain the ability to consent on the initiator's behalf. Admin authority lives in the per-tool policy (§5), not in the per-call approval.
 
-Initiator-only approval applies in both credential modes (§3). For a service account agent the tool no longer runs with the initiator's own credentials, but the initiator is still the person asking for the side effect, so their consent is still the one that matters — and the admin already consented to the credential itself when they configured the service account and enabled it on the agent.
+Initiator-only approval applies in both credential modes (§3). For a service account agent the initiator is still the person asking for the side effect, so their consent is still the one that matters; the admin consented to the credential itself when they enabled it on the agent.
 
 ### What if the initiator is offline or never returns?
 
