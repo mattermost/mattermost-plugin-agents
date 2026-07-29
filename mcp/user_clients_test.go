@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -276,22 +277,108 @@ func TestConnectToEmbeddedServerIfAvailable_ReconnectsWhenSessionChanges(t *test
 	uc := NewUserClients("alice", pluginAPI.Log, nil, nil, nil)
 	cfg := EmbeddedServerConfig{Enabled: true}
 
-	callSessionIdentity := func() string {
-		tools := uc.GetTools(context.Background())
-		requireToolNames(t, tools, "mattermost__session_identity")
-		result, err := tools[0].Resolver(context.Background(), &llm.Context{}, func(args any) error {
-			*(args.(*map[string]any)) = map[string]any{}
-			return nil
-		})
-		require.NoError(t, err)
-		return result
-	}
-
 	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "old-session", embeddedClient, cfg))
-	require.Equal(t, "old-session\n", callSessionIdentity())
+	require.Equal(t, "old-session", callSessionIdentityTool(t, uc.GetTools(context.Background())))
 
 	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "new-session", embeddedClient, cfg))
-	require.Equal(t, "new-session\n", callSessionIdentity())
+	require.Equal(t, "new-session", callSessionIdentityTool(t, uc.GetTools(context.Background())))
+}
+
+func TestClientManagerGetToolsForUser_ReconnectsAfterStoredSessionRevoked(t *testing.T) {
+	const (
+		userID       = "alice"
+		oldSessionID = "old-session"
+		newSessionID = "new-session"
+	)
+
+	storedSessionID := oldSessionID
+	sessions := map[string]*model.Session{
+		oldSessionID: {Id: oldSessionID, UserId: userID, Token: "old-token"},
+	}
+	fakeAPI := &plugintest.API{}
+	setupTestLogger(fakeAPI)
+	fakeAPI.On("KVGet", mock.AnythingOfType("string")).Return(func(key string) []byte {
+		if key == buildEmbeddedSessionKey(userID) {
+			return []byte(storedSessionID)
+		}
+		return nil
+	}, (*model.AppError)(nil))
+	fakeAPI.On("KVDelete", mock.AnythingOfType("string")).Run(func(args mock.Arguments) {
+		if args.String(0) == buildEmbeddedSessionKey(userID) {
+			storedSessionID = ""
+		}
+	}).Return((*model.AppError)(nil))
+	fakeAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.Anything, mock.AnythingOfType("model.PluginKVSetOptions")).Run(func(args mock.Arguments) {
+		if args.String(0) == buildEmbeddedSessionKey(userID) {
+			storedSessionID = string(args.Get(1).([]byte))
+		}
+	}).Return(true, (*model.AppError)(nil))
+	fakeAPI.On("GetUser", userID).Return(&model.User{Id: userID, Roles: "system_user"}, (*model.AppError)(nil))
+	fakeAPI.On("GetSession", mock.AnythingOfType("string")).Return(
+		func(sessionID string) *model.Session {
+			return sessions[sessionID]
+		},
+		func(sessionID string) *model.AppError {
+			if sessions[sessionID] == nil {
+				return model.NewAppError("GetSessionById", "api.context.session_expired.app_error", nil, "", http.StatusUnauthorized)
+			}
+			return nil
+		},
+	)
+	fakeAPI.On("CreateSession", mock.AnythingOfType("*model.Session")).Return(func(session *model.Session) *model.Session {
+		session.Id = newSessionID
+		session.Token = "new-token"
+		sessions[newSessionID] = session
+		return session
+	}, (*model.AppError)(nil))
+	defaultConfig := &model.Config{}
+	defaultConfig.SetDefaults()
+	fakeAPI.On("GetConfig").Return(defaultConfig)
+
+	pluginAPI := pluginapi.NewClient(fakeAPI, nil)
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
+	manager := NewClientManager(
+		Config{
+			EmbeddedServer: EmbeddedServerConfig{
+				Enabled: true,
+				ToolConfigs: []ToolConfig{{
+					Name:    "session_identity",
+					Policy:  "auto_run_in_dm",
+					Enabled: true,
+				}},
+			},
+		},
+		pluginAPI.Log,
+		pluginAPI,
+		nil,
+		&sessionEchoEmbeddedMCPServer{ctx: runCtx},
+		http.DefaultClient,
+		nil,
+	)
+	t.Cleanup(manager.Close)
+
+	tools, mcpErrors := manager.GetToolsForUser(context.Background(), userID)
+	require.Nil(t, mcpErrors)
+	require.Equal(t, oldSessionID, callSessionIdentityTool(t, tools))
+
+	delete(sessions, oldSessionID)
+
+	tools, mcpErrors = manager.GetToolsForUser(context.Background(), userID)
+	require.Nil(t, mcpErrors)
+	require.Equal(t, newSessionID, storedSessionID)
+	require.Equal(t, newSessionID, callSessionIdentityTool(t, tools))
+}
+
+func callSessionIdentityTool(t *testing.T, tools []llm.Tool) string {
+	t.Helper()
+	requireToolNames(t, tools, "mattermost__session_identity")
+	result, err := tools[0].Resolver(context.Background(), &llm.Context{}, func(args any) error {
+		*(args.(*map[string]any)) = map[string]any{}
+		return nil
+	})
+	require.NoError(t, err)
+	return strings.TrimSpace(result)
 }
 
 type sessionEchoEmbeddedMCPServer struct {
