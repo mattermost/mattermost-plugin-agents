@@ -132,14 +132,18 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, se
 	existingClient = c.clients[EmbeddedClientKey]
 	if existingClient != nil && existingClient.sessionID == sessionID {
 		c.clientsMu.Unlock()
-		_ = serverClient.Close()
+		if err := serverClient.Close(); err != nil {
+			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", EmbeddedClientKey, "error", err)
+		}
 		return nil
 	}
 	c.clients[EmbeddedClientKey] = serverClient
 	c.clientsMu.Unlock()
 
 	if existingClient != nil {
-		_ = existingClient.Close()
+		if err := existingClient.Close(); err != nil {
+			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", EmbeddedClientKey, "error", err)
+		}
 		c.log.Debug("Reconnected to embedded MCP server with refreshed session", "userID", c.userID)
 	} else {
 		c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
