@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -258,6 +259,61 @@ func TestConnectToEmbeddedServerIfAvailable_Idempotent(t *testing.T) {
 	secondSnapshot := uc.snapshotClients()
 	require.Len(t, secondSnapshot, 1)
 	require.Same(t, firstClient, secondSnapshot[0].client)
+}
+
+func TestConnectToEmbeddedServerIfAvailable_ReconnectsWhenSessionChanges(t *testing.T) {
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
+
+	fakeAPI := &fixedPluginAPI{
+		sessionByID: map[string]*model.Session{
+			"old-session": {Id: "old-session", UserId: "alice", Token: "old-token"},
+			"new-session": {Id: "new-session", UserId: "alice", Token: "new-token"},
+		},
+	}
+	pluginAPI := pluginapi.NewClient(fakeAPI, nil)
+	embeddedClient := NewEmbeddedServerClient(&sessionEchoEmbeddedMCPServer{ctx: runCtx}, pluginAPI.Log, pluginAPI)
+	uc := NewUserClients("alice", pluginAPI.Log, nil, nil, nil)
+	cfg := EmbeddedServerConfig{Enabled: true}
+
+	callSessionIdentity := func() string {
+		tools := uc.GetTools(context.Background())
+		requireToolNames(t, tools, "mattermost__session_identity")
+		result, err := tools[0].Resolver(context.Background(), &llm.Context{}, func(args any) error {
+			*(args.(*map[string]any)) = map[string]any{}
+			return nil
+		})
+		require.NoError(t, err)
+		return result
+	}
+
+	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "old-session", embeddedClient, cfg))
+	require.Equal(t, "old-session\n", callSessionIdentity())
+
+	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "new-session", embeddedClient, cfg))
+	require.Equal(t, "new-session\n", callSessionIdentity())
+}
+
+type sessionEchoEmbeddedMCPServer struct {
+	ctx context.Context
+}
+
+func (s *sessionEchoEmbeddedMCPServer) CreateClientTransport(_ string, sessionID string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+	server := gomcp.NewServer(&gomcp.Implementation{Name: "session-echo", Version: "1.0"}, nil)
+	server.AddTool(&gomcp.Tool{
+		Name:        "session_identity",
+		Description: "Returns the session used by this connection",
+		InputSchema: map[string]any{"type": "object"},
+	}, func(context.Context, *gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		return &gomcp.CallToolResult{
+			Content: []gomcp.Content{&gomcp.TextContent{Text: sessionID}},
+		}, nil
+	})
+	serverTransport, clientTransport := gomcp.NewInMemoryTransports()
+	go func() {
+		_ = server.Run(s.ctx, serverTransport)
+	}()
+	return clientTransport, nil
 }
 
 func TestUserClientsGetToolsResolverUsesResolverContext(t *testing.T) {
