@@ -229,6 +229,7 @@ func TestEnrichResults(t *testing.T) {
 				{
 					Document: embeddings.PostDocument{
 						PostID:    "post1",
+						CreateAt:  1700000000000,
 						ChannelID: "channel1",
 						UserID:    "user1",
 						Content:   "content 1",
@@ -238,6 +239,7 @@ func TestEnrichResults(t *testing.T) {
 				{
 					Document: embeddings.PostDocument{
 						PostID:    "post2",
+						CreateAt:  1700000060000,
 						ChannelID: "channel2",
 						UserID:    "user2",
 						Content:   "content 2",
@@ -270,9 +272,11 @@ func TestEnrichResults(t *testing.T) {
 				require.Equal(t, "post1", results[0].PostID)
 				require.Equal(t, "Channel One", results[0].ChannelName)
 				require.Equal(t, "user_one", results[0].Username)
+				require.Equal(t, int64(1700000000000), results[0].CreateAt)
 				require.Equal(t, "post2", results[1].PostID)
 				require.Equal(t, "Channel Two", results[1].ChannelName)
 				require.Equal(t, "user_two", results[1].Username)
+				require.Equal(t, int64(1700000060000), results[1].CreateAt)
 			},
 		},
 	}
@@ -473,6 +477,40 @@ func TestBuildPrompt(t *testing.T) {
 			expectError: false,
 			validate: func(t *testing.T, req llm.CompletionRequest) {
 				require.Contains(t, req.Posts[0].Message, "important information")
+			},
+		},
+		{
+			name:  "system message contains message timestamps",
+			query: "search query",
+			results: []RAGResult{
+				// 2024-01-01T00:00:00Z
+				{PostID: "post1", Content: "dated content", ChannelName: "General", Username: "testuser", Score: 0.95, CreateAt: 1704067200000},
+			},
+			expectError: false,
+			validate: func(t *testing.T, req llm.CompletionRequest) {
+				require.Contains(t, req.Posts[0].Message, `time="2024-01-01T00:00:00Z"`)
+			},
+		},
+		{
+			name:  "missing timestamp omits the time attribute",
+			query: "search query",
+			results: []RAGResult{
+				{PostID: "post1", Content: "undated content", ChannelName: "General", Username: "testuser", Score: 0.95},
+			},
+			expectError: false,
+			validate: func(t *testing.T, req llm.CompletionRequest) {
+				require.NotContains(t, req.Posts[0].Message, "time=")
+			},
+		},
+		{
+			name:  "negative timestamp omits the time attribute",
+			query: "search query",
+			results: []RAGResult{
+				{PostID: "post1", Content: "undated content", ChannelName: "General", Username: "testuser", Score: 0.95, CreateAt: -1},
+			},
+			expectError: false,
+			validate: func(t *testing.T, req llm.CompletionRequest) {
+				require.NotContains(t, req.Posts[0].Message, "time=")
 			},
 		},
 	}

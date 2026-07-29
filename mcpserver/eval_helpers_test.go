@@ -319,7 +319,7 @@ func setupEmbeddingSearch(t *testing.T, data *evalChannelData, serverURL, adminT
 		ChunkSize:        500,
 		ChunkOverlap:     50,
 		ChunkingStrategy: "sentences",
-	})
+	}, embeddings.RecencyBiasSettings{})
 
 	// Fetch all posts from Mattermost and index them into PGVector
 	client := model.NewAPIv4Client(serverURL)
