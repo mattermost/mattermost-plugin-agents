@@ -150,7 +150,7 @@ func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.E
 			chunkingOpts = chunking.DefaultOptions()
 		}
 
-		return embeddings.NewCompositeSearch(vector, embeddor, chunkingOpts), nil
+		return embeddings.NewCompositeSearch(vector, embeddor, chunkingOpts, cfg.GetRecencyBiasSettings()), nil
 	}
 
 	return nil, fmt.Errorf("unsupported search type: %s", cfg.Type)

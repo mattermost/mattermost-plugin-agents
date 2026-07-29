@@ -51,6 +51,7 @@ type RAGResult struct {
 	Username    string  `json:"username"`
 	Content     string  `json:"content"`
 	Score       float32 `json:"score"`
+	CreateAt    int64   `json:"createAt"` // Post creation timestamp (Unix millis)
 }
 
 // Options configures a search operation
@@ -173,6 +174,7 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 			Username:    username,
 			Content:     content,
 			Score:       result.Score,
+			CreateAt:    result.Document.CreateAt,
 		})
 	}
 
