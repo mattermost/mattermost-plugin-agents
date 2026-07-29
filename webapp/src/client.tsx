@@ -9,6 +9,7 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
 
@@ -32,11 +33,15 @@ function postRoute(postid: string): string {
 }
 
 function channelRoute(channelid: string): string {
-    return `${baseRoute()}/channel/${channelid}`;
+    return `${baseRoute()}/channel/${encodeURIComponent(channelid)}`;
 }
 
 function agentRoute(agentId: string): string {
-    return `${baseRoute()}/agents/${agentId}`;
+    return `${baseRoute()}/agents/${encodeURIComponent(agentId)}`;
+}
+
+function conversationRoute(conversationId: string): string {
+    return `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}`;
 }
 
 export async function doReaction(postid: string) {
@@ -270,7 +275,17 @@ export function normalizeConversationResponse(raw: ConversationResponse): Conver
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationResponse> {
-    const url = `${baseRoute()}/conversations/${conversationId}`;
+    // The id can arrive straight off a free-form post prop; refuse to build a
+    // request from a value that is not a well-formed id.
+    if (!isValidId(conversationId)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid conversation id',
+            status_code: 400,
+            url: Client4.url,
+        });
+    }
+
+    const url = conversationRoute(conversationId);
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));

@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -14,8 +14,10 @@ import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, useTurnForPost, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
 
+import {isValidId} from '@/utils/ids';
+
 import PostText from '../post_text';
-import {SearchSources} from '../search_sources';
+import {SearchSources, parseSearchSources} from '../search_sources';
 import ToolApprovalSet from '../tool_approval_set';
 import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
@@ -51,8 +53,11 @@ interface LLMBotPostProps {
 export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
 
-    // Conversation entity data
-    const conversationId: string | undefined = props.post.props?.conversation_id;
+    // Post props are free-form JSON; a conversation_id that is not a
+    // well-formed id is treated as absent so no request is built from it and
+    // the component falls back to its no-conversation rendering path.
+    const rawConversationId: unknown = props.post.props?.conversation_id;
+    const conversationId: string | undefined = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
     const turn = useTurnForPost(conversation, props.post.id);
 
@@ -323,6 +328,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const hasContent = message !== '' || reasoningSummary !== '';
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 
+    // Parsed defensively: search_results is a free-form post prop, so a
+    // malformed value yields an empty list instead of throwing during render.
+    const searchSources = useMemo(
+        () => parseSearchSources(props.post.props?.[SearchResultsPropKey]),
+        [props.post.props],
+    );
+
     return (
         <PostBody
             data-testid='llm-bot-post'
@@ -373,9 +385,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 showCursor={generating && !precontent}
                 annotations={annotations.length > 0 ? annotations : undefined} // eslint-disable-line no-undefined
             />
-            {props.post.props?.[SearchResultsPropKey] && (
+            {searchSources.length > 0 && (
                 <SearchSources
-                    sources={JSON.parse(props.post.props[SearchResultsPropKey])}
+                    sources={searchSources}
                 />
             )}
             { showPostbackButton &&
