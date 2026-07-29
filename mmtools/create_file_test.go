@@ -187,7 +187,31 @@ func TestCreateFileResolverValidation(t *testing.T) {
 			},
 			args:       validArgs,
 			setup:      attachmentsEnabledConfig,
-			wantResult: "the limit of 10 created files per reply has been reached; do not create more files in this reply",
+			wantResult: "no more files can be attached to this reply (limit 10 per post); do not create more files in this reply",
+		},
+		{
+			name: "response attachment budget from earlier rounds is exhausted",
+			llmCtx: func() *llm.Context {
+				ctx := validChannelCtx()
+				ctx.SetResponseAttachmentBudget(2)
+				ctx.AddCreatedFile(llm.CreatedFile{ID: model.NewId(), Name: "a.txt"})
+				ctx.AddCreatedFile(llm.CreatedFile{ID: model.NewId(), Name: "b.txt"})
+				return ctx
+			},
+			args:       validArgs,
+			setup:      attachmentsEnabledConfig,
+			wantResult: "no more files can be attached to this reply (limit 10 per post); do not create more files in this reply",
+		},
+		{
+			name: "response attachment budget of zero rejects the first file",
+			llmCtx: func() *llm.Context {
+				ctx := validChannelCtx()
+				ctx.SetResponseAttachmentBudget(0)
+				return ctx
+			},
+			args:       validArgs,
+			setup:      attachmentsEnabledConfig,
+			wantResult: "no more files can be attached to this reply (limit 10 per post); do not create more files in this reply",
 		},
 		{
 			name:   "attachments disabled on the server",

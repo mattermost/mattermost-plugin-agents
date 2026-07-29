@@ -336,21 +336,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 			args.TeamDisplayName, channel.TeamId, team.DisplayName)
 	}
 
-	// Legacy attachments resolve first so checkCombinedFileCap runs before any inline upload.
-	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, args.ChannelID, args.Attachments, mcpContext.AccessMode)
-
-	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); capErr != nil {
-		return "", capErr
-	}
-
-	// Create LLM-authored inline files; a failure aborts the post because a post
-	// missing files the model explicitly asked to create is broken output.
-	inlineFileIDs, err := uploadInlineFiles(ctx, client, args.ChannelID, args.Files)
-	if err != nil {
-		return "", err
-	}
-
-	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
+	fileIDs, filesMessage, err := resolvePostFiles(ctx, client, args.ChannelID, args.Attachments, args.Files, mcpContext.AccessMode)
 	if err != nil {
 		return "", err
 	}
@@ -370,8 +356,8 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "", fmt.Errorf("error creating post: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully created post in channel '%s' (Team: %s) with ID: %s%s%s",
-		channel.DisplayName, team.DisplayName, createdPost.Id, attachmentMessage, inlineFilesMessage(len(inlineFileIDs))), nil
+	return fmt.Sprintf("Successfully created post in channel '%s' (Team: %s) with ID: %s%s",
+		channel.DisplayName, team.DisplayName, createdPost.Id, filesMessage), nil
 }
 
 // toolCreatePostAsUser implements the create_post_as_user tool with custom authentication
@@ -468,21 +454,7 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		return "", fmt.Errorf("error creating direct channel: %w", err)
 	}
 
-	// Legacy attachments resolve first so checkCombinedFileCap runs before any inline upload.
-	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
-
-	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); capErr != nil {
-		return "", capErr
-	}
-
-	// Create LLM-authored inline files; a failure aborts the post because a post
-	// missing files the model explicitly asked to create is broken output.
-	inlineFileIDs, err := uploadInlineFiles(ctx, client, dmChannel.Id, args.Files)
-	if err != nil {
-		return "", err
-	}
-
-	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
+	fileIDs, filesMessage, err := resolvePostFiles(ctx, client, dmChannel.Id, args.Attachments, args.Files, mcpContext.AccessMode)
 	if err != nil {
 		return "", err
 	}
@@ -507,9 +479,9 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 	}
 
 	if dmSelf {
-		return fmt.Sprintf("Successfully sent DM to yourself with ID: %s%s%s", createdPost.Id, attachmentMessage, inlineFilesMessage(len(inlineFileIDs))), nil
+		return fmt.Sprintf("Successfully sent DM to yourself with ID: %s%s", createdPost.Id, filesMessage), nil
 	}
-	return fmt.Sprintf("Successfully sent DM to @%s with ID: %s%s%s", targetUser.Username, createdPost.Id, attachmentMessage, inlineFilesMessage(len(inlineFileIDs))), nil
+	return fmt.Sprintf("Successfully sent DM to @%s with ID: %s%s", targetUser.Username, createdPost.Id, filesMessage), nil
 }
 
 // toolGroupMessage implements the group_message tool
@@ -556,21 +528,7 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		return "", fmt.Errorf("error creating group channel: %w", err)
 	}
 
-	// Legacy attachments resolve first so checkCombinedFileCap runs before any inline upload.
-	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
-
-	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(args.Files)); capErr != nil {
-		return "", capErr
-	}
-
-	// Create LLM-authored inline files; a failure aborts the post because a post
-	// missing files the model explicitly asked to create is broken output.
-	inlineFileIDs, err := uploadInlineFiles(ctx, client, gmChannel.Id, args.Files)
-	if err != nil {
-		return "", err
-	}
-
-	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
+	fileIDs, filesMessage, err := resolvePostFiles(ctx, client, gmChannel.Id, args.Attachments, args.Files, mcpContext.AccessMode)
 	if err != nil {
 		return "", err
 	}
@@ -594,8 +552,8 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 		usernames = append(usernames, "@"+uname)
 	}
 
-	return fmt.Sprintf("Successfully sent group message to %s with ID: %s%s%s",
-		strings.Join(usernames, ", "), createdPost.Id, attachmentMessage, inlineFilesMessage(len(inlineFileIDs))), nil
+	return fmt.Sprintf("Successfully sent group message to %s with ID: %s%s",
+		strings.Join(usernames, ", "), createdPost.Id, filesMessage), nil
 }
 
 // --- Additional post tools (info, pins, saved, edit/delete, acknowledge) ---

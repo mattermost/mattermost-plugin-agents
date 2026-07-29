@@ -13,9 +13,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// maxResponseAttachments caps attachments on a response post (Mattermost
-// allows ~10 attachments per post).
-const maxResponseAttachments = 10
+const maxResponseAttachments = llm.MaxPostAttachments
 
 // decorateStreamWithCreatedFiles wraps stream so that, on a clean end, the
 // files created during the turn (recorded on the given contexts via
@@ -73,10 +71,7 @@ func (c *Conversations) collectAttachableFileIDs(post *model.Post, extraFileIDs 
 	for _, id := range extraFileIDs {
 		appendID(id)
 	}
-	if room := maxResponseAttachments - len(post.FileIds); len(candidates) > room {
-		if room < 0 {
-			room = 0
-		}
+	if room := max(maxResponseAttachments-len(post.FileIds), 0); len(candidates) > room {
 		if c.mmClient != nil {
 			c.mmClient.LogWarn("Truncating created files beyond the response attachment cap",
 				"post_id", post.Id, "dropped", len(candidates)-room, "cap", maxResponseAttachments)

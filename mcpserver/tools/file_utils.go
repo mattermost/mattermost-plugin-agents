@@ -17,6 +17,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/httpservice"
 )
@@ -279,9 +280,7 @@ func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID s
 	return fileIDs, nil
 }
 
-// maxFilesPerPost is the maximum number of file attachments on a single post;
-// the Mattermost server enforces roughly this cap via model.PostFileidsMaxRunes.
-const maxFilesPerPost = 10
+const maxFilesPerPost = llm.MaxPostAttachments
 
 // maxInlineFileBytes is the maximum size of a single LLM-authored inline file (1 MiB).
 const maxInlineFileBytes = 1024 * 1024
@@ -302,7 +301,9 @@ func uploadInlineFiles(ctx context.Context, client *model.Client4, channelID str
 		return nil, fmt.Errorf("too many files: %d provided but a post can have at most %d attachments - reduce the number of files or split them across multiple posts", len(files), maxFilesPerPost)
 	}
 
-	fileIDs := make([]string, 0, len(files))
+	// Validate the whole list before the first upload so a bad later entry
+	// cannot orphan files that were already uploaded for this call.
+	names := make([]string, 0, len(files))
 	for _, file := range files {
 		name := filepath.Base(strings.TrimSpace(file.Name))
 		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
@@ -317,13 +318,17 @@ func uploadInlineFiles(ctx context.Context, client *model.Client4, channelID str
 		if len(file.Content) > maxInlineFileBytes {
 			return nil, fmt.Errorf("file %q is too large (%d bytes): inline file content must be at most %d bytes", name, len(file.Content), maxInlineFileBytes)
 		}
+		names = append(names, name)
+	}
 
-		fileUploadResponse, _, err := client.UploadFileAsRequestBody(ctx, []byte(file.Content), channelID, name)
+	fileIDs := make([]string, 0, len(files))
+	for i, file := range files {
+		fileUploadResponse, _, err := client.UploadFileAsRequestBody(ctx, []byte(file.Content), channelID, names[i])
 		if err != nil {
-			return nil, fmt.Errorf("failed to create file %q: %w", name, err)
+			return nil, fmt.Errorf("failed to create file %q: %w", names[i], err)
 		}
 		if len(fileUploadResponse.FileInfos) == 0 {
-			return nil, fmt.Errorf("failed to create file %q: server returned no file info", name)
+			return nil, fmt.Errorf("failed to create file %q: server returned no file info", names[i])
 		}
 		fileIDs = append(fileIDs, fileUploadResponse.FileInfos[0].Id)
 	}
@@ -362,6 +367,31 @@ func inlineFilesMessage(count int) string {
 		return ""
 	}
 	return fmt.Sprintf(" (created and attached %d file(s))", count)
+}
+
+// resolvePostFiles resolves a posting tool's legacy attachments and inline
+// files into the post's file IDs plus a success-message suffix. Legacy
+// attachments resolve first (best-effort) so the combined cap is enforced
+// before any inline upload; an inline-file failure aborts because a post
+// missing files the model explicitly asked to create is broken output.
+func resolvePostFiles(ctx context.Context, client *model.Client4, channelID string, attachments []string, files []InlineFile, accessMode AccessMode) ([]string, string, error) {
+	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, channelID, attachments, accessMode)
+
+	if err := checkCombinedFileCap(len(attachmentFileIDs), len(files)); err != nil {
+		return nil, "", err
+	}
+
+	inlineFileIDs, err := uploadInlineFiles(ctx, client, channelID, files)
+	if err != nil {
+		return nil, "", err
+	}
+
+	fileIDs, err := mergePostFileIDs(inlineFileIDs, attachmentFileIDs)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return fileIDs, attachmentMessage + inlineFilesMessage(len(inlineFileIDs)), nil
 }
 
 // uploadFilesAndUrlsForLocal uploads files from URLs or file paths (local access only) and returns file IDs and status message

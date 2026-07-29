@@ -12,16 +12,18 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	otelcodes "go.opentelemetry.io/otel/codes"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 const (
 	// CreateFileToolName is the runtime name of the built-in file creation tool.
-	CreateFileToolName = "CreateFile"
-	// maxCreatedFilesPerTurn caps CreateFile calls per response (Mattermost allows ~10 attachments per post).
-	maxCreatedFilesPerTurn = 10
+	CreateFileToolName     = "CreateFile"
+	maxCreatedFilesPerTurn = llm.MaxPostAttachments
 	// fallbackCreateFileContentBytes caps a file's content (1 MiB) when the
 	// server config does not provide FileSettings.MaxFileSize.
 	fallbackCreateFileContentBytes = 1024 * 1024
@@ -64,13 +66,13 @@ func NewCreateFileTool(client mmapi.Client) llm.Tool {
 		Description: createFileDescription,
 		Schema:      llm.NewJSONSchemaFromStruct[CreateFileArgs](),
 		AutoExecute: true,
-		Resolver: func(_ context.Context, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
-			return resolveCreateFile(client, llmCtx, argsGetter)
+		Resolver: func(ctx context.Context, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+			return resolveCreateFile(ctx, client, llmCtx, argsGetter)
 		},
 	}
 }
 
-func resolveCreateFile(client mmapi.Client, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+func resolveCreateFile(ctx context.Context, client mmapi.Client, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args CreateFileArgs
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for CreateFile tool: %w", err)
@@ -112,18 +114,25 @@ func resolveCreateFile(client mmapi.Client, llmCtx *llm.Context, argsGetter llm.
 		return fmt.Sprintf("content exceeds the %d-byte file size limit; split the content into multiple smaller files", limit), errors.New("CreateFile content too large")
 	}
 
-	if len(llmCtx.CreatedFilesList()) >= maxCreatedFilesPerTurn {
-		return fmt.Sprintf("the limit of %d created files per reply has been reached; do not create more files in this reply", maxCreatedFilesPerTurn), errors.New("CreateFile per-reply cap reached")
+	// Slots account for files already attached to the response post (set by
+	// the conversation flow) so excess calls are rejected before uploading.
+	if slots := min(llmCtx.ResponseAttachmentSlots(), maxCreatedFilesPerTurn); len(llmCtx.CreatedFilesList()) >= slots {
+		return fmt.Sprintf("no more files can be attached to this reply (limit %d per post); do not create more files in this reply", maxCreatedFilesPerTurn), errors.New("CreateFile per-reply cap reached")
 	}
 
 	if !client.HasPermissionToChannel(llmCtx.RequestingUser.Id, llmCtx.Channel.Id, model.PermissionUploadFile) {
 		return "you do not have permission to attach files in this channel", errors.New("CreateFile rejected: requesting user lacks upload permission in the channel")
 	}
 
+	_, span := telemetry.Tracer().Start(ctx, "create file upload")
 	info, err := client.UploadFile(strings.NewReader(args.Content), name, llmCtx.Channel.Id)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, "upload failed")
+		span.End()
 		return "file upload failed", fmt.Errorf("CreateFile upload failed: %w", err)
 	}
+	span.End()
 
 	llmCtx.AddCreatedFile(llm.CreatedFile{ID: info.Id, Name: info.Name})
 

@@ -99,6 +99,7 @@ func TestUploadInlineFiles(t *testing.T) {
 		files           []InlineFile
 		failFilename    string
 		wantErrContains []string // non-empty means an error containing every entry
+		wantNoUploads   bool     // error cases: assert nothing reached the upload endpoint
 		wantFilenames   []string
 		wantContents    []string
 	}{
@@ -114,6 +115,15 @@ func TestUploadInlineFiles(t *testing.T) {
 			name:            "more than max files rejected",
 			files:           makeInlineFiles(maxFilesPerPost + 1),
 			wantErrContains: []string{"at most 10"},
+		},
+		{
+			name: "invalid later file rejects the whole list before any upload",
+			files: []InlineFile{
+				{Name: "good.md", Content: "fine"},
+				{Name: "bad.md", Content: ""},
+			},
+			wantErrContains: []string{`"bad.md"`, "no content"},
+			wantNoUploads:   true,
 		},
 		{
 			name:            "blank name rejected",
@@ -185,6 +195,9 @@ func TestUploadInlineFiles(t *testing.T) {
 				require.Error(t, err)
 				for _, want := range tt.wantErrContains {
 					assert.Contains(t, err.Error(), want)
+				}
+				if tt.wantNoUploads {
+					assert.Empty(t, rec.filenames, "validation failures must reject the list before any upload")
 				}
 				return
 			}

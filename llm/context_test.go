@@ -157,6 +157,52 @@ func TestContextObserveMCPDynamicToolEventBotLabelFallbacks(t *testing.T) {
 	}
 }
 
+func TestContextResponseAttachmentBudget(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(c *Context)
+		wantSlots int
+	}{
+		{
+			name:      "unset budget defaults to the full per-post limit",
+			configure: func(*Context) {},
+			wantSlots: MaxPostAttachments,
+		},
+		{
+			name:      "positive budget is returned as-is",
+			configure: func(c *Context) { c.SetResponseAttachmentBudget(3) },
+			wantSlots: 3,
+		},
+		{
+			name:      "zero budget means no slots",
+			configure: func(c *Context) { c.SetResponseAttachmentBudget(0) },
+			wantSlots: 0,
+		},
+		{
+			name:      "negative budget means no slots",
+			configure: func(c *Context) { c.SetResponseAttachmentBudget(-4) },
+			wantSlots: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Context{}
+			tt.configure(c)
+			assert.Equal(t, tt.wantSlots, c.ResponseAttachmentSlots())
+		})
+	}
+
+	t.Run("nil receivers are safe", func(t *testing.T) {
+		var c *Context
+		c.SetResponseAttachmentBudget(5)
+		assert.Equal(t, 0, c.ResponseAttachmentSlots())
+		var tr *ToolRuntimeContext
+		tr.SetResponseAttachmentBudget(5)
+		assert.Equal(t, 0, tr.ResponseAttachmentSlots())
+	})
+}
+
 func TestContextCreatedFiles(t *testing.T) {
 	tests := []struct {
 		name  string

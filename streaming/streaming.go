@@ -36,11 +36,9 @@ type Client interface {
 	LogDebug(msg string, keyValuePairs ...interface{})
 }
 
-// maxPostAttachments is an independent hard cap on file IDs merged onto a
-// streamed post, matching the Mattermost per-post attachment limit (~10
-// files per post). It protects post.FileIds from unbounded growth even if an
-// emitter misbehaves.
-const maxPostAttachments = 10
+// maxPostAttachments independently caps file IDs merged onto a streamed post
+// so an emitter cannot grow post.FileIds unboundedly.
+const maxPostAttachments = llm.MaxPostAttachments
 
 const PostStreamingControlCancel = "cancel"
 const PostStreamingControlEnd = "end"

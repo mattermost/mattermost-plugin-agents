@@ -5,6 +5,10 @@ package llm
 
 import "fmt"
 
+// MaxPostAttachments is the Mattermost per-post attachment limit. It bounds
+// how many files tools may create for or attach to a single post.
+const MaxPostAttachments = 10
+
 // EventType represents the type of event in the text stream
 type EventType int
 

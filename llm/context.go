@@ -104,6 +104,11 @@ type ToolRuntimeContext struct {
 	// CreatedFiles collects files created by tools during this turn for
 	// attachment to the response post.
 	CreatedFiles []CreatedFile
+
+	// ResponseAttachmentBudget caps how many files response tools may create
+	// this turn. 0 means unset (full MaxPostAttachments budget); -1 means the
+	// response post has no room left. Set via SetResponseAttachmentBudget.
+	ResponseAttachmentBudget int
 }
 
 type MCPDynamicToolTelemetry interface {
@@ -265,6 +270,48 @@ func (t *ToolRuntimeContext) CreatedFilesList() []CreatedFile {
 		return nil
 	}
 	return t.CreatedFiles
+}
+
+// SetResponseAttachmentBudget records how many more files the response post
+// can hold, so file-creating tools reject excess calls before uploading.
+func (c *Context) SetResponseAttachmentBudget(remaining int) {
+	if c == nil {
+		return
+	}
+	c.ToolRuntime.SetResponseAttachmentBudget(remaining)
+}
+
+func (t *ToolRuntimeContext) SetResponseAttachmentBudget(remaining int) {
+	if t == nil {
+		return
+	}
+	if remaining <= 0 {
+		remaining = -1
+	}
+	t.ResponseAttachmentBudget = remaining
+}
+
+// ResponseAttachmentSlots returns how many more files response tools may
+// create this turn: the recorded budget, or the full MaxPostAttachments
+// budget when none was set.
+func (c *Context) ResponseAttachmentSlots() int {
+	if c == nil {
+		return 0
+	}
+	return c.ToolRuntime.ResponseAttachmentSlots()
+}
+
+func (t *ToolRuntimeContext) ResponseAttachmentSlots() int {
+	switch {
+	case t == nil:
+		return 0
+	case t.ResponseAttachmentBudget == 0:
+		return MaxPostAttachments
+	case t.ResponseAttachmentBudget < 0:
+		return 0
+	default:
+		return t.ResponseAttachmentBudget
+	}
 }
 
 func (c Context) String() string {
