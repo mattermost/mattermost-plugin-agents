@@ -340,11 +340,10 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 
 	queryBuilder = queryBuilder.OrderBy("similarity ASC")
 
-	// Apply limit with sensible default/max
-	const maxSearchLimit = 1000
+	// Apply limit with sensible default/max (shared store cap)
 	limit := opts.Limit
-	if limit <= 0 || limit > maxSearchLimit {
-		limit = maxSearchLimit
+	if limit <= 0 || limit > embeddings.MaxSearchResults {
+		limit = embeddings.MaxSearchResults
 	}
 	queryBuilder = queryBuilder.Limit(uint64(limit)) //nolint:gosec
 
