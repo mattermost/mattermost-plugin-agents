@@ -299,7 +299,10 @@ func (t *otelTracer) ProcessStreamingChunk(_ *bschemas.BifrostContext, traceID s
 			if routing.ResolvedKeyAlias != nil {
 				resolvedModel = routing.ResolvedKeyAlias.ModelID
 			}
-			out.RequestID = requestedModel
+			// traceID is the request ID: CreateTrace returns the requestID
+			// Bifrost passes in, and Bifrost keys the whole streaming
+			// lifecycle (including this call) by that value.
+			out.RequestID = traceID
 			out.RequestedModel = requestedModel
 			out.ResolvedModel = resolvedModel
 			out.Provider = routing.Provider

@@ -12,6 +12,21 @@ import {LLMService} from './service';
 const maxReasoningBudget = 8192;
 const minReasoningBudget = 1024;
 
+// Mirrors Bifrost's IsAdaptiveOnlyThinkingModel: Anthropic models where
+// budget-based extended thinking was removed and the thinking budget is
+// ignored (thinking.type "adaptive" is the only thinking-on mode).
+// Covers Opus 4.7+, Sonnet 5+, and the Fable/Mythos family.
+const usesAdaptiveThinking = (model: string): boolean => {
+    const m = model.toLowerCase();
+    if (m.includes('fable') || m.includes('mythos') || m.includes('sonnet-5') || m.includes('opus-5')) {
+        return true;
+    }
+    if (m.includes('opus')) {
+        return ['4-7', '4.7', '4-8', '4.8'].some((v) => m.includes(v));
+    }
+    return false;
+};
+
 type ReasoningConfigItemProps = {
     bot: LLMBotConfig
     service: LLMService | undefined
@@ -43,6 +58,11 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
 
     const reasoningEnabled = props.bot.reasoningEnabled ?? true; // Default to enabled
     const reasoningEffort = props.bot.reasoningEffort || 'medium';
+
+    // The agent's effective model decides whether the thinking budget applies:
+    // adaptive-thinking Anthropic models ignore it entirely.
+    const effectiveModel = props.bot.model || props.service.defaultModel || '';
+    const adaptiveThinking = isAnthropic && usesAdaptiveThinking(effectiveModel);
 
     // For thinking budget, use the value from the bot config, or empty string if 0/undefined
     const thinkingBudgetValue = (props.bot.thinkingBudget && props.bot.thinkingBudget > 0) ? props.bot.thinkingBudget.toString() : '';
@@ -101,19 +121,21 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     placeholder={getDefaultThinkingBudget().toString()}
                                 />
                                 <HelpText>
-                                    {intl.formatMessage({
-                                        defaultMessage: 'Token budget for extended thinking. Higher values allow deeper reasoning but increase response time and cost. Must be between 1024 and {maxTokens}. Leave blank to use default ({defaultBudget}). Ignored by models that use adaptive thinking (Claude Opus 4.7+, Sonnet 5+, Fable).',
+                                    {adaptiveThinking ? intl.formatMessage({
+                                        defaultMessage: 'This model uses adaptive thinking and decides how much to reason on its own. The token budget is ignored.',
+                                    }) : intl.formatMessage({
+                                        defaultMessage: 'Token budget for extended thinking. Higher values allow deeper reasoning but increase response time and cost. Must be between 1024 and {maxTokens}. Leave blank to use default ({defaultBudget}).',
                                     }, {
                                         maxTokens: props.maxTokens,
                                         defaultBudget: getDefaultThinkingBudget(),
                                     })}
                                 </HelpText>
-                                {typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > 0 && props.bot.thinkingBudget < 1024 && (
+                                {!adaptiveThinking && typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > 0 && props.bot.thinkingBudget < 1024 && (
                                     <ErrorText>
                                         {intl.formatMessage({defaultMessage: 'Thinking budget must be at least 1024 tokens.'})}
                                     </ErrorText>
                                 )}
-                                {typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > props.maxTokens && (
+                                {!adaptiveThinking && typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > props.maxTokens && (
                                     <ErrorText>
                                         {intl.formatMessage({
                                             defaultMessage: 'Thinking budget cannot exceed max tokens ({maxTokens}).',
