@@ -93,9 +93,7 @@ export type CreateAgentRequest = {
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
 
-    // Required, not optional: the backend field has no omitempty and update is a
-    // full-document replace, so a payload omitting the key resets the flag.
-    // Requiring it makes tsc reject any payload builder that forgets it.
+    // Required so payload builders can't silently drop it on full-replace PUT.
     useServiceAccountAuth: boolean;
     model?: string;
     enableVision?: boolean;

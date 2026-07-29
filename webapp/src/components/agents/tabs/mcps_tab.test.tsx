@@ -13,8 +13,7 @@ import McpsTab from './mcps_tab';
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
 
-    // One stable intl object: McpsTab's catalog loader is memoized on intl, so a
-    // fresh object per render would reload the catalog on every render.
+    // Stable intl object: the catalog loader is memoized on intl, so a fresh one per render would reload forever.
     const intl = {
         formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
@@ -154,8 +153,6 @@ describe('McpsTab', () => {
         expect(screen.queryByText(serviceAccountWarning)).toBeNull();
     });
 
-    // The flag also switches embedded MCP identity, so it must stay reachable
-    // when the remote catalog is empty.
     test('shows the service account toggle when no MCP servers are available', async () => {
         mockedGetUserMCPTools.mockResolvedValue({servers: []});
 

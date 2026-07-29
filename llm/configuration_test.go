@@ -706,8 +706,7 @@ func TestBotConfigUseServiceAccountAuthJSON(t *testing.T) {
 		})
 	}
 
-	// The webapp relies on the flag always being present in responses, so it must
-	// not be omitted when false.
+	// The webapp relies on the flag being present even when false.
 	raw, err := json.Marshal(BotConfig{UseServiceAccountAuth: false})
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"useServiceAccountAuth":false`)

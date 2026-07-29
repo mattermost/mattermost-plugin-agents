@@ -1711,8 +1711,7 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 // fakeBridgeMCPToolProvider is a minimal llmcontext.MCPToolProvider with
 // separate user-mode and service-account catalogs. Unlike
 // testLLMContextToolProvider (which feeds the built-in tool path), this exercises
-// the real MCP path: per-agent allowlist filtering and namespacing. It records
-// the IDs each method is called with so tests can pin catalog selection.
+// the real MCP path: per-agent allowlist filtering and namespacing.
 type fakeBridgeMCPToolProvider struct {
 	tools   []llm.Tool // user-mode catalog
 	saTools []llm.Tool // service-account catalog (fail-closed subset)
@@ -1738,8 +1737,6 @@ func (e *TestEnvironment) setupBridgeMCPProvider(tools []llm.Tool) *fakeBridgeMC
 	return e.setupBridgeMCPProviderSA(tools, nil)
 }
 
-// setupBridgeMCPProviderSA is setupBridgeMCPProvider with a distinct
-// service-account catalog, so tests can tell the two apart.
 func (e *TestEnvironment) setupBridgeMCPProviderSA(userTools, saTools []llm.Tool) *fakeBridgeMCPToolProvider {
 	provider := &fakeBridgeMCPToolProvider{tools: userTools, saTools: saTools}
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
@@ -1756,8 +1753,7 @@ func bridgeMCPTool(serverSlug, bareName, serverOrigin string) llm.Tool {
 	return bridgeMCPToolRecording(serverSlug, bareName, serverOrigin, nil)
 }
 
-// bridgeMCPToolRecording is bridgeMCPTool with a resolver that counts its own
-// invocations, so tests can assert a tool never executed.
+// bridgeMCPToolRecording is bridgeMCPTool with a resolver that counts its invocations.
 func bridgeMCPToolRecording(serverSlug, bareName, serverOrigin string, calls *int) llm.Tool {
 	return llm.Tool{
 		Name:         llm.NamespaceMCPToolName(serverSlug, bareName),

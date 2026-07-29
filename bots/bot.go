@@ -35,8 +35,7 @@ func (b *Bot) GetMMBot() *model.Bot {
 	return b.mmBot
 }
 
-// BotUserID returns the Mattermost user ID of the bot's user account, or ""
-// when no bot user exists.
+// BotUserID returns the Mattermost user ID of the bot's user account, or "" when no bot user exists.
 func (b *Bot) BotUserID() string {
 	if b.mmBot == nil {
 		return ""

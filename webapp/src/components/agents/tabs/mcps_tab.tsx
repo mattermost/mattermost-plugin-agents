@@ -48,8 +48,6 @@ type ServerCardProps = {
     onToggleTool: (serverOrigin: string, toolName: string) => void;
 };
 
-// One collapsible server entry in the tool picker: header row with the
-// all-tools toggle, plus the per-tool rows when expanded.
 const ServerCard = ({
     server,
     isExpanded,
@@ -81,8 +79,7 @@ const ServerCard = ({
     );
     const canConnect = !server.authenticated && Boolean(server.authURL);
 
-    // Strip the pluginmcp "<pluginID>__" prefix for display only; wire
-    // tool.name remains the enable/disable identity.
+    // Plugin prefix is stripped for display only; tool.name stays the toggle identity.
     const pluginID = pluginIDFromServerOrigin(server.serverOrigin);
     const toolsDisabled = autoEnableNewMCPTools || wildcardOn;
 
@@ -359,9 +356,7 @@ const McpsTab = (props: Props) => {
         [servers, searchQuery],
     );
 
-    // The service account toggle governs embedded MCP identity as well as remote
-    // servers, so it stays reachable even when the catalog is loading, failed, or
-    // empty; only the tool picker below it depends on the catalog.
+    // Keep the service account toggle reachable regardless of catalog state.
     let body: React.ReactNode;
     if (loading) {
         body = (

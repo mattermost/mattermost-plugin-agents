@@ -168,11 +168,7 @@ func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *b
 
 	bridgeContext := llm.NewContext()
 	if a.contextBuilder != nil {
-		// Populate bot identity so token-usage attribution (agent_user_id, and
-		// acting_user_id in service account mode) and embedded MCP bot_user_id
-		// metadata are complete for bridge requests, matching the service path
-		// (buildLLMBridgeContext). Setting bot fields before the tools option
-		// mirrors the option order used elsewhere.
+		// Populate bot identity for token-usage attribution and embedded MCP metadata.
 		a.contextBuilder.WithLLMContextBot(bot)(bridgeContext)
 	}
 	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
@@ -319,12 +315,8 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
 	}
 
-	// Before-hook keys are bound to the requesting user but resolved by the
-	// embedded MCP server against its authenticated connection identity, which
-	// is the agent's bot in service account mode — so a user-bound key can
-	// never resolve. Reject up front instead of failing every hooked tool call
-	// at runtime. Gated on the effective mode: an unlicensed SA-flagged agent
-	// behaves as a normal agent and keeps working hooks.
+	// Tool hook keys are bound to the requesting user but resolve against the connection
+	// identity — the bot user in service account mode — so they can never work; reject up front.
 	if len(req.ToolHooks) > 0 && a.contextBuilder != nil && a.contextBuilder.UsesServiceAccountCatalog(bot) {
 		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("tool_hooks is not supported for agents using service account authentication")
 	}

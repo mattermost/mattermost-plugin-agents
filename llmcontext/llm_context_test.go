@@ -55,9 +55,7 @@ func (p *countingMCPToolProvider) GetToolsForServiceAccount(stdcontext.Context, 
 	return nil, nil
 }
 
-// staticMCPToolProvider serves a fixed catalog per auth mode and records the
-// identity each mode was asked for, so tests can pin which catalog a build
-// selected.
+// staticMCPToolProvider serves a fixed catalog per auth mode and records the identity each mode was asked for.
 type staticMCPToolProvider struct {
 	tools     []llm.Tool
 	saTools   []llm.Tool
@@ -343,9 +341,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 
 const serviceAccountTestBotUserID = "bot-user-id"
 
-// serviceAccountTestProvider serves a distinct tool per auth mode so a build's
-// selected catalog is visible in the resulting store. The service account
-// errors carry only generic errors: SA mode can never produce ToolAuthErrors.
+// serviceAccountTestProvider serves a distinct tool per auth mode so the selected catalog is visible in the store.
 func serviceAccountTestProvider() *staticMCPToolProvider {
 	return &staticMCPToolProvider{
 		tools:    []llm.Tool{testMCPTool("jira__get_issue", "https://jira.example.com", "user OAuth Jira")},
@@ -354,9 +350,7 @@ func serviceAccountTestProvider() *staticMCPToolProvider {
 	}
 }
 
-// TestGetToolsStoreServiceAccountSelection pins the single catalog-selection
-// choke point: which provider method a build calls, which identity it is called
-// with, and the auth mode recorded on the context for attribution.
+// Pins which provider method a build calls, with which identity, and the auth mode recorded for attribution.
 func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -473,8 +467,6 @@ func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 	}
 }
 
-// TestUsesServiceAccountCatalog pins the exported selection predicate other
-// layers (conversations, bridge) rely on.
 func TestUsesServiceAccountCatalog(t *testing.T) {
 	tests := []struct {
 		name           string

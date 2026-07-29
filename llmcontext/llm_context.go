@@ -26,10 +26,7 @@ type ToolProvider interface {
 // MCPToolProvider provides MCP tools for a user or for a service-account agent
 type MCPToolProvider interface {
 	GetToolsForUser(ctx stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors)
-	// GetToolsForServiceAccount returns the catalog for a service-account-
-	// flagged agent acting as botUserID: remote servers with service account
-	// headers only (fail closed), embedded/plugin servers as the bot user, and
-	// errors that never contain ToolAuthErrors.
+	// GetToolsForServiceAccount returns the catalog for a service-account agent acting as botUserID.
 	GetToolsForServiceAccount(ctx stdcontext.Context, botUserID string) ([]llm.Tool, *mcp.Errors)
 }
 
@@ -218,19 +215,13 @@ func sanitizeUserProfileField(s string) string {
 
 // WithLLMContextSessionID removed: embedded MCP manages its own session lifecycle
 
-// isRemoteMCPLicensed reports whether the licensed remote-MCP feature is
-// available; a nil license checker means licensing is not enforced.
+// isRemoteMCPLicensed reports whether the licensed remote-MCP feature is available.
 func (b *Builder) isRemoteMCPLicensed() bool {
 	return b.licenseChecker == nil || b.licenseChecker.IsBasicsLicensed()
 }
 
-// UsesServiceAccountCatalog reports whether tool catalogs for this bot must be
-// built in service-account mode: the agent is SA-flagged AND remote MCP is
-// licensed. Service Account authentication inherits the remote-MCP enterprise
-// gate; on an unlicensed server SA mode is fully off and the agent behaves
-// exactly like a normal agent (per-user OAuth catalog, embedded tools as the
-// requesting user). This is the single selection rule for every catalog
-// construction site, interactive and bridge alike.
+// UsesServiceAccountCatalog reports whether tool catalogs for this bot are built in
+// service-account mode; on an unlicensed server SA agents behave like normal agents.
 func (b *Builder) UsesServiceAccountCatalog(bot *bots.Bot) bool {
 	return bot != nil && bot.GetConfig().UseServiceAccountAuth && b.isRemoteMCPLicensed()
 }
@@ -243,15 +234,13 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		return llm.NewNoTools()
 	}
 
-	// useServiceAccount implies remoteMCPLicensed (both derive from
-	// isRemoteMCPLicensed), so the remote-tool license drop below is
-	// structurally a no-op for service account catalogs.
+	// useServiceAccount implies remoteMCPLicensed, so the license filter below
+	// never strips service account catalogs.
 	remoteMCPLicensed := b.isRemoteMCPLicensed()
 	useServiceAccount := b.UsesServiceAccountCatalog(bot)
 
-	// Service account catalogs are derived from the agent's bot identity rather
-	// than the requesting user, so an empty userID is only unexpected in user
-	// mode. Bridge discovery may legitimately omit user_id for SA agents.
+	// SA catalogs derive from the bot identity; bridge discovery may legitimately
+	// omit user_id for SA agents.
 	if userID == "" && !useServiceAccount {
 		b.pluginAPI.Log.Error("Unexpected empty userID when getting tool store for user")
 		return llm.NewNoTools()
@@ -280,8 +269,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 			return store
 		}
 
-		// Get tools from all connected servers, acting either as the requesting
-		// user or as the agent's bot in service account mode.
+		// Get tools from all connected servers
 		if useServiceAccount {
 			c.ToolAuthMode = llm.ToolAuthModeServiceAccount
 			botUserID := bot.BotUserID()

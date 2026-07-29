@@ -197,8 +197,6 @@ func newTestPluginAPIForEmbeddedManager(userID, sessionID string) *pluginapi.Cli
 	return newTestPluginAPIForEmbeddedUser(&model.User{Id: userID, Roles: "system_user"}, sessionID)
 }
 
-// newTestPluginAPIForEmbeddedUser lets callers control the acting user, e.g. a
-// bot user for service-account mode.
 func newTestPluginAPIForEmbeddedUser(user *model.User, sessionID string) *pluginapi.Client {
 	fakeAPI := &fixedPluginAPI{
 		kvGet: func(key string) ([]byte, *model.AppError) {
@@ -532,9 +530,7 @@ func TestRemoteConnectionHeaders(t *testing.T) {
 			expectedHeaders: map[string]string{MMUserIDHeader: "bot-1"},
 		},
 		{
-			// A blank header name makes Go's HTTP transport reject the whole
-			// request ("invalid header field name"), so an empty console row
-			// must never reach the wire.
+			// A blank header name must never reach the wire: net/http rejects the whole request.
 			name:            "service account mode drops a blank header name",
 			userID:          "bot-1",
 			serverConfig:    ServerConfig{Name: "srv", ServiceAccountHeaders: map[string]string{"": "Bearer pat"}},

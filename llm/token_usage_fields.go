@@ -32,8 +32,7 @@ const (
 	OperationBridgeService            = "bridge_service"
 )
 
-// tool_auth_mode identifies which identity/auth mode the request's tool
-// catalog was built with.
+// tool_auth_mode identifies which auth mode the request's tool catalog was built with.
 const (
 	ToolAuthModeUser           = "user"
 	ToolAuthModeServiceAccount = "service_account"

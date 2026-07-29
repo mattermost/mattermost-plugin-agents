@@ -44,14 +44,8 @@ type Context struct {
 	BotServiceType     string
 	CustomInstructions string
 
-	// ToolAuthMode records the identity mode the tool catalog for this request
-	// was built with: empty/ToolAuthModeUser (per-user OAuth + requesting-user
-	// sessions) or ToolAuthModeServiceAccount (admin service-account headers +
-	// bot-user sessions). Set during catalog construction; consumed by token
-	// usage attribution. ToolAuthModeServiceAccount is recorded iff
-	// service-account catalog construction was attempted: an SA agent with
-	// tools disabled keeps the user-mode default, while the fail-closed
-	// no-bot-user case is still attributed as service account.
+	// ToolAuthMode records the identity mode the tool catalog was built with
+	// (ToolAuthModeUser or ToolAuthModeServiceAccount); consumed by token usage attribution.
 	ToolAuthMode string
 
 	Tools             *ToolStore

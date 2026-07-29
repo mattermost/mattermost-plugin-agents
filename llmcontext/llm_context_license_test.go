@@ -146,11 +146,7 @@ func TestUnlicensedBuilderDropsRemoteMCPToolsFromDynamicRegistry(t *testing.T) {
 	}
 }
 
-// TestServiceAccountModeFullyOffWhenUnlicensed pins the settled licensing
-// decision: Service Account authentication inherits the remote-MCP enterprise
-// gate, so on an unlicensed server an SA-flagged agent behaves exactly like a
-// normal agent — per-user catalog (embedded tools as the requesting user),
-// remote tools dropped, and no service account attribution.
+// SA auth inherits the remote-MCP enterprise gate: unlicensed SA-flagged agents behave like normal agents.
 func TestServiceAccountModeFullyOffWhenUnlicensed(t *testing.T) {
 	provider := &staticMCPToolProvider{
 		tools: []llm.Tool{

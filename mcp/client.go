@@ -67,10 +67,7 @@ type Client struct {
 	toolsCache     *ToolsCache
 	embeddedClient *EmbeddedServerClient // for reconnection (nil for remote servers)
 	sessionID      string                // session ID for embedded server reconnection
-	// serviceAccount marks a connection authenticated with the server's static
-	// ServiceAccountHeaders instead of per-user OAuth. userID is then the acting
-	// bot's user ID, and oauthManager is always nil.
-	serviceAccount bool
+	serviceAccount bool                  // auth via static ServiceAccountHeaders; userID is the bot user, oauthManager nil
 }
 
 // clientParams bundles the dependencies for a remote MCP client connection.
@@ -94,16 +91,14 @@ func staticOAuthCreds(s ServerConfig) *StaticOAuthCredentials {
 	}
 }
 
-// sharedToolsCacheAllowedForServer reports whether user-mode connections to this
-// server may read/write the shared tools cache. Static OAuth credentials mean
-// the catalog can be user-specific, so it must not be shared.
+// sharedToolsCacheAllowedForServer reports whether user-mode connections may use the
+// shared tools cache; static OAuth credentials make the catalog user-specific.
 func sharedToolsCacheAllowedForServer(serverConfig ServerConfig) bool {
 	return staticOAuthCreds(serverConfig) == nil
 }
 
-// serviceAccountToolsCacheID namespaces service-account-discovered tool lists
-// away from the user-mode entry (keyed by the bare server name). The catalogs
-// can legitimately differ because the server sees different credentials.
+// serviceAccountToolsCacheID namespaces service-account tool lists away from the
+// user-mode cache entry (keyed by the bare server name).
 func serviceAccountToolsCacheID(serverName string) string {
 	return "sa:" + serverName
 }
@@ -115,12 +110,8 @@ func (c *Client) toolsCacheServerID() string {
 	return c.config.Name
 }
 
-// useSharedToolsCache reports whether this client may read/write the shared
-// tools cache. Service-account connections always may: their credentials are
-// static and identical for every SA connection to the server, so the SA-scoped
-// entry stays valid even when the server also has static OAuth credentials
-// configured. The static-credential guard exists to avoid caching user-specific
-// OAuth catalogs, which cannot happen in SA mode.
+// useSharedToolsCache reports whether this client may read/write the shared tools
+// cache. Service-account credentials are identical for every connection, so SA mode always may.
 func (c *Client) useSharedToolsCache() bool {
 	if c.serviceAccount {
 		return true
@@ -128,12 +119,8 @@ func (c *Client) useSharedToolsCache() bool {
 	return sharedToolsCacheAllowedForServer(c.config)
 }
 
-// remoteConnectionHeaders builds the static headers for a remote MCP
-// connection. Later layers win on key conflicts:
-// X-Mattermost-UserID < admin Headers < ServiceAccountHeaders.
-// Admin Headers apply in both modes; ServiceAccountHeaders only in SA mode,
-// where userID is the acting bot's user ID. Only the effective service account
-// headers are sent, so a blank console row cannot poison the request.
+// remoteConnectionHeaders builds the static headers for a remote MCP connection.
+// Later layers win on key conflicts: X-Mattermost-UserID < admin Headers < ServiceAccountHeaders.
 func remoteConnectionHeaders(userID string, serverConfig ServerConfig, serviceAccount bool) map[string]string {
 	headers := make(map[string]string)
 	headers[MMUserIDHeader] = userID
@@ -294,8 +281,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	return client, nil
 }
 
-// NewClient creates a user-OAuth-mode MCP client for the given server and user and connects to the
-// specified MCP server.
+// NewClient creates a user-OAuth-mode MCP client for the given server and user and connects to it.
 // forceRefresh bypasses the shared tools cache read. Its sole purpose is to close the race where a concurrent
 // lookup repopulates the cache between a manual refresh's invalidation and this reconnect; a plain
 // post-invalidation rediscovery would otherwise cache-miss on its own.
@@ -309,9 +295,8 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	})
 }
 
-// newClient connects to a remote MCP server in either auth mode. In
-// service-account mode p.oauthManager must be nil so no OAuth token loading,
-// OAuthNeededError, or oauth-needed state can occur.
+// newClient connects to a remote MCP server in either auth mode. In service-account
+// mode p.oauthManager must be nil so no OAuth flow can occur.
 func newClient(ctx context.Context, userID string, serverConfig ServerConfig, p clientParams) (*Client, error) {
 	c := &Client{
 		session:        nil,
@@ -502,10 +487,7 @@ func (c *Client) oauthNeededError(err error) error {
 		return nil
 	}
 
-	// Service account mode has no per-user OAuth, so it must never classify a
-	// failure as OAuth-needed. Refusing here covers every caller (connect, tool
-	// discovery, reconnect, tool-call state) and keeps an upstream error that
-	// happens to contain the string form below from leaking an OAuth prompt.
+	// Service-account mode has no per-user OAuth; never classify a failure as OAuth-needed.
 	if c.serviceAccount {
 		return nil
 	}

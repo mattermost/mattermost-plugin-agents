@@ -32,9 +32,7 @@ export interface LLMBot {
     enabledMCPTools: EnabledMCPTool[] | null;
     autoEnableNewMCPTools: boolean;
 
-    // useServiceAccountAuth mirrors llm.BotConfig.UseServiceAccountAuth via
-    // GET /ai_bots (AIBotInfo). Optional so the UI degrades to the normal
-    // (non-SA) UX if the server predates the field.
+    // Optional so the UI degrades to the non-SA UX when the server predates the field.
     useServiceAccountAuth?: boolean;
 
     // isDefault marks the system-wide default agent. Optional: older servers

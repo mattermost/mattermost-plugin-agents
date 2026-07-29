@@ -56,11 +56,7 @@ type MCPServerConfig struct {
 	Headers map[string]string `json:"headers,omitempty"`
 
 	// ServiceAccountHeaders are static headers (e.g. a PAT Authorization header)
-	// used in place of per-user OAuth when the calling agent has Service Account
-	// authentication enabled (BotConfig.UseServiceAccountAuth). Unlike Headers —
-	// which apply to every connection in both modes — these are sent only on
-	// SA-mode connections. A server with no (non-blank) entries here is excluded
-	// from SA-flagged agents' catalogs entirely (fail closed).
+	// sent in place of per-user OAuth on service-account-mode connections.
 	ServiceAccountHeaders map[string]string `json:"serviceAccountHeaders,omitempty"`
 
 	ClientID     string          `json:"clientID,omitempty"`
@@ -112,13 +108,9 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	return IsToolPolicyAutoRunInDM(policy) && enabled
 }
 
-// EffectiveServiceAccountHeaders returns the ServiceAccountHeaders entries that
-// are actually usable as HTTP headers: those with a non-blank name and a
-// non-blank value. Blank entries (e.g. an empty row saved from the System
-// Console) are dropped — transmitting one makes Go's HTTP transport reject the
-// whole request with "invalid header field name". Returns nil when the server
-// has no usable Service Account credential. This is the single source of truth
-// for which headers an SA connection sends and for HasServiceAccountAuth.
+// EffectiveServiceAccountHeaders returns the ServiceAccountHeaders entries with a
+// non-blank name and value; blank System Console rows would make Go's HTTP
+// transport reject the whole request.
 func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
 	if s == nil {
 		return nil
@@ -137,12 +129,8 @@ func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
 	return headers
 }
 
-// HasServiceAccountAuth reports whether this server has Service Account
-// authentication configured, i.e. at least one usable header. An SA-flagged
-// agent therefore never connects to a server that would effectively send no
-// service credential (fail closed). Enabled is intentionally ignored:
-// enablement is filtered where catalogs are built, this predicate answers only
-// "is SA auth configured".
+// HasServiceAccountAuth reports whether this server has at least one usable
+// service account header. Enabled is intentionally ignored.
 func (s *MCPServerConfig) HasServiceAccountAuth() bool {
 	return len(s.EffectiveServiceAccountHeaders()) > 0
 }

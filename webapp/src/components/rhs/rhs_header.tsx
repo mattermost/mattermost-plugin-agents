@@ -65,8 +65,7 @@ const RHSHeader = (props: Props) => {
                 )}
                 {props.currentTab === 'new' ? (
                     <>
-                        {/* A service account agent has no per-user OAuth connections or
-                            per-user server preferences, which is all the popover controls. */}
+                        {/* SA agents have no per-user connections or preferences to manage. */}
                         {props.activeBot?.useServiceAccountAuth !== true && (
                             <ToolProviderPopover
                                 disabledServers={props.disabledServers}

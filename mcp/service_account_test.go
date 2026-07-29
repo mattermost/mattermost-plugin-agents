@@ -27,9 +27,7 @@ const (
 	testSAHeaderValue = "service-account-pat"
 	testAdminHeader   = "X-Admin"
 
-	// testOAuthNeededErrorPrefix is the string form Client.oauthNeededError
-	// pattern-matches on because the MCP SDK drops error chains. Any upstream
-	// server is free to word its own errors this way.
+	// The string form Client.oauthNeededError pattern-matches on (the MCP SDK drops error chains).
 	testOAuthNeededErrorPrefix = "OAuth authentication needed for resource at "
 	testOAuthShapedFailure     = testOAuthNeededErrorPrefix + "https://upstream.example.com/.well-known/oauth-protected-resource"
 	testOAuthCallbackURL       = "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback"
@@ -39,8 +37,7 @@ func testServiceAccountHeaders() map[string]string {
 	return map[string]string{testSAHeaderName: testSAHeaderValue}
 }
 
-// requestHeaderRecorder captures the headers of every request reaching a test
-// MCP server so tests can assert what credentials were actually sent.
+// requestHeaderRecorder captures the headers of every request reaching a test MCP server.
 type requestHeaderRecorder struct {
 	mu      sync.Mutex
 	headers []http.Header
@@ -73,8 +70,7 @@ func startRecordingStreamableMCPServer(t *testing.T, server *gomcp.Server) (*htt
 	return httpServer, recorder
 }
 
-// deadServerURL returns a local URL that is guaranteed to refuse connections,
-// so a test can prove a server was (or was not) dialed.
+// deadServerURL returns a local URL guaranteed to refuse connections.
 func deadServerURL(t *testing.T) string {
 	t.Helper()
 
@@ -89,9 +85,7 @@ func newServiceAccountTestClients(t *testing.T, botUserID string, httpClient *ht
 	return NewServiceAccountClients(botUserID, newTestLogService(), httpClient, newTestToolsCache())
 }
 
-// kvWriteRecorder records the keys an OAuthManager persists while delegating
-// every other call to a working test client, so OAuth-mode connections can still
-// look up (absent) tokens.
+// kvWriteRecorder records KV keys written by an OAuthManager while delegating everything else.
 type kvWriteRecorder struct {
 	mmapi.Client
 	mu   sync.Mutex
@@ -111,16 +105,12 @@ func (r *kvWriteRecorder) writtenKeys() []string {
 	return append([]string(nil), r.keys...)
 }
 
-// newRecordingOAuthManager returns an OAuth manager whose KV writes land in the
-// returned recorder, so tests can assert whether oauth-needed state was
-// persisted.
 func newRecordingOAuthManager() (*OAuthManager, *kvWriteRecorder) {
 	recorder := &kvWriteRecorder{Client: mmapi.NewClient(newTestPluginAPIWithSession(""))}
 	return NewOAuthManager(recorder, testOAuthCallbackURL, http.DefaultClient, nil), recorder
 }
 
-// startOAuthShapedDiscoveryFailureMCPServer serves an MCP server that fails tool
-// discovery with an error whose text contains testOAuthNeededErrorPrefix.
+// startOAuthShapedDiscoveryFailureMCPServer fails tool discovery with testOAuthNeededErrorPrefix text.
 func startOAuthShapedDiscoveryFailureMCPServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
@@ -136,9 +126,7 @@ func startOAuthShapedDiscoveryFailureMCPServer(t *testing.T) *httptest.Server {
 	return startStreamableMCPServer(t, server)
 }
 
-// startOAuthShapedToolFailureMCPServer serves an MCP server whose tool discovery
-// succeeds but whose only tool fails with an error whose text contains
-// testOAuthNeededErrorPrefix.
+// startOAuthShapedToolFailureMCPServer discovers fine but its only tool fails with testOAuthNeededErrorPrefix text.
 func startOAuthShapedToolFailureMCPServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
@@ -185,10 +173,7 @@ func TestNewClientServiceAccountSendsStaticHeaders(t *testing.T) {
 	}
 }
 
-// A blank ServiceAccountHeaders row — what an empty System Console entry saves —
-// must never reach the transport: net/http rejects the whole request with
-// "invalid header field name", which would break every SA connection to the
-// server rather than just skipping the useless row.
+// A blank header row must never reach the transport: net/http rejects the whole request.
 func TestNewClientServiceAccountIgnoresBlankConfiguredHeaders(t *testing.T) {
 	server := newTestMCPServer(0, "sa_tool")
 	httpServer, recorder := startRecordingStreamableMCPServer(t, server)
@@ -287,8 +272,6 @@ func TestServiceAccountConnectToRemoteServersFailClosed(t *testing.T) {
 		Enabled:               true,
 		ServiceAccountHeaders: testServiceAccountHeaders(),
 	}
-	// Both entries below point at a URL that refuses connections, so any dial
-	// attempt shows up as a connect error.
 	withoutSA := ServerConfig{Name: "no-sa-server", BaseURL: deadURL, Enabled: true}
 	saConfiguredDead := ServerConfig{
 		Name:                  "sa-dead-server",
@@ -357,10 +340,7 @@ func TestServiceAccountConnectToRemoteServersFailClosed(t *testing.T) {
 	}
 }
 
-// Connect failures must never be classified as OAuth-needed in service account
-// mode, even when the upstream error text happens to contain the string form
-// Client.oauthNeededError matches on: an OAuthNeededError there would surface an
-// empty "connect your account" prompt for an agent that has no per-user OAuth.
+// SA connect failures must stay generic even when the error text matches Client.oauthNeededError.
 func TestServiceAccountConnectNeverSurfacesOAuthPrompt(t *testing.T) {
 	testCases := []struct {
 		name                string
@@ -412,9 +392,6 @@ func TestServiceAccountConnectNeverSurfacesOAuthPrompt(t *testing.T) {
 	}
 }
 
-// OAuth-needed KV state (mcp_oauth_needed_v1_<userID>_<serverID>) is what API
-// layers read to render "connect your account", so a service account tool-call
-// failure must never write it — not even one shaped like an OAuth failure.
 func TestServiceAccountToolCallNeverWritesOAuthNeededState(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -428,8 +405,7 @@ func TestServiceAccountToolCallNeverWritesOAuthNeededState(t *testing.T) {
 			},
 		},
 		{
-			// Defense in depth: an SA bag has no OAuth manager today, so this row
-			// pins the Client.oauthNeededError guard itself rather than the nil.
+			// SA bags never have an OAuth manager in production; this pins the guard, not the nil.
 			name: "service account bag with an OAuth manager still writes nothing",
 			newBag: func(t *testing.T, httpServer *httptest.Server, oauthManager *OAuthManager) *UserClients {
 				bag := newServiceAccountTestClients(t, "bot-1", httpServer.Client())
@@ -557,9 +533,7 @@ func TestServiceAccountUsesSharedCacheDespiteStaticOAuthCreds(t *testing.T) {
 	httpServer := startStreamableMCPServer(t, server)
 	cache := newTestToolsCache()
 
-	// Static OAuth credentials disable the shared cache in user mode; service
-	// account credentials are identical for every connection, so the
-	// SA-namespaced entry stays valid.
+	// Static OAuth creds disable the shared cache in user mode, but SA creds are identical per connection.
 	serverConfig := ServerConfig{
 		Name:                  "sa-server",
 		BaseURL:               httpServer.URL,
@@ -589,8 +563,7 @@ func TestServiceAccountUsesSharedCacheDespiteStaticOAuthCreds(t *testing.T) {
 	require.ElementsMatch(t, []string{"sa_tool"}, cachedToolNames(second.Tools()))
 }
 
-// A bridge caller may pass a bot user ID to GetToolsForUser for a non-SA agent,
-// so the two auth modes must pool separately for the same identity.
+// The two auth modes must pool separately even for the same user ID.
 func TestClientManagerModeIsolationPooling(t *testing.T) {
 	pluginAPI := newTestPluginAPIForEmbeddedManager("bot-1", "session-1")
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, http.DefaultClient, nil)

@@ -137,8 +137,7 @@ describe('MCPServers service account headers', () => {
         mockUseIsBasicsLicensed.mockReturnValue(true);
     });
 
-    // The two header maps are rendered by the same editor, so rows appear in DOM
-    // order: base Headers first, then Service Account headers.
+    // Rows render in DOM order: base Headers first, then Service Account headers.
     const baseHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[0];
     const serviceAccountHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[1];
 
@@ -173,8 +172,7 @@ describe('MCPServers service account headers', () => {
         }));
     });
 
-    // Regression: the server card rebuilds the config field by field, so any
-    // unrelated edit used to drop serviceAccountHeaders from the saved document.
+    // Regression: the field-by-field config rebuild used to drop serviceAccountHeaders.
     test('editing an unrelated field preserves serviceAccountHeaders', async () => {
         const {onChange} = await renderOneServer(makeRemoteServer({
             serviceAccountHeaders: {Authorization: 'Bearer pat'},

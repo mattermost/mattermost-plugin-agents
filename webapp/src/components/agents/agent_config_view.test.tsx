@@ -519,8 +519,7 @@ describe('AgentConfigView', () => {
         }));
     });
 
-    // PUT /agents/:id replaces the whole document, so an update payload that
-    // dropped the flag would silently turn service account auth back off.
+    // Update is a full-replace PUT; a payload dropping the flag would silently disable SA auth.
     test('edit mode hydrates useServiceAccountAuth and the update payload preserves it', async () => {
         mockUpdateAgent.mockResolvedValue({...savedAgent, useServiceAccountAuth: true});
         const agent: UserAgent = {

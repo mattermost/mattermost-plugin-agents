@@ -47,8 +47,6 @@ func (p *countingMCPToolProvider) Calls() int {
 	return int(atomic.LoadInt32(&p.calls))
 }
 
-// SAIdentities returns the bot user IDs the service account catalog was built
-// for, in call order.
 func (p *countingMCPToolProvider) SAIdentities() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()

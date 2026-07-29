@@ -35,10 +35,7 @@ export type MCPServerConfig = {
     baseURL: string;
     headers: {[key: string]: string};
 
-    // Static headers sent instead of per-user OAuth for agents with
-    // useServiceAccountAuth enabled. Optional: the backend tag is
-    // `json:"serviceAccountHeaders,omitempty"`, so servers saved before this
-    // feature (or with no entries) omit the key entirely.
+    // Optional: the backend tag has omitempty, so pre-feature servers omit the key entirely.
     serviceAccountHeaders?: {[key: string]: string};
     tool_configs?: MCPToolConfig[];
     clientID?: string;
@@ -82,9 +79,7 @@ const defaultServerConfig: MCPServerConfig = {
     clientSecret: '',
 };
 
-// Shared key/value editor for the two header maps on a server (base Headers
-// and Service Account headers). Behavior is identical for both: renaming a key
-// deletes the old entry, blank rows are legal (the backend ignores them).
+// Renaming a key deletes the old entry; blank rows are legal (the backend ignores them).
 const HeaderMapEditor = ({
     headers,
     onChange,

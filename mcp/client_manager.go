@@ -27,10 +27,8 @@ func cacheableContext(ctx context.Context) context.Context {
 	return context.WithoutCancel(ctx)
 }
 
-// clientKey identifies one pooled client bag. serviceAccount must be part of
-// the key: a bridge caller can create a user-OAuth bag for a bot user ID
-// (non-SA agents accept bot user_ids), which must never collide with a
-// service-account bag for the same bot.
+// clientKey identifies one pooled client bag. serviceAccount is part of the key so a
+// user-OAuth bag for a bot user ID never collides with that bot's service-account bag.
 type clientKey struct {
 	userID         string
 	serviceAccount bool
@@ -100,8 +98,7 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 	}
 }
 
-// closeIdleClients closes and removes client bags (both auth modes) whose last
-// activity is older than clientTimeout.
+// closeIdleClients closes and removes client bags idle longer than clientTimeout.
 func (m *ClientManager) closeIdleClients(now time.Time) {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
@@ -236,12 +233,8 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	return m.getToolsForKey(ctx, clientKey{userID: userID})
 }
 
-// GetToolsForServiceAccount returns the tools available to a service-account-
-// flagged agent acting as botUserID. Remote servers connect with their
-// configured ServiceAccountHeaders; servers without ServiceAccountHeaders are
-// excluded entirely (fail closed). Embedded and plugin servers connect as the
-// bot user. The returned Errors never contains ToolAuthErrors: SA mode has no
-// per-user OAuth and never prompts to connect an account.
+// GetToolsForServiceAccount returns the tools for a service-account agent acting as
+// botUserID. Servers without service account headers are excluded (fail closed).
 func (m *ClientManager) GetToolsForServiceAccount(ctx context.Context, botUserID string) ([]llm.Tool, *Errors) {
 	return m.getToolsForKey(ctx, clientKey{userID: botUserID, serviceAccount: true})
 }
@@ -319,9 +312,7 @@ func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
 		if sharedToolsCacheAllowedForServer(serverConfig) {
 			invalidate(serverConfig.Name)
 		}
-		// Service-account entries are always shared-cached, including for
-		// servers with static OAuth credentials, so they are invalidated
-		// regardless of the user-mode guard above.
+		// Service-account entries are always shared-cached, even for static-OAuth servers.
 		if serverConfig.HasServiceAccountAuth() {
 			invalidate(serviceAccountToolsCacheID(serverConfig.Name))
 		}
@@ -408,10 +399,7 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 	return out
 }
 
-// InvalidateUserClients closes and removes cached MCP clients for a user, in
-// both auth modes. Every call site means "drop any cached connections for this
-// identity"; dropping a service-account bag on an OAuth event costs one
-// reconnect and is always safe.
+// InvalidateUserClients closes and removes cached MCP clients for a user, in both auth modes.
 func (m *ClientManager) InvalidateUserClients(userID string) {
 	if userID == "" {
 		return

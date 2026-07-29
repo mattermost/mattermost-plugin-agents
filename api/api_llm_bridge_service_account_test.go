@@ -20,19 +20,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Bridge tests for service-account agents. Catalog selection itself lives in
-// llmcontext (getToolsStoreForUser); these tests pin the behavior the bridge
-// endpoints expose: the SA catalog is used regardless of user_id, fail-closed
-// exclusions are unreachable from allowed_tools, discovery mirrors execution,
-// tool_hooks are rejected, and bridge contexts carry bot identity.
-
 const (
-	// A second bot's user ID, used as a caller-asserted user_id on a normal
-	// agent (bridge callers may legitimately act on behalf of a bot).
 	testSecondBotUserID = "botb12345678901234567890ab"
 
-	// Tools that exist only in one of the two catalogs, so a test can only
-	// pass when the expected catalog is the one in effect.
+	// Each tool exists in only one catalog, so tests fail if the wrong catalog is in effect.
 	saToolName       = "mattermost__sa_tool"
 	userToolName     = "mattermost__user_tool"
 	excludedToolName = "remote__excluded_tool"
@@ -40,9 +31,7 @@ const (
 	excludedServerOrigin = "https://excluded.example.com"
 )
 
-// setupBridgeCatalogBot registers the single bridge test bot, optionally
-// service-account flagged. AutoEnableNewMCPTools keeps every catalog tool in
-// the store so allowed_tools resolution is the only filter under test.
+// AutoEnableNewMCPTools keeps every catalog tool in the store so allowed_tools is the only filter.
 func (e *TestEnvironment) setupBridgeCatalogBot(useServiceAccountAuth bool) {
 	e.setupTestBot(llm.BotConfig{
 		Name:                  "testbot",
@@ -59,9 +48,6 @@ func (e *TestEnvironment) setBridgeFakeLLM(fakeLLM *FakeLLM) {
 	}
 }
 
-// TestBridgeAgentCompletionCatalogSelection pins which catalog a bridge agent
-// completion builds: the agent's service-account catalog for effectively-SA
-// agents (independent of user_id), the requesting user's catalog otherwise.
 func TestBridgeAgentCompletionCatalogSelection(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -148,10 +134,7 @@ func TestBridgeAgentCompletionCatalogSelection(t *testing.T) {
 	}
 }
 
-// TestBridgeSAAgentCompletionWithAndWithoutSAServers covers a service-account
-// agent whose configured servers do and do not supply service-account
-// credentials. With none, the catalog is empty and the request fails closed —
-// it never falls back to the requesting user's catalog.
+// With no SA-credentialed servers the catalog is empty; it never falls back to the user's catalog.
 func TestBridgeSAAgentCompletionWithAndWithoutSAServers(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -188,8 +171,7 @@ func TestBridgeSAAgentCompletionWithAndWithoutSAServers(t *testing.T) {
 				saTools = []llm.Tool{bridgeMCPToolRecording("mattermost", "sa_tool", embeddedOrigin, &saResolverCalls)}
 			}
 
-			// A non-empty user catalog proves the fail-closed case does not
-			// fall back to per-user OAuth tools.
+			// Non-empty user catalog proves fail-closed does not fall back to it.
 			provider := e.setupBridgeMCPProviderSA(
 				[]llm.Tool{bridgeMCPTool("mattermost", "user_tool", embeddedOrigin)},
 				saTools,
@@ -238,9 +220,6 @@ func TestBridgeSAAgentCompletionWithAndWithoutSAServers(t *testing.T) {
 	}
 }
 
-// TestBridgeSAAllowlistReferencingExcludedServerNeverExecutes pins that a tool
-// from a server excluded from the service-account catalog (no SA credentials
-// configured) cannot be reached through allowed_tools, by either name form.
 func TestBridgeSAAllowlistReferencingExcludedServerNeverExecutes(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -296,9 +275,6 @@ func TestBridgeSAAllowlistReferencingExcludedServerNeverExecutes(t *testing.T) {
 	}
 }
 
-// TestBridgeGetAgentToolsServiceAccountMirrorsExecution pins that bridge
-// discovery resolves the same catalog as execution, including for
-// service-account agents called without user_id.
 func TestBridgeGetAgentToolsServiceAccountMirrorsExecution(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -401,9 +377,6 @@ func TestBridgeGetAgentToolsServiceAccountMirrorsExecution(t *testing.T) {
 	})
 }
 
-// TestPrepareAgentBridgeCompletionToolHooksRejectedForServiceAccountAgents pins
-// that tool_hooks is rejected for effectively-SA agents before any hook key is
-// issued, and that an unlicensed SA-flagged agent keeps working hooks.
 func TestPrepareAgentBridgeCompletionToolHooksRejectedForServiceAccountAgents(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -418,8 +391,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRejectedForServiceAccountAgents(t 
 		e.setupBridgeMCPProviderSA(nil, []llm.Tool{bridgeMCPTool("mattermost", bare, embeddedOrigin)})
 		e.setupBridgeCatalogBot(true)
 
-		// No KVSetWithOptions expectation is registered: plugintest.API fails
-		// the test if a before-hook key write is attempted.
+		// No KVSetWithOptions expectation: plugintest.API fails the test if a hook key write is attempted.
 		_, _, _, _, beforeHookKeys, statusCode, err := e.api.prepareAgentBridgeCompletion(
 			context.Background(),
 			testBotUserID,
@@ -498,9 +470,6 @@ func TestPrepareAgentBridgeCompletionToolHooksRejectedForServiceAccountAgents(t 
 	})
 }
 
-// TestBridgeAgentCompletionContextCarriesBotIdentity pins that bridge agent
-// completions hand the LLM a context with the agent's bot identity, so token
-// usage attribution resolves the acting identity instead of "unknown".
 func TestBridgeAgentCompletionContextCarriesBotIdentity(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

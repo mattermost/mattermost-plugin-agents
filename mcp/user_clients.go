@@ -42,9 +42,8 @@ type UserClients struct {
 	// user client is cached; otherwise callers only see those errors once (first
 	// GetToolsForUser) and lose stable auth-required state on subsequent requests.
 	initialRemoteConnectErrors *Errors
-	// serviceAccount marks a service-account bag: userID is the acting bot's
-	// user ID, oauthManager is nil, and remote servers without
-	// ServiceAccountHeaders are excluded from the bag entirely.
+	// serviceAccount marks a service-account bag: userID is the acting bot's user ID
+	// and oauthManager is nil.
 	serviceAccount bool
 }
 
@@ -64,9 +63,8 @@ func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuth
 	}
 }
 
-// NewServiceAccountClients creates a client bag for service-account mode acting
-// as botUserID. It has no OAuthManager: SA connections never load OAuth tokens,
-// never produce OAuthNeededError, and never write oauth-needed KV state.
+// NewServiceAccountClients creates a client bag for service-account mode acting as
+// botUserID; it has no OAuthManager, so no OAuth flow can occur.
 func NewServiceAccountClients(botUserID string, log pluginapi.LogService, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
 	userClients := NewUserClients(botUserID, log, nil, httpClient, toolsCache)
 	userClients.serviceAccount = true
@@ -89,9 +87,8 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 			continue
 		}
 
-		// Fail closed: a server with no service account credential is out of
-		// catalog for SA-flagged agents, never a fallback to user OAuth. It is
-		// not a failure, so it contributes nothing to the returned errors.
+		// Fail closed: no service account credential means the server is excluded,
+		// never a fallback to user OAuth.
 		if c.serviceAccount && !serverConfig.HasServiceAccountAuth() {
 			c.log.Debug("Skipping MCP server without service account headers in service account mode",
 				"userID", c.userID, "serverID", serverConfig.Name)

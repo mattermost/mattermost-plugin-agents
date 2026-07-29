@@ -1009,8 +1009,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			},
 		},
 		{
-			// The webapp reads useServiceAccountAuth to hide per-user MCP
-			// connect prompts and server preferences for these agents.
+			// The webapp reads useServiceAccountAuth to hide per-user MCP connect prompts.
 			name:                     "service account agent reports its auth mode",
 			searchService:            nil,
 			useServiceAccountAuth:    true,

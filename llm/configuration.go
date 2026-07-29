@@ -153,13 +153,9 @@ type BotConfig struct {
 	// It defaults to true for omitted legacy config.
 	MCPDynamicToolLoading bool `json:"mcpDynamicToolLoading"`
 
-	// UseServiceAccountAuth switches this agent to Service Account authentication
-	// for ALL MCP access (all-or-nothing): external MCP servers are reached with
-	// the admin-configured ServiceAccountHeaders from the server config (servers
-	// without SA headers are excluded from this agent's catalog — fail closed),
-	// and embedded/plugin MCP access acts as the agent's bot user instead of the
-	// requesting user. Per-user OAuth and per-user server preferences are
-	// bypassed entirely for this agent.
+	// UseServiceAccountAuth switches all MCP access for this agent to the service
+	// account identity (admin ServiceAccountHeaders for external servers, the bot
+	// user for embedded/plugin servers) instead of per-user OAuth.
 	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
 
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.

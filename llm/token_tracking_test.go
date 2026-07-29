@@ -426,9 +426,6 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 	}
 }
 
-// TestExtractTokenUsageDimensionsToolAuthMode pins the acting-identity
-// attribution: which identity external systems saw performing tool actions for
-// this request, and in which auth mode the catalog was built.
 func TestExtractTokenUsageDimensionsToolAuthMode(t *testing.T) {
 	tests := []struct {
 		name             string

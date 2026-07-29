@@ -35,8 +35,7 @@ jest.mock('../bot_selector', () => ({
     BotDropdown: () => <div data-testid='bot-dropdown'/>,
 }));
 
-// Cast instead of importing the access-level enums: their home module
-// (system_console/bot.tsx) drags the whole console import tree into the test.
+// Cast instead of importing the enums; system_console/bot.tsx drags in the whole console tree.
 const activeBot = {
     id: 'bot-id',
     displayName: 'Agents',
@@ -73,8 +72,6 @@ describe('RHSHeader', () => {
         expect(screen.getByRole('button', {name: 'Tools'})).not.toBeNull();
     });
 
-    // A service account agent has no per-user OAuth connections or per-user
-    // server preferences, which is all the Tools popover controls.
     test('hides the Tools popover when the active agent uses service account auth', () => {
         renderHeader({...activeBot, useServiceAccountAuth: true});
 

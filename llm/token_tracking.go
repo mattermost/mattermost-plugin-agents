@@ -236,9 +236,8 @@ func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername,
 			dimensions.userID = request.Context.RequestingUser.Id
 		}
 
-		// Acting identity: who external systems and audit logs see performing
-		// tool actions. User mode acts as the requesting user; service-account
-		// mode acts as the agent's bot user.
+		// The acting identity is the requesting user in user mode, the agent's
+		// bot user in service-account mode.
 		dimensions.actingUserID = dimensions.userID
 		if request.Context.ToolAuthMode == ToolAuthModeServiceAccount {
 			dimensions.toolAuthMode = ToolAuthModeServiceAccount

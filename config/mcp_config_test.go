@@ -114,11 +114,7 @@ func TestMCPServerConfigServiceAccountHeadersDecode(t *testing.T) {
 	}
 }
 
-// TestMCPServerConfigServiceAccountHeaderFiltering pins the one blank-filtering
-// rule shared by the accessor and the predicate: HasServiceAccountAuth is true
-// exactly when EffectiveServiceAccountHeaders is non-empty. Blank entries must
-// never be transmitted — Go's HTTP transport rejects a request carrying a blank
-// header name outright.
+// HasServiceAccountAuth must be true exactly when EffectiveServiceAccountHeaders is non-empty.
 func TestMCPServerConfigServiceAccountHeaderFiltering(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -205,9 +201,7 @@ func TestMCPServerConfigServiceAccountHeaderFiltering(t *testing.T) {
 	}
 }
 
-// TestConfigClonePreservesServiceAccountHeaders pins that the JSON-based deep copy
-// used by Config.Clone and Container.Update carries the field across (a broken tag
-// would silently drop service account credentials cluster-wide).
+// A broken JSON tag would make Config.Clone silently drop SA credentials cluster-wide.
 func TestConfigClonePreservesServiceAccountHeaders(t *testing.T) {
 	original := &Config{
 		MCP: MCPConfig{
@@ -223,8 +217,7 @@ func TestConfigClonePreservesServiceAccountHeaders(t *testing.T) {
 		},
 	}
 
-	// Config-wide equality is not asserted: the JSON deep copy normalizes nil
-	// json.RawMessage fields elsewhere in Config to "null".
+	// No Config-wide equality: the JSON deep copy normalizes nil json.RawMessage fields to "null".
 	clone := original.Clone()
 	require.Equal(t, original.MCP.Servers, clone.MCP.Servers)
 

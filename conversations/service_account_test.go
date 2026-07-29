@@ -29,9 +29,7 @@ const (
 	serviceAccountBotUserID    = "bot-user-id"
 )
 
-// serviceAccountTestBot returns an agent with the requested service account
-// flag and without dynamic MCP tool loading, so provided tools are immediately
-// visible and resolvable in the tool store.
+// serviceAccountTestBot returns an agent without dynamic MCP tool loading, so provided tools resolve immediately.
 func serviceAccountTestBot(useServiceAccount bool) *bots.Bot {
 	return bots.NewBot(
 		llm.BotConfig{
@@ -49,9 +47,7 @@ func serviceAccountTestBot(useServiceAccount bool) *bots.Bot {
 	)
 }
 
-// serviceAccountTestBuilder builds a context builder over the given MCP
-// provider whose license state controls whether service account mode is active
-// at all: Service Account authentication inherits the remote-MCP license gate.
+// serviceAccountTestBuilder's license state gates SA mode (it inherits the remote-MCP license gate).
 func serviceAccountTestBuilder(t *testing.T, licensed bool, provider llmcontext.MCPToolProvider) *llmcontext.Builder {
 	t.Helper()
 
@@ -76,9 +72,6 @@ func serviceAccountTestBuilder(t *testing.T, licensed bool, provider llmcontext.
 	)
 }
 
-// TestBuildConversationContextSkipsUserPrefsForServiceAccountAgents pins that
-// per-user MCP server preferences — a per-user-auth concept — are not consulted
-// for service account agents, which serve one shared catalog to every user.
 func TestBuildConversationContextSkipsUserPrefsForServiceAccountAgents(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -159,10 +152,7 @@ func TestBuildConversationContextSkipsUserPrefsForServiceAccountAgents(t *testin
 	}
 }
 
-// TestHandleToolCallExecutesFromServiceAccountCatalog pins the approval-resume
-// contract for service account agents: the human initiator stays the only
-// approver, while execution resolves against the re-derived service account
-// catalog. A tool that is no longer in that catalog fails closed.
+// The human initiator approves, but execution resolves against the re-derived SA catalog.
 func TestHandleToolCallExecutesFromServiceAccountCatalog(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -205,8 +195,7 @@ func TestHandleToolCallExecutesFromServiceAccountCatalog(t *testing.T) {
 				return "mcp:sa_jira__get_issue", nil
 			}
 			provider := &countingMCPToolProvider{
-				// The user-mode catalog holds a different Jira tool, so the
-				// fail-closed case cannot pass by resolving the wrong catalog.
+				// A different Jira tool, so fail-closed cannot pass by resolving the wrong catalog.
 				tools:   []llm.Tool{channelFollowUpTestMCPTool("jira__get_issue", serviceAccountRemoteOrigin, "user OAuth Jira")},
 				saTools: []llm.Tool{saTool},
 			}
@@ -283,8 +272,6 @@ func TestHandleToolCallExecutesFromServiceAccountCatalog(t *testing.T) {
 	}
 }
 
-// serviceAccountConversations wires a Conversations service for a licensed
-// service-account-flagged agent over the given MCP provider.
 func serviceAccountConversations(t *testing.T, convStore *loadedStateFlowStore, provider llmcontext.MCPToolProvider) *Conversations {
 	t.Helper()
 
