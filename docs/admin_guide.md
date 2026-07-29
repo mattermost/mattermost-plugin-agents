@@ -546,6 +546,8 @@ The Model Context Protocol (MCP) integration lets Agents use tools exposed by MC
 
 The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers and connection timeout from the MCP UI in the System Console. The **Tools** tab also shows plugin-registered MCP servers, where admins can enable or disable each plugin server and set per-tool enabled state and approval policies. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
 
+Remote and external MCP servers require a license (see [license requirements](#license-requirements)). Without one, the remote server configuration UI is not shown and tools from remote servers are not made available to agents; the embedded Mattermost MCP tools remain available on all plans.
+
 ### Configuration
 
 1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**.
@@ -804,11 +806,11 @@ The following table outlines which features require a license:
 | Basic agent configuration (single agent) | No license required |
 | Chat with agents in DMs and channels | No license required |
 | Image analysis (vision capabilities) | No license required |
-| Basic tool integrations | No license required |
+| Basic tool integrations (built-in tools and the embedded Mattermost MCP server) | No license required |
 | Multiple agent configurations | Entry, Enterprise, and Enterprise Advanced |
 | Fine-grained access controls | Entry, Enterprise, and Enterprise Advanced |
 | Embedding search (semantic AI search) | Entry, Enterprise, and Enterprise Advanced |
-| MCP Support | Entry, Enterprise, and Enterprise Advanced |
+| MCP Support (remote and external MCP servers) | Entry, Enterprise, and Enterprise Advanced |
 | Usage analytics and token tracking | Entry, Enterprise, and Enterprise Advanced |
 | AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
 | Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |

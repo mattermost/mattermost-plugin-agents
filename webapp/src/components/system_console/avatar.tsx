@@ -12,7 +12,7 @@ import {getBotProfilePictureUrl} from '@/client';
 
 import {TertiaryButton} from '../assets/buttons';
 
-import {ItemLabel} from './item';
+import {FormRow, ItemLabel} from './item';
 
 type AvatarItemProps = {
     botusername: string;
@@ -103,7 +103,7 @@ const AvatarItem = (props: AvatarItemProps) => {
     };
 
     return (
-        <>
+        <FormRow>
             <ItemLabel><FormattedMessage defaultMessage='Bot avatar'/></ItemLabel>
             <AvatarSelectorContainer>
                 <Avatar src={icon}/>
@@ -123,7 +123,7 @@ const AvatarItem = (props: AvatarItemProps) => {
                     <FormattedMessage defaultMessage='Upload Image'/>
                 </TertiaryButton>
             </AvatarSelectorContainer>
-        </>
+        </FormRow>
     );
 };
 

@@ -18,6 +18,7 @@ interface NumberItemProps {
     clampOnChange?: boolean;
     onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
     onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void;
+    error?: string;
 }
 
 export const IntItem: React.FC<NumberItemProps> = ({

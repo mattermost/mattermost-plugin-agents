@@ -47,6 +47,25 @@ var ErrNotRequester = errors.New("only the original requester can approve/reject
 // 400 Bad Request.
 var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool call")
 
+// ErrRemoteMCPNotLicensed is returned when a tool decision would execute, or
+// share the output of, a tool served by a remote/external MCP server on a
+// server whose license does not include MCP support. Built-in tools (empty
+// ServerOrigin) and embedded Mattermost MCP tools (mcp.EmbeddedClientKey) are
+// basic tool integrations and never require a license. The HTTP layer maps
+// this to 403 Forbidden.
+//
+// This gate is the decision-time backstop for pending remote tool calls
+// persisted before a license change; the primary enforcement is at supply
+// time, where llmcontext.Builder drops remote MCP tools from the LLM context
+// entirely on unlicensed servers.
+var ErrRemoteMCPNotLicensed = errors.New("tools from remote MCP servers require a license with MCP support")
+
+// isRemoteMCPLicensed reports whether the server license covers remote MCP
+// servers. A nil license checker fails closed.
+func (c *Conversations) isRemoteMCPLicensed() bool {
+	return c.licenseChecker != nil && c.licenseChecker.IsBasicsLicensed()
+}
+
 // HandleToolCall handles user approval/rejection of pending tool calls via conversation entities.
 // It looks up pending tool_use blocks in the conversation turns, executes approved tools,
 // writes results back as turns, and streams a follow-up LLM response.
@@ -98,6 +117,26 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	pendingTurn, pendingBlocks, err := findPendingToolTurn(turns, post.Id)
 	if err != nil {
 		return err
+	}
+
+	// Accepting tools from remote/external MCP servers is part of the
+	// licensed "MCP Support" feature. Built-in and embedded Mattermost MCP
+	// tools are basic tool integrations with no license requirement.
+	// Rejections are always allowed — they execute nothing. Blocks marked
+	// WouldAutoExecute are not gated here: their resume re-checks the policy
+	// via shouldAutoExecuteTool, which already refuses remote tools on an
+	// unlicensed server, so they resolve to a rejection instead of blocking
+	// the whole submission on a possibly stale marker.
+	for _, b := range pendingBlocks {
+		if b.Type != conversation.BlockTypeToolUse || !mcp.IsRemoteServerOrigin(b.ServerOrigin) {
+			continue
+		}
+		if b.Status != conversation.StatusPending && b.Status != conversation.StatusAccepted {
+			continue
+		}
+		if slices.Contains(acceptedToolIDs, b.ID) && !c.isRemoteMCPLicensed() {
+			return ErrRemoteMCPNotLicensed
+		}
 	}
 
 	user, err := c.mmClient.GetUser(userID)
@@ -379,6 +418,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	// actually executed to decide whether a follow-up stream is warranted.
 	clickedPostToolUseIDs := make(map[string]struct{})
 	clickedPostHasExecutedTool := false
+	acceptedRemoteMCPTool := false
 	for _, turn := range turns {
 		if turn.Role != "assistant" || turn.PostID == nil || *turn.PostID != post.Id {
 			continue
@@ -396,6 +436,9 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 				b.Status == conversation.StatusError ||
 				b.Status == conversation.StatusAutoApproved {
 				clickedPostHasExecutedTool = true
+			}
+			if acceptedSet[b.ID] && mcp.IsRemoteServerOrigin(b.ServerOrigin) {
+				acceptedRemoteMCPTool = true
 			}
 		}
 	}
@@ -427,6 +470,13 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	}
 	if sawMatchingResult && alreadyDecided {
 		return nil
+	}
+
+	// Sharing output from remote/external MCP tools is part of the licensed
+	// "MCP Support" feature (see HandleToolCall). Keep-private decisions are
+	// always allowed — they disclose nothing.
+	if acceptedRemoteMCPTool && !c.isRemoteMCPLicensed() {
+		return ErrRemoteMCPNotLicensed
 	}
 
 	now := model.GetMillis()
