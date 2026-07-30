@@ -111,6 +111,8 @@ describe('QuestionCard', () => {
 
         fireEvent.click(screen.getByText('UX Design'));
         fireEvent.click(screen.getByText('Design team')); // replaces the prior choice
+        expect(screen.getByRole('button', {name: /UX Design/}).getAttribute('aria-pressed')).toBe('false');
+        expect(screen.getByRole('button', {name: /Design team/}).getAttribute('aria-pressed')).toBe('true');
         fireEvent.click(screen.getByText('Accept'));
 
         expect(onAnswer).toHaveBeenCalledWith(['Design team'], '');
@@ -174,6 +176,7 @@ describe('QuestionCard', () => {
         expect(queryByPlaceholderText('Something else…')).toBeNull();
         fireEvent.click(getByText('Something else…'));
         expect(queryByPlaceholderText('Something else…')).not.toBeNull();
+        expect(screen.getByRole('button', {name: 'Something else…'}).getAttribute('aria-pressed')).toBe('true');
     });
 
     test('typing a free-form answer and accepting calls onAnswer with the custom text', () => {
@@ -232,6 +235,8 @@ describe('QuestionCard', () => {
         expect(screen.queryByText('Accept')).toBeNull();
         expect(screen.queryByText('Skip')).toBeNull();
         expect(screen.getByText('Answered')).not.toBeNull();
+        expect(screen.getByRole('button', {name: /Product/}).getAttribute('aria-pressed')).toBe('true');
+        expect(screen.getByRole('button', {name: /UX Design/}).getAttribute('aria-pressed')).toBe('false');
     });
 
     test('shows a Skipped status for a declined question', () => {

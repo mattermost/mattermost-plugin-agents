@@ -160,6 +160,7 @@ export default function RHS() {
                     {navigableThreads.map((p) => (
                         <ThreadItem
                             key={p.id}
+                            conversationId={p.id}
                             postTitle={p.title}
                             turnCount={p.turn_count}
                             lastActivityDate={p.update_at}

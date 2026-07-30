@@ -1,5 +1,17 @@
 import { Page, Locator, expect } from '@playwright/test';
 
+const panelTestIds = {
+    'AI Services': 'system-console-ai-services-panel',
+    'AI Bots': 'system-console-ai-bots-panel',
+    'AI Functions': 'system-console-ai-functions-panel',
+    'Debug': 'system-console-debug-panel',
+    'Embedding Search': 'system-console-embedding-search-panel',
+    'Web Search': 'system-console-web-search-panel',
+    'Model Context Protocol (MCP)': 'system-console-mcp-panel',
+} as const;
+
+type PanelTitle = keyof typeof panelTestIds;
+
 /**
  * SystemConsoleHelper - Page object for System Console AI Plugin configuration
  *
@@ -10,6 +22,17 @@ export class SystemConsoleHelper {
 
     constructor(page: Page) {
         this.page = page;
+    }
+
+    private escapeRegExp(value: string): string {
+        return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    private async waitForPluginConfig(): Promise<void> {
+        await this.page.getByText('To report a bug or to provide feedback', {exact: false}).waitFor({
+            state: 'visible',
+            timeout: 15000,
+        });
     }
 
     /**
@@ -46,7 +69,37 @@ export class SystemConsoleHelper {
 
         // Wait for the plugin configuration UI to fully render
         // The beta message is always present and indicates the React components have loaded
-        await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
+        await this.waitForPluginConfig();
+    }
+
+    async reloadPluginConfig(): Promise<void> {
+        await this.page.reload({waitUntil: 'domcontentloaded'});
+        await this.waitForPluginConfig();
+    }
+
+    getPanel(title: PanelTitle): Locator {
+        return this.page.getByTestId(panelTestIds[title]);
+    }
+
+    private getLabeledControl(label: string, panelTitle: PanelTitle): Locator {
+        const exactLabel = new RegExp(`^${this.escapeRegExp(label)}(?:EXPERIMENTAL)?$`);
+        return this.getPanel(panelTitle).
+            locator('label').
+            filter({hasText: exactLabel}).
+            locator('+ *');
+    }
+
+    getInput(panelTitle: PanelTitle, label: string): Locator {
+        return this.getLabeledControl(label, panelTitle).locator('input, textarea');
+    }
+
+    getSelect(panelTitle: PanelTitle, label: string): Locator {
+        return this.getLabeledControl(label, panelTitle).getByRole('combobox');
+    }
+
+    getBooleanRadio(panelTitle: PanelTitle, label: string, value: boolean): Locator {
+        return this.getLabeledControl(label, panelTitle).
+            locator(`input[type="radio"][value="${value.toString()}"]`);
     }
 
     /**
@@ -78,7 +131,7 @@ export class SystemConsoleHelper {
      * Get the Save button
      */
     getSaveButton(): Locator {
-        return this.page.getByRole('button', { name: /save/i });
+        return this.page.getByRole('button', {name: /^save$/i});
     }
 
     /**
@@ -106,28 +159,28 @@ export class SystemConsoleHelper {
      * Get AI Services panel
      */
     getServicesPanel(): Locator {
-        return this.page.getByText('AI Services').first();
+        return this.getPanel('AI Services').getByText('AI Services', {exact: true});
     }
 
     /**
      * Get AI Bots panel
      */
     getBotsPanel(): Locator {
-        return this.page.getByText(/AI (Bots|Agents)/i).first();
+        return this.getPanel('AI Bots').getByText('AI Bots', {exact: true});
     }
 
     /**
      * Get AI Functions panel
      */
     getFunctionsPanel(): Locator {
-        return this.page.getByText('AI Functions').first();
+        return this.getPanel('AI Functions').getByText('AI Functions', {exact: true});
     }
 
     /**
      * Get Debug panel
      */
     getDebugPanel(): Locator {
-        return this.page.getByText('Debug').first();
+        return this.getPanel('Debug').getByText('Debug', {exact: true});
     }
 
     /**
@@ -148,7 +201,15 @@ export class SystemConsoleHelper {
      * Click save button
      */
     async clickSave(): Promise<void> {
+        const saveResponsePromise = this.page.waitForResponse((response) => {
+            return response.request().method() === 'PUT' &&
+                new URL(response.url()).pathname.endsWith('/plugins/mattermost-ai/admin/config');
+        });
+
         await this.getSaveButton().click();
-        await this.page.waitForTimeout(1000);
+        const saveResponse = await saveResponsePromise;
+        if (!saveResponse.ok()) {
+            throw new Error(`Failed to save plugin configuration: HTTP ${saveResponse.status()}`);
+        }
     }
 }

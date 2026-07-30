@@ -40,11 +40,12 @@ type PanelProps = {
     title: React.ReactNode
     subtitle: string
     children: React.ReactNode
+    testId?: string
 }
 
 const Panel = (props: PanelProps) => {
     return (
-        <PanelContainer>
+        <PanelContainer data-testid={props.testId}>
             <PanelHeader>
                 <PanelTitle>{props.title}</PanelTitle>
                 <PanelSubtitle>{props.subtitle}</PanelSubtitle>

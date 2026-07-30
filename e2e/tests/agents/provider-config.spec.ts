@@ -3,10 +3,12 @@
 
 import {test, expect, Page} from '@playwright/test';
 
+import {AgentAPIHelper} from 'helpers/agent-api';
 import {AgentPageHelper} from 'helpers/agent-page';
 import {MattermostPage} from 'helpers/mm';
 import MattermostContainer from 'helpers/mmcontainer';
 import {OpenAIMockContainer, RunOpenAIMocks} from 'helpers/openai-mock';
+import {mattermostAIAdminConfigApiFromClient, mattermostAIPluginRoutes} from 'helpers/plugin-http';
 import RunSystemConsoleContainer, {adminUsername, adminPassword} from 'helpers/system-console-container';
 
 const providerConfigTestTimeoutMs = 180000;
@@ -126,6 +128,253 @@ test.describe('Agent provider configuration', () => {
         await expect(page.getByText('Username must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores')).toBeVisible({
             timeout: 10000,
         });
+    });
+
+    test('repairs a migrated agent whose AI service was deleted', async ({page}) => {
+        test.setTimeout(providerConfigTestTimeoutMs);
+
+        const deletedServiceID = 'deleted-compatible-service';
+        const replacementServiceID = 'replacement-compatible-service';
+        const displayName = 'Missing Service Agent';
+        const username = 'missingserviceagent';
+        const customInstructions = 'Preserve this configuration while repairing its deleted service.';
+        const model = 'persisted-provider-model';
+        const maxToolTurns = 23;
+        const mm = await startFixture({
+            services: [
+                createCompatibleService({
+                    id: deletedServiceID,
+                    name: 'Service To Delete',
+                    useResponsesAPI: true,
+                }),
+                createCompatibleService({
+                    id: replacementServiceID,
+                    name: 'Replacement Service',
+                    useResponsesAPI: true,
+                }),
+            ],
+            bots: [
+                {
+                    id: 'legacy-missing-service-bot',
+                    name: username,
+                    displayName,
+                    serviceID: deletedServiceID,
+                    customInstructions,
+                    model,
+                    enableVision: false,
+                    disableTools: true,
+                    channelAccessLevel: 3,
+                    channelIDs: [],
+                    userAccessLevel: 2,
+                    userIDs: [],
+                    teamIDs: [],
+                    enabledNativeTools: [],
+                    mcpDynamicToolLoading: false,
+                    reasoningEnabled: false,
+                    reasoningEffort: 'high',
+                    thinkingBudget: 2048,
+                    structuredOutputEnabled: true,
+                    maxToolTurns,
+                },
+            ],
+        });
+
+        const adminClient = await mm.getClient(adminUsername, adminPassword);
+        const adminToken = adminClient.getToken();
+        const agentAPI = new AgentAPIHelper(mm.url());
+        const configAPI = mattermostAIAdminConfigApiFromClient(adminClient, mm.url());
+        const pluginRoutes = mattermostAIPluginRoutes(mm.url());
+
+        await expect.poll(async () => {
+            const agent = (await agentAPI.getAgents(adminToken)).find((candidate) => candidate.name === username);
+            return agent?.serviceID;
+        }, {timeout: 15000}).toBe(deletedServiceID);
+
+        const migratedAgent = (await agentAPI.getAgents(adminToken)).find((candidate) => candidate.name === username);
+        expect(migratedAgent).toBeDefined();
+        const enabledMCPTools = [
+            {server_origin: 'embedded://mattermost', tool_name: 'read_post'},
+        ];
+        await agentAPI.updateAgent(adminToken, migratedAgent!.id, {
+            enabledMCPTools,
+            autoEnableNewMCPTools: false,
+            mcpDynamicToolLoading: false,
+        });
+        const baseline = await agentAPI.getAgent(adminToken, migratedAgent!.id);
+        expect(baseline).toMatchObject({
+            serviceID: deletedServiceID,
+            customInstructions,
+            model,
+            enableVision: false,
+            disableTools: true,
+            channelAccessLevel: 3,
+            userAccessLevel: 2,
+            enabledMCPTools,
+            autoEnableNewMCPTools: false,
+            mcpDynamicToolLoading: false,
+            reasoningEnabled: false,
+            reasoningEffort: 'high',
+            thinkingBudget: 2048,
+            structuredOutputEnabled: true,
+            maxToolTurns,
+        });
+        expect(baseline.enabledNativeTools ?? []).toEqual([]);
+        expect(baseline.updateAt).toEqual(expect.any(Number));
+
+        const migratedConfig = await configAPI.get();
+        expect(migratedConfig.bots ?? []).toEqual([]);
+        expect(Array.isArray(migratedConfig.services)).toBe(true);
+        const migratedServices = migratedConfig.services as Array<Record<string, unknown>>;
+        expect(migratedServices.map((service) => service.id)).toEqual(
+            expect.arrayContaining([deletedServiceID, replacementServiceID]),
+        );
+
+        await configAPI.put({
+            ...migratedConfig,
+            services: migratedServices.filter((service) => service.id !== deletedServiceID),
+        }, {settleMs: 0});
+
+        await expect.poll(async () => {
+            const services = await pluginRoutes.getJson('services', adminToken) as Array<{id: string}>;
+            const serviceIDs = services.map((service) => service.id);
+            return {
+                replacementIncluded: serviceIDs.includes(replacementServiceID),
+                deletedIncluded: serviceIDs.includes(deletedServiceID),
+            };
+        }, {timeout: 15000}).toEqual({
+            replacementIncluded: true,
+            deletedIncluded: false,
+        });
+
+        const modelFetchServiceIDs: string[] = [];
+        await page.route(/\/plugins\/mattermost-ai\/agents\/models\/fetch(\?.*)?$/, async (route) => {
+            if (route.request().method() !== 'POST') {
+                await route.continue();
+                return;
+            }
+
+            const body = route.request().postDataJSON() as {serviceID?: string};
+            modelFetchServiceIDs.push(body.serviceID ?? '');
+            if (body.serviceID !== replacementServiceID) {
+                await route.continue();
+                return;
+            }
+
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: '[]',
+            });
+        });
+
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+        await mmPage.login(mm.url(), adminUsername, adminPassword);
+        await agentPage.navigateToAgents(mm.url());
+
+        const targetRow = agentPage.getAgentRow(baseline.id);
+        await expect(targetRow).toBeVisible({timeout: 15000});
+        await expect(targetRow.getByText(displayName, {exact: true})).toBeVisible();
+        await expect(targetRow.getByText('Service unavailable', {exact: true})).toBeVisible();
+
+        await agentPage.openAgentActions(displayName);
+        await agentPage.clickEditAction(displayName);
+        await agentPage.waitForModal();
+
+        const serviceSelect = agentPage.getAIServiceSelect();
+        const deletedServiceOption = serviceSelect.getByRole('option', {name: 'Unknown service (deleted)', exact: true});
+        await expect(serviceSelect).toHaveValue(deletedServiceID);
+        await expect(serviceSelect.locator('option:checked')).toHaveText('Unknown service (deleted)');
+        await expect(deletedServiceOption).toHaveAttribute('value', deletedServiceID);
+        await expect(deletedServiceOption).toBeDisabled();
+        await expect(agentPage.getDisplayNameInput()).toHaveValue(displayName);
+        await expect(agentPage.getUsernameInput()).toHaveValue(username);
+        await expect(agentPage.getCustomInstructionsInput()).toHaveValue(customInstructions);
+        await expect(agentPage.getMaxToolTurnsInput()).toHaveValue(String(maxToolTurns));
+        await expect(page.getByPlaceholder('Leave empty to use service default')).toHaveValue(model);
+
+        const rejectedUpdateResponse = page.waitForResponse((response) => {
+            const url = new URL(response.url());
+            return url.pathname === `/plugins/mattermost-ai/agents/${baseline.id}` &&
+                response.request().method() === 'PUT';
+        });
+        await agentPage.getModalSaveButton().click();
+        expect((await rejectedUpdateResponse).status()).toBe(400);
+        await expect(page.getByText(`service "${deletedServiceID}" not found in configuration`, {exact: true})).toBeVisible();
+        await expect(agentPage.getBackButton()).toBeVisible();
+        await expect(serviceSelect).toHaveValue(deletedServiceID);
+        expect(await agentAPI.getAgent(adminToken, baseline.id)).toEqual(baseline);
+        expect(modelFetchServiceIDs).not.toContain(deletedServiceID);
+
+        await serviceSelect.selectOption(replacementServiceID);
+        await expect(serviceSelect).toHaveValue(replacementServiceID);
+        await expect(page.getByText(`service "${deletedServiceID}" not found in configuration`, {exact: true})).not.toBeVisible();
+        await expect(agentPage.getCustomInstructionsInput()).toHaveValue(customInstructions);
+        await expect(agentPage.getMaxToolTurnsInput()).toHaveValue(String(maxToolTurns));
+        await expect(page.getByPlaceholder('Leave empty to use service default')).toHaveValue('');
+        await expect(agentPage.getBooleanFieldRadios('Enable Vision').nth(1)).toBeChecked();
+        await expect(agentPage.getBooleanFieldRadios('Enable Tools').nth(1)).toBeChecked();
+        await expect(agentPage.getNativeToolCheckbox('Native OpenAI Tools')).toBeChecked();
+        await expect(agentPage.getReasoningEnableCheckbox('Reasoning')).toBeChecked();
+        await expect(agentPage.getReasoningEffortSelect()).toHaveValue('medium');
+        await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(1)).toBeChecked();
+        await expect(agentPage.getModalTab('MCPs')).toBeDisabled();
+        await expect.poll(() => [...modelFetchServiceIDs], {timeout: 10000}).toContain(replacementServiceID);
+        expect(modelFetchServiceIDs).not.toContain(deletedServiceID);
+
+        const updateResponse = page.waitForResponse((response) => {
+            const url = new URL(response.url());
+            return url.pathname === `/plugins/mattermost-ai/agents/${baseline.id}` &&
+                response.request().method() === 'PUT';
+        });
+        await agentPage.getModalSaveButton().click();
+        expect((await updateResponse).status()).toBe(200);
+        await agentPage.waitForModalClosed();
+
+        await expect(targetRow).toBeVisible({timeout: 15000});
+        await expect(targetRow.getByText('Service unavailable', {exact: true})).toHaveCount(0);
+
+        const savedAgent = await agentAPI.getAgent(adminToken, baseline.id);
+        expect(savedAgent.serviceID).toBe(replacementServiceID);
+        expect(savedAgent).toEqual({
+            ...baseline,
+            serviceID: replacementServiceID,
+            model: '',
+            enabledNativeTools: ['web_search'],
+            reasoningEnabled: true,
+            reasoningEffort: 'medium',
+            thinkingBudget: 0,
+            structuredOutputEnabled: false,
+            updateAt: expect.any(Number),
+        });
+        expect(savedAgent.updateAt!).toBeGreaterThan(baseline.updateAt!);
+
+        await page.reload();
+        await agentPage.waitForAgentsLoaded();
+        expect(await agentAPI.getAgent(adminToken, baseline.id)).toEqual(savedAgent);
+        const reloadedRow = agentPage.getAgentRow(baseline.id);
+        await expect(reloadedRow).toBeVisible({timeout: 15000});
+        await expect(reloadedRow.getByText('Service unavailable', {exact: true})).toHaveCount(0);
+
+        await agentPage.openAgentActions(displayName);
+        await agentPage.clickEditAction(displayName);
+        await agentPage.waitForModal();
+        await expect(agentPage.getAIServiceSelect()).toHaveValue(replacementServiceID);
+        await expect(agentPage.getCustomInstructionsInput()).toHaveValue(customInstructions);
+        await expect(agentPage.getMaxToolTurnsInput()).toHaveValue(String(maxToolTurns));
+        await expect(page.getByPlaceholder('Leave empty to use service default')).toHaveValue('');
+        await expect(agentPage.getBooleanFieldRadios('Enable Vision').nth(1)).toBeChecked();
+        await expect(agentPage.getBooleanFieldRadios('Enable Tools').nth(1)).toBeChecked();
+        await expect(agentPage.getNativeToolCheckbox('Native OpenAI Tools')).toBeChecked();
+        await expect(agentPage.getReasoningEnableCheckbox('Reasoning')).toBeChecked();
+        await expect(agentPage.getReasoningEffortSelect()).toHaveValue('medium');
+        await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(1)).toBeChecked();
+        await expect(agentPage.getModalTab('MCPs')).toBeDisabled();
+        await agentPage.getModalTab('Access').click();
+        await expect(agentPage.getChannelAccessRadio(3)).toBeChecked();
+        await expect(agentPage.getUserAccessRadio(2)).toBeChecked();
+        expect(modelFetchServiceIDs).toContain(replacementServiceID);
+        expect(modelFetchServiceIDs).not.toContain(deletedServiceID);
     });
 
     test('creates direct OpenAI agents with native tools and structured output off by default', async ({page}) => {

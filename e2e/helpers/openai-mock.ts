@@ -1,5 +1,39 @@
 import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait} from "testcontainers";
 
+export type OpenAIChatContentPart = {
+	type?: string;
+	text?: string;
+	image_url?: {
+		url?: string;
+	};
+	[key: string]: unknown;
+};
+
+export type OpenAIChatMessage = {
+	role?: string;
+	content?: string | OpenAIChatContentPart[];
+	[key: string]: unknown;
+};
+
+export type OpenAIChatCompletionRequest = {
+	messages?: OpenAIChatMessage[];
+	[key: string]: unknown;
+};
+
+export type OpenAIMockHistoryEntry = {
+	request: {
+		body?: unknown;
+		method?: string;
+		path?: string;
+		[key: string]: unknown;
+	};
+	[key: string]: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * Smocker matches request paths exactly. Bifrost may POST to /v1/chat/completions or /chat/completions.
  * Use a single path regex so we do not register two mocks with the same body matchers (which would
@@ -78,6 +112,41 @@ export class OpenAIMockContainer {
 
 	stop = async () => {
 		await this.container.stop()
+	}
+
+	getHistory = async (): Promise<OpenAIMockHistoryEntry[]> => {
+		const response = await fetch(`http://localhost:${this.container.getMappedPort(8081)}/history`);
+		if (!response.ok) {
+			throw new Error(`Failed to read provider mock history: ${response.status}`);
+		}
+
+		const rawHistory: unknown = await response.json();
+		if (!Array.isArray(rawHistory)) {
+			throw new Error('Provider mock history response was not an array');
+		}
+
+		return rawHistory.map((rawEntry, index) => {
+			if (!isRecord(rawEntry) || !isRecord(rawEntry.request)) {
+				throw new Error(`Provider mock history entry ${index} did not contain a request object`);
+			}
+
+			let body = rawEntry.request.body;
+			if (typeof body === 'string') {
+				try {
+					body = JSON.parse(body) as unknown;
+				} catch (error) {
+					throw new Error(`Provider mock history entry ${index} contained invalid JSON`, {cause: error});
+				}
+			}
+
+			return {
+				...rawEntry,
+				request: {
+					...rawEntry.request,
+					body,
+				},
+			} as OpenAIMockHistoryEntry;
+		});
 	}
 
 	resetMocks = async (attempt = 0): Promise<void> => {
@@ -259,22 +328,30 @@ export function buildToolCallResponse(toolCallId: string, toolName: string, args
  * Create a streaming SSE text response (for after tool execution).
  */
 /**
- * Single Smocker rule for POST /chat/completions. Rules are evaluated in order — register
- * more specific body matchers before catch-all rules.
+ * Single Smocker rule for POST /chat/completions. Smocker gives the last registered matching
+ * rule priority, so register broad success rules before narrower traps that must win.
  */
 export function buildChatCompletionMockRule(
     sseBody: string,
-    opts?: { bodyContains?: string; botPrefix?: string; times?: number },
+    opts?: { bodyContains?: string; bodyMatches?: string; botPrefix?: string; times?: number },
 ): any {
     const prefix = opts?.botPrefix ? `/${opts.botPrefix}` : '';
     const req: Record<string, unknown> = {
         method: 'POST',
         path: `${prefix}/v1/chat/completions`,
     };
+    if (opts?.bodyContains && opts.bodyMatches) {
+        throw new Error('Specify only one chat completion body matcher');
+    }
     if (opts?.bodyContains) {
         req.body = {
             matcher: 'ShouldContainSubstring',
             value: opts.bodyContains,
+        };
+    } else if (opts?.bodyMatches) {
+        req.body = {
+            matcher: 'ShouldMatch',
+            value: opts.bodyMatches,
         };
     }
     return normalizeChatCompletionMockPath({
@@ -289,6 +366,16 @@ export function buildChatCompletionMockRule(
             },
             body: sseBody,
         },
+    });
+}
+
+const titlePrompt = 'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:';
+
+export function buildTitleMockRule(title: string, userMessage: string, botPrefix?: string): any {
+    return buildChatCompletionMockRule(buildTextResponse(title), {
+        bodyContains: `${titlePrompt}\\n${userMessage}`,
+        botPrefix,
+        times: 1,
     });
 }
 

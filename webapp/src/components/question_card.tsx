@@ -337,6 +337,10 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
 }) => {
     const {formatMessage} = useIntl();
     const [selections, setSelections] = useState<string[]>([]);
+    const somethingElseLabel = formatMessage({
+        id: 'ai.question.something_else',
+        defaultMessage: 'Something else…',
+    });
 
     // Whether the free-form "Something else…" row is selected, plus the text
     // typed into it. The row behaves like any other option for select rules.
@@ -448,6 +452,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                         <OptionRow
                             key={opt.label}
                             type='button'
+                            aria-pressed={selected}
                             $selected={selected}
                             $disabled={!interactive}
                             onClick={() => toggleOption(opt.label)}
@@ -474,6 +479,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                         <FreeFormRow>
                             <FreeFormToggle
                                 type='button'
+                                aria-label={somethingElseLabel}
+                                aria-pressed={true}
                                 $disabled={!interactive}
                                 onClick={toggleFreeForm}
                             >
@@ -487,10 +494,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                             </FreeFormToggle>
                             <FreeFormInput
                                 value={shownCustomText}
-                                placeholder={formatMessage({
-                                    id: 'ai.question.something_else',
-                                    defaultMessage: 'Something else…',
-                                })}
+                                placeholder={somethingElseLabel}
                                 disabled={!interactive}
                                 onChange={(e) => setCustomText(e.target.value)}
                             />
@@ -498,6 +502,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                     ) : (
                         <OptionRow
                             type='button'
+                            aria-pressed={false}
                             $selected={false}
                             $disabled={!interactive}
                             onClick={toggleFreeForm}

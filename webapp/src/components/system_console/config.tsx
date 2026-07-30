@@ -288,6 +288,7 @@ const Config = (props: Props) => {
         <ConfigContainer>
             <BetaMessage/>
             <Panel
+                testId='system-console-ai-services-panel'
                 title={intl.formatMessage({defaultMessage: 'AI Services'})}
                 subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
             >
@@ -303,12 +304,14 @@ const Config = (props: Props) => {
                 </PanelFooterText>
             </Panel>
             <Panel
+                testId='system-console-ai-bots-panel'
                 title={intl.formatMessage({defaultMessage: 'AI Bots'})}
                 subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
             >
                 <BotsMovedNotice/>
             </Panel>
             <Panel
+                testId='system-console-ai-functions-panel'
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
                 subtitle={intl.formatMessage({defaultMessage: 'Choose a default bot.'})}
             >
@@ -370,6 +373,7 @@ const Config = (props: Props) => {
                 </ItemList>
             </Panel>
             <Panel
+                testId='system-console-debug-panel'
                 title={intl.formatMessage({defaultMessage: 'Debug'})}
                 subtitle=''
             >
@@ -414,6 +418,7 @@ const Config = (props: Props) => {
                 }}
             />
             <Panel
+                testId='system-console-mcp-panel'
                 title={
                     <Horizontal>
                         <FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>

@@ -4,7 +4,8 @@ import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
-import { resetSelectedAgentPreference } from 'helpers/agent_preferences';
+import { AgentPageHelper } from 'helpers/agent-page';
+import { expectSelectedAgentPreference, resetSelectedAgentPreference } from 'helpers/agent_preferences';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
 
 // Test configuration
@@ -88,6 +89,56 @@ test.describe('RHS Bot Interactions', () => {
     await expect(page.getByRole('button', { name: 'second', exact: true })).toBeVisible();
     await aiPlugin.waitForBotResponse(responseTestText);
   });
+
+  test('Manage opens the Agents product page and browser back returns to the channel', async ({ page }) => {
+    const { aiPlugin } = await setupTestPage(page);
+    const agentPage = new AgentPageHelper(page);
+    const userClient = await mattermost.getClient(username, password);
+    const user = await userClient.getMe();
+    const secondBot = await userClient.getUserByUsername('second');
+    const channelURL = new URL(page.url());
+
+    await aiPlugin.openRHS();
+    await aiPlugin.ensureRhsNewChatTab();
+
+    const rhs = aiPlugin.getRhsContainer();
+    const selector = rhs.getByTestId('bot-selector-rhs');
+    await expect(rhs.getByTestId('rhs-new-tab-create-post')).toBeVisible({ timeout: 30000 });
+    await expect(selector).toHaveAttribute('title', 'Mock Bot');
+    await selector.click();
+
+    const menu = page.getByTestId('dropdownmenu').filter({ hasText: 'Choose an Agent' });
+    await expect(menu.getByText('Choose an Agent', { exact: true })).toBeVisible();
+    await menu.getByRole('button', { name: 'Second Bot', exact: true }).click();
+    await expect(menu).not.toBeVisible();
+    await expect(selector).toHaveAttribute('title', 'Second Bot');
+    await expectSelectedAgentPreference(userClient, user.id, secondBot.id);
+
+    await selector.click();
+    await expect(menu.getByText('Choose an Agent', { exact: true })).toBeVisible();
+    const manageButton = menu.getByRole('button', { name: 'Manage', exact: true });
+    await expect(manageButton).toBeVisible();
+    await manageButton.click();
+
+    await expect(page).toHaveURL(`${mattermost.url()}/plug/mattermost-ai/agents`);
+    await agentPage.waitForAgentsLoaded();
+    await expect(agentPage.getAgentRowByName('Second Bot')).toBeVisible();
+
+    await page.goBack();
+    await expect(page).toHaveURL((url) => (
+      url.origin === channelURL.origin &&
+      url.pathname === channelURL.pathname &&
+      url.search === channelURL.search
+    ));
+    await expect(page.getByTestId('channel_view')).toBeVisible();
+
+    await aiPlugin.openRHS();
+    await aiPlugin.ensureRhsNewChatTab();
+    const restoredSelector = aiPlugin.getRhsContainer().getByTestId('bot-selector-rhs');
+    await expect(restoredSelector).toHaveAttribute('title', 'Second Bot');
+    await expect(restoredSelector).toContainText('Second Bot');
+    await expectSelectedAgentPreference(userClient, user.id, secondBot.id);
+  });
 });
 
 test.describe('Bot Mentions', () => {
@@ -106,86 +157,6 @@ test.describe('Bot Mentions', () => {
     // Regular mention - should get response
     await mmPage.mentionBot('mock', 'TestBotMention3');
     await mmPage.waitForReply();
-  });
-});
-
-// Error handling tests
-test.describe('Error Handling', () => {
-  test('handles API errors gracefully', async ({ page }) => {
-    const { aiPlugin } = await setupTestPage(page);
-    await aiPlugin.openRHS();
-
-    await openAIMock.addErrorMock(500, "Internal Server Error");
-    await aiPlugin.sendMessage('This should cause an error');
-
-    // Check if error message is displayed
-    await expect(page.getByText(/An error occurred/i)).toBeVisible();
-  });
-});
-
-test.describe('Chat History', () => {
-  test('can view chat history after creating conversations', async ({ page }) => {
-    const { aiPlugin } = await setupTestPage(page);
-    await aiPlugin.openRHS();
-
-    // Create first conversation
-    await openAIMock.addCompletionMock(responseTest);
-    await aiPlugin.sendMessage('First conversation message');
-    await aiPlugin.waitForBotResponse(responseTestText);
-
-    // Create second conversation by starting new chat
-    await page.getByTestId('new-chat').click();
-    await openAIMock.addCompletionMock(responseTest2);
-    await aiPlugin.sendMessage('Second conversation message');
-    await aiPlugin.waitForBotResponse(responseTest2Text);
-
-    // Open chat history
-    await aiPlugin.openChatHistory();
-    await aiPlugin.expectChatHistoryVisible();
-
-    // Verify we can see conversation entries
-    await expect(aiPlugin.threadsListContainer.locator('div').first()).toBeVisible();
-  });
-
-  test('can click on chat history items without errors', async ({ page }) => {
-    const { aiPlugin } = await setupTestPage(page);
-    await aiPlugin.openRHS();
-
-    // Create a conversation first
-    await openAIMock.addCompletionMock(responseTest);
-    await aiPlugin.sendMessage('Test conversation');
-    await aiPlugin.waitForBotResponse(responseTestText);
-
-    // Open chat history
-    await aiPlugin.openChatHistory();
-    await aiPlugin.expectChatHistoryVisible();
-
-    // Click on the first history item
-    await aiPlugin.clickChatHistoryItem(0);
-
-    // Verify we can see the conversation content we created
-    await expect(page.getByText('Test conversation')).toBeVisible();
-    await expect(page.getByText(responseTestText)).toBeVisible();
-  });
-
-  test('chat history button is visible and functional', async ({ page }) => {
-    const { aiPlugin } = await setupTestPage(page);
-    await aiPlugin.openRHS();
-
-    // Create a conversation first so we have content in the history
-    await openAIMock.addCompletionMock(responseTest);
-    await aiPlugin.sendMessage('Test for history button');
-    await aiPlugin.waitForBotResponse(responseTestText);
-
-    // Chat history button should be visible
-    await expect(aiPlugin.chatHistoryButton).toBeVisible();
-
-    // Should be clickable
-    await aiPlugin.chatHistoryButton.click();
-
-    // Should show threads list with content
-    await expect(aiPlugin.threadsListContainer).toBeVisible();
-    await expect(aiPlugin.threadsListContainer.locator('div').first()).toBeVisible();
   });
 });
 

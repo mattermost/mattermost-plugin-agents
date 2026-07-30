@@ -58,6 +58,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
 
     return (
         <Panel
+            testId='system-console-web-search-panel'
             title={<FormattedMessage defaultMessage='Web Search'/>}
             subtitle={intl.formatMessage({defaultMessage: 'Configure built-in web search for agents that do not have native web search capabilities. NOTE: If your agent is configured to use native tool web search, that will be used instead of this web search.'})}
         >

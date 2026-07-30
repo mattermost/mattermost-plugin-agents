@@ -1,4 +1,9 @@
-import { Page, Locator, expect } from '@playwright/test';
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import {Page, Locator, expect} from '@playwright/test';
+
+type AccessLevel = 0 | 1 | 2 | 3;
 
 /**
  * AgentPageHelper — Page object for the agent listing page and config view.
@@ -18,7 +23,7 @@ export class AgentPageHelper {
     private getExactLabel(label: string): Locator {
         return this.page.locator('label').filter({
             hasText: new RegExp(`^${this.escapeRegExp(label)}$`),
-        }).first();
+        });
     }
 
     private getLabeledSection(label: string): Locator {
@@ -27,15 +32,20 @@ export class AgentPageHelper {
 
     // --- Navigation ---
 
+    /** Wait for the agents listing shell and data request to finish loading. */
+    async waitForAgentsLoaded(): Promise<void> {
+        await this.page.getByRole('heading', { name: 'Agents' }).waitFor({ state: 'visible', timeout: 15000 });
+        await this.getSearchInput().waitFor({ state: 'visible', timeout: 15000 });
+        await expect(this.page.getByText('Loading agents...')).not.toBeVisible({ timeout: 15000 });
+    }
+
     /** Navigate to the agents listing page */
     async navigateToAgents(baseUrl: string): Promise<void> {
         await this.page.goto(`${baseUrl}/plug/mattermost-ai/agents`);
         await this.page.waitForLoadState('domcontentloaded');
         // Neutral ready: shell (heading + tabs/search) and agents fetch finished — not only the create button
         // (e.g. users without manage permission might differ in future).
-        await this.page.getByRole('heading', { name: 'Agents' }).waitFor({ state: 'visible', timeout: 15000 });
-        await this.getSearchInput().waitFor({ state: 'visible', timeout: 15000 });
-        await expect(this.page.getByText('Loading agents...')).not.toBeVisible({ timeout: 15000 });
+        await this.waitForAgentsLoaded();
     }
 
     // --- Listing Page Locators ---
@@ -54,6 +64,10 @@ export class AgentPageHelper {
 
     getYourAgentsTab(): Locator {
         return this.page.getByText('Your agents');
+    }
+
+    getAgentRow(agentId: string): Locator {
+        return this.page.getByTestId(`agent-row-${agentId}`);
     }
 
     getAgentRowByName(displayName: string): Locator {
@@ -131,6 +145,14 @@ export class AgentPageHelper {
         return this.page.getByPlaceholder('Agent username');
     }
 
+    getAvatarInput(): Locator {
+        return this.getLabeledSection('Bot avatar').locator('input[type="file"]');
+    }
+
+    getAvatarImage(): Locator {
+        return this.getLabeledSection('Bot avatar').locator('img');
+    }
+
     getAIServiceSelect(): Locator {
         return this.getExactLabel('AI Service').locator('xpath=following-sibling::*[1]//select[1]');
     }
@@ -172,6 +194,10 @@ export class AgentPageHelper {
         return this.getExactLabel('Thinking Budget (tokens)').locator('xpath=following-sibling::input[1]');
     }
 
+    getMaxToolTurnsInput(): Locator {
+        return this.getLabeledSection('Max tool turns').locator('input');
+    }
+
     getStructuredOutputNote(): Locator {
         return this.page.getByText('Requests that ask for structured JSON output will skip extended thinking', {exact: false});
     }
@@ -187,6 +213,48 @@ export class AgentPageHelper {
             await toggle.click();
             await expect(toggle).toHaveAttribute('aria-expanded', 'true');
         }
+    }
+
+    // --- Access Tab ---
+
+    getChannelAccessSection(): Locator {
+        return this.getLabeledSection('Channel access');
+    }
+
+    getChannelAccessRadios(): Locator {
+        return this.getChannelAccessSection().locator('input[type="radio"]');
+    }
+
+    getChannelAccessRadio(level: AccessLevel): Locator {
+        return this.getChannelAccessSection().locator(`input[type="radio"][value="${level}"]`);
+    }
+
+    getChannelAccessSelect(): Locator {
+        return this.getChannelAccessSection().getByRole('combobox');
+    }
+
+    getUserAccessSection(): Locator {
+        return this.getLabeledSection('User access');
+    }
+
+    getUserAccessRadios(): Locator {
+        return this.getUserAccessSection().locator('input[type="radio"]');
+    }
+
+    getUserAccessRadio(level: AccessLevel): Locator {
+        return this.getUserAccessSection().locator(`input[type="radio"][value="${level}"]`);
+    }
+
+    getUserAccessSelect(): Locator {
+        return this.getUserAccessSection().getByRole('combobox');
+    }
+
+    getAgentAdminsSection(): Locator {
+        return this.getLabeledSection('Agent admins');
+    }
+
+    getAgentAdminsSelect(): Locator {
+        return this.getAgentAdminsSection().getByRole('combobox');
     }
 
     // --- Delete Dialog ---
@@ -218,9 +286,38 @@ export class AgentPageHelper {
         return this.page.getByPlaceholder('Search servers and tools...');
     }
 
-    getToolToggles(): Locator {
-        // Tool toggles are custom button elements styled as switches
-        return this.page.locator('button[class*="Toggle"]');
+    getMCPDynamicToolLoadingCheckbox(): Locator {
+        return this.page.getByRole('checkbox', {name: /^Dynamic tool loading(?:\s|$)/});
+    }
+
+    getMCPAutoEnableAllCheckbox(): Locator {
+        return this.page.getByRole('checkbox', {name: /^Automatically enable all MCP tools(?:\s|$)/});
+    }
+
+    getMCPServerHeader(serverName: string): Locator {
+        return this.page.getByRole('button', {
+            name: new RegExp(
+                `^${this.escapeRegExp(serverName)}, .*Press to expand or collapse tools\\.$`,
+            ),
+        });
+    }
+
+    getMCPServerToolsRegion(serverName: string): Locator {
+        return this.page.getByRole('region', {name: serverName, exact: true});
+    }
+
+    getMCPServerAllToolsToggle(serverName: string): Locator {
+        return this.page.getByRole('button', {
+            name: new RegExp(`^(Enable|Disable) all tools for ${this.escapeRegExp(serverName)}$`),
+        });
+    }
+
+    getMCPToolToggle(serverName: string, toolName: string): Locator {
+        return this.page.getByRole('button', {
+            name: new RegExp(
+                `^(Enable|Disable) tool ${this.escapeRegExp(toolName)} on ${this.escapeRegExp(serverName)}$`,
+            ),
+        });
     }
 
     // --- Convenience Methods ---

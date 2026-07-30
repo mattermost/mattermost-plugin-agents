@@ -122,6 +122,7 @@ const AgentRow = (props: Props) => {
 
     return (
         <RowContainer
+            data-testid={`agent-row-${agent.id}`}
             $clickable={canManage}
             {...(canManage ? {
                 onClick: handleRowActivate,

@@ -111,6 +111,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
     if (!isBasicsLicensed) {
         return (
             <Panel
+                testId='system-console-embedding-search-panel'
                 title={
                     <Horizontal>
                         <FormattedMessage defaultMessage='Embedding Search'/>
@@ -129,6 +130,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
 
     return (
         <Panel
+            testId='system-console-embedding-search-panel'
             title={
                 <Horizontal>
                     <FormattedMessage defaultMessage='Embedding Search'/>
