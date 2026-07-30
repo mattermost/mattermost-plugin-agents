@@ -103,17 +103,19 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 }
 
 // ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
-// If a connection already exists, it is reused.
 func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
 	if !embeddedConfig.Enabled || embeddedClient == nil {
 		return nil
 	}
 
-	if c.hasClient(EmbeddedClientKey) {
+	if sessionID == "" {
 		return nil
 	}
 
-	if sessionID == "" {
+	c.clientsMu.RLock()
+	existingClient := c.clients[EmbeddedClientKey]
+	c.clientsMu.RUnlock()
+	if existingClient != nil && existingClient.sessionID == sessionID {
 		return nil
 	}
 
@@ -127,14 +129,25 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, se
 	}
 
 	c.clientsMu.Lock()
-	defer c.clientsMu.Unlock()
-	if _, exists := c.clients[EmbeddedClientKey]; exists {
-		_ = serverClient.Close()
+	existingClient = c.clients[EmbeddedClientKey]
+	if existingClient != nil && existingClient.sessionID == sessionID {
+		c.clientsMu.Unlock()
+		if err := serverClient.Close(); err != nil {
+			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", EmbeddedClientKey, "error", err)
+		}
 		return nil
 	}
-
 	c.clients[EmbeddedClientKey] = serverClient
-	c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
+	c.clientsMu.Unlock()
+
+	if existingClient != nil {
+		if err := existingClient.Close(); err != nil {
+			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", EmbeddedClientKey, "error", err)
+		}
+		c.log.Debug("Reconnected to embedded MCP server with refreshed session", "userID", c.userID)
+	} else {
+		c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
+	}
 
 	return nil
 }
