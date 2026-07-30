@@ -3,7 +3,10 @@
 
 package config
 
-import "strings"
+import (
+	"net/textproto"
+	"strings"
+)
 
 const (
 	MCPToolPolicyAsk               = "ask"
@@ -109,10 +112,12 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 }
 
 // EffectiveServiceAccountHeaders returns the ServiceAccountHeaders entries with a
-// non-blank name and value, trimmed of surrounding whitespace; blank or padded
-// System Console rows would make Go's HTTP transport reject the whole request.
-// Entries whose names collide after trimming are ambiguous, so all of them are
-// dropped instead of letting map iteration order pick the winner.
+// non-blank name and value, trimmed of surrounding whitespace and keyed by their
+// canonical MIME form; blank or padded System Console rows would make Go's HTTP
+// transport reject the whole request. Because http.Header canonicalizes names on
+// the wire, collisions are case-insensitive: entries whose canonical names collide
+// are ambiguous, so all of them are dropped instead of letting map iteration order
+// pick the winner.
 func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
 	if s == nil {
 		return nil
@@ -120,24 +125,24 @@ func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
 
 	counts := make(map[string]int, len(s.ServiceAccountHeaders))
 	for name, value := range s.ServiceAccountHeaders {
-		trimmedName := strings.TrimSpace(name)
-		if trimmedName == "" || strings.TrimSpace(value) == "" {
+		canonicalName := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))
+		if canonicalName == "" || strings.TrimSpace(value) == "" {
 			continue
 		}
-		counts[trimmedName]++
+		counts[canonicalName]++
 	}
 
 	var headers map[string]string
 	for name, value := range s.ServiceAccountHeaders {
-		trimmedName := strings.TrimSpace(name)
+		canonicalName := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))
 		trimmedValue := strings.TrimSpace(value)
-		if trimmedName == "" || trimmedValue == "" || counts[trimmedName] > 1 {
+		if canonicalName == "" || trimmedValue == "" || counts[canonicalName] > 1 {
 			continue
 		}
 		if headers == nil {
 			headers = make(map[string]string, len(counts))
 		}
-		headers[trimmedName] = trimmedValue
+		headers[canonicalName] = trimmedValue
 	}
 	return headers
 }

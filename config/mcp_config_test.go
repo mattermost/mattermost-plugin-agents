@@ -97,6 +97,31 @@ func TestMCPServerConfigServiceAccountHeaderFiltering(t *testing.T) {
 			wantHeaders: map[string]string{"X-Api-Key": "secret-token"},
 		},
 		{
+			// http.Header.Set canonicalizes names, so a case-only pair is the same
+			// header on the wire and just as ambiguous as a whitespace-only pair.
+			name: "names colliding only by case are all dropped",
+			serverConfig: &MCPServerConfig{
+				Enabled:               true,
+				ServiceAccountHeaders: map[string]string{"Authorization": "Bearer first", "authorization": "Bearer second"},
+			},
+		},
+		{
+			name: "case-colliding names do not drop distinct entries",
+			serverConfig: &MCPServerConfig{
+				Enabled:               true,
+				ServiceAccountHeaders: map[string]string{"Authorization": "Bearer first", "authorization": "Bearer second", "X-Api-Key": "secret-token"},
+			},
+			wantHeaders: map[string]string{"X-Api-Key": "secret-token"},
+		},
+		{
+			name: "names are stored in canonical form",
+			serverConfig: &MCPServerConfig{
+				Enabled:               true,
+				ServiceAccountHeaders: map[string]string{"x-api-key": "secret-token"},
+			},
+			wantHeaders: map[string]string{"X-Api-Key": "secret-token"},
+		},
+		{
 			name: "base headers do not count as service account auth",
 			serverConfig: &MCPServerConfig{
 				Enabled: true,
