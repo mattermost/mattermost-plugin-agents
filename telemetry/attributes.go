@@ -65,6 +65,10 @@ var (
 var (
 	MCPServer = attribute.Key("agents.mcp.server")
 	MCPTool   = attribute.Key("agents.mcp.tool")
+
+	// MCPOAuthConfigCacheHit records whether an OAuth configuration lookup on
+	// the outgoing-request hot path was served from the discovery cache.
+	MCPOAuthConfigCacheHit = attribute.Key("agents.mcp.oauth.config_cache_hit")
 )
 
 // Attribute keys for Mattermost entities

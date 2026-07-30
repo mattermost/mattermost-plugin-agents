@@ -15,13 +15,17 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/oauth2"
 )
 
 const (
 	// oauthClientName is the human-readable RFC 7591 client_name shown on
-	// authorization server consent screens.
+	// authorization server consent screens. "Mattermost Agents" is a brand
+	// name and is deliberately not translated.
 	oauthClientName         = "Mattermost Agents"
 	oauthCallbackPathSuffix = "/oauth/callback"
 
@@ -111,12 +115,24 @@ func (m *OAuthManager) createOAuthConfigCached(ctx context.Context, serverURL, m
 	m.configCacheMu.Lock()
 	entry, ok := m.configCache[key]
 	m.configCacheMu.Unlock()
-	if ok && time.Now().Before(entry.expiresAt) {
+	cacheHit := ok && time.Now().Before(entry.expiresAt)
+
+	ctx, span := telemetry.Tracer().Start(ctx, "mcp oauth config",
+		trace.WithAttributes(
+			telemetry.MCPServer.String(serverURL),
+			telemetry.MCPOAuthConfigCacheHit.Bool(cacheHit),
+		),
+	)
+	defer span.End()
+
+	if cacheHit {
 		return entry.config, nil
 	}
 
 	config, err := m.createOAuthConfig(ctx, serverURL, metadataURL, staticCreds)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
