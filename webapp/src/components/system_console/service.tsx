@@ -367,7 +367,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     value={props.service.defaultModel}
                     options={availableModels}
                     placeholder={intl.formatMessage({defaultMessage: 'Select a model or enter custom model name'})}
-                    onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
+                    onChange={(value) => props.onChange({...props.service, defaultModel: value})}
                     helptext={intl.formatMessage({defaultMessage: 'Select from the list or type a custom model name'})}
                     isClearable={false}
                 />

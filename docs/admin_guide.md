@@ -142,11 +142,11 @@ Some capabilities depend on the selected Service type and, for OpenAI Compatible
 |---------|-------------|
 | **Enable Web Search** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Gemini and Vertex map this to Google Search grounding via the provider's Responses API. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
 | **Reasoning Enabled** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. For Gemini / Vertex, Bifrost maps a token budget to `thinkingConfig.thinkingBudget` and an effort level to `thinkingConfig.thinkingLevel` on Gemini 3.0+. |
-| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the model returns structured JSON matching that schema. Compatible model support is still required. |
+| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the schema is sent natively to the provider so the model returns structured JSON matching it. Compatible model support is still required. When disabled, the schema is converted into prompt instructions instead of being sent to the provider, so requests still work with models that lack native structured output support. |
 
 New agents enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
 
-For Anthropic services, **Structured Output** and extended thinking can't be used at the same time.
+For Anthropic services, **Structured Output** and extended thinking can both be enabled on the same agent, but Anthropic doesn't support using them on the same request. Requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
 
 If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
 
@@ -306,7 +306,7 @@ Notes on deferred reindex:
 - **Semantic search is unavailable** from reindex start until the final index build finishes (API returns HTTP 503). Live posts still index during the bulk load. During the final build (hours on large DBs), live indexing, deletions, and retention pause instead of blocking on CREATE INDEX — catch-up repairs new posts, the repair pass handles edits/deletions, and retention runs on its next schedule.
 - **Repair phase after the build.** Search returns once the index exists; the job then enters a short `repairing` phase to re-embed posts edited while live indexing was paused (catch-up sweeps new posts). If the job stops after the build but before repair finishes, the `repairing` marker stays durable — resume or reindex to finish. Search works in this phase; a few recent edits may be slightly stale until repair completes.
 - **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + 300)` bytes (~1.7 KB/element at 256 dims, ~34 GB for 20M posts). Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`.
-- **Crash recovery.** Lifecycle state is durable. After a restart, **Check Index Health** shows the vector index state and search stays gated until you resume or start a full reindex (the plugin never rebuilds during activation). Any full or resumed reindex rebuilds a dropped index and finishes pending repair, even if strategy was changed back to `maintain`.
+- **Crash recovery.** Lifecycle state is durable. After a restart, **Check Index Health** shows the vector index state and search stays gated until you resume or start a full reindex (the plugin never rebuilds during activation). Canceling or failing mid-bulk-load likewise leaves the index dropped rather than rebuilding it over a partial corpus, so a resume continues defer-style. Any full or resumed reindex rebuilds a dropped index and finishes pending repair, even if strategy was changed back to `maintain`.
 - Strategy applies to full reindexes only. Catch-up never drops the index. Live indexing maintains the index except during the final build.
 
 ### Permission configuration
@@ -394,13 +394,13 @@ jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_to
 
 ### Post indexing
 
-Post indexing occurs automatically during initial setup and when changing embedding providers:
+Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, or **dimensions** requires a **Full Reindex** (do not use Resume for a dimension change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions change so new vectors match the configured width.
 
 1. Navigate to **System Console > Plugins > Agents > Embedding Search**
 2. Use the reindex controls to:
    
    - Monitor indexing progress during initial setup.
-   - Trigger reindexing when changing embedding providers.
+   - Trigger a Full Reindex when changing embedding providers, models, or dimensions.
    - Check indexing status.
 
 ### OpenTelemetry tracing
@@ -579,6 +579,8 @@ Integrations are available in direct messages by default. If you enable the expe
 The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools, plugin-registered MCP servers from compatible Mattermost plugins, and optional remote servers.
 
 The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers and connection timeout from the MCP UI in the System Console. The **Tools** tab also shows plugin-registered MCP servers, where admins can enable or disable each plugin server and set per-tool enabled state and approval policies. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
+
+Remote and external MCP servers require a license (see [license requirements](#license-requirements)). Without one, the remote server configuration UI is not shown and tools from remote servers are not made available to agents; the embedded Mattermost MCP tools remain available on all plans.
 
 ### Configuration
 
@@ -838,11 +840,11 @@ The following table outlines which features require a license:
 | Basic agent configuration (single agent) | No license required |
 | Chat with agents in DMs and channels | No license required |
 | Image analysis (vision capabilities) | No license required |
-| Basic tool integrations | No license required |
+| Basic tool integrations (built-in tools and the embedded Mattermost MCP server) | No license required |
 | Multiple agent configurations | Entry, Enterprise, and Enterprise Advanced |
 | Fine-grained access controls | Entry, Enterprise, and Enterprise Advanced |
 | Embedding search (semantic AI search) | Entry, Enterprise, and Enterprise Advanced |
-| MCP Support | Entry, Enterprise, and Enterprise Advanced |
+| MCP Support (remote and external MCP servers) | Entry, Enterprise, and Enterprise Advanced |
 | Usage analytics and token tracking | Entry, Enterprise, and Enterprise Advanced |
 | AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
 | Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |

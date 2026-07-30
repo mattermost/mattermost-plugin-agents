@@ -165,6 +165,74 @@ func TestOTelTracer_ProcessStreamingChunkOnlyReturnsOnFinal(t *testing.T) {
 	assert.Equal(t, "completed", final.Status)
 }
 
+func TestOTelTracer_ProcessStreamingChunkRoutingInfo(t *testing.T) {
+	tests := []struct {
+		name          string
+		routing       bschemas.RoutingInfo
+		wantRequested string
+		wantResolved  string
+		wantProvider  bschemas.ModelProvider
+	}{
+		{
+			name: "normal routing",
+			routing: bschemas.RoutingInfo{
+				Provider: bschemas.Anthropic,
+				Model:    "claude-opus-5",
+			},
+			wantRequested: "claude-opus-5",
+			wantResolved:  "claude-opus-5",
+			wantProvider:  bschemas.Anthropic,
+		},
+		{
+			name: "fallback keeps the caller's primary model as requested",
+			routing: bschemas.RoutingInfo{
+				Provider:     bschemas.OpenAI,
+				Model:        "gpt-4o",
+				IsFallback:   true,
+				PrimaryModel: Ptr("claude-opus-5"),
+			},
+			wantRequested: "claude-opus-5",
+			wantResolved:  "gpt-4o",
+			wantProvider:  bschemas.OpenAI,
+		},
+		{
+			name: "key alias resolves to the wire model",
+			routing: bschemas.RoutingInfo{
+				Provider: bschemas.Anthropic,
+				Model:    "my-alias",
+				ResolvedKeyAlias: &bschemas.ResolvedKeyAlias{
+					ModelID: "claude-sonnet-5",
+				},
+			},
+			wantRequested: "my-alias",
+			wantResolved:  "claude-sonnet-5",
+			wantProvider:  bschemas.Anthropic,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tracer := newOTelTracer().(*otelTracer)
+			traceID := "req-" + tt.name
+			tracer.CreateStreamAccumulator(traceID, time.Now())
+
+			resp := &bschemas.BifrostResponse{
+				ChatResponse: &bschemas.BifrostChatResponse{
+					ExtraFields: bschemas.BifrostResponseExtraFields{
+						RoutingInfo: tt.routing,
+					},
+				},
+			}
+			result := tracer.ProcessStreamingChunk(nil, traceID, true, resp, nil)
+			require.NotNil(t, result)
+			assert.Equal(t, traceID, result.RequestID, "RequestID must carry the request identifier, not a model name")
+			assert.Equal(t, tt.wantRequested, result.RequestedModel)
+			assert.Equal(t, tt.wantResolved, result.ResolvedModel)
+			assert.Equal(t, tt.wantProvider, result.Provider)
+		})
+	}
+}
+
 func TestOTelTracer_NilHandleIsSafe(t *testing.T) {
 	tracer := newOTelTracer()
 	// Calls with nil/wrong-typed handles must be no-ops, not panics.

@@ -1,4 +1,4 @@
-{{range .Parameters.Results}}<message index="{{.Index}}" postId="{{.PostID}}" teamName="{{if .TeamName}}{{escapeContent .TeamName}}{{else}}_redirect{{end}}" from="{{escapeContent .Username}}" in="{{escapeContent .ChannelName}}" relevance="{{printf "%.2f" .Score}}">
+{{range .Parameters.Results}}<message index="{{.Index}}" postId="{{.PostID}}" teamName="{{if .TeamName}}{{escapeContent .TeamName}}{{else}}_redirect{{end}}" from="{{escapeContent .Username}}" in="{{escapeContent .ChannelName}}"{{with formatTime .CreateAt}} time="{{.}}"{{end}} relevance="{{printf "%.2f" .Score}}">
 {{escapeContent .Content}}
 </message>
 

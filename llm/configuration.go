@@ -174,10 +174,10 @@ type BotConfig struct {
 	//   takes priority over ReasoningEffort.
 	ThinkingBudget int `json:"thinkingBudget"`
 
-	// StructuredOutputEnabled enables structured JSON output for providers that support it.
-	// When enabled, the provider will use the JSONOutputFormat schema from the request config
-	// to constrain the model's output to valid JSON matching the schema.
-	// Only applicable to Anthropic (Claude 4.5/4.6+ models)
+	// StructuredOutputEnabled controls how a requested JSONOutputFormat schema is handled.
+	// When enabled, the schema is sent natively to the provider to constrain the model's
+	// output. When disabled, the schema is converted into prompt instructions and stripped
+	// from the provider request, for models/APIs without native structured output support.
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 
 	// MaxToolTurns is the maximum number of LLM-call → tool-execute iterations

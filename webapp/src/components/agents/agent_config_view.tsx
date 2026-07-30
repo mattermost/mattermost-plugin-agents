@@ -213,7 +213,16 @@ const AgentConfigView = (props: Props) => {
     const intl = useIntl();
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
-    const initialDraft = useMemo(() => (agent ? agentToDraft(agent) : cloneDraft(emptyDraft)), [agent]);
+    const initialDraft = useMemo(() => {
+        if (agent) {
+            return agentToDraft(agent);
+        }
+        const draft = cloneDraft(emptyDraft);
+        if (services.length > 0) {
+            draft.serviceId = services[0].id;
+        }
+        return draft;
+    }, [agent, services]);
     const [draft, setDraft] = useState<AgentDraft>(initialDraft);
     const [baselineDraft, setBaselineDraft] = useState<AgentDraft>(initialDraft);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -508,7 +517,6 @@ const AgentConfigView = (props: Props) => {
                         <McpsTab
                             enabledTools={draft.enabledTools}
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
-                            mcpDynamicToolLoading={draft.mcpDynamicToolLoading}
                             onChange={(updates) => updateDraft(updates)}
                             onReconcileEnabledTools={reconcileEnabledTools}
                         />

@@ -54,6 +54,7 @@ type httpSearchResult struct {
 	Username    string  `json:"username"`
 	Content     string  `json:"content"`
 	Score       float32 `json:"score"`
+	CreateAt    int64   `json:"create_at"` // Post creation timestamp (Unix millis)
 }
 
 // httpSearchResponse represents the response from the plugin endpoint
@@ -104,6 +105,7 @@ func (s *HTTPSemanticSearchService) Search(ctx context.Context, query string, op
 			Username:    r.Username,
 			Content:     r.Content,
 			Score:       r.Score,
+			CreateAt:    r.CreateAt,
 		})
 	}
 

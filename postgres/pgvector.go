@@ -5,6 +5,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -57,7 +59,9 @@ const createVectorIndexQuery = "CREATE INDEX IF NOT EXISTS " + vectorIndexName +
 const expectedVectorIndexDefSuffix = "USING hnsw (embedding vector_l2_ops)"
 
 type PGVector struct {
-	db *sqlx.DB
+	db              *sqlx.DB
+	dimensions      int
+	skipVectorIndex bool
 }
 
 // Compile-time check that PGVector supports deferred bulk indexing.
@@ -81,8 +85,20 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 		return nil, fmt.Errorf("failed to create vector extension: %w", err)
 	}
 
-	// Create the llm_posts_embeddings table if it doesn't exist
-	createTableQuery := `
+	pv := &PGVector{
+		db:              db,
+		dimensions:      config.Dimensions,
+		skipVectorIndex: config.SkipVectorIndex,
+	}
+	if err := pv.ensureSchema(context.Background(), !config.SkipVectorIndex, pv.db); err != nil {
+		return nil, err
+	}
+
+	return pv, nil
+}
+
+func createEmbeddingsTableQuery(dimensions int) string {
+	return `
 		CREATE TABLE IF NOT EXISTS llm_posts_embeddings (
 			id TEXT PRIMARY KEY,             								-- Post ID or chunk ID (post_id_chunk_N)
 			post_id TEXT NOT NULL REFERENCES Posts(Id) ON DELETE CASCADE,   -- Original post ID (same as id for non-chunks)
@@ -90,35 +106,94 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 			channel_id TEXT NOT NULL,
 			user_id TEXT NOT NULL,
 			content TEXT NOT NULL,
-			embedding vector(` + strconv.Itoa(config.Dimensions) + `),
+			embedding vector(` + strconv.Itoa(dimensions) + `),
 			created_at BIGINT NOT NULL,
 			is_chunk BOOLEAN NOT NULL DEFAULT FALSE,
 			chunk_index INTEGER,              -- NULL for non-chunks
 			total_chunks INTEGER             -- NULL for non-chunks
 		)`
-	if _, err := db.Exec(createTableQuery); err != nil {
-		return nil, fmt.Errorf("failed to create llm_posts_embeddings table: %w", err)
+}
+
+type execContexter interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// ensureSchema creates the embeddings table and supporting indexes when missing.
+func (pv *PGVector) ensureSchema(ctx context.Context, withVectorIndex bool, ex execContexter) error {
+	if _, err := ex.ExecContext(ctx, createEmbeddingsTableQuery(pv.dimensions)); err != nil {
+		return fmt.Errorf("failed to create llm_posts_embeddings table: %w", err)
 	}
 
-	// Create indexes
 	queries := []string{
-		// Index on post_id for efficient lookups and deletions
 		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_post_id_idx ON llm_posts_embeddings(post_id)",
-		// Index on is_chunk to filter by chunks
 		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_is_chunk_idx ON llm_posts_embeddings(is_chunk)",
 	}
-	if !config.SkipVectorIndex {
-		// Index for similarity search using HNSW
+	if withVectorIndex {
 		queries = append(queries, createVectorIndexQuery)
 	}
 
 	for _, query := range queries {
-		if _, err := db.Exec(query); err != nil {
-			return nil, fmt.Errorf("failed to create index: %w", err)
+		if _, err := ex.ExecContext(ctx, query); err != nil {
+			return fmt.Errorf("failed to create index: %w", err)
 		}
 	}
+	return nil
+}
 
-	return &PGVector{db: db}, nil
+// embeddingColumnDimensions returns the typmod dimensions of the embedding
+// column, or 0 if the table/column does not exist.
+func (pv *PGVector) embeddingColumnDimensions(ctx context.Context) (int, error) {
+	var typeName string
+	err := pv.db.GetContext(ctx, &typeName, `
+		SELECT format_type(a.atttypid, a.atttypmod)
+		FROM pg_catalog.pg_attribute a
+		JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
+		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relname = 'llm_posts_embeddings'
+			AND n.nspname = current_schema()
+			AND a.attname = 'embedding'
+			AND NOT a.attisdropped`)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to read embedding column type: %w", err)
+	}
+
+	dims, err := parseVectorTypmod(typeName)
+	if err != nil {
+		return 0, err
+	}
+	return dims, nil
+}
+
+func parseVectorTypmod(typeName string) (int, error) {
+	const prefix = "vector("
+	if !strings.HasPrefix(typeName, prefix) || !strings.HasSuffix(typeName, ")") {
+		return 0, fmt.Errorf("unexpected embedding column type %q", typeName)
+	}
+	dims, err := strconv.Atoi(typeName[len(prefix) : len(typeName)-1])
+	if err != nil || dims <= 0 {
+		return 0, fmt.Errorf("unexpected embedding column type %q", typeName)
+	}
+	return dims, nil
+}
+
+func (pv *PGVector) vectorIndexExists(ctx context.Context) (bool, error) {
+	var exists bool
+	err := pv.db.GetContext(ctx, &exists, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_catalog.pg_class c
+			JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relname = $1
+				AND n.nspname = current_schema()
+				AND c.relkind = 'i'
+		)`, vectorIndexName)
+	if err != nil {
+		return false, fmt.Errorf("failed to check vector index existence: %w", err)
+	}
+	return exists, nil
 }
 
 func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, embeddings [][]float32) error {
@@ -265,11 +340,10 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 
 	queryBuilder = queryBuilder.OrderBy("similarity ASC")
 
-	// Apply limit with sensible default/max
-	const maxSearchLimit = 1000
+	// Apply limit with sensible default/max (shared store cap)
 	limit := opts.Limit
-	if limit <= 0 || limit > maxSearchLimit {
-		limit = maxSearchLimit
+	if limit <= 0 || limit > embeddings.MaxSearchResults {
+		limit = embeddings.MaxSearchResults
 	}
 	queryBuilder = queryBuilder.Limit(uint64(limit)) //nolint:gosec
 
@@ -378,9 +452,45 @@ func (pv *PGVector) Delete(ctx context.Context, postIDs []string) error {
 }
 
 func (pv *PGVector) Clear(ctx context.Context) error {
-	_, err := pv.db.ExecContext(ctx, "TRUNCATE TABLE llm_posts_embeddings")
+	tableDims, err := pv.embeddingColumnDimensions(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to clear vectors: %w", err)
+		return err
+	}
+
+	// Missing table: create at configured dimensions.
+	if tableDims == 0 {
+		return pv.ensureSchema(ctx, !pv.skipVectorIndex, pv.db)
+	}
+
+	// Same dimensions: truncate keeps typmod and any existing ANN index.
+	if tableDims == pv.dimensions {
+		if _, truncErr := pv.db.ExecContext(ctx, "TRUNCATE TABLE llm_posts_embeddings"); truncErr != nil {
+			return fmt.Errorf("failed to clear vectors: %w", truncErr)
+		}
+		return nil
+	}
+
+	// Dimension change: DROP + recreate. Preserve HNSW only if it was present
+	// (deferred reindex drops it via PrepareBulkIndex before Clear).
+	hadVectorIndex, err := pv.vectorIndexExists(ctx)
+	if err != nil {
+		return err
+	}
+
+	tx, err := pv.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction for dimension change: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS llm_posts_embeddings"); err != nil {
+		return fmt.Errorf("failed to drop embeddings table for dimension change: %w", err)
+	}
+	if err := pv.ensureSchema(ctx, hadVectorIndex && !pv.skipVectorIndex, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit dimension change: %w", err)
 	}
 	return nil
 }

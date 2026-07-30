@@ -290,6 +290,7 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 				ChannelId: r.ChannelID,
 				UserId:    r.UserID,
 				Message:   r.Content,
+				CreateAt:  r.CreateAt,
 			},
 			ChannelName: r.ChannelName,
 			TeamName:    channelTeamCache[r.ChannelID],

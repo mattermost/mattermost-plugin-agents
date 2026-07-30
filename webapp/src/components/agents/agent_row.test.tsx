@@ -16,13 +16,23 @@ jest.mock('react-intl', () => {
     return {
         ...actual,
         useIntl: () => intl,
-        FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+        FormattedMessage: ({defaultMessage, values}: {defaultMessage: string; values?: Record<string, string>}) => {
+            if (!values) {
+                return defaultMessage;
+            }
+            return defaultMessage.replace(/\{(\w+)\}/g, (_, key: string) => values[key] ?? `{${key}}`);
+        },
     };
 });
 
 jest.mock('@/client', () => ({
     getProfilePictureUrl: () => 'http://example.com/avatar.png',
 }));
+
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
 
 function makeAgent(): UserAgent {
     return {
@@ -91,5 +101,22 @@ describe('AgentRow "Service unavailable" badge', () => {
         } else {
             expect(badge).toBeNull();
         }
+        expect(screen.getByText('Read only')).not.toBeNull();
+        expect(screen.getByText('Mention @agent1 in a channel or direct message to chat with this agent.')).not.toBeNull();
+    });
+
+    test('does not show Read only badge when the user can manage the agent', () => {
+        render(
+            <AgentRow
+                agent={makeAgent()}
+                services={[availableService]}
+                servicesLoaded={true}
+                canManage={true}
+                onEdit={noop}
+                onDelete={noop}
+            />,
+        );
+
+        expect(screen.queryByText('Read only')).toBeNull();
     });
 });

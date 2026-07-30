@@ -150,6 +150,7 @@ type RawSearchResult struct {
 	Username    string  `json:"username"`
 	Content     string  `json:"content"`
 	Score       float32 `json:"score"`
+	CreateAt    int64   `json:"create_at"` // Post creation timestamp (Unix millis)
 }
 
 // RawSearchResponse represents the response body for the raw semantic search endpoint
@@ -233,6 +234,7 @@ func (a *API) handleRawSearch(c *gin.Context) {
 			Username:    r.Username,
 			Content:     r.Content,
 			Score:       r.Score,
+			CreateAt:    r.CreateAt,
 		})
 	}
 

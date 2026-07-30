@@ -250,6 +250,8 @@ export interface Round {
  * content never lands in `persistedRounds` — it lives only in the live round.
  * For those posts the live round must stay rendered after streaming ends;
  * otherwise the summary vanishes the moment `generating` flips to false.
+ * Conversation posts also keep the live current round visible while refetching
+ * or waiting for persisted rounds, preventing content from disappearing.
  */
 export function computeRenderedRounds(params: {
     regenerating: boolean;
@@ -257,9 +259,10 @@ export function computeRenderedRounds(params: {
     persistedRounds: Round[];
     liveRounds: Round[];
     generating: boolean;
+    pendingRefetch?: boolean;
     currentRound: Round | null;
 }): Round[] {
-    const {regenerating, hasConversation, persistedRounds, liveRounds, generating, currentRound} = params;
+    const {regenerating, hasConversation, persistedRounds, liveRounds, generating, pendingRefetch = false, currentRound} = params;
 
     if (regenerating) {
         // Suppress persistedRounds (still the pre-regen turn) but keep
@@ -272,7 +275,7 @@ export function computeRenderedRounds(params: {
     }
 
     const out: Round[] = [...persistedRounds, ...liveRounds];
-    if ((generating || !hasConversation) && currentRound) {
+    if ((generating || pendingRefetch || !hasConversation || persistedRounds.length === 0) && currentRound) {
         out.push(currentRound);
     }
     return out;

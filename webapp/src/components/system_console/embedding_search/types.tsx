@@ -22,6 +22,13 @@ export const REINDEX_INDEX_STRATEGY = {
     defer: 'defer',
 } as const;
 
+// Mirror the server's recency bias defaults
+// (embeddings.DefaultRecency* in embeddings/recency.go).
+export const RECENCY_DEFAULTS = {
+    halfLifeDays: 7,
+    floor: 0.7,
+} as const;
+
 export type ReindexIndexStrategy = typeof REINDEX_INDEX_STRATEGY[keyof typeof REINDEX_INDEX_STRATEGY];
 
 export interface ChunkingOptions {
@@ -40,6 +47,9 @@ export interface EmbeddingSearchConfig {
     reindexWorkers?: number;
     reindexBatchSize?: number;
     reindexIndexStrategy?: ReindexIndexStrategy;
+    recencyBiasEnabled?: boolean;
+    recencyHalfLifeDays?: number;
+    recencyFloor?: number;
 }
 
 // Match the server's JobStatus struct field names
@@ -56,6 +66,9 @@ export interface JobStatusType {
     cutoff_at?: number;
     last_updated_at?: string;
     is_stale?: boolean;
+
+    // Known values: 'building_index' (HNSW CREATE INDEX after bulk load).
+    phase?: string;
 }
 
 // Mirror the server's vector index phases
