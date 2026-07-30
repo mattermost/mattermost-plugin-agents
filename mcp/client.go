@@ -434,13 +434,24 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 
 	httpClient := c.httpClientForMCP(headers)
 
+	// OAuth-capable clients get a per-connection handler; embedded and
+	// plugin-bridge clients (nil oauthManager) do not use OAuth.
+	var oauthHandler *userOAuthHandler
+	if c.oauthManager != nil {
+		oauthHandler = newUserOAuthHandler(c.userID, serverConfig, c.oauthManager)
+	}
+
 	// Try the modern Streamable HTTP transport first. The SDK auto-negotiates the
 	// protocol version (2026-07-28 down to 2025-03-26) via a server/discover request,
 	// falling back to a legacy initialize request when the server does not support it.
-	session, errStreamable := client.Connect(ctx, &mcp.StreamableClientTransport{
+	streamableTransport := &mcp.StreamableClientTransport{
 		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: httpClient,
-	}, nil)
+	}
+	if oauthHandler != nil {
+		streamableTransport.OAuthHandler = oauthHandler
+	}
+	session, errStreamable := client.Connect(ctx, streamableTransport, nil)
 	if errStreamable == nil {
 		// Successfully connected using Streamable HTTP transport
 		return session, nil
@@ -452,10 +463,11 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	}
 
 	// Fall back to the HTTP+SSE transport for legacy servers that only implement
-	// the 2024-11-05 HTTP+SSE transport.
+	// the 2024-11-05 HTTP+SSE transport. SSEClientTransport has no OAuthHandler
+	// field, so OAuth is applied through a RoundTripper adapter instead.
 	session, errSSE := client.Connect(ctx, &mcp.SSEClientTransport{
 		Endpoint:   serverConfig.BaseURL,
-		HTTPClient: httpClient,
+		HTTPClient: c.httpClientForLegacySSE(oauthHandler, headers),
 	}, nil)
 	if errSSE == nil {
 		// Successfully connected using SSE transport

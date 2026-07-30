@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -254,14 +255,16 @@ func TestCreateOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 	// (e.g. /v1/mcp), protected resource metadata is unavailable, and
 	// authorization server metadata is only at the base well-known URL.
 	// Per MCP spec, the path must be stripped for auth server discovery.
+	var serverURL string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			metadata := AuthorizationServerMetadata{
-				Issuer:                "https://auth.example.com",
-				AuthorizationEndpoint: "https://auth.example.com/authorize",
-				TokenEndpoint:         "https://auth.example.com/token",
+			metadata := oauthex.AuthServerMeta{
+				Issuer:                        serverURL,
+				AuthorizationEndpoint:         "https://auth.example.com/authorize",
+				TokenEndpoint:                 "https://auth.example.com/token",
+				CodeChallengeMethodsSupported: []string{"S256"},
 			}
 			_ = json.NewEncoder(w).Encode(metadata)
 		default:
@@ -270,6 +273,7 @@ func TestCreateOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	serverURL = server.URL
 
 	manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
 
@@ -296,26 +300,27 @@ func TestCreateOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-protected-resource/mcp":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(ProtectedResourceMetadata{
+			_ = json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
 				Resource:             serverURL + "/mcp",
 				AuthorizationServers: []string{serverURL + "/resources/res_123"},
 			})
 		case "/.well-known/oauth-authorization-server/resources/res_123":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(AuthorizationServerMetadata{
-				Issuer:                serverURL,
-				AuthorizationEndpoint: serverURL + "/authorize",
-				TokenEndpoint:         serverURL + "/token",
-				RegistrationEndpoint:  serverURL + "/resources/res_123/register",
+			_ = json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+				Issuer:                        serverURL + "/resources/res_123",
+				AuthorizationEndpoint:         serverURL + "/authorize",
+				TokenEndpoint:                 serverURL + "/token",
+				RegistrationEndpoint:          serverURL + "/resources/res_123/register",
+				CodeChallengeMethodsSupported: []string{"S256"},
 			})
 		case "/resources/res_123/register":
 			registrationCalled = true
 			require.Equal(t, http.MethodPost, r.Method)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(RegistrationResponse{
-				ClientID:     "registered-client",
-				ClientSecret: "registered-secret",
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"client_id":     "registered-client",
+				"client_secret": "registered-secret",
 			})
 		case "/.well-known/oauth-authorization-server":
 			hostMetadataCalled = true
@@ -584,10 +589,11 @@ func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
 			http.NotFound(w, r)
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(AuthorizationServerMetadata{
-				Issuer:                authServer.URL,
-				AuthorizationEndpoint: authServer.URL + "/authorize",
-				TokenEndpoint:         authServer.URL + "/token",
+			require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+				Issuer:                        authServer.URL,
+				AuthorizationEndpoint:         authServer.URL + "/authorize",
+				TokenEndpoint:                 authServer.URL + "/token",
+				CodeChallengeMethodsSupported: []string{"S256"},
 			}))
 		case "/token":
 			w.Header().Set("Content-Type", "application/json")

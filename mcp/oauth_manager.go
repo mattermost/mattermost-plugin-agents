@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"golang.org/x/oauth2"
 )
 
@@ -115,19 +116,25 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 		return creds, nil
 	}
 
-	var response *RegistrationResponse
-	if registrationEndpoint != "" {
-		request := DefaultRegistrationRequest(m.callbackURL, clientID)
-		response, err = RegisterClient(ctx, m.httpClient, registrationEndpoint, request, "")
+	if registrationEndpoint == "" {
+		// No registration endpoint was discovered upstream; discover it from
+		// the authorization server metadata at the server's base URL.
+		registrationEndpoint, err = m.discoverRegistrationEndpoint(ctx, serverURL)
 		if err != nil {
-			return nil, fmt.Errorf("failed to register OAuth client with server %s (registration endpoint: %s): %w", serverURL, registrationEndpoint, err)
+			return nil, fmt.Errorf("failed to discover registration endpoint for server %s: %w", serverURL, err)
 		}
-	} else {
-		// Perform complete client registration flow
-		response, err = DiscoverAndRegisterClient(ctx, m.httpClient, serverURL, m.callbackURL, clientID, "")
 	}
+
+	// Register a new client via Dynamic Client Registration (RFC 7591).
+	response, err := oauthex.RegisterClient(ctx, registrationEndpoint, &oauthex.ClientRegistrationMetadata{
+		RedirectURIs:            []string{m.callbackURL},
+		TokenEndpointAuthMethod: "client_secret_basic",
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ResponseTypes:           []string{"code"},
+		ClientName:              clientID,
+	}, m.httpClient)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to register OAuth client with server %s (registration endpoint: %s): %w", serverURL, registrationEndpoint, err)
 	}
 
 	// Create new credentials from registration response
@@ -164,25 +171,24 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	// Attempt discovery (best effort, fall back to hardcoded endpoints if it fails).
 	// Pass serverURL (not baseURL) so the well-known URL preserves any path component
 	// per RFC 9728 Section 3.1 (e.g. /base/path -> /.well-known/oauth-protected-resource/base/path).
-	if protectedMetadata, discErr := discoverProtectedResourceMetadata(ctx, m.httpClient, serverURL, metadataURL); discErr == nil {
+	if protectedMetadata, discErr := m.fetchProtectedResourceMetadata(ctx, serverURL, metadataURL); discErr == nil {
 		scopes = protectedMetadata.ScopesSupported
-		if len(protectedMetadata.AuthorizationServers) > 0 {
-			// Use first authorization server
-			authServerIssuer := protectedMetadata.AuthorizationServers[0]
-			if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, m.httpClient, authServerIssuer); authErr == nil {
-				authURL = authMetadata.AuthorizationEndpoint
-				tokenURL = authMetadata.TokenEndpoint
-				// Per OAuth best practices, credentials are registered with the authorization server
-				authServerURL = authServerIssuer
-				registrationEndpoint = authMetadata.RegistrationEndpoint
-			}
+		// Use first authorization server (fetchProtectedResourceMetadata
+		// guarantees at least one).
+		authServerIssuer := protectedMetadata.AuthorizationServers[0]
+		if authMetadata, authErr := m.fetchAuthorizationServerMetadata(ctx, authServerIssuer); authErr == nil {
+			authURL = authMetadata.AuthorizationEndpoint
+			tokenURL = authMetadata.TokenEndpoint
+			// Per OAuth best practices, credentials are registered with the authorization server
+			authServerURL = authServerIssuer
+			registrationEndpoint = authMetadata.RegistrationEndpoint
 		}
 	} else {
 		// If protected resource metadata fails, assume the resource server is the authorization server
 		// and try the authorization server metadata endpoint directly (existing MCP server behavior).
 		// Use baseURL (path stripped) per MCP spec: the authorization base URL is derived by
 		// discarding the path component from the MCP server URL.
-		if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, m.httpClient, baseURL); authErr == nil {
+		if authMetadata, authErr := m.fetchAuthorizationServerMetadata(ctx, baseURL); authErr == nil {
 			authURL = authMetadata.AuthorizationEndpoint
 			tokenURL = authMetadata.TokenEndpoint
 			registrationEndpoint = authMetadata.RegistrationEndpoint
