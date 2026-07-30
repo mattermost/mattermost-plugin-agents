@@ -36,9 +36,10 @@ func abortPolicyRequest(c *gin.Context, err error) {
 	}
 }
 
-// Legacy non-26-char resource IDs can never carry an access policy: the PDP
-// short-circuits them to no_policy and the server's policy APIs reject them.
-// The gates below keep the upstream 400 from surfacing as a UI load failure.
+// Legacy non-26-char resource IDs can never carry an access policy: the
+// checker short-circuits them to a no_policy decision and the server's policy
+// APIs reject them. The gates below keep the upstream 400 from surfacing as a
+// UI load failure.
 
 // policyReadableID gates policy GETs: an invalid resource ID means the
 // policy cannot exist, which is exactly ErrPolicyNotFound (404). Returns

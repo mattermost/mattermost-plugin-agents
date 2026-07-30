@@ -15,21 +15,74 @@ import (
 )
 
 func TestPluginAPIClientEvaluateAccessRequest(t *testing.T) {
+	noPolicy := model.NewNoPolicyAccessDecision()
+
 	tests := []struct {
-		name        string
-		decision    *model.PluginAccessControlDecision
-		appErr      *model.AppError
-		wantOutcome model.AccessDecisionOutcome
-		wantErr     bool
+		name     string
+		decision *model.AccessDecision
+		appErr   *model.AppError
+
+		wantErr error
+		// wantAttribute is the value reported on the ABACOutcome span
+		// attribute, which keeps allow/deny/no_policy apart even though the
+		// AuthZEN decision folds them into one boolean.
+		wantAttribute string
+		wantNoPolicy  bool
 	}{
-		{name: "allow", decision: &model.PluginAccessControlDecision{Outcome: model.AccessDecisionOutcomeAllow}, wantOutcome: model.AccessDecisionOutcomeAllow},
-		{name: "deny", decision: &model.PluginAccessControlDecision{Outcome: model.AccessDecisionOutcomeDeny}, wantOutcome: model.AccessDecisionOutcomeDeny},
-		{name: "no_policy", decision: &model.PluginAccessControlDecision{Outcome: model.AccessDecisionOutcomeNoPolicy}, wantOutcome: model.AccessDecisionOutcomeNoPolicy},
-		{name: "unavailable", decision: &model.PluginAccessControlDecision{Outcome: model.AccessDecisionOutcomeUnavailable}, wantOutcome: model.AccessDecisionOutcomeUnavailable},
-		{name: "unknown outcome passes through", decision: &model.PluginAccessControlDecision{Outcome: model.AccessDecisionOutcome("future_value")}, wantOutcome: model.AccessDecisionOutcome("future_value")},
-		{name: "app error", appErr: model.NewAppError("EvaluateAccessControl", "boom", nil, "", http.StatusInternalServerError), wantErr: true},
-		// (nil, nil) is the RPC client's silent transport failure; it must surface as an error so the checkers deny.
-		{name: "transport failure (nil, nil) returns error", wantErr: true},
+		{
+			name:          "allow",
+			decision:      &model.AccessDecision{Decision: true},
+			wantAttribute: "allow",
+		},
+		{
+			name:          "deny",
+			decision:      &model.AccessDecision{Decision: false},
+			wantAttribute: "deny",
+		},
+		{
+			name:          "no_policy",
+			decision:      &noPolicy,
+			wantAttribute: "no_policy",
+			wantNoPolicy:  true,
+		},
+		{
+			// A reason this plugin does not recognize does not weaken the
+			// allow it annotates; only the no_policy reason makes one vacuous.
+			name: "allow carrying an unrecognized reason is still an allow",
+			decision: &model.AccessDecision{
+				Decision: true,
+				Context:  map[string]any{model.AccessDecisionContextKeyReason: "future_reason"},
+			},
+			wantAttribute: "allow",
+		},
+		{
+			// A deny labelled no_policy is self-contradictory; it must not be
+			// mistaken for the unregulated case, which fails open.
+			name: "deny contradicting the no_policy reason stays a deny",
+			decision: &model.AccessDecision{
+				Decision: false,
+				Context:  map[string]any{model.AccessDecisionContextKeyReason: string(model.AccessDecisionReasonNoPolicy)},
+			},
+			wantAttribute: "deny",
+		},
+		{
+			name:    "evaluation failure",
+			appErr:  model.NewAppError("EvaluateAccessControl", "boom", nil, "", http.StatusInternalServerError),
+			wantErr: model.NewAppError("EvaluateAccessControl", "boom", nil, "", http.StatusInternalServerError),
+		},
+		{
+			// Unavailability is no longer a decision value: an open-core,
+			// unlicensed, or disabled server reports it as an error.
+			name:    "unavailable PDP arrives as an error",
+			appErr:  model.NewAppError("EvaluateAccessControl", "unavailable", nil, "", http.StatusServiceUnavailable),
+			wantErr: model.NewAppError("EvaluateAccessControl", "unavailable", nil, "", http.StatusServiceUnavailable),
+		},
+		{
+			// (nil, nil) is the RPC client's silent transport failure; it must
+			// surface as an error so the checkers deny.
+			name:    "transport failure (nil, nil) returns an error",
+			wantErr: errRPCTransportFailure,
+		},
 	}
 
 	for _, tt := range tests {
@@ -40,14 +93,19 @@ func TestPluginAPIClientEvaluateAccessRequest(t *testing.T) {
 				Return(tt.decision, tt.appErr).Once()
 
 			client := NewPluginAPIClient(api)
-			outcome, err := client.EvaluateAccessRequest(context.Background(), "userid", ResourceTypeAgent, "resourceid", ActionUse)
+			decision, err := client.EvaluateAccessRequest(context.Background(), "userid", ResourceTypeAgent, "resourceid", ActionUse)
 
-			if tt.wantErr {
+			if tt.wantErr != nil {
 				require.Error(t, err)
+				assert.Equal(t, tt.wantErr, err)
+				assert.Nil(t, decision)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantOutcome, outcome)
+			// The server's decision is returned verbatim.
+			require.Equal(t, tt.decision, decision)
+			assert.Equal(t, tt.wantNoPolicy, decision.IsNoPolicy())
+			assert.Equal(t, tt.wantAttribute, outcomeAttribute(*decision))
 		})
 	}
 }

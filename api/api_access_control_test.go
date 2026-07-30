@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -21,12 +22,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// unavailableDecisionClient reports every resource as unavailable, which the
-// decision tables translate to an unconditional deny.
-type unavailableDecisionClient struct{}
+// erroringDecisionClient fails every evaluation, as an unlicensed, disabled, or
+// unreachable PDP does. The decision tables translate that to an unconditional
+// deny.
+type erroringDecisionClient struct{}
 
-func (unavailableDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (model.AccessDecisionOutcome, error) {
-	return model.AccessDecisionOutcomeUnavailable, nil
+func (erroringDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (*model.AccessDecision, error) {
+	return nil, errors.New("access control evaluation unavailable")
 }
 
 // setupAccessControlTestEnvironment builds an API whose accessChecker proxies
@@ -316,11 +318,12 @@ type perIDDecisionClient struct {
 	denied map[string]bool
 }
 
-func (c perIDDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, resourceID, _ string) (model.AccessDecisionOutcome, error) {
+func (c perIDDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, resourceID, _ string) (*model.AccessDecision, error) {
 	if c.denied[resourceID] {
-		return model.AccessDecisionOutcomeDeny, nil
+		return &model.AccessDecision{Decision: false}, nil
 	}
-	return model.AccessDecisionOutcomeNoPolicy, nil
+	noPolicy := model.NewNoPolicyAccessDecision()
+	return &noPolicy, nil
 }
 
 // seedServiceConfig registers a service with a valid stable ID so ABAC
@@ -480,7 +483,7 @@ func seedTwoServiceConfig(e *TestEnvironment, firstID, secondID string) {
 }
 
 // System admins get the full catalog; everyone else is filtered through
-// CanUseService — including the unavailable row, which fails closed.
+// CanUseService — including the evaluation-error row, which fails closed.
 func TestListServicesAppliesServicePolicies(t *testing.T) {
 	allowedID := model.NewId()
 	gatedID := model.NewId()
@@ -507,9 +510,9 @@ func TestListServicesAppliesServicePolicies(t *testing.T) {
 			wantIDs: []string{allowedID, gatedID},
 		},
 		{
-			name: "unavailable fails closed for every service",
+			name: "an evaluation error fails closed for every service",
 			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(unavailableDecisionClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
+				return accesscontrol.New(erroringDecisionClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
 			},
 			wantIDs: []string{},
 		},
@@ -569,9 +572,9 @@ func TestFetchModelsForServiceAppliesServicePolicies(t *testing.T) {
 			wantStatus: http.StatusBadRequest, // missing credentials, past the policy gate
 		},
 		{
-			name: "unavailable fails closed",
+			name: "an evaluation error fails closed",
 			checker: func() *accesscontrol.Checker {
-				return accesscontrol.New(unavailableDecisionClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
+				return accesscontrol.New(erroringDecisionClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
 			},
 			wantStatus: http.StatusForbidden,
 		},

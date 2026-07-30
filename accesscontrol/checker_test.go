@@ -26,28 +26,48 @@ type decisionCall struct {
 	action       string
 }
 
-// stubDecisionClient returns a fixed outcome/error, optionally overridden per
-// resource type, and records every call.
+// stubDecisionClient returns a fixed decision/error, optionally overridden per
+// resource type, and records every call. A nil decision with a nil error
+// exercises the DecisionClient contract guard.
 type stubDecisionClient struct {
-	outcome    model.AccessDecisionOutcome
+	decision   *model.AccessDecision
 	err        error
-	perType    map[string]model.AccessDecisionOutcome // resourceType → outcome override
-	perTypeErr map[string]error                       // resourceType → error override
+	perType    map[string]*model.AccessDecision // resourceType → decision override
+	perTypeErr map[string]error                 // resourceType → error override
 	calls      []decisionCall
 }
 
-func (s *stubDecisionClient) EvaluateAccessRequest(_ context.Context, userID, resourceType, resourceID, action string) (model.AccessDecisionOutcome, error) {
+func (s *stubDecisionClient) EvaluateAccessRequest(_ context.Context, userID, resourceType, resourceID, action string) (*model.AccessDecision, error) {
 	s.calls = append(s.calls, decisionCall{userID: userID, resourceType: resourceType, resourceID: resourceID, action: action})
 	if err, ok := s.perTypeErr[resourceType]; ok {
-		return "", err
+		return nil, err
 	}
-	if outcome, ok := s.perType[resourceType]; ok {
-		return outcome, nil
+	if decision, ok := s.perType[resourceType]; ok {
+		return decision, nil
 	}
 	if s.err != nil {
-		return "", s.err
+		return nil, s.err
 	}
-	return s.outcome, s.err
+	return s.decision, nil
+}
+
+// Decision shorthands for the tables below.
+func allowDecision() *model.AccessDecision { return &model.AccessDecision{Decision: true} }
+func denyDecision() *model.AccessDecision  { return &model.AccessDecision{Decision: false} }
+
+func noPolicyDecision() *model.AccessDecision {
+	d := model.NewNoPolicyAccessDecision()
+	return &d
+}
+
+// contradictoryDecision is a deny carrying the no_policy reason. The PDP should
+// never emit one; if the checkers read the reason without the boolean they
+// would fail open on it.
+func contradictoryDecision() *model.AccessDecision {
+	return &model.AccessDecision{
+		Decision: false,
+		Context:  map[string]any{model.AccessDecisionContextKeyReason: string(model.AccessDecisionReasonNoPolicy)},
+	}
 }
 
 func newTestChecker() *Checker {
@@ -68,9 +88,10 @@ func TestPassthroughClientEvaluateAccessRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outcome, err := PassthroughClient{}.EvaluateAccessRequest(context.Background(), "userid", tt.resourceType, "resourceid", ActionUse)
+			decision, err := PassthroughClient{}.EvaluateAccessRequest(context.Background(), "userid", tt.resourceType, "resourceid", ActionUse)
 			require.NoError(t, err)
-			assert.Equal(t, model.AccessDecisionOutcomeNoPolicy, outcome)
+			require.NotNil(t, decision)
+			assert.True(t, decision.IsNoPolicy())
 		})
 	}
 }
@@ -137,7 +158,7 @@ func TestCanUseAgentDecisionTable(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		outcome         model.AccessDecisionOutcome
+		decision        *model.AccessDecision
 		evalErr         error
 		attributeBased  bool
 		legacy          int
@@ -146,27 +167,27 @@ func TestCanUseAgentDecisionTable(t *testing.T) {
 		wantLegacyCalls int  // how many times legacyCheck must run
 	}{
 		// attribute-based mode: legacy check must NEVER run
-		{name: "attr allow", outcome: model.AccessDecisionOutcomeAllow, attributeBased: true, legacy: legacyFail},
-		{name: "attr deny", outcome: model.AccessDecisionOutcomeDeny, attributeBased: true, legacy: legacyPass, wantDenied: true},
-		{name: "attr no_policy fails open", outcome: model.AccessDecisionOutcomeNoPolicy, attributeBased: true, legacy: legacyFail},
-		{name: "attr unavailable fails closed", outcome: model.AccessDecisionOutcomeUnavailable, attributeBased: true, legacy: legacyPass, wantDenied: true},
+		{name: "attr allow", decision: allowDecision(), attributeBased: true, legacy: legacyFail},
+		{name: "attr deny", decision: denyDecision(), attributeBased: true, legacy: legacyPass, wantDenied: true},
+		{name: "attr no_policy fails open", decision: noPolicyDecision(), attributeBased: true, legacy: legacyFail},
+		{name: "attr contradictory deny fails closed", decision: contradictoryDecision(), attributeBased: true, legacy: legacyPass, wantDenied: true},
 		{name: "attr eval error fails closed", evalErr: evalErr, attributeBased: true, legacy: legacyPass, wantDenied: true},
-		{name: "attr unknown outcome fails closed", outcome: model.AccessDecisionOutcome("future_value"), attributeBased: true, legacy: legacyPass, wantDenied: true},
+		{name: "attr missing decision fails closed", attributeBased: true, legacy: legacyPass, wantDenied: true},
 
-		// legacy modes: allow/no_policy defer to the legacy check
-		{name: "legacy allow runs legacy pass", outcome: model.AccessDecisionOutcomeAllow, legacy: legacyPass, wantLegacyCalls: 1},
-		{name: "legacy allow runs legacy fail", outcome: model.AccessDecisionOutcomeAllow, legacy: legacyFail, wantLegacyErr: true, wantLegacyCalls: 1},
-		{name: "legacy allow nil legacy", outcome: model.AccessDecisionOutcomeAllow, legacy: legacyNil},
+		// legacy modes: any allow defers to the legacy check
+		{name: "legacy allow runs legacy pass", decision: allowDecision(), legacy: legacyPass, wantLegacyCalls: 1},
+		{name: "legacy allow runs legacy fail", decision: allowDecision(), legacy: legacyFail, wantLegacyErr: true, wantLegacyCalls: 1},
+		{name: "legacy allow nil legacy", decision: allowDecision(), legacy: legacyNil},
 
-		{name: "legacy no_policy runs legacy pass", outcome: model.AccessDecisionOutcomeNoPolicy, legacy: legacyPass, wantLegacyCalls: 1},
-		{name: "legacy no_policy runs legacy fail", outcome: model.AccessDecisionOutcomeNoPolicy, legacy: legacyFail, wantLegacyErr: true, wantLegacyCalls: 1},
+		{name: "legacy no_policy runs legacy pass", decision: noPolicyDecision(), legacy: legacyPass, wantLegacyCalls: 1},
+		{name: "legacy no_policy runs legacy fail", decision: noPolicyDecision(), legacy: legacyFail, wantLegacyErr: true, wantLegacyCalls: 1},
 
-		// deny/unavailable/error/unknown fail closed in every mode
-		{name: "legacy deny", outcome: model.AccessDecisionOutcomeDeny, legacy: legacyPass, wantDenied: true},
-		{name: "legacy unavailable denies despite passing legacy check", outcome: model.AccessDecisionOutcomeUnavailable, legacy: legacyPass, wantDenied: true},
-		{name: "legacy unavailable denies with nil legacy check", outcome: model.AccessDecisionOutcomeUnavailable, legacy: legacyNil, wantDenied: true},
-		{name: "legacy eval error denies", evalErr: evalErr, legacy: legacyPass, wantDenied: true},
-		{name: "legacy unknown outcome denies", outcome: model.AccessDecisionOutcome("future_value"), legacy: legacyPass, wantDenied: true},
+		// a deny, or any failure to obtain a decision, fails closed in every mode
+		{name: "legacy deny", decision: denyDecision(), legacy: legacyPass, wantDenied: true},
+		{name: "legacy contradictory deny denies despite passing legacy check", decision: contradictoryDecision(), legacy: legacyPass, wantDenied: true},
+		{name: "legacy eval error denies despite passing legacy check", evalErr: evalErr, legacy: legacyPass, wantDenied: true},
+		{name: "legacy eval error denies with nil legacy check", evalErr: evalErr, legacy: legacyNil, wantDenied: true},
+		{name: "legacy missing decision denies", legacy: legacyPass, wantDenied: true},
 	}
 
 	for _, tt := range tests {
@@ -174,7 +195,7 @@ func TestCanUseAgentDecisionTable(t *testing.T) {
 			agentID := model.NewId()
 			userID := model.NewId()
 
-			client := &stubDecisionClient{outcome: tt.outcome, err: tt.evalErr}
+			client := &stubDecisionClient{decision: tt.decision, err: tt.evalErr}
 			c := New(client, nil, NoMCPServerIDs, nil)
 
 			cfg := &llm.BotConfig{ID: agentID}
@@ -219,16 +240,16 @@ func TestCanUseServiceAndMCPServerDecisionTable(t *testing.T) {
 
 	rows := []struct {
 		name       string
-		outcome    model.AccessDecisionOutcome
+		decision   *model.AccessDecision
 		evalErr    error
 		wantDenied bool
 	}{
-		{name: "allow", outcome: model.AccessDecisionOutcomeAllow},
-		{name: "no_policy", outcome: model.AccessDecisionOutcomeNoPolicy},
-		{name: "deny", outcome: model.AccessDecisionOutcomeDeny, wantDenied: true},
-		{name: "unavailable denies", outcome: model.AccessDecisionOutcomeUnavailable, wantDenied: true},
+		{name: "allow", decision: allowDecision()},
+		{name: "no_policy", decision: noPolicyDecision()},
+		{name: "deny", decision: denyDecision(), wantDenied: true},
+		{name: "contradictory deny denies", decision: contradictoryDecision(), wantDenied: true},
 		{name: "eval error denies", evalErr: evalErr, wantDenied: true},
-		{name: "unknown outcome denies", outcome: model.AccessDecisionOutcome("future_value"), wantDenied: true},
+		{name: "missing decision denies", wantDenied: true},
 	}
 
 	checks := []struct {
@@ -250,7 +271,7 @@ func TestCanUseServiceAndMCPServerDecisionTable(t *testing.T) {
 				resourceID := model.NewId()
 				userID := model.NewId()
 
-				client := &stubDecisionClient{outcome: tt.outcome, err: tt.evalErr}
+				client := &stubDecisionClient{decision: tt.decision, err: tt.evalErr}
 				c := New(client, nil, NoMCPServerIDs, nil)
 
 				err := check.invoke(c, userID, resourceID)
@@ -285,7 +306,7 @@ func TestEvaluateInvalidIDsAreNoPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Deny-everything client: if it were consulted these would all fail.
-			client := &stubDecisionClient{outcome: model.AccessDecisionOutcomeDeny}
+			client := &stubDecisionClient{decision: denyDecision()}
 			c := New(client, nil, NoMCPServerIDs, nil)
 
 			// Agent path: falls back to legacy behavior.
@@ -392,7 +413,7 @@ func TestValidateAgentWrite(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		perType       map[string]model.AccessDecisionOutcome
+		perType       map[string]*model.AccessDecision
 		cfg           *llm.BotConfig
 		prev          *llm.BotConfig
 		probe         int
@@ -410,14 +431,14 @@ func TestValidateAgentWrite(t *testing.T) {
 		},
 		{
 			name:      "create attribute-based while available",
-			perType:   map[string]model.AccessDecisionOutcome{ResourceTypeService: model.AccessDecisionOutcomeAllow},
+			perType:   map[string]*model.AccessDecision{ResourceTypeService: allowDecision()},
 			cfg:       &llm.BotConfig{ID: model.NewId(), ServiceID: serviceID, UserAccessLevel: llm.UserAccessLevelAttributeBased},
 			probe:     probeAvailable,
 			wantTypes: []string{ResourceTypeService},
 		},
 		{
 			name:        "create with denied service",
-			perType:     map[string]model.AccessDecisionOutcome{ResourceTypeService: model.AccessDecisionOutcomeDeny},
+			perType:     map[string]*model.AccessDecision{ResourceTypeService: denyDecision()},
 			cfg:         &llm.BotConfig{ID: model.NewId(), ServiceID: serviceID},
 			wantErr:     ErrAccessDenied,
 			wantErrText: "service",
@@ -425,14 +446,14 @@ func TestValidateAgentWrite(t *testing.T) {
 		},
 		{
 			name:      "update with unchanged denied service skips the service check",
-			perType:   map[string]model.AccessDecisionOutcome{ResourceTypeService: model.AccessDecisionOutcomeDeny},
+			perType:   map[string]*model.AccessDecision{ResourceTypeService: denyDecision()},
 			cfg:       &llm.BotConfig{ID: model.NewId(), ServiceID: serviceID},
 			prev:      &llm.BotConfig{ID: model.NewId(), ServiceID: serviceID},
 			wantTypes: nil,
 		},
 		{
 			name:      "update with changed service checks the new one",
-			perType:   map[string]model.AccessDecisionOutcome{ResourceTypeService: model.AccessDecisionOutcomeDeny},
+			perType:   map[string]*model.AccessDecision{ResourceTypeService: denyDecision()},
 			cfg:       &llm.BotConfig{ID: model.NewId(), ServiceID: serviceID},
 			prev:      &llm.BotConfig{ID: model.NewId(), ServiceID: prevServiceID},
 			wantErr:   ErrAccessDenied,
@@ -440,7 +461,7 @@ func TestValidateAgentWrite(t *testing.T) {
 		},
 		{
 			name:    "create with denied mcp origin names the origin",
-			perType: map[string]model.AccessDecisionOutcome{ResourceTypeService: model.AccessDecisionOutcomeAllow, ResourceTypeMCP: model.AccessDecisionOutcomeDeny},
+			perType: map[string]*model.AccessDecision{ResourceTypeService: allowDecision(), ResourceTypeMCP: denyDecision()},
 			cfg: &llm.BotConfig{
 				ID: model.NewId(), ServiceID: serviceID,
 				EnabledMCPTools: tools(deniedOrigin),
@@ -451,7 +472,7 @@ func TestValidateAgentWrite(t *testing.T) {
 		},
 		{
 			name:    "update skips pre-existing mcp origins",
-			perType: map[string]model.AccessDecisionOutcome{ResourceTypeMCP: model.AccessDecisionOutcomeDeny},
+			perType: map[string]*model.AccessDecision{ResourceTypeMCP: denyDecision()},
 			cfg: &llm.BotConfig{
 				ID: model.NewId(), ServiceID: serviceID,
 				EnabledMCPTools: tools(deniedOrigin, deniedOrigin+"/"), // normalization dedupes the slash variant
@@ -464,7 +485,7 @@ func TestValidateAgentWrite(t *testing.T) {
 		},
 		{
 			name:    "update checks only newly added mcp origins",
-			perType: map[string]model.AccessDecisionOutcome{ResourceTypeMCP: model.AccessDecisionOutcomeAllow},
+			perType: map[string]*model.AccessDecision{ResourceTypeMCP: allowDecision()},
 			cfg: &llm.BotConfig{
 				ID: model.NewId(), ServiceID: serviceID,
 				EnabledMCPTools: tools(deniedOrigin, allowedOrigin),
@@ -477,7 +498,7 @@ func TestValidateAgentWrite(t *testing.T) {
 		},
 		{
 			name:    "auto-enable-new-mcp-tools skips mcp validation",
-			perType: map[string]model.AccessDecisionOutcome{ResourceTypeService: model.AccessDecisionOutcomeAllow, ResourceTypeMCP: model.AccessDecisionOutcomeDeny},
+			perType: map[string]*model.AccessDecision{ResourceTypeService: allowDecision(), ResourceTypeMCP: denyDecision()},
 			cfg: &llm.BotConfig{
 				ID: model.NewId(), ServiceID: serviceID,
 				AutoEnableNewMCPTools: true,
@@ -487,7 +508,7 @@ func TestValidateAgentWrite(t *testing.T) {
 		},
 		{
 			name:    "empty resolver leaves origins non-addressable",
-			perType: map[string]model.AccessDecisionOutcome{ResourceTypeService: model.AccessDecisionOutcomeAllow, ResourceTypeMCP: model.AccessDecisionOutcomeDeny},
+			perType: map[string]*model.AccessDecision{ResourceTypeService: allowDecision(), ResourceTypeMCP: denyDecision()},
 			cfg: &llm.BotConfig{
 				ID: model.NewId(), ServiceID: serviceID,
 				EnabledMCPTools: tools(deniedOrigin),
@@ -497,7 +518,7 @@ func TestValidateAgentWrite(t *testing.T) {
 		},
 		{
 			name:    "unresolvable origins are not policy-addressable",
-			perType: map[string]model.AccessDecisionOutcome{ResourceTypeService: model.AccessDecisionOutcomeAllow, ResourceTypeMCP: model.AccessDecisionOutcomeDeny},
+			perType: map[string]*model.AccessDecision{ResourceTypeService: allowDecision(), ResourceTypeMCP: denyDecision()},
 			cfg: &llm.BotConfig{
 				ID: model.NewId(), ServiceID: serviceID,
 				EnabledMCPTools: tools(unknownOrigin),
@@ -508,7 +529,7 @@ func TestValidateAgentWrite(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &stubDecisionClient{outcome: model.AccessDecisionOutcomeNoPolicy, perType: tt.perType}
+			client := &stubDecisionClient{decision: noPolicyDecision(), perType: tt.perType}
 			idsByOrigin := resolver
 			if tt.emptyResolver {
 				idsByOrigin = NoMCPServerIDs

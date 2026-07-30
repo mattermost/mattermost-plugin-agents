@@ -78,20 +78,34 @@ func NewLegacyOnly(mcpIDsByOrigin func() map[string]string, log Logger) *Checker
 	return c
 }
 
+// errNoDecision reports a DecisionClient that returned neither a decision nor
+// an error. Unreachable through either shipped client, but denying beats
+// dereferencing nil inside an access gate.
+var errNoDecision = errors.New("access control evaluation returned no decision")
+
 // evaluate runs one decision call. Non-26-char IDs (e.g. legacy UUID bot IDs)
 // can never have policies, so they short-circuit to no_policy.
-func (c *Checker) evaluate(ctx context.Context, userID, resourceType, resourceID string) (model.AccessDecisionOutcome, error) {
+func (c *Checker) evaluate(ctx context.Context, userID, resourceType, resourceID string) (*model.AccessDecision, error) {
 	if !model.IsValidId(resourceID) || !model.IsValidId(userID) {
 		logDebug(c.log, "ABAC evaluate skipped for non-policy-addressable IDs", "resource_type", resourceType, "resource_id", resourceID)
-		return model.AccessDecisionOutcomeNoPolicy, nil
+		decision := model.NewNoPolicyAccessDecision()
+		return &decision, nil
 	}
-	return c.client.EvaluateAccessRequest(ctx, userID, resourceType, resourceID, ActionUse)
+
+	decision, err := c.client.EvaluateAccessRequest(ctx, userID, resourceType, resourceID, ActionUse)
+	if err != nil {
+		return nil, err
+	}
+	if decision == nil {
+		return nil, errNoDecision
+	}
+	return decision, nil
 }
 
 // CanUseAgent gates end-user use of an agent, combining the resource policy
 // with the agent's UserAccessLevel. legacyCheck supplies the legacy
-// allow/block outcome; attribute-based mode never invokes it. Unavailable —
-// like any call error — denies unconditionally, in every agent mode.
+// allow/block outcome; attribute-based mode never invokes it. Any failure to
+// obtain a decision denies unconditionally, in every agent mode.
 func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotConfig, legacyCheck func() error) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "abac can_use_agent", trace.WithAttributes(
 		telemetry.UserID.String(userID),
@@ -123,38 +137,30 @@ func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotCo
 		return runLegacy()
 	}
 
-	outcome, err := c.evaluate(ctx, userID, ResourceTypeAgent, cfg.ID)
+	decision, err := c.evaluate(ctx, userID, ResourceTypeAgent, cfg.ID)
 	if err != nil {
 		logError(c.log, "ABAC agent evaluation failed", "agent_id", cfg.ID, "error", err.Error())
 		span.RecordError(err)
 		return deny()
 	}
-	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
+	span.SetAttributes(telemetry.ABACOutcome.String(outcomeAttribute(*decision)))
 
-	switch outcome {
-	case model.AccessDecisionOutcomeAllow:
-		if attributeBased {
-			return nil
-		}
-		return runLegacy()
-	case model.AccessDecisionOutcomeDeny:
-		return deny()
-	case model.AccessDecisionOutcomeNoPolicy:
-		// Deliberate fail-open for attribute-based agents without a policy.
-		if attributeBased {
-			return nil
-		}
-		return runLegacy()
-	case model.AccessDecisionOutcomeUnavailable:
-		return deny()
-	default:
-		// Unknown outcome from a future server: fail closed.
+	if !decision.Decision {
 		return deny()
 	}
+	// An allow hands the verdict to the agent's own access level. Both kinds of
+	// allow land here: an explicit grant, and the vacuous allow reporting that
+	// no policy governs this agent — which is the deliberate fail-open for
+	// attribute-based agents. The span attribute keeps the two apart.
+	if attributeBased {
+		return nil
+	}
+	return runLegacy()
 }
 
-// canUseResource is the shared service/MCP decision table:
-// allow/no_policy → nil; deny/unavailable/error/unknown → deny.
+// canUseResource is the shared service/MCP decision table: an allow (explicit,
+// or the vacuous allow meaning no policy governs the resource) permits use;
+// a deny or any failure to obtain a decision denies.
 func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resourceType, resourceID string) error {
 	ctx, span := telemetry.Tracer().Start(ctx, spanName, trace.WithAttributes(
 		telemetry.UserID.String(userID),
@@ -175,22 +181,18 @@ func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resource
 		return nil
 	}
 
-	outcome, err := c.evaluate(ctx, userID, resourceType, resourceID)
+	decision, err := c.evaluate(ctx, userID, resourceType, resourceID)
 	if err != nil {
 		logError(c.log, "ABAC resource evaluation failed", "resource_type", resourceType, "resource_id", resourceID, "error", err.Error())
 		span.RecordError(err)
 		return deny()
 	}
-	span.SetAttributes(telemetry.ABACOutcome.String(string(outcome)))
+	span.SetAttributes(telemetry.ABACOutcome.String(outcomeAttribute(*decision)))
 
-	switch outcome {
-	case model.AccessDecisionOutcomeAllow, model.AccessDecisionOutcomeNoPolicy:
-		return nil
-	case model.AccessDecisionOutcomeDeny, model.AccessDecisionOutcomeUnavailable:
-		return deny()
-	default:
+	if !decision.Decision {
 		return deny()
 	}
+	return nil
 }
 
 // CanUseService gates end-user use of an LLM service (by stable service ID).

@@ -17,6 +17,7 @@ import (
 type PassthroughClient struct{}
 
 // EvaluateAccessRequest always reports no_policy.
-func (PassthroughClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (model.AccessDecisionOutcome, error) {
-	return model.AccessDecisionOutcomeNoPolicy, nil
+func (PassthroughClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (*model.AccessDecision, error) {
+	decision := model.NewNoPolicyAccessDecision()
+	return &decision, nil
 }

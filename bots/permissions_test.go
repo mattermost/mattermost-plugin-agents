@@ -5,6 +5,7 @@ package bots
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -476,23 +477,33 @@ func TestCheckUsageRestrictionsDowngradedServer(t *testing.T) {
 }
 
 // abacStubClient answers decision calls per resource type; unlisted types
-// evaluate as no_policy (legacy behavior).
+// evaluate as no_policy (legacy behavior). A type listed in perTypeErr fails
+// evaluation instead, which the checker denies.
 type abacStubClient struct {
-	perType map[string]model.AccessDecisionOutcome
+	perType    map[string]*model.AccessDecision
+	perTypeErr map[string]error
 }
 
-func (s abacStubClient) EvaluateAccessRequest(_ context.Context, _, resourceType, _, _ string) (model.AccessDecisionOutcome, error) {
-	if outcome, ok := s.perType[resourceType]; ok {
-		return outcome, nil
+func (s abacStubClient) EvaluateAccessRequest(_ context.Context, _, resourceType, _, _ string) (*model.AccessDecision, error) {
+	if err, ok := s.perTypeErr[resourceType]; ok {
+		return nil, err
 	}
-	return model.AccessDecisionOutcomeNoPolicy, nil
+	if decision, ok := s.perType[resourceType]; ok {
+		return decision, nil
+	}
+	noPolicy := model.NewNoPolicyAccessDecision()
+	return &noPolicy, nil
 }
 
-func setupABACTestEnvironment(t *testing.T, perType map[string]model.AccessDecisionOutcome) *TestEnvironment {
+// Decision shorthands for the table below.
+func abacAllow() *model.AccessDecision { return &model.AccessDecision{Decision: true} }
+func abacDeny() *model.AccessDecision  { return &model.AccessDecision{Decision: false} }
+
+func setupABACTestEnvironment(t *testing.T, stub abacStubClient) *TestEnvironment {
 	t.Helper()
 	mockAPI := &plugintest.API{}
 	client := pluginapi.NewClient(mockAPI, nil)
-	checker := accesscontrol.New(abacStubClient{perType: perType}, nil, accesscontrol.NoMCPServerIDs, nil)
+	checker := accesscontrol.New(stub, nil, accesscontrol.NoMCPServerIDs, nil)
 	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, checker, &http.Client{}, nil)
 	return &TestEnvironment{bots: mmBots, client: client, mockAPI: mockAPI}
 }
@@ -506,13 +517,14 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		perType    map[string]model.AccessDecisionOutcome
+		perType    map[string]*model.AccessDecision
+		perTypeErr map[string]error
 		cfg        llm.BotConfig
 		wantDenied bool
 	}{
 		{
 			name:    "agent policy deny masks legacy allow",
-			perType: map[string]model.AccessDecisionOutcome{accesscontrol.ResourceTypeAgent: model.AccessDecisionOutcomeDeny},
+			perType: map[string]*model.AccessDecision{accesscontrol.ResourceTypeAgent: abacDeny()},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
 				UserAccessLevel: llm.UserAccessLevelAll,
@@ -521,9 +533,9 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 		},
 		{
 			name: "service deny after agent allow",
-			perType: map[string]model.AccessDecisionOutcome{
-				accesscontrol.ResourceTypeAgent:   model.AccessDecisionOutcomeAllow,
-				accesscontrol.ResourceTypeService: model.AccessDecisionOutcomeDeny,
+			perType: map[string]*model.AccessDecision{
+				accesscontrol.ResourceTypeAgent:   abacAllow(),
+				accesscontrol.ResourceTypeService: abacDeny(),
 			},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
@@ -533,9 +545,9 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 		},
 		{
 			name: "agent and service allow",
-			perType: map[string]model.AccessDecisionOutcome{
-				accesscontrol.ResourceTypeAgent:   model.AccessDecisionOutcomeAllow,
-				accesscontrol.ResourceTypeService: model.AccessDecisionOutcomeAllow,
+			perType: map[string]*model.AccessDecision{
+				accesscontrol.ResourceTypeAgent:   abacAllow(),
+				accesscontrol.ResourceTypeService: abacAllow(),
 			},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
@@ -544,7 +556,7 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 		},
 		{
 			name:    "attribute-based agent ignores legacy user lists",
-			perType: map[string]model.AccessDecisionOutcome{accesscontrol.ResourceTypeAgent: model.AccessDecisionOutcomeAllow},
+			perType: map[string]*model.AccessDecision{accesscontrol.ResourceTypeAgent: abacAllow()},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
 				UserAccessLevel: llm.UserAccessLevelAttributeBased,
@@ -553,7 +565,7 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 		},
 		{
 			name:    "attribute-based agent denied by policy",
-			perType: map[string]model.AccessDecisionOutcome{accesscontrol.ResourceTypeAgent: model.AccessDecisionOutcomeDeny},
+			perType: map[string]*model.AccessDecision{accesscontrol.ResourceTypeAgent: abacDeny()},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
 				UserAccessLevel: llm.UserAccessLevelAttributeBased,
@@ -561,11 +573,11 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 			wantDenied: true,
 		},
 		{
-			// Unavailable means a policy exists (or existence is unknowable),
-			// so even a legacy-mode agent whose user lists would allow fails
-			// closed at the enforcement point.
-			name:    "legacy-mode agent denied on unavailable",
-			perType: map[string]model.AccessDecisionOutcome{accesscontrol.ResourceTypeAgent: model.AccessDecisionOutcomeUnavailable},
+			// A failed evaluation leaves policy existence unknowable, so even
+			// a legacy-mode agent whose user lists would allow fails closed at
+			// the enforcement point.
+			name:       "legacy-mode agent denied on evaluation error",
+			perTypeErr: map[string]error{accesscontrol.ResourceTypeAgent: errors.New("pdp unavailable")},
 			cfg: llm.BotConfig{
 				ID: agentID, ServiceID: serviceID,
 				UserAccessLevel: llm.UserAccessLevelAll,
@@ -576,7 +588,7 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setupABACTestEnvironment(t, tc.perType)
+			e := setupABACTestEnvironment(t, abacStubClient{perType: tc.perType, perTypeErr: tc.perTypeErr})
 			defer e.Cleanup(t)
 
 			err := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), tc.cfg, userID)

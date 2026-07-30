@@ -29,9 +29,9 @@ func NewPluginAPIClient(papi plugin.API) *PluginAPIClient {
 }
 
 // EvaluateAccessRequest proxies one PDP decision call (ctx is span-only; the
-// plugin RPC hop carries no context). The server outcome is returned verbatim;
-// unknown values hit the checkers' default switch row, which denies.
-func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (model.AccessDecisionOutcome, error) {
+// plugin RPC hop carries no context). The server's decision is returned
+// verbatim; every failure to obtain one is an error, which the checkers deny.
+func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (*model.AccessDecision, error) {
 	_, span := telemetry.Tracer().Start(ctx, "abac evaluate", trace.WithAttributes(
 		telemetry.UserID.String(userID),
 		telemetry.ABACResourceType.String(resourceType),
@@ -43,15 +43,30 @@ func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, res
 	if appErr != nil {
 		span.RecordError(appErr)
 		span.SetStatus(codes.Error, "access control evaluation failed")
-		return "", appErr
+		return nil, appErr
 	}
 	if decision == nil {
 		// The generated RPC client returns (nil, nil) on transport failure.
 		span.RecordError(errRPCTransportFailure)
 		span.SetStatus(codes.Error, "access control evaluation returned no decision")
-		return "", errRPCTransportFailure
+		return nil, errRPCTransportFailure
 	}
 
-	span.SetAttributes(telemetry.ABACOutcome.String(string(decision.Outcome)))
-	return decision.Outcome, nil
+	span.SetAttributes(telemetry.ABACOutcome.String(outcomeAttribute(*decision)))
+	return decision, nil
+}
+
+// outcomeAttribute renders a decision for the ABACOutcome span attribute,
+// keeping the allow/deny/no_policy distinction the AuthZEN shape folds into
+// one boolean. There is no "unavailable" value any more: failing to obtain a
+// decision is an error, recorded on the span as an error status instead.
+func outcomeAttribute(decision model.AccessDecision) string {
+	switch {
+	case decision.IsNoPolicy():
+		return string(model.AccessDecisionReasonNoPolicy)
+	case decision.Decision:
+		return "allow"
+	default:
+		return "deny"
+	}
 }
