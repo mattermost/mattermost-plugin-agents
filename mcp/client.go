@@ -136,11 +136,23 @@ func NewEmbeddedServerClientWithCache(server EmbeddedMCPServer, log pluginapi.Lo
 	return client
 }
 
-func listAllTools(ctx context.Context, session *mcp.ClientSession) (map[string]*mcp.Tool, error) {
-	tools := make(map[string]*mcp.Tool)
-	for tool, err := range session.Tools(ctx, &mcp.ListToolsParams{}) {
-		if err != nil {
-			return nil, err
+func listAllTools(ctx context.Context, session *mcp.ClientSession) (tools map[string]*mcp.Tool, err error) {
+	// go-sdk v1.7.0's ListTools panics (nil dereference in filterValidTools) when a
+	// server's tools/list result contains a JSON null tool entry, so a misbehaving
+	// remote MCP server could crash the whole plugin process. Recover the panic and
+	// surface it as an error instead. Upstream report:
+	// https://github.com/modelcontextprotocol/go-sdk/issues/1119
+	defer func() {
+		if r := recover(); r != nil {
+			tools = nil
+			err = fmt.Errorf("panic while listing tools from MCP server: %v", r)
+		}
+	}()
+
+	tools = make(map[string]*mcp.Tool)
+	for tool, iterErr := range session.Tools(ctx, &mcp.ListToolsParams{}) {
+		if iterErr != nil {
+			return nil, iterErr
 		}
 		if tool == nil {
 			continue
@@ -386,42 +398,6 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 	return client, nil
 }
 
-// extractOAuthMetadataURL attempts to extract the OAuth metadata URL from an error message.
-// This is part of a temporary workaround
-// Returns the metadata URL and true if found, empty string and false otherwise.
-func extractOAuthMetadataURL(err error) (string, bool) {
-	if err == nil {
-		return "", false
-	}
-
-	errMsg := err.Error()
-	// Match the pattern from mcpUnauthorized.Error():
-	// "OAuth authentication needed for resource at <URL>"
-	// "OAuth authentication needed for resource at <URL>: Got error: <err>"
-	const prefix = "OAuth authentication needed for resource at "
-
-	idx := strings.Index(errMsg, prefix)
-	if idx == -1 {
-		return "", false
-	}
-
-	// Extract URL starting after the prefix
-	urlStart := idx + len(prefix)
-	remaining := errMsg[urlStart:]
-
-	// Find the end of the URL. The delimiter is ": Got error:" which separates
-	// the URL from the wrapped error. We cannot split on bare ":" because URLs
-	// contain colons (e.g. "https://").
-	urlEnd := len(remaining)
-	const errorSuffix = ": Got error:"
-	if suffixIdx := strings.Index(remaining, errorSuffix); suffixIdx != -1 {
-		urlEnd = suffixIdx
-	}
-
-	metadataURL := strings.TrimSpace(remaining[:urlEnd])
-	return metadataURL, metadataURL != ""
-}
-
 func (c *Client) oauthNeededError(err error) error {
 	if err == nil {
 		return nil
@@ -430,15 +406,6 @@ func (c *Client) oauthNeededError(err error) error {
 	var mcpAuthErr *mcpUnauthorized
 	if errors.As(err, &mcpAuthErr) {
 		md := mcpAuthErr.MetadataURL()
-		return &OAuthNeededError{
-			authURL:     c.oauthNeededRedirectURL(md),
-			metadataURL: md,
-		}
-	}
-
-	// Temporary workaround: check for OAuth error by string matching since go-sdk
-	// does not preserve error chains with %w.
-	if md, ok := extractOAuthMetadataURL(err); ok {
 		return &OAuthNeededError{
 			authURL:     c.oauthNeededRedirectURL(md),
 			metadataURL: md,
@@ -467,8 +434,9 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 
 	httpClient := c.httpClientForMCP(headers)
 
-	// Try new Streamable HTTP transport first (2025-03-26 spec).
-	// This will POST InitializeRequest and detect if the server supports the new transport.
+	// Try the modern Streamable HTTP transport first. The SDK auto-negotiates the
+	// protocol version (2026-07-28 down to 2025-03-26) via a server/discover request,
+	// falling back to a legacy initialize request when the server does not support it.
 	session, errStreamable := client.Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: httpClient,
@@ -483,7 +451,8 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		return nil, oauthErr
 	}
 
-	// Fallback to old HTTP+SSE transport for backwards compatibility (2024-11-05 spec)
+	// Fall back to the HTTP+SSE transport for legacy servers that only implement
+	// the 2024-11-05 HTTP+SSE transport.
 	session, errSSE := client.Connect(ctx, &mcp.SSEClientTransport{
 		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: httpClient,

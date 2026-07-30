@@ -513,10 +513,14 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	target := newFakePluginMCPServer(t, 1)
 	t.Cleanup(target.Close)
 
-	var calls atomic.Int32
+	// Fail every request while true so the entire first connect attempt fails;
+	// a single failed request is not enough because the SDK retries with a
+	// legacy-initialize fallback within one connect attempt.
+	var failing atomic.Bool
+	failing.Store(true)
 	mockAPI := &fakePluginHTTPClient{
 		pluginHTTP: func(req *http.Request) *http.Response {
-			if calls.Add(1) == 1 {
+			if failing.Load() {
 				rec := httptest.NewRecorder()
 				rec.WriteHeader(http.StatusInternalServerError)
 				return rec.Result()
@@ -545,6 +549,8 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	require.Empty(t, tools)
 	require.NotNil(t, mcpErrors)
 	require.NotEmpty(t, mcpErrors.Errors)
+
+	failing.Store(false)
 
 	tools, mcpErrors = m.GetToolsForUser(context.Background(), "alice")
 	require.Nil(t, mcpErrors, "successful plugin reconnect must not return the prior transient error")
