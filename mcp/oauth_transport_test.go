@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,6 +49,10 @@ func TestOAuthRoundTripper(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Captured in the handler goroutine and asserted from the test
+			// goroutine after RoundTrip returns (require must not be called
+			// from non-test goroutines).
+			var gotAuthorization atomic.Value
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// Metadata discovery endpoints intentionally 404 so
 				// createOAuthConfig uses its hardcoded endpoint fallback.
@@ -60,7 +65,7 @@ func TestOAuthRoundTripper(t *testing.T) {
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}
-				require.Equal(t, "Bearer stored-access", r.Header.Get("Authorization"))
+				gotAuthorization.Store(r.Header.Get("Authorization"))
 				w.WriteHeader(http.StatusOK)
 			}))
 			t.Cleanup(server.Close)
@@ -101,6 +106,8 @@ func TestOAuthRoundTripper(t *testing.T) {
 			require.NoError(t, err)
 			defer resp.Body.Close()
 			require.Equal(t, tt.wantStatus, resp.StatusCode)
+			require.Equal(t, "Bearer stored-access", gotAuthorization.Load(),
+				"stored token must be injected as bearer authorization")
 		})
 	}
 }

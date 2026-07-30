@@ -6,7 +6,9 @@ package mcp
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -110,7 +112,11 @@ func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *htt
 // createOAuthConfig directly so explicit user actions always see fresh
 // discovery results.
 func (m *OAuthManager) createOAuthConfigCached(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error) {
-	key := serverURL + "|" + metadataURL + "|" + staticCredsClientID(staticCreds)
+	// The key includes a fingerprint of the static client secret so that
+	// rotating a secret (same ClientID) immediately misses the cache instead
+	// of serving the stale configuration until the TTL expires. A hash is
+	// used to avoid holding the raw secret in map keys.
+	key := serverURL + "|" + metadataURL + "|" + staticCredsClientID(staticCreds) + "|" + staticCredsSecretFingerprint(staticCreds)
 
 	m.configCacheMu.Lock()
 	entry, ok := m.configCache[key]
@@ -344,6 +350,17 @@ func staticCredsClientID(creds *StaticOAuthCredentials) string {
 		return ""
 	}
 	return creds.ClientID
+}
+
+// staticCredsSecretFingerprint returns a non-reversible fingerprint of the
+// static client secret for use in cache keys, so secret rotation invalidates
+// cached OAuth configurations without keeping the raw secret in map keys.
+func staticCredsSecretFingerprint(creds *StaticOAuthCredentials) string {
+	if creds == nil || creds.ClientSecret == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(creds.ClientSecret))
+	return hex.EncodeToString(sum[:8])
 }
 
 func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, state, code string) (*OAuthSession, error) {

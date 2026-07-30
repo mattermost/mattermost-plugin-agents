@@ -189,6 +189,12 @@ func TestCreateOAuthConfigCachedReusesDiscovery(t *testing.T) {
 	_, err = manager.createOAuthConfig(context.Background(), serverURL, "", staticCreds)
 	require.NoError(t, err)
 	require.Equal(t, int32(2), prmFetches.Load(), "uncached call must always run discovery")
+
+	rotated := &StaticOAuthCredentials{ClientID: staticCreds.ClientID, ClientSecret: "rotated-secret"}
+	rotatedConfig, err := manager.createOAuthConfigCached(context.Background(), serverURL, "", rotated)
+	require.NoError(t, err)
+	require.NotSame(t, first, rotatedConfig, "rotating the static secret must bypass the cached config")
+	require.Equal(t, int32(3), prmFetches.Load(), "rotated secret must re-run discovery immediately")
 }
 
 // TestLoadOrCreateClientCredentials_RegistrationEndpointDiscovery covers the
