@@ -83,7 +83,7 @@ function clearHostEditors() {
 const existingPolicy: AccessControlPolicy = {
     id: 'agentidaaaaaaaaaaaaaaaaaaa',
     name: 'My Agent',
-    type: 'plugins/mattermost-ai.agent',
+    type: 'mattermost-ai:agent',
     active: true,
     create_at: 1,
     revision: 1,

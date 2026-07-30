@@ -201,16 +201,18 @@ export async function getAccessControlVisualAST(resourceType: PolicyResourceType
     });
 }
 
-// policyResourceTypeValue maps the UI resource kind onto the server-registered
-// ABAC resource type names (accesscontrol package constants).
+// policyResourceTypeValue maps the UI resource kind onto the plugin-owned ABAC
+// policy type the CEL routes validate against, which the platform keys as
+// "<pluginID>:<resourceType>". These must stay in step with the accesscontrol
+// package's ResourceType* constants.
 function policyResourceTypeValue(resourceType: PolicyResourceType): string {
     switch (resourceType) {
     case 'agent':
-        return 'mattermost-ai.agent';
+        return 'mattermost-ai:agent';
     case 'service':
-        return 'mattermost-ai.service';
+        return 'mattermost-ai:service';
     case 'mcp':
-        return 'mattermost-ai.mcp';
+        return 'mattermost-ai:mcp';
     default: {
         const exhaustive: never = resourceType;
         throw new Error(`unknown resource type: ${exhaustive}`);

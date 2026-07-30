@@ -55,7 +55,7 @@ function policyFor(id: string): AccessControlPolicy {
     return {
         id,
         name: 'Service',
-        type: 'plugins/mattermost-ai.service',
+        type: 'mattermost-ai:service',
         active: true,
         create_at: 1,
         revision: 1,
