@@ -20,7 +20,11 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Header.Set(key, value)
 	}
 
-	return t.base.RoundTrip(req)
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
 }
 
 // httpClientForMCP returns a copy of the client's http.Client with the custom
