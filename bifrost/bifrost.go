@@ -173,7 +173,7 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	}
 
 	key := schemas.Key{
-		Value:  schemas.EnvVar{Val: a.APIKey},
+		Value:  schemas.SecretVar{Val: a.APIKey},
 		Weight: 1.0,
 		// Bifrost v1.5+ requires keys to declare which models they support;
 		// "*" allows any model the configured provider can serve.
@@ -183,16 +183,16 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	// Handle Azure config
 	if a.Provider == schemas.Azure && a.APIURL != "" {
 		key.AzureKeyConfig = &schemas.AzureKeyConfig{
-			Endpoint: schemas.EnvVar{Val: a.APIURL},
+			Endpoint: schemas.SecretVar{Val: a.APIURL},
 		}
 	}
 
 	// Handle Bedrock config
 	if a.Provider == schemas.Bedrock {
-		region := schemas.EnvVar{Val: a.Region}
+		region := schemas.SecretVar{Val: a.Region}
 		key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
-			AccessKey: schemas.EnvVar{Val: a.AWSAccessKeyID},
-			SecretKey: schemas.EnvVar{Val: a.AWSSecretAccessKey},
+			AccessKey: schemas.SecretVar{Val: a.AWSAccessKeyID},
+			SecretKey: schemas.SecretVar{Val: a.AWSSecretAccessKey},
 			Region:    &region,
 		}
 	}
@@ -200,10 +200,10 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	// Handle Vertex config. Empty AuthCredentials signals ADC / attached IAM role.
 	if a.Provider == schemas.Vertex {
 		key.VertexKeyConfig = &schemas.VertexKeyConfig{
-			ProjectID:       schemas.EnvVar{Val: a.VertexProjectID},
-			ProjectNumber:   schemas.EnvVar{Val: a.VertexProjectNumber},
-			Region:          schemas.EnvVar{Val: a.Region},
-			AuthCredentials: schemas.EnvVar{Val: a.VertexAuthCredentials},
+			ProjectID:       schemas.SecretVar{Val: a.VertexProjectID},
+			ProjectNumber:   schemas.SecretVar{Val: a.VertexProjectNumber},
+			Region:          schemas.SecretVar{Val: a.Region},
+			AuthCredentials: schemas.SecretVar{Val: a.VertexAuthCredentials},
 		}
 	}
 
@@ -483,20 +483,20 @@ func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.Respon
 	if typeVal, ok := schemaMap["type"].(string); ok {
 		responseSchema.Type = Ptr(typeVal)
 	} else if typeList, ok := schemaMap["type"].([]interface{}); ok {
-		anyOf := make([]map[string]any, 0, len(typeList))
+		anyOf := make([]schemas.OrderedMap, 0, len(typeList))
 		for i, item := range typeList {
 			typeName, ok := item.(string)
 			if !ok {
 				return nil, fmt.Errorf("responses JSON schema type[%d] must be a string", i)
 			}
-			anyOf = append(anyOf, map[string]any{"type": typeName})
+			anyOf = append(anyOf, *schemas.NewOrderedMapFromPairs(schemas.KV("type", typeName)))
 		}
 		if len(anyOf) > 0 {
 			responseSchema.AnyOf = anyOf
 		}
 	}
 	if properties, ok := schemaMap["properties"].(map[string]interface{}); ok {
-		responseSchema.Properties = &properties
+		responseSchema.Properties = schemas.OrderedMapFromMap(properties)
 	}
 	if required := extractStringSlice(schemaMap["required"]); len(required) > 0 {
 		responseSchema.Required = required
@@ -519,16 +519,16 @@ func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.Respon
 		responseSchema.Name = Ptr(title)
 	}
 	if defs, ok := schemaMap["$defs"].(map[string]interface{}); ok {
-		responseSchema.Defs = &defs
+		responseSchema.Defs = schemas.OrderedMapFromMap(defs)
 	}
 	if definitions, ok := schemaMap["definitions"].(map[string]interface{}); ok {
-		responseSchema.Definitions = &definitions
+		responseSchema.Definitions = schemas.OrderedMapFromMap(definitions)
 	}
 	if ref, ok := schemaMap["$ref"].(string); ok {
 		responseSchema.Ref = Ptr(ref)
 	}
 	if items, ok := schemaMap["items"].(map[string]interface{}); ok {
-		responseSchema.Items = &items
+		responseSchema.Items = schemas.OrderedMapFromMap(items)
 	}
 	if minItems, ok := toInt64(schemaMap["minItems"]); ok {
 		responseSchema.MinItems = &minItems
@@ -636,19 +636,19 @@ func extractStringEnum(value interface{}) ([]string, error) {
 	}
 }
 
-func extractSchemaList(value interface{}) []map[string]any {
+func extractSchemaList(value interface{}) []schemas.OrderedMap {
 	items, ok := value.([]interface{})
 	if !ok {
 		return nil
 	}
 
-	result := make([]map[string]any, 0, len(items))
+	result := make([]schemas.OrderedMap, 0, len(items))
 	for _, item := range items {
 		schemaMap, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		result = append(result, schemaMap)
+		result = append(result, *schemas.OrderedMapFromMap(schemaMap))
 	}
 	if len(result) == 0 {
 		return nil
@@ -1138,9 +1138,9 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 
 	switch b.provider {
 	case schemas.Anthropic:
-		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
-		if budget >= cfg.MaxGeneratedTokens {
-			return nil // Anthropic requires budget < max_tokens
+		budget, ok := b.anthropicThinkingBudget(cfg.MaxGeneratedTokens)
+		if !ok {
+			return nil
 		}
 		return &schemas.ChatReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
@@ -1165,14 +1165,39 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	}
 }
 
+// Anthropic budget-based extended thinking requires
+// minThinkingBudget <= budget < max_tokens.
+const (
+	minThinkingBudget        = 1024
+	defaultMaxThinkingBudget = 8192
+)
+
 // calculateThinkingBudget computes the thinking budget for Anthropic models.
 func (b *LLM) calculateThinkingBudget(maxGeneratedTokens int) int {
-	const minBudget, maxBudget = 1024, 8192
 	if b.thinkingBudget > 0 {
-		return max(b.thinkingBudget, minBudget)
+		return max(b.thinkingBudget, minThinkingBudget)
 	}
 	budget := maxGeneratedTokens / 4
-	return max(min(budget, maxBudget), minBudget)
+	return max(min(budget, defaultMaxThinkingBudget), minThinkingBudget)
+}
+
+// anthropicThinkingBudget returns the thinking budget to send for an Anthropic
+// request, clamped into the provider's valid range (minThinkingBudget <=
+// budget < max_tokens). Clamping — rather than gating on the primary model's
+// capabilities — keeps the value valid for every Anthropic model that may see
+// it: models that only support adaptive thinking ignore the budget entirely,
+// while budget-based models (including any Anthropic fallback in the request's
+// fallback chain) reject an out-of-range value with a 400. Returns ok=false
+// when no valid budget exists, in which case thinking must be omitted.
+func (b *LLM) anthropicThinkingBudget(maxGeneratedTokens int) (int, bool) {
+	budget := b.calculateThinkingBudget(maxGeneratedTokens)
+	if budget >= maxGeneratedTokens {
+		budget = maxGeneratedTokens - 1
+	}
+	if budget < minThinkingBudget {
+		return 0, false
+	}
+	return budget, true
 }
 
 // convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
@@ -1859,9 +1884,9 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 
 	switch b.provider {
 	case schemas.Anthropic:
-		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
-		if budget >= cfg.MaxGeneratedTokens {
-			return nil // Anthropic requires budget < max_tokens
+		budget, ok := b.anthropicThinkingBudget(cfg.MaxGeneratedTokens)
+		if !ok {
+			return nil
 		}
 		return &schemas.ResponsesParametersReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:

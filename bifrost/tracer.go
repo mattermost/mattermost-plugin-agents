@@ -27,6 +27,12 @@ import (
 // expects for streaming requests; they keep handles live so the final
 // EndSpan call can stamp completion attributes.
 type otelTracer struct {
+	// NoOpTracer provides the stream pause/resume gate methods (PauseStream,
+	// ResumeStream, EndStream, GateSend, ...). This plugin never engages the
+	// gate, and NoOpTracer's GateSend forwards chunks directly to the channel,
+	// so the no-op implementations preserve normal streaming behavior.
+	bschemas.NoOpTracer
+
 	mu             sync.Mutex
 	deferredSpans  map[string]bschemas.SpanHandle
 	streamStarts   map[string]time.Time
@@ -284,10 +290,22 @@ func (t *otelTracer) ProcessStreamingChunk(_ *bschemas.BifrostContext, traceID s
 			out.TokenUsage = usage
 		}
 		if extras := last.GetExtraFields(); extras != nil {
-			out.RequestID = extras.OriginalModelRequested
-			out.RequestedModel = extras.OriginalModelRequested
-			out.ResolvedModel = extras.ResolvedModelUsed
-			out.Provider = extras.Provider
+			routing := extras.RoutingInfo
+			requestedModel := routing.Model
+			if routing.IsFallback && routing.PrimaryModel != nil {
+				requestedModel = *routing.PrimaryModel
+			}
+			resolvedModel := routing.Model
+			if routing.ResolvedKeyAlias != nil {
+				resolvedModel = routing.ResolvedKeyAlias.ModelID
+			}
+			// traceID is the request ID: CreateTrace returns the requestID
+			// Bifrost passes in, and Bifrost keys the whole streaming
+			// lifecycle (including this call) by that value.
+			out.RequestID = traceID
+			out.RequestedModel = requestedModel
+			out.ResolvedModel = resolvedModel
+			out.Provider = routing.Provider
 		}
 	}
 	if count > 0 {

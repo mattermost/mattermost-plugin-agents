@@ -12,6 +12,33 @@ import {LLMService} from './service';
 const maxReasoningBudget = 8192;
 const minReasoningBudget = 1024;
 
+// Anthropic models where budget-based extended thinking was removed and the
+// thinking budget is ignored (adaptive thinking is the only thinking-on mode).
+// Classified by family and version threshold rather than an enumerated model
+// list, so future versions classify correctly without maintenance: Opus
+// dropped the budget at 4.7 and Sonnet at 5, and every Fable/Mythos model is
+// adaptive-only. Unrecognized models are treated as budget-based, which keeps
+// the budget validation visible.
+export const usesAdaptiveThinking = (model: string): boolean => {
+    const m = model.toLowerCase();
+    if (m.includes('fable') || m.includes('mythos')) {
+        return true;
+    }
+    const match = (/claude-(opus|sonnet)-(\d+)(?:[.-](\d+))?/).exec(m);
+    if (!match) {
+        return false;
+    }
+    const major = parseInt(match[2], 10);
+
+    // A long trailing number is a date suffix (e.g. claude-opus-4-20250514),
+    // not a minor version.
+    const minor = match[3] && match[3].length <= 2 ? parseInt(match[3], 10) : 0;
+    if (match[1] === 'opus') {
+        return major > 4 || (major === 4 && minor >= 7);
+    }
+    return major >= 5;
+};
+
 type ReasoningConfigItemProps = {
     bot: LLMBotConfig
     service: LLMService | undefined
@@ -43,6 +70,11 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
 
     const reasoningEnabled = props.bot.reasoningEnabled ?? true; // Default to enabled
     const reasoningEffort = props.bot.reasoningEffort || 'medium';
+
+    // The agent's effective model decides whether the thinking budget applies:
+    // adaptive-thinking Anthropic models ignore it entirely.
+    const effectiveModel = props.bot.model || props.service.defaultModel || '';
+    const adaptiveThinking = isAnthropic && usesAdaptiveThinking(effectiveModel);
 
     // For thinking budget, use the value from the bot config, or empty string if 0/undefined
     const thinkingBudgetValue = (props.bot.thinkingBudget && props.bot.thinkingBudget > 0) ? props.bot.thinkingBudget.toString() : '';
@@ -101,19 +133,21 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     placeholder={getDefaultThinkingBudget().toString()}
                                 />
                                 <HelpText>
-                                    {intl.formatMessage({
+                                    {adaptiveThinking ? intl.formatMessage({
+                                        defaultMessage: 'This model uses adaptive thinking and decides how much to reason on its own. The token budget is ignored.',
+                                    }) : intl.formatMessage({
                                         defaultMessage: 'Token budget for extended thinking. Higher values allow deeper reasoning but increase response time and cost. Must be between 1024 and {maxTokens}. Leave blank to use default ({defaultBudget}).',
                                     }, {
                                         maxTokens: props.maxTokens,
                                         defaultBudget: getDefaultThinkingBudget(),
                                     })}
                                 </HelpText>
-                                {typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > 0 && props.bot.thinkingBudget < 1024 && (
+                                {!adaptiveThinking && typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > 0 && props.bot.thinkingBudget < 1024 && (
                                     <ErrorText>
                                         {intl.formatMessage({defaultMessage: 'Thinking budget must be at least 1024 tokens.'})}
                                     </ErrorText>
                                 )}
-                                {typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > props.maxTokens && (
+                                {!adaptiveThinking && typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > props.maxTokens && (
                                     <ErrorText>
                                         {intl.formatMessage({
                                             defaultMessage: 'Thinking budget cannot exceed max tokens ({maxTokens}).',
