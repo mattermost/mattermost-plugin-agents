@@ -233,11 +233,14 @@ require (
 	modernc.org/sqlite v1.44.0 // indirect
 )
 
-// DEV-ONLY: branch pin for the in-flight ABAC plugin API (EvaluateAccessControl + PAP/CEL
-// methods + Option B existence-resolving semantics). Currently the pseudo-version of the
-// mattermost branch cursor/agents-abac-platform-229e head (4d1c1816fc). Before merge: repoint
-// to a MASTER pseudo-version of server/public containing the merged API — never merge a
-// branch pin, and never merge a local-path replace.
-replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.4.4-0.20260715162756-4d1c1816fcff
+// DEV-ONLY: branch pin for the in-flight ABAC plugin API (EvaluateAccessControl returning
+// model.AccessDecision + PAP/CEL methods + plugin-owned "<pluginID>:<resourceType>" policy
+// keying). Currently the pseudo-version of the mattermost branch
+// cursor/agents-abac-platform-229e head (180df00618). proxy.golang.org does not serve this
+// commit yet, so go.sum carries hashes resolved straight from the repository; builds work
+// because the go command trusts go.sum and only consults the checksum database for entries
+// missing from it. Before merge: repoint to a MASTER pseudo-version of server/public
+// containing the merged API — never merge a branch pin, and never merge a local-path replace.
+replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.4.4-0.20260730201402-180df006186a
 
 replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.6
