@@ -330,7 +330,7 @@ func (s *MattermostHTTPMCPServer) securityMiddleware(next http.Handler) http.Han
 			// Origin was already validated in validateOrigin(), safe to set CORS headers
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Cache-Control, MCP-Protocol-Version, Mcp-Session-Id, Last-Event-ID")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Cache-Control, MCP-Protocol-Version, Mcp-Session-Id, Mcp-Method, Mcp-Name, Last-Event-ID")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 		}

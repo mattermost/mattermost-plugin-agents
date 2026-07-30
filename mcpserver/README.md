@@ -175,6 +175,7 @@ Create a post as a specific user using username/password login. Simply provide t
 - `--http-port`: Port for HTTP server (default: 8080)
 - `--http-bind-addr`: Bind address for HTTP server (default: 127.0.0.1 for security, use specific IP for external access)
 - `--site-url`: Public URL where clients will access the MCP server (used for OAuth metadata and origin validation)
+- `--stateless`: Enable stateless mode for multi-node/HA deployments (no server-side session tracking)
 
 **Notes**: 
 - Token validation occurs at startup for fast failure detection
@@ -249,6 +250,11 @@ export MM_INTERNAL_SERVER_URL=http://localhost:8065  # optional for localhost op
 - `/sse`: Server-Sent Events endpoint (backwards compatibility)
 - `/message`: Message endpoint for SSE transport (backwards compatibility)
 - `/.well-known/oauth-protected-resource`: OAuth metadata endpoint
+
+**MCP protocol versions:**
+- Stateful mode (default): the `/mcp` endpoint supports MCP protocol versions up to `2025-11-25`, with sessions tracked via the `Mcp-Session-Id` header.
+- Stateless mode (`--stateless` flag / `stateless` config): additionally enables the latest MCP protocol `2026-07-28`, which requires stateless operation.
+- The `/sse` and `/message` endpoints remain available for legacy `2024-11-05` HTTP+SSE clients.
 
 ### Development Mode
 

@@ -4,6 +4,7 @@
 package mcpserver_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -604,6 +606,79 @@ func TestStreamableHTTPServerIntegration(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Contains(t, resp.Header.Get("WWW-Authenticate"), "Bearer resource_metadata=")
+}
+
+// bearerTokenTransport injects the Authorization header so the go-sdk client
+// can pass the server's auth middleware.
+type bearerTokenTransport struct {
+	token string
+}
+
+func (b *bearerTokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+b.token)
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+// TestHTTPServerProtocolVersionNegotiation verifies the MCP protocol version
+// negotiated on the /mcp endpoint: stateful sessions negotiate 2025-11-25,
+// while stateless mode additionally serves the latest 2026-07-28.
+func TestHTTPServerProtocolVersionNegotiation(t *testing.T) {
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+
+	tests := []struct {
+		name            string
+		stateless       bool
+		expectedVersion string
+	}{
+		{
+			name:            "StatefulNegotiates20251125",
+			stateless:       false,
+			expectedVersion: "2025-11-25",
+		},
+		{
+			name:            "StatelessNegotiates20260728",
+			stateless:       true,
+			expectedVersion: "2026-07-28",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := mcpserver.HTTPConfig{
+				BaseConfig: mcpserver.BaseConfig{
+					MMServerURL: suite.serverURL,
+					DevMode:     false,
+				},
+				HTTPPort:     8080,
+				HTTPBindAddr: "127.0.0.1",
+				Stateless:    tt.stateless,
+			}
+
+			server, err := mcpserver.NewHTTPServer(config, suite.logger)
+			require.NoError(t, err)
+
+			testServer := httptest.NewServer(server.GetTestHandler())
+			defer testServer.Close()
+
+			client := mcp.NewClient(&mcp.Implementation{Name: "protocol-version-test", Version: "1.0"}, nil)
+			session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
+				Endpoint: testServer.URL + "/mcp",
+				HTTPClient: &http.Client{
+					Transport: &bearerTokenTransport{token: suite.adminToken},
+				},
+			}, nil)
+			require.NoError(t, err)
+			defer session.Close()
+
+			require.Equal(t, tt.expectedVersion, session.InitializeResult().ProtocolVersion)
+
+			toolsRes, err := session.ListTools(context.Background(), &mcp.ListToolsParams{})
+			require.NoError(t, err)
+			require.NotEmpty(t, toolsRes.Tools)
+		})
+	}
 }
 
 // TestConfigurationMethods tests configuration getter methods
