@@ -956,13 +956,14 @@ func TestHandleGetAIBots(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	tests := []struct {
-		name                     string
-		searchService            *search.Search
-		useServiceAccountAuth    bool
-		expectedSearchEnabled    bool
-		expectedAllowUnsafeLinks bool
-		expectedStatus           int
-		envSetup                 func(e *TestEnvironment)
+		name                          string
+		searchService                 *search.Search
+		useServiceAccountAuth         bool
+		expectedUseServiceAccountAuth bool
+		expectedSearchEnabled         bool
+		expectedAllowUnsafeLinks      bool
+		expectedStatus                int
+		envSetup                      func(e *TestEnvironment)
 	}{
 		{
 			name: "search enabled - non-nil service with non-nil embedding search",
@@ -999,14 +1000,30 @@ func TestHandleGetAIBots(t *testing.T) {
 		},
 		{
 			// The webapp reads useServiceAccountAuth to hide per-user MCP connect prompts.
-			name:                     "unsafe links enabled via config",
-			searchService:            nil,
-			useServiceAccountAuth:    true,
-			expectedSearchEnabled:    false,
-			expectedAllowUnsafeLinks: true,
-			expectedStatus:           http.StatusOK,
+			name:                          "unsafe links enabled via config",
+			searchService:                 nil,
+			useServiceAccountAuth:         true,
+			expectedUseServiceAccountAuth: true,
+			expectedSearchEnabled:         false,
+			expectedAllowUnsafeLinks:      true,
+			expectedStatus:                http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.config.allowUnsafeLinks = true
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
+			// Unlicensed servers run service account agents in per-user mode, so the
+			// response must report the effective mode instead of the raw agent flag.
+			name:                          "service account agent reports user mode when unlicensed",
+			searchService:                 nil,
+			useServiceAccountAuth:         true,
+			expectedUseServiceAccountAuth: false,
+			expectedSearchEnabled:         false,
+			expectedAllowUnsafeLinks:      false,
+			expectedStatus:                http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.OverrideLicense(nil)
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
@@ -1051,8 +1068,8 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
-				require.Equal(t, test.useServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,
-					"UseServiceAccountAuth field should mirror the agent configuration")
+				require.Equal(t, test.expectedUseServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,
+					"UseServiceAccountAuth field should report the effective service account mode")
 			}
 		})
 	}

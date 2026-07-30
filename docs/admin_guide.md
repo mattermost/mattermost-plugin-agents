@@ -610,7 +610,7 @@ By default, MCP tool calls run with the credentials of the user who triggered th
 To set it up:
 
 1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**, open the remote MCP server on the **Configuration** tab, and add the static headers the server should receive from service account agents in the **Service Account Authentication** section — for example, an `Authorization` header carrying a personal access token. Rows with a blank name or value are ignored, so a server whose entries are all blank counts as having no service account credentials. Select **Save**.
-2. On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**.
+2. On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**. Only system administrators can turn this setting on; anyone who can manage the agent can turn it off.
 
 The agent setting is all-or-nothing:
 

@@ -111,20 +111,31 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 // EffectiveServiceAccountHeaders returns the ServiceAccountHeaders entries with a
 // non-blank name and value, trimmed of surrounding whitespace; blank or padded
 // System Console rows would make Go's HTTP transport reject the whole request.
+// Entries whose names collide after trimming are ambiguous, so all of them are
+// dropped instead of letting map iteration order pick the winner.
 func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
 	if s == nil {
 		return nil
+	}
+
+	counts := make(map[string]int, len(s.ServiceAccountHeaders))
+	for name, value := range s.ServiceAccountHeaders {
+		trimmedName := strings.TrimSpace(name)
+		if trimmedName == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		counts[trimmedName]++
 	}
 
 	var headers map[string]string
 	for name, value := range s.ServiceAccountHeaders {
 		trimmedName := strings.TrimSpace(name)
 		trimmedValue := strings.TrimSpace(value)
-		if trimmedName == "" || trimmedValue == "" {
+		if trimmedName == "" || trimmedValue == "" || counts[trimmedName] > 1 {
 			continue
 		}
 		if headers == nil {
-			headers = make(map[string]string, len(s.ServiceAccountHeaders))
+			headers = make(map[string]string, len(counts))
 		}
 		headers[trimmedName] = trimmedValue
 	}

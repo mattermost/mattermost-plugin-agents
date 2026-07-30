@@ -42,6 +42,17 @@ func TestMCPToolConfigEmptyRetrievalDescriptionOverrideOmitted(t *testing.T) {
 	require.Empty(t, decoded.RetrievalDescriptionOverride)
 }
 
+// headersFromPairs builds a header map from name/value pairs. Padded names are
+// passed as arguments because a map literal cannot hold keys that only differ by
+// whitespace without tripping the linter.
+func headersFromPairs(pairs ...string) map[string]string {
+	headers := make(map[string]string, len(pairs)/2)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		headers[pairs[i]] = pairs[i+1]
+	}
+	return headers
+}
+
 // HasServiceAccountAuth must be true exactly when EffectiveServiceAccountHeaders is non-empty.
 func TestMCPServerConfigServiceAccountHeaderFiltering(t *testing.T) {
 	tests := []struct {
@@ -67,6 +78,23 @@ func TestMCPServerConfigServiceAccountHeaderFiltering(t *testing.T) {
 			},
 			// Untrimmed names/values make Go's HTTP transport reject the request.
 			wantHeaders: map[string]string{"Authorization": "Bearer pat", "X-Api-Key": "secret-token"},
+		},
+		{
+			// Fail closed: an ambiguous pair has no deterministic winner, so the
+			// server ends up with no service account auth at all.
+			name: "names colliding after trim are all dropped",
+			serverConfig: &MCPServerConfig{
+				Enabled:               true,
+				ServiceAccountHeaders: headersFromPairs("Authorization", "Bearer first", " Authorization ", "Bearer second"),
+			},
+		},
+		{
+			name: "colliding names do not drop distinct entries",
+			serverConfig: &MCPServerConfig{
+				Enabled:               true,
+				ServiceAccountHeaders: headersFromPairs("Authorization", "Bearer first", "Authorization ", "Bearer second", "X-Api-Key", "secret-token"),
+			},
+			wantHeaders: map[string]string{"X-Api-Key": "secret-token"},
 		},
 		{
 			name: "base headers do not count as service account auth",

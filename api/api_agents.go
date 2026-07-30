@@ -24,6 +24,10 @@ import (
 
 var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
+// errServiceAccountAuthRequiresAdmin is returned when a caller without
+// PermissionManageSystem tries to turn the service account flag on.
+var errServiceAccountAuthRequiresAdmin = errors.New("only system administrators can enable service account authentication for an agent")
+
 // WebsocketEventBotsInvalidate is the event name for PublishWebSocketEvent (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventBotsInvalidate = "bots_invalidate"
 
@@ -195,6 +199,13 @@ func canCreateAgent(client *pluginapi.Client, userID string) bool {
 	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
 }
 
+// canEnableServiceAccountAuth reports whether userID may turn the service account
+// flag on. It grants the agent the admin-provisioned MCP credentials, so enabling
+// it is restricted to system admins even when the caller can manage the agent.
+func canEnableServiceAccountAuth(client *pluginapi.Client, userID string) bool {
+	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
+}
+
 // canConfigureAgentServices reports whether userID may list services or fetch models (ManageOwnAgent, ManageOthersAgent, or ManageSystem).
 func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
 	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
@@ -350,6 +361,11 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	if req.UseServiceAccountAuth && !canEnableServiceAccountAuth(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
+		return
+	}
+
 	if !validUsernameRe.MatchString(req.Username) {
 		abortAgentRequest(c, http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
 		return
@@ -480,6 +496,13 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 			return
 		}
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	// Only the false→true transition escalates; an already-enabled flag was
+	// admin-granted, so keeping or clearing it needs no extra permission.
+	if req.UseServiceAccountAuth && !cfg.UseServiceAccountAuth && !canEnableServiceAccountAuth(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
 

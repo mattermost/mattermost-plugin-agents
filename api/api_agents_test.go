@@ -205,6 +205,8 @@ func TestCreateAgentPersistsExplicitRequestValues(t *testing.T) {
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	// Enabling service account auth is system-admin only.
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
 	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
 		UserId:      "bot-user-id-created",
 		Username:    "my-agent",
@@ -679,6 +681,122 @@ func TestUpdateAgentOwnedByOtherWithManageOthersPermission(t *testing.T) {
 	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agent))
 	assert.Equal(t, "Admin Renamed", agent.DisplayName)
+}
+
+// Service account auth hands the agent the admin-provisioned MCP credentials, so
+// only system admins may switch it on; anyone who can manage the agent may keep an
+// already-granted flag or clear it.
+func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
+	tests := []struct {
+		name           string
+		create         bool
+		systemAdmin    bool
+		storedValue    bool
+		requestValue   bool
+		expectedStatus int
+		expectStored   bool
+	}{
+		{
+			name:           "non-admin cannot create with service account auth",
+			create:         true,
+			requestValue:   true,
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "admin can create with service account auth",
+			create:         true,
+			systemAdmin:    true,
+			requestValue:   true,
+			expectedStatus: http.StatusCreated,
+			expectStored:   true,
+		},
+		{
+			name:           "non-admin cannot turn service account auth on",
+			requestValue:   true,
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "admin can turn service account auth on",
+			systemAdmin:    true,
+			requestValue:   true,
+			expectedStatus: http.StatusOK,
+			expectStored:   true,
+		},
+		{
+			name:           "non-admin can update an agent that already uses service account auth",
+			storedValue:    true,
+			requestValue:   true,
+			expectedStatus: http.StatusOK,
+			expectStored:   true,
+		},
+		{
+			name:           "non-admin can turn service account auth off",
+			storedValue:    true,
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tc.systemAdmin).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			if tc.create {
+				e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+					UserId:      "bot-user-id-created",
+					Username:    "my-agent",
+					DisplayName: "My Agent",
+				}, nil).Maybe()
+
+				body := createAgentBody(map[string]any{"useServiceAccountAuth": tc.requestValue})
+				recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
+				require.Equal(t, tc.expectedStatus, recorder.Result().StatusCode)
+
+				if tc.expectedStatus != http.StatusCreated {
+					assert.Contains(t, decodeAgentError(t, recorder), "system administrators")
+					assert.Empty(t, e.agentStore.agents)
+					return
+				}
+
+				var agent llm.BotConfig
+				require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+				assert.Equal(t, tc.expectStored, e.agentStore.agents[agent.ID].UseServiceAccountAuth)
+				return
+			}
+
+			stored := &llm.BotConfig{
+				ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+				DisplayName: "Original", Name: "original", ServiceID: "svc-1",
+				UseServiceAccountAuth: tc.storedValue,
+			}
+			e.agentStore.agents["agent-1"] = stored
+			e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+
+			body := updateAgentBodyFromStored(stored, map[string]any{
+				"displayName":           "Updated",
+				"useServiceAccountAuth": tc.requestValue,
+			})
+			recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+			require.Equal(t, tc.expectedStatus, recorder.Result().StatusCode)
+			if tc.expectedStatus == http.StatusForbidden {
+				assert.Contains(t, decodeAgentError(t, recorder), "system administrators")
+			}
+			assert.Equal(t, tc.expectStored, e.agentStore.agents["agent-1"].UseServiceAccountAuth)
+		})
+	}
+}
+
+// decodeAgentError returns the message from a JSON agent error response body.
+func decodeAgentError(t *testing.T, recorder *httptest.ResponseRecorder) string {
+	t.Helper()
+	var payload agentErrorResponse
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&payload))
+	return payload.Error
 }
 
 func TestDeleteAgentDeactivatesBot(t *testing.T) {
