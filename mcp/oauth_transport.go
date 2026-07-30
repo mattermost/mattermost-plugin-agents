@@ -84,9 +84,10 @@ func (t *oauthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		return nil, fmt.Errorf("oauthRoundTripper round trip failed: %w", err)
 	}
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		// Authorize drains and closes the response body and always returns a
-		// non-nil *mcpUnauthorized.
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		// Match the auth.OAuthHandler contract (and the streamable transport):
+		// both 401 and 403 are delegated to Authorize, which drains and closes
+		// the response body and always returns a non-nil *mcpUnauthorized.
 		return nil, t.handler.Authorize(req.Context(), req, resp)
 	}
 

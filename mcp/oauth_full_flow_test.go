@@ -57,6 +57,14 @@ type fullFlowOAuthServer struct {
 	lastAuthorizedToken string
 }
 
+// counters returns the server-side observation fields under s.mu so test
+// assertions do not race with HTTP handler goroutines.
+func (s *fullFlowOAuthServer) counters() (registerCalls, refreshCalls int, pkceVerified bool, lastAuthorizedToken string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.registerCalls, s.refreshCalls, s.pkceVerified, s.lastAuthorizedToken
+}
+
 func newFullFlowOAuthServer(t *testing.T) *fullFlowOAuthServer {
 	t.Helper()
 
@@ -431,7 +439,8 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 	// --- Step 2: initiate the flow (discovery + DCR + PKCE auth URL) ---
 	authorizationURL, err := manager.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, oauthNeeded.MetadataURL())
 	require.NoError(t, err)
-	require.Equal(t, 1, oauthServer.registerCalls, "dynamic client registration must have happened exactly once")
+	registerCalls, _, _, _ := oauthServer.counters()
+	require.Equal(t, 1, registerCalls, "dynamic client registration must have happened exactly once")
 	parsedAuthURL, err := url.Parse(authorizationURL)
 	require.NoError(t, err)
 	require.Equal(t, "/authorize", parsedAuthURL.Path)
@@ -462,7 +471,8 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 	session, err := manager.ProcessCallback(ctx, userID, state, code)
 	require.NoError(t, err)
 	require.Equal(t, serverName, session.ServerID)
-	require.True(t, oauthServer.pkceVerified, "token endpoint must have verified the PKCE code_verifier")
+	_, _, pkceVerified, _ := oauthServer.counters()
+	require.True(t, pkceVerified, "token endpoint must have verified the PKCE code_verifier")
 	stored := kv.storedToken(t, userID, serverName)
 	require.NotNil(t, stored, "token must be persisted to the KV store")
 	require.Equal(t, "access-token-1", stored.AccessToken)
@@ -477,8 +487,9 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 	result, err := client.CallTool(ctx, "whoami", map[string]any{})
 	require.NoError(t, err)
 	require.Contains(t, result, "access-token-1", "tool must observe the bearer token from the exchange")
-	require.Equal(t, "access-token-1", oauthServer.lastAuthorizedToken)
-	require.Zero(t, oauthServer.refreshCalls, "no refresh should have happened yet")
+	_, refreshCalls, _, lastAuthorizedToken := oauthServer.counters()
+	require.Equal(t, "access-token-1", lastAuthorizedToken)
+	require.Zero(t, refreshCalls, "no refresh should have happened yet")
 	require.NoError(t, client.Close())
 	t.Logf("step 5 OK: authenticated tool call result: %s", result)
 
@@ -492,7 +503,8 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 	result, err = client.CallTool(ctx, "whoami", map[string]any{})
 	require.NoError(t, err)
 	require.Contains(t, result, "access-token-2", "tool call must use the refreshed access token")
-	require.Equal(t, 1, oauthServer.refreshCalls, "exactly one refresh_token grant expected")
+	_, refreshCalls, _, _ = oauthServer.counters()
+	require.Equal(t, 1, refreshCalls, "exactly one refresh_token grant expected")
 
 	rotated := kv.storedToken(t, userID, serverName)
 	require.NotNil(t, rotated)
@@ -501,5 +513,6 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 	require.NoError(t, client.Close())
 	t.Logf("step 6 OK: refresh rotated and persisted (access=%s refresh=%s)", rotated.AccessToken, rotated.RefreshToken)
 
-	require.Equal(t, 1, oauthServer.registerCalls, "DCR credentials must be reused from KV, not re-registered")
+	registerCalls, _, _, _ = oauthServer.counters()
+	require.Equal(t, 1, registerCalls, "DCR credentials must be reused from KV, not re-registered")
 }

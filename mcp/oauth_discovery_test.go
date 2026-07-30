@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
@@ -106,6 +107,88 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 			// so any lenient fallback would fail the test.
 		})
 	}
+}
+
+// TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer verifies that when
+// protected resource metadata names an external authorization server whose
+// metadata cannot be fetched, the conventional /authorize and /token fallback
+// endpoints are derived from that issuer — not from the MCP resource server.
+func TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-protected-resource" {
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+				Resource: serverURL,
+				// The issuer's well-known metadata path is not served, so
+				// fetchAuthorizationServerMetadata fails for it.
+				AuthorizationServers: []string{serverURL + "/as"},
+			}))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	serverURL = server.URL
+
+	manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
+
+	config, err := manager.createOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
+		ClientID:     "static-client",
+		ClientSecret: "static-secret",
+	})
+	require.NoError(t, err)
+	require.Equal(t, serverURL+"/as/authorize", config.Endpoint.AuthURL,
+		"fallback authorize endpoint must live on the discovered issuer")
+	require.Equal(t, serverURL+"/as/token", config.Endpoint.TokenURL,
+		"fallback token endpoint must live on the discovered issuer")
+}
+
+// TestCreateOAuthConfigCachedReusesDiscovery verifies the hot-path cache: a
+// second call within the TTL must not re-run metadata discovery, and the
+// uncached createOAuthConfig must remain unaffected by the cache.
+func TestCreateOAuthConfigCachedReusesDiscovery(t *testing.T) {
+	var prmFetches atomic.Int32
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			prmFetches.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+				Resource:             serverURL,
+				AuthorizationServers: []string{serverURL},
+			}))
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+				Issuer:                        serverURL,
+				AuthorizationEndpoint:         serverURL + "/authorize",
+				TokenEndpoint:                 serverURL + "/token",
+				CodeChallengeMethodsSupported: []string{"S256"},
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	serverURL = server.URL
+
+	manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
+	staticCreds := &StaticOAuthCredentials{ClientID: "static-client", ClientSecret: "static-secret"}
+
+	first, err := manager.createOAuthConfigCached(context.Background(), serverURL, "", staticCreds)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), prmFetches.Load())
+
+	second, err := manager.createOAuthConfigCached(context.Background(), serverURL, "", staticCreds)
+	require.NoError(t, err)
+	require.Same(t, first, second, "cached call within the TTL must reuse the discovered config")
+	require.Equal(t, int32(1), prmFetches.Load(), "cached call must not re-run discovery")
+
+	_, err = manager.createOAuthConfig(context.Background(), serverURL, "", staticCreds)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), prmFetches.Load(), "uncached call must always run discovery")
 }
 
 // TestLoadOrCreateClientCredentials_RegistrationEndpointDiscovery covers the

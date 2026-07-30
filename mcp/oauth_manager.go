@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -19,8 +20,15 @@ import (
 )
 
 const (
-	clientID                = "mattermost-mcp-client"
+	// oauthClientName is the human-readable RFC 7591 client_name shown on
+	// authorization server consent screens.
+	oauthClientName         = "Mattermost Agents"
 	oauthCallbackPathSuffix = "/oauth/callback"
+
+	// oauthConfigCacheTTL bounds how long a discovered OAuth configuration
+	// (metadata endpoints + client credentials) is reused on the hot request
+	// path before discovery runs again.
+	oauthConfigCacheTTL = 5 * time.Minute
 )
 
 type OAuthNeededError struct {
@@ -66,6 +74,17 @@ type OAuthManager struct {
 	callbackURL        string
 	httpClient         *http.Client
 	serverConfigLookup ServerConfigLookup
+
+	// configCacheMu guards configCache, a small TTL cache of discovered OAuth
+	// configurations used on the hot request path (see
+	// createOAuthConfigCached).
+	configCacheMu sync.Mutex
+	configCache   map[string]oauthConfigCacheEntry
+}
+
+type oauthConfigCacheEntry struct {
+	config    *oauth2.Config
+	expiresAt time.Time
 }
 
 func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *http.Client, serverConfigLookup ServerConfigLookup) *OAuthManager {
@@ -74,7 +93,38 @@ func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *htt
 		callbackURL:        callbackURL,
 		httpClient:         httpClient,
 		serverConfigLookup: serverConfigLookup,
+		configCache:        make(map[string]oauthConfigCacheEntry),
 	}
+}
+
+// createOAuthConfigCached returns the OAuth configuration for a server,
+// reusing a recently discovered one when available. Token sources ask for the
+// configuration on every outgoing MCP request; without a cache each request
+// would pay two or more metadata round trips (protected resource +
+// authorization server metadata) even when the stored token is still valid.
+// Flow initiation and callback processing deliberately keep using
+// createOAuthConfig directly so explicit user actions always see fresh
+// discovery results.
+func (m *OAuthManager) createOAuthConfigCached(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error) {
+	key := serverURL + "|" + metadataURL + "|" + staticCredsClientID(staticCreds)
+
+	m.configCacheMu.Lock()
+	entry, ok := m.configCache[key]
+	m.configCacheMu.Unlock()
+	if ok && time.Now().Before(entry.expiresAt) {
+		return entry.config, nil
+	}
+
+	config, err := m.createOAuthConfig(ctx, serverURL, metadataURL, staticCreds)
+	if err != nil {
+		return nil, err
+	}
+
+	m.configCacheMu.Lock()
+	m.configCache[key] = oauthConfigCacheEntry{config: config, expiresAt: time.Now().Add(oauthConfigCacheTTL)}
+	m.configCacheMu.Unlock()
+
+	return config, nil
 }
 
 func (m *OAuthManager) StartURL(serverID string) string {
@@ -131,7 +181,7 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 		TokenEndpointAuthMethod: "client_secret_basic",
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
-		ClientName:              clientID,
+		ClientName:              oauthClientName,
 	}, m.httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to register OAuth client with server %s (registration endpoint: %s): %w", serverURL, registrationEndpoint, err)
@@ -182,6 +232,14 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 			// Per OAuth best practices, credentials are registered with the authorization server
 			authServerURL = authServerIssuer
 			registrationEndpoint = authMetadata.RegistrationEndpoint
+		} else {
+			// Discovery explicitly named an authorization server but its
+			// metadata is unavailable: fall back to conventional endpoints on
+			// that issuer rather than on the resource server, and register
+			// credentials against the right host.
+			authURL = strings.TrimSuffix(authServerIssuer, "/") + "/authorize"
+			tokenURL = strings.TrimSuffix(authServerIssuer, "/") + "/token"
+			authServerURL = authServerIssuer
 		}
 	} else {
 		// If protected resource metadata fails, assume the resource server is the authorization server

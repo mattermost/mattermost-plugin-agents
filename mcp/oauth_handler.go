@@ -62,7 +62,10 @@ func (h *userOAuthHandler) TokenSource(ctx context.Context) (oauth2.TokenSource,
 		return nil, nil
 	}
 
-	oauthConfig, err := h.manager.createOAuthConfig(ctx, h.serverURL, "", h.staticCreds)
+	// The cached variant avoids re-running metadata discovery on every
+	// outgoing MCP request (TokenSource is called per request by both the
+	// streamable transport and oauthRoundTripper).
+	oauthConfig, err := h.manager.createOAuthConfigCached(ctx, h.serverURL, "", h.staticCreds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OAuth config: %w", err)
 	}

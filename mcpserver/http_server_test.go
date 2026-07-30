@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -662,8 +663,13 @@ func TestHTTPServerProtocolVersionNegotiation(t *testing.T) {
 			testServer := httptest.NewServer(server.GetTestHandler())
 			defer testServer.Close()
 
+			// Bound the subtest so a wedged /mcp endpoint fails fast instead
+			// of hanging until the package test timeout.
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
 			client := mcp.NewClient(&mcp.Implementation{Name: "protocol-version-test", Version: "1.0"}, nil)
-			session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
+			session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
 				Endpoint: testServer.URL + "/mcp",
 				HTTPClient: &http.Client{
 					Transport: &bearerTokenTransport{token: suite.adminToken},
@@ -674,7 +680,7 @@ func TestHTTPServerProtocolVersionNegotiation(t *testing.T) {
 
 			require.Equal(t, tt.expectedVersion, session.InitializeResult().ProtocolVersion)
 
-			toolsRes, err := session.ListTools(context.Background(), &mcp.ListToolsParams{})
+			toolsRes, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 			require.NoError(t, err)
 			require.NotEmpty(t, toolsRes.Tools)
 		})
