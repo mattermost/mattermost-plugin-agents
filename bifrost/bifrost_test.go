@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/maximhq/bifrost/core/providers/anthropic"
+	"github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -458,6 +459,129 @@ func TestPromptCaching(t *testing.T) {
 			assert.Equal(t, schemas.CacheControlTypeEphemeral, wireResponses.CacheControl.Type)
 		})
 	}
+}
+
+// TestWebSearchToolOptsOutOfAnthropicDynamicFiltering pins the fix for the
+// unexpected Anthropic code-execution (bash) sandbox: Bifrost auto-selects
+// Anthropic's web_search_20260209 tool version for newer Claude models
+// (4.6+, Opus 4.7+, Sonnet 5+), and that version defaults allowed_callers to
+// code_execution — the Anthropic API then auto-provisions its code-execution
+// environment ("dynamic filtering") even though the plugin never requested
+// it. The plugin opts out by pinning allowed_callers to ["direct"] on the
+// neutral web_search tool. This test verifies the opt-out reaches the
+// Anthropic wire request for both the bot-level native tool and the
+// per-request NativeWebSearchAllowed paths, on both dynamic-filtering and
+// basic web search models.
+func TestWebSearchToolOptsOutOfAnthropicDynamicFiltering(t *testing.T) {
+	tests := []struct {
+		name               string
+		model              string
+		enabledNativeTools []string
+		cfg                llm.LanguageModelConfig
+	}{
+		{
+			name:               "bot-level native web_search on a dynamic-filtering model",
+			model:              "claude-sonnet-4-6",
+			enabledNativeTools: []string{"web_search"},
+		},
+		{
+			name:               "bot-level native web_search on a basic web search model",
+			model:              "claude-sonnet-4-20250514",
+			enabledNativeTools: []string{"web_search"},
+		},
+		{
+			name:  "per-request NativeWebSearchAllowed on a dynamic-filtering model",
+			model: "claude-opus-4-6",
+			cfg:   llm.LanguageModelConfig{NativeWebSearchAllowed: true, ToolsDisabled: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: schemas.Anthropic, enabledNativeTools: tt.enabledNativeTools}
+			cfg := tt.cfg
+			cfg.Model = tt.model
+			cfg.MaxGeneratedTokens = 1000
+
+			request := llm.CompletionRequest{
+				Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+			}
+			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+			require.NoError(t, err)
+
+			// Neutral request: web_search must carry allowed_callers ["direct"].
+			var neutralWebSearch *schemas.ResponsesTool
+			for i := range respReq.Params.Tools {
+				if respReq.Params.Tools[i].Type == schemas.ResponsesToolTypeWebSearch {
+					neutralWebSearch = &respReq.Params.Tools[i]
+				}
+			}
+			require.NotNil(t, neutralWebSearch, "web_search tool must be present in the request")
+			assert.Equal(t, []string{"direct"}, neutralWebSearch.AllowedCallers)
+
+			// Wire request: feed through bifrost's Anthropic converter and
+			// confirm the opt-out survives, whatever web_search_* tool version
+			// bifrost picked for the model.
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			wire, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
+			require.NoError(t, err)
+
+			var wireWebSearch *anthropic.AnthropicTool
+			for i := range wire.Tools {
+				tool := &wire.Tools[i]
+				if tool.Type == nil {
+					continue
+				}
+				if strings.HasPrefix(string(*tool.Type), "web_search_") {
+					wireWebSearch = tool
+				}
+				// The plugin never asks for Anthropic code execution; no
+				// conversion step may inject it explicitly.
+				assert.NotContains(t, string(*tool.Type), "code_execution")
+			}
+			require.NotNil(t, wireWebSearch, "the Anthropic wire request must carry a web_search tool")
+			assert.Equal(t, []string{"direct"}, wireWebSearch.AllowedCallers,
+				"allowed_callers [direct] is the documented opt-out from dynamic filtering, "+
+					"which would otherwise auto-provision Anthropic's code-execution (bash) sandbox")
+		})
+	}
+}
+
+// TestWebSearchAllowedCallersStrippedForOpenAI pins the bifrost serializer
+// behavior that makes the unconditional allowed_callers pin safe: the
+// Anthropic-only flag must not leak onto the OpenAI Responses wire (OpenAI
+// 400s on unknown tool fields). If this test breaks after a bifrost upgrade,
+// the plugin must start gating the flag by provider instead.
+func TestWebSearchAllowedCallersStrippedForOpenAI(t *testing.T) {
+	b := &LLM{
+		provider:           schemas.OpenAI,
+		enabledNativeTools: []string{"web_search"},
+		useResponsesAPI:    true,
+	}
+	cfg := llm.LanguageModelConfig{Model: "gpt-4o", MaxGeneratedTokens: 1000}
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	}
+
+	respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	require.NoError(t, err)
+	require.NotEmpty(t, respReq.Params.Tools)
+
+	wireReq := &openai.OpenAIResponsesRequest{
+		Model: cfg.Model,
+		Input: openai.OpenAIResponsesRequestInput{
+			OpenAIResponsesRequestInputArray: respReq.Input,
+		},
+		ResponsesParameters: *respReq.Params,
+	}
+	body, err := json.Marshal(wireReq)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(body), "allowed_callers",
+		"the Anthropic-only allowed_callers flag must be stripped from OpenAI Responses requests")
+	assert.Contains(t, string(body), `"web_search"`,
+		"the web_search tool itself must still reach OpenAI")
 }
 
 func TestBuildResponsesReasoning(t *testing.T) {

@@ -1803,6 +1803,33 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 	return parts
 }
 
+// anthropicDirectToolCaller is the allowed_callers value that restricts a
+// server tool to direct model invocation. See webSearchResponsesTool.
+const anthropicDirectToolCaller = "direct"
+
+// webSearchResponsesTool builds the native web-search tool definition.
+//
+// AllowedCallers is pinned to "direct" because Bifrost auto-selects Anthropic's
+// web_search_20260209 tool version for newer Claude models (4.6+, Opus 4.7+,
+// Sonnet 5+), and that version defaults allowed_callers to code_execution: the
+// Anthropic API then auto-provisions its code-execution (bash) sandbox for
+// "dynamic filtering", a capability this plugin does not support or surface.
+// "direct" is Anthropic's documented opt-out, accepted by every web_search tool
+// version:
+// https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering
+// The plugin has no other lever — Bifrost picks the tool version from the model
+// name and the neutral schema carries no web-search version field. The field is
+// safe to set unconditionally: Bifrost strips allowed_callers for providers
+// that don't accept it (OpenAI serializers drop Anthropic-only tool flags;
+// Gemini converts to typed GoogleSearch; the Anthropic-family builder strips it
+// on Bedrock/Vertex via StripUnsupportedAnthropicFields).
+func webSearchResponsesTool() schemas.ResponsesTool {
+	return schemas.ResponsesTool{
+		Type:           schemas.ResponsesToolTypeWebSearch,
+		AllowedCallers: []string{anthropicDirectToolCaller},
+	}
+}
+
 // convertToResponsesTools creates Responses API tools including native tools and function tools.
 func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ResponsesTool {
 	var result []schemas.ResponsesTool
@@ -1811,9 +1838,7 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 	for _, nativeTool := range b.enabledNativeTools {
 		switch nativeTool {
 		case "web_search":
-			result = append(result, schemas.ResponsesTool{
-				Type: schemas.ResponsesToolTypeWebSearch,
-			})
+			result = append(result, webSearchResponsesTool())
 		case "file_search":
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeFileSearch,
@@ -1828,9 +1853,7 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 	// When NativeWebSearchAllowed is true but web_search is not in enabledNativeTools,
 	// add it dynamically
 	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled("web_search") {
-		result = append(result, schemas.ResponsesTool{
-			Type: schemas.ResponsesToolTypeWebSearch,
-		})
+		result = append(result, webSearchResponsesTool())
 	}
 
 	// Keep function tools defined when the history has tool_use blocks; the
