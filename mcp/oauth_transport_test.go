@@ -71,13 +71,13 @@ func TestOAuthRoundTripper(t *testing.T) {
 			t.Cleanup(server.Close)
 
 			manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
-			tokenGet := mockClient.On("KVGet", buildTokenKey(userID, serverID), mock.AnythingOfType("*oauth2.Token"))
+			tokenGet := mockClient.On("KVGet", buildTokenKey(userID, serverID), mock.AnythingOfType("*mcp.storedTokenEnvelope"))
 			if tt.storedToken == nil {
 				tokenGet.Return(mmapi.ErrKVNotFound)
 			} else {
+				envelope := boundTestEnvelope(server.URL, tt.storedToken)
 				tokenGet.Run(func(args mock.Arguments) {
-					token := args.Get(1).(*oauth2.Token)
-					*token = *tt.storedToken
+					*(args.Get(1).(*storedTokenEnvelope)) = *envelope
 				}).Return(nil)
 			}
 

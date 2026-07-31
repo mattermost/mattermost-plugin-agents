@@ -407,7 +407,7 @@ func (c *Client) oauthNeededError(err error) error {
 	if errors.As(err, &mcpAuthErr) {
 		md := mcpAuthErr.MetadataURL()
 		return &OAuthNeededError{
-			authURL:     c.oauthNeededRedirectURL(md),
+			authURL:     c.oauthNeededRedirectURL(md, mcpAuthErr.Scope()),
 			metadataURL: md,
 		}
 	}
@@ -493,10 +493,11 @@ func (c *Client) oauthStartURL() string {
 
 // oauthNeededRedirectURL returns the plugin MCP OAuth start URL, optionally
 // appending resource_metadata so InitiateOAuthFlow can use the same discovery
-// path as the failed MCP handshake (RFC 9728).
-func (c *Client) oauthNeededRedirectURL(metadataURL string) string {
+// path as the failed MCP handshake (RFC 9728) and the challenge's
+// authoritative scope so re-authorization requests exactly it (RFC 6750 §3).
+func (c *Client) oauthNeededRedirectURL(metadataURL, scope string) string {
 	base := c.oauthStartURL()
-	if metadataURL == "" || base == "" {
+	if base == "" || (metadataURL == "" && scope == "") {
 		return base
 	}
 	u, err := url.Parse(base)
@@ -504,7 +505,12 @@ func (c *Client) oauthNeededRedirectURL(metadataURL string) string {
 		return base
 	}
 	q := u.Query()
-	q.Set("resource_metadata", metadataURL)
+	if metadataURL != "" {
+		q.Set("resource_metadata", metadataURL)
+	}
+	if scope != "" {
+		q.Set("scope", scope)
+	}
 	u.RawQuery = q.Encode()
 	return u.String()
 }

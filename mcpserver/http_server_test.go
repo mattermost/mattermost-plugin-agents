@@ -732,18 +732,23 @@ func TestHTTPServerHostValidation(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, testServer.URL+"/sse", nil)
-			require.NoError(t, err)
-			if tt.host != "" {
-				req.Host = tt.host
-			}
-			resp, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = resp.Body.Close() })
-			require.Equal(t, tt.wantStatus, resp.StatusCode)
-		})
+	// Both MCP endpoints must behave identically: the SDK's own
+	// loopback-only checks are disabled in favor of the middleware's
+	// allowlist on /sse (SSE handler) and /mcp (streamable handler) alike.
+	for _, endpoint := range []string{"/sse", "/mcp"} {
+		for _, tt := range tests {
+			t.Run(endpoint+" "+tt.name, func(t *testing.T) {
+				req, err := http.NewRequest(http.MethodGet, testServer.URL+endpoint, nil)
+				require.NoError(t, err)
+				if tt.host != "" {
+					req.Host = tt.host
+				}
+				resp, err := http.DefaultClient.Do(req)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = resp.Body.Close() })
+				require.Equal(t, tt.wantStatus, resp.StatusCode)
+			})
+		}
 	}
 }
 

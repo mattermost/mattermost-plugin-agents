@@ -629,6 +629,10 @@ func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
 		State:          state,
 		StaticClientID: "client-id",
 		CreatedAt:      time.Now(),
+		Issuer:         authServer.URL,
+		AuthServerURL:  authServer.URL,
+		TokenEndpoint:  authServer.URL + "/token",
+		ClientID:       "client-id",
 	}
 	clearErr := model.NewAppError("test", "auth_needed_delete_failed", nil, "auth-needed delete failed", http.StatusInternalServerError)
 
@@ -688,6 +692,10 @@ func TestProcessCallback_RederivesStaticCredsFromConfig(t *testing.T) {
 		State:             state,
 		StaticClientID:    "cfg-client-id",
 		CreatedAt:         time.Now(),
+		Issuer:            serverURL,
+		AuthServerURL:     serverURL,
+		TokenEndpoint:     serverURL + "/token",
+		ClientID:          "cfg-client-id",
 	}
 
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Run(func(args mock.Arguments) {
@@ -728,6 +736,10 @@ func TestProcessCallback_LogsWarningWhenLookupMissesServer(t *testing.T) {
 		State:             state,
 		StaticClientID:    "some-client-id",
 		CreatedAt:         time.Now(),
+		Issuer:            "https://api.example.com",
+		AuthServerURL:     "https://api.example.com",
+		TokenEndpoint:     "https://api.example.com/token",
+		ClientID:          "some-client-id",
 	}
 
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Run(func(args mock.Arguments) {
@@ -744,6 +756,9 @@ func TestProcessCallback_LogsWarningWhenLookupMissesServer(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, result)
 
-	expectedMsg := "Static OAuth credentials were expected but server config not found; falling back to dynamic registration"
+	require.Contains(t, err.Error(), "restart authorization",
+		"credentials must be load-only at callback time; no registration fallback")
+
+	expectedMsg := "Static OAuth credentials were expected but server config not found"
 	mockClient.AssertCalled(t, "LogWarn", expectedMsg, []interface{}{"serverID", serverID})
 }

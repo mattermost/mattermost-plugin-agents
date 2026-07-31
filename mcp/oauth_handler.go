@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -50,50 +49,38 @@ func newUserOAuthHandler(userID string, serverConfig ServerConfig, manager *OAut
 	}
 }
 
-// TokenSource returns a token source backed by the KV-stored token for this
-// user and server. It returns (nil, nil) when the user has no stored token, in
-// which case the transport sends the request unauthenticated and the server's
-// 401 lands in Authorize.
+// TokenSource returns a token source backed by the KV-stored grant for this
+// user and server. It returns (nil, nil) when the user has no stored token,
+// in which case the transport sends the request unauthenticated and the
+// server's 401 lands in Authorize.
+//
+// No discovery happens here: the grant envelope pins the token endpoint and
+// client the grant was issued with, and refreshes go exactly there. A
+// compromised MCP server that starts advertising different authorization
+// server metadata therefore never sees the refresh token or client secret.
 func (h *userOAuthHandler) TokenSource(ctx context.Context) (oauth2.TokenSource, error) {
-	token, err := h.manager.loadToken(h.userID, h.serverName)
+	envelope, err := h.manager.loadTokenEnvelope(h.userID, h.serverName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load token: %w", err)
 	}
-	if token == nil {
+	if envelope == nil {
 		return nil, nil
 	}
 
-	// The streamable transport calls TokenSource while holding a
-	// connection-wide send lock, with the connection context rather than the
-	// per-request one — so caller deadlines do not bound this work and a hung
-	// identity provider would stall every queued send on the session. Bound
-	// the discovery here (and each refresh in persistingTokenSource.Token)
-	// with our own timeout instead. The cached variant additionally avoids
-	// re-running metadata discovery on every outgoing MCP request.
-	discoveryCtx, cancel := context.WithTimeout(ctx, oauthPrepTimeout)
-	defer cancel()
-	oauthConfig, err := h.manager.createOAuthConfigCached(discoveryCtx, h.serverURL, "", h.staticCreds)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create OAuth config: %w", err)
-	}
-
-	if h.manager.httpClient != nil {
-		ctx = context.WithValue(ctx, oauth2.HTTPClient, h.manager.httpClient)
-	}
-
 	return &persistingTokenSource{
-		ctx:        ctx,
-		config:     oauthConfig,
-		token:      token,
-		manager:    h.manager,
-		userID:     h.userID,
-		serverName: h.serverName,
+		ctx:         ctx,
+		envelope:    envelope,
+		staticCreds: h.staticCreds,
+		manager:     h.manager,
+		userID:      h.userID,
+		serverName:  h.serverName,
 	}, nil
 }
 
-// oauthPrepTimeout bounds the network work TokenSource may perform (metadata
-// discovery on cache misses, token refresh) so a hung identity provider
-// cannot stall MCP sessions indefinitely. It is a variable only so tests can
+// oauthPrepTimeout bounds the network work a token refresh may perform so a
+// hung identity provider cannot stall MCP sessions indefinitely (the
+// streamable transport calls TokenSource under a connection-wide send lock
+// with an unbounded connection context). It is a variable only so tests can
 // shorten it.
 var oauthPrepTimeout = 30 * time.Second
 
@@ -108,17 +95,20 @@ const maxWWWAuthenticateBytes = 4096
 
 // Authorize is called by the transport on a 401/403 response. For 401 it
 // never returns nil (see the type comment): it converts the response into a
-// *mcpUnauthorized carrying the RFC 9728 resource_metadata URL from the
-// WWW-Authenticate challenge when one is present. For 403 it returns a
-// *mcpUnauthorized only when the challenge indicates an OAuth-remediable
-// condition; a plain authorization denial is surfaced as an ordinary error so
-// callers do not loop through futile re-authentication.
+// *mcpUnauthorized carrying the RFC 9728 resource_metadata URL and, when the
+// challenge names one, the authoritative scope. For 403 it returns a
+// *mcpUnauthorized only when a well-formed challenge indicates an
+// OAuth-remediable condition (resource_metadata or
+// error="insufficient_scope"); everything else — missing, oversized, or
+// malformed challenges included — is surfaced as an ordinary error so callers
+// do not loop through futile re-authentication.
 func (h *userOAuthHandler) Authorize(_ context.Context, _ *http.Request, resp *http.Response) error {
 	drainAndCloseResponseBody(resp)
+	forbidden := resp.StatusCode == http.StatusForbidden
 
 	headers := resp.Header.Values("WWW-Authenticate")
 	if len(headers) == 0 {
-		if resp.StatusCode == http.StatusForbidden {
+		if forbidden {
 			return fmt.Errorf("server returned 403 forbidden without an OAuth challenge")
 		}
 		return &mcpUnauthorized{
@@ -131,6 +121,9 @@ func (h *userOAuthHandler) Authorize(_ context.Context, _ *http.Request, resp *h
 		totalHeaderBytes += len(header)
 	}
 	if totalHeaderBytes > maxWWWAuthenticateBytes {
+		if forbidden {
+			return fmt.Errorf("server returned 403 forbidden with an oversized WWW-Authenticate header (%d bytes, max %d)", totalHeaderBytes, maxWWWAuthenticateBytes)
+		}
 		return &mcpUnauthorized{
 			err: fmt.Errorf("WWW-Authenticate header too long (%d bytes, max %d)", totalHeaderBytes, maxWWWAuthenticateBytes),
 		}
@@ -138,10 +131,18 @@ func (h *userOAuthHandler) Authorize(_ context.Context, _ *http.Request, resp *h
 
 	challenges, parseErr := oauthex.ParseWWWAuthenticate(headers)
 	if parseErr != nil {
+		if forbidden {
+			return fmt.Errorf("server returned 403 forbidden with a malformed WWW-Authenticate header: %w", parseErr)
+		}
 		return &mcpUnauthorized{
 			err: fmt.Errorf("failed to parse WWW-Authenticate header: %w", parseErr),
 		}
 	}
+
+	// The challenge's scope is authoritative per the MCP specification: it
+	// travels with the OAuth-needed error so re-authorization requests
+	// exactly the challenged scope.
+	scope := challengeScope(challenges)
 
 	// Take the first challenge advertising resource_metadata regardless of
 	// scheme (Bearer, DPoP, ...), matching the previous hand-rolled parser.
@@ -155,10 +156,10 @@ func (h *userOAuthHandler) Authorize(_ context.Context, _ *http.Request, resp *h
 				err: fmt.Errorf("failed to parse WWW-Authenticate header: %w", err),
 			}
 		}
-		return &mcpUnauthorized{metadataURL: metadataURL}
+		return &mcpUnauthorized{metadataURL: metadataURL, scope: scope}
 	}
 
-	if resp.StatusCode == http.StatusForbidden && !hasInsufficientScopeChallenge(challenges) {
+	if forbidden && !hasInsufficientScopeChallenge(challenges) {
 		// A 403 whose challenge names neither a resource_metadata URL nor
 		// error="insufficient_scope" is a plain authorization denial;
 		// re-authenticating would loop without helping.
@@ -166,15 +167,14 @@ func (h *userOAuthHandler) Authorize(_ context.Context, _ *http.Request, resp *h
 	}
 
 	return &mcpUnauthorized{
-		err: fmt.Errorf("received %d response without usable WWW-Authenticate header (no resource_metadata)", resp.StatusCode),
+		scope: scope,
+		err:   fmt.Errorf("received %d response without usable WWW-Authenticate header (no resource_metadata)", resp.StatusCode),
 	}
 }
 
 // hasInsufficientScopeChallenge reports whether any challenge carries the RFC
 // 6750 error="insufficient_scope" parameter, the OAuth-remediable form of a
-// 403. Full scope step-up (preserving the challenged scope and unioning
-// previously granted scopes) is a deliberate non-goal here; re-running the
-// ordinary authorization flow is the supported remediation.
+// 403.
 func hasInsufficientScopeChallenge(challenges []oauthex.Challenge) bool {
 	for _, challenge := range challenges {
 		if challenge.Params["error"] == "insufficient_scope" {
@@ -184,52 +184,87 @@ func hasInsufficientScopeChallenge(challenges []oauthex.Challenge) bool {
 	return false
 }
 
-// persistingTokenSource refreshes tokens through the resolved OAuth config
-// and persists refreshed tokens back to the KV store so refresh tokens
-// rotated by the authorization server survive process restarts and are
-// visible to other cluster nodes. It is safe for concurrent use.
+// challengeScope returns the scope parameter from the first challenge that
+// carries one (RFC 6750 §3: the scope a client needs to access the resource).
+func challengeScope(challenges []oauthex.Challenge) string {
+	for _, challenge := range challenges {
+		if scope := challenge.Params["scope"]; scope != "" {
+			return scope
+		}
+	}
+	return ""
+}
+
+// persistingTokenSource returns the stored token while valid and refreshes it
+// against the grant envelope's pinned token endpoint and client when expired.
+// State transitions on the shared KV entry are compare-and-set (attempted →
+// refreshed, attempted → deleted) so concurrent refreshes on other cluster
+// nodes can neither be erased nor resurrected; on a lost race the winner's
+// grant is adopted. It is safe for concurrent use.
 type persistingTokenSource struct {
 	mu sync.Mutex
-	// ctx is the connection context the SDK hands to TokenSource (carrying
-	// the oauth2.HTTPClient value); each Token call derives a bounded
-	// per-refresh context from it.
-	ctx        context.Context
-	config     *oauth2.Config
-	token      *oauth2.Token
-	manager    *OAuthManager
-	userID     string
-	serverName string
+	// ctx is the connection context the SDK hands to TokenSource; each
+	// refresh derives a bounded per-call context from it.
+	ctx         context.Context
+	envelope    *storedTokenEnvelope
+	staticCreds *StaticOAuthCredentials
+	manager     *OAuthManager
+	userID      string
+	serverName  string
 }
 
 func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Build a fresh oauth2 source per call so every refresh runs under its
-	// own bounded window: oauth2.Config.TokenSource captures its context for
-	// all future refreshes, so a long-lived source constructed with a
-	// timeout context would be poisoned once that timeout fires. The valid
-	// (non-expired) path returns the token without any network I/O.
+	if s.envelope.Token.Valid() {
+		return s.envelope.Token, nil
+	}
+
+	if s.envelope.Version == 0 || s.envelope.TokenEndpoint == "" || s.envelope.ClientID == "" {
+		// Pre-envelope grant: there is no pinned refresh destination, and
+		// rediscovering one would let a compromised server redirect the
+		// refresh token. Force one re-authorization instead. (Unconditional
+		// delete: legacy entries are not CAS-able against the envelope type.)
+		if delErr := s.manager.deleteToken(s.userID, s.serverName); delErr != nil {
+			s.manager.pluginAPI.LogWarn("Failed to delete legacy token", "error", delErr)
+		}
+		return nil, &mcpUnauthorized{
+			err: fmt.Errorf("stored token predates authorization server binding and cannot be refreshed safely, re-authentication required"),
+		}
+	}
+
+	if s.envelope.Token.RefreshToken == "" {
+		if won, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.envelope); delErr != nil || !won {
+			if adopted := s.adoptLatestGrant(); adopted != nil {
+				return adopted, nil
+			}
+		}
+		return nil, &mcpUnauthorized{
+			err: fmt.Errorf("access token expired and no refresh token was issued, re-authentication required"),
+		}
+	}
+
+	creds, credsErr := s.refreshCredentials()
+	if credsErr != nil {
+		return nil, credsErr
+	}
+
 	refreshCtx, cancel := context.WithTimeout(s.ctx, oauthPrepTimeout)
 	defer cancel()
-
-	token, err := s.config.TokenSource(refreshCtx, s.token).Token()
+	token, err := s.manager.refreshGrant(refreshCtx, s.envelope, creds)
 	if err != nil {
-		// Token refresh failure with invalid_grant happens when client
-		// credentials changed (e.g. v1 -> v2 migration) and the old token was
-		// issued for different credentials — or, in HA, when another node
-		// already rotated the refresh token we are holding. Only clear the
-		// stored token when it is still the one we attempted to refresh;
-		// deleting unconditionally would erase a concurrently rotated, valid
-		// token. (A tiny read-then-delete window remains; true prevention
-		// would need a KV compare-and-delete.)
-		if strings.Contains(err.Error(), "invalid_grant") {
-			stored, loadErr := s.manager.loadToken(s.userID, s.serverName)
-			if loadErr == nil && stored != nil && !sameStoredToken(stored, s.token) {
-				return nil, fmt.Errorf("token refresh failed but the stored token was rotated concurrently; retry with the new token: %w", err)
-			}
-			if delErr := s.manager.deleteToken(s.userID, s.serverName); delErr != nil {
-				s.manager.pluginAPI.LogWarn("Failed to delete stale token", "error", delErr)
+		// invalid_grant happens when client credentials changed (e.g. v1 ->
+		// v2 migration) — or, in HA, when another node already rotated the
+		// refresh token we are holding. The compare-and-delete only clears
+		// the grant when it is still the one we attempted to refresh; on a
+		// lost race the winner's rotated grant is adopted.
+		if isInvalidGrantError(err) {
+			if won, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.envelope); delErr != nil || !won {
+				if adopted := s.adoptLatestGrant(); adopted != nil {
+					return adopted, nil
+				}
+				return nil, fmt.Errorf("token refresh failed but the stored token changed concurrently; retry: %w", err)
 			}
 			return nil, &mcpUnauthorized{
 				err: fmt.Errorf("token refresh failed (credentials may have changed), re-authentication required: %w", err),
@@ -238,31 +273,70 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 		return nil, err
 	}
 
-	if token.AccessToken != s.token.AccessToken {
-		if storeErr := s.manager.storeToken(s.userID, s.serverName, token); storeErr != nil {
-			// Don't fail the request over a persistence problem; the refreshed
-			// token is still valid for this request and we retry storing on
-			// the next refresh.
-			s.manager.pluginAPI.LogWarn("Failed to persist refreshed OAuth token",
-				"userID", s.userID,
-				"serverID", s.serverName,
-				"error", storeErr)
-		} else {
-			s.token = token
-		}
+	refreshed := *s.envelope
+	refreshed.Token = token
+	if won, casErr := s.manager.casTokenEnvelope(s.userID, s.serverName, s.envelope, &refreshed); casErr != nil {
+		// Don't fail the request over a persistence problem; the refreshed
+		// token is still valid for this request and we retry on the next
+		// refresh.
+		s.manager.pluginAPI.LogWarn("Failed to persist refreshed OAuth token",
+			"userID", s.userID,
+			"serverID", s.serverName,
+			"error", casErr)
+	} else if !won {
+		// Another node persisted a different grant between our load and this
+		// write; keep the winner for future calls. Our freshly issued token
+		// is still valid for this request.
+		s.adoptLatestGrant()
+	} else {
+		s.envelope = &refreshed
 	}
 
 	return token, nil
 }
 
-// sameStoredToken reports whether the stored token is the same credential this
-// source attempted to refresh, comparing refresh tokens (the rotating part)
-// and falling back to access tokens when neither has one.
-func sameStoredToken(stored, attempted *oauth2.Token) bool {
-	if stored.RefreshToken != "" || attempted.RefreshToken != "" {
-		return stored.RefreshToken == attempted.RefreshToken
+// adoptLatestGrant reloads the stored grant after a lost compare-and-set race
+// and adopts it when it carries a valid token, returning that token (nil
+// otherwise). Callers hold s.mu.
+func (s *persistingTokenSource) adoptLatestGrant() *oauth2.Token {
+	latest, err := s.manager.loadTokenEnvelope(s.userID, s.serverName)
+	if err != nil || latest == nil || latest.Token == nil {
+		return nil
 	}
-	return stored.AccessToken == attempted.AccessToken
+	s.envelope = latest
+	if latest.Token.Valid() {
+		return latest.Token
+	}
+	return nil
+}
+
+// refreshCredentials resolves the client credentials for a refresh, strictly
+// bound to the client the grant was issued to: static credentials must match
+// the pinned client ID, and dynamically registered credentials are loaded
+// from the KV store without any registration fallback.
+func (s *persistingTokenSource) refreshCredentials() (*ClientCredentials, error) {
+	if s.staticCreds != nil && s.staticCreds.ClientID != "" {
+		if s.staticCreds.ClientID != s.envelope.ClientID {
+			return nil, &mcpUnauthorized{
+				err: fmt.Errorf("configured client ID no longer matches the client this grant was issued to, re-authentication required"),
+			}
+		}
+		return &ClientCredentials{
+			ClientID:     s.staticCreds.ClientID,
+			ClientSecret: s.staticCreds.ClientSecret,
+		}, nil
+	}
+
+	creds, err := s.manager.loadClientCredentials(s.envelope.AuthServerURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client credentials for refresh: %w", err)
+	}
+	if creds == nil || creds.ClientID != s.envelope.ClientID {
+		return nil, &mcpUnauthorized{
+			err: fmt.Errorf("registered client for this grant is no longer available, re-authentication required"),
+		}
+	}
+	return creds, nil
 }
 
 // ValidateResourceMetadataURL validates a resource_metadata URL from an OAuth

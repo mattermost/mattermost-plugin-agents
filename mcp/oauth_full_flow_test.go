@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -288,6 +289,12 @@ func (s *fullFlowOAuthServer) handleToken(w http.ResponseWriter, r *http.Request
 		s.pkceVerified = true
 		s.issueTokensLocked(w)
 	case "refresh_token":
+		// RFC 8707: the MCP spec requires the canonical resource on refresh
+		// requests too.
+		if r.PostFormValue("resource") != s.mcpURL() {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_target")
+			return
+		}
 		if s.refreshToken == "" || r.PostFormValue("refresh_token") != s.refreshToken {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_grant")
 			return
@@ -369,6 +376,37 @@ func newFullFlowKVClient(t *testing.T) (*mocks.MockClient, *fullFlowKV) {
 			delete(kv.data, key)
 			return nil
 		})
+	// Compare-and-set mirrors pluginapi's SetAtomic semantics: old nil means
+	// "only if absent", new nil means delete.
+	client.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().
+		Return(func(key string, oldValue, newValue interface{}) (bool, error) {
+			kv.mu.Lock()
+			defer kv.mu.Unlock()
+			current, exists := kv.data[key]
+			if oldValue == nil {
+				if exists {
+					return false, nil
+				}
+			} else {
+				oldRaw, err := json.Marshal(oldValue)
+				if err != nil {
+					return false, err
+				}
+				if !exists || !bytes.Equal(current, oldRaw) {
+					return false, nil
+				}
+			}
+			if newValue == nil {
+				delete(kv.data, key)
+				return true, nil
+			}
+			newRaw, err := json.Marshal(newValue)
+			if err != nil {
+				return false, err
+			}
+			kv.data[key] = newRaw
+			return true, nil
+		})
 	for _, logMethod := range []string{"LogDebug", "LogInfo", "LogWarn", "LogError"} {
 		client.On(logMethod, mock.Anything).Maybe().Return()
 		client.On(logMethod, mock.Anything, mock.Anything).Maybe().Return()
@@ -377,7 +415,7 @@ func newFullFlowKVClient(t *testing.T) (*mocks.MockClient, *fullFlowKV) {
 	return client, kv
 }
 
-func (kv *fullFlowKV) storedToken(t *testing.T, userID, serverID string) *oauth2.Token {
+func (kv *fullFlowKV) storedEnvelope(t *testing.T, userID, serverID string) *storedTokenEnvelope {
 	t.Helper()
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
@@ -385,14 +423,28 @@ func (kv *fullFlowKV) storedToken(t *testing.T, userID, serverID string) *oauth2
 	if !ok {
 		return nil
 	}
-	var token oauth2.Token
-	require.NoError(t, json.Unmarshal(raw, &token))
-	return &token
+	var envelope storedTokenEnvelope
+	require.NoError(t, json.Unmarshal(raw, &envelope))
+	return &envelope
 }
 
+func (kv *fullFlowKV) storedToken(t *testing.T, userID, serverID string) *oauth2.Token {
+	t.Helper()
+	envelope := kv.storedEnvelope(t, userID, serverID)
+	if envelope == nil {
+		return nil
+	}
+	return envelope.Token
+}
+
+// overwriteToken swaps the token inside the stored grant envelope, keeping
+// its authorization server binding (used to simulate expiry).
 func (kv *fullFlowKV) overwriteToken(t *testing.T, userID, serverID string, token *oauth2.Token) {
 	t.Helper()
-	raw, err := json.Marshal(token)
+	envelope := kv.storedEnvelope(t, userID, serverID)
+	require.NotNil(t, envelope, "no stored grant to overwrite")
+	envelope.Token = token
+	raw, err := json.Marshal(envelope)
 	require.NoError(t, err)
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
@@ -454,7 +506,7 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 	t.Logf("step 1 OK: OAuthNeededError metadataURL=%s authURL=%s", oauthNeeded.MetadataURL(), oauthNeeded.AuthURL())
 
 	// --- Step 2: initiate the flow (discovery + DCR + PKCE auth URL) ---
-	authorizationURL, err := manager.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, oauthNeeded.MetadataURL())
+	authorizationURL, err := manager.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, oauthNeeded.MetadataURL(), "")
 	require.NoError(t, err)
 	registerCalls, _, _, _ := oauthServer.counters()
 	require.Equal(t, 1, registerCalls, "dynamic client registration must have happened exactly once")
@@ -493,7 +545,7 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 
 	// The session was consumed by the failed attempt; restart the flow to get
 	// a fresh code+state for the successful exchange.
-	authorizationURL2, err := manager.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, oauthNeeded.MetadataURL())
+	authorizationURL2, err := manager.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, oauthNeeded.MetadataURL(), "")
 	require.NoError(t, err)
 	resp2, err := noRedirect.Get(authorizationURL2)
 	require.NoError(t, err)

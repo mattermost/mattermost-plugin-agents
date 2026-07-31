@@ -343,59 +343,6 @@ func TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
 		"fallback token endpoint must live on the discovered issuer")
 }
 
-// TestCreateOAuthConfigCachedReusesDiscovery verifies the hot-path cache: a
-// second call within the TTL must not re-run metadata discovery, and the
-// uncached createOAuthConfig must remain unaffected by the cache.
-func TestCreateOAuthConfigCachedReusesDiscovery(t *testing.T) {
-	var prmFetches atomic.Int32
-	var serverURL string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/oauth-protected-resource":
-			prmFetches.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
-				Resource:             serverURL,
-				AuthorizationServers: []string{serverURL},
-			}))
-		case "/.well-known/oauth-authorization-server":
-			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
-				Issuer:                        serverURL,
-				AuthorizationEndpoint:         serverURL + "/authorize",
-				TokenEndpoint:                 serverURL + "/token",
-				CodeChallengeMethodsSupported: []string{"S256"},
-			}))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-	serverURL = server.URL
-
-	manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
-	staticCreds := &StaticOAuthCredentials{ClientID: "static-client", ClientSecret: "static-secret"}
-
-	first, err := manager.createOAuthConfigCached(context.Background(), serverURL, "", staticCreds)
-	require.NoError(t, err)
-	require.Equal(t, int32(1), prmFetches.Load())
-
-	second, err := manager.createOAuthConfigCached(context.Background(), serverURL, "", staticCreds)
-	require.NoError(t, err)
-	require.Same(t, first, second, "cached call within the TTL must reuse the discovered config")
-	require.Equal(t, int32(1), prmFetches.Load(), "cached call must not re-run discovery")
-
-	_, err = manager.createOAuthConfig(context.Background(), serverURL, "", staticCreds)
-	require.NoError(t, err)
-	require.Equal(t, int32(2), prmFetches.Load(), "uncached call must always run discovery")
-
-	rotated := &StaticOAuthCredentials{ClientID: staticCreds.ClientID, ClientSecret: "rotated-secret"}
-	rotatedConfig, err := manager.createOAuthConfigCached(context.Background(), serverURL, "", rotated)
-	require.NoError(t, err)
-	require.NotSame(t, first, rotatedConfig, "rotating the static secret must bypass the cached config")
-	require.Equal(t, int32(3), prmFetches.Load(), "rotated secret must re-run discovery immediately")
-}
-
 // TestLoadOrCreateClientCredentials_RegistrationEndpointDiscovery covers the
 // DCR path where no registration endpoint was discovered upstream: it must be
 // discovered from the authorization server metadata at the base URL, and

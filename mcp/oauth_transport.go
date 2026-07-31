@@ -14,7 +14,10 @@ import (
 // converts it into the public *OAuthNeededError via errors.As.
 type mcpUnauthorized struct {
 	metadataURL string
-	err         error
+	// scope is the authoritative scope from the WWW-Authenticate challenge,
+	// if any (space-separated, RFC 6750 §3).
+	scope string
+	err   error
 }
 
 func drainAndCloseResponseBody(resp *http.Response) {
@@ -32,6 +35,13 @@ func (e *mcpUnauthorized) Error() string {
 	}
 	return fmt.Sprintf("OAuth authentication needed for resource at %s", e.metadataURL)
 }
+
+// Scope returns the authoritative scope from the WWW-Authenticate challenge,
+// if any.
+func (e *mcpUnauthorized) Scope() string {
+	return e.scope
+}
+
 func (e *mcpUnauthorized) MetadataURL() string {
 	return e.metadataURL
 }

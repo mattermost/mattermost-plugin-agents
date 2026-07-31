@@ -51,7 +51,16 @@ func (a *API) handleOAuthStart(c *gin.Context) {
 		}
 	}
 
-	authURL, err := oauthManager.InitiateOAuthFlowForServerWithMetadata(c.Request.Context(), userID, serverConfig, metadataURL)
+	// scope carries the authoritative challenge scope from the failed MCP
+	// handshake (RFC 6750 §3), validated against the RFC 6749 §3.3 charset.
+	scope := c.Query("scope")
+	if scope != "" && !isValidOAuthScope(scope) {
+		a.pluginAPI.Log.Debug("Rejected MCP OAuth start scope query", "serverName", serverConfig.Name)
+		a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Invalid scope parameter.")
+		return
+	}
+
+	authURL, err := oauthManager.InitiateOAuthFlowForServerWithMetadata(c.Request.Context(), userID, serverConfig, metadataURL, scope)
 	if err != nil {
 		a.pluginAPI.Log.Error("Failed to start OAuth flow", "serverName", serverConfig.Name, "error", err)
 		a.renderOAuthErrorPage(c, http.StatusInternalServerError, "Authorization Failed", "Unable to start the MCP authorization flow.")
@@ -59,6 +68,23 @@ func (a *API) handleOAuthStart(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, authURL)
+}
+
+// isValidOAuthScope validates a space-separated OAuth scope string against
+// the RFC 6749 §3.3 scope-token charset, with a sanity length cap.
+func isValidOAuthScope(scope string) bool {
+	const maxScopeLength = 512
+	if len(scope) > maxScopeLength {
+		return false
+	}
+	for _, r := range scope {
+		// scope-token = %x21 / %x23-5B / %x5D-7E; tokens separated by SP.
+		if r == ' ' || r == 0x21 || (r >= 0x23 && r <= 0x5B) || (r >= 0x5D && r <= 0x7E) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (a *API) handleOAuthCallback(c *gin.Context) {

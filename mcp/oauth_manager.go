@@ -13,14 +13,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/oauth2"
 )
 
@@ -30,11 +26,6 @@ const (
 	// name and is deliberately not translated.
 	oauthClientName         = "Mattermost Agents"
 	oauthCallbackPathSuffix = "/oauth/callback"
-
-	// oauthConfigCacheTTL bounds how long a discovered OAuth configuration
-	// (metadata endpoints + client credentials) is reused on the hot request
-	// path before discovery runs again.
-	oauthConfigCacheTTL = 5 * time.Minute
 )
 
 type OAuthNeededError struct {
@@ -80,17 +71,6 @@ type OAuthManager struct {
 	callbackURL        string
 	httpClient         *http.Client
 	serverConfigLookup ServerConfigLookup
-
-	// configCacheMu guards configCache, a small TTL cache of discovered OAuth
-	// configurations used on the hot request path (see
-	// createOAuthConfigCached).
-	configCacheMu sync.Mutex
-	configCache   map[string]oauthConfigCacheEntry
-}
-
-type oauthConfigCacheEntry struct {
-	config    *oauth2.Config
-	expiresAt time.Time
 }
 
 func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *http.Client, serverConfigLookup ServerConfigLookup) *OAuthManager {
@@ -99,54 +79,7 @@ func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *htt
 		callbackURL:        callbackURL,
 		httpClient:         httpClient,
 		serverConfigLookup: serverConfigLookup,
-		configCache:        make(map[string]oauthConfigCacheEntry),
 	}
-}
-
-// createOAuthConfigCached returns the OAuth configuration for a server,
-// reusing a recently discovered one when available. Token sources ask for the
-// configuration on every outgoing MCP request; without a cache each request
-// would pay two or more metadata round trips (protected resource +
-// authorization server metadata) even when the stored token is still valid.
-// Flow initiation and callback processing deliberately keep using
-// createOAuthConfig directly so explicit user actions always see fresh
-// discovery results.
-func (m *OAuthManager) createOAuthConfigCached(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error) {
-	// The key includes a fingerprint of the static client secret so that
-	// rotating a secret (same ClientID) immediately misses the cache instead
-	// of serving the stale configuration until the TTL expires. A hash is
-	// used to avoid holding the raw secret in map keys.
-	key := serverURL + "|" + metadataURL + "|" + staticCredsClientID(staticCreds) + "|" + staticCredsSecretFingerprint(staticCreds)
-
-	m.configCacheMu.Lock()
-	entry, ok := m.configCache[key]
-	m.configCacheMu.Unlock()
-	cacheHit := ok && time.Now().Before(entry.expiresAt)
-
-	ctx, span := telemetry.Tracer().Start(ctx, "mcp oauth config",
-		trace.WithAttributes(
-			telemetry.MCPServer.String(serverURL),
-			telemetry.MCPOAuthConfigCacheHit.Bool(cacheHit),
-		),
-	)
-	defer span.End()
-
-	if cacheHit {
-		return entry.config, nil
-	}
-
-	config, err := m.createOAuthConfig(ctx, serverURL, metadataURL, staticCreds)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return nil, err
-	}
-
-	m.configCacheMu.Lock()
-	m.configCache[key] = oauthConfigCacheEntry{config: config, expiresAt: time.Now().Add(oauthConfigCacheTTL)}
-	m.configCacheMu.Unlock()
-
-	return config, nil
 }
 
 func (m *OAuthManager) StartURL(serverID string) string {
@@ -251,6 +184,8 @@ type resolvedOAuthConfig struct {
 	// resource is the canonical RFC 8707 resource identifier of the MCP
 	// server (the PRM resource value when discovery produced one).
 	resource string
+	// creds are the client credentials the config was assembled from.
+	creds *ClientCredentials
 }
 
 func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error) {
@@ -338,6 +273,7 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 		requireIss:    requireIss,
 		authServerURL: authServerURL,
 		resource:      resource,
+		creds:         clientCreds,
 	}, nil
 }
 
@@ -362,16 +298,18 @@ func (m *OAuthManager) oauthConfigFromCredentials(clientCreds *ClientCredentials
 }
 
 func (m *OAuthManager) InitiateOAuthFlowForServer(ctx context.Context, userID string, serverConfig ServerConfig) (string, error) {
-	return m.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, "")
+	return m.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, "", "")
 }
 
 // InitiateOAuthFlowForServerWithMetadata starts OAuth like InitiateOAuthFlowForServer but passes
-// resource_metadata from the upstream 401 when present (RFC 9728).
-func (m *OAuthManager) InitiateOAuthFlowForServerWithMetadata(ctx context.Context, userID string, serverConfig ServerConfig, metadataURL string) (string, error) {
-	return m.InitiateOAuthFlow(ctx, userID, serverConfig.Name, serverConfig.BaseURL, metadataURL, staticOAuthCreds(serverConfig))
+// resource_metadata from the upstream 401 when present (RFC 9728) and the
+// space-separated scope from an insufficient_scope challenge when present
+// (treated as authoritative per the MCP specification).
+func (m *OAuthManager) InitiateOAuthFlowForServerWithMetadata(ctx context.Context, userID string, serverConfig ServerConfig, metadataURL, challengeScope string) (string, error) {
+	return m.InitiateOAuthFlow(ctx, userID, serverConfig.Name, serverConfig.BaseURL, metadataURL, challengeScope, staticOAuthCreds(serverConfig))
 }
 
-func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (string, error) {
+func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL, challengeScope string, staticCreds *StaticOAuthCredentials) (string, error) {
 	// Generate PKCE parameters
 	codeVerifier := oauth2.GenerateVerifier()
 
@@ -385,6 +323,19 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 	resolved, err := m.resolveOAuthConfig(ctx, serverURL, metadataURL, staticCreds)
 	if err != nil {
 		return "", fmt.Errorf("failed to create OAuth config: %w", err)
+	}
+
+	// Scopes from a WWW-Authenticate challenge are authoritative per the MCP
+	// specification: they override the metadata-advertised default.
+	if challengeScope != "" {
+		resolved.config.Scopes = strings.Fields(challengeScope)
+	}
+
+	// Static credentials are pinned to the first issuer they were used with
+	// (trust on first use): a compromised MCP server that later advertises a
+	// different authorization server must not receive the static secret.
+	if err := m.checkStaticCredsIssuerPin(serverID, serverURL, staticCreds, resolved.issuer); err != nil {
+		return "", err
 	}
 
 	// Build authorization URL with PKCE and the canonical RFC 8707 resource
@@ -415,6 +366,8 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 		TokenEndpoint:     resolved.config.Endpoint.TokenURL,
 		ResourceURL:       resolved.resource,
 		Scopes:            resolved.config.Scopes,
+		ClientID:          resolved.creds.ClientID,
+		AuthMethod:        resolved.creds.TokenEndpointAuthMethod,
 	}); err != nil {
 		return "", fmt.Errorf("failed to store OAuth session: %w", err)
 	}
@@ -422,26 +375,76 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 	return authURL, nil
 }
 
-// callbackOAuthConfig builds the oauth2 configuration for the code exchange.
-// Sessions bound at initiation time (TokenEndpoint set) reuse the persisted
-// endpoints and the credentials registered under the persisted authorization
-// server; legacy sessions without binding fields fall back to re-discovery.
-func (m *OAuthManager) callbackOAuthConfig(ctx context.Context, session *OAuthSession, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error) {
-	if session.TokenEndpoint == "" {
-		return m.createOAuthConfig(ctx, session.ServerURL, session.ServerMetadataURL, staticCreds)
+// staticIssuerPin records the first issuer a static client credential was
+// used with.
+type staticIssuerPin struct {
+	Issuer string `json:"issuer"`
+}
+
+// checkStaticCredsIssuerPin enforces trust-on-first-use issuer pinning for
+// statically configured client credentials. The pin key incorporates the
+// server name, client ID, and base URL, so intentionally reconfiguring the
+// server naturally re-pins. Dynamically registered credentials need no pin:
+// each authorization server registers (and receives) its own client.
+func (m *OAuthManager) checkStaticCredsIssuerPin(serverID, serverURL string, staticCreds *StaticOAuthCredentials, issuer string) error {
+	if staticCreds == nil || staticCreds.ClientID == "" {
+		return nil
 	}
 
-	// Credentials were created (or statically configured) at initiation time;
-	// no registration endpoint is passed because registering a new client at
-	// callback time would change the client_id and break the exchange.
-	clientCreds, err := m.loadOrCreateClientCredentials(ctx, session.AuthServerURL, staticCreds, "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client credentials: %w", err)
+	sum := sha256.Sum256([]byte(serverID + "|" + staticCreds.ClientID + "|" + serverURL))
+	pinKey := "mcp_oauth_issuer_pin_v1_" + hex.EncodeToString(sum[:16])
+
+	var pin staticIssuerPin
+	err := m.pluginAPI.KVGet(pinKey, &pin)
+	if err != nil && !mmapi.IsKVNotFound(err) {
+		return fmt.Errorf("failed to load issuer pin: %w", err)
+	}
+	if pin.Issuer == "" {
+		// First use: pin the issuer. A lost race against a concurrent
+		// initiation pins whichever equal-or-different issuer won; enforce it
+		// on the next flow rather than failing this one.
+		if _, casErr := m.pluginAPI.KVCompareAndSet(pinKey, nil, &staticIssuerPin{Issuer: issuer}); casErr != nil {
+			return fmt.Errorf("failed to store issuer pin: %w", casErr)
+		}
+		return nil
+	}
+	if pin.Issuer != issuer {
+		return fmt.Errorf("authorization server issuer %q does not match the issuer %q this server's static OAuth credentials were first used with; if this change is intentional, update the MCP server configuration (name, base URL, or client ID) to re-pin", issuer, pin.Issuer)
+	}
+	return nil
+}
+
+// callbackOAuthConfig builds the oauth2 configuration for the code exchange,
+// strictly from the session's persisted binding: the persisted token endpoint
+// and exactly the client registration the authorization request was made with
+// (load-only — never registering, rediscovering, or adopting a different
+// client, all of which would either break the exchange or hand material to a
+// server that changed its metadata mid-flow).
+func (m *OAuthManager) callbackOAuthConfig(session *OAuthSession, staticCreds *StaticOAuthCredentials) (*oauth2.Config, *ClientCredentials, error) {
+	var clientCreds *ClientCredentials
+	switch {
+	case staticCreds != nil && staticCreds.ClientID != "":
+		if session.ClientID != "" && staticCreds.ClientID != session.ClientID {
+			return nil, nil, fmt.Errorf("configured client ID no longer matches the client this authorization was started with; restart authorization")
+		}
+		clientCreds = &ClientCredentials{
+			ClientID:     staticCreds.ClientID,
+			ClientSecret: staticCreds.ClientSecret,
+		}
+	default:
+		stored, err := m.loadClientCredentials(session.AuthServerURL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load client credentials: %w", err)
+		}
+		if stored == nil || (session.ClientID != "" && stored.ClientID != session.ClientID) {
+			return nil, nil, fmt.Errorf("the client registration this authorization was started with is no longer available; restart authorization")
+		}
+		clientCreds = stored
 	}
 
 	// The authorization endpoint is not used during the exchange; only the
 	// token endpoint matters here.
-	return m.oauthConfigFromCredentials(clientCreds, "", session.TokenEndpoint, session.Scopes), nil
+	return m.oauthConfigFromCredentials(clientCreds, "", session.TokenEndpoint, session.Scopes), clientCreds, nil
 }
 
 func staticCredsClientID(creds *StaticOAuthCredentials) string {
@@ -449,17 +452,6 @@ func staticCredsClientID(creds *StaticOAuthCredentials) string {
 		return ""
 	}
 	return creds.ClientID
-}
-
-// staticCredsSecretFingerprint returns a non-reversible fingerprint of the
-// static client secret for use in cache keys, so secret rotation invalidates
-// cached OAuth configurations without keeping the raw secret in map keys.
-func staticCredsSecretFingerprint(creds *StaticOAuthCredentials) string {
-	if creds == nil || creds.ClientSecret == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(creds.ClientSecret))
-	return hex.EncodeToString(sum[:8])
 }
 
 // ProcessCallback finishes the authorization flow: it validates state, user,
@@ -492,12 +484,23 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		return nil, fmt.Errorf("user ID mismatch: expected %s, got %s", session.UserID, loggedInUserID)
 	}
 
+	// Sessions created before the binding fields existed cannot be verified
+	// against the discovery outcome they were initiated with; re-running
+	// discovery here would let a server that swapped its metadata mid-flow
+	// receive the code, verifier, and client secret. Fail closed: the user
+	// restarts authorization (sessions live only a few minutes, so this can
+	// only occur for flows in flight across a plugin upgrade).
+	if session.TokenEndpoint == "" || session.ClientID == "" {
+		return nil, fmt.Errorf("authorization session predates security binding and cannot be completed; please restart authorization")
+	}
+
 	// RFC 9207 issuer verification: when the authorization response carries
-	// an iss parameter it must match the issuer the session was bound to; and
-	// when the AS metadata advertised iss support at initiation time, the
-	// parameter is mandatory (its absence indicates a mix-up attack).
-	if iss != "" && session.Issuer != "" &&
-		strings.TrimSuffix(iss, "/") != strings.TrimSuffix(session.Issuer, "/") {
+	// an iss parameter it must match the issuer the session was bound to
+	// exactly (the MCP specification forbids normalization during this
+	// comparison); and when the AS metadata advertised iss support at
+	// initiation time, the parameter is mandatory (its absence indicates a
+	// mix-up attack).
+	if iss != "" && iss != session.Issuer {
 		return nil, fmt.Errorf("issuer mismatch in authorization response: got %q, expected %q", iss, session.Issuer)
 	}
 	if iss == "" && session.RequireIss {
@@ -511,17 +514,14 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		if cfg, ok := m.serverConfigLookup(session.ServerID); ok {
 			staticCreds = staticOAuthCreds(cfg)
 		} else {
-			m.pluginAPI.LogWarn("Static OAuth credentials were expected but server config not found; falling back to dynamic registration",
+			m.pluginAPI.LogWarn("Static OAuth credentials were expected but server config not found",
 				"serverID", session.ServerID)
 		}
 	}
 
-	// Exchange the code against the endpoints the session was bound to at
-	// initiation time; re-running discovery here would let a server that
-	// swaps its advertised metadata mid-flow receive the code, verifier, or
-	// client secret. Sessions created before the binding fields existed fall
-	// back to re-discovery.
-	oauthConfig, err := m.callbackOAuthConfig(ctx, session, staticCreds)
+	// Exchange the code against exactly the endpoints and client the session
+	// was bound to at initiation time.
+	oauthConfig, clientCreds, err := m.callbackOAuthConfig(session, staticCreds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OAuth config: %w", err)
 	}
@@ -538,8 +538,18 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
 	}
 
-	// Store the token
-	if err := m.storeToken(loggedInUserID, session.ServerID, token); err != nil {
+	// Store the grant pinned to the authorization server and client it was
+	// issued by; refreshes go exactly there, never through rediscovery.
+	if err := m.storeTokenEnvelope(loggedInUserID, session.ServerID, &storedTokenEnvelope{
+		Version:       tokenEnvelopeVersion,
+		Token:         token,
+		Issuer:        session.Issuer,
+		TokenEndpoint: session.TokenEndpoint,
+		AuthServerURL: session.AuthServerURL,
+		ClientID:      clientCreds.ClientID,
+		AuthMethod:    clientCreds.TokenEndpointAuthMethod,
+		Resource:      session.ResourceURL,
+	}); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
 	if err := m.DeleteAuthNeededState(loggedInUserID, session.ServerID); err != nil {

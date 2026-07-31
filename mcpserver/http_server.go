@@ -104,11 +104,16 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	// request body limit is the SDK default, set explicitly because go-sdk
 	// v1.7.0 introduced it (previously unlimited): requests are LLM-generated
 	// tool calls, so 4 MiB is ample, and oversized requests get 413.
+	// Localhost protection is disabled for the same reason as on the SSE
+	// handler above: securityMiddleware's validateHost enforces the
+	// equivalent check with the configured public hosts allowlisted, which
+	// the SDK's loopback-only check would reject behind a reverse proxy.
 	mattermostServer.streamableHandler = mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return mattermostServer.mcpServer
 	}, &mcp.StreamableHTTPOptions{
-		Stateless:           config.Stateless,
-		MaxRequestBodyBytes: mcp.DefaultMaxRequestBodyBytes,
+		Stateless:                  config.Stateless,
+		MaxRequestBodyBytes:        mcp.DefaultMaxRequestBodyBytes,
+		DisableLocalhostProtection: true,
 	})
 
 	// Create HTTP mux router and setup all routes

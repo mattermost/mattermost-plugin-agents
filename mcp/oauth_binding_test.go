@@ -10,7 +10,9 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -94,6 +96,11 @@ func TestProcessCallbackUsesSessionBoundEndpoints(t *testing.T) {
 	}
 	manager, mockClient := setupTestOAuthManagerFull(t, lookup, server.Client())
 	mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
+	// Trust-on-first-use issuer pin for the static credentials.
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.staticIssuerPin")).
+		Return(mmapi.ErrKVNotFound)
+	mockClient.On("KVCompareAndSet", mock.AnythingOfType("string"), nil, mock.AnythingOfType("*mcp.staticIssuerPin")).
+		Return(true, nil)
 
 	var storedSession *OAuthSession
 	mockClient.On("KVSetWithExpiry", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession"), mock.Anything).
@@ -103,9 +110,9 @@ func TestProcessCallbackUsesSessionBoundEndpoints(t *testing.T) {
 		Run(func(args mock.Arguments) { *(args.Get(1).(*OAuthSession)) = *storedSession }).
 		Return(nil)
 	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil)
-	mockClient.On("KVSet", buildTokenKey(userID, serverID), mock.AnythingOfType("*oauth2.Token")).Return(nil)
+	mockClient.On("KVSet", buildTokenKey(userID, serverID), mock.AnythingOfType("*mcp.storedTokenEnvelope")).Return(nil)
 
-	_, err := manager.InitiateOAuthFlow(context.Background(), userID, serverID, server.URL, "", &StaticOAuthCredentials{
+	_, err := manager.InitiateOAuthFlow(context.Background(), userID, serverID, server.URL, "", "", &StaticOAuthCredentials{
 		ClientID:     "static-client",
 		ClientSecret: "static-secret",
 	})
@@ -123,6 +130,98 @@ func TestProcessCallbackUsesSessionBoundEndpoints(t *testing.T) {
 		"the exchange must use the session-bound token endpoint")
 	require.Zero(t, authServer.exchangesByPath["/token-attacker"],
 		"the swapped-in endpoint must never receive the code")
+}
+
+// TestProcessCallbackRejectsUnboundSession verifies that sessions written
+// before the security-binding fields existed (an in-flight flow across a
+// plugin upgrade) fail closed instead of re-running discovery.
+func TestProcessCallbackRejectsUnboundSession(t *testing.T) {
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, &http.Client{})
+
+	unbound := &OAuthSession{
+		UserID:       "user123",
+		ServerID:     "server456",
+		ServerURL:    "https://api.example.com",
+		CodeVerifier: "test-verifier",
+		State:        "test-state",
+		CreatedAt:    time.Now(),
+		// No Issuer/TokenEndpoint/ClientID: pre-upgrade layout.
+	}
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).
+		Run(func(args mock.Arguments) { *(args.Get(1).(*OAuthSession)) = *unbound }).
+		Return(nil)
+	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil)
+
+	_, err := manager.ProcessCallback(context.Background(), "user123", "test-state", "auth-code", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "restart authorization")
+}
+
+// TestProcessCallbackRejectsNormalizedIss pins the RFC 9207 comparison to
+// exact string equality: the MCP specification forbids normalization, so even
+// a trailing-slash variant of the bound issuer must be rejected.
+func TestProcessCallbackRejectsNormalizedIss(t *testing.T) {
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, &http.Client{})
+
+	bound := &OAuthSession{
+		UserID:        "user123",
+		ServerID:      "server456",
+		ServerURL:     "https://api.example.com",
+		CodeVerifier:  "test-verifier",
+		State:         "test-state",
+		CreatedAt:     time.Now(),
+		Issuer:        "https://as.example.com",
+		AuthServerURL: "https://as.example.com",
+		TokenEndpoint: "https://as.example.com/token",
+		ClientID:      "client-1",
+	}
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).
+		Run(func(args mock.Arguments) { *(args.Get(1).(*OAuthSession)) = *bound }).
+		Return(nil)
+	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil)
+
+	_, err := manager.ProcessCallback(context.Background(), "user123", "test-state", "auth-code", bound.Issuer+"/")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "issuer mismatch")
+}
+
+// TestInitiateOAuthFlowStaticIssuerPinMismatch verifies trust-on-first-use
+// issuer pinning for static credentials: once pinned, a flow resolving a
+// different authorization server must fail before the secret can be sent
+// anywhere.
+func TestInitiateOAuthFlowStaticIssuerPinMismatch(t *testing.T) {
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/oauth-authorization-server" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                           serverURL,
+			"authorization_endpoint":           serverURL + "/authorize",
+			"token_endpoint":                   serverURL + "/token",
+			"code_challenge_methods_supported": []string{"S256"},
+		}))
+	}))
+	t.Cleanup(server.Close)
+	serverURL = server.URL
+
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	// The pin was created when the credentials were first used with a
+	// different authorization server.
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.staticIssuerPin")).
+		Run(func(args mock.Arguments) {
+			*(args.Get(1).(*staticIssuerPin)) = staticIssuerPin{Issuer: "https://original-as.example.com"}
+		}).
+		Return(nil)
+
+	_, err := manager.InitiateOAuthFlow(context.Background(), "user123", "pinned-server", server.URL, "", "", &StaticOAuthCredentials{
+		ClientID:     "static-client",
+		ClientSecret: "static-secret",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not match the issuer")
 }
 
 // TestDCRPublicClientCredentials verifies RFC 7591 public-client handling:

@@ -43,26 +43,102 @@ type OAuthNeededState struct {
 	SeenAt  time.Time `json:"seenAt"`
 }
 
-// loadToken retrieves the OAuth token for a user and server from the KV store
-// If no token is found, it returns nil to indicate no token exists
-func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error) {
+// tokenEnvelopeVersion is the current storedTokenEnvelope version.
+const tokenEnvelopeVersion = 1
+
+// storedTokenEnvelope pins an OAuth grant to the authorization server it was
+// issued by. Refreshes go to exactly the pinned token endpoint with exactly
+// the pinned client — never through rediscovery — so a compromised MCP server
+// that starts advertising a different authorization server can neither
+// receive the refresh token nor the client secret.
+//
+// Version 0 (a bare oauth2.Token, written before the envelope existed) is
+// still readable: the access token remains usable until it expires, but it
+// cannot be refreshed (no pinned destination), forcing one re-authorization.
+type storedTokenEnvelope struct {
+	Version int           `json:"version"`
+	Token   *oauth2.Token `json:"token"`
+	// Issuer is the authorization server's issuer identifier.
+	Issuer string `json:"issuer,omitempty"`
+	// TokenEndpoint is the only endpoint refreshes may be sent to.
+	TokenEndpoint string `json:"tokenEndpoint,omitempty"`
+	// AuthServerURL keys the stored client credentials.
+	AuthServerURL string `json:"authServerURL,omitempty"`
+	// ClientID is the client the grant was issued to; refresh credentials
+	// must match it.
+	ClientID string `json:"clientID,omitempty"`
+	// AuthMethod is the RFC 7591 token endpoint auth method ("none" for
+	// public clients).
+	AuthMethod string `json:"authMethod,omitempty"`
+	// Resource is the canonical RFC 8707 resource the grant is bound to.
+	Resource string `json:"resource,omitempty"`
+}
+
+// loadTokenEnvelope retrieves the stored OAuth grant for a user and server.
+// It returns nil when no grant exists. Pre-envelope grants (bare
+// oauth2.Token values) are returned as a Version 0 envelope.
+func (m *OAuthManager) loadTokenEnvelope(userID, serverID string) (*storedTokenEnvelope, error) {
 	tokenKey := buildTokenKey(userID, serverID)
 
-	var oauth2Token oauth2.Token
-	err := m.pluginAPI.KVGet(tokenKey, &oauth2Token)
+	var envelope storedTokenEnvelope
+	err := m.pluginAPI.KVGet(tokenKey, &envelope)
 	if err != nil {
 		if mmapi.IsKVNotFound(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to retrieve token from KV store: %w", err)
 	}
-
-	if oauth2Token.AccessToken == "" {
-		// If no token is found, return nil to indicate no token exists
-		return nil, nil
+	if envelope.Version > 0 && envelope.Token != nil && envelope.Token.AccessToken != "" {
+		return &envelope, nil
 	}
 
-	return &oauth2Token, nil
+	// Legacy layout: the key holds a bare oauth2.Token.
+	var legacy oauth2.Token
+	err = m.pluginAPI.KVGet(tokenKey, &legacy)
+	if err != nil {
+		if mmapi.IsKVNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to retrieve token from KV store: %w", err)
+	}
+	if legacy.AccessToken == "" {
+		return nil, nil
+	}
+	return &storedTokenEnvelope{Version: 0, Token: &legacy}, nil
+}
+
+// loadToken retrieves the OAuth token for a user and server from the KV store
+// If no token is found, it returns nil to indicate no token exists
+func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error) {
+	envelope, err := m.loadTokenEnvelope(userID, serverID)
+	if err != nil {
+		return nil, err
+	}
+	if envelope == nil {
+		return nil, nil
+	}
+	return envelope.Token, nil
+}
+
+// storeTokenEnvelope persists an OAuth grant with its authorization server
+// binding.
+func (m *OAuthManager) storeTokenEnvelope(userID, serverID string, envelope *storedTokenEnvelope) error {
+	if err := m.pluginAPI.KVSet(buildTokenKey(userID, serverID), envelope); err != nil {
+		return fmt.Errorf("failed to store token in KV store: %w", err)
+	}
+	return nil
+}
+
+// casTokenEnvelope atomically replaces the stored grant only if it still
+// equals old (attempted → refreshed). Returns false when another writer won.
+func (m *OAuthManager) casTokenEnvelope(userID, serverID string, old, updated *storedTokenEnvelope) (bool, error) {
+	return m.pluginAPI.KVCompareAndSet(buildTokenKey(userID, serverID), old, updated)
+}
+
+// casDeleteTokenEnvelope atomically deletes the stored grant only if it still
+// equals old (attempted → nil). Returns false when another writer won.
+func (m *OAuthManager) casDeleteTokenEnvelope(userID, serverID string, old *storedTokenEnvelope) (bool, error) {
+	return m.pluginAPI.KVCompareAndSet(buildTokenKey(userID, serverID), old, nil)
 }
 
 // HasStoredToken returns true when a non-expired OAuth token exists for the
@@ -120,16 +196,6 @@ func (m *OAuthManager) DeleteAuthNeededState(userID, serverID string) error {
 	if err := m.pluginAPI.KVDelete(authNeededKey); err != nil {
 		return fmt.Errorf("failed to delete OAuth-needed state: %w", err)
 	}
-	return nil
-}
-
-func (m *OAuthManager) storeToken(userID, serverID string, token *oauth2.Token) error {
-	tokenKey := buildTokenKey(userID, serverID)
-
-	if err := m.pluginAPI.KVSet(tokenKey, token); err != nil {
-		return fmt.Errorf("failed to store token in KV store: %w", err)
-	}
-
 	return nil
 }
 
@@ -243,6 +309,11 @@ type OAuthSession struct {
 	TokenEndpoint string   `json:"tokenEndpoint,omitempty"`
 	ResourceURL   string   `json:"resourceURL,omitempty"` // canonical RFC 8707 resource
 	Scopes        []string `json:"scopes,omitempty"`
+	// ClientID and AuthMethod pin the exact client registration the
+	// authorization request was made with; the callback refuses to exchange
+	// with any other client.
+	ClientID   string `json:"clientID,omitempty"`
+	AuthMethod string `json:"authMethod,omitempty"`
 }
 
 // Unlike the other loaders, a missing key surfaces as an error here:
