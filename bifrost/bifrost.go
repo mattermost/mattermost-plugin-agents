@@ -2060,6 +2060,17 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// an unrelated function call's argument buffer.
 	outputIndexToFuncCallID := make(map[int]string)
 
+	// serverTools accumulates provider-executed tool activity (web search /
+	// web fetch / code execution). Every state change re-emits the cumulative
+	// snapshot so receivers can replace prior state.
+	serverTools := newServerToolTracker()
+	emitServerTools := func() {
+		output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeServerToolUse,
+			Value: serverTools.snapshot(),
+		}
+	}
+
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
 	var reasoningSignature string
@@ -2268,7 +2279,19 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 					}
 				}
 
+			case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
+				// Sandbox code/command finalized before execution starts —
+				// surface it so the activity card can show what is running.
+				if resp.ItemID != nil && resp.Code != nil && serverTools.setCommand(*resp.ItemID, *resp.Code) {
+					emitServerTools()
+				}
+
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
+				// Server tool started (web_search_call / web_fetch_call /
+				// code_interpreter_call) — track and surface the activity.
+				if serverTools.observeItem(resp.Item) {
+					emitServerTools()
+				}
 				// New output item added - register function calls so their
 				// argument deltas can be routed back to the right buffer by
 				// OutputIndex.
@@ -2298,6 +2321,11 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 			case schemas.ResponsesStreamResponseTypeOutputItemDone:
 				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
+				// Server tool finished — fold the final payload (query,
+				// resolved URL/title, stdout/stderr, error) into the activity.
+				if serverTools.observeItem(resp.Item) {
+					emitServerTools()
+				}
 				// Output item completed - finalize function call if any
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {

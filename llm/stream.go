@@ -25,7 +25,49 @@ const (
 	EventTypeAnnotations
 	// EventTypeUsage represents token usage data
 	EventTypeUsage
+	// EventTypeServerToolUse represents provider-executed (server) tool
+	// activity — e.g. Anthropic web_search / web_fetch / code_execution or
+	// OpenAI web_search / code_interpreter. The value is the cumulative
+	// []ServerToolUse for the current round; receivers replace prior state.
+	EventTypeServerToolUse
 )
+
+// Server tool activity status values. They intentionally match the
+// conversation content-block status strings so the streaming layer can persist
+// them verbatim.
+const (
+	ServerToolStatusInProgress = "in_progress"
+	ServerToolStatusSuccess    = "success"
+	ServerToolStatusError      = "error"
+)
+
+// ServerToolUse describes one provider-executed tool invocation observed on
+// the stream. Tool uses the same neutral ids as BotConfig.EnabledNativeTools
+// (NativeToolWebSearch, NativeToolWebFetch, NativeToolCodeInterpreter); the
+// remaining fields are populated per tool and pre-truncated for display.
+type ServerToolUse struct {
+	ID     string `json:"id"`
+	Tool   string `json:"tool"`
+	Status string `json:"status"`
+
+	// Query is the web_search query.
+	Query string `json:"query,omitempty"`
+	// URL is the web_fetch target (request URL, replaced by the resolved
+	// result URL when the fetch completes).
+	URL string `json:"url,omitempty"`
+	// Title is the fetched document title (web_fetch).
+	Title string `json:"title,omitempty"`
+	// SubTool is the code-execution sub-tool: "bash", "text_editor" or
+	// "python" (Anthropic), empty for providers without sub-tools.
+	SubTool string `json:"sub_tool,omitempty"`
+	// Command is the code or shell command executed in the sandbox.
+	Command string `json:"command,omitempty"`
+	// Output is the execution output (stdout/logs, with stderr appended when
+	// present) or other human-readable result summary.
+	Output string `json:"output,omitempty"`
+	// ErrorCode is the provider error code when the invocation failed.
+	ErrorCode string `json:"error_code,omitempty"`
+}
 
 // TokenUsage represents token usage statistics for an LLM request. Cached,
 // reasoning, and cost fields stay zero when the provider doesn't report them.
@@ -100,7 +142,7 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 		case EventTypeToolCalls:
 			// Tool calls may appear as progress events from auto-run tools; skip them.
 			continue
-		case EventTypeAnnotations, EventTypeReasoning, EventTypeReasoningEnd, EventTypeUsage:
+		case EventTypeAnnotations, EventTypeReasoning, EventTypeReasoningEnd, EventTypeUsage, EventTypeServerToolUse:
 			// These event types are ignored in ReadAll, continue reading text
 			continue
 		}
