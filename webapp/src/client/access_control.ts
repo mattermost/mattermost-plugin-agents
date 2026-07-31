@@ -8,6 +8,7 @@ import {ClientError} from '@mattermost/client';
 
 import {ABACStatus, AccessControlPolicy, AccessControlPropertyField, AccessControlTestResult, CELExpressionError, PolicyResourceType, VisualExpression} from '@/types/access_control';
 import {agentRoute, baseRoute, Client4, readAgentErrorMessage} from '@/client';
+import manifest from '@/manifest';
 
 // getABACStatus reports whether the server-side ABAC engine is usable.
 export async function getABACStatus(): Promise<ABACStatus> {
@@ -203,19 +204,7 @@ export async function getAccessControlVisualAST(resourceType: PolicyResourceType
 
 // policyResourceTypeValue maps the UI resource kind onto the plugin-owned ABAC
 // policy type the CEL routes validate against, which the platform keys as
-// "<pluginID>:<resourceType>". These must stay in step with the accesscontrol
-// package's ResourceType* constants.
+// "<pluginID>:<resourceType>".
 function policyResourceTypeValue(resourceType: PolicyResourceType): string {
-    switch (resourceType) {
-    case 'agent':
-        return 'mattermost-ai:agent';
-    case 'service':
-        return 'mattermost-ai:service';
-    case 'mcp':
-        return 'mattermost-ai:mcp';
-    default: {
-        const exhaustive: never = resourceType;
-        throw new Error(`unknown resource type: ${exhaustive}`);
-    }
-    }
+    return `${manifest.id}:${resourceType}`;
 }
