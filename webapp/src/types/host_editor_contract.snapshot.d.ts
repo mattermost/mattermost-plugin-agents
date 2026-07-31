@@ -68,6 +68,12 @@ export type HostTableEditorProps = {
                 source_plugin_id?: undefined | string;
                 access_mode?: undefined | "" | "source_only" | "shared_only";
                 display_name?: undefined | string;
+                owners?: undefined | (Array<{
+                        id: string;
+                        type: "user" | "plugin" | "service" | "role";
+                        scopes: Array<string>;
+                    }>);
+                platforms?: undefined | Array<string>;
                 native?: undefined | false | true;
                 operators?: undefined | Array<string>;
             };
@@ -177,6 +183,7 @@ export type HostCELEditorProps = {
     userAttributes: Array<{
             attribute: string;
             values: Array<string>;
+            objectType?: undefined | string;
             isNative?: undefined | false | true;
         }>;
     onTestClick?: undefined | (() => void);
@@ -448,6 +455,12 @@ export type HostUserPropertyField = ({
         source_plugin_id?: undefined | string;
         access_mode?: undefined | "" | "source_only" | "shared_only";
         display_name?: undefined | string;
+        owners?: undefined | (Array<{
+                id: string;
+                type: "user" | "plugin" | "service" | "role";
+                scopes: Array<string>;
+            }>);
+        platforms?: undefined | Array<string>;
         native?: undefined | false | true;
         operators?: undefined | Array<string>;
     };
