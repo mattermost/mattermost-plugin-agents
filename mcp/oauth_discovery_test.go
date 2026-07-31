@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -131,6 +132,180 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 			// so any lenient fallback would fail the test.
 		})
 	}
+}
+
+// TestFetchAuthorizationServerMetadataOrderedVariants verifies the MCP
+// specification's ordered well-known walk: RFC 8414 preferred, OpenID Connect
+// Discovery accepted as fallback, path-inserted variants for pathed issuers.
+func TestFetchAuthorizationServerMetadataOrderedVariants(t *testing.T) {
+	writeMeta := func(t *testing.T, w http.ResponseWriter, issuer, marker string) {
+		t.Helper()
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			Issuer:                        issuer,
+			AuthorizationEndpoint:         issuer + "/" + marker + "-authorize",
+			TokenEndpoint:                 issuer + "/" + marker + "-token",
+			CodeChallengeMethodsSupported: []string{"S256"},
+		}))
+	}
+
+	tests := []struct {
+		name         string
+		issuerPath   string // path component of the issuer, "" for root
+		servedPaths  []string
+		wantAuthPath string
+		wantErr      bool
+	}{
+		{
+			name:         "root issuer served only via openid-configuration",
+			servedPaths:  []string{"/.well-known/openid-configuration"},
+			wantAuthPath: "/oidc-authorize",
+		},
+		{
+			name:         "oauth-authorization-server preferred over openid-configuration",
+			servedPaths:  []string{"/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"},
+			wantAuthPath: "/rfc8414-authorize",
+		},
+		{
+			name:         "pathed issuer served via path-inserted openid-configuration",
+			issuerPath:   "/tenant1",
+			servedPaths:  []string{"/.well-known/openid-configuration/tenant1"},
+			wantAuthPath: "/oidc-authorize",
+		},
+		{
+			name:         "pathed issuer served via path-appended openid-configuration",
+			issuerPath:   "/tenant1",
+			servedPaths:  []string{"/tenant1/.well-known/openid-configuration"},
+			wantAuthPath: "/oidc-authorize",
+		},
+		{
+			name:        "no variant served fails discovery",
+			servedPaths: nil,
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var issuer string
+			served := make(map[string]bool, len(tt.servedPaths))
+			for _, p := range tt.servedPaths {
+				served[p] = true
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !served[r.URL.Path] {
+					http.NotFound(w, r)
+					return
+				}
+				marker := "rfc8414"
+				if strings.Contains(r.URL.Path, "openid-configuration") {
+					marker = "oidc"
+				}
+				writeMeta(t, w, issuer, marker)
+			}))
+			t.Cleanup(server.Close)
+			issuer = server.URL + tt.issuerPath
+
+			manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
+			asm, err := manager.fetchAuthorizationServerMetadata(context.Background(), issuer)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, issuer+tt.wantAuthPath, asm.AuthorizationEndpoint)
+		})
+	}
+}
+
+// TestFetchAuthorizationServerMetadataLenientIssuerTOCTOU verifies that the
+// PKCE-lenient re-fetch re-validates issuer equality: a server answering the
+// second fetch with a different issuer must fail discovery.
+func TestFetchAuthorizationServerMetadataLenientIssuerTOCTOU(t *testing.T) {
+	var issuer string
+	var fetches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/oauth-authorization-server" {
+			http.NotFound(w, r)
+			return
+		}
+		respIssuer := issuer
+		if fetches.Add(1) > 1 {
+			// Second (lenient) fetch: switch the issuer.
+			respIssuer = "https://evil.example.com"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			Issuer:                respIssuer,
+			AuthorizationEndpoint: issuer + "/authorize",
+			TokenEndpoint:         issuer + "/token",
+			// No PKCE advertisement: strict fetch fails with the PKCE error,
+			// triggering the lenient re-fetch.
+		}))
+	}))
+	t.Cleanup(server.Close)
+	issuer = server.URL
+
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return()
+
+	_, err := manager.fetchAuthorizationServerMetadata(context.Background(), issuer)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not match expected issuer")
+}
+
+// TestCheckHTTPSOrLoopbackURL pins the endpoint scheme policy: HTTPS anywhere,
+// plain HTTP only on loopback, all other schemes rejected even on loopback.
+func TestCheckHTTPSOrLoopbackURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{name: "https any host", url: "https://as.example.com/token"},
+		{name: "http localhost", url: "http://localhost:8080/token"},
+		{name: "http loopback ip", url: "http://127.0.0.1:8080/token"},
+		{name: "empty is allowed", url: ""},
+		{name: "http non-loopback rejected", url: "http://as.example.com/token", wantErr: true},
+		{name: "ftp on loopback rejected", url: "ftp://127.0.0.1/token", wantErr: true},
+		{name: "javascript scheme rejected", url: "javascript:alert(1)", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkHTTPSOrLoopbackURL(tt.url)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestFetchProtectedResourceMetadataRootFallback verifies the ordered PRM walk
+// for pathed server URLs: when the path-inserted variant is absent, the root
+// well-known document (whose resource is the server origin) is used.
+func TestFetchProtectedResourceMetadataRootFallback(t *testing.T) {
+	var origin string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/oauth-protected-resource" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
+			Resource:             origin,
+			AuthorizationServers: []string{origin},
+		}))
+	}))
+	t.Cleanup(server.Close)
+	origin = server.URL
+
+	manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
+	prm, err := manager.fetchProtectedResourceMetadata(context.Background(), origin+"/mcp/v1", "")
+	require.NoError(t, err)
+	require.Equal(t, []string{origin}, prm.AuthorizationServers)
 }
 
 // TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer verifies that when

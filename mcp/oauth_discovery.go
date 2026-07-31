@@ -19,30 +19,59 @@ import (
 // fetchProtectedResourceMetadata fetches OAuth 2.0 Protected Resource
 // Metadata (RFC 9728) via oauthex, which enforces the spec strictly —
 // including the §3.3 requirement that the metadata's "resource" value equal
-// the resource identifier the client used. Any failure is fatal here; the
-// caller falls back to authorization server metadata discovery at the base
-// URL.
+// the resource identifier the client used.
+//
+// When no explicit metadata URL is known (i.e. it did not come from a 401
+// challenge), the MCP specification's ordered discovery sequence is used:
+// first the path-inserted well-known URL (expecting the full server URL as
+// the resource), then the root well-known URL (expecting the server's origin
+// as the resource), mirroring the go-sdk's own client discovery. The first
+// candidate to succeed wins; if all fail, the first candidate's error is
+// returned since it is the primary variant.
 func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serverURL, metadataURL string) (*oauthex.ProtectedResourceMetadata, error) {
-	if metadataURL == "" {
-		// The metadata URL is not provided, use the default well-known
-		// endpoint constructed according to RFC 9728 Section 3.1.
-		var err error
-		metadataURL, err = constructWellKnownURL(serverURL, "oauth-protected-resource")
+	type prmCandidate struct {
+		metadataURL string
+		resource    string
+	}
+
+	var candidates []prmCandidate
+	if metadataURL != "" {
+		candidates = []prmCandidate{{metadataURL: metadataURL, resource: serverURL}}
+	} else {
+		pathInserted, err := constructWellKnownURL(serverURL, "oauth-protected-resource")
 		if err != nil {
 			return nil, fmt.Errorf("failed to construct metadata URL: %w", err)
 		}
+		candidates = []prmCandidate{{metadataURL: pathInserted, resource: serverURL}}
+
+		if parsed, parseErr := url.Parse(serverURL); parseErr == nil && strings.Trim(parsed.Path, "/") != "" {
+			origin := &url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
+			candidates = append(candidates, prmCandidate{
+				metadataURL: origin.String() + "/.well-known/oauth-protected-resource",
+				resource:    origin.String(),
+			})
+		}
 	}
 
-	prm, err := oauthex.GetProtectedResourceMetadata(ctx, metadataURL, serverURL, m.httpClient)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch protected resource metadata from %s: %w", metadataURL, err)
+	var firstErr error
+	for _, candidate := range candidates {
+		prm, err := oauthex.GetProtectedResourceMetadata(ctx, candidate.metadataURL, candidate.resource, m.httpClient)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("failed to fetch protected resource metadata from %s: %w", candidate.metadataURL, err)
+			}
+			continue
+		}
+		if len(prm.AuthorizationServers) == 0 {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("no authorization servers found in protected resource metadata from %s", candidate.metadataURL)
+			}
+			continue
+		}
+		return prm, nil
 	}
 
-	if len(prm.AuthorizationServers) == 0 {
-		return nil, fmt.Errorf("no authorization servers found in protected resource metadata from %s", metadataURL)
-	}
-
-	return prm, nil
+	return nil, firstErr
 }
 
 // fetchAuthorizationServerMetadata fetches OAuth 2.0 Authorization Server
@@ -55,47 +84,93 @@ func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serve
 // warning) instead of failing discovery. oauthex flattens error types, so the
 // error message is the only stable signal for detecting it.
 func (m *OAuthManager) fetchAuthorizationServerMetadata(ctx context.Context, issuer string) (*oauthex.AuthServerMeta, error) {
-	// Construct the well-known metadata URL according to RFC 8414 Section 3.1:
-	// the well-known component is inserted between host and path.
-	metadataURL, err := constructWellKnownURL(issuer, "oauth-authorization-server")
-	if err != nil {
-		return nil, fmt.Errorf("failed to construct metadata URL: %w", err)
+	urls := authServerMetadataURLs(issuer)
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("failed to construct metadata URLs for issuer %s", issuer)
 	}
 
-	asm, err := oauthex.GetAuthServerMeta(ctx, metadataURL, issuer, m.httpClient)
-	if err == nil && asm == nil {
-		// oauthex returns (nil, nil) — no error — when the fetch got a 4xx
-		// status. Treat it as discovery failure so callers fall back.
-		return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: not found", metadataURL)
-	}
-	if err != nil {
-		if !strings.Contains(err.Error(), "does not implement PKCE") {
-			return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
+	for _, metadataURL := range urls {
+		asm, err := oauthex.GetAuthServerMeta(ctx, metadataURL, issuer, m.httpClient)
+		if err == nil && asm == nil {
+			// oauthex returns (nil, nil) — no error — when the fetch got a
+			// 4xx status: this variant is not served, try the next one.
+			continue
 		}
-		m.pluginAPI.LogWarn("Authorization server metadata does not advertise PKCE support; retrying leniently (we always use PKCE regardless)",
-			"metadataURL", metadataURL,
-			"issuer", issuer,
-			"error", err)
-		asm, err = fetchJSONLenient[oauthex.AuthServerMeta](ctx, m.httpClient, metadataURL)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
+			if !strings.Contains(err.Error(), "does not implement PKCE") {
+				// Hard failures (unreachable, issuer mismatch, insecure URLs,
+				// bad JSON) abort the walk, mirroring the SDK's own client.
+				return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
+			}
+			m.pluginAPI.LogWarn("Authorization server metadata does not advertise PKCE support; retrying leniently (we always use PKCE regardless)",
+				"metadataURL", metadataURL,
+				"issuer", issuer,
+				"error", err)
+			asm, err = fetchJSONLenient[oauthex.AuthServerMeta](ctx, m.httpClient, metadataURL)
+			if err != nil {
+				return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
+			}
+			if err := validateLenientAuthServerMeta(asm, metadataURL, issuer); err != nil {
+				return nil, err
+			}
 		}
-		if err := validateLenientAuthServerMeta(asm, metadataURL); err != nil {
-			return nil, err
-		}
+		return asm, nil
 	}
 
-	return asm, nil
+	return nil, fmt.Errorf("no authorization server metadata found for issuer %s (tried %d well-known variants)", issuer, len(urls))
+}
+
+// authServerMetadataURLs returns the ordered discovery URLs for authorization
+// server metadata mandated by the MCP specification, mirroring the go-sdk's
+// own client: for issuers without a path component, RFC 8414 then OpenID
+// Connect Discovery at the root; for issuers with a path component, the
+// path-inserted RFC 8414 and OIDC variants followed by the path-appended OIDC
+// variant.
+func authServerMetadataURLs(issuer string) []string {
+	baseURL, err := url.Parse(issuer)
+	if err != nil {
+		return nil
+	}
+
+	var urls []string
+	if strings.Trim(baseURL.Path, "/") == "" {
+		// "OAuth 2.0 Authorization Server Metadata".
+		baseURL.Path = "/.well-known/oauth-authorization-server"
+		urls = append(urls, baseURL.String())
+		// "OpenID Connect Discovery 1.0".
+		baseURL.Path = "/.well-known/openid-configuration"
+		urls = append(urls, baseURL.String())
+		return urls
+	}
+
+	originalPath := baseURL.Path
+	// "OAuth 2.0 Authorization Server Metadata with path insertion".
+	baseURL.Path = "/.well-known/oauth-authorization-server/" + strings.TrimLeft(originalPath, "/")
+	urls = append(urls, baseURL.String())
+	// "OpenID Connect Discovery 1.0 with path insertion".
+	baseURL.Path = "/.well-known/openid-configuration/" + strings.TrimLeft(originalPath, "/")
+	urls = append(urls, baseURL.String())
+	// "OpenID Connect Discovery 1.0 with path appending".
+	baseURL.Path = "/" + strings.Trim(originalPath, "/") + "/.well-known/openid-configuration"
+	urls = append(urls, baseURL.String())
+
+	return urls
 }
 
 // validateLenientAuthServerMeta applies the validations the PKCE-lenient
-// re-fetch still needs: RFC 8414 required fields, and HTTPS-or-loopback on
-// the endpoints we will actually contact (oauthex validates endpoint URLs
-// only after its PKCE check, so a PKCE failure means they were never
-// validated).
-func validateLenientAuthServerMeta(asm *oauthex.AuthServerMeta, metadataURL string) error {
+// re-fetch still needs: RFC 8414 required fields, issuer equality against the
+// expected issuer (the strict attempt verified the FIRST response's issuer,
+// but the lenient path is a second fetch and the server could answer
+// differently), and HTTPS-or-loopback on the endpoints we will actually
+// contact (oauthex validates endpoint URLs only after its PKCE check, so a
+// PKCE failure means they were never validated).
+func validateLenientAuthServerMeta(asm *oauthex.AuthServerMeta, metadataURL, expectedIssuer string) error {
 	if asm.Issuer == "" {
 		return fmt.Errorf("missing required 'issuer' field in authorization server metadata from %s", metadataURL)
+	}
+	// Trailing-slash-insensitive, mirroring the SDK's IssuersEqual.
+	if strings.TrimSuffix(asm.Issuer, "/") != strings.TrimSuffix(expectedIssuer, "/") {
+		return fmt.Errorf("metadata issuer %q from %s does not match expected issuer %q", asm.Issuer, metadataURL, expectedIssuer)
 	}
 	if asm.AuthorizationEndpoint == "" {
 		return fmt.Errorf("missing required 'authorization_endpoint' field in authorization server metadata from %s", metadataURL)
@@ -188,9 +263,12 @@ func fetchJSONLenient[T any](ctx context.Context, httpClient *http.Client, metad
 	return &value, nil
 }
 
-// checkHTTPSOrLoopbackURL enforces the same constraint oauthex applies to
-// endpoint URLs on its strict path: HTTPS, or plain HTTP only for loopback
-// addresses (testing and development).
+// checkHTTPSOrLoopbackURL enforces HTTPS, or plain HTTP only for loopback
+// addresses (testing and development). Note this is deliberately stricter
+// than oauthex's equivalent, which exempts loopback hosts from the scheme
+// check entirely: URLs with non-HTTP schemes (ftp:, javascript:, ...) are
+// rejected even on loopback, since these endpoints end up in authorization
+// URLs handed to browsers.
 func checkHTTPSOrLoopbackURL(rawURL string) error {
 	if rawURL == "" {
 		return nil
@@ -199,17 +277,19 @@ func checkHTTPSOrLoopbackURL(rawURL string) error {
 	if err != nil {
 		return err
 	}
-	if u.Scheme == "https" {
+	switch u.Scheme {
+	case "https":
 		return nil
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" {
+			return nil
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return nil
+		}
 	}
-	host := u.Hostname()
-	if host == "localhost" {
-		return nil
-	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return nil
-	}
-	return fmt.Errorf("URL %q does not use HTTPS or is not a loopback address", rawURL)
+	return fmt.Errorf("URL %q does not use HTTPS or is not an HTTP loopback address", rawURL)
 }
 
 // constructWellKnownURL constructs a well-known URL according to RFC 8414 Section 3.1
