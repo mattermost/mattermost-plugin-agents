@@ -74,6 +74,11 @@ func newTestChecker() *Checker {
 	return New(PassthroughClient{}, nil, NoMCPServerIDs, nil)
 }
 
+// The checkers deny outright on a user ID no policy can be evaluated against, so
+// tests that mean to exercise anything past that gate need a well-formed one.
+// Resource IDs are free to be arbitrary strings: callers choose them.
+var testUserID = model.NewId()
+
 // --- passthrough pins (the no_policy rows must keep behaving like this) ---
 
 func TestPassthroughClientEvaluateAccessRequest(t *testing.T) {
@@ -88,7 +93,7 @@ func TestPassthroughClientEvaluateAccessRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			decision, err := PassthroughClient{}.EvaluateAccessRequest(context.Background(), "userid", tt.resourceType, "resourceid", ActionUse)
+			decision, err := PassthroughClient{}.EvaluateAccessRequest(context.Background(), testUserID, tt.resourceType, "resourceid", ActionUse)
 			require.NoError(t, err)
 			require.NotNil(t, decision)
 			assert.True(t, decision.IsNoPolicy())
@@ -112,7 +117,7 @@ func TestCheckerCanUseAgentPassthrough(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := newTestChecker()
-			err := c.CanUseAgent(context.Background(), "userid", &llm.BotConfig{ID: "agentid"}, tt.legacyCheck)
+			err := c.CanUseAgent(context.Background(), testUserID, &llm.BotConfig{ID: "agentid"}, tt.legacyCheck)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
@@ -129,10 +134,10 @@ func TestCheckerPassthroughHelpersAllow(t *testing.T) {
 		name  string
 		check func() error
 	}{
-		{name: "CanUseService", check: func() error { return c.CanUseService(context.Background(), "userid", "serviceid") }},
-		{name: "CanUseMCPServer", check: func() error { return c.CanUseMCPServer(context.Background(), "userid", "serverid") }},
+		{name: "CanUseService", check: func() error { return c.CanUseService(context.Background(), testUserID, "serviceid") }},
+		{name: "CanUseMCPServer", check: func() error { return c.CanUseMCPServer(context.Background(), testUserID, "serverid") }},
 		{name: "ValidateAgentWrite", check: func() error {
-			return c.ValidateAgentWrite(context.Background(), "userid", &llm.BotConfig{ID: "agentid"}, nil)
+			return c.ValidateAgentWrite(context.Background(), testUserID, &llm.BotConfig{ID: "agentid"}, nil)
 		}},
 	}
 
@@ -287,20 +292,21 @@ func TestCanUseServiceAndMCPServerDecisionTable(t *testing.T) {
 	}
 }
 
-// --- invalid IDs are no_policy, never PDP calls ---
+// --- non-addressable resource IDs are no_policy, never PDP calls ---
 
-func TestEvaluateInvalidIDsAreNoPolicy(t *testing.T) {
+// Resource IDs the caller chooses (config-file bot IDs, service and MCP server
+// IDs) need not be 26-char platform IDs. No policy can be stored against one, so
+// the resource is ungoverned and the caller's own default applies.
+func TestEvaluateNonAddressableResourceIDsAreNoPolicy(t *testing.T) {
 	legacyErr := errors.New("legacy restriction")
 
 	tests := []struct {
 		name       string
-		userID     string
 		resourceID string
 	}{
-		{name: "uuid resource id", userID: model.NewId(), resourceID: "550e8400-e29b-41d4-a716-446655440000"},
-		{name: "empty resource id", userID: model.NewId(), resourceID: ""},
-		{name: "invalid user id", userID: "not-a-user", resourceID: model.NewId()},
-		{name: "both invalid", userID: "", resourceID: "config-bot"},
+		{name: "uuid resource id", resourceID: "550e8400-e29b-41d4-a716-446655440000"},
+		{name: "empty resource id", resourceID: ""},
+		{name: "config file bot id", resourceID: "config-bot"},
 	}
 
 	for _, tt := range tests {
@@ -308,18 +314,65 @@ func TestEvaluateInvalidIDsAreNoPolicy(t *testing.T) {
 			// Deny-everything client: if it were consulted these would all fail.
 			client := &stubDecisionClient{decision: denyDecision()}
 			c := New(client, nil, NoMCPServerIDs, nil)
+			userID := model.NewId()
 
 			// Agent path: falls back to legacy behavior.
 			legacyCalls := 0
-			err := c.CanUseAgent(context.Background(), tt.userID, &llm.BotConfig{ID: tt.resourceID}, func() error { legacyCalls++; return legacyErr })
+			err := c.CanUseAgent(context.Background(), userID, &llm.BotConfig{ID: tt.resourceID}, func() error { legacyCalls++; return legacyErr })
 			assert.ErrorIs(t, err, legacyErr)
 			assert.Equal(t, 1, legacyCalls)
 
 			// Mode-less paths: allow.
-			assert.NoError(t, c.CanUseService(context.Background(), tt.userID, tt.resourceID))
-			assert.NoError(t, c.CanUseMCPServer(context.Background(), tt.userID, tt.resourceID))
+			assert.NoError(t, c.CanUseService(context.Background(), userID, tt.resourceID))
+			assert.NoError(t, c.CanUseMCPServer(context.Background(), userID, tt.resourceID))
 
-			assert.Empty(t, client.calls, "decision client must never be called for invalid IDs")
+			assert.Empty(t, client.calls, "decision client must never be called for a non-addressable resource ID")
+		})
+	}
+}
+
+// --- non-addressable user IDs deny, never PDP calls ---
+
+// A user ID that cannot name a user is a caller bug with no legitimate case, so
+// it denies rather than reporting the resource ungoverned. Treating it as
+// no_policy would fail attribute-based agents open.
+func TestEvaluateInvalidUserIDDenies(t *testing.T) {
+	userIDs := []struct {
+		name   string
+		userID string
+	}{
+		{name: "empty", userID: ""},
+		{name: "not an id", userID: "not-a-user"},
+		{name: "uuid", userID: "550e8400-e29b-41d4-a716-446655440000"},
+	}
+
+	// Attribute-based agents are the ones that fail open on a wrong no_policy;
+	// the legacy modes must deny too rather than run their legacy check.
+	agentModes := []llm.UserAccessLevel{
+		llm.UserAccessLevelAttributeBased,
+		llm.UserAccessLevelAll,
+		llm.UserAccessLevelAllow,
+		llm.UserAccessLevelBlock,
+	}
+
+	for _, tt := range userIDs {
+		t.Run(tt.name, func(t *testing.T) {
+			// Allow-everything client: only the short-circuit can deny here.
+			client := &stubDecisionClient{decision: allowDecision()}
+			c := New(client, nil, NoMCPServerIDs, nil)
+			resourceID := model.NewId()
+
+			for _, mode := range agentModes {
+				legacyCalls := 0
+				err := c.CanUseAgent(context.Background(), tt.userID, &llm.BotConfig{ID: resourceID, UserAccessLevel: mode}, func() error { legacyCalls++; return nil })
+				assert.ErrorIs(t, err, ErrAccessDenied, "agent mode %d must deny", mode)
+				assert.Zero(t, legacyCalls, "agent mode %d must not reach its legacy check", mode)
+			}
+
+			assert.ErrorIs(t, c.CanUseService(context.Background(), tt.userID, resourceID), ErrAccessDenied)
+			assert.ErrorIs(t, c.CanUseMCPServer(context.Background(), tt.userID, resourceID), ErrAccessDenied)
+
+			assert.Empty(t, client.calls, "decision client must never be called for a non-addressable user ID")
 		})
 	}
 }

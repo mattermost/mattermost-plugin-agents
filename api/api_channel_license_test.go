@@ -77,11 +77,11 @@ func TestChannelAnalysisLicenseMiddleware(t *testing.T) {
 				Type:   model.ChannelTypeOpen,
 				TeamId: "teamid",
 			}, nil)
-			e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(true)
 			e.mockAPI.On("LogError", mock.Anything).Maybe()
 
 			request := httptest.NewRequest(http.MethodPost, test.endpoint, strings.NewReader(test.body))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 
 			recorder := httptest.NewRecorder()
 			e.api.ServeHTTP(&plugin.Context{}, recorder, request)

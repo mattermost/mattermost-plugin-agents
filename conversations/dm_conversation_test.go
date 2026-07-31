@@ -374,7 +374,9 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 	const (
 		botID     = "bot1"
 		botUserID = "bot1"
-		userID    = "user1"
+		// Well-formed 26-char ID: the agent access gate denies a user ID no
+		// policy can be evaluated against, so the DM never reaches the LLM.
+		userID    = "user12345678901234567890ab"
 		channelID = "dm_channel"
 		teamID    = "team1"
 	)

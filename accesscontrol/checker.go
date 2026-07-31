@@ -83,11 +83,26 @@ func NewLegacyOnly(mcpIDsByOrigin func() map[string]string, log Logger) *Checker
 // dereferencing nil inside an access gate.
 var errNoDecision = errors.New("access control evaluation returned no decision")
 
-// evaluate runs one decision call. Non-26-char IDs (e.g. legacy UUID bot IDs)
-// can never have policies, so they short-circuit to no_policy.
+// errInvalidSubject reports a caller that supplied a user ID no policy can be
+// evaluated against.
+var errInvalidSubject = errors.New("access control evaluation requires a valid user ID")
+
+// evaluate runs one decision call.
+//
+// A resource ID that is not policy-addressable (a legacy UUID bot ID, or a
+// caller-chosen service/MCP ID) is a designed case: no policy can be stored
+// against it, so it short-circuits to no_policy and the caller applies its own
+// default. A non-addressable user ID has no such case — nothing can be
+// evaluated for a subject that cannot exist — so it is a caller bug and errors
+// out, denying. Failing open there would hand every attribute-based resource to
+// anyone who could get a malformed ID this far.
 func (c *Checker) evaluate(ctx context.Context, userID, resourceType, resourceID string) (*model.AccessDecision, error) {
-	if !model.IsValidId(resourceID) || !model.IsValidId(userID) {
-		logDebug(c.log, "ABAC evaluate skipped for non-policy-addressable IDs", "resource_type", resourceType, "resource_id", resourceID)
+	if !model.IsValidId(userID) {
+		logError(c.log, "ABAC evaluate called with a user ID no policy can be evaluated against", "resource_type", resourceType, "resource_id", resourceID)
+		return nil, errInvalidSubject
+	}
+	if !model.IsValidId(resourceID) {
+		logDebug(c.log, "ABAC evaluate skipped for a non-policy-addressable resource ID", "resource_type", resourceType, "resource_id", resourceID)
 		decision := model.NewNoPolicyAccessDecision()
 		return &decision, nil
 	}

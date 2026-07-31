@@ -18,6 +18,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Well-formed 26-char IDs: the agent access gate denies a user ID no policy can
+// be evaluated against, so these tests need real-shaped IDs to reach the
+// restriction logic they cover.
+const (
+	testUserID      = "user12345678901234567890ab"
+	testOtherUserID = "othe12345678901234567890ab"
+)
+
 type TestEnvironment struct {
 	bots    *MMBots
 	client  *pluginapi.Client
@@ -62,7 +70,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -73,7 +81,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -81,10 +89,10 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelBlock,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -95,7 +103,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -103,10 +111,10 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -117,7 +125,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -125,10 +133,10 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user2"},
+				UserIDs:            []string{testOtherUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -138,7 +146,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -148,7 +156,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelNone,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -159,7 +167,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -167,10 +175,10 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelBlock,
-				UserIDs:            []string{"user2"},
+				UserIDs:            []string{testOtherUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -179,10 +187,10 @@ func TestUsageRestrictions(t *testing.T) {
 				ChannelAccessLevel: llm.ChannelAccessLevelAllow,
 				ChannelIDs:         []string{"channel1"},
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -191,10 +199,10 @@ func TestUsageRestrictions(t *testing.T) {
 				ChannelAccessLevel: llm.ChannelAccessLevelAllow,
 				ChannelIDs:         []string{"channel1"},
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user2"},
+				UserIDs:            []string{testOtherUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -205,7 +213,7 @@ func TestUsageRestrictions(t *testing.T) {
 				TeamIDs:            []string{"team1"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -216,7 +224,7 @@ func TestUsageRestrictions(t *testing.T) {
 				TeamIDs:            []string{"team1"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -227,7 +235,7 @@ func TestUsageRestrictions(t *testing.T) {
 				TeamIDs:            []string{"team2"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -235,11 +243,11 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 				TeamIDs:            []string{"team2"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -247,11 +255,11 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelBlock,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 				TeamIDs:            []string{"team1"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		// DB-backed agent test cases: build llm.BotConfig directly to confirm
@@ -264,10 +272,10 @@ func TestUsageRestrictions(t *testing.T) {
 				DisplayName:     "DB Agent",
 				ServiceID:       "svc-1",
 				UserAccessLevel: llm.UserAccessLevelAllow,
-				UserIDs:         []string{"user1"},
+				UserIDs:         []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -296,7 +304,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "allowed_channel"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 	}
@@ -307,10 +315,10 @@ func TestUsageRestrictions(t *testing.T) {
 			if len(tc.bot.GetConfig().TeamIDs) > 0 {
 				member := &model.TeamMember{
 					TeamId: "team1",
-					UserId: "user1",
+					UserId: testUserID,
 				}
-				e.mockAPI.On("GetTeamMember", "team1", "user1").Return(member, nil).Maybe()
-				e.mockAPI.On("GetTeamMember", "team2", "user1").Return(nil, &model.AppError{Message: "not found", StatusCode: http.StatusNotFound}).Maybe()
+				e.mockAPI.On("GetTeamMember", "team1", testUserID).Return(member, nil).Maybe()
+				e.mockAPI.On("GetTeamMember", "team2", testUserID).Return(nil, &model.AppError{Message: "not found", StatusCode: http.StatusNotFound}).Maybe()
 			}
 
 			err := e.bots.CheckUsageRestrictions(context.Background(), tc.requestingUser, tc.bot, tc.channel)
@@ -328,9 +336,9 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 	defer e.Cleanup(t)
 
 	// Only team-membership branches need API mocks.
-	member := &model.TeamMember{TeamId: "team1", UserId: "user1"}
-	e.mockAPI.On("GetTeamMember", "team1", "user1").Return(member, nil).Maybe()
-	e.mockAPI.On("GetTeamMember", "team2", "user1").Return(
+	member := &model.TeamMember{TeamId: "team1", UserId: testUserID}
+	e.mockAPI.On("GetTeamMember", "team1", testUserID).Return(member, nil).Maybe()
+	e.mockAPI.On("GetTeamMember", "team2", testUserID).Return(
 		nil, &model.AppError{Message: "not found", StatusCode: http.StatusNotFound},
 	).Maybe()
 
@@ -340,32 +348,32 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 		user    string
 		wantErr bool
 	}{
-		{"all allowed", llm.BotConfig{UserAccessLevel: llm.UserAccessLevelAll}, "user1", false},
+		{"all allowed", llm.BotConfig{UserAccessLevel: llm.UserAccessLevelAll}, testUserID, false},
 		{"allow in userIDs", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelAllow,
-			UserIDs:         []string{"user1"},
-		}, "user1", false},
+			UserIDs:         []string{testUserID},
+		}, testUserID, false},
 		{"allow via team", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelAllow,
 			TeamIDs:         []string{"team1"},
-		}, "user1", false},
+		}, testUserID, false},
 		{"allow not listed", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelAllow,
 			UserIDs:         []string{"other"},
-		}, "user1", true},
+		}, testUserID, true},
 		{"block in userIDs", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelBlock,
-			UserIDs:         []string{"user1"},
-		}, "user1", true},
+			UserIDs:         []string{testUserID},
+		}, testUserID, true},
 		{"block via team", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelBlock,
 			TeamIDs:         []string{"team1"},
-		}, "user1", true},
+		}, testUserID, true},
 		{"block not listed", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelBlock,
 			UserIDs:         []string{"other"},
-		}, "user1", false},
-		{"none", llm.BotConfig{UserAccessLevel: llm.UserAccessLevelNone}, "user1", true},
+		}, testUserID, false},
+		{"none", llm.BotConfig{UserAccessLevel: llm.UserAccessLevelNone}, testUserID, true},
 	}
 
 	for _, tc := range cases {

@@ -717,7 +717,7 @@ func TestPostRouter(t *testing.T) {
 						Type:   model.ChannelTypeOpen,
 						TeamId: "teamid",
 					}, nil)
-					e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(false)
+					e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(false)
 				},
 			},
 			"user not allowed": {
@@ -725,7 +725,7 @@ func TestPostRouter(t *testing.T) {
 				expectedStatus: http.StatusForbidden,
 				botconfig: llm.BotConfig{
 					UserAccessLevel: llm.UserAccessLevelBlock,
-					UserIDs:         []string{"userid"},
+					UserIDs:         []string{testUserID},
 				},
 				envSetup: func(e *TestEnvironment) {
 					e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
@@ -733,7 +733,7 @@ func TestPostRouter(t *testing.T) {
 						Type:   model.ChannelTypeOpen,
 						TeamId: "teamid",
 					}, nil)
-					e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+					e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(true)
 				},
 			},
 		} {
@@ -752,7 +752,7 @@ func TestPostRouter(t *testing.T) {
 
 				test.envSetup(e)
 
-				test.request.Header.Add("Mattermost-User-ID", "userid")
+				test.request.Header.Add("Mattermost-User-ID", testUserID)
 				recorder := httptest.NewRecorder()
 				e.api.ServeHTTP(&plugin.Context{}, recorder, test.request)
 				resp := recorder.Result()
@@ -782,7 +782,7 @@ func TestAdminRouter(t *testing.T) {
 				request:        httptest.NewRequest(http.MethodGet, url, nil),
 				expectedStatus: http.StatusForbidden,
 				envSetup: func(e *TestEnvironment) {
-					e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(false)
+					e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
 				},
 			},
 		} {
@@ -794,7 +794,7 @@ func TestAdminRouter(t *testing.T) {
 
 				test.envSetup(e)
 
-				test.request.Header.Add("Mattermost-User-ID", "userid")
+				test.request.Header.Add("Mattermost-User-ID", testUserID)
 				recorder := httptest.NewRecorder()
 				e.api.ServeHTTP(&plugin.Context{}, recorder, test.request)
 				resp := recorder.Result()
@@ -899,7 +899,7 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 			e.bots.SetBotsForTesting([]*bots.Bot{bots.NewBot(llm.BotConfig{Name: "thebot"}, llm.ServiceConfig{}, nil, nil)})
 
 			request := httptest.NewRequest(http.MethodPost, url, strings.NewReader("non-empty body"))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			recorder := httptest.NewRecorder()
 			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
 			resp := recorder.Result()
@@ -932,7 +932,7 @@ func TestChannelRouter(t *testing.T) {
 						Type:   model.ChannelTypeOpen,
 						TeamId: "teamid",
 					}, nil)
-					e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(false)
+					e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(false)
 				},
 			},
 			"test user not allowed": {
@@ -940,7 +940,7 @@ func TestChannelRouter(t *testing.T) {
 				expectedStatus: http.StatusForbidden,
 				botconfig: llm.BotConfig{
 					UserAccessLevel: llm.UserAccessLevelBlock,
-					UserIDs:         []string{"userid"},
+					UserIDs:         []string{testUserID},
 				},
 				envSetup: func(e *TestEnvironment) {
 					e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
@@ -948,7 +948,7 @@ func TestChannelRouter(t *testing.T) {
 						Type:   model.ChannelTypeOpen,
 						TeamId: "teamid",
 					}, nil)
-					e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+					e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(true)
 				},
 			},
 		} {
@@ -964,7 +964,7 @@ func TestChannelRouter(t *testing.T) {
 
 				test.envSetup(e)
 
-				test.request.Header.Add("Mattermost-User-ID", "userid")
+				test.request.Header.Add("Mattermost-User-ID", testUserID)
 				recorder := httptest.NewRecorder()
 				e.api.ServeHTTP(&plugin.Context{}, recorder, test.request)
 				resp := recorder.Result()
@@ -1052,7 +1052,7 @@ func TestHandleGetAIBots(t *testing.T) {
 
 			// Create request
 			request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 
 			// Execute request
 			recorder := httptest.NewRecorder()
@@ -1087,7 +1087,7 @@ func TestHandleGetAIBotsDefaultBotAfterFilteredBot(t *testing.T) {
 			Name:            "hidden",
 			DisplayName:     "Hidden Agent",
 			UserAccessLevel: llm.UserAccessLevelBlock,
-			UserIDs:         []string{"userid"},
+			UserIDs:         []string{testUserID},
 		},
 		llm.ServiceConfig{},
 		&model.Bot{UserId: "hiddenbotuserid1234567890", Username: "hidden", DisplayName: "Hidden Agent"},
@@ -1108,7 +1108,7 @@ func TestHandleGetAIBotsDefaultBotAfterFilteredBot(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything).Maybe()
 
 	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
-	request.Header.Add("Mattermost-User-ID", "userid")
+	request.Header.Add("Mattermost-User-ID", testUserID)
 
 	recorder := httptest.NewRecorder()
 	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
@@ -1149,7 +1149,7 @@ func TestHandleGetAIBotsIsDefaultFlag(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything).Maybe()
 
 	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
-	request.Header.Add("Mattermost-User-ID", "userid")
+	request.Header.Add("Mattermost-User-ID", testUserID)
 
 	recorder := httptest.NewRecorder()
 	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
