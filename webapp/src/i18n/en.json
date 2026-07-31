@@ -337,6 +337,7 @@
   "bikXVccI": "Failed to cancel reindexing job.",
   "bm20kUs+": "Needs Reindex",
   "btXAieN2": "{tokens} ({pct}%)",
+  "c3TBYq1b": "Custom instructions must be {max} characters or fewer",
   "c9vr6I5Z": "You do not have permission to perform this action.",
   "cA6M2lTV": "Multiple self-service agents require a qualifying Mattermost plan",
   "cAQb5tZd": "Use the new OpenAI Responses API with support for reasoning summaries and other advanced features. Disable for legacy Completions API compatibility.",

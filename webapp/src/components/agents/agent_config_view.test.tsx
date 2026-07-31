@@ -6,7 +6,7 @@ import {fireEvent, render, screen, waitFor, waitForElementToBeRemoved} from '@te
 import {IntlProvider} from 'react-intl';
 
 import {createAgent, updateAgent} from '@/client';
-import {EnabledTool, ServiceInfo, UserAgent} from '@/types/agents';
+import {EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, UserAgent} from '@/types/agents';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
 
@@ -24,6 +24,7 @@ jest.mock('react-intl', () => {
                     defaultMessage,
                 );
             },
+            formatNumber: (value: number) => new Intl.NumberFormat('en').format(value),
         }),
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
@@ -69,6 +70,12 @@ jest.mock('./tabs/config_tab', () => ({
                 onChange={(e) => onChange({maxToolTurns: Number(e.target.value)})}
             />
             {errors.maxToolTurns && <div>{errors.maxToolTurns}</div>}
+            <textarea
+                aria-label='Custom instructions'
+                value={draft.customInstructions}
+                onChange={(e) => onChange({customInstructions: e.target.value})}
+            />
+            {errors.customInstructions && <div>{errors.customInstructions}</div>}
             <input
                 aria-label='Dynamic tool loading'
                 type='checkbox'
@@ -455,6 +462,20 @@ describe('AgentConfigView', () => {
 
         expect(screen.getByText('Max tool turns must be between 1 and 250')).not.toBeNull();
         expect(updateAgent).not.toHaveBeenCalled();
+    });
+
+    test('blocks saving when custom instructions exceed the character limit', () => {
+        renderView();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.change(screen.getByLabelText('Custom instructions'), {
+            target: {value: 'a'.repeat(MaxCustomInstructionsRunes + 1)},
+        });
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(screen.getByText('Custom instructions must be 100,000 characters or fewer')).not.toBeNull();
+        expect(createAgent).not.toHaveBeenCalled();
     });
 
     test('preserves explicit dynamic tool loading false on update', async () => {
