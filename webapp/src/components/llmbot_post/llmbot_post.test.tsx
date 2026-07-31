@@ -24,6 +24,14 @@ jest.mock('react-intl', () => {
     return {
         IntlProvider: ({children}: {children: React.ReactNode}) => ReactLocal.createElement(ReactLocal.Fragment, null, children),
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => ReactLocal.createElement(ReactLocal.Fragment, null, defaultMessage),
+        useIntl: () => ({
+            formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: Record<string, unknown>) => {
+                if (!values) {
+                    return defaultMessage;
+                }
+                return defaultMessage.replace(/\{(\w+)\}/g, (match, key) => String(values[key] ?? match));
+            },
+        }),
     };
 });
 
@@ -188,6 +196,78 @@ describe('LLMBotPost streaming fallback rendering', () => {
             expect(screen.getByText(errorText)).toBeTruthy();
         });
         expect(screen.queryByText('Starting...')).toBeNull();
+    });
+});
+
+describe('LLMBotPost server tool activity rendering', () => {
+    test('renders provider tool activity from server_tool websocket events', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+        expect(listener).toBeDefined();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'in_progress', query: 'release notes'},
+                ]),
+            }));
+        });
+
+        await expect(screen.findByText('Searched the web for "release notes"')).resolves.toBeTruthy();
+
+        // The final snapshot replaces the in-progress one and adds the sandbox run.
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'release notes'},
+                    {id: 'srv2', tool: 'code_interpreter', status: 'success', sub_tool: 'bash', command: 'ls', output: 'file.txt'},
+                ]),
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'All done.'}));
+        });
+
+        await expect(screen.findByText('Ran code in the provider sandbox')).resolves.toBeTruthy();
+        expect(screen.getByText('Searched the web for "release notes"')).toBeTruthy();
+        expect(screen.getByText('All done.')).toBeTruthy();
+    });
+
+    test('a fresh stream clears prior server tool activity', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_fetch', status: 'success', url: 'https://example.com/doc'},
+                ]),
+            }));
+        });
+
+        await expect(screen.findByText('Fetched example.com')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+        });
+
+        await waitFor(() => {
+            expect(screen.queryByText('Fetched example.com')).toBeNull();
+        });
     });
 });
 
