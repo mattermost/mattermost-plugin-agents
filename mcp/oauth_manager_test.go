@@ -496,7 +496,7 @@ func TestProcessCallback_InvalidSession(t *testing.T) {
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Return(mmapi.ErrKVNotFound)
 
 	ctx := context.Background()
-	session, err := manager.ProcessCallback(ctx, userID, state, code)
+	session, err := manager.ProcessCallback(ctx, userID, state, code, "")
 
 	require.Error(t, err)
 	require.Nil(t, session)
@@ -531,7 +531,7 @@ func TestProcessCallback_StateValidation(t *testing.T) {
 	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Once()
 
 	ctx := context.Background()
-	session, err := manager.ProcessCallback(ctx, userID, wrongState, "auth-code")
+	session, err := manager.ProcessCallback(ctx, userID, wrongState, "auth-code", "")
 
 	require.Error(t, err)
 	require.Nil(t, session)
@@ -566,7 +566,7 @@ func TestProcessCallback_UserIDValidation(t *testing.T) {
 	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Once()
 
 	ctx := context.Background()
-	session, err := manager.ProcessCallback(ctx, wrongUserID, state, "auth-code")
+	session, err := manager.ProcessCallback(ctx, wrongUserID, state, "auth-code", "")
 
 	require.Error(t, err)
 	require.Nil(t, session)
@@ -652,7 +652,7 @@ func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
 		Return().
 		Once()
 
-	gotSession, err := manager.ProcessCallback(context.Background(), userID, state, code)
+	gotSession, err := manager.ProcessCallback(context.Background(), userID, state, code, "")
 
 	require.NoError(t, err)
 	require.Equal(t, session, gotSession)
@@ -701,7 +701,7 @@ func TestProcessCallback_RederivesStaticCredsFromConfig(t *testing.T) {
 	// but we can verify it gets past session validation and attempts to create
 	// an OAuth config -- which means the static creds were successfully
 	// re-derived from the config lookup.
-	result, err := manager.ProcessCallback(ctx, userID, state, "auth-code")
+	result, err := manager.ProcessCallback(ctx, userID, state, "auth-code", "")
 
 	require.Error(t, err)
 	require.Nil(t, result)
@@ -739,7 +739,7 @@ func TestProcessCallback_LogsWarningWhenLookupMissesServer(t *testing.T) {
 	mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return()
 
 	ctx := context.Background()
-	result, err := manager.ProcessCallback(ctx, userID, state, "auth-code")
+	result, err := manager.ProcessCallback(ctx, userID, state, "auth-code", "")
 
 	require.Error(t, err)
 	require.Nil(t, result)

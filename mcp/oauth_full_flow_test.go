@@ -147,6 +147,9 @@ func (s *fullFlowOAuthServer) handleAuthServerMetadata(w http.ResponseWriter, _ 
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
+		// RFC 9207: the client must require a matching iss parameter on the
+		// authorization response.
+		"authorization_response_iss_parameter_supported": true,
 	})
 }
 
@@ -201,6 +204,12 @@ func (s *fullFlowOAuthServer) handleAuthorize(w http.ResponseWriter, r *http.Req
 		http.Error(w, "PKCE S256 challenge required", http.StatusBadRequest)
 		return
 	}
+	// RFC 8707: the MCP spec requires the canonical resource on the
+	// authorization request.
+	if q.Get("resource") != s.mcpURL() {
+		http.Error(w, "missing or wrong resource parameter", http.StatusBadRequest)
+		return
+	}
 	redirectURI := q.Get("redirect_uri")
 	if redirectURI == "" {
 		http.Error(w, "missing redirect_uri", http.StatusBadRequest)
@@ -221,6 +230,8 @@ func (s *fullFlowOAuthServer) handleAuthorize(w http.ResponseWriter, r *http.Req
 	values := u.Query()
 	values.Set("code", code)
 	values.Set("state", q.Get("state"))
+	// RFC 9207: identify the issuer in the authorization response.
+	values.Set("iss", s.baseURL)
 	u.RawQuery = values.Encode()
 	http.Redirect(w, r, u.String(), http.StatusFound)
 }
@@ -256,6 +267,12 @@ func (s *fullFlowOAuthServer) handleToken(w http.ResponseWriter, r *http.Request
 
 	switch r.PostFormValue("grant_type") {
 	case "authorization_code":
+		// RFC 8707: the MCP spec requires the canonical resource on the
+		// token request.
+		if r.PostFormValue("resource") != s.mcpURL() {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_target")
+			return
+		}
 		code := r.PostFormValue("code")
 		ac, found := s.codes[code]
 		if !found {
@@ -463,12 +480,31 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 	require.Equal(t, "localhost:3333", location.Host, "redirect must land on the plugin callback")
 	code := location.Query().Get("code")
 	state := location.Query().Get("state")
+	iss := location.Query().Get("iss")
 	require.NotEmpty(t, code)
 	require.Equal(t, parsedAuthURL.Query().Get("state"), state)
+	require.Equal(t, oauthServer.baseURL, iss, "authorization response must carry the RFC 9207 iss parameter")
 	t.Logf("step 3 OK: provider redirected to %s", location.String())
 
 	// --- Step 4: ProcessCallback exchanges the code and stores the token ---
-	session, err := manager.ProcessCallback(ctx, userID, state, code)
+	// The wrong issuer must be rejected (RFC 9207), then the real one accepted.
+	_, err = manager.ProcessCallback(ctx, userID, state, code, "https://evil.example.com")
+	require.ErrorContains(t, err, "issuer mismatch")
+
+	// The session was consumed by the failed attempt; restart the flow to get
+	// a fresh code+state for the successful exchange.
+	authorizationURL2, err := manager.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, oauthNeeded.MetadataURL())
+	require.NoError(t, err)
+	resp2, err := noRedirect.Get(authorizationURL2)
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	location2, err := resp2.Location()
+	require.NoError(t, err)
+	code = location2.Query().Get("code")
+	state = location2.Query().Get("state")
+	iss = location2.Query().Get("iss")
+
+	session, err := manager.ProcessCallback(ctx, userID, state, code, iss)
 	require.NoError(t, err)
 	require.Equal(t, serverName, session.ServerID)
 	_, _, pkceVerified, _ := oauthServer.counters()

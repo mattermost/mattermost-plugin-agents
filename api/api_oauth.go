@@ -80,7 +80,9 @@ func (a *API) handleOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	session, err := a.mcpClientManager.ProcessOAuthCallback(c.Request.Context(), userID, state, code)
+	// iss is the RFC 9207 issuer identifier; ProcessOAuthCallback verifies it
+	// against the issuer the authorization session was bound to.
+	session, err := a.mcpClientManager.ProcessOAuthCallback(c.Request.Context(), userID, state, code, c.Query("iss"))
 	if err != nil {
 		a.pluginAPI.Log.Error("Failed to process OAuth callback", "error", err)
 		a.renderOAuthWindowClosePage(c, http.StatusInternalServerError, "Authorization Failed")

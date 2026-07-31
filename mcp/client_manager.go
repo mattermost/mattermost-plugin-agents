@@ -379,13 +379,14 @@ func (m *ClientManager) InvalidateUserClients(userID string) {
 	delete(m.activity, userID)
 }
 
-// ProcessOAuthCallback processes the OAuth callback for a user
-func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code string) (*OAuthSession, error) {
+// ProcessOAuthCallback processes the OAuth callback for a user. iss is the
+// RFC 9207 issuer identifier from the authorization response, if any.
+func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code, iss string) (*OAuthSession, error) {
 	if m.oauthManager == nil {
 		return nil, ErrOAuthNotConfigured
 	}
 
-	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code)
+	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code, iss)
 	if err != nil {
 		return nil, err
 	}

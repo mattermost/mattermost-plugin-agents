@@ -154,6 +154,22 @@ type ClientCredentials struct {
 	ClientSecret string    `json:"clientSecret"`
 	ServerURL    string    `json:"serverURL"`
 	CreatedAt    time.Time `json:"createdAt"`
+	// TokenEndpointAuthMethod is the RFC 7591 auth method returned by dynamic
+	// client registration. "none" identifies a public client, whose empty
+	// secret is valid. Empty means the pre-existing default
+	// (client_secret_basic).
+	TokenEndpointAuthMethod string `json:"tokenEndpointAuthMethod,omitempty"`
+	// SecretExpiresAt is the RFC 7591 client_secret_expires_at (Unix seconds,
+	// 0 = never expires). Expired credentials are treated as absent so a new
+	// registration replaces them instead of failing token exchanges.
+	SecretExpiresAt int64 `json:"secretExpiresAt,omitempty"`
+}
+
+// isPublicClient reports whether the registration produced a public client
+// (RFC 7591 token_endpoint_auth_method "none"), which legitimately has no
+// client secret.
+func (c *ClientCredentials) isPublicClient() bool {
+	return c.TokenEndpointAuthMethod == "none"
 }
 
 func (m *OAuthManager) loadClientCredentials(serverURL string) (*ClientCredentials, error) {
@@ -168,8 +184,16 @@ func (m *OAuthManager) loadClientCredentials(serverURL string) (*ClientCredentia
 		return nil, fmt.Errorf("failed to retrieve client credentials from KV store: %w", err)
 	}
 
-	if creds.ClientID == "" || creds.ClientSecret == "" {
-		// If no credentials are found, return nil to indicate no credentials exist
+	if creds.ClientID == "" || (creds.ClientSecret == "" && !creds.isPublicClient()) {
+		// If no credentials are found, return nil to indicate no credentials
+		// exist. Public clients (token_endpoint_auth_method "none")
+		// legitimately have no secret.
+		return nil, nil
+	}
+
+	if creds.SecretExpiresAt > 0 && time.Now().Unix() >= creds.SecretExpiresAt {
+		// The registered secret expired; treat the credentials as absent so
+		// the caller registers a fresh client instead of failing exchanges.
 		return nil, nil
 	}
 
@@ -205,6 +229,20 @@ type OAuthSession struct {
 	State             string    `json:"state"`
 	StaticClientID    string    `json:"staticClientID,omitempty"`
 	CreatedAt         time.Time `json:"createdAt"`
+
+	// Binding of the authorization request to the discovery outcome at
+	// initiation time. ProcessCallback exchanges the code against these
+	// persisted values instead of re-running discovery, so a server that
+	// swaps its advertised authorization server metadata mid-flow cannot
+	// redirect the code, verifier, or client secret to a different host.
+	// Empty on sessions created before the fields existed (an in-flight
+	// upgrade), in which case the callback falls back to re-discovery.
+	Issuer        string   `json:"issuer,omitempty"`
+	RequireIss    bool     `json:"requireIss,omitempty"` // AS advertises RFC 9207 support: iss must be present and match
+	AuthServerURL string   `json:"authServerURL,omitempty"`
+	TokenEndpoint string   `json:"tokenEndpoint,omitempty"`
+	ResourceURL   string   `json:"resourceURL,omitempty"` // canonical RFC 8707 resource
+	Scopes        []string `json:"scopes,omitempty"`
 }
 
 // Unlike the other loaders, a missing key surfaces as an error here:

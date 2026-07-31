@@ -209,12 +209,18 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 		return nil, fmt.Errorf("failed to register OAuth client with server %s (registration endpoint: %s): %w", serverURL, registrationEndpoint, err)
 	}
 
-	// Create new credentials from registration response
+	// Create new credentials from registration response, preserving the
+	// authentication method (public clients register with
+	// token_endpoint_auth_method "none" and no secret) and secret expiry.
 	newCreds := &ClientCredentials{
-		ClientID:     response.ClientID,
-		ClientSecret: response.ClientSecret,
-		ServerURL:    serverURL,
-		CreatedAt:    time.Now(),
+		ClientID:                response.ClientID,
+		ClientSecret:            response.ClientSecret,
+		ServerURL:               serverURL,
+		CreatedAt:               time.Now(),
+		TokenEndpointAuthMethod: response.TokenEndpointAuthMethod,
+	}
+	if !response.ClientSecretExpiresAt.IsZero() {
+		newCreds.SecretExpiresAt = response.ClientSecretExpiresAt.Unix()
 	}
 
 	// Store the new credentials
@@ -226,7 +232,36 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 	return newCreds, nil
 }
 
+// resolvedOAuthConfig carries the oauth2 configuration together with the
+// discovery outcome it was derived from, so flows can bind sessions to the
+// issuer/endpoints that were actually selected (see OAuthSession) and send
+// the canonical RFC 8707 resource with authorization requests.
+type resolvedOAuthConfig struct {
+	config *oauth2.Config
+	// issuer is the authorization server's issuer identifier from its
+	// metadata (falls back to the URL discovery derived it from), used for
+	// RFC 9207 iss verification.
+	issuer string
+	// requireIss reports whether the AS metadata advertised RFC 9207 support
+	// (authorization_response_iss_parameter_supported), in which case the
+	// callback must carry a matching iss parameter.
+	requireIss bool
+	// authServerURL is the URL client credentials are registered under.
+	authServerURL string
+	// resource is the canonical RFC 8707 resource identifier of the MCP
+	// server (the PRM resource value when discovery produced one).
+	resource string
+}
+
 func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error) {
+	resolved, err := m.resolveOAuthConfig(ctx, serverURL, metadataURL, staticCreds)
+	if err != nil {
+		return nil, err
+	}
+	return resolved.config, nil
+}
+
+func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*resolvedOAuthConfig, error) {
 	parsedURL, err := url.Parse(serverURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse server URL: %w", err)
@@ -237,6 +272,9 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	authURL := baseURL + "/authorize" // Fallback
 	tokenURL := baseURL + "/token"    // Fallback
 	authServerURL := baseURL          // Fallback - per MCP spec, auth server is at base URL (path stripped)
+	issuer := ""
+	requireIss := false
+	resource := serverURL // Fallback: canonical resource is the MCP server URL
 	registrationEndpoint := ""
 	var scopes []string
 
@@ -245,6 +283,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	// per RFC 9728 Section 3.1 (e.g. /base/path -> /.well-known/oauth-protected-resource/base/path).
 	if protectedMetadata, discErr := m.fetchProtectedResourceMetadata(ctx, serverURL, metadataURL); discErr == nil {
 		scopes = protectedMetadata.ScopesSupported
+		resource = protectedMetadata.Resource
 		// Use first authorization server (fetchProtectedResourceMetadata
 		// guarantees at least one).
 		authServerIssuer := protectedMetadata.AuthorizationServers[0]
@@ -253,6 +292,8 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 			tokenURL = authMetadata.TokenEndpoint
 			// Per OAuth best practices, credentials are registered with the authorization server
 			authServerURL = authServerIssuer
+			issuer = authMetadata.Issuer
+			requireIss = authMetadata.AuthorizationResponseIssParameterSupported
 			registrationEndpoint = authMetadata.RegistrationEndpoint
 		} else {
 			// Discovery explicitly named an authorization server but its
@@ -262,6 +303,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 			authURL = strings.TrimSuffix(authServerIssuer, "/") + "/authorize"
 			tokenURL = strings.TrimSuffix(authServerIssuer, "/") + "/token"
 			authServerURL = authServerIssuer
+			issuer = authServerIssuer
 		}
 	} else {
 		// If protected resource metadata fails, assume the resource server is the authorization server
@@ -271,9 +313,14 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 		if authMetadata, authErr := m.fetchAuthorizationServerMetadata(ctx, baseURL); authErr == nil {
 			authURL = authMetadata.AuthorizationEndpoint
 			tokenURL = authMetadata.TokenEndpoint
+			issuer = authMetadata.Issuer
+			requireIss = authMetadata.AuthorizationResponseIssParameterSupported
 			registrationEndpoint = authMetadata.RegistrationEndpoint
 			// authServerURL already set to baseURL above
 		}
+	}
+	if issuer == "" {
+		issuer = authServerURL
 	}
 
 	// Get client credentials for the authorization server (not the protected resource)
@@ -285,16 +332,33 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 		return nil, fmt.Errorf("failed to get client credentials: %w", err)
 	}
 
+	return &resolvedOAuthConfig{
+		config:        m.oauthConfigFromCredentials(clientCreds, authURL, tokenURL, scopes),
+		issuer:        issuer,
+		requireIss:    requireIss,
+		authServerURL: authServerURL,
+		resource:      resource,
+	}, nil
+}
+
+// oauthConfigFromCredentials assembles the oauth2.Config for a set of client
+// credentials. Public clients (empty secret) authenticate by sending only
+// client_id in the request body.
+func (m *OAuthManager) oauthConfigFromCredentials(clientCreds *ClientCredentials, authURL, tokenURL string, scopes []string) *oauth2.Config {
+	endpoint := oauth2.Endpoint{
+		AuthURL:  authURL,
+		TokenURL: tokenURL,
+	}
+	if clientCreds.ClientSecret == "" {
+		endpoint.AuthStyle = oauth2.AuthStyleInParams
+	}
 	return &oauth2.Config{
 		ClientID:     clientCreds.ClientID,
 		ClientSecret: clientCreds.ClientSecret,
 		RedirectURL:  m.callbackURL,
 		Scopes:       scopes,
-		Endpoint: oauth2.Endpoint{
-			AuthURL:  authURL,
-			TokenURL: tokenURL,
-		},
-	}, nil
+		Endpoint:     endpoint,
+	}
 }
 
 func (m *OAuthManager) InitiateOAuthFlowForServer(ctx context.Context, userID string, serverConfig ServerConfig) (string, error) {
@@ -317,18 +381,25 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 		return "", fmt.Errorf("failed to generate state: %w", err)
 	}
 
-	// Get OAuth config
-	oauthConfig, err := m.createOAuthConfig(ctx, serverURL, metadataURL, staticCreds)
+	// Get OAuth config together with the discovery outcome it is based on.
+	resolved, err := m.resolveOAuthConfig(ctx, serverURL, metadataURL, staticCreds)
 	if err != nil {
 		return "", fmt.Errorf("failed to create OAuth config: %w", err)
 	}
 
-	// Build authorization URL with PKCE
-	authURL := oauthConfig.AuthCodeURL(state, oauth2.S256ChallengeOption(codeVerifier))
+	// Build authorization URL with PKCE and the canonical RFC 8707 resource
+	// so the authorization server audience-restricts the issued token to this
+	// MCP server.
+	authURL := resolved.config.AuthCodeURL(state,
+		oauth2.S256ChallengeOption(codeVerifier),
+		oauth2.SetAuthURLParam("resource", resolved.resource),
+	)
 
-	// Store OAuth session. Only the StaticClientID is persisted so ProcessCallback
-	// knows whether to look up static credentials; the secret itself is re-derived
-	// from the live plugin config via serverConfigLookup at callback time.
+	// Store OAuth session, bound to the discovery outcome so the callback
+	// exchanges the code against exactly these endpoints (see OAuthSession).
+	// Only the StaticClientID is persisted so ProcessCallback knows whether
+	// to look up static credentials; the secret itself is re-derived from the
+	// live plugin config via serverConfigLookup at callback time.
 	if err := m.storeSession(&OAuthSession{
 		UserID:            userID,
 		ServerID:          serverID,
@@ -338,11 +409,39 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 		State:             state,
 		StaticClientID:    staticCredsClientID(staticCreds),
 		CreatedAt:         time.Now(),
+		Issuer:            resolved.issuer,
+		RequireIss:        resolved.requireIss,
+		AuthServerURL:     resolved.authServerURL,
+		TokenEndpoint:     resolved.config.Endpoint.TokenURL,
+		ResourceURL:       resolved.resource,
+		Scopes:            resolved.config.Scopes,
 	}); err != nil {
 		return "", fmt.Errorf("failed to store OAuth session: %w", err)
 	}
 
 	return authURL, nil
+}
+
+// callbackOAuthConfig builds the oauth2 configuration for the code exchange.
+// Sessions bound at initiation time (TokenEndpoint set) reuse the persisted
+// endpoints and the credentials registered under the persisted authorization
+// server; legacy sessions without binding fields fall back to re-discovery.
+func (m *OAuthManager) callbackOAuthConfig(ctx context.Context, session *OAuthSession, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error) {
+	if session.TokenEndpoint == "" {
+		return m.createOAuthConfig(ctx, session.ServerURL, session.ServerMetadataURL, staticCreds)
+	}
+
+	// Credentials were created (or statically configured) at initiation time;
+	// no registration endpoint is passed because registering a new client at
+	// callback time would change the client_id and break the exchange.
+	clientCreds, err := m.loadOrCreateClientCredentials(ctx, session.AuthServerURL, staticCreds, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client credentials: %w", err)
+	}
+
+	// The authorization endpoint is not used during the exchange; only the
+	// token endpoint matters here.
+	return m.oauthConfigFromCredentials(clientCreds, "", session.TokenEndpoint, session.Scopes), nil
 }
 
 func staticCredsClientID(creds *StaticOAuthCredentials) string {
@@ -363,7 +462,12 @@ func staticCredsSecretFingerprint(creds *StaticOAuthCredentials) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, state, code string) (*OAuthSession, error) {
+// ProcessCallback finishes the authorization flow: it validates state, user,
+// and (RFC 9207) issuer, exchanges the code against the token endpoint the
+// session was bound to at initiation time, and persists the token. iss is the
+// issuer identifier from the authorization response's "iss" query parameter
+// (may be empty when the server does not send one).
+func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*OAuthSession, error) {
 	session, err := m.loadSession(loggedInUserID, state)
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session: %w", err)
@@ -388,6 +492,18 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		return nil, fmt.Errorf("user ID mismatch: expected %s, got %s", session.UserID, loggedInUserID)
 	}
 
+	// RFC 9207 issuer verification: when the authorization response carries
+	// an iss parameter it must match the issuer the session was bound to; and
+	// when the AS metadata advertised iss support at initiation time, the
+	// parameter is mandatory (its absence indicates a mix-up attack).
+	if iss != "" && session.Issuer != "" &&
+		strings.TrimSuffix(iss, "/") != strings.TrimSuffix(session.Issuer, "/") {
+		return nil, fmt.Errorf("issuer mismatch in authorization response: got %q, expected %q", iss, session.Issuer)
+	}
+	if iss == "" && session.RequireIss {
+		return nil, fmt.Errorf("authorization response is missing the iss parameter required by the authorization server's metadata")
+	}
+
 	// Re-derive static credentials from the live plugin config so the secret
 	// never needs to be persisted in the KV store session.
 	var staticCreds *StaticOAuthCredentials
@@ -400,16 +516,24 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		}
 	}
 
-	// Get OAuth config
-	oauthConfig, err := m.createOAuthConfig(ctx, session.ServerURL, session.ServerMetadataURL, staticCreds)
+	// Exchange the code against the endpoints the session was bound to at
+	// initiation time; re-running discovery here would let a server that
+	// swaps its advertised metadata mid-flow receive the code, verifier, or
+	// client secret. Sessions created before the binding fields existed fall
+	// back to re-discovery.
+	oauthConfig, err := m.callbackOAuthConfig(ctx, session, staticCreds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OAuth config: %w", err)
 	}
 
-	// Exchange code for token with PKCE
+	// Exchange code for token with PKCE and the canonical RFC 8707 resource
+	// bound at initiation time.
+	exchangeOpts := []oauth2.AuthCodeOption{oauth2.VerifierOption(session.CodeVerifier)}
+	if session.ResourceURL != "" {
+		exchangeOpts = append(exchangeOpts, oauth2.SetAuthURLParam("resource", session.ResourceURL))
+	}
 	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, m.httpClient)
-	token, err := oauthConfig.Exchange(ctxWithClient, code,
-		oauth2.VerifierOption(session.CodeVerifier))
+	token, err := oauthConfig.Exchange(ctxWithClient, code, exchangeOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
 	}

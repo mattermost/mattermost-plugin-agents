@@ -59,7 +59,7 @@ type MCPClientManager interface {
 	GetOAuthManager() *mcp.OAuthManager
 	GetToolsCache() *mcp.ToolsCache
 	GetHTTPClient() *http.Client
-	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
+	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*mcp.OAuthSession, error)
 	DisconnectUserOAuth(userID, serverName string) error
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer

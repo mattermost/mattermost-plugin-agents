@@ -1048,7 +1048,7 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 func TestClientManagerProcessOAuthCallbackRequiresOAuthManager(t *testing.T) {
 	manager := &ClientManager{}
 
-	session, err := manager.ProcessOAuthCallback(t.Context(), "user-1", "state", "code")
+	session, err := manager.ProcessOAuthCallback(t.Context(), "user-1", "state", "code", "")
 
 	require.Nil(t, session)
 	require.ErrorIs(t, err, ErrOAuthNotConfigured)
