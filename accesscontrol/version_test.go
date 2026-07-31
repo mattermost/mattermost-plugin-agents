@@ -116,7 +116,7 @@ func TestLegacyOnlyModeDecisionTable(t *testing.T) {
 func TestLegacyOnlyModeReportsUnavailable(t *testing.T) {
 	c := NewLegacyOnly(NoMCPServerIDs, nil)
 
-	assert.False(t, c.IsAvailable(context.Background()), "legacy-only wiring must report ABAC unavailable")
+	assert.False(t, c.IsAvailable(context.Background(), model.NewId()), "legacy-only wiring must report ABAC unavailable")
 
 	err := c.ValidateAgentWrite(context.Background(), model.NewId(), &llm.BotConfig{
 		ID:              model.NewId(),

@@ -206,12 +206,31 @@ func (c *Checker) CanUseMCPServer(ctx context.Context, userID, serverID string) 
 	return c.canUseResource(ctx, "abac can_use_mcp_server", userID, ResourceTypeMCP, serverID)
 }
 
-// IsAvailable probes whether the ABAC PAP is usable: one GetAccessControlPolicy
-// for a fresh (nonexistent) ID. A 404 means the PAP answered (available); open
-// core / unlicensed / disabled servers return a non-404 error (unavailable).
-// The result is cached for availabilityCacheTTL and gates both the status
-// endpoint (ABAC UI) and ValidateAgentWrite.
-func (c *Checker) IsAvailable(ctx context.Context) bool {
+// availabilityProbeExpression is the expression the availability probe compiles.
+// The server special-cases it to "no conditions" and returns immediately, so the
+// probe costs a readiness check and one allocation.
+const availabilityProbeExpression = "true"
+
+// IsAvailable probes whether the ABAC PAP is usable, on behalf of actingUserID:
+// one GetAccessControlVisualAST for a trivial expression. Only a non-nil AST
+// with no error means available — that is reachable solely past the server's
+// readiness gate, so open-core (no access-control service), unlicensed, and
+// ABAC-disabled servers all report unavailable, as does the RPC client's silent
+// (nil, nil) transport failure. The result is cached for availabilityCacheTTL
+// and gates both the status endpoint (ABAC UI) and ValidateAgentWrite.
+//
+// Probing a policy read instead is NOT sound: the server resolves plugin policy
+// ownership against a raw store read and answers an absent row with its uniform
+// 404 before consulting the license or the ABAC config, and its access-control
+// service is registered on any enterprise binary whatever the license. An
+// unlicensed server would therefore answer 404 and look available, offering
+// policy UI whose every save fails and — worse — letting attribute-based agents
+// through ValidateAgentWrite to fail open for everyone.
+//
+// A probe needs an acting user because the server validates one on every CEL
+// call. Availability itself is server-wide (license and config), so the cached
+// result is shared across users; both call sites pass a request's own user.
+func (c *Checker) IsAvailable(ctx context.Context, actingUserID string) bool {
 	_, span := telemetry.Tracer().Start(ctx, "abac is_available")
 	defer span.End()
 
@@ -229,10 +248,8 @@ func (c *Checker) IsAvailable(ctx context.Context) bool {
 
 	available := false
 	if c.papi != nil {
-		policy, appErr := c.papi.GetAccessControlPolicy(model.NewId())
-		// 404 (or an improbable hit) proves the PAP answered; (nil, nil) is
-		// the RPC client's silent transport failure and must map to unavailable.
-		available = isNotFoundAppErr(appErr) || (appErr == nil && policy != nil)
+		ast, appErr := c.papi.GetAccessControlVisualAST(actingUserID, ResourceTypeAgent, availabilityProbeExpression)
+		available = appErr == nil && ast != nil
 	}
 	c.availabilityValue = available
 	c.availabilityChecked = time.Now()
@@ -247,7 +264,7 @@ func (c *Checker) IsAvailable(ctx context.Context) bool {
 // AutoEnableNewMCPTools skips write-time MCP validation — runtime per-user
 // filtering is the gate.
 func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, cfg, prev *llm.BotConfig) error {
-	if cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased && !c.IsAvailable(ctx) {
+	if cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased && !c.IsAvailable(ctx, actingUserID) {
 		return ErrABACUnavailable
 	}
 

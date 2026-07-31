@@ -438,27 +438,30 @@ func TestListAgentsFiltersPolicyDeniedAgents(t *testing.T) {
 	assert.Equal(t, allowedAgentID, agents[0].ID)
 }
 
-// TestABACStatusRoute drives the status endpoint through the PAP availability
-// probe: GetAccessControlPolicy on a fresh ID returning 404 means ABAC is up;
-// a 501-class error means it is not.
+// TestABACStatusRoute drives the status endpoint through the availability probe,
+// which asks the server to render a trivial CEL expression: an AST means the
+// server is past its ABAC readiness gate, a readiness error means it is not.
 func TestABACStatusRoute(t *testing.T) {
-	notFound := model.NewAppError("GetAccessControlPolicy", "not found", nil, "", http.StatusNotFound)
-	notImplemented := model.NewAppError("GetAccessControlPolicy", "abac unavailable", nil, "", http.StatusNotImplemented)
+	unlicensed := model.NewAppError("Init", "app.pap.init.app_error", nil, "enterprise advanced license required", http.StatusNotImplemented)
+	abacDisabled := model.NewAppError("isReady", "app.pap.is_ready.app_error", nil, "access control is disabled", http.StatusNotAcceptable)
 
 	tests := []struct {
 		name          string
+		probeAST      *model.VisualExpression
 		probeErr      *model.AppError
 		wantAvailable bool
 	}{
-		{name: "available", probeErr: notFound, wantAvailable: true},
-		{name: "unavailable", probeErr: notImplemented, wantAvailable: false},
+		{name: "ready", probeAST: &model.VisualExpression{Conditions: []model.Condition{}}, wantAvailable: true},
+		{name: "unlicensed", probeErr: unlicensed, wantAvailable: false},
+		{name: "ABAC disabled", probeErr: abacDisabled, wantAvailable: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := setupAccessControlTestEnvironment(t)
 			defer e.Cleanup(t)
-			e.mockAPI.On("GetAccessControlPolicy", mock.AnythingOfType("string")).Return(nil, tt.probeErr).Once()
+			e.mockAPI.On("GetAccessControlVisualAST", mock.AnythingOfType("string"), accesscontrol.ResourceTypeAgent, mock.AnythingOfType("string")).
+				Return(tt.probeAST, tt.probeErr).Once()
 
 			recorder := doRequest(e.api, http.MethodGet, "/access_control/status", nil, model.NewId())
 			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)

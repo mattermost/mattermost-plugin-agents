@@ -324,23 +324,32 @@ func TestEvaluateInvalidIDsAreNoPolicy(t *testing.T) {
 	}
 }
 
-// --- IsAvailable probe (PAP read path) + TTL cache ---
+// --- IsAvailable probe (CEL readiness path) + TTL cache ---
 
+// The probe must report available in exactly one server state: enterprise,
+// licensed for Enterprise Advanced, with ABAC enabled. Each row below is what
+// GetAccessControlVisualAST returns in one state, read off the platform:
+// App.ExpressionToVisualAST answers 501 when the access-control service is
+// absent, the enterprise service's readiness gate answers 501 unlicensed and 406
+// with ABAC disabled, and past that gate a "true" expression is special-cased to
+// an empty condition set — so only the ready state yields a non-nil AST.
 func TestIsAvailable(t *testing.T) {
-	notFound := model.NewAppError("GetAccessControlPolicy", "not found", nil, "", http.StatusNotFound)
-	notImplemented := model.NewAppError("GetAccessControlPolicy", "abac unavailable", nil, "", http.StatusNotImplemented)
-	serverErr := model.NewAppError("GetAccessControlPolicy", "boom", nil, "", http.StatusInternalServerError)
+	noService := model.NewAppError("ExpressionToVisualAST", "app.pap.expression_to_visual_ast.app_error", nil, "Policy Administration Point is not initialized", http.StatusNotImplemented)
+	unlicensed := model.NewAppError("Init", "app.pap.init.app_error", nil, "enterprise advanced license required", http.StatusNotImplemented)
+	abacDisabled := model.NewAppError("isReady", "app.pap.is_ready.app_error", nil, "access control is disabled", http.StatusNotAcceptable)
+	compileErr := model.NewAppError("ExpressionToVisualAST", "app.pap.expression_to_visual_ast.app_error", nil, "boom", http.StatusBadRequest)
 
 	tests := []struct {
 		name   string
-		policy *model.AccessControlPolicy
+		ast    *model.VisualExpression
 		appErr *model.AppError
 		want   bool
 	}{
-		{name: "not found means available", appErr: notFound, want: true},
-		{name: "unavailable-class error means unavailable", appErr: notImplemented, want: false},
-		{name: "other errors mean unavailable", appErr: serverErr, want: false},
-		{name: "existing policy means available", policy: &model.AccessControlPolicy{}, want: true},
+		{name: "open core: no access control service", appErr: noService, want: false},
+		{name: "enterprise, unlicensed", appErr: unlicensed, want: false},
+		{name: "enterprise, licensed, ABAC disabled", appErr: abacDisabled, want: false},
+		{name: "ready", ast: &model.VisualExpression{Conditions: []model.Condition{}}, want: true},
+		{name: "unexpected compile failure means unavailable", appErr: compileErr, want: false},
 		{name: "transport failure (nil, nil) means unavailable", want: false},
 	}
 
@@ -348,29 +357,44 @@ func TestIsAvailable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			api := &plugintest.API{}
 			defer api.AssertExpectations(t)
-			// Fresh model.NewId() per probe: match any string argument.
-			api.On("GetAccessControlPolicy", mock.AnythingOfType("string")).Return(tt.policy, tt.appErr).Twice()
+			api.On("GetAccessControlVisualAST", mock.AnythingOfType("string"), ResourceTypeAgent, availabilityProbeExpression).Return(tt.ast, tt.appErr).Twice()
 
 			c := New(PassthroughClient{}, api, NoMCPServerIDs, nil)
+			actingUserID := model.NewId()
 
-			assert.Equal(t, tt.want, c.IsAvailable(context.Background()))
-			api.AssertNumberOfCalls(t, "GetAccessControlPolicy", 1)
+			assert.Equal(t, tt.want, c.IsAvailable(context.Background(), actingUserID))
+			api.AssertNumberOfCalls(t, "GetAccessControlVisualAST", 1)
 
 			// Second call within the TTL is served from cache.
-			assert.Equal(t, tt.want, c.IsAvailable(context.Background()))
-			api.AssertNumberOfCalls(t, "GetAccessControlPolicy", 1)
+			assert.Equal(t, tt.want, c.IsAvailable(context.Background(), actingUserID))
+			api.AssertNumberOfCalls(t, "GetAccessControlVisualAST", 1)
 
 			// Expiring the cache re-probes.
 			c.availabilityChecked = c.availabilityChecked.Add(-2 * availabilityCacheTTL)
-			assert.Equal(t, tt.want, c.IsAvailable(context.Background()))
-			api.AssertNumberOfCalls(t, "GetAccessControlPolicy", 2)
+			assert.Equal(t, tt.want, c.IsAvailable(context.Background(), actingUserID))
+			api.AssertNumberOfCalls(t, "GetAccessControlVisualAST", 2)
 		})
 	}
 }
 
+// A policy read cannot stand in for the probe: the platform answers an absent
+// row with its uniform 404 before it consults the license, so an unlicensed
+// enterprise server would look available.
+func TestIsAvailableDoesNotProbeAPolicyRead(t *testing.T) {
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	api.On("GetAccessControlVisualAST", mock.AnythingOfType("string"), ResourceTypeAgent, availabilityProbeExpression).
+		Return(nil, model.NewAppError("Init", "app.pap.init.app_error", nil, "enterprise advanced license required", http.StatusNotImplemented)).Once()
+
+	c := New(PassthroughClient{}, api, NoMCPServerIDs, nil)
+
+	assert.False(t, c.IsAvailable(context.Background(), model.NewId()))
+	api.AssertNotCalled(t, "GetAccessControlPolicy", mock.Anything)
+}
+
 func TestIsAvailableWithoutPluginAPI(t *testing.T) {
 	c := New(PassthroughClient{}, nil, NoMCPServerIDs, nil)
-	assert.False(t, c.IsAvailable(context.Background()), "a checker without a plugin API has no PAP to probe")
+	assert.False(t, c.IsAvailable(context.Background(), model.NewId()), "a checker without a plugin API has no PAP to probe")
 }
 
 // --- ValidateAgentWrite ---
@@ -387,9 +411,10 @@ func TestValidateAgentWrite(t *testing.T) {
 		unknownOrigin = "embedded://mattermost"
 	)
 
-	// Availability-probe variants for the attribute-based rows: the probe is
-	// the PAP read path (GetAccessControlPolicy on a fresh ID), so those rows
-	// inject a plugintest mock; the rest keep papi = nil (probe never runs).
+	// Availability-probe variants for the attribute-based rows: the probe is the
+	// CEL readiness path (GetAccessControlVisualAST for a trivial expression), so
+	// those rows inject a plugintest mock; the rest keep papi = nil (probe never
+	// runs).
 	const (
 		probeNone = iota
 		probeAvailable
@@ -540,11 +565,14 @@ func TestValidateAgentWrite(t *testing.T) {
 			case probeAvailable, probeUnavailable:
 				api := &plugintest.API{}
 				defer api.AssertExpectations(t)
-				probeErr := model.NewAppError("GetAccessControlPolicy", "not found", nil, "", http.StatusNotFound)
-				if tt.probe == probeUnavailable {
-					probeErr = model.NewAppError("GetAccessControlPolicy", "abac unavailable", nil, "", http.StatusNotImplemented)
+				var probeAST *model.VisualExpression
+				var probeErr *model.AppError
+				if tt.probe == probeAvailable {
+					probeAST = &model.VisualExpression{Conditions: []model.Condition{}}
+				} else {
+					probeErr = model.NewAppError("Init", "app.pap.init.app_error", nil, "enterprise advanced license required", http.StatusNotImplemented)
 				}
-				api.On("GetAccessControlPolicy", mock.AnythingOfType("string")).Return(nil, probeErr).Once()
+				api.On("GetAccessControlVisualAST", mock.AnythingOfType("string"), ResourceTypeAgent, availabilityProbeExpression).Return(probeAST, probeErr).Once()
 				c = New(client, api, idsByOrigin, nil)
 			default:
 				c = New(client, nil, idsByOrigin, nil)
