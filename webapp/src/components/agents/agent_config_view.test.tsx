@@ -466,6 +466,7 @@ describe('AgentConfigView', () => {
 
     test.each([
         ['exactly the ASCII character limit', 'a'.repeat(MaxCustomInstructionsRunes)],
+
         // Code points under the limit but UTF-16 length over it: catches .length-based counting.
         ['astral characters below the character limit', '😀'.repeat((MaxCustomInstructionsRunes / 2) + 1)],
     ])('allows saving with %s', async (_description, customInstructions) => {
