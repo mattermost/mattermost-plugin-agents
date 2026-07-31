@@ -41,10 +41,6 @@ func (t *serverToolTracker) snapshot() []llm.ServerToolUse {
 	return out
 }
 
-func (t *serverToolTracker) empty() bool {
-	return len(t.order) == 0
-}
-
 // upsert merges use into the tracked entry with the same ID, creating it when
 // unseen. Non-empty incoming fields win; the entry's Status always follows the
 // incoming value when set.
@@ -179,8 +175,8 @@ func populateCodeExecutionFields(use *llm.ServerToolUse, tm *schemas.ResponsesTo
 			use.Command = truncateForDisplay(*ci.Code, serverToolCommandMaxLen)
 		}
 		for _, out := range ci.Outputs {
-			if out.ResponsesCodeInterpreterOutputLogs != nil && out.ResponsesCodeInterpreterOutputLogs.Logs != "" {
-				use.Output = truncateForDisplay(out.ResponsesCodeInterpreterOutputLogs.Logs, serverToolOutputMaxLen)
+			if out.ResponsesCodeInterpreterOutputLogs != nil && out.Logs != "" {
+				use.Output = truncateForDisplay(out.Logs, serverToolOutputMaxLen)
 				break
 			}
 		}
