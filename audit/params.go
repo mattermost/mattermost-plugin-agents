@@ -53,16 +53,6 @@ func TruncateIDs(vals []string) []string {
 	return out
 }
 
-// maxDescriptionLength bounds error descriptions. Long enough for wrapped
-// error chains, short enough that an error embedding request text cannot pump
-// unbounded content into the log.
-const maxDescriptionLength = 500
-
-// TruncateDescription clamps an error description for audit recording.
-func TruncateDescription(s string) string {
-	return truncate(s, maxDescriptionLength)
-}
-
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

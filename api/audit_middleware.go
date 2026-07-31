@@ -28,11 +28,13 @@ const auditRecordGinKey = "auditRecord"
 // Audit persistence is governed entirely by the server's audit configuration,
 // so the record is emitted unconditionally.
 //
-// Contract for handler authors: on failure the LAST gin error's text becomes
-// the record's error description. TruncateDescription bounds its length, not
-// its content — errors surfaced via c.Error/AbortWithError on audited routes
-// must stay value-free (no secrets, prompt/user content, tokens, or raw
-// request text; see mmtools/ask_user_question.go for the pattern).
+// Handler error text intentionally never enters the record: gin errors are
+// free-form and may quote user content or request values, and constraining
+// every current and future handler's error messages for the audit log's sake
+// would trade debuggability for convention-based safety. Fail records carry
+// the HTTP status code; the full error text stays available to operators in
+// the server log (ginlogger logs every gin error verbatim) and correlates
+// with the record via timestamp, actor, and the trace_id meta.
 func (a *API) auditMiddleware(pluginCtx *plugin.Context) gin.HandlerFunc {
 	if pluginCtx == nil {
 		pluginCtx = &plugin.Context{}
@@ -65,6 +67,7 @@ func (a *API) auditMiddleware(pluginCtx *plugin.Context) gin.HandlerFunc {
 		defer func() {
 			if r := recover(); r != nil {
 				rec.AddErrorCode(http.StatusInternalServerError)
+				// Static marker only — panic values can carry anything.
 				rec.AddErrorDesc("panic during request handling")
 				a.pluginAPI.Audit.Record(rec)
 				panic(r)
@@ -75,13 +78,8 @@ func (a *API) auditMiddleware(pluginCtx *plugin.Context) gin.HandlerFunc {
 				// 3xx counts as success: OAuth start answers with a 302.
 				rec.Success()
 			} else {
+				// Status code only; see the free-form-text note above.
 				rec.AddErrorCode(status)
-				if last := c.Errors.Last(); last != nil {
-					// Clamped: bind errors and wrapped store errors can
-					// quote fragments of request text, and the description
-					// must never become an unbounded content channel.
-					rec.AddErrorDesc(audit.TruncateDescription(last.Error()))
-				}
 			}
 
 			a.pluginAPI.Audit.Record(rec)

@@ -154,7 +154,8 @@ func TestDelegateToMCPHandler_AuditsSessionGrant(t *testing.T) {
 
 			if tt.ensureErr != nil {
 				require.Equal(t, http.StatusInternalServerError, got.Error.Code)
-				require.NotEmpty(t, got.Error.Description)
+				require.Equal(t, "failed to ensure MCP session", got.Error.Description,
+					"grant fail records carry only the static class, never the error text")
 				return
 			}
 

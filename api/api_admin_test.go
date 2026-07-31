@@ -1083,7 +1083,8 @@ func TestAuditReindexPosts(t *testing.T) {
 			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
 				assert.Equal(t, model.AuditStatusFail, rec.Status)
 				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
-				assert.NotEmpty(t, rec.Error.Description)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
 				assert.NotContains(t, rec.EventData.Parameters, "clear_index")
 			},
 		},
@@ -1237,7 +1238,8 @@ func TestAuditCatchUpReindex(t *testing.T) {
 			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
 				assert.Equal(t, model.AuditStatusFail, rec.Status)
 				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
-				assert.NotEmpty(t, rec.Error.Description)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
 			},
 		},
 	}
@@ -1318,7 +1320,8 @@ func TestAuditClearMCPToolsCache(t *testing.T) {
 			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
 				assert.Equal(t, model.AuditStatusFail, rec.Status)
 				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
-				assert.NotEmpty(t, rec.Error.Description)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
 				assert.NotContains(t, rec.EventData.Parameters, "cleared_servers")
 			},
 		},

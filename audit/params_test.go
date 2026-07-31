@@ -86,28 +86,3 @@ func TestTruncateIDs(t *testing.T) {
 		})
 	}
 }
-
-func TestTruncateDescription(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "typical error chains pass through unchanged",
-			input:    "failed to save config: kv exploded",
-			expected: "failed to save config: kv exploded",
-		},
-		{
-			name:     "oversized descriptions are clamped with a marker",
-			input:    strings.Repeat("x", 501),
-			expected: strings.Repeat("x", 500) + "…(truncated)",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, TruncateDescription(tt.input))
-		})
-	}
-}

@@ -175,7 +175,8 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
 				assert.Equal(t, model.AuditStatusFail, rec.Status)
 				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
-				assert.NotEmpty(t, rec.Error.Description)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
 				assert.NotContains(t, rec.EventData.Parameters, "persisted",
 					"a save that never landed must not claim persistence")
 			},
@@ -324,7 +325,8 @@ func TestAuditMiddlewareEmitsFailRecordOnPanic(t *testing.T) {
 	assert.Equal(t, "panicEvent", rec.EventName)
 	assert.Equal(t, model.AuditStatusFail, rec.Status)
 	assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
-	assert.NotContains(t, rec.Error.Description, "boom", "panic values must not leak into the record")
+	assert.Equal(t, "panic during request handling", rec.Error.Description,
+		"panic records carry only the static marker, never the panic value")
 }
 
 func TestAuditMiddlewareRecordsTraceID(t *testing.T) {

@@ -98,7 +98,8 @@ func (a *API) delegateToMCPHandler(c *gin.Context, handler http.Handler) {
 			"error", err)
 		rec := mcpSessionGrantRecord(c, userID)
 		rec.AddErrorCode(http.StatusInternalServerError)
-		rec.AddErrorDesc(audit.TruncateDescription(err.Error()))
+		// Static class only; the full error is in the server log line above.
+		rec.AddErrorDesc("failed to ensure MCP session")
 		a.pluginAPI.Audit.Record(rec)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
