@@ -687,6 +687,66 @@ func TestHTTPServerProtocolVersionNegotiation(t *testing.T) {
 	}
 }
 
+// TestHTTPServerHostValidation verifies the DNS-rebinding host check that
+// replaces the SDK's SSE-only localhost protection: on loopback connections,
+// loopback Hosts and the configured public hosts (SiteURL / MMServerURL) are
+// accepted, while unknown Hosts are rejected with 403 before authentication.
+func TestHTTPServerHostValidation(t *testing.T) {
+	config := mcpserver.HTTPConfig{
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: "http://mattermost.internal:8065",
+		},
+		HTTPPort:     8080,
+		HTTPBindAddr: "127.0.0.1",
+		SiteURL:      "https://mcp.public.example.com",
+	}
+	server, err := mcpserver.NewHTTPServer(config, nil)
+	require.NoError(t, err)
+
+	testServer := httptest.NewServer(server.GetTestHandler())
+	defer testServer.Close()
+
+	tests := []struct {
+		name       string
+		host       string // empty = keep the default loopback host
+		wantStatus int
+	}{
+		{
+			name:       "loopback host is accepted",
+			wantStatus: http.StatusUnauthorized, // passes host check, fails auth
+		},
+		{
+			name:       "configured site-url host is accepted (reverse proxy)",
+			host:       "mcp.public.example.com",
+			wantStatus: http.StatusUnauthorized, // passes host check, fails auth
+		},
+		{
+			name:       "configured mattermost host is accepted",
+			host:       "mattermost.internal:8065",
+			wantStatus: http.StatusUnauthorized, // passes host check, fails auth
+		},
+		{
+			name:       "unknown host is rejected",
+			host:       "evil.example.com",
+			wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, testServer.URL+"/sse", nil)
+			require.NoError(t, err)
+			if tt.host != "" {
+				req.Host = tt.host
+			}
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = resp.Body.Close() })
+			require.Equal(t, tt.wantStatus, resp.StatusCode)
+		})
+	}
+}
+
 // TestConfigurationMethods tests configuration getter methods
 func TestConfigurationMethods(t *testing.T) {
 	config := mcpserver.HTTPConfig{

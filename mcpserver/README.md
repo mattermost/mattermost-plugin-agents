@@ -251,6 +251,8 @@ export MM_INTERNAL_SERVER_URL=http://localhost:8065  # optional for localhost op
 - `/message`: Message endpoint for SSE transport (backwards compatibility)
 - `/.well-known/oauth-protected-resource`: OAuth metadata endpoint
 
+**Request limits:** JSON-RPC request bodies on the `/mcp` endpoint are limited to 4 MiB (the MCP SDK default); larger requests receive `413 Request Entity Too Large`.
+
 **MCP protocol versions:**
 - Stateful mode (default): the `/mcp` endpoint supports MCP protocol versions up to `2025-11-25`, with sessions tracked via the `Mcp-Session-Id` header.
 - Stateless mode (`--stateless` flag / `stateless` config): additionally enables the latest MCP protocol `2026-07-28`, which requires stateless operation.

@@ -89,15 +89,27 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	// Create HTTP server with OAuth endpoints and MCP routing
 	addr := fmt.Sprintf("%s:%d", config.HTTPBindAddr, config.HTTPPort)
 
-	// Create SSE handler for backwards compatibility
+	// Create SSE handler for backwards compatibility. The SDK's built-in
+	// localhost protection rejects loopback-bound requests carrying a
+	// non-loopback Host header, which breaks the documented deployment of
+	// binding to 127.0.0.1 behind a reverse proxy with an external
+	// --site-url. securityMiddleware enforces the equivalent check with the
+	// configured public hosts allowlisted (see validateHost), so the SDK's
+	// narrower check is disabled.
 	mattermostServer.sseHandler = mcp.NewSSEHandler(func(req *http.Request) *mcp.Server {
 		return mattermostServer.mcpServer
-	}, &mcp.SSEOptions{})
+	}, &mcp.SSEOptions{DisableLocalhostProtection: true})
 
-	// Create streamable HTTP handler for modern MCP communication
+	// Create streamable HTTP handler for modern MCP communication. The
+	// request body limit is the SDK default, set explicitly because go-sdk
+	// v1.7.0 introduced it (previously unlimited): requests are LLM-generated
+	// tool calls, so 4 MiB is ample, and oversized requests get 413.
 	mattermostServer.streamableHandler = mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return mattermostServer.mcpServer
-	}, &mcp.StreamableHTTPOptions{Stateless: config.Stateless})
+	}, &mcp.StreamableHTTPOptions{
+		Stateless:           config.Stateless,
+		MaxRequestBodyBytes: mcp.DefaultMaxRequestBodyBytes,
+	})
 
 	// Create HTTP mux router and setup all routes
 	httpMux := http.NewServeMux()
@@ -301,9 +313,68 @@ func normalizeURL(u *url.URL) string {
 	return normalized.String()
 }
 
+// validateHost applies DNS-rebinding protection with the same semantics as
+// the go-sdk's SSE localhost protection (which is disabled in favor of this
+// check, see NewHTTPServer): requests arriving on a loopback local address
+// must carry either a loopback Host or one of the configured public hosts
+// (MMServerURL / SiteURL), so the documented loopback-bind +
+// reverse-proxy-with-external-site-url deployment keeps working while
+// rebinding attacks against localhost servers are still rejected.
+func (s *MattermostHTTPMCPServer) validateHost(r *http.Request) bool {
+	localAddr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok || !isLoopbackHost(localAddr.String()) {
+		// Mirroring the SDK: the protection applies only to connections that
+		// arrived via a loopback address.
+		return true
+	}
+	if isLoopbackHost(r.Host) {
+		return true
+	}
+
+	requestHost := hostWithoutPort(r.Host)
+	for _, allowedOrigin := range s.getAllowedOrigins() {
+		if parsed, err := url.Parse(allowedOrigin); err == nil && strings.EqualFold(parsed.Hostname(), requestHost) {
+			return true
+		}
+	}
+	return false
+}
+
+// isLoopbackHost reports whether a host (optionally host:port) is localhost
+// or a loopback IP, mirroring the go-sdk's check.
+func isLoopbackHost(hostport string) bool {
+	host := hostWithoutPort(hostport)
+	if host == "localhost" {
+		return true
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr.IsLoopback()
+	}
+	return false
+}
+
+// hostWithoutPort strips an optional port (and IPv6 brackets) from a
+// host:port value.
+func hostWithoutPort(hostport string) string {
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		return strings.Trim(host, "[]")
+	}
+	return strings.Trim(hostport, "[]")
+}
+
 // securityMiddleware applies security headers and validation
 func (s *MattermostHTTPMCPServer) securityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Validate the Host header on loopback connections to prevent DNS
+		// rebinding attacks (replaces the SDK's narrower SSE-only check).
+		if !s.validateHost(r) {
+			s.logger.Warn("request blocked due to invalid host header",
+				"host", r.Host,
+				"remote_addr", r.RemoteAddr)
+			http.Error(w, fmt.Sprintf("Forbidden: invalid Host header %q", r.Host), http.StatusForbidden)
+			return
+		}
+
 		// Validate Origin header to prevent DNS rebinding attacks
 		if !s.validateOrigin(r) {
 			s.logger.Warn("request blocked due to invalid origin",
