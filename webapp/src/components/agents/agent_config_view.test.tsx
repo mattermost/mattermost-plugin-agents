@@ -464,13 +464,35 @@ describe('AgentConfigView', () => {
         expect(updateAgent).not.toHaveBeenCalled();
     });
 
-    test('blocks saving when custom instructions exceed the character limit', () => {
+    test.each([
+        ['exactly the ASCII character limit', 'a'.repeat(MaxCustomInstructionsRunes)],
+        // Code points under the limit but UTF-16 length over it: catches .length-based counting.
+        ['astral characters below the character limit', '😀'.repeat((MaxCustomInstructionsRunes / 2) + 1)],
+    ])('allows saving with %s', async (_description, customInstructions) => {
+        mockCreateAgent.mockResolvedValue(savedAgent);
         renderView();
 
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
         fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
         fireEvent.change(screen.getByLabelText('Custom instructions'), {
-            target: {value: 'a'.repeat(MaxCustomInstructionsRunes + 1)},
+            target: {value: customInstructions},
+        });
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+        expect(screen.queryByText('Custom instructions must be 100,000 characters or fewer')).toBeNull();
+    });
+
+    test.each([
+        ['ASCII characters', 'a'.repeat(MaxCustomInstructionsRunes + 1)],
+        ['astral characters', '😀'.repeat(MaxCustomInstructionsRunes + 1)],
+    ])('blocks saving when custom instructions exceed the character limit using %s', (_description, customInstructions) => {
+        renderView();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.change(screen.getByLabelText('Custom instructions'), {
+            target: {value: customInstructions},
         });
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
