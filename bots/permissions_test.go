@@ -286,10 +286,10 @@ func TestUsageRestrictions(t *testing.T) {
 				DisplayName:     "DB Agent 2",
 				ServiceID:       "svc-1",
 				UserAccessLevel: llm.UserAccessLevelBlock,
-				UserIDs:         []string{"blocked_user"},
+				UserIDs:         []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "blocked_user",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -324,6 +324,12 @@ func TestUsageRestrictions(t *testing.T) {
 			err := e.bots.CheckUsageRestrictions(context.Background(), tc.requestingUser, tc.bot, tc.channel)
 			if tc.expectedError != nil {
 				require.ErrorIs(t, err, tc.expectedError)
+
+				// The composite gate relabels ABAC denials as ErrUsageRestriction,
+				// so that sentinel alone cannot tell a legacy restriction from a
+				// denial that never reached the legacy check. Every row here
+				// expects the legacy channel/user switch to do the rejecting.
+				require.NotErrorIs(t, err, accesscontrol.ErrAccessDenied)
 			} else {
 				require.NoError(t, err)
 			}

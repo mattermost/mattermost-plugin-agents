@@ -221,9 +221,11 @@ func (c *Checker) CanUseMCPServer(ctx context.Context, userID, serverID string) 
 	return c.canUseResource(ctx, "abac can_use_mcp_server", userID, ResourceTypeMCP, serverID)
 }
 
-// availabilityProbeExpression is the expression the availability probe compiles.
-// The server special-cases it to "no conditions" and returns immediately, so the
-// probe costs a readiness check and one allocation.
+// availabilityProbeExpression is the expression the availability probe sends.
+// Enterprise special-cases it to "no conditions" without touching the CEL
+// engine, so it is the cheapest expression to ask about — the probe still pays
+// for the RPC round trip, the scope check, and an acting-user lookup, which is
+// what the TTL cache is for.
 const availabilityProbeExpression = "true"
 
 // IsAvailable probes whether the ABAC PAP is usable, on behalf of actingUserID:
