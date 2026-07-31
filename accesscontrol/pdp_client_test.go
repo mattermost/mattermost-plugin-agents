@@ -56,7 +56,7 @@ func TestPluginAPIClientEvaluateAccessRequest(t *testing.T) {
 			wantAttribute: "allow",
 		},
 		{
-			// A deny labelled no_policy is self-contradictory; it must not be
+			// A deny labeled no_policy is self-contradictory; it must not be
 			// mistaken for the unregulated case, which fails open.
 			name: "deny contradicting the no_policy reason stays a deny",
 			decision: &model.AccessDecision{
