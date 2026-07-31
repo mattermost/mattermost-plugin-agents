@@ -93,3 +93,13 @@ Read these only when the trigger applies:
 - Working inside `mcpserver/` (config-vs-runtime, search service wiring, adding optional capabilities): `mcpserver/AGENTS.md`.
 - Configuring providers, agents, or the admin UI: `docs/admin_guide.md`.
 - When working on prompt evals or modifying the eval harness: `cmd/evalviewer/README.md`.
+
+## Cursor Cloud specific instructions
+
+These notes apply to the dashboard-managed multi-repo Cloud environment ("Agents Plus Server"). It clones `mattermost`, `enterprise`, and `mattermost-plugin-agents` as siblings under `/agent/repos/`. Go 1.26.4, Node 24.11.1, and Docker are baked into the snapshot; the startup update script only refreshes Go modules and `node_modules` for the three repos, so do not add toolchain installs to it.
+
+- Node version gotcha: the exec-daemon prepends `/exec-daemon` (an older Node, currently v22) to `PATH`, which would shadow nvm. Node 24.11.1 is made effective via symlinks in `/usr/local/cargo/bin` (first in `PATH`). If `node --version` unexpectedly reports v22, recreate them: `ln -sfn ~/.nvm/versions/node/v24.11.1/bin/node /usr/local/cargo/bin/node` (repeat for `npm`, `npx`). The webapp requires Node `^24` but `engine-strict` is off, so a wrong version only warns.
+- Docker: the daemon is enabled but may need a nudge per boot — `sudo service docker start`. For non-root access from a shell that predates the group change, run `sudo chmod 666 /var/run/docker.sock` (freshly opened login shells already have the `docker` group).
+- Run the whole stack from source (validated end to end): `cd /agent/repos/mattermost/server && ENABLED_DOCKER_SERVICES='postgres redis' make run-server` (details in `mattermost/.cursor/cursor.md`). Local mode is enabled, so seed an admin with `./bin/mmctl --local user create ...` and `team create`. Deploy this plugin against it with `MM_LOCALSOCKETPATH=/var/tmp/mattermost_local.socket ./build/bin/pluginctl deploy mattermost-ai dist/*.tar.gz` (build the bundle first with `make dist-ci`).
+- Configure an agent without the UI by writing to `PUT /plugins/mattermost-ai/admin/config` and `POST /plugins/mattermost-ai/agents` using the `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` secrets — full curl recipe in `cursor_cloud_supplement.md`.
+- Agent replies stream over websocket and may not render immediately in a browser session opened via automation; the reply is persisted, so reload the page (or read the channel via the REST API) to see it.
