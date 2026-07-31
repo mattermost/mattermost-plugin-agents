@@ -16,10 +16,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency verifies that discovery
-// succeeds on strict, spec-compliant metadata without any fallback, and that
-// the deliberate leniency fallbacks (RFC 9728 resource mismatch, RFC 8414
-// issuer mismatch, missing PKCE advertisement) recover with a logged warning.
+// TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency verifies the discovery
+// strictness posture: spec-compliant metadata resolves the advertised
+// (non-conventional) endpoints; a missing PKCE advertisement — the one
+// deliberate leniency — recovers with a logged warning; and spec violations
+// (RFC 9728 resource mismatch, RFC 8414 issuer mismatch) are treated as
+// discovery failures that degrade to the documented fallbacks instead of
+// being papered over.
+//
+// The advertised endpoints use /custom-* paths so discovered endpoints are
+// observably different from the conventional /authorize and /token fallbacks.
 func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 	tests := []struct {
 		name string
@@ -28,30 +34,48 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 		prmResourceSuffix string
 		// asIssuer overrides the advertised issuer; empty means the compliant
 		// value (the server URL).
-		asIssuer    string
-		pkceMethods []string
-		wantWarn    bool
+		asIssuer      string
+		pkceMethods   []string
+		wantWarn      bool
+		wantAuthPath  string
+		wantTokenPath string
+		wantScopes    []string
 	}{
 		{
-			name:        "strict compliant metadata passes without fallback",
-			pkceMethods: []string{"S256"},
-			wantWarn:    false,
+			name:          "strict compliant metadata resolves discovered endpoints",
+			pkceMethods:   []string{"S256"},
+			wantAuthPath:  "/custom-authorize",
+			wantTokenPath: "/custom-token",
+			wantScopes:    []string{"read"},
 		},
 		{
-			name:              "protected resource mismatch recovers via lenient fallback",
+			name:          "missing PKCE advertisement recovers via lenient fallback",
+			wantWarn:      true,
+			wantAuthPath:  "/custom-authorize",
+			wantTokenPath: "/custom-token",
+			wantScopes:    []string{"read"},
+		},
+		{
+			// PRM succeeded and named the issuer, but its metadata fails the
+			// RFC 8414 issuer check, so conventional endpoints on the issuer
+			// are used instead of the advertised custom ones.
+			name:          "issuer mismatch fails AS discovery and falls back to conventional endpoints",
+			asIssuer:      "https://legacy.example.com",
+			pkceMethods:   []string{"S256"},
+			wantAuthPath:  "/authorize",
+			wantTokenPath: "/token",
+			wantScopes:    []string{"read"},
+		},
+		{
+			// PRM discovery fails the RFC 9728 §3.3 resource check, so scopes
+			// are lost and discovery proceeds via AS metadata at the base URL
+			// (which is compliant here and yields the custom endpoints).
+			name:              "resource mismatch fails PRM discovery and falls back to AS metadata at base URL",
 			prmResourceSuffix: "/",
 			pkceMethods:       []string{"S256"},
-			wantWarn:          true,
-		},
-		{
-			name:        "issuer mismatch recovers via lenient fallback",
-			asIssuer:    "https://legacy.example.com",
-			pkceMethods: []string{"S256"},
-			wantWarn:    true,
-		},
-		{
-			name:     "missing PKCE advertisement recovers via lenient fallback",
-			wantWarn: true,
+			wantAuthPath:      "/custom-authorize",
+			wantTokenPath:     "/custom-token",
+			wantScopes:        nil,
 		},
 	}
 
@@ -75,8 +99,8 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
 						Issuer:                        issuer,
-						AuthorizationEndpoint:         serverURL + "/authorize",
-						TokenEndpoint:                 serverURL + "/token",
+						AuthorizationEndpoint:         serverURL + "/custom-authorize",
+						TokenEndpoint:                 serverURL + "/custom-token",
 						CodeChallengeMethodsSupported: tt.pkceMethods,
 					}))
 				default:
@@ -97,9 +121,9 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 			})
 
 			require.NoError(t, err)
-			require.Equal(t, serverURL+"/authorize", config.Endpoint.AuthURL)
-			require.Equal(t, serverURL+"/token", config.Endpoint.TokenURL)
-			require.Equal(t, []string{"read"}, config.Scopes)
+			require.Equal(t, serverURL+tt.wantAuthPath, config.Endpoint.AuthURL)
+			require.Equal(t, serverURL+tt.wantTokenPath, config.Endpoint.TokenURL)
+			require.Equal(t, tt.wantScopes, config.Scopes)
 			if tt.wantWarn {
 				mockClient.AssertCalled(t, "LogWarn", mock.AnythingOfType("string"), mock.Anything)
 			}

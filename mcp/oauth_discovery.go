@@ -17,15 +17,11 @@ import (
 )
 
 // fetchProtectedResourceMetadata fetches OAuth 2.0 Protected Resource
-// Metadata (RFC 9728) via oauthex, with a lenient fallback for the resource
-// identifier check.
-//
-// oauthex.GetProtectedResourceMetadata enforces RFC 9728 §3.3 strictly: the
-// metadata's "resource" value must equal the resource identifier the client
-// used, byte for byte. Real-world MCP servers frequently violate this (the
-// advertised resource differs by a trailing slash or a path component), so on
-// that specific failure we log a warning and re-fetch the document leniently,
-// validating the authorization server URLs ourselves.
+// Metadata (RFC 9728) via oauthex, which enforces the spec strictly —
+// including the §3.3 requirement that the metadata's "resource" value equal
+// the resource identifier the client used. Any failure is fatal here; the
+// caller falls back to authorization server metadata discovery at the base
+// URL.
 func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serverURL, metadataURL string) (*oauthex.ProtectedResourceMetadata, error) {
 	if metadataURL == "" {
 		// The metadata URL is not provided, use the default well-known
@@ -39,25 +35,7 @@ func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serve
 
 	prm, err := oauthex.GetProtectedResourceMetadata(ctx, metadataURL, serverURL, m.httpClient)
 	if err != nil {
-		// Match the resource-mismatch error only; every other failure
-		// (unreachable, non-200, bad JSON, insecure URLs) stays fatal so the
-		// caller can fall back to authorization server metadata discovery.
-		if !strings.Contains(err.Error(), "got metadata resource") {
-			return nil, fmt.Errorf("failed to fetch protected resource metadata from %s: %w", metadataURL, err)
-		}
-		m.pluginAPI.LogWarn("Protected resource metadata resource does not match the MCP server URL; retrying leniently (RFC 9728 Section 3.3 violation by the server)",
-			"metadataURL", metadataURL,
-			"serverURL", serverURL,
-			"error", err)
-		prm, err = fetchJSONLenient[oauthex.ProtectedResourceMetadata](ctx, m.httpClient, metadataURL)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch protected resource metadata from %s: %w", metadataURL, err)
-		}
-		for _, authServer := range prm.AuthorizationServers {
-			if urlErr := checkHTTPSOrLoopbackURL(authServer); urlErr != nil {
-				return nil, fmt.Errorf("invalid authorization server URL in protected resource metadata from %s: %w", metadataURL, urlErr)
-			}
-		}
+		return nil, fmt.Errorf("failed to fetch protected resource metadata from %s: %w", metadataURL, err)
 	}
 
 	if len(prm.AuthorizationServers) == 0 {
@@ -68,20 +46,14 @@ func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serve
 }
 
 // fetchAuthorizationServerMetadata fetches OAuth 2.0 Authorization Server
-// Metadata (RFC 8414) via oauthex, with a lenient fallback for two strictness
-// checks legacy MCP servers commonly fail:
-//
-//   - Issuer equality: oauthex enforces that the metadata's issuer matches the
-//     URL it was derived from. The 2025-03-26 MCP spec era tolerated
-//     mismatches, and legacy servers still serve mismatched issuers.
-//   - PKCE advertisement: oauthex requires a non-empty
-//     code_challenge_methods_supported. The MCP spec mandates PKCE but older
-//     servers don't advertise it. We always use PKCE regardless of what the
-//     server advertises, so this is safe to relax.
-//
-// Note oauthex also requires the well-known metadata URL itself to be HTTPS or
-// loopback; we keep that strictness (a plain-HTTP non-loopback OAuth server
-// was never legitimate).
+// Metadata (RFC 8414) via oauthex, adopting its strict validation (issuer
+// equality, HTTPS-or-loopback URLs) with a single deliberate relaxation:
+// oauthex requires a non-empty code_challenge_methods_supported, but the most
+// common real-world non-compliance is servers that support PKCE without
+// advertising it. Since we always use PKCE regardless of what the server
+// advertises, that specific failure triggers a lenient re-fetch (with a
+// warning) instead of failing discovery. oauthex flattens error types, so the
+// error message is the only stable signal for detecting it.
 func (m *OAuthManager) fetchAuthorizationServerMetadata(ctx context.Context, issuer string) (*oauthex.AuthServerMeta, error) {
 	// Construct the well-known metadata URL according to RFC 8414 Section 3.1:
 	// the well-known component is inserted between host and path.
@@ -97,10 +69,10 @@ func (m *OAuthManager) fetchAuthorizationServerMetadata(ctx context.Context, iss
 		return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: not found", metadataURL)
 	}
 	if err != nil {
-		if !isLenientRecoverableAuthServerMetaErr(err) {
+		if !strings.Contains(err.Error(), "does not implement PKCE") {
 			return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
 		}
-		m.pluginAPI.LogWarn("Authorization server metadata failed strict validation; retrying leniently (legacy MCP servers may serve mismatched issuers or omit PKCE advertisement)",
+		m.pluginAPI.LogWarn("Authorization server metadata does not advertise PKCE support; retrying leniently (we always use PKCE regardless)",
 			"metadataURL", metadataURL,
 			"issuer", issuer,
 			"error", err)
@@ -116,19 +88,11 @@ func (m *OAuthManager) fetchAuthorizationServerMetadata(ctx context.Context, iss
 	return asm, nil
 }
 
-// isLenientRecoverableAuthServerMetaErr reports whether a strict
-// oauthex.GetAuthServerMeta failure is one of the two deliberate strictness
-// relaxations (issuer mismatch, missing PKCE advertisement). oauthex flattens
-// error types, so the messages are the only stable signal.
-func isLenientRecoverableAuthServerMetaErr(err error) bool {
-	return strings.Contains(err.Error(), "does not match issuer URL") ||
-		strings.Contains(err.Error(), "does not implement PKCE")
-}
-
-// validateLenientAuthServerMeta applies the validations the lenient fetch path
-// still needs: RFC 8414 required fields, and HTTPS-or-loopback on the
-// endpoints we will actually contact (mirroring oauthex's own endpoint
-// validation).
+// validateLenientAuthServerMeta applies the validations the PKCE-lenient
+// re-fetch still needs: RFC 8414 required fields, and HTTPS-or-loopback on
+// the endpoints we will actually contact (oauthex validates endpoint URLs
+// only after its PKCE check, so a PKCE failure means they were never
+// validated).
 func validateLenientAuthServerMeta(asm *oauthex.AuthServerMeta, metadataURL string) error {
 	if asm.Issuer == "" {
 		return fmt.Errorf("missing required 'issuer' field in authorization server metadata from %s", metadataURL)
@@ -187,10 +151,9 @@ const maxMetadataBytes = 1 << 20
 
 // fetchJSONLenient fetches and decodes an OAuth metadata document without the
 // strict RFC validations oauthex applies (no Content-Type requirement, no
-// issuer/resource/PKCE checks). It is the shared fallback for both protected
-// resource metadata and authorization server metadata when a real-world
-// server fails oauthex's strict validation; callers are responsible for any
-// validation the lenient path still needs.
+// issuer/PKCE checks). It is used by the PKCE-advertisement fallback in
+// fetchAuthorizationServerMetadata and by discoverRegistrationEndpoint;
+// callers are responsible for any validation the lenient path still needs.
 func fetchJSONLenient[T any](ctx context.Context, httpClient *http.Client, metadataURL string) (*T, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
 	if err != nil {
