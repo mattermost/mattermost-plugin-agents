@@ -461,38 +461,84 @@ func TestPromptCaching(t *testing.T) {
 	}
 }
 
-// TestWebSearchToolOptsOutOfAnthropicDynamicFiltering pins the fix for the
-// unexpected Anthropic code-execution (bash) sandbox: Bifrost auto-selects
-// Anthropic's web_search_20260209 tool version for newer Claude models
-// (4.6+, Opus 4.7+, Sonnet 5+), and that version defaults allowed_callers to
-// code_execution — the Anthropic API then auto-provisions its code-execution
-// environment ("dynamic filtering") even though the plugin never requested
-// it. The plugin opts out by pinning allowed_callers to ["direct"] on the
-// neutral web_search tool. This test verifies the opt-out reaches the
-// Anthropic wire request for both the bot-level native tool and the
-// per-request NativeWebSearchAllowed paths, on both dynamic-filtering and
-// basic web search models.
-func TestWebSearchToolOptsOutOfAnthropicDynamicFiltering(t *testing.T) {
+// TestAnthropicNativeToolSandboxOptInMatrix pins the sandbox opt-in contract:
+//
+//   - Without the code_interpreter native tool, web_search and web_fetch carry
+//     allowed_callers ["direct"] — Anthropic's documented opt-out from dynamic
+//     filtering, which would otherwise auto-provision the code-execution (bash)
+//     sandbox on newer Claude models (Bifrost auto-selects the *_20260209 tool
+//     versions for 4.6+/Opus 4.7+/Sonnet 5+) — and no code_execution tool may
+//     appear on the wire.
+//   - With code_interpreter enabled, the sandbox is sanctioned by the admin:
+//     the pin is omitted. Alongside web tools, Bifrost defers to Anthropic's
+//     auto-injection (no explicit code_execution tool — including one would
+//     400 with "Auto-injecting tools would conflict"); without web tools, the
+//     explicit code_execution tool must reach the wire.
+//
+// Assertions run against both the neutral Bifrost request and the Anthropic
+// wire request (anthropic.ToAnthropicResponsesRequest), so the contract holds
+// whatever tool version Bifrost picks for the model.
+func TestAnthropicNativeToolSandboxOptInMatrix(t *testing.T) {
 	tests := []struct {
 		name               string
 		model              string
 		enabledNativeTools []string
 		cfg                llm.LanguageModelConfig
+		wantPinnedWebTools bool
+		wantWireWebSearch  bool
+		wantWireWebFetch   bool
+		wantWireCodeExec   bool
 	}{
 		{
-			name:               "bot-level native web_search on a dynamic-filtering model",
+			name:               "web_search only on a dynamic-filtering model stays pinned",
 			model:              "claude-sonnet-4-6",
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
+			wantPinnedWebTools: true,
+			wantWireWebSearch:  true,
 		},
 		{
-			name:               "bot-level native web_search on a basic web search model",
+			name:               "web_search only on a basic model stays pinned",
 			model:              "claude-sonnet-4-20250514",
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
+			wantPinnedWebTools: true,
+			wantWireWebSearch:  true,
 		},
 		{
-			name:  "per-request NativeWebSearchAllowed on a dynamic-filtering model",
-			model: "claude-opus-4-6",
-			cfg:   llm.LanguageModelConfig{NativeWebSearchAllowed: true, ToolsDisabled: true},
+			name:               "per-request NativeWebSearchAllowed stays pinned",
+			model:              "claude-opus-4-6",
+			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true, ToolsDisabled: true},
+			wantPinnedWebTools: true,
+			wantWireWebSearch:  true,
+		},
+		{
+			name:               "web_search and web_fetch without sandbox both pinned",
+			model:              "claude-sonnet-4-6",
+			enabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch},
+			wantPinnedWebTools: true,
+			wantWireWebSearch:  true,
+			wantWireWebFetch:   true,
+		},
+		{
+			name:               "web_fetch only stays pinned",
+			model:              "claude-opus-4-6",
+			enabledNativeTools: []string{llm.NativeToolWebFetch},
+			wantPinnedWebTools: true,
+			wantWireWebFetch:   true,
+		},
+		{
+			name:               "explicit sandbox unpins web tools and defers to auto-injection",
+			model:              "claude-sonnet-4-6",
+			enabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch, llm.NativeToolCodeInterpreter},
+			wantPinnedWebTools: false,
+			wantWireWebSearch:  true,
+			wantWireWebFetch:   true,
+			wantWireCodeExec:   false, // bifrost skips it: Anthropic auto-injects alongside web tools
+		},
+		{
+			name:               "sandbox without web tools sends explicit code_execution",
+			model:              "claude-sonnet-4-6",
+			enabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+			wantWireCodeExec:   true,
 		},
 	}
 
@@ -509,41 +555,53 @@ func TestWebSearchToolOptsOutOfAnthropicDynamicFiltering(t *testing.T) {
 			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
 			require.NoError(t, err)
 
-			// Neutral request: web_search must carry allowed_callers ["direct"].
-			var neutralWebSearch *schemas.ResponsesTool
+			// Neutral request: the allowed_callers pin must match the sandbox state.
+			wantCallers := []string(nil)
+			if tt.wantPinnedWebTools {
+				wantCallers = []string{"direct"}
+			}
 			for i := range respReq.Params.Tools {
-				if respReq.Params.Tools[i].Type == schemas.ResponsesToolTypeWebSearch {
-					neutralWebSearch = &respReq.Params.Tools[i]
+				tool := &respReq.Params.Tools[i]
+				switch tool.Type {
+				case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebFetch:
+					assert.Equal(t, wantCallers, tool.AllowedCallers,
+						"neutral %s allowed_callers must reflect the sandbox opt-in state", tool.Type)
 				}
 			}
-			require.NotNil(t, neutralWebSearch, "web_search tool must be present in the request")
-			assert.Equal(t, []string{"direct"}, neutralWebSearch.AllowedCallers)
 
-			// Wire request: feed through bifrost's Anthropic converter and
-			// confirm the opt-out survives, whatever web_search_* tool version
-			// bifrost picked for the model.
+			// Wire request: the contract must survive bifrost's Anthropic converter.
 			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
 			defer cancel()
 			wire, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
 			require.NoError(t, err)
 
-			var wireWebSearch *anthropic.AnthropicTool
+			var wireWebSearch, wireWebFetch *anthropic.AnthropicTool
+			wireHasCodeExec := false
 			for i := range wire.Tools {
 				tool := &wire.Tools[i]
 				if tool.Type == nil {
 					continue
 				}
-				if strings.HasPrefix(string(*tool.Type), "web_search_") {
+				switch {
+				case strings.HasPrefix(string(*tool.Type), "web_search_"):
 					wireWebSearch = tool
+				case strings.HasPrefix(string(*tool.Type), "web_fetch_"):
+					wireWebFetch = tool
+				case strings.HasPrefix(string(*tool.Type), "code_execution"):
+					wireHasCodeExec = true
 				}
-				// The plugin never asks for Anthropic code execution; no
-				// conversion step may inject it explicitly.
-				assert.NotContains(t, string(*tool.Type), "code_execution")
 			}
-			require.NotNil(t, wireWebSearch, "the Anthropic wire request must carry a web_search tool")
-			assert.Equal(t, []string{"direct"}, wireWebSearch.AllowedCallers,
-				"allowed_callers [direct] is the documented opt-out from dynamic filtering, "+
-					"which would otherwise auto-provision Anthropic's code-execution (bash) sandbox")
+
+			assert.Equal(t, tt.wantWireCodeExec, wireHasCodeExec, "explicit code_execution on the wire")
+			require.Equal(t, tt.wantWireWebSearch, wireWebSearch != nil, "web_search on the wire")
+			require.Equal(t, tt.wantWireWebFetch, wireWebFetch != nil, "web_fetch on the wire")
+			for _, tool := range []*anthropic.AnthropicTool{wireWebSearch, wireWebFetch} {
+				if tool == nil {
+					continue
+				}
+				assert.Equal(t, wantCallers, tool.AllowedCallers,
+					"wire %s allowed_callers must reflect the sandbox opt-in state", *tool.Type)
+			}
 		})
 	}
 }

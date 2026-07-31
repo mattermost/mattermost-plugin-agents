@@ -1804,30 +1804,43 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 }
 
 // anthropicDirectToolCaller is the allowed_callers value that restricts a
-// server tool to direct model invocation. See webSearchResponsesTool.
+// server tool to direct model invocation. See webToolResponsesTool.
 const anthropicDirectToolCaller = "direct"
 
-// webSearchResponsesTool builds the native web-search tool definition.
+// sandboxEnabled reports whether the agent explicitly enabled the provider code
+// sandbox (the code_interpreter native tool — Anthropic's code_execution).
+func (b *LLM) sandboxEnabled() bool {
+	return b.isNativeToolEnabled(llm.NativeToolCodeInterpreter)
+}
+
+// webToolResponsesTool builds a native web_search / web_fetch tool definition.
 //
-// AllowedCallers is pinned to "direct" because Bifrost auto-selects Anthropic's
-// web_search_20260209 tool version for newer Claude models (4.6+, Opus 4.7+,
-// Sonnet 5+), and that version defaults allowed_callers to code_execution: the
-// Anthropic API then auto-provisions its code-execution (bash) sandbox for
-// "dynamic filtering", a capability this plugin does not support or surface.
-// "direct" is Anthropic's documented opt-out, accepted by every web_search tool
+// Unless the agent explicitly enabled the code sandbox, AllowedCallers is
+// pinned to "direct": Bifrost auto-selects Anthropic's *_20260209 web tool
+// versions for newer Claude models (4.6+, Opus 4.7+, Sonnet 5+), and those
+// versions default allowed_callers to code_execution — the Anthropic API then
+// auto-provisions its code-execution (bash) sandbox for "dynamic filtering".
+// "direct" is Anthropic's documented opt-out, accepted by every web tool
 // version:
 // https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering
 // The plugin has no other lever — Bifrost picks the tool version from the model
-// name and the neutral schema carries no web-search version field. The field is
-// safe to set unconditionally: Bifrost strips allowed_callers for providers
-// that don't accept it (OpenAI serializers drop Anthropic-only tool flags;
-// Gemini converts to typed GoogleSearch; the Anthropic-family builder strips it
-// on Bedrock/Vertex via StripUnsupportedAnthropicFields).
-func webSearchResponsesTool() schemas.ResponsesTool {
-	return schemas.ResponsesTool{
-		Type:           schemas.ResponsesToolTypeWebSearch,
-		AllowedCallers: []string{anthropicDirectToolCaller},
+// name and the neutral schema carries no web tool version field.
+//
+// When the agent has the code_interpreter native tool enabled, the sandbox is
+// sanctioned by the admin: the pin is omitted so Anthropic's documented default
+// (dynamic filtering in the shared execution container) applies.
+//
+// The field is safe to set regardless of provider: Bifrost strips
+// allowed_callers for providers that don't accept it (OpenAI serializers drop
+// Anthropic-only tool flags; Gemini converts to typed GoogleSearch; the
+// Anthropic-family builder strips it on Bedrock/Vertex via
+// StripUnsupportedAnthropicFields).
+func (b *LLM) webToolResponsesTool(toolType schemas.ResponsesToolType) schemas.ResponsesTool {
+	tool := schemas.ResponsesTool{Type: toolType}
+	if !b.sandboxEnabled() {
+		tool.AllowedCallers = []string{anthropicDirectToolCaller}
 	}
+	return tool
 }
 
 // convertToResponsesTools creates Responses API tools including native tools and function tools.
@@ -1837,13 +1850,15 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 	// Add native tools (always add when configured, regardless of ToolsDisabled)
 	for _, nativeTool := range b.enabledNativeTools {
 		switch nativeTool {
-		case "web_search":
-			result = append(result, webSearchResponsesTool())
-		case "file_search":
+		case llm.NativeToolWebSearch:
+			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
+		case llm.NativeToolWebFetch:
+			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebFetch))
+		case llm.NativeToolFileSearch:
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeFileSearch,
 			})
-		case "code_interpreter":
+		case llm.NativeToolCodeInterpreter:
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeCodeInterpreter,
 			})
@@ -1852,8 +1867,8 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 
 	// When NativeWebSearchAllowed is true but web_search is not in enabledNativeTools,
 	// add it dynamically
-	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled("web_search") {
-		result = append(result, webSearchResponsesTool())
+	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled(llm.NativeToolWebSearch) {
+		result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
 	}
 
 	// Keep function tools defined when the history has tool_use blocks; the

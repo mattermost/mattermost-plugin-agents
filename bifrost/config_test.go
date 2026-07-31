@@ -38,7 +38,12 @@ func TestSupportsNativeTools(t *testing.T) {
 }
 
 func TestFilterNativeToolsForServiceType(t *testing.T) {
-	tools := []string{"web_search"}
+	allTools := []string{
+		llm.NativeToolWebSearch,
+		llm.NativeToolWebFetch,
+		llm.NativeToolFileSearch,
+		llm.NativeToolCodeInterpreter,
+	}
 
 	tests := []struct {
 		name        string
@@ -46,13 +51,45 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 		tools       []string
 		want        []string
 	}{
-		{"OpenAI keeps tools", llm.ServiceTypeOpenAI, tools, tools},
-		{"Anthropic keeps tools", llm.ServiceTypeAnthropic, tools, tools},
-		{"Gemini keeps tools", llm.ServiceTypeGemini, tools, tools},
-		{"Vertex keeps tools", llm.ServiceTypeVertex, tools, tools},
-		{"Bedrock drops tools", llm.ServiceTypeBedrock, tools, []string{}},
-		{"Cohere drops tools", llm.ServiceTypeCohere, tools, []string{}},
-		{"Mistral drops tools", llm.ServiceTypeMistral, tools, []string{}},
+		{
+			name:        "OpenAI keeps its Responses API tools, drops web_fetch",
+			serviceType: llm.ServiceTypeOpenAI,
+			tools:       allTools,
+			want:        []string{llm.NativeToolWebSearch, llm.NativeToolFileSearch, llm.NativeToolCodeInterpreter},
+		},
+		{
+			name:        "Azure keeps its Responses API tools, drops web_fetch",
+			serviceType: llm.ServiceTypeAzure,
+			tools:       allTools,
+			want:        []string{llm.NativeToolWebSearch, llm.NativeToolFileSearch, llm.NativeToolCodeInterpreter},
+		},
+		{
+			name:        "Anthropic keeps its server tools, drops file_search",
+			serviceType: llm.ServiceTypeAnthropic,
+			tools:       allTools,
+			want:        []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch, llm.NativeToolCodeInterpreter},
+		},
+		{
+			name:        "Gemini keeps only web_search",
+			serviceType: llm.ServiceTypeGemini,
+			tools:       allTools,
+			want:        []string{llm.NativeToolWebSearch},
+		},
+		{
+			name:        "Vertex keeps only web_search",
+			serviceType: llm.ServiceTypeVertex,
+			tools:       allTools,
+			want:        []string{llm.NativeToolWebSearch},
+		},
+		{
+			name:        "unknown tool ids are dropped",
+			serviceType: llm.ServiceTypeAnthropic,
+			tools:       []string{"totally_made_up", llm.NativeToolWebSearch},
+			want:        []string{llm.NativeToolWebSearch},
+		},
+		{"Bedrock drops tools", llm.ServiceTypeBedrock, []string{llm.NativeToolWebSearch}, []string{}},
+		{"Cohere drops tools", llm.ServiceTypeCohere, []string{llm.NativeToolWebSearch}, []string{}},
+		{"Mistral drops tools", llm.ServiceTypeMistral, []string{llm.NativeToolWebSearch}, []string{}},
 		{"nil tools stay nil", llm.ServiceTypeOpenAI, nil, nil},
 		{"empty tools stay empty", llm.ServiceTypeOpenAI, []string{}, []string{}},
 	}

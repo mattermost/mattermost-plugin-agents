@@ -129,14 +129,11 @@ type BotConfig struct {
 	TeamIDs            []string           `json:"teamIDs"`
 	MaxFileSize        int64              `json:"maxFileSize"`
 
-	// EnabledNativeTools contains the list of enabled native tools for this bot.
-	// Supported values by provider:
-	//   - OpenAI / Azure: ["web_search", "file_search", "code_interpreter"]
-	//     (only works when UseResponsesAPI is true for OpenAI-compatible and Azure)
-	//   - Anthropic: ["web_search"]
-	//   - Gemini / Vertex AI: ["web_search"] (mapped to Google Search / grounding
-	//     via Bifrost's Responses API)
-	// For other providers these values are filtered out at request time.
+	// EnabledNativeTools contains the list of enabled native tools for this bot
+	// (see the NativeTool* constants). Which ids a provider actually supports is
+	// defined by bifrost.SupportedNativeToolsForServiceType; unsupported values
+	// are filtered out at request time. For OpenAI-compatible and Azure services,
+	// native tools additionally require UseResponsesAPI.
 	EnabledNativeTools []string `json:"enabledNativeTools"`
 
 	// EnabledMCPTools is the per-agent allowlist of MCP tools:
