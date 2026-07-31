@@ -412,6 +412,66 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, "https://example.com", parsedAnnotations[0].URL)
 	})
 
+	t.Run("finalizes with server tool activity blocks and broadcasts them", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		inProgress := []llm.ServerToolUse{{
+			ID: "srv1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusInProgress, SubTool: "bash",
+		}}
+		final := []llm.ServerToolUse{{
+			ID: "srv1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusSuccess,
+			SubTool: "bash", Command: "ls", Output: "file.txt\u202E\n",
+		}}
+
+		streamChannel := make(chan llm.TextStreamEvent, 4)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeServerToolUse, Value: inProgress}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeServerToolUse, Value: final}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Done."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
+
+		// Persisted turn: the final snapshot lands as a server_tool_use block
+		// before the text block, with bidi characters sanitized.
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
+		require.Len(t, blocks, 2)
+		require.Equal(t, conversation.BlockTypeServerToolUse, blocks[0].Type)
+		require.NotNil(t, blocks[0].ServerTool)
+		require.Equal(t, "srv1", blocks[0].ServerTool.ID)
+		require.Equal(t, llm.ServerToolStatusSuccess, blocks[0].ServerTool.Status)
+		require.Equal(t, "ls", blocks[0].ServerTool.Command)
+		require.NotContains(t, blocks[0].ServerTool.Output, "\u202E", "output must be sanitized before persisting")
+		require.Equal(t, conversation.BlockTypeText, blocks[1].Type)
+
+		// Websocket: every snapshot is broadcast under the server_tool control.
+		var serverToolEvents []publishedEvent
+		for _, ev := range client.events {
+			if ev.payload["control"] == "server_tool" {
+				serverToolEvents = append(serverToolEvents, ev)
+			}
+		}
+		require.Len(t, serverToolEvents, 2, "both snapshots must be broadcast")
+		var broadcastUses []llm.ServerToolUse
+		require.NoError(t, json.Unmarshal([]byte(serverToolEvents[1].payload["server_tool"].(string)), &broadcastUses))
+		require.Len(t, broadcastUses, 1)
+		require.Equal(t, llm.ServerToolStatusSuccess, broadcastUses[0].Status)
+	})
+
 	t.Run("finalizes with token usage", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 		client := &fakeStreamingClient{

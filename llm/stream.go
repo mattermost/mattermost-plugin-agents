@@ -69,6 +69,18 @@ type ServerToolUse struct {
 	ErrorCode string `json:"error_code,omitempty"`
 }
 
+// Sanitize escapes Unicode bidi/spoofing characters in every LLM- or
+// web-influenced string field, mirroring ToolCall.SanitizeArguments. Call it
+// before broadcasting or persisting the activity.
+func (s *ServerToolUse) Sanitize() {
+	s.Query = SanitizeNonPrintableChars(s.Query)
+	s.URL = SanitizeNonPrintableChars(s.URL)
+	s.Title = SanitizeNonPrintableChars(s.Title)
+	s.Command = SanitizeNonPrintableChars(s.Command)
+	s.Output = SanitizeNonPrintableChars(s.Output)
+	s.ErrorCode = SanitizeNonPrintableChars(s.ErrorCode)
+}
+
 // TokenUsage represents token usage statistics for an LLM request. Cached,
 // reasoning, and cost fields stay zero when the provider doesn't report them.
 type TokenUsage struct {
