@@ -322,13 +322,7 @@ func TestHandleGetUserMCPToolsStaticOAuthCredentialsNeedOAuthWhenUnauthenticated
 	}
 
 	mmClient := mmapimocks.NewMockClient(t)
-	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.storedTokenEnvelope")).Return(nil).Maybe()
-	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*oauth2.Token")).
-		Run(func(args mock.Arguments) {
-			token := args.Get(1).(*oauth2.Token)
-			*token = oauth2.Token{}
-		}).
-		Return(nil)
+	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*[]uint8")).Return(mmapi.ErrKVNotFound)
 	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).Return(nil)
 
 	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
@@ -370,11 +364,11 @@ func TestHandleGetUserMCPToolsStoredTokenMarksZeroToolServerAuthenticated(t *tes
 	}
 
 	mmClient := mmapimocks.NewMockClient(t)
-	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.storedTokenEnvelope")).Return(nil).Maybe()
-	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*oauth2.Token")).
+	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*[]uint8")).
 		Run(func(args mock.Arguments) {
-			token := args.Get(1).(*oauth2.Token)
-			*token = oauth2.Token{AccessToken: "stored-token"}
+			raw := args.Get(1).(*[]byte)
+			b, _ := json.Marshal(oauth2.Token{AccessToken: "stored-token"})
+			*raw = b
 		}).
 		Return(nil)
 	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).Return(nil)
@@ -418,11 +412,11 @@ func TestHandleGetUserMCPToolsAuthErrorsOverrideStoredTokensForZeroToolServers(t
 	}
 
 	mmClient := mmapimocks.NewMockClient(t)
-	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.storedTokenEnvelope")).Return(nil).Maybe()
-	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*oauth2.Token")).
+	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*[]uint8")).
 		Run(func(args mock.Arguments) {
-			token := args.Get(1).(*oauth2.Token)
-			*token = oauth2.Token{AccessToken: "stored-token"}
+			raw := args.Get(1).(*[]byte)
+			b, _ := json.Marshal(oauth2.Token{AccessToken: "stored-token"})
+			*raw = b
 		}).
 		Return(nil).
 		Maybe()
@@ -559,13 +553,7 @@ func TestHandleGetUserMCPToolsAuthNeededStateOverridesDiscoveredTools(t *testing
 	}
 
 	mmClient := mmapimocks.NewMockClient(t)
-	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.storedTokenEnvelope")).Return(nil).Maybe()
-	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*oauth2.Token")).
-		Run(func(args mock.Arguments) {
-			token := args.Get(1).(*oauth2.Token)
-			*token = oauth2.Token{}
-		}).
-		Return(nil)
+	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*[]uint8")).Return(mmapi.ErrKVNotFound)
 	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
 		Run(func(args mock.Arguments) {
 			state := args.Get(1).(*mcp.OAuthNeededState)

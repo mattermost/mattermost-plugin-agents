@@ -14,10 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	mocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
@@ -234,19 +231,11 @@ func boundTestEnvelope(serverURL string, token *oauth2.Token) *storedTokenEnvelo
 	}
 }
 
-// mockEnvelopeGet registers a single KVGet expectation returning the given
-// grant envelope.
-func mockEnvelopeGet(mockClient *mocks.MockClient, userID, serverID string, envelope *storedTokenEnvelope) {
-	mockClient.On("KVGet", buildTokenKey(userID, serverID), mock.AnythingOfType("*mcp.storedTokenEnvelope")).
-		Run(func(args mock.Arguments) { *(args.Get(1).(*storedTokenEnvelope)) = *envelope }).
-		Return(nil).Once()
-}
-
-// TestPersistingTokenSourceInvalidGrantRotatedToken covers the HA race: this
-// node's refresh fails with invalid_grant because another node already
-// rotated the grant. The compare-and-delete loses, the concurrently stored
-// (valid) grant must NOT be deleted, and the winner's token is adopted.
-func TestPersistingTokenSourceInvalidGrantRotatedToken(t *testing.T) {
+// TestPersistingTokenSourceInvalidGrantClearsGrant verifies that when the
+// refresh token is genuinely dead (invalid_grant under the serialized lease,
+// i.e. not a concurrency artifact) the grant is cleared and re-authentication
+// is required.
+func TestPersistingTokenSourceInvalidGrantClearsGrant(t *testing.T) {
 	const userID = "user123"
 	const serverID = "rotated-server"
 
@@ -255,29 +244,14 @@ func TestPersistingTokenSourceInvalidGrantRotatedToken(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
 	})
-	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	manager, kv := newStatefulKVManager(t, nil, server.Client())
 
-	staleEnvelope := boundTestEnvelope(server.URL, &oauth2.Token{
+	kv.putEnvelope(t, userID, serverID, boundTestEnvelope(server.URL, &oauth2.Token{
 		AccessToken:  "old-access",
 		RefreshToken: "old-refresh",
 		TokenType:    "Bearer",
 		Expiry:       time.Now().Add(-time.Hour),
-	})
-	rotatedEnvelope := boundTestEnvelope(server.URL, &oauth2.Token{
-		AccessToken:  "rotated-access",
-		RefreshToken: "rotated-refresh",
-		TokenType:    "Bearer",
-		Expiry:       time.Now().Add(time.Hour),
-	})
-
-	// First load (TokenSource) sees the stale grant; the compare-and-delete
-	// after invalid_grant loses because another node rotated the grant, and
-	// the re-load adopts the winner. KVDelete is deliberately not registered:
-	// an unconditional delete of the rotated grant fails the test.
-	mockEnvelopeGet(mockClient, userID, serverID, staleEnvelope)
-	mockClient.On("KVCompareAndSet", buildTokenKey(userID, serverID), mock.Anything, mock.Anything).
-		Return(false, nil).Once()
-	mockEnvelopeGet(mockClient, userID, serverID, rotatedEnvelope)
+	}))
 
 	handler := newUserOAuthHandler(userID, ServerConfig{
 		Name:         serverID,
@@ -289,9 +263,12 @@ func TestPersistingTokenSourceInvalidGrantRotatedToken(t *testing.T) {
 	tokenSource, err := handler.TokenSource(context.Background())
 	require.NoError(t, err)
 
-	token, err := tokenSource.Token()
-	require.NoError(t, err, "the concurrently rotated valid grant must be adopted")
-	require.Equal(t, "rotated-access", token.AccessToken)
+	_, err = tokenSource.Token()
+	require.Error(t, err)
+	var unauthorized *mcpUnauthorized
+	require.ErrorAs(t, err, &unauthorized)
+	require.Contains(t, err.Error(), "re-authentication required")
+	require.False(t, kv.exists(userID, serverID), "the dead grant must be cleared")
 }
 
 // TestPersistingTokenSourceRefreshTimeout verifies that a hung identity
@@ -316,15 +293,14 @@ func TestPersistingTokenSourceRefreshTimeout(t *testing.T) {
 	// Registered after the server so it runs BEFORE server.Close (LIFO):
 	// Close waits for in-flight handlers, which block on release.
 	t.Cleanup(func() { close(release) })
-	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	manager, kv := newStatefulKVManager(t, nil, server.Client())
 
-	expiredEnvelope := boundTestEnvelope(server.URL, &oauth2.Token{
+	kv.putEnvelope(t, userID, serverID, boundTestEnvelope(server.URL, &oauth2.Token{
 		AccessToken:  "old-access",
 		RefreshToken: "old-refresh",
 		TokenType:    "Bearer",
 		Expiry:       time.Now().Add(-time.Hour),
-	})
-	mockEnvelopeGet(mockClient, userID, serverID, expiredEnvelope)
+	}))
 
 	handler := newUserOAuthHandler(userID, ServerConfig{
 		Name:         serverID,
@@ -351,8 +327,6 @@ func TestPersistingTokenSourceRefreshTimeout(t *testing.T) {
 func TestPersistingTokenSourceLegacyTokenForcesReauth(t *testing.T) {
 	const userID = "user123"
 	const serverID = "legacy-server"
-
-	manager, mockClient := setupTestOAuthManagerFull(t, nil, &http.Client{})
 
 	tests := []struct {
 		name       string
@@ -381,16 +355,9 @@ func TestPersistingTokenSourceLegacyTokenForcesReauth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// A bare oauth2.Token in the KV store: the envelope read yields
-			// no versioned envelope, the legacy read yields the token.
-			mockClient.On("KVGet", buildTokenKey(userID, serverID), mock.AnythingOfType("*mcp.storedTokenEnvelope")).
-				Return(nil).Once()
-			mockClient.On("KVGet", buildTokenKey(userID, serverID), mock.AnythingOfType("*oauth2.Token")).
-				Run(func(args mock.Arguments) { *(args.Get(1).(*oauth2.Token)) = *tt.token }).
-				Return(nil).Once()
-			if tt.wantReAuth {
-				mockClient.On("KVDelete", buildTokenKey(userID, serverID)).Return(nil).Once()
-			}
+			manager, kv := newStatefulKVManager(t, nil, &http.Client{})
+			// A bare oauth2.Token in the KV store (pre-envelope layout).
+			kv.putLegacyToken(t, userID, serverID, tt.token)
 
 			handler := newUserOAuthHandler(userID, ServerConfig{Name: serverID, BaseURL: "https://mcp.example.com"}, manager)
 			tokenSource, err := handler.TokenSource(context.Background())
@@ -403,6 +370,7 @@ func TestPersistingTokenSourceLegacyTokenForcesReauth(t *testing.T) {
 				var unauthorized *mcpUnauthorized
 				require.ErrorAs(t, err, &unauthorized)
 				require.Contains(t, err.Error(), "re-authentication required")
+				require.False(t, kv.exists(userID, serverID), "expired legacy token must be cleared")
 				return
 			}
 			require.NoError(t, err)
@@ -411,10 +379,27 @@ func TestPersistingTokenSourceLegacyTokenForcesReauth(t *testing.T) {
 	}
 }
 
+// TestTokenSourceRejectsUnknownEnvelopeVersion verifies that a grant written
+// by a newer node (a future v2 layout) is not silently treated as v1 — which
+// would ignore binding fields it requires. It fails closed.
+func TestTokenSourceRejectsUnknownEnvelopeVersion(t *testing.T) {
+	const userID = "user123"
+	const serverID = "future-server"
+
+	manager, kv := newStatefulKVManager(t, nil, &http.Client{})
+	kv.putEnvelope(t, userID, serverID, &storedTokenEnvelope{
+		Version: tokenEnvelopeVersion + 1,
+		Token:   &oauth2.Token{AccessToken: "future-access", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)},
+	})
+
+	handler := newUserOAuthHandler(userID, ServerConfig{Name: serverID, BaseURL: "https://mcp.example.com"}, manager)
+	_, err := handler.TokenSource(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported token envelope version")
+}
+
 func TestUserOAuthHandlerTokenSourceNoStoredToken(t *testing.T) {
-	manager, mockClient := setupTestOAuthManager(t)
-	mockClient.On("KVGet", buildTokenKey("user123", "no-token-server"), mock.AnythingOfType("*mcp.storedTokenEnvelope")).
-		Return(mmapi.ErrKVNotFound)
+	manager, _ := newStatefulKVManager(t, nil, &http.Client{})
 
 	handler := newUserOAuthHandler("user123", ServerConfig{
 		Name:    "no-token-server",
@@ -491,7 +476,7 @@ func TestPersistingTokenSourceRefresh(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := newRefreshTestServer(t, tt.tokenHandler)
-			manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+			manager, kv := newStatefulKVManager(t, nil, server.Client())
 
 			expiredEnvelope := boundTestEnvelope(server.URL, &oauth2.Token{
 				AccessToken:  "old-access",
@@ -499,20 +484,7 @@ func TestPersistingTokenSourceRefresh(t *testing.T) {
 				TokenType:    "Bearer",
 				Expiry:       time.Now().Add(-time.Hour),
 			})
-			mockEnvelopeGet(mockClient, userID, serverID, expiredEnvelope)
-
-			// State transitions are compare-and-set against the attempted
-			// grant: attempted → refreshed on success, attempted → nil on
-			// invalid_grant.
-			var storedEnvelope *storedTokenEnvelope
-			mockClient.On("KVCompareAndSet", buildTokenKey(userID, serverID), mock.Anything, mock.Anything).
-				Run(func(args mock.Arguments) {
-					if updated, ok := args.Get(2).(*storedTokenEnvelope); ok {
-						storedEnvelope = updated
-					}
-				}).
-				Return(true, nil).
-				Once()
+			kv.putEnvelope(t, userID, serverID, expiredEnvelope)
 
 			handler := newUserOAuthHandler(userID, ServerConfig{
 				Name:         serverID,
@@ -531,11 +503,13 @@ func TestPersistingTokenSourceRefresh(t *testing.T) {
 				var unauthorized *mcpUnauthorized
 				require.ErrorAs(t, err, &unauthorized)
 				require.Contains(t, err.Error(), "re-authentication required")
+				require.False(t, kv.exists(userID, serverID), "dead grant must be cleared")
 				return
 			}
 
 			require.NoError(t, err)
 			require.Equal(t, "new-access", token.AccessToken)
+			storedEnvelope := kv.storedEnvelope(t, userID, serverID)
 			require.NotNil(t, storedEnvelope, "expected refreshed grant to be persisted to the KV store")
 			require.Equal(t, "new-access", storedEnvelope.Token.AccessToken)
 			require.Equal(t, "new-refresh", storedEnvelope.Token.RefreshToken)

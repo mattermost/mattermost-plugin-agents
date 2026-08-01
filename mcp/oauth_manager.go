@@ -122,22 +122,25 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 	}
 
 	if registrationEndpoint == "" {
-		// No registration endpoint was discovered upstream; discover it from
-		// the authorization server metadata at the server's base URL.
-		registrationEndpoint, err = m.discoverRegistrationEndpoint(ctx, serverURL)
-		if err != nil {
-			return nil, fmt.Errorf("failed to discover registration endpoint for server %s: %w", serverURL, err)
-		}
+		// The selected authorization server's own metadata advertised no
+		// registration endpoint. We deliberately do NOT fall back to
+		// stripping the issuer's path and rediscovering at the root: that
+		// could register the client against a different (root) authorization
+		// server and then hand those credentials to this path-scoped one.
+		// Fail closed instead.
+		return nil, fmt.Errorf("authorization server %s does not advertise a dynamic client registration endpoint", serverURL)
 	}
 
-	// Register a new client via Dynamic Client Registration (RFC 7591).
+	// Register a new client via Dynamic Client Registration (RFC 7591). The
+	// body-limited client caps the response size the SDK would otherwise read
+	// unbounded, guarding against a hostile registration endpoint.
 	response, err := oauthex.RegisterClient(ctx, registrationEndpoint, &oauthex.ClientRegistrationMetadata{
 		RedirectURIs:            []string{m.callbackURL},
 		TokenEndpointAuthMethod: "client_secret_basic",
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
 		ClientName:              oauthClientName,
-	}, m.httpClient)
+	}, m.bodyLimitedHTTPClient())
 	if err != nil {
 		return nil, fmt.Errorf("failed to register OAuth client with server %s (registration endpoint: %s): %w", serverURL, registrationEndpoint, err)
 	}

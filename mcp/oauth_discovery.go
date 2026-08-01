@@ -188,38 +188,6 @@ func validateLenientAuthServerMeta(asm *oauthex.AuthServerMeta, metadataURL, exp
 	return nil
 }
 
-// discoverRegistrationEndpoint discovers the RFC 7591 registration endpoint
-// from the authorization server metadata at the server's base URL (path
-// stripped per the MCP spec). It is used when createOAuthConfig's discovery
-// did not produce a registration endpoint. The fetch is deliberately lenient
-// (no issuer/PKCE checks), matching the previous hand-rolled behavior.
-func (m *OAuthManager) discoverRegistrationEndpoint(ctx context.Context, serverURL string) (string, error) {
-	parsedURL, err := url.Parse(serverURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse server URL %s: %w", serverURL, err)
-	}
-	baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
-
-	metadataURL, err := constructWellKnownURL(baseURL, "oauth-authorization-server")
-	if err != nil {
-		return "", fmt.Errorf("failed to construct metadata URL from server URL %s: %w", serverURL, err)
-	}
-
-	metadata, err := fetchJSONLenient[oauthex.AuthServerMeta](ctx, m.httpClient, metadataURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch server metadata from %s: %w", metadataURL, err)
-	}
-
-	if metadata.RegistrationEndpoint == "" {
-		return "", fmt.Errorf("server %s does not support dynamic client registration (no registration_endpoint in metadata from %s)", serverURL, metadataURL)
-	}
-	if err := checkHTTPSOrLoopbackURL(metadata.RegistrationEndpoint); err != nil {
-		return "", fmt.Errorf("invalid registration endpoint in metadata from %s: %w", metadataURL, err)
-	}
-
-	return metadata.RegistrationEndpoint, nil
-}
-
 // maxMetadataBytes limits how much of a metadata document we read, matching
 // the limit oauthex applies on its strict path.
 const maxMetadataBytes = 1 << 20
@@ -227,8 +195,8 @@ const maxMetadataBytes = 1 << 20
 // fetchJSONLenient fetches and decodes an OAuth metadata document without the
 // strict RFC validations oauthex applies (no Content-Type requirement, no
 // issuer/PKCE checks). It is used by the PKCE-advertisement fallback in
-// fetchAuthorizationServerMetadata and by discoverRegistrationEndpoint;
-// callers are responsible for any validation the lenient path still needs.
+// fetchAuthorizationServerMetadata; callers are responsible for any
+// validation the lenient path still needs.
 func fetchJSONLenient[T any](ctx context.Context, httpClient *http.Client, metadataURL string) (*T, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
 	if err != nil {

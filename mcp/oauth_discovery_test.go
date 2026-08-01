@@ -347,40 +347,42 @@ func TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
 // DCR path where no registration endpoint was discovered upstream: it must be
 // discovered from the authorization server metadata at the base URL, and
 // registration failures must surface as errors.
-func TestLoadOrCreateClientCredentials_RegistrationEndpointDiscovery(t *testing.T) {
+func TestLoadOrCreateClientCredentials_Registration(t *testing.T) {
 	tests := []struct {
-		name                 string
-		advertiseEndpoint    bool
-		registrationHandler  http.HandlerFunc
-		wantClientID         string
-		wantErrContains      string
-		expectStoreAndDebug  bool
-		expectRegistration   bool
-		expectMetadataLookup bool
+		name                string
+		registrationEndpt   bool // pass a real registration endpoint
+		registrationHandler http.HandlerFunc
+		wantClientID        string
+		wantErrContains     string
+		expectStoreAndDebug bool
 	}{
 		{
-			name:              "discovers registration endpoint from server metadata",
-			advertiseEndpoint: true,
-			registrationHandler: func(w http.ResponseWriter, r *http.Request) {
+			name:              "registers against the provided endpoint",
+			registrationEndpt: true,
+			registrationHandler: func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"client_id":     "discovered-client",
-					"client_secret": "discovered-secret",
+					"client_id":     "registered-client",
+					"client_secret": "registered-secret",
 				})
 			},
-			wantClientID:        "discovered-client",
+			wantClientID:        "registered-client",
 			expectStoreAndDebug: true,
 		},
 		{
-			name:              "fails when server does not support dynamic client registration",
-			advertiseEndpoint: false,
-			wantErrContains:   "does not support dynamic client registration",
+			// The key fix: with no registration endpoint from the selected
+			// issuer's own metadata, we fail closed instead of stripping the
+			// path and rediscovering at the root (which could register against
+			// a different authorization server).
+			name:              "fails closed when no registration endpoint is available",
+			registrationEndpt: false,
+			wantErrContains:   "does not advertise a dynamic client registration endpoint",
 		},
 		{
 			name:              "surfaces registration error response",
-			advertiseEndpoint: true,
-			registrationHandler: func(w http.ResponseWriter, r *http.Request) {
+			registrationEndpt: true,
+			registrationHandler: func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
 				_ = json.NewEncoder(w).Encode(map[string]string{
@@ -394,30 +396,19 @@ func TestLoadOrCreateClientCredentials_RegistrationEndpointDiscovery(t *testing.
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var serverURL string
+			var registrationCalled bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/.well-known/oauth-authorization-server":
-					metadata := oauthex.AuthServerMeta{
-						Issuer:                serverURL,
-						AuthorizationEndpoint: serverURL + "/authorize",
-						TokenEndpoint:         serverURL + "/token",
-					}
-					if tt.advertiseEndpoint {
-						metadata.RegistrationEndpoint = serverURL + "/register"
-					}
-					w.Header().Set("Content-Type", "application/json")
-					require.NoError(t, json.NewEncoder(w).Encode(metadata))
-				case "/register":
+				if r.URL.Path == "/register" && tt.registrationHandler != nil {
+					registrationCalled = true
 					require.Equal(t, http.MethodPost, r.Method)
-					require.NotNil(t, tt.registrationHandler)
 					tt.registrationHandler(w, r)
-				default:
-					http.NotFound(w, r)
+					return
 				}
+				// No well-known metadata is served: fail-closed must NOT fall
+				// back to root discovery.
+				http.NotFound(w, r)
 			}))
 			t.Cleanup(server.Close)
-			serverURL = server.URL
 
 			manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
 			mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
@@ -426,11 +417,18 @@ func TestLoadOrCreateClientCredentials_RegistrationEndpointDiscovery(t *testing.
 				mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Once()
 			}
 
-			creds, err := manager.loadOrCreateClientCredentials(context.Background(), serverURL, nil, "")
+			registrationEndpoint := ""
+			if tt.registrationEndpt {
+				registrationEndpoint = server.URL + "/register"
+			}
+			creds, err := manager.loadOrCreateClientCredentials(context.Background(), server.URL, nil, registrationEndpoint)
 
 			if tt.wantErrContains != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.wantErrContains)
+				if !tt.registrationEndpt {
+					require.False(t, registrationCalled, "must not register anywhere when no endpoint is advertised")
+				}
 				return
 			}
 			require.NoError(t, err)

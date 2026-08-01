@@ -43,12 +43,28 @@ func isInvalidGrantError(err error) bool {
 	return errors.As(err, &tokenErr) && tokenErr.Code == "invalid_grant"
 }
 
+// Client authentication methods (RFC 7591 token_endpoint_auth_method /
+// RFC 6749 client authentication).
+const (
+	authMethodNone  = "none"
+	authMethodBasic = "client_secret_basic"
+	authMethodPost  = "client_secret_post"
+)
+
 // refreshGrant redeems the grant's refresh token against exactly the token
 // endpoint and client the grant envelope is pinned to — no discovery — and
 // includes the pinned canonical RFC 8707 resource, as the MCP specification
 // requires on every token request. When the response omits a new refresh
 // token, the previous one is retained (RFC 6749 §6).
-func (m *OAuthManager) refreshGrant(ctx context.Context, envelope *storedTokenEnvelope, creds *ClientCredentials) (_ *oauth2.Token, err error) {
+//
+// Client authentication uses the envelope's pinned method when known. When it
+// is unknown (empty) and a secret is present — the static-credentials case,
+// where the exchange relied on oauth2's basic/post auto-detection — the
+// refresh auto-detects too: it tries client_secret_basic and, on an
+// invalid_client error, retries with client_secret_post. The method that
+// worked is returned so the caller can persist it and skip detection next
+// time.
+func (m *OAuthManager) refreshGrant(ctx context.Context, envelope *storedTokenEnvelope, creds *ClientCredentials) (_ *oauth2.Token, usedMethod string, err error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "mcp oauth token refresh",
 		trace.WithAttributes(telemetry.MCPServer.String(envelope.Resource)),
 	)
@@ -60,6 +76,44 @@ func (m *OAuthManager) refreshGrant(ctx context.Context, envelope *storedTokenEn
 		span.End()
 	}()
 
+	methods := refreshAuthMethods(envelope.AuthMethod, creds.ClientSecret)
+	for i, method := range methods {
+		token, refreshErr := m.doRefresh(ctx, envelope, creds, method)
+		if refreshErr == nil {
+			return token, method, nil
+		}
+		// Only auto-detection (multiple candidates) retries, and only on
+		// invalid_client, which specifically signals wrong client
+		// authentication rather than a dead refresh token.
+		var tokenErr *oauthTokenError
+		if i < len(methods)-1 && errors.As(refreshErr, &tokenErr) && tokenErr.Code == "invalid_client" {
+			continue
+		}
+		return nil, "", refreshErr
+	}
+	return nil, "", fmt.Errorf("no client authentication method available for refresh")
+}
+
+// refreshAuthMethods returns the ordered client-authentication methods to try
+// for a refresh given the pinned method and whether a secret is present.
+func refreshAuthMethods(pinned, secret string) []string {
+	switch pinned {
+	case authMethodNone:
+		return []string{authMethodNone}
+	case authMethodBasic:
+		return []string{authMethodBasic}
+	case authMethodPost:
+		return []string{authMethodPost}
+	}
+	if secret == "" {
+		return []string{authMethodNone}
+	}
+	// Unknown method with a secret (static credentials): auto-detect, matching
+	// oauth2's exchange behavior.
+	return []string{authMethodBasic, authMethodPost}
+}
+
+func (m *OAuthManager) doRefresh(ctx context.Context, envelope *storedTokenEnvelope, creds *ClientCredentials, method string) (*oauth2.Token, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {envelope.Token.RefreshToken},
@@ -67,10 +121,12 @@ func (m *OAuthManager) refreshGrant(ctx context.Context, envelope *storedTokenEn
 	if envelope.Resource != "" {
 		form.Set("resource", envelope.Resource)
 	}
-	// Public clients (and any client without a secret) authenticate by
-	// identifying themselves in the request body.
-	if creds.ClientSecret == "" {
+	switch method {
+	case authMethodNone, authMethodPost:
 		form.Set("client_id", creds.ClientID)
+		if method == authMethodPost {
+			form.Set("client_secret", creds.ClientSecret)
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, envelope.TokenEndpoint, strings.NewReader(form.Encode()))
@@ -78,7 +134,7 @@ func (m *OAuthManager) refreshGrant(ctx context.Context, envelope *storedTokenEn
 		return nil, fmt.Errorf("failed to create refresh request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if creds.ClientSecret != "" {
+	if method == authMethodBasic {
 		// RFC 6749 §2.3.1: credentials are form-urlencoded before being used
 		// in HTTP basic authentication.
 		req.SetBasicAuth(url.QueryEscape(creds.ClientID), url.QueryEscape(creds.ClientSecret))

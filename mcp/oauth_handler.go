@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -59,7 +60,7 @@ func newUserOAuthHandler(userID string, serverConfig ServerConfig, manager *OAut
 // compromised MCP server that starts advertising different authorization
 // server metadata therefore never sees the refresh token or client secret.
 func (h *userOAuthHandler) TokenSource(ctx context.Context) (oauth2.TokenSource, error) {
-	envelope, err := h.manager.loadTokenEnvelope(h.userID, h.serverName)
+	envelope, raw, err := h.manager.loadTokenEnvelope(h.userID, h.serverName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load token: %w", err)
 	}
@@ -70,6 +71,7 @@ func (h *userOAuthHandler) TokenSource(ctx context.Context) (oauth2.TokenSource,
 	return &persistingTokenSource{
 		ctx:         ctx,
 		envelope:    envelope,
+		rawEnvelope: raw,
 		staticCreds: h.staticCreds,
 		manager:     h.manager,
 		userID:      h.userID,
@@ -207,6 +209,7 @@ type persistingTokenSource struct {
 	// refresh derives a bounded per-call context from it.
 	ctx         context.Context
 	envelope    *storedTokenEnvelope
+	rawEnvelope []byte
 	staticCreds *StaticOAuthCredentials
 	manager     *OAuthManager
 	userID      string
@@ -224,10 +227,13 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 	if s.envelope.Version == 0 || s.envelope.TokenEndpoint == "" || s.envelope.ClientID == "" {
 		// Pre-envelope grant: there is no pinned refresh destination, and
 		// rediscovering one would let a compromised server redirect the
-		// refresh token. Force one re-authorization instead. (Unconditional
-		// delete: legacy entries are not CAS-able against the envelope type.)
-		if delErr := s.manager.deleteToken(s.userID, s.serverName); delErr != nil {
-			s.manager.pluginAPI.LogWarn("Failed to delete legacy token", "error", delErr)
+		// refresh token. Force one re-authorization. The compare-and-delete
+		// uses the exact bytes we read, so it cannot erase a v1 envelope a
+		// concurrent callback wrote in the meantime.
+		if won, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.rawEnvelope); delErr != nil || !won {
+			if adopted := s.adoptLatestGrant(); adopted != nil {
+				return adopted, nil
+			}
 		}
 		return nil, &mcpUnauthorized{
 			err: fmt.Errorf("stored token predates authorization server binding and cannot be refreshed safely, re-authentication required"),
@@ -235,7 +241,7 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 	}
 
 	if s.envelope.Token.RefreshToken == "" {
-		if won, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.envelope); delErr != nil || !won {
+		if won, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.rawEnvelope); delErr != nil || !won {
 			if adopted := s.adoptLatestGrant(); adopted != nil {
 				return adopted, nil
 			}
@@ -245,6 +251,39 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 		}
 	}
 
+	return s.refreshUnderLease()
+}
+
+// refreshUnderLease serializes the remote refresh across cluster nodes with a
+// per-grant lease so the same rotating refresh token is not submitted
+// concurrently (which risks authorization-server replay protection and races
+// between a losing invalid_grant delete and the winner's store). When the
+// lease cannot be acquired another node is refreshing: we briefly wait and
+// adopt its result rather than issuing a competing refresh. Callers hold s.mu.
+func (s *persistingTokenSource) refreshUnderLease() (*oauth2.Token, error) {
+	leaseID, err := generateState()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate refresh lease id: %w", err)
+	}
+
+	acquired, err := s.manager.acquireRefreshLease(s.userID, s.serverName, leaseID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire refresh lease: %w", err)
+	}
+	if !acquired {
+		return s.waitForConcurrentRefresh()
+	}
+	defer s.manager.releaseRefreshLease(s.userID, s.serverName, leaseID)
+
+	// Reload under the lease: another node may have refreshed just before we
+	// took it, and we must refresh the newest stored refresh token.
+	if adopted := s.adoptLatestGrant(); adopted != nil {
+		return adopted, nil
+	}
+	if s.envelope.Token.RefreshToken == "" {
+		return nil, &mcpUnauthorized{err: fmt.Errorf("no refresh token available, re-authentication required")}
+	}
+
 	creds, credsErr := s.refreshCredentials()
 	if credsErr != nil {
 		return nil, credsErr
@@ -252,19 +291,14 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 
 	refreshCtx, cancel := context.WithTimeout(s.ctx, oauthPrepTimeout)
 	defer cancel()
-	token, err := s.manager.refreshGrant(refreshCtx, s.envelope, creds)
+	token, method, err := s.manager.refreshGrant(refreshCtx, s.envelope, creds)
 	if err != nil {
-		// invalid_grant happens when client credentials changed (e.g. v1 ->
-		// v2 migration) — or, in HA, when another node already rotated the
-		// refresh token we are holding. The compare-and-delete only clears
-		// the grant when it is still the one we attempted to refresh; on a
-		// lost race the winner's rotated grant is adopted.
 		if isInvalidGrantError(err) {
-			if won, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.envelope); delErr != nil || !won {
-				if adopted := s.adoptLatestGrant(); adopted != nil {
-					return adopted, nil
-				}
-				return nil, fmt.Errorf("token refresh failed but the stored token changed concurrently; retry: %w", err)
+			// The refresh token is truly dead (not a concurrency artifact:
+			// the lease guarantees no competing refresh). Clear the grant so
+			// the user re-authorizes.
+			if _, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.rawEnvelope); delErr != nil {
+				s.manager.pluginAPI.LogWarn("Failed to delete grant after invalid_grant", "error", delErr)
 			}
 			return nil, &mcpUnauthorized{
 				err: fmt.Errorf("token refresh failed (credentials may have changed), re-authentication required: %w", err),
@@ -275,35 +309,85 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 
 	refreshed := *s.envelope
 	refreshed.Token = token
-	if won, casErr := s.manager.casTokenEnvelope(s.userID, s.serverName, s.envelope, &refreshed); casErr != nil {
-		// Don't fail the request over a persistence problem; the refreshed
-		// token is still valid for this request and we retry on the next
-		// refresh.
-		s.manager.pluginAPI.LogWarn("Failed to persist refreshed OAuth token",
-			"userID", s.userID,
-			"serverID", s.serverName,
-			"error", casErr)
-	} else if !won {
-		// Another node persisted a different grant between our load and this
-		// write; keep the winner for future calls. Our freshly issued token
-		// is still valid for this request.
-		s.adoptLatestGrant()
-	} else {
-		s.envelope = &refreshed
+	// Persist the auth method that actually worked so a subsequent refresh of
+	// a client whose method we had to auto-detect skips the detection.
+	if method != "" {
+		refreshed.AuthMethod = method
 	}
-
+	if err := s.persistRefreshedGrant(&refreshed); err != nil {
+		return nil, err
+	}
 	return token, nil
 }
 
-// adoptLatestGrant reloads the stored grant after a lost compare-and-set race
-// and adopts it when it carries a valid token, returning that token (nil
-// otherwise). Callers hold s.mu.
+// persistRefreshedGrant durably stores a freshly rotated grant, retrying
+// transient KV errors with a short bounded backoff. Because the refresh ran
+// under the per-grant lease there is no competing writer, so a compare-and-set
+// against the observed bytes must eventually succeed; if it cannot, the
+// refresh is NOT treated as successful (returning the token while the store
+// still holds the now-revoked refresh token would force reauth on the next
+// request and can trip replay protection). Callers hold s.mu.
+func (s *persistingTokenSource) persistRefreshedGrant(refreshed *storedTokenEnvelope) error {
+	var lastErr error
+	backoff := 50 * time.Millisecond
+	for attempt := 0; attempt < 4; attempt++ {
+		won, err := s.manager.casTokenEnvelope(s.userID, s.serverName, s.rawEnvelope, refreshed)
+		if err == nil && won {
+			s.envelope = refreshed
+			if raw, marshalErr := json.Marshal(refreshed); marshalErr == nil {
+				s.rawEnvelope = raw
+			}
+			return nil
+		}
+		if err == nil && !won {
+			// Under the lease this is not expected; surface it rather than
+			// silently proceeding on stale state.
+			lastErr = fmt.Errorf("stored grant changed unexpectedly during refresh persistence")
+			break
+		}
+		lastErr = err
+		select {
+		case <-s.ctx.Done():
+			lastErr = s.ctx.Err()
+		case <-time.After(backoff):
+			backoff *= 2
+		}
+	}
+	s.manager.pluginAPI.LogWarn("Failed to persist refreshed OAuth token",
+		"userID", s.userID, "serverID", s.serverName, "error", lastErr)
+	return fmt.Errorf("refreshed token could not be persisted safely: %w", lastErr)
+}
+
+// waitForConcurrentRefresh briefly polls for another node's in-flight refresh
+// to land, adopting the refreshed grant when it appears. The wait is short
+// because TokenSource runs under the SDK connection lock; if nothing valid
+// appears the request fails transiently and is retried by the caller.
+func (s *persistingTokenSource) waitForConcurrentRefresh() (*oauth2.Token, error) {
+	deadline := time.Now().Add(refreshLeaseWait)
+	for {
+		select {
+		case <-s.ctx.Done():
+			return nil, s.ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+		if adopted := s.adoptLatestGrant(); adopted != nil {
+			return adopted, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("another node is refreshing this OAuth token; retry")
+		}
+	}
+}
+
+// adoptLatestGrant reloads the stored grant and adopts it when it carries a
+// valid token, returning that token (nil otherwise). Callers hold s.mu.
 func (s *persistingTokenSource) adoptLatestGrant() *oauth2.Token {
-	latest, err := s.manager.loadTokenEnvelope(s.userID, s.serverName)
+	latest, raw, err := s.manager.loadTokenEnvelope(s.userID, s.serverName)
 	if err != nil || latest == nil || latest.Token == nil {
 		return nil
 	}
 	s.envelope = latest
+	s.rawEnvelope = raw
 	if latest.Token.Valid() {
 		return latest.Token
 	}

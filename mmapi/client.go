@@ -40,6 +40,7 @@ type Client interface {
 	KVSet(key string, value interface{}) error
 	KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error
 	KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error)
+	KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, ttl time.Duration) (bool, error)
 	KVDelete(key string) error
 	GetUserByUsername(username string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)
@@ -135,6 +136,14 @@ func (m *client) KVSetWithExpiry(key string, value interface{}, ttl time.Duratio
 // the write was applied, false when the current value differed from oldValue.
 func (m *client) KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error) {
 	return m.pluginAPI.KV.Set(key, newValue, pluginapi.SetAtomic(oldValue))
+}
+
+// KVCompareAndSetWithExpiry performs an atomic compare-and-set with a TTL on
+// the written value. It is used to acquire self-expiring leases: pass a nil
+// oldValue so the write only succeeds when the key is absent (or its previous
+// lease has expired).
+func (m *client) KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, ttl time.Duration) (bool, error) {
+	return m.pluginAPI.KV.Set(key, newValue, pluginapi.SetAtomic(oldValue), pluginapi.SetExpiry(ttl))
 }
 
 func (m *client) KVDelete(key string) error {

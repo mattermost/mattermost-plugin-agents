@@ -4,7 +4,6 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -17,13 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/oauth2"
 )
 
 // ---------------------------------------------------------------------------
@@ -325,133 +320,6 @@ func (s *fullFlowOAuthServer) issueTokensLocked(w http.ResponseWriter) {
 }
 
 // ---------------------------------------------------------------------------
-// Stateful in-memory KV backing the mmapi mock, mirroring the real client's
-// JSON marshal/unmarshal semantics (raw []byte values are stored as-is).
-// ---------------------------------------------------------------------------
-
-type fullFlowKV struct {
-	mu   sync.Mutex
-	data map[string][]byte
-}
-
-func newFullFlowKVClient(t *testing.T) (*mocks.MockClient, *fullFlowKV) {
-	t.Helper()
-	kv := &fullFlowKV{data: map[string][]byte{}}
-	client := mocks.NewMockClient(t)
-
-	get := func(key string, value interface{}) error {
-		kv.mu.Lock()
-		defer kv.mu.Unlock()
-		raw, ok := kv.data[key]
-		if !ok {
-			return mmapi.ErrKVNotFound
-		}
-		return json.Unmarshal(raw, value)
-	}
-	set := func(key string, value interface{}) error {
-		raw, ok := value.([]byte)
-		if !ok {
-			var err error
-			raw, err = json.Marshal(value)
-			if err != nil {
-				return err
-			}
-		}
-		kv.mu.Lock()
-		defer kv.mu.Unlock()
-		kv.data[key] = raw
-		return nil
-	}
-
-	client.On("KVGet", mock.Anything, mock.Anything).Maybe().
-		Return(func(key string, value interface{}) error { return get(key, value) })
-	client.On("KVSet", mock.Anything, mock.Anything).Maybe().
-		Return(func(key string, value interface{}) error { return set(key, value) })
-	client.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().
-		Return(func(key string, value interface{}, _ time.Duration) error { return set(key, value) })
-	client.On("KVDelete", mock.Anything).Maybe().
-		Return(func(key string) error {
-			kv.mu.Lock()
-			defer kv.mu.Unlock()
-			delete(kv.data, key)
-			return nil
-		})
-	// Compare-and-set mirrors pluginapi's SetAtomic semantics: old nil means
-	// "only if absent", new nil means delete.
-	client.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().
-		Return(func(key string, oldValue, newValue interface{}) (bool, error) {
-			kv.mu.Lock()
-			defer kv.mu.Unlock()
-			current, exists := kv.data[key]
-			if oldValue == nil {
-				if exists {
-					return false, nil
-				}
-			} else {
-				oldRaw, err := json.Marshal(oldValue)
-				if err != nil {
-					return false, err
-				}
-				if !exists || !bytes.Equal(current, oldRaw) {
-					return false, nil
-				}
-			}
-			if newValue == nil {
-				delete(kv.data, key)
-				return true, nil
-			}
-			newRaw, err := json.Marshal(newValue)
-			if err != nil {
-				return false, err
-			}
-			kv.data[key] = newRaw
-			return true, nil
-		})
-	for _, logMethod := range []string{"LogDebug", "LogInfo", "LogWarn", "LogError"} {
-		client.On(logMethod, mock.Anything).Maybe().Return()
-		client.On(logMethod, mock.Anything, mock.Anything).Maybe().Return()
-	}
-
-	return client, kv
-}
-
-func (kv *fullFlowKV) storedEnvelope(t *testing.T, userID, serverID string) *storedTokenEnvelope {
-	t.Helper()
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	raw, ok := kv.data[buildTokenKey(userID, serverID)]
-	if !ok {
-		return nil
-	}
-	var envelope storedTokenEnvelope
-	require.NoError(t, json.Unmarshal(raw, &envelope))
-	return &envelope
-}
-
-func (kv *fullFlowKV) storedToken(t *testing.T, userID, serverID string) *oauth2.Token {
-	t.Helper()
-	envelope := kv.storedEnvelope(t, userID, serverID)
-	if envelope == nil {
-		return nil
-	}
-	return envelope.Token
-}
-
-// overwriteToken swaps the token inside the stored grant envelope, keeping
-// its authorization server binding (used to simulate expiry).
-func (kv *fullFlowKV) overwriteToken(t *testing.T, userID, serverID string, token *oauth2.Token) {
-	t.Helper()
-	envelope := kv.storedEnvelope(t, userID, serverID)
-	require.NotNil(t, envelope, "no stored grant to overwrite")
-	envelope.Token = token
-	raw, err := json.Marshal(envelope)
-	require.NoError(t, err)
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	kv.data[buildTokenKey(userID, serverID)] = raw
-}
-
-// ---------------------------------------------------------------------------
 // The test: the plugin's REAL OAuth flow, end to end, against the fake server.
 // ---------------------------------------------------------------------------
 
@@ -484,7 +352,8 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 		// No ClientID/ClientSecret: force dynamic client registration.
 	}
 
-	mockClient, kv := newFullFlowKVClient(t)
+	kv := newStatefulKVClient(t)
+	mockClient := kv.mockClient(t)
 	httpClient := &http.Client{Transport: http.DefaultTransport}
 	manager := NewOAuthManager(mockClient, callbackURL, httpClient, func(id string) (ServerConfig, bool) {
 		if id == serverName {

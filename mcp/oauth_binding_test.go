@@ -4,17 +4,20 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
 
 // mutableAuthServer is an httptest authorization server whose advertised
@@ -130,6 +133,107 @@ func TestProcessCallbackUsesSessionBoundEndpoints(t *testing.T) {
 		"the exchange must use the session-bound token endpoint")
 	require.Zero(t, authServer.exchangesByPath["/token-attacker"],
 		"the swapped-in endpoint must never receive the code")
+}
+
+// TestDCRResponseBodyIsSizeLimited verifies that a hostile registration
+// endpoint streaming an oversized body cannot exhaust memory: the response is
+// capped, so registration fails cleanly rather than reading unbounded.
+func TestDCRResponseBodyIsSizeLimited(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/register" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		// Stream far more than the cap; valid JSON prefix then endless filler.
+		_, _ = w.Write([]byte(`{"client_id":"c","padding":"`))
+		chunk := bytes.Repeat([]byte("A"), 64*1024)
+		for i := 0; i < (maxOAuthResponseBytes/len(chunk))+8; i++ {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
+
+	_, err := manager.loadOrCreateClientCredentials(context.Background(), server.URL, nil, server.URL+"/register")
+	// The truncated body is invalid JSON, so registration fails — crucially
+	// without reading the unbounded stream into memory.
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to register OAuth client")
+}
+
+// TestRefreshSerializedByLease verifies that concurrent refreshes of the same
+// grant are serialized by the per-grant lease: the token endpoint is hit
+// exactly once and every caller ends up with the rotated token.
+func TestRefreshSerializedByLease(t *testing.T) {
+	const userID = "user123"
+	const serverID = "lease-server"
+
+	var refreshCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/token" {
+			http.NotFound(w, r)
+			return
+		}
+		refreshCalls.Add(1)
+		time.Sleep(150 * time.Millisecond) // widen the concurrency window
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "rotated-access",
+			"refresh_token": "rotated-refresh",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	manager, kv := newStatefulKVManager(t, nil, srv.Client())
+	kv.putEnvelope(t, userID, serverID, &storedTokenEnvelope{
+		Version:       tokenEnvelopeVersion,
+		Token:         &oauth2.Token{AccessToken: "old", RefreshToken: "old-refresh", TokenType: "Bearer", Expiry: time.Now().Add(-time.Hour)},
+		Issuer:        srv.URL,
+		TokenEndpoint: srv.URL + "/token",
+		AuthServerURL: srv.URL,
+		ClientID:      "static-client",
+	})
+
+	newSource := func() oauth2.TokenSource {
+		h := newUserOAuthHandler(userID, ServerConfig{
+			Name: serverID, BaseURL: srv.URL, ClientID: "static-client", ClientSecret: "static-secret",
+		}, manager)
+		ts, err := h.TokenSource(context.Background())
+		require.NoError(t, err)
+		return ts
+	}
+
+	const goroutines = 5
+	var wg sync.WaitGroup
+	results := make([]string, goroutines)
+	errs := make([]error, goroutines)
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			tok, err := newSource().Token()
+			if err != nil {
+				errs[idx] = err
+				return
+			}
+			results[idx] = tok.AccessToken
+		}(i)
+	}
+	wg.Wait()
+
+	require.Equal(t, int32(1), refreshCalls.Load(), "the lease must serialize the refresh to a single token-endpoint call")
+	for i := 0; i < goroutines; i++ {
+		require.NoError(t, errs[i])
+		require.Equal(t, "rotated-access", results[i])
+	}
 }
 
 // TestProcessCallbackRejectsUnboundSession verifies that sessions written

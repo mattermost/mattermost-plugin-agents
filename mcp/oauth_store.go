@@ -75,42 +75,53 @@ type storedTokenEnvelope struct {
 }
 
 // loadTokenEnvelope retrieves the stored OAuth grant for a user and server.
-// It returns nil when no grant exists. Pre-envelope grants (bare
-// oauth2.Token values) are returned as a Version 0 envelope.
-func (m *OAuthManager) loadTokenEnvelope(userID, serverID string) (*storedTokenEnvelope, error) {
+// It returns nil when no grant exists. The raw stored bytes are returned
+// alongside so callers can perform exact compare-and-set/delete against the
+// snapshot they observed (avoiding a re-marshal that might not reproduce the
+// stored bytes). Pre-envelope grants (bare oauth2.Token values) are returned
+// as a Version 0 envelope. The key is read exactly once so a concurrent write
+// between reads cannot be misclassified.
+func (m *OAuthManager) loadTokenEnvelope(userID, serverID string) (*storedTokenEnvelope, []byte, error) {
 	tokenKey := buildTokenKey(userID, serverID)
 
-	var envelope storedTokenEnvelope
-	err := m.pluginAPI.KVGet(tokenKey, &envelope)
-	if err != nil {
+	var raw []byte
+	if err := m.pluginAPI.KVGet(tokenKey, &raw); err != nil {
 		if mmapi.IsKVNotFound(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("failed to retrieve token from KV store: %w", err)
+		return nil, nil, fmt.Errorf("failed to retrieve token from KV store: %w", err)
 	}
-	if envelope.Version > 0 && envelope.Token != nil && envelope.Token.AccessToken != "" {
-		return &envelope, nil
+	if len(raw) == 0 {
+		return nil, nil, nil
 	}
 
-	// Legacy layout: the key holds a bare oauth2.Token.
-	var legacy oauth2.Token
-	err = m.pluginAPI.KVGet(tokenKey, &legacy)
-	if err != nil {
-		if mmapi.IsKVNotFound(err) {
-			return nil, nil
+	// Decode the single snapshot as a versioned envelope first.
+	var envelope storedTokenEnvelope
+	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.Version > 0 {
+		if envelope.Version != tokenEnvelopeVersion {
+			// Fail closed for unknown versions (a newer node's v2 record):
+			// treating it as v1 would silently ignore binding fields it
+			// requires.
+			return nil, raw, fmt.Errorf("unsupported token envelope version %d (expected %d)", envelope.Version, tokenEnvelopeVersion)
 		}
-		return nil, fmt.Errorf("failed to retrieve token from KV store: %w", err)
+		if envelope.Token == nil || envelope.Token.AccessToken == "" {
+			return nil, raw, nil
+		}
+		return &envelope, raw, nil
 	}
-	if legacy.AccessToken == "" {
-		return nil, nil
+
+	// Legacy layout: the same snapshot holds a bare oauth2.Token.
+	var legacy oauth2.Token
+	if err := json.Unmarshal(raw, &legacy); err != nil || legacy.AccessToken == "" {
+		return nil, raw, nil
 	}
-	return &storedTokenEnvelope{Version: 0, Token: &legacy}, nil
+	return &storedTokenEnvelope{Version: 0, Token: &legacy}, raw, nil
 }
 
 // loadToken retrieves the OAuth token for a user and server from the KV store
 // If no token is found, it returns nil to indicate no token exists
 func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error) {
-	envelope, err := m.loadTokenEnvelope(userID, serverID)
+	envelope, _, err := m.loadTokenEnvelope(userID, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -129,16 +140,49 @@ func (m *OAuthManager) storeTokenEnvelope(userID, serverID string, envelope *sto
 	return nil
 }
 
-// casTokenEnvelope atomically replaces the stored grant only if it still
-// equals old (attempted → refreshed). Returns false when another writer won.
-func (m *OAuthManager) casTokenEnvelope(userID, serverID string, old, updated *storedTokenEnvelope) (bool, error) {
-	return m.pluginAPI.KVCompareAndSet(buildTokenKey(userID, serverID), old, updated)
+// casTokenEnvelope atomically replaces the stored grant only if the current
+// bytes still equal oldRaw (the exact snapshot the caller observed). Returns
+// false when another writer won.
+func (m *OAuthManager) casTokenEnvelope(userID, serverID string, oldRaw []byte, updated *storedTokenEnvelope) (bool, error) {
+	newRaw, err := json.Marshal(updated)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal token envelope: %w", err)
+	}
+	return m.pluginAPI.KVCompareAndSet(buildTokenKey(userID, serverID), oldRaw, newRaw)
 }
 
-// casDeleteTokenEnvelope atomically deletes the stored grant only if it still
-// equals old (attempted → nil). Returns false when another writer won.
-func (m *OAuthManager) casDeleteTokenEnvelope(userID, serverID string, old *storedTokenEnvelope) (bool, error) {
-	return m.pluginAPI.KVCompareAndSet(buildTokenKey(userID, serverID), old, nil)
+// casDeleteTokenEnvelope atomically deletes the stored grant only if the
+// current bytes still equal oldRaw. Returns false when another writer won.
+func (m *OAuthManager) casDeleteTokenEnvelope(userID, serverID string, oldRaw []byte) (bool, error) {
+	return m.pluginAPI.KVCompareAndSet(buildTokenKey(userID, serverID), oldRaw, nil)
+}
+
+const (
+	// refreshLeaseTTL bounds how long a per-grant refresh lease is held; it
+	// exceeds oauthPrepTimeout so a node actively refreshing keeps the lease
+	// for the whole attempt, while a crashed holder's lease auto-expires.
+	refreshLeaseTTL = 35 * time.Second
+	// refreshLeaseWait caps how long a node blocks waiting for another node's
+	// in-flight refresh. TokenSource runs under the SDK's connection-wide
+	// send lock, so this is deliberately short.
+	refreshLeaseWait = 2 * time.Second
+)
+
+func buildRefreshLeaseKey(userID, serverID string) string {
+	return fmt.Sprintf("mcp_oauth_refresh_lease_v1_%s_%s", userID, serverID)
+}
+
+// acquireRefreshLease attempts to take the per-grant refresh lease. It
+// succeeds only when no unexpired lease exists (atomic create with TTL).
+func (m *OAuthManager) acquireRefreshLease(userID, serverID, leaseID string) (bool, error) {
+	return m.pluginAPI.KVCompareAndSetWithExpiry(buildRefreshLeaseKey(userID, serverID), nil, leaseID, refreshLeaseTTL)
+}
+
+// releaseRefreshLease drops the lease if we still hold it.
+func (m *OAuthManager) releaseRefreshLease(userID, serverID, leaseID string) {
+	if _, err := m.pluginAPI.KVCompareAndSet(buildRefreshLeaseKey(userID, serverID), leaseID, nil); err != nil {
+		m.pluginAPI.LogWarn("Failed to release MCP OAuth refresh lease", "userID", userID, "serverID", serverID, "error", err)
+	}
 }
 
 // HasStoredToken returns true when a non-expired OAuth token exists for the

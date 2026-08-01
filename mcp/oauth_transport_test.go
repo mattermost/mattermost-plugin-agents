@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
@@ -70,15 +68,9 @@ func TestOAuthRoundTripper(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
-			tokenGet := mockClient.On("KVGet", buildTokenKey(userID, serverID), mock.AnythingOfType("*mcp.storedTokenEnvelope"))
-			if tt.storedToken == nil {
-				tokenGet.Return(mmapi.ErrKVNotFound)
-			} else {
-				envelope := boundTestEnvelope(server.URL, tt.storedToken)
-				tokenGet.Run(func(args mock.Arguments) {
-					*(args.Get(1).(*storedTokenEnvelope)) = *envelope
-				}).Return(nil)
+			manager, kv := newStatefulKVManager(t, nil, server.Client())
+			if tt.storedToken != nil {
+				kv.putEnvelope(t, userID, serverID, boundTestEnvelope(server.URL, tt.storedToken))
 			}
 
 			handler := newUserOAuthHandler(userID, ServerConfig{
