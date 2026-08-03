@@ -278,31 +278,29 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 	if s.envelope.Version == 0 || s.envelope.TokenEndpoint == "" || s.envelope.ClientID == "" {
 		// Pre-envelope grant: there is no pinned refresh destination, and
 		// rediscovering one would let a compromised server redirect the
-		// refresh token. Force one re-authorization. The compare-and-delete
-		// uses the exact bytes we read, so it cannot erase a v1 envelope a
-		// concurrent callback wrote in the meantime.
-		if won, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.rawEnvelope); delErr != nil || !won {
-			if adopted := s.adoptLatestGrant(); adopted != nil {
-				return adopted, nil
-			}
-		}
-		return nil, &mcpUnauthorized{
-			err: fmt.Errorf("stored token predates authorization server binding and cannot be refreshed safely, re-authentication required"),
-		}
+		// refresh token. Force one re-authorization.
+		return s.clearGrantOrAdopt("stored token predates authorization server binding and cannot be refreshed safely, re-authentication required")
 	}
 
 	if s.envelope.Token.RefreshToken == "" {
-		if won, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.rawEnvelope); delErr != nil || !won {
-			if adopted := s.adoptLatestGrant(); adopted != nil {
-				return adopted, nil
-			}
-		}
-		return nil, &mcpUnauthorized{
-			err: fmt.Errorf("access token expired and no refresh token was issued, re-authentication required"),
-		}
+		return s.clearGrantOrAdopt("access token expired and no refresh token was issued, re-authentication required")
 	}
 
 	return s.refreshUnderLease()
+}
+
+// clearGrantOrAdopt handles an unusable stored grant: it compare-and-deletes
+// the exact bytes we observed (so it cannot erase a v1 envelope a concurrent
+// callback wrote in the meantime) and, if that CAS loses to a concurrent
+// writer that installed a still-valid grant, adopts and returns that instead.
+// Otherwise it surfaces a re-authorization error. Callers hold s.mu.
+func (s *persistingTokenSource) clearGrantOrAdopt(reauthMsg string) (*oauth2.Token, error) {
+	if won, delErr := s.manager.casDeleteTokenEnvelope(s.userID, s.serverName, s.rawEnvelope); delErr != nil || !won {
+		if adopted := s.adoptLatestGrant(); adopted != nil {
+			return adopted, nil
+		}
+	}
+	return nil, &mcpUnauthorized{err: fmt.Errorf("%s", reauthMsg)}
 }
 
 // refreshUnderLease serializes the remote refresh across cluster nodes with a

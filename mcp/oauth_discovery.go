@@ -242,17 +242,23 @@ func inferApplicationType(redirectURI string) string {
 	}
 	switch u.Scheme {
 	case "http", "https":
-		host := u.Hostname()
-		if host == "localhost" {
-			return "native"
-		}
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if isLoopbackHostname(u.Hostname()) {
 			return "native"
 		}
 		return "web"
 	default:
 		return "native"
 	}
+}
+
+// isLoopbackHostname reports whether host (no port) is localhost or a
+// loopback IP literal.
+func isLoopbackHostname(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // checkHTTPSOrLoopbackURL enforces HTTPS, or plain HTTP only for loopback
@@ -273,11 +279,7 @@ func checkHTTPSOrLoopbackURL(rawURL string) error {
 	case "https":
 		return nil
 	case "http":
-		host := u.Hostname()
-		if host == "localhost" {
-			return nil
-		}
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if isLoopbackHostname(u.Hostname()) {
 			return nil
 		}
 	}
