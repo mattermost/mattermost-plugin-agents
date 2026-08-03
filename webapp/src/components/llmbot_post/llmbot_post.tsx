@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
 
@@ -72,6 +72,7 @@ function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
 }
 
 export const LLMBotPost = (props: LLMBotPostProps) => {
+    const intl = useIntl();
     const selectPost = useSelectNotAIPost();
 
     // Post props are free-form JSON; a conversation_id that is not a
@@ -251,7 +252,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     setServerTools(parsedServerTools);
                     setPrecontent(false);
                 } catch {
-                    setError('Error parsing server tool data');
+                    setError(intl.formatMessage({defaultMessage: 'Error parsing server tool data'}));
                 }
                 return;
             }

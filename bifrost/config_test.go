@@ -64,6 +64,12 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 			want:        []string{llm.NativeToolWebSearch, llm.NativeToolFileSearch, llm.NativeToolCodeInterpreter},
 		},
 		{
+			name:        "OpenAI-compatible keeps its Responses API tools, drops web_fetch",
+			serviceType: llm.ServiceTypeOpenAICompatible,
+			tools:       allTools,
+			want:        []string{llm.NativeToolWebSearch, llm.NativeToolFileSearch, llm.NativeToolCodeInterpreter},
+		},
+		{
 			name:        "Anthropic keeps its server tools, drops file_search",
 			serviceType: llm.ServiceTypeAnthropic,
 			tools:       allTools,

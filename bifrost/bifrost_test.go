@@ -614,7 +614,7 @@ func TestAnthropicNativeToolSandboxOptInMatrix(t *testing.T) {
 func TestWebSearchAllowedCallersStrippedForOpenAI(t *testing.T) {
 	b := &LLM{
 		provider:           schemas.OpenAI,
-		enabledNativeTools: []string{"web_search"},
+		enabledNativeTools: []string{llm.NativeToolWebSearch},
 		useResponsesAPI:    true,
 	}
 	cfg := llm.LanguageModelConfig{Model: "gpt-4o", MaxGeneratedTokens: 1000}
@@ -877,13 +877,13 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 		{
 			name:               "OpenAI-compatible native tools do not override disabled Responses API",
 			provider:           schemas.OpenAI,
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
 			expected:           false,
 		},
 		{
 			name:               "OpenAI-compatible native web search does not override disabled Responses API",
 			provider:           schemas.OpenAI,
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
 			expected:           false,
 		},
@@ -905,27 +905,27 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 		{
 			name:               "Azure native tools do not override disabled Responses API",
 			provider:           schemas.Azure,
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
 			expected:           false,
 		},
 		{
 			name:               "Azure uses Responses API when explicitly enabled",
 			provider:           schemas.Azure,
 			useResponsesAPI:    true,
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
 			expected:           true,
 		},
 		{
 			name:               "unsupported provider ignores native tools",
 			provider:           schemas.Bedrock,
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
 			cfg:                llm.LanguageModelConfig{},
 			expected:           false,
 		},
 		{
 			name:               "Gemini with native tools auto-enables Responses API",
 			provider:           schemas.Gemini,
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
 			cfg:                llm.LanguageModelConfig{},
 			expected:           true,
 		},
@@ -1981,7 +1981,7 @@ func TestOpenAICompatibleResponsesToggleIsHardRoutingGate(t *testing.T) {
 		ID:                 "bot-1",
 		ServiceID:          service.ID,
 		DisableTools:       true,
-		EnabledNativeTools: []string{"web_search"},
+		EnabledNativeTools: []string{llm.NativeToolWebSearch},
 	}
 
 	llmInstance, err := NewFromServiceConfig(service, bot, nil)
@@ -2909,7 +2909,7 @@ func TestCountTokensOmitsNativeServerTools(t *testing.T) {
 			DefaultModel:     "claude-sonnet-4-6",
 			StreamingTimeout: 10 * time.Second,
 		},
-		EnabledNativeTools: []string{"web_search"},
+		EnabledNativeTools: []string{llm.NativeToolWebSearch},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()

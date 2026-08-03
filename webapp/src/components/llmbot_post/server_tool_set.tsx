@@ -66,7 +66,7 @@ const ServerToolCard: React.FC<{tool: ServerToolUse}> = ({tool}) => {
     const intl = useIntl();
     const [expanded, setExpanded] = useState(false);
 
-    const details = buildDetails(tool);
+    const details = buildDetails(tool, intl);
     const canExpand = details.length > 0;
 
     let icon = <CodeTagsIcon/>;
@@ -88,9 +88,14 @@ const ServerToolCard: React.FC<{tool: ServerToolUse}> = ({tool}) => {
         title = intl.formatMessage({defaultMessage: 'Used a provider tool'});
     }
 
+    // Expandable cards render a semantic button so keyboard users can focus
+    // and toggle the details; cards without details stay a plain div.
     return (
         <Card data-testid={`server-tool-${tool.tool}`}>
             <Header
+                as={canExpand ? 'button' : 'div'}
+                type={canExpand ? 'button' : undefined} // eslint-disable-line no-undefined
+                aria-expanded={canExpand ? expanded : undefined} // eslint-disable-line no-undefined
                 $canExpand={canExpand}
                 onClick={() => canExpand && setExpanded(!expanded)}
             >
@@ -116,24 +121,24 @@ interface DetailEntry {
     content: string;
 }
 
-// buildDetails assembles the expandable sections of a card. Labels are the
-// tool-domain terms themselves (URL, stdout, …) and intentionally untranslated.
-function buildDetails(tool: ServerToolUse): DetailEntry[] {
+// buildDetails assembles the expandable sections of a card. The bash prompt
+// glyph ("$") is a shell symbol, not language, and stays literal.
+function buildDetails(tool: ServerToolUse, intl: ReturnType<typeof useIntl>): DetailEntry[] {
     const details: DetailEntry[] = [];
     if (tool.tool === ServerToolWebFetch && tool.url) {
-        details.push({label: 'URL', content: tool.url});
+        details.push({label: intl.formatMessage({defaultMessage: 'URL'}), content: tool.url});
     }
     if (tool.title) {
-        details.push({label: 'Title', content: tool.title});
+        details.push({label: intl.formatMessage({defaultMessage: 'Title'}), content: tool.title});
     }
     if (tool.command) {
-        details.push({label: tool.sub_tool === 'bash' ? '$' : 'Input', content: tool.command});
+        details.push({label: tool.sub_tool === 'bash' ? '$' : intl.formatMessage({defaultMessage: 'Input'}), content: tool.command});
     }
     if (tool.output) {
-        details.push({label: 'Output', content: tool.output});
+        details.push({label: intl.formatMessage({defaultMessage: 'Output'}), content: tool.output});
     }
     if (tool.error_code) {
-        details.push({label: 'Error', content: tool.error_code});
+        details.push({label: intl.formatMessage({defaultMessage: 'Error'}), content: tool.error_code});
     }
     return details;
 }
@@ -161,12 +166,22 @@ const Card = styled.div`
     flex-direction: column;
 `;
 
+// Rendered as a <button> when expandable (see ServerToolCard), so reset the
+// native button chrome; the resets are inert for the plain-div variant.
 const Header = styled.div<{$canExpand: boolean}>`
     display: flex;
     align-items: center;
     gap: 8px;
     cursor: ${(props) => (props.$canExpand ? 'pointer' : 'default')};
     user-select: none;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    font: inherit;
+    color: inherit;
+    text-align: left;
 `;
 
 const ChevronWrapper = styled.div<{$visible: boolean}>`

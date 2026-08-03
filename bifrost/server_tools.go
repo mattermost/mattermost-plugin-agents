@@ -229,8 +229,10 @@ func codeExecutionSubTool(toolName string) string {
 	}
 }
 
-// mapServerToolStatus converts a Responses item status ("in_progress",
-// "completed", "failed") to the neutral activity status.
+// mapServerToolStatus converts a Responses item status to the neutral
+// activity status. "incomplete" (e.g. an OpenAI code_interpreter_call cut off
+// by max tokens, or an Anthropic call truncated mid-stream) is terminal and
+// maps to error — leaving it in progress would spin forever in the UI.
 func mapServerToolStatus(status *string) string {
 	if status == nil {
 		return llm.ServerToolStatusInProgress
@@ -238,7 +240,7 @@ func mapServerToolStatus(status *string) string {
 	switch *status {
 	case "completed":
 		return llm.ServerToolStatusSuccess
-	case "failed":
+	case "failed", "incomplete":
 		return llm.ServerToolStatusError
 	default:
 		return llm.ServerToolStatusInProgress

@@ -5,6 +5,7 @@ package bifrost
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,18 +22,19 @@ import (
 
 // writeAnthropicSSE writes raw Anthropic Messages API stream events as
 // server-sent events. Each element is the JSON data payload; the SSE event
-// name is read from its "type" field the same way Anthropic emits it.
+// name is read from its top-level "type" field the same way Anthropic emits
+// it. Parsed with encoding/json so nested objects carrying their own "type"
+// fields can't produce the wrong event name.
 func writeAnthropicSSE(w http.ResponseWriter, events []string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	for _, data := range events {
-		eventName := ""
-		if start := strings.Index(data, `"type":"`); start != -1 {
-			rest := data[start+len(`"type":"`):]
-			if end := strings.Index(rest, `"`); end != -1 {
-				eventName = rest[:end]
-			}
+		var envelope struct {
+			Type string `json:"type"`
 		}
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName, data)
+		if err := json.Unmarshal([]byte(data), &envelope); err != nil {
+			panic(fmt.Sprintf("invalid SSE fixture %q: %v", data, err))
+		}
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", envelope.Type, data)
 	}
 }
 
@@ -62,7 +64,7 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 		enabledNativeTools []string
 		events             []string
 		wantText           string
-		wantFinal          llm.ServerToolUse
+		wantFinal          []llm.ServerToolUse
 	}{
 		{
 			name:               "bash code execution",
@@ -82,14 +84,14 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 				messageEnd,
 			),
 			wantText: "Let me calculate.The mean is 5.5.",
-			wantFinal: llm.ServerToolUse{
+			wantFinal: []llm.ServerToolUse{{
 				ID:      "srvtoolu_bash",
 				Tool:    llm.NativeToolCodeInterpreter,
 				Status:  llm.ServerToolStatusSuccess,
 				SubTool: "bash",
 				Command: "python3 -c statistics",
 				Output:  "Mean: 5.5\n",
-			},
+			}},
 		},
 		{
 			name:               "bash code execution error",
@@ -107,14 +109,14 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 				messageEnd,
 			),
 			wantText: "The sandbox is unavailable.",
-			wantFinal: llm.ServerToolUse{
+			wantFinal: []llm.ServerToolUse{{
 				ID:        "srvtoolu_err",
 				Tool:      llm.NativeToolCodeInterpreter,
 				Status:    llm.ServerToolStatusError,
 				SubTool:   "bash",
 				Command:   "boom",
 				ErrorCode: "unavailable",
-			},
+			}},
 		},
 		{
 			name:               "web search",
@@ -131,12 +133,12 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 				messageEnd,
 			),
 			wantText: "Found it.",
-			wantFinal: llm.ServerToolUse{
+			wantFinal: []llm.ServerToolUse{{
 				ID:     "srvtoolu_ws",
 				Tool:   llm.NativeToolWebSearch,
 				Status: llm.ServerToolStatusSuccess,
 				Query:  "latest mattermost release",
-			},
+			}},
 		},
 		{
 			name:               "web fetch",
@@ -153,12 +155,49 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 				messageEnd,
 			),
 			wantText: "Fetched.",
-			wantFinal: llm.ServerToolUse{
+			wantFinal: []llm.ServerToolUse{{
 				ID:     "srvtoolu_wf",
 				Tool:   llm.NativeToolWebFetch,
 				Status: llm.ServerToolStatusSuccess,
 				URL:    "https://example.com/doc",
 				Title:  "Example Doc",
+			}},
+		},
+		{
+			// The snapshot is cumulative: a second tool in the same response
+			// must append to the activity, not replace the earlier entry.
+			name:               "web search then web fetch accumulate in order",
+			enabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch},
+			events: flatten(
+				[]string{messageStart},
+				[]string{
+					`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_ws2","name":"web_search","input":{"query":"release notes url"}}}`,
+					`{"type":"content_block_stop","index":0}`,
+					`{"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_ws2","content":[{"type":"web_search_result","title":"Docs","url":"https://example.com/docs","encrypted_content":"enc2"}]}}`,
+					`{"type":"content_block_stop","index":1}`,
+					`{"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_wf2","name":"web_fetch","input":{"url":"https://example.com/docs"}}}`,
+					`{"type":"content_block_stop","index":2}`,
+					`{"type":"content_block_start","index":3,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"srvtoolu_wf2","content":{"type":"web_fetch_result","url":"https://example.com/docs","retrieved_at":"2026-07-30T12:00:00Z","content":{"type":"document","title":"Docs","source":{"type":"text","media_type":"text/plain","data":"body"},"citations":{"enabled":false}}}}}`,
+					`{"type":"content_block_stop","index":3}`,
+				},
+				textBlock(4, "Both done."),
+				messageEnd,
+			),
+			wantText: "Both done.",
+			wantFinal: []llm.ServerToolUse{
+				{
+					ID:     "srvtoolu_ws2",
+					Tool:   llm.NativeToolWebSearch,
+					Status: llm.ServerToolStatusSuccess,
+					Query:  "release notes url",
+				},
+				{
+					ID:     "srvtoolu_wf2",
+					Tool:   llm.NativeToolWebFetch,
+					Status: llm.ServerToolStatusSuccess,
+					URL:    "https://example.com/docs",
+					Title:  "Docs",
+				},
 			},
 		},
 	}
@@ -211,13 +250,13 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 
 			require.NotEmpty(t, snapshots, "server tool activity must be surfaced")
 			first := snapshots[0]
-			require.Len(t, first, 1)
+			require.NotEmpty(t, first)
 			assert.Equal(t, llm.ServerToolStatusInProgress, first[0].Status,
 				"the first snapshot arrives when the tool starts, before the result")
 
 			final := snapshots[len(snapshots)-1]
-			require.Len(t, final, 1)
-			assert.Equal(t, tt.wantFinal, final[0])
+			assert.Equal(t, tt.wantFinal, final,
+				"the final snapshot must carry every tool of the round in arrival order")
 		})
 	}
 }
@@ -228,4 +267,26 @@ func flatten(groups ...[]string) []string {
 		out = append(out, g...)
 	}
 	return out
+}
+
+// TestMapServerToolStatus pins the item-status mapping. "incomplete" (e.g. an
+// OpenAI code_interpreter_call cut off by max tokens) must be terminal: mapping
+// it to in-progress leaves a spinner in the UI after the stream ends.
+func TestMapServerToolStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status *string
+		want   string
+	}{
+		{"nil defaults to in progress", nil, llm.ServerToolStatusInProgress},
+		{"in_progress stays in progress", Ptr("in_progress"), llm.ServerToolStatusInProgress},
+		{"completed maps to success", Ptr("completed"), llm.ServerToolStatusSuccess},
+		{"failed maps to error", Ptr("failed"), llm.ServerToolStatusError},
+		{"incomplete is terminal error", Ptr("incomplete"), llm.ServerToolStatusError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, mapServerToolStatus(tt.status))
+		})
+	}
 }
