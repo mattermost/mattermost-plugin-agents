@@ -44,6 +44,7 @@ const groups = {
         'tests/llmbot-post-component/citations-annotations.spec.ts',
         'tests/llmbot-post-component/combined-features.spec.ts',
         'tests/llmbot-post-component/debug-test.spec.ts',
+        'tests/ask-another-user/ask-another-user.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',
