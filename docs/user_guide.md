@@ -106,6 +106,14 @@ Tool availability depends on your user permissions, provider connection status, 
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 
+### Answer a question an agent asks you
+
+While working on someone else's request, an agent can ask **you** a clarifying question using its ask-another-user capability. The question arrives as an interactive card in your direct message with the agent. The card shows the question, optional answer choices, an optional free-form answer field, and — when a person started the conversation — an "Asked on behalf of @username" line so you know who the answer helps. Select **View conversation** to open the conversation the question came from (you'll only see it if you have access to it).
+
+Choose an option and/or type an answer, then select **Answer** — your response is passed back to the agent and attributed to you in the requesting conversation. If you can't or don't want to answer, select **Decline**; the agent is told you declined and continues without your input. Only you can answer or decline your card. Once resolved, the card shows your answer (or that you declined) and can't be changed. If the card says the question is no longer active, the requester's conversation moved on — nothing is needed from you.
+
+> **Note:** Answering isn't currently supported in the Mattermost mobile apps — the question appears as plain text there. Open Mattermost in a browser or the desktop app to respond.
+
 ## Analyze threads and channels
 
 ### Summarize discussion threads

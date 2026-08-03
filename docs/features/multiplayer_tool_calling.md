@@ -14,9 +14,9 @@ This document is the canonical reference for those rules. It is aimed at:
 
 End-user instructions (how to click **Accept** or **Reject** in the moment) live in the [user guide](../user_guide.md#use-tools). This document explains the model behind those clicks.
 
-## 2. The four roles
+## 2. The five roles
 
-Every tool call in a channel involves up to four distinct roles. These terms are used consistently throughout the rest of this document.
+Every tool call in a channel involves up to five distinct roles. These terms are used consistently throughout the rest of this document.
 
 | Role | Definition |
 |---|---|
@@ -24,6 +24,7 @@ Every tool call in a channel involves up to four distinct roles. These terms are
 | **Approver** | The user permitted to click **Accept** or **Reject** on a pending tool-call card. In multiplayer tool calling, **the approver is always the initiator** — never another channel member, never an admin. |
 | **Executor** | The identity Mattermost uses when actually running the tool — opening the HTTP request, hitting the MCP server, reading channel posts, etc. The executor inherits the initiator's user identity and the initiator's per-user OAuth tokens for OAuth-backed MCP servers. |
 | **Observer** (or **onlooker**) | Any other channel member who can read the channel post containing the Agent's response, but who did not trigger it. Observers are read-only with respect to the tool call: they cannot approve, cannot reject, and (by default) cannot see tool arguments or private results. |
+| **Target** | The user an Agent asks a question of via the `AskAnotherUser` tool. The target is not the initiator and may not even be in the originating channel. The target owns exactly one decision: answer or decline the question delivered to their DM. See §10. |
 
 Concrete example: Maya `@`-mentions `@copilot` in `~team-eng` and asks it to look up a Jira ticket. Raj is also in `~team-eng` and watches the conversation unfold.
 
@@ -169,7 +170,31 @@ In practice this means:
 
 This is the intentional behavior. If a workflow needs an Agent to invoke `ask`-policy tools on a recurring schedule, the right answer is for an admin to either (a) reclassify those tools as `auto_run_everywhere` after a security review, or (b) keep a human in the loop. Bots cannot promote themselves into the approver role.
 
-## 10. Operational guidance for admins
+## 10. Asking another user: the target as a second actor
+
+The built-in `AskAnotherUser` tool lets an Agent ask a specific other user a clarifying question mid-task. This is a deliberate extension of the multiplayer model: it introduces a second first-class human actor — the **target** — alongside the initiator. While the question is outstanding, the conversation blocks (the tool call sits in a waiting state and the Agent produces no follow-up); once the target answers or declines, the conversation resumes with the answer (or the decline) recorded as an ordinary tool result.
+
+### Delivery is DM-only
+
+The question is delivered as an interactive card in the target's DM with the Agent bot — never posted into the originating channel, even when the initiating conversation is a channel thread. The card carries a permalink back to the initiating conversation and, when a person started the conversation, an "Asked on behalf of @initiator" attribution line. Attribution is carried in post props and rendered by the client — it is never authored by the model. Autonomous flows without a human requester show no attribution.
+
+### Ownership split
+
+The initiator still owns Accept / Reject of the tool call itself — §4's rules are unchanged, and under the default `ask` policy the question card is dispatched only after the initiator accepts. The **target** exclusively owns the answer: the answer endpoint verifies the caller is the recorded target and rejects anyone else, including the initiator and admins. Decline is a first-class outcome, not an error — the Agent is instructed to proceed gracefully without the answer.
+
+### No Share / Keep Private stage
+
+The answer is authored by the target, not produced by a third-party tool, so it is treated like `AskUserQuestion` answers: marked shared on resolution, with no §6 two-step. Channel observers see only a redacted waiting placeholder while the question is outstanding — the question text and target arguments stay hidden, consistent with §7.
+
+### Policy
+
+`AskAnotherUser` is a regular built-in tool under the standard `ask` / `auto_run_in_dm` / `auto_run_everywhere` policies (see the admin guide's "Built-in tool policies" section). It ships with an explicit `ask` default. Consistent with §9, it is excluded from `activate_ai` bot-triggered channel flows — a question card is never dispatched from a flow with no accountable human.
+
+### Limitations (v1)
+
+Regenerating or stopping the conversation while a question is outstanding orphans the card: a late answer gets "This question is no longer active." and the card stays pending, mirroring the "pending tool calls remain pending" behavior in §4. There is no initiator-side cancel of an outstanding question. The Mattermost mobile apps show a plain-text fallback and cannot answer; targets must use web or desktop.
+
+## 11. Operational guidance for admins
 
 Configuring the per-tool policy list is the main lever admins have over multiplayer behavior. A few recommendations:
 
@@ -181,7 +206,7 @@ Configuring the per-tool policy list is the main lever admins have over multipla
 
 The channel tool-calling capability itself is gated by the workspace setting **Enable Channel Mention Tool Calling**, which is experimental at the time of the v2 launch. Until that setting is enabled, multiplayer tool calling is effectively limited to `auto_run_*` policies in DMs and admins do not need to think about channel privacy at all.
 
-## 11. Tradeoffs and explicit non-goals
+## 12. Tradeoffs and explicit non-goals
 
 To make the model auditable, several things are deliberately **not** supported. These are not oversights; they are design choices.
 
@@ -191,7 +216,7 @@ To make the model auditable, several things are deliberately **not** supported. 
 - **No tool execution as the bot.** As noted in §3 and §9, tools always run as the initiator. There is no "service account" path for OAuth-backed MCP tools.
 - **No retroactive privacy.** Once the initiator chooses **Share**, the result is visible to channel members and the Agent's follow-up response incorporates it openly. There is no "unshare" button. The same is true for `auto_run_everywhere` tools, which are auto-shared at the moment they execute — there is no Share / Keep Private prompt to retract. (Channel-level moderation tools — deleting posts, etc. — are still available but live outside Agents.)
 
-## 12. Related docs
+## 13. Related docs
 
 - [User guide — Use tools](../user_guide.md#use-tools): the end-user-facing instructions for Accept / Reject and the Tools menu.
 - [Admin guide](../admin_guide.md): per-tool policy configuration, agent management, and the **Enable Channel Mention Tool Calling** setting.

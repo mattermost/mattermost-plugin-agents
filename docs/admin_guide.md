@@ -273,6 +273,31 @@ To obtain Google Custom Search credentials:
 - Search results include clickable citations that link back to source websites
 - Domain denylisting applies to all providers and is enforced for _web page fetching only_. 
 
+### Built-in tool policies
+
+Built-in (non-MCP) tools — such as `AskAnotherUser` and the built-in web search tool — follow the same three approval policies as MCP tools (`ask`, `auto_run_in_dm`, `auto_run_everywhere`; see the [multiplayer tool calling](features/multiplayer_tool_calling.md) reference). Unconfigured built-in tools default to policy `ask`, which always requires the initiator's approval. `AskAnotherUser` ships with an explicit `ask` default.
+
+There is no System Console panel for built-in tool policies in this release. Configure them through the plugin's admin config API: `GET` the current configuration from `/plugins/mattermost-ai/admin/config`, add or edit the `mcp.builtInTools` array, and `PUT` the **full** configuration object back (the endpoint replaces the stored configuration; don't send a partial body). Example fragment of the configuration object:
+
+```json
+{
+  "mcp": {
+    "builtInTools": [
+      {"name": "AskAnotherUser", "policy": "auto_run_in_dm", "enabled": true}
+    ]
+  }
+}
+```
+
+Semantics:
+
+- `policy` accepts `ask`, `auto_run_in_dm`, and `auto_run_everywhere`; invalid values fall back to `ask`.
+- `enabled: false` prevents the tool from auto-running; combined with `ask`, the tool still shows the Accept/Reject card. This setting doesn't remove built-in tools from the Agent's catalog.
+- Entries here override the shipped defaults; built-in tools you don't list keep the default `ask` policy.
+- `AskAnotherUser` never runs from automated `activate_ai` bot flows regardless of policy (see [bot-triggered flows](features/multiplayer_tool_calling.md#9-bot-triggered-flows) in the multiplayer reference).
+
+For the question-card experience on the receiving end of `AskAnotherUser`, see [Answer a question an agent asks you](user_guide.md#answer-a-question-an-agent-asks-you) in the user guide.
+
 ### Embed search configuration
 
 To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search requires a license (see [license requirements](#license-requirements)) and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
