@@ -372,7 +372,9 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
             dispatch({type: 'RECEIVED_PROFILES', data: profilesById});
         }).catch(() => {
             // Best-effort: the attribution row stays hidden and submission
-            // stays disabled until a later render retries the fetch.
+            // stays disabled until the profiles land in redux some other way
+            // (e.g. another consumer fetches them) or the card remounts and
+            // the effect runs again.
         });
     }, [requesterId, requesterUsername, botUserId, botUsername, dispatch]);
 

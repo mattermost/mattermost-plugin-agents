@@ -192,7 +192,7 @@ The answer is authored by the target, not produced by a third-party tool, so it 
 
 ### Limitations (v1)
 
-Regenerating or stopping the conversation while a question is outstanding orphans the card: a late answer gets "This question is no longer active." and the card stays pending, mirroring the "pending tool calls remain pending" behavior in §4. There is no initiator-side cancel of an outstanding question. The Mattermost mobile apps show a plain-text fallback and cannot answer; targets must use web or desktop.
+Regenerating or stopping the conversation while a question is outstanding orphans the card: a late answer fails with an error and the card stays pending, mirroring the "pending tool calls remain pending" behavior in §4. There is no initiator-side cancel of an outstanding question. The Mattermost mobile apps show a plain-text fallback and cannot answer; targets must use web or desktop.
 
 ## 11. Operational guidance for admins
 

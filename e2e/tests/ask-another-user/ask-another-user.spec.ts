@@ -173,6 +173,15 @@ test.describe('Ask Another User (Aimock)', () => {
             await expect(answerButton).not.toBeVisible();
             await expect(declineButton).not.toBeVisible();
 
+            // Reload: the resolved state must come from the server-patched
+            // card-post props, not the local submit snapshot — a prop-patch
+            // regression would revert the card to pending here.
+            await targetPage.reload();
+            await expect(askCard.getByText('Answered')).toBeVisible({timeout: 30000});
+            await expect(askCard.getByText(optionAnswer, {exact: true})).toBeVisible();
+            await expect(answerButton).not.toBeVisible();
+            await expect(declineButton).not.toBeVisible();
+
             // Initiator conversation resumes with the scripted continuation.
             await expect(rhs.getByText(finalText)).toBeVisible({timeout: 60000});
             await expect(rhs.getByText(waitingForTargetRegex)).not.toBeVisible();
