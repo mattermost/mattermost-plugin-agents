@@ -246,6 +246,34 @@ export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?
     });
 }
 
+export type AskUserResponseAction = 'answer' | 'decline';
+
+// Request body for the ask_user_response endpoint. Mirrors
+// conversations.AskUserResponse on the server.
+export interface AskUserResponseBody {
+    action: AskUserResponseAction;
+    selected: string[];
+    free_form: string;
+}
+
+export async function doAskUserResponse(postid: string, body: AskUserResponseBody): Promise<{status: string}> {
+    const url = `${postRoute(postid)}/ask_user_response`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(body),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doToolResult(postid: string, toolIDs: string[]): Promise<void> {
     const url = `${postRoute(postid)}/tool_result`;
     const response = await fetch(url, Client4.getOptions({

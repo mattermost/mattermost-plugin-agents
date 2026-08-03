@@ -8,7 +8,12 @@ export enum ToolCallStatus {
     Error = 3,
     Success = 4,
     AutoApproved = 5,
+    Waiting = 6,
 }
+
+// Built-in deferred-result tool that asks a different Mattermost user a
+// question. Mirrors mmtools.AskAnotherUserToolName on the server.
+export const AskAnotherUserToolName = 'AskAnotherUser';
 
 export type JSONValue =
     | string
@@ -46,6 +51,10 @@ export interface ToolCall {
     // may be running live or paused in a persisted round, but never needs an
     // individual approval decision.
     would_auto_execute?: boolean;
+
+    // True when the tool's result arrives out-of-band after a dispatch side
+    // effect (deferred-result tools, e.g. AskAnotherUser).
+    deferred_result?: boolean;
 
     // True when the matching tool result has already received its terminal
     // share/keep-private decision (decided_at set server-side). Derived from

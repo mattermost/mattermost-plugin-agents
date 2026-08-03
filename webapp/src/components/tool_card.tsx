@@ -15,7 +15,7 @@ import {GlobalState} from '@mattermost/types/store';
 import manifest from '@/manifest';
 import {stripWirePrefix} from '@/utils/tool_names';
 
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+import {AskAnotherUserToolName, ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
 import LoadingSpinner from './assets/loading_spinner';
 import IconCheckCircle from './assets/icon_check_circle';
@@ -334,6 +334,35 @@ export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']
         Object.keys(argumentsValue).length === 0;
 }
 
+// Extracts the target username from AskAnotherUser tool arguments. Returns ''
+// when the arguments are missing or redacted (observers see null arguments).
+export function parseAskAnotherUserTarget(args: ToolCall['arguments']): string {
+    if (args == null || typeof args !== 'object' || Array.isArray(args)) {
+        return '';
+    }
+    const username = (args as {[key: string]: unknown}).username;
+    return typeof username === 'string' ? username : '';
+}
+
+// Returns the declining user's username (or '' when unknown) if this tool call
+// is an AskAnotherUser call whose result records a decline; null otherwise.
+// Result shape: {"status":"declined","target_username":"bob"} (contract C7).
+export function parseAskAnotherUserDecline(tool: ToolCall): string | null {
+    if (tool.name !== AskAnotherUserToolName || !tool.result) {
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(tool.result);
+        if (parsed?.status !== 'declined') {
+            return null;
+        }
+        const username = typeof parsed?.target_username === 'string' ? parsed.target_username : '';
+        return username || parseAskAnotherUserTarget(tool.arguments);
+    } catch {
+        return null;
+    }
+}
+
 const ToolCard: React.FC<ToolCardProps> = ({
     postID,
     tool,
@@ -356,12 +385,18 @@ const ToolCard: React.FC<ToolCardProps> = ({
     const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
+    const isWaiting = tool.status === ToolCallStatus.Waiting;
     const isResultApprovalStage = approvalStage === 'result';
     const showDecisionButtons = Boolean(onApprove && onReject) &&
         (isResultApprovalStage ||
             (approvalStage === 'call' && isPending && !tool.would_auto_execute));
-    const showProcessingSpinner = isProcessing || isPending || isAccepted;
+    const showProcessingSpinner = isProcessing || isPending || isAccepted || isWaiting;
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
+
+    // A waiting AskAnotherUser call names its target in the arguments;
+    // observers see redacted (null) arguments and get the generic fallback.
+    const waitingTarget = tool.name === AskAnotherUserToolName ? parseAskAnotherUserTarget(tool.arguments) : '';
+    const declinedBy = parseAskAnotherUserDecline(tool);
 
     // Tool-call cards lack server context, so strip the pluginmcp prefix
     // heuristically before title-casing the display name.
@@ -631,13 +666,48 @@ const ToolCard: React.FC<ToolCardProps> = ({
                     {isRejected && (
                         <StatusContainer>
                             <ResponseRejectedIcon/>
-                            <FormattedMessage
-                                id='ai.tool_call.status.rejected'
-                                defaultMessage='Rejected'
-                            />
+                            {declinedBy === null && (
+                                <FormattedMessage
+                                    id='ai.tool_call.status.rejected'
+                                    defaultMessage='Rejected'
+                                />
+                            )}
+                            {declinedBy !== null && declinedBy !== '' && (
+                                <FormattedMessage
+                                    id='ai.tool_call.declined_to_answer'
+                                    defaultMessage='@{username} declined to answer'
+                                    values={{username: declinedBy}}
+                                />
+                            )}
+                            {declinedBy === '' && (
+                                <FormattedMessage
+                                    id='ai.tool_call.declined_to_answer_unknown'
+                                    defaultMessage='Declined to answer'
+                                />
+                            )}
                         </StatusContainer>
                     )}
                 </>
+            )}
+
+            {isWaiting && (
+                <StatusContainer>
+                    <ProcessingSpinnerContainer>
+                        <ProcessingSpinner/>
+                    </ProcessingSpinnerContainer>
+                    {waitingTarget ? (
+                        <FormattedMessage
+                            id='ai.tool_call.waiting_for_user'
+                            defaultMessage='Waiting for @{username} to answer…'
+                            values={{username: waitingTarget}}
+                        />
+                    ) : (
+                        <FormattedMessage
+                            id='ai.tool_call.waiting_for_response'
+                            defaultMessage='Waiting for a response…'
+                        />
+                    )}
+                </StatusContainer>
             )}
 
             {showDecisionButtons && renderDecisionButtons()}
