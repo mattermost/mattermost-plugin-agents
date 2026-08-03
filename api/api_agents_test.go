@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -1972,6 +1973,36 @@ func TestAuditUploadAgentAvatar(t *testing.T) {
 				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
 				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
 				assert.Equal(t, "my-agent", rec.EventData.Parameters[audit.KeyAgentName])
+			},
+		},
+		{
+			name: "malformed multipart cannot inject raw header text into the record",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				seedAgent(e)
+			},
+			// Go's multipart parser wraps offending input into its error
+			// text (e.g. "malformed MIME header line: <raw line>"). That
+			// error reaches gin's error list; the record must never carry
+			// it — fail records are content-free by construction.
+			makeBody: func(t *testing.T) (io.Reader, string) {
+				body := "--BOUNDARY\r\n" +
+					"PLANTED-INJECTED-HEADER-LINE-not-a-mime-header\r\n" +
+					"\r\npayload\r\n" +
+					"--BOUNDARY--\r\n"
+				return strings.NewReader(body), "multipart/form-data; boundary=BOUNDARY"
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), "PLANTED-INJECTED-HEADER-LINE",
+					"multipart parse errors quoting request bytes must not reach the record")
 			},
 		},
 	}
