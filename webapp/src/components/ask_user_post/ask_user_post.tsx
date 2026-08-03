@@ -87,6 +87,7 @@ export function parseAskUserProps(props: Record<string, unknown> | undefined): A
         if (!Array.isArray(rawOptions)) {
             return null;
         }
+        const seenLabels = new Set<string>();
         for (const opt of rawOptions) {
             if (opt == null || typeof opt !== 'object' || Array.isArray(opt)) {
                 return null;
@@ -95,6 +96,14 @@ export function parseAskUserProps(props: Record<string, unknown> | undefined): A
             if (typeof optObj.label !== 'string' || optObj.label === '') {
                 return null;
             }
+
+            // Labels key the option rows and the selection state; duplicates
+            // would double-toggle. The server validates uniqueness, but props
+            // are untrusted.
+            if (seenLabels.has(optObj.label)) {
+                return null;
+            }
+            seenLabels.add(optObj.label);
             const option: QuestionOption = {label: optObj.label};
             if (typeof optObj.description === 'string') {
                 option.description = optObj.description;
@@ -130,10 +139,21 @@ export function parseAskUserProps(props: Record<string, unknown> | undefined): A
     };
 }
 
-// Mirrors the server's answer-preview rule (contract C4) so the local
-// resolved snapshot matches what the patched props will show.
-function buildAnswerPreview(selected: string[], freeForm: string): string {
-    return [...selected, freeForm.trim()].filter((s) => s !== '').join(', ').slice(0, 200);
+// Mirrors the server's answer-preview rule (askUserAnswerPreview in
+// conversations/ask_another_user.go) so the local resolved snapshot matches
+// what the patched props will show: selected labels joined with ', ', then
+// ' — ' and the free-form text when both are present, truncated to 200 runes.
+// Exported for tests.
+export function buildAnswerPreview(selected: string[], freeForm: string): string {
+    let preview = selected.join(', ');
+    const trimmedFreeForm = freeForm.trim();
+    if (trimmedFreeForm !== '') {
+        preview = preview === '' ? trimmedFreeForm : `${preview} — ${trimmedFreeForm}`;
+    }
+
+    // Rune-safe truncation: Array.from splits by code points, matching Go's
+    // []rune semantics for astral characters.
+    return Array.from(preview).slice(0, 200).join('');
 }
 
 const Card = styled.div`
@@ -323,22 +343,38 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
     const requesterUsername = useSelector<GlobalState, string | undefined>(
         (state) => state.entities.users.profiles[requesterId]?.username,
     );
+
+    // The card post's author is the bot. Its username must accompany every
+    // answer/decline request (see doAskUserResponse); submission stays
+    // disabled until the profile resolves.
+    const botUserId = post.user_id;
+    const botUsername = useSelector<GlobalState, string | undefined>(
+        (state) => state.entities.users.profiles[botUserId]?.username,
+    );
     const dispatch = useDispatch();
 
     useEffect(() => {
-        if (!requesterId || requesterUsername) {
+        const missing: string[] = [];
+        if (requesterId && !requesterUsername) {
+            missing.push(requesterId);
+        }
+        if (botUserId && !botUsername) {
+            missing.push(botUserId);
+        }
+        if (missing.length === 0) {
             return;
         }
-        getProfilesByIds([requesterId]).then((profiles) => {
+        getProfilesByIds(missing).then((profiles) => {
             const profilesById = profiles.reduce<Record<string, unknown>>((acc, p) => {
                 acc[p.id] = p;
                 return acc;
             }, {});
             dispatch({type: 'RECEIVED_PROFILES', data: profilesById});
         }).catch(() => {
-            // Attribution is best-effort; the row simply stays hidden.
+            // Best-effort: the attribution row stays hidden and submission
+            // stays disabled until a later render retries the fetch.
         });
-    }, [requesterId, requesterUsername, dispatch]);
+    }, [requesterId, requesterUsername, botUserId, botUsername, dispatch]);
 
     const selection = useOptionSelection(data?.multiSelect ?? false);
 
@@ -355,12 +391,12 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
     const interactive = canRespond && (submitState.phase === 'idle' || (submitState.phase === 'error' && !submitState.conflict));
 
     const submit = async (action: AskUserResponseAction, selected: string[], freeForm: string) => {
-        if (!interactive) {
+        if (!interactive || !botUsername) {
             return;
         }
         setSubmitState({phase: 'submitting', action});
         try {
-            await doAskUserResponse(post.id, {action, selected, free_form: freeForm});
+            await doAskUserResponse(post.id, botUsername, {action, selected, free_form: freeForm});
             setSubmitState({
                 phase: 'resolved',
                 resolution: action === 'answer' ? 'answered' : 'declined',
@@ -534,6 +570,7 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
                         <FooterButton
                             type='button'
                             $primary={false}
+                            disabled={!botUsername}
                             onClick={onDecline}
                         >
                             <FormattedMessage
@@ -544,7 +581,7 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
                         <FooterButton
                             type='button'
                             $primary={true}
-                            disabled={!canSubmit}
+                            disabled={!canSubmit || !botUsername}
                             onClick={onAnswer}
                         >
                             <FormattedMessage

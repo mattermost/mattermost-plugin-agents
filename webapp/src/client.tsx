@@ -256,8 +256,12 @@ export interface AskUserResponseBody {
     free_form: string;
 }
 
-export async function doAskUserResponse(postid: string, body: AskUserResponseBody): Promise<{status: string}> {
-    const url = `${postRoute(postid)}/ask_user_response`;
+// botUsername must be the card bot's username (the card post's author): the
+// endpoint's middleware resolves the bot from this query param — falling back
+// to the DEFAULT bot when absent — and runs usage-restriction checks against
+// that bot. Omitting it would 403 targets who lack access to the default bot.
+export async function doAskUserResponse(postid: string, botUsername: string, body: AskUserResponseBody): Promise<{status: string}> {
+    const url = `${postRoute(postid)}/ask_user_response?botUsername=${encodeURIComponent(botUsername)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify(body),

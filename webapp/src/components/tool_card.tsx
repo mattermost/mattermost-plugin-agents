@@ -341,7 +341,13 @@ export function parseAskAnotherUserTarget(args: ToolCall['arguments']): string {
         return '';
     }
     const username = (args as {[key: string]: unknown}).username;
-    return typeof username === 'string' ? username : '';
+    if (typeof username !== 'string') {
+        return '';
+    }
+
+    // The model may pass "@bob"; the backend tolerates it via TrimPrefix.
+    // Strip it here too so the card doesn't render "@@bob".
+    return username.startsWith('@') ? username.slice(1) : username;
 }
 
 // Returns the declining user's username (or '' when unknown) if this tool call

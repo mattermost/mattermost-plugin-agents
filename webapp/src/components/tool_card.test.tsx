@@ -38,6 +38,7 @@ function renderComponent(
         onApprove?: () => void;
         onReject?: () => void;
         approvalStage?: ToolApprovalStage;
+        isCollapsed?: boolean;
     } = {},
 ) {
     return render(
@@ -104,6 +105,7 @@ describe('ToolCard argument rendering', () => {
 describe('parseAskAnotherUserTarget', () => {
     test.each([
         ['object arguments with a username', {username: 'bob', question: 'x'}, 'bob'],
+        ['username with a leading @ is stripped', {username: '@bob'}, 'bob'],
         ['null arguments (redacted for observers)', null, ''],
         ['array arguments', [{username: 'bob'}], ''],
         ['non-string username', {username: 42}, ''],
@@ -182,6 +184,19 @@ describe('ToolCard waiting state', () => {
         );
 
         expect(screen.getByText('Waiting for a response…')).not.toBeNull();
+    });
+
+    test('still shows the waiting row when the card is collapsed', () => {
+        renderComponent(
+            makeTool({
+                name: AskAnotherUserToolName,
+                status: ToolCallStatus.Waiting,
+                arguments: {username: 'bob', question: 'q'},
+            }),
+            {approvalStage: 'done', isCollapsed: true},
+        );
+
+        expect(screen.getByText('Waiting for @bob to answer…')).not.toBeNull();
     });
 });
 

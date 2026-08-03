@@ -197,6 +197,15 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				// error tool result so the model can retry.
 				block.Status = conversation.StatusError
 				if persistErr := c.persistBlocks(pendingTurn.ID, pendingBlocks); persistErr != nil {
+					// Double fault: the block is persisted as waiting even
+					// though no card went out, so nothing will ever resolve
+					// it. Name the stuck IDs so an operator can find it.
+					c.mmClient.LogError("AskAnotherUser dispatch and compensating persist both failed; tool_use block stranded in waiting",
+						"tool_use_id", block.ID,
+						"conversation_id", convID,
+						"dispatch_error", dispatchErr.Error(),
+						"persist_error", persistErr.Error(),
+					)
 					return fmt.Errorf("failed to persist dispatch failure: %w", persistErr)
 				}
 				executedAny = true
@@ -358,20 +367,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// A waiting block means a question card just went out: refresh the
 	// initiator's conversation view so the Accept/Reject controls leave the
 	// pending state live.
-	hasUnresolved := false
-	hasWaiting := false
-	for _, b := range pendingBlocks {
-		if b.Type != conversation.BlockTypeToolUse {
-			continue
-		}
-		switch b.Status {
-		case conversation.StatusWaiting:
-			hasWaiting = true
-			hasUnresolved = true
-		case conversation.StatusPending, conversation.StatusAccepted:
-			hasUnresolved = true
-		}
-	}
+	hasWaiting := slices.ContainsFunc(pendingBlocks, func(b conversation.ContentBlock) bool {
+		return b.Type == conversation.BlockTypeToolUse && b.Status == conversation.StatusWaiting
+	})
 	if hasWaiting {
 		c.publishConversationUpdated(convID, channel.Id)
 	}
@@ -383,7 +381,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// A deferred call parked in waiting blocks the follow-up: the answer
 	// handler streams it once the last outstanding block resolves (C3 resume
 	// invariant: no pending, accepted, or waiting blocks may remain).
-	if hasUnresolved {
+	if hasUnresolvedToolUse(pendingBlocks) {
 		return nil
 	}
 
@@ -406,6 +404,26 @@ func (c *Conversations) persistBlocks(turnID string, blocks []conversation.Conte
 		return fmt.Errorf("failed to marshal blocks: %w", err)
 	}
 	return c.convService.UpdateTurnContent(turnID, content)
+}
+
+// hasUnresolvedToolUse reports whether any tool_use block still awaits
+// resolution: pending (needs an approval click), accepted (decision recorded
+// but not yet executed), or waiting (deferred question outstanding). This is
+// the C3 resume invariant shared by HandleToolCall, HandleToolResult, and
+// HandleAskUserResponse: a follow-up must never stream while such a block
+// remains on the anchor turn.
+func hasUnresolvedToolUse(blocks []conversation.ContentBlock) bool {
+	for _, b := range blocks {
+		if b.Type != conversation.BlockTypeToolUse {
+			continue
+		}
+		if b.Status == conversation.StatusPending ||
+			b.Status == conversation.StatusAccepted ||
+			b.Status == conversation.StatusWaiting {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
@@ -486,6 +504,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	// actually executed to decide whether a follow-up stream is warranted.
 	clickedPostToolUseIDs := make(map[string]struct{})
 	clickedPostHasExecutedTool := false
+	anchorHasUnresolvedToolUse := false
 	acceptedRemoteMCPTool := false
 	for _, turn := range turns {
 		if turn.Role != "assistant" || turn.PostID == nil || *turn.PostID != post.Id {
@@ -494,6 +513,9 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		var blocks []conversation.ContentBlock
 		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
 			continue
+		}
+		if hasUnresolvedToolUse(blocks) {
+			anchorHasUnresolvedToolUse = true
 		}
 		for _, b := range blocks {
 			if b.Type != conversation.BlockTypeToolUse || b.ID == "" {
@@ -599,6 +621,17 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	// at least one executed tool_result exists on this post. Rejected-only
 	// posts produce no output worth streaming.
 	if !clickedPostHasExecutedTool {
+		return nil
+	}
+
+	// C3 resume invariant: the share decision above is recorded, but the
+	// follow-up must not stream while any tool_use on the anchor turn is
+	// still pending, accepted, or waiting — e.g. a mixed batch whose
+	// AskAnotherUser question is unanswered. Streaming now would feed the
+	// model a dangling tool_use and demote the anchor turn, orphaning the
+	// eventual answer's resume; HandleAskUserResponse streams once the last
+	// block resolves.
+	if anchorHasUnresolvedToolUse {
 		return nil
 	}
 

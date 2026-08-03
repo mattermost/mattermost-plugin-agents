@@ -258,6 +258,7 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 		wouldAutoExecute bool
 		policyChecker    mcp.ToolPolicyChecker
 		includeNormal    bool
+		inChannel        bool
 		dmErr            error
 		wantDMCalls      int
 		wantBlockStatus  string
@@ -310,6 +311,20 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 			name:            "mixed batch executes normal tool but gates follow-up on waiting",
 			acceptedIDs:     []string{"tool-use-1", "ask-1"},
 			includeNormal:   true,
+			wantDMCalls:     1,
+			wantBlockStatus: conversation.StatusWaiting,
+			wantResultTurn:  true,
+			wantResultText:  "restored-result",
+			wantPublish:     true,
+		},
+		{
+			// Channel-anchored mixed batch: the normal tool's result stays
+			// undecided (share stage pending in HandleToolResult) and the
+			// waiting question gates the follow-up exactly as in DMs.
+			name:            "channel mixed batch stages the share decision and gates follow-up on waiting",
+			acceptedIDs:     []string{"tool-use-1", "ask-1"},
+			includeNormal:   true,
+			inChannel:       true,
 			wantDMCalls:     1,
 			wantBlockStatus: conversation.StatusWaiting,
 			wantResultTurn:  true,
@@ -399,7 +414,12 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 			approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
 			approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
 
-			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, dmChannel, tc.acceptedIDs, nil))
+			channel := dmChannel
+			if tc.inChannel {
+				channel = &model.Channel{Id: "town-square", Type: model.ChannelTypeOpen, Name: "town-square", TeamId: "team-id"}
+			}
+
+			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, tc.acceptedIDs, nil))
 			streamingService.waitForStreaming()
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
@@ -435,6 +455,13 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 				}
 				if tc.includeNormal {
 					assert.Equal(t, "tool-use-1", resultBlocks[0].ToolUseID)
+				}
+				if tc.inChannel {
+					// Channel results stay undecided until the requester's
+					// Share/Keep-Private click in HandleToolResult.
+					assert.Nil(t, resultBlocks[0].DecidedAt, "channel results must await the share decision")
+					require.NotNil(t, resultBlocks[0].Shared)
+					assert.False(t, *resultBlocks[0].Shared, "channel results stay unshared until the share decision")
 				}
 			}
 
@@ -522,23 +549,25 @@ func TestHandleAskUserResponse(t *testing.T) {
 	askInput := `{"username":"bob","question":"Which environment?","options":[{"label":"Prod"},{"label":"Staging"}]}`
 
 	cases := []struct {
-		name            string
-		caller          string
-		action          string
-		selected        []string
-		freeForm        string
-		seedStatus      string
-		blockID         string
-		notACard        bool
-		cardConvID      string
-		extraPending    bool
-		cardPatchFails  bool
-		wantErr         error
-		wantBlockStatus string
-		wantResultJSON  string
-		wantFollowUp    bool
-		wantCardStatus  string
-		wantPreview     string
+		name                   string
+		caller                 string
+		action                 string
+		selected               []string
+		freeForm               string
+		seedStatus             string
+		blockID                string
+		notACard               bool
+		cardConvID             string
+		extraPending           bool
+		channelAnchor          bool
+		extraExecutedUndecided bool
+		cardPatchFails         bool
+		wantErr                error
+		wantBlockStatus        string
+		wantResultJSON         string
+		wantFollowUp           bool
+		wantCardStatus         string
+		wantPreview            string
 	}{
 		{
 			name:            "answer resumes the conversation",
@@ -635,6 +664,47 @@ func TestHandleAskUserResponse(t *testing.T) {
 			wantResultJSON:  `{"status":"answered","target_username":"bob","selected":["Prod"],"free_form":""}`,
 			wantFollowUp:    true,
 		},
+		{
+			// C6: channel-anchored answers are user-authored, so they are
+			// shared+decided immediately (no Share/Keep-Private stage) and
+			// the follow-up streams with isDM=false.
+			name:            "channel anchor answer is shared and streams with no share stage",
+			action:          AskUserActionAnswer,
+			selected:        []string{"Prod"},
+			channelAnchor:   true,
+			wantBlockStatus: conversation.StatusSuccess,
+			wantResultJSON:  `{"status":"answered","target_username":"bob","selected":["Prod"],"free_form":""}`,
+			wantFollowUp:    true,
+			wantCardStatus:  AskUserStatusAnswered,
+			wantPreview:     "Prod",
+		},
+		{
+			name:            "channel anchor decline is shared and streams with no share stage",
+			action:          AskUserActionDecline,
+			channelAnchor:   true,
+			wantBlockStatus: conversation.StatusRejected,
+			wantResultJSON:  `{"status":"declined","target_username":"bob"}`,
+			wantFollowUp:    true,
+			wantCardStatus:  AskUserStatusDeclined,
+			wantPreview:     "",
+		},
+		{
+			// MAJOR-1 regression (answer-first ordering): while a sibling
+			// tool's channel result still awaits its Share/Keep-Private
+			// decision, the answer is recorded but the resume belongs to
+			// HandleToolResult — streaming now would demote the anchor turn
+			// and orphan the pending share click.
+			name:                   "channel anchor undecided share decision defers the follow-up",
+			action:                 AskUserActionAnswer,
+			selected:               []string{"Prod"},
+			channelAnchor:          true,
+			extraExecutedUndecided: true,
+			wantBlockStatus:        conversation.StatusSuccess,
+			wantResultJSON:         `{"status":"answered","target_username":"bob","selected":["Prod"],"free_form":""}`,
+			wantFollowUp:           false,
+			wantCardStatus:         AskUserStatusAnswered,
+			wantPreview:            "Prod",
+		},
 	}
 
 	for _, tc := range cases {
@@ -668,6 +738,16 @@ func TestHandleAskUserResponse(t *testing.T) {
 					Shared: conversation.BoolPtr(false),
 				})
 			}
+			if tc.extraExecutedUndecided {
+				blocks = append(blocks, conversation.ContentBlock{
+					Type:   conversation.BlockTypeToolUse,
+					ID:     "tool-use-2",
+					Name:   "jira__get_issue",
+					Input:  json.RawMessage(`{}`),
+					Status: conversation.StatusSuccess,
+					Shared: conversation.BoolPtr(false),
+				})
+			}
 			content, err := json.Marshal(blocks)
 			require.NoError(t, err)
 			anchorPostID := "anchor-post-id"
@@ -679,6 +759,29 @@ func TestHandleAskUserResponse(t *testing.T) {
 				Content:        content,
 				Sequence:       1,
 			}))
+			seededTurns := 1
+			if tc.extraExecutedUndecided {
+				// The executed sibling's channel result has no share decision
+				// yet (DecidedAt unset), mirroring HandleToolCall's output
+				// for a channel-anchored mixed batch.
+				undecided := []conversation.ContentBlock{{
+					Type:      conversation.BlockTypeToolResult,
+					ToolUseID: "tool-use-2",
+					Content:   "restored-result",
+					Status:    conversation.StatusSuccess,
+					Shared:    conversation.BoolPtr(false),
+				}}
+				undecidedContent, marshalErr := json.Marshal(undecided)
+				require.NoError(t, marshalErr)
+				require.NoError(t, convStore.CreateTurn(&store.Turn{
+					ID:             "undecided-result-turn",
+					ConversationID: conv.ID,
+					Role:           "tool_result",
+					Content:        undecidedContent,
+					Sequence:       2,
+				}))
+				seededTurns = 2
+			}
 
 			cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
 			if tc.notACard {
@@ -696,7 +799,10 @@ func TestHandleAskUserResponse(t *testing.T) {
 			bot := loadedStateBot(lm)
 
 			anchorChannel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
-			anchorPost := &model.Post{Id: anchorPostID, UserId: "bot-id", ChannelId: "dm-channel"}
+			if tc.channelAnchor {
+				anchorChannel = &model.Channel{Id: "town-square", Type: model.ChannelTypeOpen, Name: "town-square", TeamId: "team-id"}
+			}
+			anchorPost := &model.Post{Id: anchorPostID, UserId: "bot-id", ChannelId: anchorChannel.Id}
 
 			mmClient := mocks.NewMockClient(t)
 			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
@@ -706,7 +812,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
 			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
-			mmClient.On("GetChannel", "dm-channel").Maybe().Return(anchorChannel, nil)
+			mmClient.On("GetChannel", anchorChannel.Id).Maybe().Return(anchorChannel, nil)
 			if tc.cardPatchFails {
 				mmClient.On("GetPost", "card-post-id").Maybe().Return(nil, errors.New("card gone"))
 			} else {
@@ -747,7 +853,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 				// no tool_result turn.
 				turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 				require.NoError(t, turnsErr)
-				require.Len(t, turns, 1)
+				require.Len(t, turns, seededTurns)
 				var unchanged []conversation.ContentBlock
 				require.NoError(t, json.Unmarshal(turns[0].Content, &unchanged))
 				assert.Equal(t, seedStatus, unchanged[0].Status)
@@ -759,7 +865,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
-			require.Len(t, turns, 2)
+			require.Len(t, turns, seededTurns+1)
 
 			var updated []conversation.ContentBlock
 			require.NoError(t, json.Unmarshal(turns[0].Content, &updated))
@@ -768,7 +874,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 			assert.True(t, *updated[0].Shared)
 
 			var resultBlocks []conversation.ContentBlock
-			require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
+			require.NoError(t, json.Unmarshal(turns[len(turns)-1].Content, &resultBlocks))
 			require.Len(t, resultBlocks, 1)
 			assert.Equal(t, conversation.BlockTypeToolResult, resultBlocks[0].Type)
 			assert.Equal(t, "ask-1", resultBlocks[0].ToolUseID)
@@ -795,6 +901,137 @@ func TestHandleAskUserResponse(t *testing.T) {
 			} else {
 				assert.Empty(t, lm.requests, "follow-up must wait for the remaining unresolved tool calls")
 			}
+		})
+	}
+}
+
+// TestChannelMixedBatchShareAnswerOrdering is the MAJOR-1 regression: a
+// channel conversation with a mixed batch (normal tool + AskAnotherUser)
+// must stream the resume exactly once, only after BOTH the requester's
+// Share/Keep-Private decision and the target's answer are in — in either
+// order. A premature stream would feed the model a dangling waiting
+// tool_use and demote the anchor turn, orphaning the other half's resume.
+func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
+	askInput := json.RawMessage(`{"username":"bob","question":"Which environment?","options":[{"label":"Prod"},{"label":"Staging"}]}`)
+
+	cases := []struct {
+		name       string
+		shareFirst bool
+		firstMsg   string
+	}{
+		{
+			name:       "share before answer defers the stream to the answer",
+			shareFirst: true,
+			firstMsg:   "the Share click must not stream while the question is still waiting",
+		},
+		{
+			name:       "answer before share defers the stream to the share click",
+			shareFirst: false,
+			firstMsg:   "the answer must not stream while the share decision is still outstanding",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+			nextSeq := 1
+			seedLoadToolPair(t, convStore, conv.ID, "load-1", "jira__get_issue", &nextSeq)
+
+			blocks := []conversation.ContentBlock{
+				{
+					Type:   conversation.BlockTypeToolUse,
+					ID:     "tool-use-1",
+					Name:   "jira__get_issue",
+					Input:  json.RawMessage(`{}`),
+					Status: conversation.StatusPending,
+					Shared: conversation.BoolPtr(false),
+				},
+				{
+					Type:           conversation.BlockTypeToolUse,
+					ID:             "ask-1",
+					Name:           "AskAnotherUser",
+					Input:          askInput,
+					Status:         conversation.StatusPending,
+					DeferredResult: true,
+					Shared:         conversation.BoolPtr(false),
+				},
+			}
+			content, err := json.Marshal(blocks)
+			require.NoError(t, err)
+			anchorPostID := "approval-post-id"
+			require.NoError(t, convStore.CreateTurn(&store.Turn{
+				ID:             "assistant-turn",
+				ConversationID: conv.ID,
+				PostID:         &anchorPostID,
+				Role:           "assistant",
+				Content:        content,
+				Sequence:       nextSeq,
+			}))
+
+			lm := &loadedStateLLM{}
+			bot := loadedStateBot(lm)
+
+			channel := &model.Channel{Id: "town-square", Type: model.ChannelTypeOpen, Name: "town-square", TeamId: "team-id"}
+			anchorPost := &model.Post{Id: anchorPostID, UserId: "bot-id", ChannelId: channel.Id}
+			anchorPost.AddProp(streaming.ConversationIDProp, conv.ID)
+
+			cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
+			cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+			cardPost.AddProp(AskUserConversationIDProp, conv.ID)
+			cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
+
+			mmClient := mocks.NewMockClient(t)
+			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+			mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
+			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
+			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
+			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
+			mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).Return(nil).Once()
+			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
+			mmClient.On("GetPost", "card-post-id").Maybe().Return(cardPost, nil)
+			mmClient.On("GetChannel", channel.Id).Maybe().Return(channel, nil)
+			mmClient.On("UpdatePost", mock.AnythingOfType("*model.Post")).Maybe().Return(nil)
+			mmClient.On("PublishWebSocketEvent", "conversation_updated", mock.Anything, mock.Anything).Maybe().Return()
+
+			streamingService := &loadedStateStreamingService{}
+			c := &Conversations{
+				mmClient:         mmClient,
+				contextBuilder:   askAnotherUserBuilder(t),
+				bots:             newAskAnotherUserBotsService(t, bot),
+				convService:      conversation.NewService(convStore, nil, nil, nil),
+				streamingService: streamingService,
+			}
+
+			// Stage 1: the initiator accepts both. The normal tool executes
+			// with an undecided channel share result, the ask parks waiting,
+			// and nothing streams.
+			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", anchorPost, channel, []string{"tool-use-1", "ask-1"}, nil))
+			require.Empty(t, lm.requests, "a mixed batch with a waiting question must not stream from HandleToolCall")
+
+			share := func() error {
+				return c.HandleToolResult(context.Background(), "user-id", anchorPost, channel, []string{"tool-use-1"})
+			}
+			answer := func() error {
+				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
+				return c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
+					Action:   AskUserActionAnswer,
+					Selected: []string{"Prod"},
+				})
+			}
+
+			first, second := answer, share
+			if tc.shareFirst {
+				first, second = share, answer
+			}
+
+			require.NoError(t, first())
+			require.Empty(t, lm.requests, tc.firstMsg)
+
+			require.NoError(t, second())
+			streamingService.waitForStreaming()
+			require.Len(t, lm.requests, 1, "the resume must stream exactly once, after both the share decision and the answer")
 		})
 	}
 }

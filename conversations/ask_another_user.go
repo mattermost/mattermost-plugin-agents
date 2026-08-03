@@ -87,7 +87,7 @@ type AskUserResponse struct {
 // sends the question card as a DM from the bot to the target. Any returned
 // error becomes the error tool result fed back to the model.
 func (c *Conversations) dispatchAskAnotherUser(ctx context.Context, bot *bots.Bot, conv *store.Conversation, anchorPostID string, toolUseID string, rawArgs json.RawMessage) (err error) {
-	_, span := telemetry.Tracer().Start(ctx, "dispatch ask another user",
+	ctx, span := telemetry.Tracer().Start(ctx, "dispatch ask another user",
 		trace.WithAttributes(
 			telemetry.ToolName.String(mmtools.AskAnotherUserToolName),
 			telemetry.ToolID.String(toolUseID),
@@ -175,6 +175,12 @@ func (c *Conversations) dispatchAskAnotherUser(ctx context.Context, bot *bots.Bo
 	post.AddProp(AskUserToolUseIDProp, toolUseID)
 	post.AddProp(AskUserSourcePostIDProp, sourcePostID)
 
+	// The card send is irreversible; if the initiating request was canceled
+	// while we validated, stop before DMing the target.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("dispatch canceled before sending the question card: %w", ctxErr)
+	}
+
 	if dmErr := c.mmClient.DM(bot.GetMMBot().UserId, target.Id, post); dmErr != nil {
 		return fmt.Errorf("failed to open a direct message with %q", args.Username)
 	}
@@ -210,9 +216,10 @@ func (c *Conversations) publishConversationUpdated(convID, channelID string) {
 // tool_use block, writes the tool_result turn, patches the card post, and —
 // when no unresolved tool calls remain on the anchor turn — streams the
 // follow-up LLM response in the original conversation.
-func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string, cardPost *model.Post, channel *model.Channel, req AskUserResponse) error {
-	_ = channel // the card's DM channel; target auth uses post props instead
-
+//
+// The card's DM channel (loaded by the HTTP middleware) is unused: target
+// authorization runs against the card's ask_user_target_id prop instead.
+func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string, cardPost *model.Post, _ *model.Channel, req AskUserResponse) error {
 	if req.Action != AskUserActionAnswer && req.Action != AskUserActionDecline {
 		return fmt.Errorf("%w: unknown action %q", ErrInvalidAskAnswer, req.Action)
 	}
@@ -370,15 +377,17 @@ func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string
 	// C3 resume invariant: never stream while any pending, accepted, or
 	// waiting tool_use remains on the anchor turn (mixed batches resume via
 	// HandleToolCall or a later answer).
-	for _, b := range blocks {
-		if b.Type != conversation.BlockTypeToolUse {
-			continue
-		}
-		if b.Status == conversation.StatusPending ||
-			b.Status == conversation.StatusAccepted ||
-			b.Status == conversation.StatusWaiting {
-			return nil
-		}
+	if hasUnresolvedToolUse(blocks) {
+		return nil
+	}
+
+	// Channel mixed batches stage executed tool output behind the requester's
+	// Share/Keep-Private decision. While any of the anchor turn's results is
+	// still undecided, the resume belongs to HandleToolResult — streaming now
+	// would demote the anchor turn and orphan the pending share click. (DM
+	// results are always decided at creation, so this only gates channels.)
+	if anchorHasUndecidedResults(turns, blocks) {
+		return nil
 	}
 
 	if anchorPost == nil {
@@ -447,6 +456,38 @@ func askUserAnswerPreview(selected []string, freeForm string) string {
 		return string(runes[:askUserAnswerPreviewMaxLen])
 	}
 	return preview
+}
+
+// anchorHasUndecidedResults reports whether any tool_result belonging to one
+// of the anchor turn's tool_use blocks still awaits its channel
+// Share/Keep-Private decision (DecidedAt unset). turns may be a snapshot
+// taken before this request's own tool_result turn was written — that result
+// is created already decided, so its absence never gates.
+func anchorHasUndecidedResults(turns []store.Turn, anchorBlocks []conversation.ContentBlock) bool {
+	anchorToolUseIDs := make(map[string]struct{}, len(anchorBlocks))
+	for _, b := range anchorBlocks {
+		if b.Type == conversation.BlockTypeToolUse && b.ID != "" {
+			anchorToolUseIDs[b.ID] = struct{}{}
+		}
+	}
+	for _, turn := range turns {
+		var blocks []conversation.ContentBlock
+		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != conversation.BlockTypeToolResult {
+				continue
+			}
+			if _, ok := anchorToolUseIDs[b.ToolUseID]; !ok {
+				continue
+			}
+			if b.DecidedAt == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // findToolUseBlock locates the assistant turn containing the tool_use block

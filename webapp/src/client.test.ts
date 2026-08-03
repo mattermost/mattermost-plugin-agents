@@ -246,25 +246,34 @@ describe('doLoopInAgent', () => {
 });
 
 describe('doAskUserResponse', () => {
-    test('posts the exact answer body to the ask_user_response route', async () => {
+    test('posts the exact answer body to the ask_user_response route with the card bot in the query', async () => {
         mockFetch.mockResolvedValue(jsonResponse({status: 'answered'}));
 
-        await expect(doAskUserResponse(WELL_FORMED_ID, {action: 'answer', selected: ['A'], free_form: ''})).
+        await expect(doAskUserResponse(WELL_FORMED_ID, 'agentbot', {action: 'answer', selected: ['A'], free_form: ''})).
             resolves.toEqual({status: 'answered'});
 
         expect(mockFetch).toHaveBeenCalledTimes(1);
         const [url, options] = mockFetch.mock.calls[0];
-        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/ask_user_response`);
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/ask_user_response?botUsername=agentbot`);
         expect(options).toEqual(expect.objectContaining({
             method: 'POST',
             body: JSON.stringify({action: 'answer', selected: ['A'], free_form: ''}),
         }));
     });
 
+    test('percent-encodes the bot username in the query string', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({status: 'answered'}));
+
+        await doAskUserResponse(WELL_FORMED_ID, 'agent bot&x=1', {action: 'answer', selected: ['A'], free_form: ''});
+
+        const [url] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/ask_user_response?botUsername=agent%20bot%26x%3D1`);
+    });
+
     test('serializes a decline action', async () => {
         mockFetch.mockResolvedValue(jsonResponse({status: 'declined'}));
 
-        await expect(doAskUserResponse(WELL_FORMED_ID, {action: 'decline', selected: [], free_form: ''})).
+        await expect(doAskUserResponse(WELL_FORMED_ID, 'agentbot', {action: 'decline', selected: [], free_form: ''})).
             resolves.toEqual({status: 'declined'});
 
         const [, options] = mockFetch.mock.calls[0];
@@ -276,7 +285,7 @@ describe('doAskUserResponse', () => {
     test('rejects with the response status code on a non-OK response', async () => {
         mockFetch.mockResolvedValue({ok: false, status: 409} as unknown as Response);
 
-        await expect(doAskUserResponse(WELL_FORMED_ID, {action: 'answer', selected: ['A'], free_form: ''})).
+        await expect(doAskUserResponse(WELL_FORMED_ID, 'agentbot', {action: 'answer', selected: ['A'], free_form: ''})).
             rejects.toMatchObject({status_code: 409});
     });
 });

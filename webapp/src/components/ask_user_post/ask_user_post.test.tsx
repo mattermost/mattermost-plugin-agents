@@ -6,7 +6,7 @@ import {render, screen, fireEvent, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 
-import {AskUserPost, parseAskUserProps} from './ask_user_post';
+import {AskUserPost, buildAnswerPreview, parseAskUserProps} from './ask_user_post';
 
 const mockDoAskUserResponse = jest.fn();
 const mockGetProfilesByIds = jest.fn();
@@ -75,7 +75,10 @@ function stateFixture(overrides: StateOverrides = {}) {
         entities: {
             users: {
                 currentUserId: overrides.currentUserId ?? TARGET_ID,
-                profiles: overrides.profiles ?? {[REQUESTER_ID]: {id: REQUESTER_ID, username: 'jane'}},
+                profiles: overrides.profiles ?? {
+                    [REQUESTER_ID]: {id: REQUESTER_ID, username: 'jane'},
+                    [BOT_ID]: {id: BOT_ID, username: 'agentbot'},
+                },
             },
             general: {config: {SiteURL: 'http://localhost:8065'}},
         },
@@ -140,6 +143,7 @@ describe('parseAskUserProps', () => {
         ['option with an empty label', makeProps({ask_user_options: [{label: ''}]})],
         ['non-array options', makeProps({ask_user_options: 'not an array'})],
         ['non-object option', makeProps({ask_user_options: ['4.2.0']})],
+        ['duplicate option labels', makeProps({ask_user_options: [{label: 'A'}, {label: 'A', description: 'again'}]})],
         ['no options and free-form disabled', makeProps({ask_user_options: [], ask_user_allow_free_form: false})],
     ])('returns null for %s', (_label, props) => {
         expect(parseAskUserProps(props)).toBeNull();
@@ -173,6 +177,28 @@ describe('parseAskUserProps', () => {
     });
 });
 
+// Pins the client preview against the server rule (askUserAnswerPreview in
+// conversations/ask_another_user.go): labels joined with ', ', ' — ' before
+// free-form, 200-rune truncation.
+describe('buildAnswerPreview', () => {
+    test.each([
+        ['labels only', ['A', 'B'], '', 'A, B'],
+        ['free-form only', [], 'hello', 'hello'],
+        ['labels and free-form joined with an em dash', ['A'], 'extra', 'A — extra'],
+        ['whitespace-only free-form dropped', ['A'], '   ', 'A'],
+        ['empty', [], '', ''],
+    ])('%s', (_label, selected, freeForm, want) => {
+        expect(buildAnswerPreview(selected as string[], freeForm as string)).toBe(want);
+    });
+
+    test('truncates to 200 runes, not UTF-16 code units', () => {
+        // Astral characters are two UTF-16 code units but one rune each.
+        const long = '😀'.repeat(300);
+
+        expect(buildAnswerPreview([], long)).toBe('😀'.repeat(200));
+    });
+});
+
 describe('AskUserPost rendering', () => {
     test('renders the full pending card for the target', () => {
         renderPost();
@@ -201,17 +227,23 @@ describe('AskUserPost rendering', () => {
         expect(screen.queryByRole('link', {name: 'View conversation'})).toBeNull();
     });
 
-    test('hydrates the requester profile when it is not cached', async () => {
+    test('hydrates the requester and bot profiles when they are not cached', async () => {
         mockUseSelector.mockImplementation((selector) => selector(stateFixture({profiles: {}})));
-        mockGetProfilesByIds.mockResolvedValue([{id: REQUESTER_ID, username: 'jane'}]);
+        mockGetProfilesByIds.mockResolvedValue([
+            {id: REQUESTER_ID, username: 'jane'},
+            {id: BOT_ID, username: 'agentbot'},
+        ]);
 
         renderPost();
 
         await waitFor(() => {
-            expect(mockGetProfilesByIds).toHaveBeenCalledWith([REQUESTER_ID]);
+            expect(mockGetProfilesByIds).toHaveBeenCalledWith([REQUESTER_ID, BOT_ID]);
             expect(dispatchMock).toHaveBeenCalledWith({
                 type: 'RECEIVED_PROFILES',
-                data: {[REQUESTER_ID]: expect.objectContaining({username: 'jane'})},
+                data: {
+                    [REQUESTER_ID]: expect.objectContaining({username: 'jane'}),
+                    [BOT_ID]: expect.objectContaining({username: 'agentbot'}),
+                },
             });
         });
     });
@@ -265,7 +297,7 @@ describe('AskUserPost interaction', () => {
         fireEvent.click(screen.getByText('Answer'));
 
         expect(mockDoAskUserResponse).toHaveBeenCalledTimes(1);
-        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, {
+        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, 'agentbot', {
             action: 'answer',
             selected: ['4.2.1'],
             free_form: '',
@@ -281,12 +313,30 @@ describe('AskUserPost interaction', () => {
         fireEvent.click(screen.getByText('4.2.0')); // toggle the first back off
         fireEvent.click(screen.getByText('Answer'));
 
-        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, {
+        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, 'agentbot', {
             action: 'answer',
             selected: ['4.2.1'],
             free_form: '',
         });
         expect(await screen.findByText('Answered')).not.toBeNull();
+    });
+
+    test('multi-select with an option and free-form text submits both, previewed with an em dash', async () => {
+        renderPost({ask_user_multi_select: true});
+
+        fireEvent.click(screen.getByText('4.2.0'));
+        fireEvent.click(screen.getByText('Something else…'));
+        fireEvent.change(screen.getByPlaceholderText('Something else…'), {target: {value: 'x'}});
+        fireEvent.click(screen.getByText('Answer'));
+
+        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, 'agentbot', {
+            action: 'answer',
+            selected: ['4.2.0'],
+            free_form: 'x',
+        });
+
+        // The local resolved snapshot previews with the server's em-dash rule.
+        expect(await screen.findByText('4.2.0 — x')).not.toBeNull();
     });
 
     test('Answer is disabled until a selection exists', () => {
@@ -302,7 +352,7 @@ describe('AskUserPost interaction', () => {
         fireEvent.change(screen.getByPlaceholderText('Something else…'), {target: {value: 'It was a config change'}});
         fireEvent.click(screen.getByText('Answer'));
 
-        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, {
+        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, 'agentbot', {
             action: 'answer',
             selected: [],
             free_form: 'It was a config change',
@@ -323,7 +373,7 @@ describe('AskUserPost interaction', () => {
         expect(answerButton().disabled).toBe(false);
         fireEvent.click(answerButton());
 
-        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, {
+        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, 'agentbot', {
             action: 'answer',
             selected: [],
             free_form: 'the 4.2.1 hotfix',
@@ -344,12 +394,35 @@ describe('AskUserPost interaction', () => {
 
         fireEvent.click(screen.getByText('Decline'));
 
-        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, {
+        expect(mockDoAskUserResponse).toHaveBeenCalledWith(POST_ID, 'agentbot', {
             action: 'decline',
             selected: [],
             free_form: '',
         });
         expect(await screen.findByText('You declined to answer')).not.toBeNull();
+    });
+
+    test('submission is disabled until the bot profile is available', async () => {
+        // Only the requester profile is cached; the card bot (the post
+        // author) is unknown, so the botUsername query param can't be built.
+        mockUseSelector.mockImplementation((selector) => selector(stateFixture({
+            profiles: {[REQUESTER_ID]: {id: REQUESTER_ID, username: 'jane'}},
+        })));
+        renderPost();
+
+        fireEvent.click(screen.getByText('4.2.0'));
+
+        expect((screen.getByText('Answer').closest('button') as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByText('Decline').closest('button') as HTMLButtonElement).disabled).toBe(true);
+
+        fireEvent.click(screen.getByText('Answer'));
+        fireEvent.click(screen.getByText('Decline'));
+        expect(mockDoAskUserResponse).not.toHaveBeenCalled();
+
+        // The card fetches the missing bot profile so submission can unlock.
+        await waitFor(() => {
+            expect(mockGetProfilesByIds).toHaveBeenCalledWith([BOT_ID]);
+        });
     });
 
     test('shows the submitting state and prevents a second submission', async () => {
