@@ -55,6 +55,10 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 		builtInTools = append(builtInTools, NewAskUserQuestionTool())
 	}
 
+	// AskAnotherUser is registered unconditionally: the *target* answers,
+	// not the invoker, so it works even when no interactive user is present.
+	builtInTools = append(builtInTools, NewAskAnotherUserTool())
+
 	return builtInTools
 }
 

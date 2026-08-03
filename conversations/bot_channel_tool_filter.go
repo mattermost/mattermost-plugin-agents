@@ -84,6 +84,9 @@ func botChannelAutoEverywhereKeepTool(checker mcp.ToolPolicyChecker, tool llm.To
 		return false
 	}
 	if tool.ServerOrigin == "" {
+		// Built-in tools never survive unattended activate_ai flows. In
+		// particular AskAnotherUser must never fire from a flow with no
+		// accountable human behind it.
 		return false
 	}
 	policy, enabled := checker.GetToolPolicy(tool.ServerOrigin, llm.BareMCPToolName(tool.Name))

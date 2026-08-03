@@ -72,6 +72,9 @@ func ComputePostApprovalState(turns []store.Turn, postID string) string {
 				pendingToolUse = true
 			case StatusSuccess, StatusError, StatusAutoApproved:
 				executedToolUseIDs[b.ID] = struct{}{}
+			case StatusWaiting:
+				// Deferred call awaiting an out-of-band answer: no Accept/Reject
+				// controls (not pending) and no result to share (not executed).
 			}
 		}
 	}

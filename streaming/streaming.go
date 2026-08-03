@@ -156,6 +156,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 			Shared:           conversation.BoolPtr(a.isDM),
 			UserInteraction:  tc.UserInteraction,
 			WouldAutoExecute: tc.WouldAutoExecute,
+			DeferredResult:   tc.DeferredResult,
 		})
 	}
 
@@ -427,6 +428,8 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 // auto-run tools as AutoApproved (not Success) and errored ones as Error;
 // user-approved tools are later tagged Success by the approval flow. Anything
 // else — most commonly Pending — indicates the event hasn't been executed yet.
+// ToolCallStatusWaiting is deliberately non-terminal here: waiting batches
+// must be retained in the turn accumulator so finalizeTurn persists them.
 func isResolvedToolCallsEvent(toolCalls []llm.ToolCall) bool {
 	if len(toolCalls) == 0 {
 		return false
@@ -456,6 +459,7 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 			Status:           tc.Status,
 			UserInteraction:  tc.UserInteraction,
 			WouldAutoExecute: tc.WouldAutoExecute,
+			DeferredResult:   tc.DeferredResult,
 		}
 	}
 	return redacted

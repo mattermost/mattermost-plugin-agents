@@ -181,6 +181,33 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 
 		switch {
+		case block.DeferredResult && (slices.Contains(acceptedToolIDs, block.ID) ||
+			(block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}))):
+			// Deferred-result tool (AskAnotherUser): dispatch the side effect
+			// and park the block in waiting. Flip-and-persist BEFORE
+			// dispatching so a second Accept click can never send a second
+			// card (findPendingToolTurn requires a pending block → repeat
+			// click gets ErrStaleToolClick).
+			block.Status = conversation.StatusWaiting
+			if persistErr := c.persistBlocks(pendingTurn.ID, pendingBlocks); persistErr != nil {
+				return fmt.Errorf("failed to persist waiting status: %w", persistErr)
+			}
+			if dispatchErr := c.dispatchAskAnotherUser(ctx, bot, conv, post.Id, block.ID, block.Input); dispatchErr != nil {
+				// Compensate: waiting → error, and surface the failure as an
+				// error tool result so the model can retry.
+				block.Status = conversation.StatusError
+				if persistErr := c.persistBlocks(pendingTurn.ID, pendingBlocks); persistErr != nil {
+					return fmt.Errorf("failed to persist dispatch failure: %w", persistErr)
+				}
+				executedAny = true
+				toolResults = append(toolResults, toolrunner.ToolResult{
+					ToolCallID: block.ID,
+					Name:       block.Name,
+					Result:     dispatchErr.Error(),
+					IsError:    true,
+				})
+			}
+			// Success: no tool result yet; the follow-up is gated below.
 		case slices.Contains(acceptedToolIDs, block.ID) && block.UserInteraction != "":
 			// Shared so the channel-visible follow-up may reference the answer.
 			block.Status = conversation.StatusSuccess
@@ -276,55 +303,87 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// Write tool results as a tool_result turn. DecidedAt is set when no
 	// share/keep-private decision remains (see terminal below); other channel
 	// results stay undecided until the requester clicks Share or Keep Private.
-	toolUseStatusByID := make(map[string]string, len(pendingBlocks))
-	interactionByID := make(map[string]bool, len(pendingBlocks))
-	for _, b := range pendingBlocks {
-		if b.Type == conversation.BlockTypeToolUse {
-			toolUseStatusByID[b.ID] = b.Status
-			interactionByID[b.ID] = b.UserInteraction != ""
-		}
-	}
-	now := model.GetMillis()
+	// A successfully dispatched deferred call produces no result, so guard the
+	// turn write: an empty tool_result turn would pollute GetTurns.
 	needsShareDecision := false
-	resultBlocks := make([]conversation.ContentBlock, 0, len(toolResults))
-	for _, tr := range toolResults {
-		status := conversation.StatusSuccess
-		if tr.IsError {
-			status = conversation.StatusError
+	if len(toolResults) > 0 {
+		toolUseStatusByID := make(map[string]string, len(pendingBlocks))
+		interactionByID := make(map[string]bool, len(pendingBlocks))
+		for _, b := range pendingBlocks {
+			if b.Type == conversation.BlockTypeToolUse {
+				toolUseStatusByID[b.ID] = b.Status
+				interactionByID[b.ID] = b.UserInteraction != ""
+			}
 		}
-		// Interaction results (answered or skipped) are user-authored, so they
-		// are terminal and shared with no separate share/keep-private step.
-		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID]
-		rb := conversation.ContentBlock{
-			Type:      conversation.BlockTypeToolResult,
-			ToolUseID: tr.ToolCallID,
-			Content:   tr.Result,
-			Status:    status,
-			Shared:    conversation.BoolPtr(terminal),
+		now := model.GetMillis()
+		resultBlocks := make([]conversation.ContentBlock, 0, len(toolResults))
+		for _, tr := range toolResults {
+			status := conversation.StatusSuccess
+			if tr.IsError {
+				status = conversation.StatusError
+			}
+			// Interaction results (answered or skipped) are user-authored, so they
+			// are terminal and shared with no separate share/keep-private step.
+			terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID]
+			rb := conversation.ContentBlock{
+				Type:      conversation.BlockTypeToolResult,
+				ToolUseID: tr.ToolCallID,
+				Content:   tr.Result,
+				Status:    status,
+				Shared:    conversation.BoolPtr(terminal),
+			}
+			if terminal || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
+				rb.DecidedAt = conversation.Int64Ptr(now)
+			} else {
+				needsShareDecision = true
+			}
+			resultBlocks = append(resultBlocks, rb)
 		}
-		if terminal || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
-			rb.DecidedAt = conversation.Int64Ptr(now)
-		} else {
-			needsShareDecision = true
+		resultContent, marshalErr := json.Marshal(resultBlocks)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal tool result blocks: %w", marshalErr)
 		}
-		resultBlocks = append(resultBlocks, rb)
+		resultTurn := &store.Turn{
+			ID:             model.NewId(),
+			ConversationID: convID,
+			Role:           "tool_result",
+			Content:        resultContent,
+			CreatedAt:      model.GetMillis(),
+		}
+		if err := c.convService.CreateTurnAutoSequence(resultTurn); err != nil {
+			return fmt.Errorf("failed to create tool result turn: %w", err)
+		}
 	}
-	resultContent, err := json.Marshal(resultBlocks)
-	if err != nil {
-		return fmt.Errorf("failed to marshal tool result blocks: %w", err)
+
+	// A waiting block means a question card just went out: refresh the
+	// initiator's conversation view so the Accept/Reject controls leave the
+	// pending state live.
+	hasUnresolved := false
+	hasWaiting := false
+	for _, b := range pendingBlocks {
+		if b.Type != conversation.BlockTypeToolUse {
+			continue
+		}
+		switch b.Status {
+		case conversation.StatusWaiting:
+			hasWaiting = true
+			hasUnresolved = true
+		case conversation.StatusPending, conversation.StatusAccepted:
+			hasUnresolved = true
+		}
 	}
-	resultTurn := &store.Turn{
-		ID:             model.NewId(),
-		ConversationID: convID,
-		Role:           "tool_result",
-		Content:        resultContent,
-		CreatedAt:      model.GetMillis(),
-	}
-	if err := c.convService.CreateTurnAutoSequence(resultTurn); err != nil {
-		return fmt.Errorf("failed to create tool result turn: %w", err)
+	if hasWaiting {
+		c.publishConversationUpdated(convID, channel.Id)
 	}
 
 	if !executedAny {
+		return nil
+	}
+
+	// A deferred call parked in waiting blocks the follow-up: the answer
+	// handler streams it once the last outstanding block resolves (C3 resume
+	// invariant: no pending, accepted, or waiting blocks may remain).
+	if hasUnresolved {
 		return nil
 	}
 
@@ -338,6 +397,15 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	}
 
 	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, llmContext)
+}
+
+// persistBlocks marshals blocks and writes them onto the turn.
+func (c *Conversations) persistBlocks(turnID string, blocks []conversation.ContentBlock) error {
+	content, err := json.Marshal(blocks)
+	if err != nil {
+		return fmt.Errorf("failed to marshal blocks: %w", err)
+	}
+	return c.convService.UpdateTurnContent(turnID, content)
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
@@ -606,7 +674,9 @@ func (c *Conversations) streamToolFollowUp(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
+	runner := toolrunner.New(bot.LLM(),
+		toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()),
+		toolrunner.WithDeferredDispatcher(c.newDeferredDispatcherForConversation(bot, conv, post.Id)))
 	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {

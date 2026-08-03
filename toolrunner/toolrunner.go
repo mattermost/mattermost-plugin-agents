@@ -25,8 +25,9 @@ const MaxToolRounds = limits.MaxToolRounds
 // It calls the LLM, checks for tool calls in the stream, executes
 // approved ones, appends results back to the request, and calls again.
 type ToolRunner struct {
-	llm       llm.LanguageModel
-	maxRounds int
+	llm                llm.LanguageModel
+	maxRounds          int
+	deferredDispatcher DeferredDispatcher
 }
 
 // Option configures a ToolRunner at construction time.
@@ -40,6 +41,20 @@ func WithMaxRounds(n int) Option {
 			r.maxRounds = n
 		}
 	}
+}
+
+// DeferredDispatcher performs the side-effect dispatch for a deferred-result
+// tool call (llm.ToolCall.DeferredResult). Returning nil means the call is
+// now waiting for an out-of-band result; returning an error converts the
+// call into an error tool result.
+type DeferredDispatcher func(ctx context.Context, call llm.ToolCall) error
+
+// WithDeferredDispatcher installs the dispatcher used for deferred-result
+// tool calls. Without one, batches containing deferred calls are emitted
+// pending instead of executed, so callers that cannot dispatch never strand
+// a call silently.
+func WithDeferredDispatcher(d DeferredDispatcher) Option {
+	return func(r *ToolRunner) { r.deferredDispatcher = d }
 }
 
 // New creates a ToolRunner bound to the given language model. Pass
@@ -302,6 +317,79 @@ func (r *ToolRunner) runLoop(
 			for i := range toolCalls {
 				toolCalls[i].WouldAutoExecute = approved[i]
 			}
+			r.deliverToolTurns(result, onToolTurns)
+			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			return
+		}
+
+		// Deferred-result calls cannot be executed synchronously: dispatch the
+		// side effect, mark them waiting, and stop the run. Handled before the
+		// normal execute path so a mixed batch never partially executes.
+		hasDeferred := false
+		for _, tc := range toolCalls {
+			if tc.DeferredResult {
+				hasDeferred = true
+				break
+			}
+		}
+		if hasDeferred {
+			if r.deferredDispatcher == nil {
+				// Defensive: callers without a dispatcher (bridge API, channels
+				// digest) fall back to the pending path so nothing strands.
+				for i := range toolCalls {
+					toolCalls[i].WouldAutoExecute = approved[i]
+				}
+				r.deliverToolTurns(result, onToolTurns)
+				output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+				output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+				return
+			}
+
+			deferredCount, failedCount, nonDeferredCount := 0, 0, 0
+			var failedResults []ToolResult
+			for i := range toolCalls {
+				if !toolCalls[i].DeferredResult {
+					// Not executed this round; runs on resume via HandleToolCall.
+					toolCalls[i].WouldAutoExecute = true
+					toolCalls[i].Status = llm.ToolCallStatusPending
+					nonDeferredCount++
+					continue
+				}
+				deferredCount++
+				if dispatchErr := r.deferredDispatcher(ctx, toolCalls[i]); dispatchErr != nil {
+					toolCalls[i].Status = llm.ToolCallStatusError
+					toolCalls[i].Result = dispatchErr.Error()
+					failedCount++
+					failedResults = append(failedResults, ToolResult{
+						ToolCallID: toolCalls[i].ID,
+						Name:       toolCalls[i].Name,
+						Result:     dispatchErr.Error(),
+						IsError:    true,
+					})
+					continue
+				}
+				toolCalls[i].Status = llm.ToolCallStatusWaiting
+			}
+
+			// Every deferred call failed and nothing else is in the batch:
+			// surface the failures as a normal executed round so the model
+			// can correct itself, and keep looping. failedResults is
+			// index-aligned with toolCalls here because every call failed.
+			if failedCount == deferredCount && nonDeferredCount == 0 {
+				resolvedToolCalls := buildResolvedToolCalls(toolCalls, failedResults)
+				appendToolTurnAndPost(result, &request, text.String(), reasoningData, resolvedToolCalls, failedResults, usage)
+				output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
+				if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
+					request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
+					currentOpts = append(currentOpts, llm.WithToolsDisabled())
+				}
+				continue
+			}
+
+			// Waiting (and any pending) statuses on one event: the streaming
+			// accumulator keeps non-terminal batches and finalizeTurn
+			// persists them.
 			r.deliverToolTurns(result, onToolTurns)
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}

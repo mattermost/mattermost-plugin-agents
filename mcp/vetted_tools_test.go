@@ -218,6 +218,22 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 	})
 }
 
+func TestSeedBuiltInToolConfigs(t *testing.T) {
+	t.Run("seed content is exactly AskAnotherUser ask enabled", func(t *testing.T) {
+		require.Equal(t, []ToolConfig{
+			{Name: "AskAnotherUser", Policy: ToolPolicyAsk, Enabled: true},
+		}, SeedBuiltInToolConfigs())
+	})
+
+	t.Run("stored admin override wins over the built-in seed", func(t *testing.T) {
+		stored := []ToolConfig{{Name: "AskAnotherUser", Policy: ToolPolicyAutoRunInDM, Enabled: true}}
+
+		merged := mergeSeedConfigs(stored, SeedBuiltInToolConfigs())
+
+		require.Equal(t, stored, merged)
+	})
+}
+
 func TestMergeSeedConfigs(t *testing.T) {
 	tests := []struct {
 		name   string

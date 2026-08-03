@@ -76,6 +76,15 @@ func SeedVettedToolConfigs(baseURL string) []ToolConfig {
 	}
 }
 
+// SeedBuiltInToolConfigs returns the default policies for built-in
+// (empty-origin) tools. Stored admin entries win via mergeSeedConfigs.
+func SeedBuiltInToolConfigs() []ToolConfig {
+	return []ToolConfig{
+		// Keep in sync with mmtools.AskAnotherUserToolName.
+		{Name: "AskAnotherUser", Policy: ToolPolicyAsk, Enabled: true},
+	}
+}
+
 func vettedHostFromBaseURL(baseURL string) (string, bool) {
 	if baseURL == "" {
 		return "", false

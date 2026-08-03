@@ -387,6 +387,52 @@ func (a *API) handleToolResult(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// handleAskUserResponse processes the target user's answer to an
+// ask-another-user question card. Unlike handleToolCall it has no
+// EnableChannelMentionToolCalling gate (the card lives in a DM even when the
+// conversation is a channel thread) and no isConversationOwner check — the
+// authoritative target check happens in the conversations layer against the
+// card's ask_user_target_id prop.
+func (a *API) handleAskUserResponse(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	var data conversations.AskUserResponse
+	if err := c.ShouldBindJSON(&data); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleAskUserResponse(c.Request.Context(), userID, post, channel, data); err != nil {
+		c.AbortWithError(askUserResponseHTTPStatus(err), err)
+		return
+	}
+
+	status := conversations.AskUserStatusAnswered
+	if data.Action == conversations.AskUserActionDecline {
+		status = conversations.AskUserStatusDeclined
+	}
+	c.JSON(http.StatusOK, map[string]string{"status": status})
+}
+
+// askUserResponseHTTPStatus maps HandleAskUserResponse errors to HTTP
+// statuses, mirroring toolApprovalHTTPStatus.
+func askUserResponseHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrInvalidAskAnswer):
+		return http.StatusBadRequest
+	case errors.Is(err, conversations.ErrNotAskTarget):
+		return http.StatusForbidden
+	case errors.Is(err, conversations.ErrAskConversationGone):
+		return http.StatusNotFound
+	case errors.Is(err, conversations.ErrAskNotPending):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // isConversationOwner checks whether the given user is the owner of the
 // conversation associated with the post (via the conversation_id prop).
 //

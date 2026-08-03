@@ -212,7 +212,18 @@ func (c *Conversations) ProcessDMRequest(
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
 
-	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxToolTurns))
+	runnerOpts := []toolrunner.Option{toolrunner.WithMaxRounds(maxToolTurns)}
+	// The initial-DM entry point receives only the language model, so the
+	// deferred dispatcher's bot is resolved from the conversation. When the
+	// bot cannot be resolved, run without a dispatcher — the runner's
+	// no-dispatcher fallback emits deferred batches pending instead.
+	if c.bots != nil {
+		if bot := c.bots.GetBotByID(conv.BotID); bot != nil {
+			runnerOpts = append(runnerOpts, toolrunner.WithDeferredDispatcher(
+				c.newDeferredDispatcherForConversation(bot, conv, "")))
+		}
+	}
+	runner := toolrunner.New(lm, runnerOpts...)
 	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)

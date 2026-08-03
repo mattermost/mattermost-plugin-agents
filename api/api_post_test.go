@@ -5,7 +5,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,11 +15,15 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -273,4 +279,237 @@ func TestHandleStopLogsClusterPublishErrors(t *testing.T) {
 		}
 	}
 	require.True(t, foundLog, "cluster publish failures must be logged so operators can diagnose dropped peer-cancels")
+}
+
+// TestAskUserResponseHTTPStatus pins the sentinel-error → HTTP status mapping
+// of the ask_user_response endpoint (C5). The behavior behind each sentinel is
+// covered by the conversations-layer HandleAskUserResponse table.
+func TestAskUserResponseHTTPStatus(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "invalid answer", err: conversations.ErrInvalidAskAnswer, want: http.StatusBadRequest},
+		{name: "wrapped invalid answer", err: fmt.Errorf("%w: no option selected", conversations.ErrInvalidAskAnswer), want: http.StatusBadRequest},
+		{name: "not the asked target", err: conversations.ErrNotAskTarget, want: http.StatusForbidden},
+		{name: "conversation gone", err: conversations.ErrAskConversationGone, want: http.StatusNotFound},
+		{name: "already answered", err: conversations.ErrAskNotPending, want: http.StatusConflict},
+		{name: "unexpected error", err: errors.New("db down"), want: http.StatusInternalServerError},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, askUserResponseHTTPStatus(tc.err))
+		})
+	}
+}
+
+// TestHandleAskUserResponse drives POST /post/{postid}/ask_user_response
+// through the full router: session auth, JSON binding, the conversations-layer
+// target check, and the C5 status mapping all fire exactly as a real client
+// would see them. The happy-path rows record the answer and write the C6/C7
+// tool_result turn; the follow-up stream itself is covered by the
+// conversations-layer tests (here the anchor turn has no post, so the resume
+// is skipped after the answer is recorded).
+func TestHandleAskUserResponse(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		cardPostID  = "card12345678901234567890ab"
+		dmChannelID = "dmch12345678901234567890ab"
+		convID      = "conv12345678901234567890ab"
+		toolUseID   = "ask-tool-use-1"
+	)
+
+	makeBlocks := func(t *testing.T, status string) json.RawMessage {
+		t.Helper()
+		blocks := []conversation.ContentBlock{{
+			Type:           conversation.BlockTypeToolUse,
+			ID:             toolUseID,
+			Name:           "AskAnotherUser",
+			Input:          json.RawMessage(`{"username":"target","question":"Which environment?"}`),
+			Status:         status,
+			DeferredResult: true,
+		}}
+		content, err := json.Marshal(blocks)
+		require.NoError(t, err)
+		return content
+	}
+
+	tests := []struct {
+		name             string
+		omitSession      bool
+		body             string
+		notACard         bool
+		targetID         string // defaults to testUserID (the caller)
+		seedConv         bool
+		blockStatus      string // seeds an assistant turn when non-empty
+		expectedStatus   int
+		expectedBody     string
+		expectResultTurn bool
+	}{
+		{
+			name:           "missing session header is unauthorized",
+			omitSession:    true,
+			body:           `{"action":"decline"}`,
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "malformed body is a bad request",
+			body:           `{`,
+			seedConv:       true,
+			blockStatus:    conversation.StatusWaiting,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "non-target caller is forbidden",
+			body:           `{"action":"answer","free_form":"hi"}`,
+			targetID:       testOtherUserID,
+			seedConv:       true,
+			blockStatus:    conversation.StatusWaiting,
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "unknown action is a bad request",
+			body:           `{"action":"maybe"}`,
+			seedConv:       true,
+			blockStatus:    conversation.StatusWaiting,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "non-card post is a bad request",
+			body:           `{"action":"decline"}`,
+			notACard:       true,
+			seedConv:       true,
+			blockStatus:    conversation.StatusWaiting,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "missing conversation is not found",
+			body:           `{"action":"decline"}`,
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "already answered question conflicts",
+			body:           `{"action":"decline"}`,
+			seedConv:       true,
+			blockStatus:    conversation.StatusSuccess,
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name:             "decline records the refusal",
+			body:             `{"action":"decline"}`,
+			seedConv:         true,
+			blockStatus:      conversation.StatusWaiting,
+			expectedStatus:   http.StatusOK,
+			expectedBody:     `"status":"declined"`,
+			expectResultTurn: true,
+		},
+		{
+			name:             "answer records the response",
+			body:             `{"action":"answer","free_form":"Use staging"}`,
+			seedConv:         true,
+			blockStatus:      conversation.StatusWaiting,
+			expectedStatus:   http.StatusOK,
+			expectedBody:     `"status":"answered"`,
+			expectResultTurn: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.setupTestBot(llm.BotConfig{Name: "thebot", DisplayName: "The Bot"})
+
+			cardPost := &model.Post{
+				Id:        cardPostID,
+				UserId:    testBotUserID,
+				ChannelId: dmChannelID,
+				Type:      conversations.AskUserPostType,
+			}
+			if test.notACard {
+				cardPost.Type = ""
+			}
+			target := testUserID
+			if test.targetID != "" {
+				target = test.targetID
+			}
+			cardPost.AddProp(conversations.AskUserTargetIDProp, target)
+			cardPost.AddProp(conversations.AskUserConversationIDProp, convID)
+			cardPost.AddProp(conversations.AskUserToolUseIDProp, toolUseID)
+
+			// Rebuild the conversations service around a mock mmapi client and
+			// an in-memory conversation store so the handler runs for real.
+			mmClient := mmapimocks.NewMockClient(t)
+			for i := 1; i <= 7; i++ {
+				args := make([]interface{}, i)
+				for j := range args {
+					args[j] = mock.Anything
+				}
+				mmClient.On("LogError", args...).Maybe().Return()
+				mmClient.On("LogDebug", args...).Maybe().Return()
+			}
+			mmClient.On("GetUser", testUserID).Maybe().Return(&model.User{Id: testUserID, Username: "target-user"}, nil)
+			mmClient.On("GetPost", cardPostID).Maybe().Return(cardPost, nil)
+			mmClient.On("UpdatePost", mock.AnythingOfType("*model.Post")).Maybe().Return(nil)
+
+			convStore := newMockConvServiceStore()
+			svc := conversations.New(nil, mmClient, nil, nil, e.bots, nil, nil, nil, nil, e.config)
+			svc.SetConversationService(conversation.NewService(convStore, nil, nil, e.bots))
+			e.api.conversationsService = svc
+
+			if test.seedConv {
+				require.NoError(t, convStore.CreateConversation(&store.Conversation{
+					ID:     convID,
+					UserID: testOtherUserID, // conversation initiator, not the asked target
+					BotID:  testBotUserID,
+				}))
+			}
+			if test.blockStatus != "" {
+				require.NoError(t, convStore.CreateTurn(&store.Turn{
+					ID:             "assistant-turn",
+					ConversationID: convID,
+					Role:           "assistant",
+					Content:        makeBlocks(t, test.blockStatus),
+					Sequence:       1,
+				}))
+			}
+
+			e.mockAPI.On("GetPost", cardPostID).Return(cardPost, nil).Maybe()
+			e.mockAPI.On("GetChannel", dmChannelID).Return(&model.Channel{
+				Id:   dmChannelID,
+				Name: testBotUserID + "__" + testUserID,
+				Type: model.ChannelTypeDirect,
+			}, nil).Maybe()
+			e.mockAPI.On("HasPermissionToChannel", testUserID, dmChannelID, model.PermissionReadChannel).Return(true).Maybe()
+
+			req := httptest.NewRequest(http.MethodPost, "/post/"+cardPostID+"/ask_user_response", strings.NewReader(test.body))
+			if !test.omitSession {
+				req.Header.Add("Mattermost-User-ID", testUserID)
+			}
+
+			rec := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, rec, req)
+			resp := rec.Result()
+			require.Equal(t, test.expectedStatus, resp.StatusCode)
+
+			if test.expectedBody != "" {
+				bodyBytes, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				require.Contains(t, string(bodyBytes), test.expectedBody)
+			}
+
+			turns := convStore.turns[convID]
+			if test.expectResultTurn {
+				require.Len(t, turns, 2, "an accepted answer must append the tool_result turn")
+				require.Equal(t, "tool_result", turns[1].Role)
+			} else if test.blockStatus != "" {
+				require.Len(t, turns, 1, "rejected requests must not write result turns")
+			}
+		})
+	}
 }

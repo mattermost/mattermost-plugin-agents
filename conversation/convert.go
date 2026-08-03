@@ -81,12 +81,13 @@ func BlocksToPost(
 				arguments = unsharedToolUseArgumentsRedaction
 			}
 			toolCall := llm.ToolCall{
-				ID:           block.ID,
-				Name:         block.Name,
-				ServerOrigin: block.ServerOrigin,
-				Arguments:    arguments,
-				MCPBareName:  block.MCPBareName,
-				Status:       StatusFromString(block.Status),
+				ID:             block.ID,
+				Name:           block.Name,
+				ServerOrigin:   block.ServerOrigin,
+				Arguments:      arguments,
+				MCPBareName:    block.MCPBareName,
+				Status:         StatusFromString(block.Status),
+				DeferredResult: block.DeferredResult,
 			}
 			if redactToolUse {
 				toolCall.MCPBareName = ""
@@ -260,14 +261,15 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 	// 3. For each ToolUse: a tool_use block, optionally followed by a tool_result block
 	for _, tc := range post.ToolUse {
 		blocks = append(blocks, ContentBlock{
-			Type:         BlockTypeToolUse,
-			ID:           tc.ID,
-			Name:         tc.Name,
-			ServerOrigin: tc.ServerOrigin,
-			Input:        tc.Arguments,
-			MCPBareName:  tc.MCPBareName,
-			Status:       StatusToString(tc.Status),
-			Shared:       BoolPtr(shared),
+			Type:           BlockTypeToolUse,
+			ID:             tc.ID,
+			Name:           tc.Name,
+			ServerOrigin:   tc.ServerOrigin,
+			Input:          tc.Arguments,
+			MCPBareName:    tc.MCPBareName,
+			Status:         StatusToString(tc.Status),
+			Shared:         BoolPtr(shared),
+			DeferredResult: tc.DeferredResult,
 		})
 
 		if tc.Result != "" {
@@ -329,6 +331,8 @@ func StatusFromString(s string) llm.ToolCallStatus {
 		return llm.ToolCallStatusSuccess
 	case StatusAutoApproved:
 		return llm.ToolCallStatusAutoApproved
+	case StatusWaiting:
+		return llm.ToolCallStatusWaiting
 	default:
 		return llm.ToolCallStatusPending
 	}
@@ -349,6 +353,8 @@ func StatusToString(s llm.ToolCallStatus) string {
 		return StatusSuccess
 	case llm.ToolCallStatusAutoApproved:
 		return StatusAutoApproved
+	case llm.ToolCallStatusWaiting:
+		return StatusWaiting
 	default:
 		return StatusPending
 	}

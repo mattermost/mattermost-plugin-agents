@@ -222,3 +222,63 @@ func TestLookupToolPolicy(t *testing.T) {
 		require.False(t, enabled)
 	})
 }
+
+func TestLookupToolPolicyBuiltIn(t *testing.T) {
+	const builtInToolName = "AskAnotherUser"
+
+	t.Run("unconfigured AskAnotherUser gets the seed", func(t *testing.T) {
+		policy, enabled := LookupToolPolicy(Config{}, "", builtInToolName)
+
+		require.Equal(t, ToolPolicyAsk, policy)
+		require.True(t, enabled)
+	})
+
+	t.Run("admin auto_run_in_dm override wins over the seed", func(t *testing.T) {
+		cfg := Config{
+			BuiltInTools: []ToolConfig{{
+				Name:    builtInToolName,
+				Policy:  ToolPolicyAutoRunInDM,
+				Enabled: true,
+			}},
+		}
+
+		policy, enabled := LookupToolPolicy(cfg, "", builtInToolName)
+
+		require.Equal(t, ToolPolicyAutoRunInDM, policy)
+		require.True(t, enabled)
+	})
+
+	t.Run("admin disable wins over the seed", func(t *testing.T) {
+		cfg := Config{
+			BuiltInTools: []ToolConfig{{
+				Name:    builtInToolName,
+				Policy:  ToolPolicyAsk,
+				Enabled: false,
+			}},
+		}
+
+		policy, enabled := LookupToolPolicy(cfg, "", builtInToolName)
+
+		require.Equal(t, ToolPolicyAsk, policy)
+		require.False(t, enabled)
+	})
+
+	t.Run("unconfigured WebSearch stays at ask and never auto-runs", func(t *testing.T) {
+		// Unconfigured built-ins move from (ask, false) to (ask, true), but
+		// ask+enabled still cannot auto-run: enabled only gates auto-run and
+		// ask never satisfies IsToolPolicyAutoRunInDM, so approval behavior
+		// is unchanged.
+		policy, enabled := LookupToolPolicy(Config{}, "", "WebSearch")
+
+		require.Equal(t, ToolPolicyAsk, policy)
+		require.True(t, enabled)
+		require.False(t, IsToolPolicyAutoRunInDM(policy))
+	})
+
+	t.Run("empty tool name stays closed", func(t *testing.T) {
+		policy, enabled := LookupToolPolicy(Config{}, "", "")
+
+		require.Equal(t, ToolPolicyAsk, policy)
+		require.False(t, enabled)
+	})
+}

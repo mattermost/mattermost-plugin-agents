@@ -435,6 +435,7 @@ func TestStatusConversion(t *testing.T) {
 		{StatusError, llm.ToolCallStatusError},
 		{StatusSuccess, llm.ToolCallStatusSuccess},
 		{StatusAutoApproved, llm.ToolCallStatusAutoApproved},
+		{StatusWaiting, llm.ToolCallStatusWaiting},
 	}
 
 	for _, tt := range tests {
@@ -443,6 +444,15 @@ func TestStatusConversion(t *testing.T) {
 			assert.Equal(t, tt.str, StatusToString(tt.status))
 		})
 	}
+}
+
+// TestStatusRoundTripWaiting pins that a persisted waiting block never
+// collapses back to pending on re-persist (which would resurrect the
+// Accept/Reject UI and break the ErrStaleToolClick idempotency guarantee),
+// and that the enum value the webapp mirrors stays 6.
+func TestStatusRoundTripWaiting(t *testing.T) {
+	assert.Equal(t, StatusWaiting, StatusToString(StatusFromString(StatusWaiting)))
+	assert.Equal(t, llm.ToolCallStatus(6), llm.ToolCallStatusWaiting)
 }
 
 func TestStatusFromStringDefault(t *testing.T) {
@@ -544,6 +554,56 @@ func TestPostToBlocksToPostRoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBlocksToPostCarriesWaitingAndDeferred(t *testing.T) {
+	blocks := []ContentBlock{{
+		Type:           BlockTypeToolUse,
+		ID:             "tc1",
+		Name:           "AskAnotherUser",
+		Input:          json.RawMessage(`{"username":"bob","question":"which release?"}`),
+		Status:         StatusWaiting,
+		DeferredResult: true,
+	}}
+
+	t.Run("waiting status and deferred flag survive conversion", func(t *testing.T) {
+		post := BlocksToPost(blocks, "assistant", PostConversionOptions{})
+		require.Len(t, post.ToolUse, 1)
+		assert.Equal(t, llm.ToolCallStatusWaiting, post.ToolUse[0].Status)
+		assert.True(t, post.ToolUse[0].DeferredResult)
+		assert.JSONEq(t, `{"username":"bob","question":"which release?"}`, string(post.ToolUse[0].Arguments))
+	})
+
+	t.Run("redaction blanks arguments but keeps status and flag", func(t *testing.T) {
+		post := BlocksToPost(blocks, "assistant", PostConversionOptions{RedactUnshared: true})
+		require.Len(t, post.ToolUse, 1)
+		assert.Equal(t, llm.ToolCallStatusWaiting, post.ToolUse[0].Status)
+		assert.True(t, post.ToolUse[0].DeferredResult)
+		assert.JSONEq(t, `{}`, string(post.ToolUse[0].Arguments))
+	})
+}
+
+func TestPostToBlocksPersistsDeferredResult(t *testing.T) {
+	post := llm.Post{
+		Role: llm.PostRoleBot,
+		ToolUse: []llm.ToolCall{{
+			ID:             "tc1",
+			Name:           "AskAnotherUser",
+			Arguments:      json.RawMessage(`{"username":"bob"}`),
+			Status:         llm.ToolCallStatusWaiting,
+			DeferredResult: true,
+		}},
+	}
+
+	blocks := PostToBlocks(post, false)
+	require.Len(t, blocks, 1)
+	assert.Equal(t, StatusWaiting, blocks[0].Status)
+	assert.True(t, blocks[0].DeferredResult)
+
+	roundTripped := BlocksToPost(blocks, "assistant", PostConversionOptions{})
+	require.Len(t, roundTripped.ToolUse, 1)
+	assert.Equal(t, llm.ToolCallStatusWaiting, roundTripped.ToolUse[0].Status)
+	assert.True(t, roundTripped.ToolUse[0].DeferredResult)
 }
 
 // fakeReadCloser wraps a strings.Reader as io.ReadCloser so the mock GetFile
