@@ -6,6 +6,7 @@ package mmtools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,9 +19,12 @@ func boolPtr(b bool) *bool { return &b }
 
 func TestValidateAskAnotherUserArgs(t *testing.T) {
 	cases := []struct {
-		name    string
-		args    AskAnotherUserArgs
-		wantErr string
+		name string
+		args AskAnotherUserArgs
+		// wantErr asserts a specific error substring; wantAnyErr asserts
+		// rejection without pinning the wording (length-cap rows).
+		wantErr    string
+		wantAnyErr bool
 	}{
 		{
 			name: "valid free-form only",
@@ -79,11 +83,96 @@ func TestValidateAskAnotherUserArgs(t *testing.T) {
 			args:    AskAnotherUserArgs{Username: "bob", Question: "Q?", AllowFreeForm: boolPtr(false)},
 			wantErr: "allow_free_form must not be false",
 		},
+		{
+			name: "question at max length passes",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: strings.Repeat("q", askAnotherUserMaxQuestionRunes),
+			},
+		},
+		{
+			// Caps are rune counts, not byte counts: 1000 two-byte runes
+			// must pass even though the byte length is double the cap.
+			name: "multibyte question at max rune length passes",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: strings.Repeat("é", askAnotherUserMaxQuestionRunes),
+			},
+		},
+		{
+			name: "question over max length rejected",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: strings.Repeat("q", askAnotherUserMaxQuestionRunes+1),
+			},
+			wantAnyErr: true,
+		},
+		{
+			name: "context at max length passes",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Q?",
+				Context:  strings.Repeat("c", askAnotherUserMaxContextRunes),
+			},
+		},
+		{
+			name: "context over max length rejected",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Q?",
+				Context:  strings.Repeat("c", askAnotherUserMaxContextRunes+1),
+			},
+			wantAnyErr: true,
+		},
+		{
+			name: "option label at max length passes",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Q?",
+				Options:  []AskUserQuestionOption{{Label: strings.Repeat("l", askAnotherUserMaxLabelRunes)}},
+			},
+		},
+		{
+			name: "option label over max length rejected",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Q?",
+				Options:  []AskUserQuestionOption{{Label: strings.Repeat("l", askAnotherUserMaxLabelRunes+1)}},
+			},
+			wantAnyErr: true,
+		},
+		{
+			name: "option description at max length passes",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Q?",
+				Options: []AskUserQuestionOption{{
+					Label:       "A",
+					Description: strings.Repeat("d", askAnotherUserMaxDescriptionRunes),
+				}},
+			},
+		},
+		{
+			name: "option description over max length rejected",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Q?",
+				Options: []AskUserQuestionOption{{
+					Label:       "A",
+					Description: strings.Repeat("d", askAnotherUserMaxDescriptionRunes+1),
+				}},
+			},
+			wantAnyErr: true,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateAskAnotherUserArgs(tc.args)
+			if tc.wantAnyErr {
+				require.Error(t, err)
+				return
+			}
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)

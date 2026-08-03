@@ -8,6 +8,10 @@
     "translation": "%s\n\n(Interactive answer card — open Mattermost in a browser or the desktop app to respond.)"
   },
   {
+    "id": "agents.ask_another_user_card_fallback_attributed",
+    "translation": "Asked on behalf of @%[1]s:\n\n%[2]s\n\n(Interactive answer card — open Mattermost in a browser or the desktop app to respond.)"
+  },
+  {
     "id": "agents.no_longer_access_error",
     "translation": "Sorry, you no longer have access to the original thread."
   },

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
@@ -27,6 +28,15 @@ const (
 	// Result status values in the C7 tool-result JSON.
 	askAnotherUserStatusAnswered = "answered"
 	askAnotherUserStatusDeclined = "declined"
+
+	// Maximum lengths (in runes) accepted by ValidateAskAnotherUserArgs.
+	// Oversized fields become error tool results so the model can shorten
+	// and retry; without caps, generated text flows unbounded into a DM
+	// post and its props (F-006).
+	askAnotherUserMaxQuestionRunes    = 1000
+	askAnotherUserMaxContextRunes     = 500
+	askAnotherUserMaxLabelRunes       = 100
+	askAnotherUserMaxDescriptionRunes = 200
 )
 
 // AskAnotherUserArgs is the LLM-visible input schema for the tool.
@@ -77,15 +87,22 @@ func NewAskAnotherUserTool() llm.Tool {
 }
 
 // ValidateAskAnotherUserArgs enforces the argument invariants that do not
-// need Mattermost lookups (question/username non-blank, at most 5 options
-// with non-empty unique labels, allow_free_form=false requires options).
-// Target-user resolution errors live in conversations.dispatchAskAnotherUser.
+// need Mattermost lookups (question/username non-blank, question/context/
+// option fields within length caps, at most 5 options with non-empty unique
+// labels, allow_free_form=false requires options). Target-user resolution
+// errors live in conversations.dispatchAskAnotherUser.
 func ValidateAskAnotherUserArgs(args AskAnotherUserArgs) error {
 	if strings.TrimSpace(args.Username) == "" {
 		return errors.New("username must not be empty")
 	}
 	if strings.TrimSpace(args.Question) == "" {
 		return errors.New("question must not be empty")
+	}
+	if utf8.RuneCountInString(args.Question) > askAnotherUserMaxQuestionRunes {
+		return fmt.Errorf("question must be at most %d characters", askAnotherUserMaxQuestionRunes)
+	}
+	if utf8.RuneCountInString(args.Context) > askAnotherUserMaxContextRunes {
+		return fmt.Errorf("context must be at most %d characters", askAnotherUserMaxContextRunes)
 	}
 	if len(args.Options) > 5 {
 		return errors.New("provide between 1 and 5 options")
@@ -94,6 +111,12 @@ func ValidateAskAnotherUserArgs(args AskAnotherUserArgs) error {
 	for _, opt := range args.Options {
 		if strings.TrimSpace(opt.Label) == "" {
 			return errors.New("option labels must not be empty")
+		}
+		if utf8.RuneCountInString(opt.Label) > askAnotherUserMaxLabelRunes {
+			return fmt.Errorf("option labels must be at most %d characters", askAnotherUserMaxLabelRunes)
+		}
+		if utf8.RuneCountInString(opt.Description) > askAnotherUserMaxDescriptionRunes {
+			return fmt.Errorf("option descriptions must be at most %d characters", askAnotherUserMaxDescriptionRunes)
 		}
 		if seen[opt.Label] {
 			return fmt.Errorf("duplicate option label %q", opt.Label)

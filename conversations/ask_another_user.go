@@ -131,10 +131,16 @@ func (c *Conversations) dispatchAskAnotherUser(ctx context.Context, bot *bots.Bo
 	}
 
 	// Requester attribution is best-effort display data: an autonomous (bot)
-	// invoker gets an empty requester (C4); lookup failures keep conv.UserID.
+	// invoker gets an empty requester (C4); lookup failures keep conv.UserID
+	// for the card props but leave the fallback message unattributed.
 	requesterID := conv.UserID
-	if requester, requesterErr := c.mmClient.GetUser(conv.UserID); requesterErr == nil && requester.IsBot {
-		requesterID = ""
+	requesterUsername := ""
+	if requester, requesterErr := c.mmClient.GetUser(conv.UserID); requesterErr == nil {
+		if requester.IsBot {
+			requesterID = ""
+		} else {
+			requesterUsername = requester.Username
+		}
 	}
 
 	sourcePostID := anchorPostID
@@ -152,11 +158,26 @@ func (c *Conversations) dispatchAskAnotherUser(ctx context.Context, bot *bots.Bo
 		})
 	}
 
+	// The plaintext/mobile fallback must carry the same attribution as the
+	// webapp card (F-001): a human requester is named so the target never
+	// sees un-attributed bot-authored text. The attribution line comes FIRST
+	// so LLM-authored question text cannot spoof it. Autonomous (bot)
+	// invocations stay unattributed, matching the empty requester prop.
 	const cardFallbackDefault = "%s\n\n(Interactive answer card — open Mattermost in a browser or the desktop app to respond.)"
-	message := fmt.Sprintf(cardFallbackDefault, args.Question)
+	const cardFallbackAttributedDefault = "Asked on behalf of @%[1]s:\n\n%[2]s\n\n(Interactive answer card — open Mattermost in a browser or the desktop app to respond.)"
+	var message string
+	if requesterUsername != "" {
+		message = fmt.Sprintf(cardFallbackAttributedDefault, requesterUsername, args.Question)
+	} else {
+		message = fmt.Sprintf(cardFallbackDefault, args.Question)
+	}
 	if c.i18n != nil {
 		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(target.Locale))
-		message = T("agents.ask_another_user_card_fallback", cardFallbackDefault, args.Question)
+		if requesterUsername != "" {
+			message = T("agents.ask_another_user_card_fallback_attributed", cardFallbackAttributedDefault, requesterUsername, args.Question)
+		} else {
+			message = T("agents.ask_another_user_card_fallback", cardFallbackDefault, args.Question)
+		}
 	}
 
 	post := &model.Post{

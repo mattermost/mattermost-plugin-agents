@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -214,6 +215,21 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			assert.Equal(t, AskUserPostType, sentPost.Type)
 			assert.Contains(t, sentPost.Message, "Which environment?")
 			assert.Contains(t, sentPost.Message, "Interactive answer card")
+			// F-001: a human requester is named in the server-authored
+			// fallback so plaintext/mobile clients see attribution too, and
+			// the attribution precedes the LLM-authored question so injected
+			// question text cannot spoof it. Autonomous (bot) requesters
+			// stay unattributed.
+			if tc.wantRequesterProp != "" {
+				attribution := "Asked on behalf of @" + tc.requester.Username
+				require.Contains(t, sentPost.Message, attribution)
+				assert.Less(t,
+					strings.Index(sentPost.Message, attribution),
+					strings.Index(sentPost.Message, "Which environment?"),
+					"attribution must come before the question")
+			} else {
+				assert.NotContains(t, sentPost.Message, "Asked on behalf of")
+			}
 			assert.Equal(t, AskUserStatusPending, sentPost.GetProp(AskUserStatusProp))
 			assert.Equal(t, "Which environment?", sentPost.GetProp(AskUserQuestionProp))
 			assert.Equal(t, "Deciding where to deploy", sentPost.GetProp(AskUserContextProp))
