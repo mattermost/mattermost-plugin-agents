@@ -93,10 +93,20 @@ func TestNewClientCrossProtocolVersionCompat(t *testing.T) {
 			expectedVersion: "2026-07-28",
 		},
 		{
-			// A real 2024-11-05 server knows nothing about server/discover
-			// and answers initialize with its own (old) protocol version. Our
-			// client must still connect via the SSE fallback and end up on
-			// the legacy version.
+			// A 2024-11-05 server that rejects server/discover at the
+			// APPLICATION level (a JSON-RPC method-not-found) while keeping
+			// the SSE connection healthy: our client falls back to initialize
+			// and negotiates the legacy version.
+			//
+			// KNOWN LIMITATION (documented, not covered here): a genuine
+			// *old go-sdk* SSE server rejects server/discover at the HTTP
+			// TRANSPORT level (400), and go-sdk v1.7.0's SSE writer marks the
+			// connection unwritable on any non-2xx, so the initialize
+			// fallback cannot run on the same connection. This needs an
+			// upstream SDK fix (v1.7.0 is the latest release; there is no
+			// public knob to skip discover). Non-Go legacy SSE servers
+			// (TS/Python), which return application-level errors, are
+			// unaffected — see the docker compatibility matrix.
 			name:            "2024-11-05-only http+sse server negotiates 2024-11-05",
 			configureServer: simulateLegacy20241105Server,
 			handler: func(server *mcp.Server) http.Handler {

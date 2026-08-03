@@ -231,6 +231,30 @@ func fetchJSONLenient[T any](ctx context.Context, httpClient *http.Client, metad
 	return &value, nil
 }
 
+// inferApplicationType returns the RFC 7591 / OIDC application_type for a
+// redirect URI: "native" for loopback or non-HTTP schemes, "web" otherwise.
+// It mirrors the go-sdk's higher-level AuthorizationCodeHandler inference so
+// strict OIDC servers accept our dynamic registration.
+func inferApplicationType(redirectURI string) string {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		return "web"
+	}
+	switch u.Scheme {
+	case "http", "https":
+		host := u.Hostname()
+		if host == "localhost" {
+			return "native"
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return "native"
+		}
+		return "web"
+	default:
+		return "native"
+	}
+}
+
 // checkHTTPSOrLoopbackURL enforces HTTPS, or plain HTTP only for loopback
 // addresses (testing and development). Note this is deliberately stricter
 // than oauthex's equivalent, which exempts loopback hosts from the scheme

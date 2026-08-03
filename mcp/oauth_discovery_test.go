@@ -437,6 +437,53 @@ func TestLoadOrCreateClientCredentials_Registration(t *testing.T) {
 	}
 }
 
+// TestInferApplicationType pins the RFC 7591 application_type inference used
+// in dynamic client registration.
+func TestInferApplicationType(t *testing.T) {
+	tests := []struct {
+		uri  string
+		want string
+	}{
+		{"https://mm.example.com/plugins/mattermost-ai/oauth/callback", "web"},
+		{"http://mm.example.com/callback", "web"},
+		{"http://localhost:3333/callback", "native"},
+		{"http://127.0.0.1:8065/callback", "native"},
+		{"http://[::1]:8065/callback", "native"},
+		{"myapp://callback", "native"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, inferApplicationType(tt.uri), tt.uri)
+	}
+}
+
+// TestDCRSendsApplicationType verifies the registration request carries the
+// inferred application_type (required by MCP 2026-07-28).
+func TestDCRSendsApplicationType(t *testing.T) {
+	var gotAppType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/register" {
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		gotAppType, _ = body["application_type"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{"client_id": "c", "client_secret": "s"})
+	}))
+	t.Cleanup(server.Close)
+
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
+	mockClient.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
+	mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
+	// callbackURL defaults to http://test.com/callback (web) in the test helper.
+	_, err := manager.loadOrCreateClientCredentials(context.Background(), server.URL, nil, server.URL+"/register")
+	require.NoError(t, err)
+	require.Equal(t, "web", gotAppType)
+}
+
 // TestConstructWellKnownURL is ported from the previous hand-rolled metadata
 // implementation; the RFC 8414 §3.1 path-insertion behavior must be preserved.
 func TestConstructWellKnownURL(t *testing.T) {

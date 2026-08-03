@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,11 +83,15 @@ func (m *OAuthManager) refreshGrant(ctx context.Context, envelope *storedTokenEn
 		if refreshErr == nil {
 			return token, method, nil
 		}
-		// Only auto-detection (multiple candidates) retries, and only on
-		// invalid_client, which specifically signals wrong client
-		// authentication rather than a dead refresh token.
+		// Only auto-detection (multiple candidates) retries, and only on a
+		// client-authentication failure — never on invalid_grant, which
+		// signals a dead refresh token (retrying would be pointless and could
+		// trip token-family replay protection). This mirrors x/oauth2's
+		// exchange auto-detection, which retries client_secret_post after a
+		// failed Basic attempt: providers signal a rejected Basic attempt
+		// with invalid_client or invalid_request.
 		var tokenErr *oauthTokenError
-		if i < len(methods)-1 && errors.As(refreshErr, &tokenErr) && tokenErr.Code == "invalid_client" {
+		if i < len(methods)-1 && errors.As(refreshErr, &tokenErr) && tokenErr.Code != "invalid_grant" {
 			continue
 		}
 		return nil, "", refreshErr
@@ -170,11 +175,11 @@ func (m *OAuthManager) doRefresh(ctx context.Context, envelope *storedTokenEnvel
 	}
 
 	var tokenBody struct {
-		AccessToken  string `json:"access_token"`
-		TokenType    string `json:"token_type"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-		Scope        string `json:"scope"`
+		AccessToken  string         `json:"access_token"`
+		TokenType    string         `json:"token_type"`
+		RefreshToken string         `json:"refresh_token"`
+		ExpiresIn    flexibleNumber `json:"expires_in"`
+		Scope        string         `json:"scope"`
 	}
 	if err := json.Unmarshal(body, &tokenBody); err != nil {
 		return nil, fmt.Errorf("failed to parse token refresh response: %w", err)
@@ -191,8 +196,39 @@ func (m *OAuthManager) doRefresh(ctx context.Context, envelope *storedTokenEnvel
 	if token.RefreshToken == "" {
 		token.RefreshToken = envelope.Token.RefreshToken
 	}
-	if tokenBody.ExpiresIn > 0 {
-		token.Expiry = time.Now().Add(time.Duration(tokenBody.ExpiresIn) * time.Second)
+	if expiresIn := int64(tokenBody.ExpiresIn); expiresIn > 0 {
+		token.Expiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
 	}
 	return token, nil
+}
+
+// flexibleNumber decodes a JSON value that may be either a number or a
+// numeric string. Real OAuth providers return expires_in both ways, and
+// x/oauth2 (which the exchange path uses) accepts both; the refresh decoder
+// must match so a valid rotation response is never rejected before the new
+// grant is persisted.
+type flexibleNumber int64
+
+func (n *flexibleNumber) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		return nil
+	}
+	// Strip surrounding quotes if the value was sent as a string.
+	if data[0] == '"' {
+		if len(data) < 2 || data[len(data)-1] != '"' {
+			return fmt.Errorf("invalid quoted number %q", string(data))
+		}
+		data = data[1 : len(data)-1]
+		if len(data) == 0 {
+			return nil
+		}
+	}
+	// Parse as a float first (RFC 6749 uses seconds, but some providers send
+	// fractional values) and truncate to whole seconds.
+	f, err := strconv.ParseFloat(string(data), 64)
+	if err != nil {
+		return fmt.Errorf("invalid number %q: %w", string(data), err)
+	}
+	*n = flexibleNumber(int64(f))
+	return nil
 }

@@ -134,12 +134,16 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 	// Register a new client via Dynamic Client Registration (RFC 7591). The
 	// body-limited client caps the response size the SDK would otherwise read
 	// unbounded, guarding against a hostile registration endpoint.
+	// application_type is required by the MCP 2026-07-28 spec and inferred
+	// from the callback URI (loopback => native, otherwise web), matching the
+	// SDK's higher-level handler; strict OIDC servers reject a mismatch.
 	response, err := oauthex.RegisterClient(ctx, registrationEndpoint, &oauthex.ClientRegistrationMetadata{
 		RedirectURIs:            []string{m.callbackURL},
 		TokenEndpointAuthMethod: "client_secret_basic",
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
 		ClientName:              oauthClientName,
+		ApplicationType:         inferApplicationType(m.callbackURL),
 	}, m.bodyLimitedHTTPClient())
 	if err != nil {
 		return nil, fmt.Errorf("failed to register OAuth client with server %s (registration endpoint: %s): %w", serverURL, registrationEndpoint, err)

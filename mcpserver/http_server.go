@@ -19,6 +19,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// mcpServerSessionTimeout bounds idle stateful streamable sessions so the
+// standalone server does not retain sessions left unreachable by the
+// server/discover → initialize fallback.
+const mcpServerSessionTimeout = 10 * time.Minute
+
 // MattermostHTTPMCPServer wraps MattermostMCPServer for HTTP transport.
 type MattermostHTTPMCPServer struct {
 	*MattermostMCPServer
@@ -114,6 +119,12 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 		Stateless:                  config.Stateless,
 		MaxRequestBodyBytes:        mcp.DefaultMaxRequestBodyBytes,
 		DisableLocalhostProtection: true,
+		// Bound idle sessions so stateful mode does not accumulate them. A
+		// 2026-07-28 client's server/discover creates a session that becomes
+		// unreachable when the client falls back to initialize (which opens a
+		// second, usable session); without a timeout the first would linger
+		// forever. Stateless mode has no sessions, so this is a no-op there.
+		SessionTimeout: mcpServerSessionTimeout,
 	})
 
 	// Create HTTP mux router and setup all routes

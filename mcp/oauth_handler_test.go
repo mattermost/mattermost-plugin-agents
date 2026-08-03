@@ -154,6 +154,51 @@ func TestUserOAuthHandlerAuthorize(t *testing.T) {
 	}
 }
 
+// TestAuthorizeRecoversBearerFromMixedChallenges verifies that a valid Bearer
+// challenge carrying resource_metadata is still found even when it is preceded
+// by a token68-style challenge (e.g. Negotiate) that the strict SDK parser
+// rejects for the whole header.
+func TestAuthorizeRecoversBearerFromMixedChallenges(t *testing.T) {
+	const metadataURL = "https://resource.example.com/.well-known/oauth-protected-resource"
+
+	tests := []struct {
+		name    string
+		headers []string
+	}{
+		{
+			name:    "token68 and bearer in one header value",
+			headers: []string{`Negotiate a87421000492aa874209af8bc028, Bearer resource_metadata="` + metadataURL + `"`},
+		},
+		{
+			name: "token68 and bearer in separate header values",
+			headers: []string{
+				`Negotiate a87421000492aa874209af8bc028`,
+				`Bearer resource_metadata="` + metadataURL + `"`,
+			},
+		},
+	}
+
+	handler := &userOAuthHandler{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader("unauthorized")),
+			}
+			for _, h := range tt.headers {
+				resp.Header.Add("WWW-Authenticate", h)
+			}
+
+			err := handler.Authorize(context.Background(), &http.Request{}, resp)
+			var unauthorized *mcpUnauthorized
+			require.ErrorAs(t, err, &unauthorized)
+			require.Equal(t, metadataURL, unauthorized.MetadataURL(),
+				"Bearer resource_metadata must survive an unrelated token68 challenge")
+		})
+	}
+}
+
 // TestUserOAuthHandlerAuthorize403Gating verifies that a 403 only surfaces as
 // an OAuth problem when the challenge is OAuth-remediable (resource_metadata
 // or error="insufficient_scope"); a plain authorization denial must not be
@@ -396,6 +441,88 @@ func TestTokenSourceRejectsUnknownEnvelopeVersion(t *testing.T) {
 	_, err := handler.TokenSource(context.Background())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported token envelope version")
+}
+
+// TestRefreshAcceptsQuotedExpiresInAndPOSTAuth exercises two provider quirks
+// through the real refresh path: expires_in returned as a JSON string, and a
+// client_secret_post-only token endpoint that rejects HTTP Basic. Both must
+// yield a persisted rotated grant (a parse failure or auth mismatch would
+// leave the revoked old token and force reauthorization).
+func TestRefreshAcceptsQuotedExpiresInAndPOSTAuth(t *testing.T) {
+	const userID = "user123"
+	const serverID = "quirky-server"
+
+	tokenHandler := func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		// POST-only: reject HTTP Basic with invalid_request (not
+		// invalid_client), which the auto-detect fallback must still recover
+		// from, matching x/oauth2 exchange behavior.
+		if _, _, hasBasic := r.BasicAuth(); hasBasic {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_request"})
+			return
+		}
+		if r.PostFormValue("client_secret") == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_client"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "new-access",
+			"refresh_token": "new-refresh",
+			"token_type":    "Bearer",
+			"expires_in":    "3600", // quoted numeric string
+		})
+	}
+	server := newRefreshTestServer(t, tokenHandler)
+	manager, kv := newStatefulKVManager(t, nil, server.Client())
+	kv.putEnvelope(t, userID, serverID, boundTestEnvelope(server.URL, &oauth2.Token{
+		AccessToken:  "old-access",
+		RefreshToken: "old-refresh",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(-time.Hour),
+	}))
+
+	handler := newUserOAuthHandler(userID, ServerConfig{
+		Name: serverID, BaseURL: server.URL, ClientID: "static-client", ClientSecret: "static-secret",
+	}, manager)
+	tokenSource, err := handler.TokenSource(context.Background())
+	require.NoError(t, err)
+
+	token, err := tokenSource.Token()
+	require.NoError(t, err)
+	require.Equal(t, "new-access", token.AccessToken)
+	require.False(t, token.Expiry.IsZero(), "quoted expires_in must be parsed into an expiry")
+	require.True(t, token.Expiry.After(time.Now().Add(30*time.Minute)), "expiry should be ~1h out")
+
+	stored := kv.storedEnvelope(t, userID, serverID)
+	require.Equal(t, "new-refresh", stored.Token.RefreshToken, "rotated refresh token must be persisted")
+	require.Equal(t, authMethodPost, stored.AuthMethod, "the working POST auth method must be persisted")
+}
+
+// TestFlexibleNumberUnmarshal pins the numeric/quoted decoding used for
+// expires_in.
+func TestFlexibleNumberUnmarshal(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int64
+	}{
+		{`3600`, 3600},
+		{`"3600"`, 3600},
+		{`3600.0`, 3600},
+		{`""`, 0},
+		{`null`, 0},
+	}
+	for _, tt := range tests {
+		var n flexibleNumber
+		require.NoError(t, json.Unmarshal([]byte(tt.in), &n), tt.in)
+		require.Equal(t, tt.want, int64(n), tt.in)
+	}
+	var bad flexibleNumber
+	require.Error(t, json.Unmarshal([]byte(`"abc"`), &bad))
 }
 
 func TestUserOAuthHandlerTokenSourceNoStoredToken(t *testing.T) {

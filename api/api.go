@@ -164,6 +164,7 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+	mcpRequestLimiter     *mcpRequestLimiter
 
 	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
 	// is the only supported entry point for tests.
@@ -207,6 +208,7 @@ func New(
 	customPromptsStore *customprompts.Store,
 ) *API {
 	return &API{
+		mcpRequestLimiter:     newMCPRequestLimiter(),
 		bots:                  bots,
 		conversationsService:  conversationsService,
 		meetingsService:       meetingsService,

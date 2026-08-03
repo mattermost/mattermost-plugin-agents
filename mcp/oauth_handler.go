@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -133,11 +135,19 @@ func (h *userOAuthHandler) Authorize(_ context.Context, _ *http.Request, resp *h
 
 	challenges, parseErr := oauthex.ParseWWWAuthenticate(headers)
 	if parseErr != nil {
-		if forbidden {
+		// oauthex aborts the whole header when any challenge does not match
+		// its key=value grammar — e.g. a token68 challenge like
+		// "Negotiate a1b2c3" preceding a valid "Bearer resource_metadata=…".
+		// Recover the OAuth parameters with a tolerant scan so an unrelated
+		// scheme cannot suppress our re-authorization.
+		if recovered := tolerantChallengeParams(headers); len(recovered) > 0 {
+			challenges = recovered
+		} else if forbidden {
 			return fmt.Errorf("server returned 403 forbidden with a malformed WWW-Authenticate header: %w", parseErr)
-		}
-		return &mcpUnauthorized{
-			err: fmt.Errorf("failed to parse WWW-Authenticate header: %w", parseErr),
+		} else {
+			return &mcpUnauthorized{
+				err: fmt.Errorf("failed to parse WWW-Authenticate header: %w", parseErr),
+			}
 		}
 	}
 
@@ -184,6 +194,47 @@ func hasInsufficientScopeChallenge(challenges []oauthex.Challenge) bool {
 		}
 	}
 	return false
+}
+
+// wwwAuthParamRE matches auth-param pairs (key=token or key="quoted") in a
+// WWW-Authenticate header. It is used only as a tolerant fallback when the
+// strict parser rejects the whole header because of an unrelated challenge
+// scheme (e.g. token68). The header is already size-capped.
+var wwwAuthParamRE = regexp.MustCompile(`([a-zA-Z0-9_-]+)\s*=\s*(?:"([^"]*)"|([a-zA-Z0-9._~+/-]+=*))`)
+
+// oauthChallengeParamNames are the auth-params we act on; restricting the
+// tolerant scan to them avoids misreading token68 blobs or realm values as
+// parameters.
+var oauthChallengeParamNames = map[string]bool{
+	"resource_metadata": true,
+	"scope":             true,
+	"error":             true,
+}
+
+// tolerantChallengeParams extracts the OAuth auth-params we care about from
+// raw WWW-Authenticate header values, ignoring challenge structure. It
+// returns a single synthetic challenge so downstream extraction is unchanged.
+func tolerantChallengeParams(headers []string) []oauthex.Challenge {
+	params := map[string]string{}
+	for _, header := range headers {
+		for _, m := range wwwAuthParamRE.FindAllStringSubmatch(header, -1) {
+			key := strings.ToLower(m[1])
+			if !oauthChallengeParamNames[key] {
+				continue
+			}
+			value := m[2]
+			if value == "" {
+				value = m[3]
+			}
+			if _, seen := params[key]; !seen {
+				params[key] = value
+			}
+		}
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	return []oauthex.Challenge{{Scheme: "bearer", Params: params}}
 }
 
 // challengeScope returns the scope parameter from the first challenge that
