@@ -57,6 +57,10 @@ func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serve
 	for _, candidate := range candidates {
 		prm, err := oauthex.GetProtectedResourceMetadata(ctx, candidate.metadataURL, candidate.resource, m.httpClient)
 		if err != nil {
+			m.pluginAPI.LogDebug("MCP OAuth discovery: protected resource metadata candidate failed",
+				"metadataURL", candidate.metadataURL,
+				"resource", candidate.resource,
+				"error", err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("failed to fetch protected resource metadata from %s: %w", candidate.metadataURL, err)
 			}
@@ -68,6 +72,10 @@ func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serve
 			}
 			continue
 		}
+		m.pluginAPI.LogDebug("MCP OAuth discovery: resolved protected resource metadata",
+			"metadataURL", candidate.metadataURL,
+			"resource", prm.Resource,
+			"authorizationServers", prm.AuthorizationServers)
 		return prm, nil
 	}
 
@@ -84,6 +92,17 @@ func (m *OAuthManager) fetchProtectedResourceMetadata(ctx context.Context, serve
 // warning) instead of failing discovery. oauthex flattens error types, so the
 // error message is the only stable signal for detecting it.
 func (m *OAuthManager) fetchAuthorizationServerMetadata(ctx context.Context, issuer string) (*oauthex.AuthServerMeta, error) {
+	return m.fetchAuthorizationServerMetadataHop(ctx, issuer, true)
+}
+
+// fetchAuthorizationServerMetadataHop implements fetchAuthorizationServerMetadata
+// with a single-use issuer-follow: when metadata fetched from one host declares
+// a DIFFERENT issuer (real-world CDN/proxy splits — e.g. mcp.atlassian.com
+// declares issuer cf.mcp.atlassian.com), the authoritative document is
+// re-fetched strictly from the declared issuer's own well-known location and
+// must be self-consistent there. That carries the same trust as following the
+// PRM's authorization_servers pointer, and one hop prevents redirect loops.
+func (m *OAuthManager) fetchAuthorizationServerMetadataHop(ctx context.Context, issuer string, allowIssuerFollow bool) (*oauthex.AuthServerMeta, error) {
 	urls := authServerMetadataURLs(issuer)
 	if len(urls) == 0 {
 		return nil, fmt.Errorf("failed to construct metadata URLs for issuer %s", issuer)
@@ -94,30 +113,70 @@ func (m *OAuthManager) fetchAuthorizationServerMetadata(ctx context.Context, iss
 		if err == nil && asm == nil {
 			// oauthex returns (nil, nil) — no error — when the fetch got a
 			// 4xx status: this variant is not served, try the next one.
+			m.pluginAPI.LogDebug("MCP OAuth discovery: authorization server metadata variant not served",
+				"metadataURL", metadataURL, "issuer", issuer)
 			continue
 		}
 		if err != nil {
-			if !strings.Contains(err.Error(), "does not implement PKCE") {
-				// Hard failures (unreachable, issuer mismatch, insecure URLs,
-				// bad JSON) abort the walk, mirroring the SDK's own client.
+			switch {
+			case strings.Contains(err.Error(), "does not implement PKCE"):
+				m.pluginAPI.LogWarn("Authorization server metadata does not advertise PKCE support; retrying leniently (we always use PKCE regardless)",
+					"metadataURL", metadataURL,
+					"issuer", issuer,
+					"error", err)
+				asm, err = fetchJSONLenient[oauthex.AuthServerMeta](ctx, m.httpClient, metadataURL)
+				if err != nil {
+					return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
+				}
+				if validateErr := validateLenientAuthServerMeta(asm, metadataURL, issuer); validateErr != nil {
+					return nil, validateErr
+				}
+			case allowIssuerFollow && strings.Contains(err.Error(), "does not match issuer URL"):
+				followed, followErr := m.followDeclaredIssuer(ctx, metadataURL, issuer)
+				if followErr != nil {
+					return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w (following its declared issuer also failed: %v)", metadataURL, err, followErr)
+				}
+				asm = followed
+			default:
+				// Hard failures (unreachable, insecure URLs, bad JSON) abort
+				// the walk, mirroring the SDK's own client.
 				return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
-			}
-			m.pluginAPI.LogWarn("Authorization server metadata does not advertise PKCE support; retrying leniently (we always use PKCE regardless)",
-				"metadataURL", metadataURL,
-				"issuer", issuer,
-				"error", err)
-			asm, err = fetchJSONLenient[oauthex.AuthServerMeta](ctx, m.httpClient, metadataURL)
-			if err != nil {
-				return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
-			}
-			if err := validateLenientAuthServerMeta(asm, metadataURL, issuer); err != nil {
-				return nil, err
 			}
 		}
+		m.pluginAPI.LogDebug("MCP OAuth discovery: resolved authorization server metadata",
+			"metadataURL", metadataURL,
+			"issuer", asm.Issuer,
+			"authorizationEndpoint", asm.AuthorizationEndpoint,
+			"tokenEndpoint", asm.TokenEndpoint,
+			"registrationEndpoint", asm.RegistrationEndpoint)
 		return asm, nil
 	}
 
 	return nil, fmt.Errorf("no authorization server metadata found for issuer %s (tried %d well-known variants)", issuer, len(urls))
+}
+
+// followDeclaredIssuer handles the issuer-mismatch case: it reads the issuer
+// the mismatched document declares, then strictly re-fetches the metadata from
+// that issuer's own well-known location, requiring self-consistency there.
+func (m *OAuthManager) followDeclaredIssuer(ctx context.Context, metadataURL, expectedIssuer string) (*oauthex.AuthServerMeta, error) {
+	declared, err := fetchJSONLenient[oauthex.AuthServerMeta](ctx, m.httpClient, metadataURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to re-read metadata to determine declared issuer: %w", err)
+	}
+	if declared.Issuer == "" || strings.TrimSuffix(declared.Issuer, "/") == strings.TrimSuffix(expectedIssuer, "/") {
+		return nil, fmt.Errorf("metadata does not declare a distinct issuer to follow")
+	}
+	if err := checkHTTPSOrLoopbackURL(declared.Issuer); err != nil {
+		return nil, fmt.Errorf("declared issuer is not a valid HTTPS URL: %w", err)
+	}
+
+	m.pluginAPI.LogDebug("MCP OAuth discovery: metadata declares a different issuer; fetching the authoritative document from it",
+		"metadataURL", metadataURL,
+		"expectedIssuer", expectedIssuer,
+		"declaredIssuer", declared.Issuer)
+
+	// One hop only: the declared issuer's metadata must be self-consistent.
+	return m.fetchAuthorizationServerMetadataHop(ctx, declared.Issuer, false)
 }
 
 // authServerMetadataURLs returns the ordered discovery URLs for authorization

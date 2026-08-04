@@ -57,12 +57,15 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 			wantScopes:    []string{"read"},
 		},
 		{
-			// PRM succeeded and named the issuer, but its metadata fails the
-			// RFC 8414 issuer check, so conventional endpoints on the issuer
-			// are used instead of the advertised custom ones.
-			name:          "issuer mismatch fails AS discovery and falls back to conventional endpoints",
-			asIssuer:      "https://legacy.example.com",
+			// PRM succeeded and named the issuer, but its metadata declares a
+			// different issuer whose own metadata is unreachable (loopback
+			// port 1 fails fast), so the issuer-follow fails and conventional
+			// endpoints on the issuer are used instead of the advertised
+			// custom ones — with a warning.
+			name:          "issuer mismatch with unreachable declared issuer falls back to conventional endpoints",
+			asIssuer:      "https://127.0.0.1:1",
 			pkceMethods:   []string{"S256"},
+			wantWarn:      true,
 			wantAuthPath:  "/authorize",
 			wantTokenPath: "/token",
 			wantScopes:    []string{"read"},
@@ -206,7 +209,8 @@ func TestFetchAuthorizationServerMetadataOrderedVariants(t *testing.T) {
 			t.Cleanup(server.Close)
 			issuer = server.URL + tt.issuerPath
 
-			manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
+			manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+			mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
 			asm, err := manager.fetchAuthorizationServerMetadata(context.Background(), issuer)
 			if tt.wantErr {
 				require.Error(t, err)
@@ -330,7 +334,8 @@ func TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
 	t.Cleanup(server.Close)
 	serverURL = server.URL
 
-	manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return()
 
 	config, err := manager.createOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
 		ClientID:     "static-client",
@@ -414,7 +419,6 @@ func TestLoadOrCreateClientCredentials_Registration(t *testing.T) {
 			mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
 			if tt.expectStoreAndDebug {
 				mockClient.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
-				mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Once()
 			}
 
 			registrationEndpoint := ""
@@ -435,6 +439,103 @@ func TestLoadOrCreateClientCredentials_Registration(t *testing.T) {
 			require.Equal(t, tt.wantClientID, creds.ClientID)
 		})
 	}
+}
+
+// TestFetchAuthorizationServerMetadataFollowsDeclaredIssuer replicates the
+// Atlassian MCP server topology that produced a broken authorization redirect
+// in the field: the MCP host serves no protected resource metadata, and its
+// authorization-server metadata declares a DIFFERENT issuer host (a CDN/proxy
+// split). Discovery must follow the declared issuer once, require
+// self-consistency there, and use the advertised endpoints — not fall back to
+// conventional /authorize on the MCP host (which 404s).
+func TestFetchAuthorizationServerMetadataFollowsDeclaredIssuer(t *testing.T) {
+	// "issuerHost" plays cf.mcp.atlassian.com; "mcpHost" plays mcp.atlassian.com.
+	var issuerHost, mcpHost *httptest.Server
+	writeMeta := func(t *testing.T, w http.ResponseWriter) {
+		t.Helper()
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			Issuer:                        issuerHost.URL,
+			AuthorizationEndpoint:         mcpHost.URL + "/v1/authorize",
+			TokenEndpoint:                 issuerHost.URL + "/v1/token",
+			RegistrationEndpoint:          issuerHost.URL + "/v1/register",
+			CodeChallengeMethodsSupported: []string{"plain", "S256"},
+		}))
+	}
+	issuerHost = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/oauth-authorization-server" {
+			http.NotFound(w, r)
+			return
+		}
+		writeMeta(t, w)
+	}))
+	t.Cleanup(issuerHost.Close)
+	mcpHost = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No protected resource metadata anywhere; AS metadata at the MCP
+		// host declares the OTHER host as issuer (mismatch).
+		if r.URL.Path != "/.well-known/oauth-authorization-server" {
+			http.NotFound(w, r)
+			return
+		}
+		writeMeta(t, w)
+	}))
+	t.Cleanup(mcpHost.Close)
+
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, mcpHost.Client())
+	mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
+	mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
+
+	resolved, err := manager.resolveOAuthConfig(context.Background(), mcpHost.URL+"/v1/mcp", "", &StaticOAuthCredentials{
+		ClientID:     "static-client",
+		ClientSecret: "static-secret",
+	})
+	require.NoError(t, err)
+	require.Equal(t, mcpHost.URL+"/v1/authorize", resolved.config.Endpoint.AuthURL,
+		"must use the advertised endpoint, not the conventional /authorize fallback")
+	require.Equal(t, issuerHost.URL+"/v1/token", resolved.config.Endpoint.TokenURL)
+	require.Equal(t, issuerHost.URL, resolved.issuer, "the declared issuer becomes the bound issuer")
+}
+
+// TestFetchAuthorizationServerMetadataIssuerFollowIsOneHop verifies the
+// issuer-follow cannot chain: a declared issuer whose own metadata is again
+// inconsistent must fail discovery rather than following further.
+func TestFetchAuthorizationServerMetadataIssuerFollowIsOneHop(t *testing.T) {
+	var hostA, hostB *httptest.Server
+	// hostB declares yet another issuer (itself inconsistent).
+	hostB = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/oauth-authorization-server" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			Issuer:                        "https://elsewhere.example.com",
+			AuthorizationEndpoint:         hostB.URL + "/authorize",
+			TokenEndpoint:                 hostB.URL + "/token",
+			CodeChallengeMethodsSupported: []string{"S256"},
+		}))
+	}))
+	t.Cleanup(hostB.Close)
+	hostA = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/oauth-authorization-server" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+			Issuer:                        hostB.URL,
+			AuthorizationEndpoint:         hostA.URL + "/authorize",
+			TokenEndpoint:                 hostA.URL + "/token",
+			CodeChallengeMethodsSupported: []string{"S256"},
+		}))
+	}))
+	t.Cleanup(hostA.Close)
+
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, hostA.Client())
+	mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
+
+	_, err := manager.fetchAuthorizationServerMetadata(context.Background(), hostA.URL)
+	require.Error(t, err, "a second issuer hop must not be followed")
 }
 
 // TestInferApplicationType pins the RFC 7591 application_type inference used

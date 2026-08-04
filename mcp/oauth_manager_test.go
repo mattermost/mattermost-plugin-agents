@@ -30,6 +30,11 @@ func setupTestOAuthManagerWithLookup(t *testing.T, lookup ServerConfigLookup) (*
 
 func setupTestOAuthManagerFull(t *testing.T, lookup ServerConfigLookup, httpClient *http.Client) (*OAuthManager, *mocks.MockClient) {
 	mockClient := mocks.NewMockClient(t)
+	// Discovery emits step-by-step LogDebug diagnostics; they are never
+	// asserted on, so accept them everywhere. LogWarn is deliberately NOT
+	// stubbed here: tests register it explicitly, so an unexpected warning
+	// (e.g. an unintended lenient fallback) fails the test.
+	mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
 	manager := NewOAuthManager(mockClient, "http://test.com/callback", httpClient, lookup)
 	return manager, mockClient
 }
@@ -335,7 +340,6 @@ func TestCreateOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
 	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
 	mockClient.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
-	mockClient.On("LogDebug", mock.Anything, mock.Anything).Return().Once()
 
 	config, err := manager.createOAuthConfig(context.Background(), serverURL+"/mcp", serverURL+"/.well-known/oauth-protected-resource/mcp", nil)
 

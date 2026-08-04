@@ -246,19 +246,36 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 			tokenURL = strings.TrimSuffix(authServerIssuer, "/") + "/token"
 			authServerURL = authServerIssuer
 			issuer = authServerIssuer
+			m.pluginAPI.LogWarn("MCP OAuth discovery: authorization server metadata unavailable; using conventional endpoints on the discovered issuer — if authorization fails with 404, the server's OAuth metadata is likely misconfigured",
+				"serverURL", serverURL,
+				"authServerIssuer", authServerIssuer,
+				"authorizationEndpoint", authURL,
+				"error", authErr)
 		}
 	} else {
 		// If protected resource metadata fails, assume the resource server is the authorization server
 		// and try the authorization server metadata endpoint directly (existing MCP server behavior).
 		// Use baseURL (path stripped) per MCP spec: the authorization base URL is derived by
 		// discarding the path component from the MCP server URL.
-		if authMetadata, authErr := m.fetchAuthorizationServerMetadata(ctx, baseURL); authErr == nil {
+		authMetadata, authErr := m.fetchAuthorizationServerMetadata(ctx, baseURL)
+		if authErr == nil {
 			authURL = authMetadata.AuthorizationEndpoint
 			tokenURL = authMetadata.TokenEndpoint
 			issuer = authMetadata.Issuer
 			requireIss = authMetadata.AuthorizationResponseIssParameterSupported
 			registrationEndpoint = authMetadata.RegistrationEndpoint
 			// authServerURL already set to baseURL above
+		} else {
+			// Complete discovery failure: the conventional /authorize and
+			// /token endpoints on the server's base URL are a last resort
+			// for pre-discovery-era servers and usually 404 on modern ones.
+			// Be loud about it: this is the most common cause of a broken
+			// authorization redirect.
+			m.pluginAPI.LogWarn("MCP OAuth discovery failed entirely; falling back to conventional endpoints on the MCP server base URL — if authorization fails with 404, check the server's protected-resource and authorization-server metadata",
+				"serverURL", serverURL,
+				"authorizationEndpoint", authURL,
+				"protectedResourceMetadataError", discErr,
+				"authorizationServerMetadataError", authErr)
 		}
 	}
 	if issuer == "" {

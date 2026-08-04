@@ -791,6 +791,7 @@ func TestHandleOAuthStartRedirectsToProviderAuthorizeURL(t *testing.T) {
 	}
 
 	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
 	mmClient.On("KVSetWithExpiry", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession"), mock.Anything).Return(nil)
 	// Trust-on-first-use issuer pin for static credentials.
 	mmClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.staticIssuerPin")).Return(mmapi.ErrKVNotFound).Maybe()
@@ -966,6 +967,7 @@ func TestHandleOAuthStartAcceptsResourceMetadataMatchingOrigin(t *testing.T) {
 	}
 
 	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
 	mmClient.On("KVSetWithExpiry", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession"), mock.Anything).Return(nil)
 	// Trust-on-first-use issuer pin for static credentials.
 	mmClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.staticIssuerPin")).Return(mmapi.ErrKVNotFound).Maybe()
