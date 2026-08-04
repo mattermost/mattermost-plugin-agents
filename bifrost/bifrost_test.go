@@ -642,6 +642,53 @@ func TestWebSearchAllowedCallersStrippedForOpenAI(t *testing.T) {
 		"the web_search tool itself must still reach OpenAI")
 }
 
+// TestAnthropicOnlyWebFetchDroppedForOpenAI pins the bifrost behavior that
+// makes heterogeneous fallback chains safe without per-fallback filtering in
+// the plugin: a request built for an Anthropic primary with web_fetch enabled
+// keeps the tool in the neutral request (Bifrost reuses the same request for
+// every fallback attempt), and the OpenAI serializer drops the Anthropic-only
+// tool type outright instead of forwarding it to a 400. If this test breaks
+// after a bifrost upgrade, the plugin must start intersecting
+// EnabledNativeTools with every fallback provider's support matrix.
+func TestAnthropicOnlyWebFetchDroppedForOpenAI(t *testing.T) {
+	// Anthropic primary with web_fetch (and web_search) enabled — the shape a
+	// request has when Bifrost retries it against an OpenAI fallback.
+	b := &LLM{
+		provider:           schemas.Anthropic,
+		enabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch},
+	}
+	cfg := llm.LanguageModelConfig{Model: "claude-sonnet-4-6", MaxGeneratedTokens: 1000}
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	}
+
+	respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	require.NoError(t, err)
+
+	hasWebFetch := false
+	for _, tool := range respReq.Params.Tools {
+		if tool.Type == schemas.ResponsesToolTypeWebFetch {
+			hasWebFetch = true
+		}
+	}
+	require.True(t, hasWebFetch, "the neutral request carries web_fetch for the Anthropic primary")
+
+	wireReq := &openai.OpenAIResponsesRequest{
+		Model: "gpt-4o",
+		Input: openai.OpenAIResponsesRequestInput{
+			OpenAIResponsesRequestInputArray: respReq.Input,
+		},
+		ResponsesParameters: *respReq.Params,
+	}
+	body, err := json.Marshal(wireReq)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(body), "web_fetch",
+		"OpenAI's serializer must drop the Anthropic-only web_fetch tool so a fallback attempt cannot 400")
+	assert.Contains(t, string(body), `"web_search"`,
+		"web_search is part of OpenAI's tool union and must survive the fallback serialization")
+}
+
 func TestBuildResponsesReasoning(t *testing.T) {
 	tests := []struct {
 		name             string

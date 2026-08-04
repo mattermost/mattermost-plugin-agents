@@ -73,16 +73,26 @@ func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
 //   - Anthropic supports the three GA server tools (web search, web fetch,
 //     code execution — the latter under the shared "code_interpreter" id).
 //   - OpenAI-family providers support OpenAI's Responses API native tools.
+//     file_search is intentionally withheld: OpenAI requires vector_store_ids
+//     on the tool definition and the plugin has no vector-store configuration
+//     surface yet, so sending the bare tool would 400 every completion.
 //   - Gemini / Vertex support only web search: Bifrost converts it to Google
 //     Search grounding, and silently drops every other native tool type
 //     (Gemini's converter maps nothing else; Vertex's Anthropic surface
 //     rejects web_fetch and code_execution outright).
+//
+// This matrix gates what the PRIMARY provider sends. Heterogeneous fallback
+// chains need no filtering here: Bifrost strips or drops native tools the
+// attempted provider doesn't support inside its per-provider serializers
+// (e.g. the OpenAI serializer drops web_fetch outright; the Anthropic-family
+// builder silently strips file_search), pinned by
+// TestAnthropicOnlyWebFetchDroppedForOpenAI.
 func SupportedNativeToolsForServiceType(serviceType string) []string {
 	switch serviceType {
 	case llm.ServiceTypeAnthropic:
 		return []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch, llm.NativeToolCodeInterpreter}
 	case llm.ServiceTypeOpenAI, llm.ServiceTypeOpenAICompatible, llm.ServiceTypeAzure:
-		return []string{llm.NativeToolWebSearch, llm.NativeToolFileSearch, llm.NativeToolCodeInterpreter}
+		return []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter}
 	case llm.ServiceTypeGemini, llm.ServiceTypeVertex:
 		return []string{llm.NativeToolWebSearch}
 	default:

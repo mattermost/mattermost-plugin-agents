@@ -28,6 +28,10 @@ const (
 	// content of specific web pages / PDFs.
 	NativeToolWebFetch = "web_fetch"
 	// NativeToolFileSearch is OpenAI's file_search tool over vector stores.
+	// Reserved: not currently offered or sent — OpenAI requires
+	// vector_store_ids on the tool definition and the plugin has no
+	// vector-store configuration surface yet (see
+	// bifrost.SupportedNativeToolsForServiceType).
 	NativeToolFileSearch = "file_search"
 	// NativeToolCodeInterpreter is the provider code sandbox: OpenAI's
 	// code_interpreter, or Anthropic's code_execution tool. For Anthropic this

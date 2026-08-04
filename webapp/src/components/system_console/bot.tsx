@@ -123,13 +123,11 @@ const nativeToolOptions = (provider: 'openai' | 'anthropic' | 'google', intl: Re
     case 'google':
         return [webSearch];
     default:
+        // file_search is intentionally absent: OpenAI requires vector_store_ids
+        // on the tool and the plugin has no vector-store configuration yet, so
+        // enabling it would break every completion for the agent.
         return [
             webSearch,
-            {
-                id: 'file_search',
-                label: intl.formatMessage({defaultMessage: 'File Search'}),
-                helpText: intl.formatMessage({defaultMessage: 'Let the agent search files previously uploaded to OpenAI vector stores. See OpenAI\'s file search documentation for details.'}),
-            },
             {
                 id: 'code_interpreter',
                 label: intl.formatMessage({defaultMessage: 'Code Interpreter'}),

@@ -52,22 +52,25 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 		want        []string
 	}{
 		{
-			name:        "OpenAI keeps its Responses API tools, drops web_fetch",
+			// file_search is dropped even for OpenAI: the plugin cannot
+			// configure the vector_store_ids the tool requires, and sending
+			// the bare tool would 400 every completion.
+			name:        "OpenAI keeps its Responses API tools, drops web_fetch and file_search",
 			serviceType: llm.ServiceTypeOpenAI,
 			tools:       allTools,
-			want:        []string{llm.NativeToolWebSearch, llm.NativeToolFileSearch, llm.NativeToolCodeInterpreter},
+			want:        []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter},
 		},
 		{
-			name:        "Azure keeps its Responses API tools, drops web_fetch",
+			name:        "Azure keeps its Responses API tools, drops web_fetch and file_search",
 			serviceType: llm.ServiceTypeAzure,
 			tools:       allTools,
-			want:        []string{llm.NativeToolWebSearch, llm.NativeToolFileSearch, llm.NativeToolCodeInterpreter},
+			want:        []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter},
 		},
 		{
-			name:        "OpenAI-compatible keeps its Responses API tools, drops web_fetch",
+			name:        "OpenAI-compatible keeps its Responses API tools, drops web_fetch and file_search",
 			serviceType: llm.ServiceTypeOpenAICompatible,
 			tools:       allTools,
-			want:        []string{llm.NativeToolWebSearch, llm.NativeToolFileSearch, llm.NativeToolCodeInterpreter},
+			want:        []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter},
 		},
 		{
 			name:        "Anthropic keeps its server tools, drops file_search",

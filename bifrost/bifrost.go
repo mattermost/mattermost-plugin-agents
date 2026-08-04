@@ -1855,6 +1855,9 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 		case llm.NativeToolWebFetch:
 			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebFetch))
 		case llm.NativeToolFileSearch:
+			// Currently unreachable: SupportedNativeToolsForServiceType
+			// withholds file_search until the plugin can configure the
+			// vector_store_ids OpenAI requires on the tool definition.
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeFileSearch,
 			})
