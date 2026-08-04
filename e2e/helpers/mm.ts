@@ -179,7 +179,11 @@ export class MattermostPage {
                 (p) => p.user_id === botUserId && p.root_id === rootId && p.message.includes(expectedText),
             );
             return Boolean(match);
-        }, { timeout, intervals: [500, 1000, 2000] }).toBe(true);
+        }, {
+            message: `Expected bot ${botUserId} to post a fully-streamed reply containing ${JSON.stringify(expectedText)} in thread ${rootId} of channel ${channelId}.`,
+            timeout,
+            intervals: [500, 1000, 2000],
+        }).toBe(true);
         return match!;
     }
 

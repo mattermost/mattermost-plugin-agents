@@ -101,10 +101,20 @@ async function waitForUserPost(client: Client4, channelId: string, userId: strin
  * inclusive), so a bot reply that finished streaming moments ago would be flagged as a
  * "new" bot post if sinceMs is taken immediately after it. Wait until the skew window
  * around the earlier reply has passed (with a 1 s margin — setTimeout can fire a hair
- * early) before taking a fresh sinceMs for a negative assertion.
+ * early) before taking a fresh sinceMs for a time-bounded assertion.
+ *
+ * The wait normally completes within ~6 s of the reply's creation; it can only run
+ * longer if the server clock is ahead of the runner, so cap it to make such a clock
+ * fault fail legibly instead of eating the whole test timeout.
  */
 async function waitOutSkewWindow(earlierBotPost: Post): Promise<void> {
+    const deadline = Date.now() + 30000;
     while (Date.now() <= earlierBotPost.create_at + 6000) {
+        if (Date.now() > deadline) {
+            throw new Error(
+                `waitOutSkewWindow: still inside the skew window after 30 s — server clock (create_at=${earlierBotPost.create_at}) is far ahead of the runner (now=${Date.now()}).`,
+            );
+        }
         await new Promise((resolve) => setTimeout(resolve, 250));
     }
 }
@@ -166,7 +176,12 @@ test.describe('Per-channel agent auto-reply', () => {
 
         // A thread reply without a mention must trigger a SECOND auto-reply. The
         // catch-all mock returns identical text for every completion, so reply #2
-        // is distinguished from reply #1 by post id, not content.
+        // is distinguished from reply #1 by post id AND a create_at lower bound
+        // taken after reply #1's skew window — the time bound anchors causality to
+        // the thread reply (a bug that double-replied to the root post would
+        // otherwise satisfy a pure id-exclusion filter).
+        await waitOutSkewWindow(firstReply);
+        const sinceMs2 = Date.now();
         await client.createPost({
             channel_id: channel.id,
             root_id: rootPost.id,
@@ -179,6 +194,7 @@ test.describe('Per-channel agent auto-reply', () => {
                 (p) => p.user_id === botUser.id &&
                     p.root_id === rootPost.id &&
                     p.id !== firstReply.id &&
+                    p.create_at >= sinceMs2 - 5000 &&
                     p.message.includes(responseTestText),
             );
             return secondReplies.length;
