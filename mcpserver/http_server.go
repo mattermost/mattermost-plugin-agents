@@ -21,8 +21,13 @@ import (
 
 // mcpServerSessionTimeout bounds idle stateful streamable sessions so the
 // standalone server does not retain sessions left unreachable by the
-// server/discover → initialize fallback.
-const mcpServerSessionTimeout = 10 * time.Minute
+// server/discover → initialize fallback. It is deliberately long: when a
+// session expires the SDK server answers 404 and clients must re-initialize
+// (the go-sdk client surfaces ErrSessionMissing rather than transparently
+// reconnecting), so an aggressive timeout would churn every legitimately idle
+// client. One hour reaps leaked sessions while comfortably outlasting normal
+// idle periods.
+const mcpServerSessionTimeout = time.Hour
 
 // MattermostHTTPMCPServer wraps MattermostMCPServer for HTTP transport.
 type MattermostHTTPMCPServer struct {

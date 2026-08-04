@@ -28,14 +28,17 @@ const (
 
 	// mcpMaxConcurrentRequestsPerUser caps how many delegated MCP requests a
 	// single user may have in flight, bounding resource retention from
-	// reconnect churn within the request lifetime window (a well-behaved
-	// client holds one listen stream plus short-lived calls, so this is
-	// generous). The cap is deliberately per-user only: total load then
-	// scales with the number of distinct authenticated users — the same
-	// trust boundary the rest of Mattermost applies — whereas a fixed global
-	// cap would both reject legitimate traffic on large deployments and let
-	// a handful of abusive accounts lock every other user out.
-	mcpMaxConcurrentRequestsPerUser = 16
+	// reconnect churn within the request lifetime window. It must absorb a
+	// user running several MCP clients at once (each holding a listen stream
+	// plus parallel tool calls) AND the orphaned streams left by client
+	// restarts, which count against the cap until the lifetime expires — so
+	// it is sized well above any legitimate steady state. The cap is
+	// deliberately per-user only: total load then scales with the number of
+	// distinct authenticated users — the same trust boundary the rest of
+	// Mattermost applies — whereas a fixed global cap would both reject
+	// legitimate traffic on large deployments and let a handful of abusive
+	// accounts lock every other user out.
+	mcpMaxConcurrentRequestsPerUser = 32
 )
 
 // mcpRequestLimiter tracks in-flight delegated MCP requests per user.

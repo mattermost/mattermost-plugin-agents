@@ -101,7 +101,11 @@ func (m *OAuthManager) loadTokenEnvelope(userID, serverID string) (*storedTokenE
 		if envelope.Version != tokenEnvelopeVersion {
 			// Fail closed for unknown versions (a newer node's v2 record):
 			// treating it as v1 would silently ignore binding fields it
-			// requires.
+			// requires. NOTE for whoever introduces v2: during a rolling
+			// upgrade, nodes still on v1 will error here for every grant a
+			// v2 node has rewritten — plan the migration so v2 records are
+			// only written once the whole cluster can read them (or make v2
+			// additive and bump the version lazily).
 			return nil, raw, fmt.Errorf("unsupported token envelope version %d (expected %d)", envelope.Version, tokenEnvelopeVersion)
 		}
 		if envelope.Token == nil || envelope.Token.AccessToken == "" {

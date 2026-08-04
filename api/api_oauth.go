@@ -71,9 +71,12 @@ func (a *API) handleOAuthStart(c *gin.Context) {
 }
 
 // isValidOAuthScope validates a space-separated OAuth scope string against
-// the RFC 6749 §3.3 scope-token charset, with a sanity length cap.
+// the RFC 6749 §3.3 scope-token charset, with a sanity length cap. The cap is
+// generous because providers with URL-style scopes (~60 bytes each) can list
+// many in an insufficient_scope challenge; it matches the resource_metadata
+// URL length cap.
 func isValidOAuthScope(scope string) bool {
-	const maxScopeLength = 512
+	const maxScopeLength = 2048
 	if len(scope) > maxScopeLength {
 		return false
 	}
