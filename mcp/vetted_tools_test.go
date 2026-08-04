@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/stretchr/testify/require"
 )
 
@@ -223,6 +224,18 @@ func TestSeedBuiltInToolConfigs(t *testing.T) {
 		require.Equal(t, []ToolConfig{
 			{Name: "AskAnotherUser", Policy: ToolPolicyAsk, Enabled: true},
 		}, SeedBuiltInToolConfigs())
+	})
+
+	t.Run("seed name matches the registered tool name", func(t *testing.T) {
+		// The seed keeps a string literal instead of importing mmtools from
+		// mcp production code (import-graph hygiene). This pins the literal
+		// to the registered runtime name so the two cannot silently drift —
+		// a renamed tool with a stale seed would lose its ask policy.
+		names := make([]string, 0)
+		for _, seed := range SeedBuiltInToolConfigs() {
+			names = append(names, seed.Name)
+		}
+		require.Contains(t, names, mmtools.AskAnotherUserToolName)
 	})
 
 	t.Run("stored admin override wins over the built-in seed", func(t *testing.T) {

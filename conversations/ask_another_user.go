@@ -113,7 +113,7 @@ func (c *Conversations) dispatchAskAnotherUser(ctx context.Context, bot *bots.Bo
 		return validateErr
 	}
 
-	target, lookupErr := c.mmClient.GetUserByUsername(strings.TrimPrefix(args.Username, "@"))
+	target, lookupErr := c.mmClient.GetUserByUsername(mmtools.CanonicalAskUsername(args.Username))
 	if lookupErr != nil {
 		return fmt.Errorf("user %q not found", args.Username)
 	}
@@ -131,16 +131,14 @@ func (c *Conversations) dispatchAskAnotherUser(ctx context.Context, bot *bots.Bo
 	}
 
 	// Requester attribution is best-effort display data: an autonomous (bot)
-	// invoker gets an empty requester (C4); lookup failures keep conv.UserID
-	// for the card props but leave the fallback message unattributed.
-	requesterID := conv.UserID
+	// invoker gets an empty requester (C4). A failed lookup also clears the
+	// requester so the card is consistently unattributed everywhere (webapp
+	// prop and fallback message) instead of half-attributed.
+	requesterID := ""
 	requesterUsername := ""
-	if requester, requesterErr := c.mmClient.GetUser(conv.UserID); requesterErr == nil {
-		if requester.IsBot {
-			requesterID = ""
-		} else {
-			requesterUsername = requester.Username
-		}
+	if requester, requesterErr := c.mmClient.GetUser(conv.UserID); requesterErr == nil && !requester.IsBot {
+		requesterID = conv.UserID
+		requesterUsername = requester.Username
 	}
 
 	sourcePostID := anchorPostID
@@ -220,6 +218,36 @@ func (c *Conversations) newDeferredDispatcherForConversation(bot *bots.Bot, conv
 		}
 		return c.dispatchAskAnotherUser(ctx, bot, conv, anchorPostID, call.ID, call.Arguments)
 	}
+}
+
+// Ask claim stages. Each one-shot transition of a tool_use block gets its own
+// claim key: the pending→waiting dispatch (HandleToolCall) and the
+// waiting→resolved answer (HandleAskUserResponse) are independent
+// transitions, so sharing one key would let the dispatch claim starve the
+// later answer.
+const (
+	askClaimStageDispatch = "dispatch"
+	askClaimStageAnswer   = "answer"
+)
+
+// claimAskToolUse atomically claims the given one-shot transition for a
+// tool_use block via KV compare-and-set (write-if-absent), returning whether
+// THIS caller won the claim. The plain read-check-write on turn content is
+// not atomic, so two concurrent submissions (two tabs/devices, or two HA
+// nodes) can both pass the status check; exactly one of them wins this claim.
+// A KV error counts as a failed claim: it is logged here and returned so the
+// caller can surface it instead of proceeding to a possible double-write.
+func (c *Conversations) claimAskToolUse(stage, toolUseID string) (bool, error) {
+	won, err := c.mmClient.KVCompareAndSet("askclaim_"+stage+"_"+toolUseID, nil, []byte("1"))
+	if err != nil {
+		c.mmClient.LogError("Failed to claim ask tool_use transition",
+			"stage", stage,
+			"tool_use_id", toolUseID,
+			"error", err.Error(),
+		)
+		return false, err
+	}
+	return won, nil
 }
 
 // publishConversationUpdated tells webapp clients to refetch the
@@ -331,6 +359,20 @@ func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string
 	if resolveErr != nil {
 		// State untouched: the question stays waiting and answerable.
 		return fmt.Errorf("%w: %s", ErrInvalidAskAnswer, resolveErr.Error())
+	}
+
+	// Atomic claim: exactly one submission may resolve this question. The
+	// waiting-status check above stays as the first-line guard; this CAS
+	// closes the concurrent window in which two submissions both read the
+	// block as waiting and double-write the result turn. The claim comes
+	// AFTER answer validation so an invalid answer never burns it — the
+	// question must stay answerable after a validation error.
+	won, claimErr := c.claimAskToolUse(askClaimStageAnswer, toolUseID)
+	if claimErr != nil {
+		return fmt.Errorf("failed to claim the question: %w", claimErr)
+	}
+	if !won {
+		return ErrAskNotPending
 	}
 
 	// Flip the block BEFORE side effects so a concurrent second submission

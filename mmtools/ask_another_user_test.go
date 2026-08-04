@@ -49,6 +49,24 @@ func TestValidateAskAnotherUserArgs(t *testing.T) {
 			wantErr: "username must not be empty",
 		},
 		{
+			name:    "lone @ username is empty after canonicalization",
+			args:    AskAnotherUserArgs{Username: "@", Question: "Q?"},
+			wantErr: "username must not be empty",
+		},
+		{
+			name:    "whitespace-wrapped lone @ username is empty after canonicalization",
+			args:    AskAnotherUserArgs{Username: "  @  ", Question: "Q?"},
+			wantErr: "username must not be empty",
+		},
+		{
+			name: "@-prefixed username is valid",
+			args: AskAnotherUserArgs{Username: "@bob", Question: "Q?"},
+		},
+		{
+			name: "whitespace-wrapped @-prefixed username is valid",
+			args: AskAnotherUserArgs{Username: "  @bob  ", Question: "Q?"},
+		},
+		{
 			name: "too many options",
 			args: AskAnotherUserArgs{
 				Username: "bob",
@@ -58,7 +76,7 @@ func TestValidateAskAnotherUserArgs(t *testing.T) {
 					{Label: "D"}, {Label: "E"}, {Label: "F"},
 				},
 			},
-			wantErr: "between 1 and 5",
+			wantAnyErr: true,
 		},
 		{
 			name: "duplicate labels",
@@ -179,6 +197,28 @@ func TestValidateAskAnotherUserArgs(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+		})
+	}
+}
+
+func TestCanonicalAskUsername(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "plain username unchanged", raw: "bob", want: "bob"},
+		{name: "leading @ stripped", raw: "@bob", want: "bob"},
+		{name: "whitespace trimmed then @ stripped", raw: "  @bob  ", want: "bob"},
+		{name: "whitespace only becomes empty", raw: "   ", want: ""},
+		{name: "lone @ becomes empty", raw: "@", want: ""},
+		{name: "whitespace-wrapped lone @ becomes empty", raw: "  @  ", want: ""},
+		{name: "only a single leading @ is stripped", raw: "@@bob", want: "@bob"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, CanonicalAskUsername(tc.raw))
 		})
 	}
 }

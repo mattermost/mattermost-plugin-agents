@@ -404,7 +404,9 @@ func (a *API) handleAskUserResponse(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleAskUserResponse(c.Request.Context(), userID, post, channel, data); err != nil {
+	// Detach: the answer resumes the conversation with an async LLM follow-up
+	// stream that must outlive this request (see telemetry.DetachContext).
+	if err := a.conversationsService.HandleAskUserResponse(telemetry.DetachContext(c.Request.Context()), userID, post, channel, data); err != nil {
 		c.AbortWithError(askUserResponseHTTPStatus(err), err)
 		return
 	}

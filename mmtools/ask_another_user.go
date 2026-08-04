@@ -43,7 +43,7 @@ const (
 type AskAnotherUserArgs struct {
 	Username      string                  `json:"username" jsonschema_description:"Mattermost username of the user to ask, without the leading @. Must not be the requesting user."`
 	Question      string                  `json:"question" jsonschema_description:"The question to ask. Must be specific, self-contained, and answerable without extra context."`
-	Options       []AskUserQuestionOption `json:"options,omitempty" jsonschema_description:"Optional choices to present (2 to 5). Omit for a purely free-form question."`
+	Options       []AskUserQuestionOption `json:"options,omitempty" jsonschema_description:"Optional choices to present (up to 5). Omit for a purely free-form question."`
 	MultiSelect   bool                    `json:"multi_select,omitempty" jsonschema_description:"Set to true to let the user pick more than one option. Defaults to single-select."`
 	AllowFreeForm *bool                   `json:"allow_free_form,omitempty" jsonschema_description:"Whether the user may type their own answer. Defaults to true. Must not be false when options is empty."`
 	Context       string                  `json:"context,omitempty" jsonschema_description:"One short sentence shown to the user explaining why you are asking."`
@@ -53,6 +53,14 @@ type AskAnotherUserArgs struct {
 // omitted field (nil) means enabled; an explicit false disables.
 func (a AskAnotherUserArgs) FreeFormEnabled() bool {
 	return a.AllowFreeForm == nil || *a.AllowFreeForm
+}
+
+// CanonicalAskUsername returns the canonical form of a username argument:
+// surrounding whitespace trimmed, then a single leading '@' stripped. Models
+// routinely emit "@bob" or pad the name; user lookups and emptiness checks
+// must run against the canonical form.
+func CanonicalAskUsername(raw string) string {
+	return strings.TrimPrefix(strings.TrimSpace(raw), "@")
 }
 
 // AskAnotherUserAnswer is the target's submitted answer.
@@ -92,7 +100,7 @@ func NewAskAnotherUserTool() llm.Tool {
 // labels, allow_free_form=false requires options). Target-user resolution
 // errors live in conversations.dispatchAskAnotherUser.
 func ValidateAskAnotherUserArgs(args AskAnotherUserArgs) error {
-	if strings.TrimSpace(args.Username) == "" {
+	if CanonicalAskUsername(args.Username) == "" {
 		return errors.New("username must not be empty")
 	}
 	if strings.TrimSpace(args.Question) == "" {
@@ -105,7 +113,7 @@ func ValidateAskAnotherUserArgs(args AskAnotherUserArgs) error {
 		return fmt.Errorf("context must be at most %d characters", askAnotherUserMaxContextRunes)
 	}
 	if len(args.Options) > 5 {
-		return errors.New("provide between 1 and 5 options")
+		return errors.New("provide at most 5 options")
 	}
 	seen := make(map[string]bool, len(args.Options))
 	for _, opt := range args.Options {

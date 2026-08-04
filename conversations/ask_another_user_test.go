@@ -62,19 +62,21 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 	rootPostID := "root-post-id"
 
 	cases := []struct {
-		name              string
-		rawArgs           string
-		anchorPostID      string
-		rootPostID        *string
-		restrictedAccess  bool
-		target            *model.User
-		targetLookupErr   bool
-		requester         *model.User
-		dmErr             error
-		wantErrContains   string
-		wantDM            bool
-		wantRequesterProp string
-		wantSourceProp    string
+		name               string
+		rawArgs            string
+		anchorPostID       string
+		rootPostID         *string
+		restrictedAccess   bool
+		target             *model.User
+		targetLookupErr    bool
+		requester          *model.User
+		requesterLookupErr bool
+		dmErr              error
+		wantErrContains    string
+		wantDM             bool
+		wantRequesterProp  string
+		wantSourceProp     string
+		wantLookupUsername string
 	}{
 		{
 			name:              "happy path sends card with all props",
@@ -152,6 +154,30 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			wantRequesterProp: "",
 			wantSourceProp:    "anchor-post-id",
 		},
+		{
+			// A failed requester lookup must not send a half-attributed
+			// card: both the requester prop and the fallback attribution
+			// stay empty, like an autonomous dispatch.
+			name:               "requester lookup failure sends an unattributed card",
+			rawArgs:            validArgs,
+			anchorPostID:       "anchor-post-id",
+			target:             &model.User{Id: "bob-id", Username: "bob"},
+			requesterLookupErr: true,
+			wantDM:             true,
+			wantRequesterProp:  "",
+			wantSourceProp:     "anchor-post-id",
+		},
+		{
+			name:               "whitespace-and-@ username is canonicalized for the lookup",
+			rawArgs:            `{"username":"  @bob  ","question":"Which environment?","options":[{"label":"Prod"},{"label":"Staging"}],"context":"Deciding where to deploy"}`,
+			anchorPostID:       "anchor-post-id",
+			target:             &model.User{Id: "bob-id", Username: "bob"},
+			requester:          &model.User{Id: "user-id", Username: "user"},
+			wantDM:             true,
+			wantRequesterProp:  "user-id",
+			wantSourceProp:     "anchor-post-id",
+			wantLookupUsername: "bob",
+		},
 	}
 
 	for _, tc := range cases {
@@ -178,12 +204,17 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 
 			mmClient := mocks.NewMockClient(t)
 			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+			var lookedUpUsername string
 			if tc.targetLookupErr {
 				mmClient.On("GetUserByUsername", mock.Anything).Return(nil, errors.New("store miss")).Once()
 			} else if tc.target != nil {
-				mmClient.On("GetUserByUsername", mock.Anything).Return(tc.target, nil).Once()
+				mmClient.On("GetUserByUsername", mock.Anything).
+					Run(func(args mock.Arguments) { lookedUpUsername = args.String(0) }).
+					Return(tc.target, nil).Once()
 			}
-			if tc.requester != nil {
+			if tc.requesterLookupErr {
+				mmClient.On("GetUser", "user-id").Return(nil, errors.New("requester lookup down")).Once()
+			} else if tc.requester != nil {
 				mmClient.On("GetUser", "user-id").Return(tc.requester, nil).Once()
 			}
 			var sentPost *model.Post
@@ -241,6 +272,10 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			assert.Equal(t, true, sentPost.GetProp(AskUserAllowFreeFormProp))
 			assert.Equal(t, tc.wantRequesterProp, sentPost.GetProp(AskUserRequesterIDProp))
 			assert.Equal(t, "bob-id", sentPost.GetProp(AskUserTargetIDProp))
+			if tc.wantLookupUsername != "" {
+				assert.Equal(t, tc.wantLookupUsername, lookedUpUsername,
+					"the user lookup must use the canonical username")
+			}
 			assert.Equal(t, "conv-id", sentPost.GetProp(AskUserConversationIDProp))
 			assert.Equal(t, "ask-1", sentPost.GetProp(AskUserToolUseIDProp))
 			assert.Equal(t, tc.wantSourceProp, sentPost.GetProp(AskUserSourcePostIDProp))
@@ -399,6 +434,7 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
+			mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
 
 			dmCalls := 0
 			if tc.wantDMCalls > 0 {
@@ -529,6 +565,7 @@ func TestHandleToolCallDeferredDoubleAccept(t *testing.T) {
 	mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
 	mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 	mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
+	mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
 	mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
 	dmCalls := 0
 	mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
@@ -554,6 +591,134 @@ func TestHandleToolCallDeferredDoubleAccept(t *testing.T) {
 	err = c.HandleToolCall(context.Background(), "user-id", approvalPost, dmChannel, []string{"ask-1"}, nil)
 	require.ErrorIs(t, err, ErrStaleToolClick)
 	assert.Equal(t, 1, dmCalls, "a second Accept must never send a second card")
+}
+
+// TestAskToolUseClaimRaces pins the atomic KV claim that closes the
+// concurrent duplicate-submission window (two tabs/devices or two HA nodes)
+// which the plain read-check-write status guards cannot: the claim loser
+// must fail with the same sentinel as a sequential duplicate and write
+// nothing — no second card, no second tool_result turn. A KV failure also
+// blocks the transition (fail closed) but surfaces as a plain error rather
+// than a misleading "already handled" sentinel.
+func TestAskToolUseClaimRaces(t *testing.T) {
+	askInput := json.RawMessage(`{"username":"bob","question":"Which environment?","options":[{"label":"Prod"},{"label":"Staging"}]}`)
+
+	cases := []struct {
+		name      string
+		action    string // "dispatch" (HandleToolCall accept) | "answer" (HandleAskUserResponse)
+		claimErr  error
+		wantErrIs error // nil means any non-sentinel error is acceptable
+	}{
+		{
+			name:      "concurrent duplicate accept loses the dispatch claim and sends no card",
+			action:    "dispatch",
+			wantErrIs: ErrStaleToolClick,
+		},
+		{
+			name:     "KV failure on the dispatch claim fails the accept without sending a card",
+			action:   "dispatch",
+			claimErr: errors.New("kv down"),
+		},
+		{
+			name:      "concurrent duplicate answer loses the answer claim and writes no result turn",
+			action:    "answer",
+			wantErrIs: ErrAskNotPending,
+		},
+		{
+			name:     "KV failure on the answer claim fails the answer without writing",
+			action:   "answer",
+			claimErr: errors.New("kv down"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+
+			seedStatus := conversation.StatusWaiting
+			if tc.action == "dispatch" {
+				seedStatus = conversation.StatusPending
+			}
+			blocks := []conversation.ContentBlock{{
+				Type:           conversation.BlockTypeToolUse,
+				ID:             "ask-1",
+				Name:           "AskAnotherUser",
+				Input:          askInput,
+				Status:         seedStatus,
+				DeferredResult: true,
+				Shared:         conversation.BoolPtr(false),
+			}}
+			content, err := json.Marshal(blocks)
+			require.NoError(t, err)
+			anchorPostID := "anchor-post-id"
+			require.NoError(t, convStore.CreateTurn(&store.Turn{
+				ID:             "assistant-turn",
+				ConversationID: conv.ID,
+				PostID:         &anchorPostID,
+				Role:           "assistant",
+				Content:        content,
+				Sequence:       1,
+			}))
+
+			lm := &loadedStateLLM{}
+			bot := loadedStateBot(lm)
+
+			// The claim loses; the mockery strict mock doubles as the
+			// "no side effects" assertion — any DM, card patch, result
+			// write, or publish after a lost claim fails the test.
+			mmClient := mocks.NewMockClient(t)
+			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+			mmClient.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
+			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
+			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
+			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).
+				Return(false, tc.claimErr).Once()
+
+			c := &Conversations{
+				mmClient:         mmClient,
+				contextBuilder:   askAnotherUserBuilder(t),
+				bots:             newAskAnotherUserBotsService(t, bot),
+				convService:      conversation.NewService(convStore, nil, nil, nil),
+				streamingService: &loadedStateStreamingService{},
+			}
+
+			switch tc.action {
+			case "dispatch":
+				approvalPost := &model.Post{Id: anchorPostID, UserId: "bot-id"}
+				approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
+				dmChannel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+				err = c.HandleToolCall(context.Background(), "user-id", approvalPost, dmChannel, []string{"ask-1"}, nil)
+			case "answer":
+				cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
+				cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+				cardPost.AddProp(AskUserConversationIDProp, conv.ID)
+				cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
+				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
+				err = c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
+					Action:   AskUserActionAnswer,
+					Selected: []string{"Prod"},
+				})
+			}
+
+			require.Error(t, err)
+			if tc.wantErrIs != nil {
+				require.ErrorIs(t, err, tc.wantErrIs)
+			} else {
+				// Infra failures must not masquerade as the duplicate
+				// sentinels the webapp treats as benign.
+				require.NotErrorIs(t, err, ErrStaleToolClick)
+				require.NotErrorIs(t, err, ErrAskNotPending)
+			}
+
+			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
+			require.NoError(t, turnsErr)
+			require.Len(t, turns, 1, "a lost claim must not write a tool_result turn")
+
+			assert.Empty(t, lm.requests, "a lost claim must not stream a follow-up")
+		})
+	}
 }
 
 // TestHandleAskUserResponse covers the target-side answer endpoint logic:
@@ -825,6 +990,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 			mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
+			mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
 			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
 			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
@@ -1001,6 +1167,7 @@ func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
 			mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
+			mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
 			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
 			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()

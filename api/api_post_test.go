@@ -456,6 +456,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 			mmClient.On("GetUser", testUserID).Maybe().Return(&model.User{Id: testUserID, Username: "target-user"}, nil)
 			mmClient.On("GetPost", cardPostID).Maybe().Return(cardPost, nil)
 			mmClient.On("UpdatePost", mock.AnythingOfType("*model.Post")).Maybe().Return(nil)
+			mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
 
 			convStore := newMockConvServiceStore()
 			svc := conversations.New(nil, mmClient, nil, nil, e.bots, nil, nil, nil, nil, e.config)

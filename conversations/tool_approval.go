@@ -192,6 +192,18 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			if persistErr := c.persistBlocks(pendingTurn.ID, pendingBlocks); persistErr != nil {
 				return fmt.Errorf("failed to persist waiting status: %w", persistErr)
 			}
+			// Atomic dispatch claim: the persist above stops sequential
+			// repeat clicks (findPendingToolTurn no longer sees a pending
+			// block), and this CAS closes the concurrent window (two tabs,
+			// two HA nodes) in which both requests read the block as pending
+			// — only the claim winner sends the card.
+			won, claimErr := c.claimAskToolUse(askClaimStageDispatch, block.ID)
+			if claimErr != nil {
+				return fmt.Errorf("failed to claim deferred dispatch: %w", claimErr)
+			}
+			if !won {
+				return ErrStaleToolClick
+			}
 			if dispatchErr := c.dispatchAskAnotherUser(ctx, bot, conv, post.Id, block.ID, block.Input); dispatchErr != nil {
 				// Compensate: waiting → error, and surface the failure as an
 				// error tool result so the model can retry.
@@ -301,12 +313,8 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	}
 
 	// Update the assistant turn with resolved statuses.
-	updatedContent, err := json.Marshal(pendingBlocks)
-	if err != nil {
-		return fmt.Errorf("failed to marshal updated blocks: %w", err)
-	}
-	if updateErr := c.convService.UpdateTurnContent(pendingTurn.ID, updatedContent); updateErr != nil {
-		return fmt.Errorf("failed to update turn with resolved statuses: %w", updateErr)
+	if persistErr := c.persistBlocks(pendingTurn.ID, pendingBlocks); persistErr != nil {
+		return fmt.Errorf("failed to update turn with resolved statuses: %w", persistErr)
 	}
 
 	// Write tool results as a tool_result turn. DecidedAt is set when no
