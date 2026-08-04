@@ -317,6 +317,11 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != "" && service.APIURL != ""
 	case ServiceTypeGemini:
 		return service.APIKey != ""
+	case ServiceTypeNorth:
+		// Cohere North needs the instance API URL and an auth token. The
+		// DefaultModel field optionally carries the North agent ID to delegate
+		// to; empty means the instance's default agent.
+		return service.APIURL != "" && service.APIKey != ""
 	case ServiceTypeVertex:
 		// Auth credentials optional — empty means ADC / attached IAM role.
 		if service.VertexProjectID == "" || service.Region == "" {
