@@ -26,20 +26,21 @@ const (
 	// clients (MCP streams may end at any time).
 	mcpRequestMaxLifetime = 30 * time.Minute
 
-	// mcpMaxConcurrentRequestsPerUser and mcpMaxConcurrentRequestsGlobal cap
-	// how many delegated MCP requests may be in flight, bounding resource
-	// retention from reconnect churn within a request lifetime window. A
-	// well-behaved client holds one listen stream plus short-lived calls, so
-	// these are generous.
+	// mcpMaxConcurrentRequestsPerUser caps how many delegated MCP requests a
+	// single user may have in flight, bounding resource retention from
+	// reconnect churn within the request lifetime window (a well-behaved
+	// client holds one listen stream plus short-lived calls, so this is
+	// generous). The cap is deliberately per-user only: total load then
+	// scales with the number of distinct authenticated users — the same
+	// trust boundary the rest of Mattermost applies — whereas a fixed global
+	// cap would both reject legitimate traffic on large deployments and let
+	// a handful of abusive accounts lock every other user out.
 	mcpMaxConcurrentRequestsPerUser = 16
-	mcpMaxConcurrentRequestsGlobal  = 256
 )
 
-// mcpRequestLimiter tracks in-flight delegated MCP requests per user and
-// globally.
+// mcpRequestLimiter tracks in-flight delegated MCP requests per user.
 type mcpRequestLimiter struct {
 	mu      sync.Mutex
-	global  int
 	perUser map[string]int
 }
 
@@ -48,14 +49,13 @@ func newMCPRequestLimiter() *mcpRequestLimiter {
 }
 
 // acquire reserves a slot for the user's request. It returns false when the
-// per-user or global concurrency cap is reached.
+// user's concurrency cap is reached.
 func (l *mcpRequestLimiter) acquire(userID string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.global >= mcpMaxConcurrentRequestsGlobal || l.perUser[userID] >= mcpMaxConcurrentRequestsPerUser {
+	if l.perUser[userID] >= mcpMaxConcurrentRequestsPerUser {
 		return false
 	}
-	l.global++
 	l.perUser[userID]++
 	return true
 }
@@ -63,7 +63,6 @@ func (l *mcpRequestLimiter) acquire(userID string) bool {
 func (l *mcpRequestLimiter) release(userID string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.global--
 	if l.perUser[userID] <= 1 {
 		delete(l.perUser, userID)
 	} else {

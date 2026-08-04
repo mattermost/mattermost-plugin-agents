@@ -86,6 +86,19 @@ func TestDelegateToMCPHandler_ConcurrencyLimit(t *testing.T) {
 	}))
 	require.Equal(t, http.StatusTooManyRequests, rec.Code)
 
+	// The limit is strictly per-user: one user saturating their own slots
+	// must not affect anyone else (there is deliberately no global cap, so a
+	// few abusive accounts cannot lock every other user out).
+	otherRec := httptest.NewRecorder()
+	otherReq := httptest.NewRequest(http.MethodGet, "/plugins/mattermost-ai/mcp-server/mcp", nil)
+	otherC, _ := gin.CreateTestContext(otherRec)
+	otherC.Request = otherReq.WithContext(context.Background())
+	otherC.Set("userID", "other567890123456789012345")
+	e.api.delegateToMCPHandler(otherC, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	require.Equal(t, http.StatusOK, otherRec.Code, "another user must be unaffected")
+
 	// Releasing the in-flight requests frees the slots.
 	close(release)
 	for i := 0; i < mcpMaxConcurrentRequestsPerUser; i++ {
