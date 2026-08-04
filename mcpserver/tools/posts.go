@@ -16,7 +16,12 @@ import (
 type ReadPostArgs struct {
 	PostID        string `json:"post_id" jsonschema:"The ID of the post to read,minLength=26,maxLength=26"`
 	IncludeThread *bool  `json:"include_thread,omitempty" jsonschema:"Whether to include the entire thread (default: true). Set false to fetch only the single post."`
+	Page          int    `json:"page,omitempty" jsonschema:"Page number for paginating large threads, starting at 0 (default: 0). Only applies when include_thread is true,minimum=0"`
+	PerPage       int    `json:"per_page,omitempty" jsonschema:"Maximum number of thread posts to return per page (max: 200). When omitted, the entire thread is returned. Only applies when include_thread is true,minimum=1,maximum=200"`
 }
+
+// readPostMaxPerPage caps per_page to protect against oversized responses.
+const readPostMaxPerPage = 200
 
 // CreatePostArgs represents arguments for the create_post tool
 type CreatePostArgs struct {
@@ -57,7 +62,7 @@ type GroupMessageArgs struct {
 // descriptions are format strings: getPostTools fills the %s with an access-mode-dependent
 // attachments clause.
 const (
-	readPostDescription = "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}"
+	readPostDescription = "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true — set false to fetch only the single post), per_page (1-200, optional — caps thread posts per page; omit to return the whole thread), page (0+, default 0 — increment to page through a long thread). Returns post content, author info, and optionally replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true, \"per_page\": 50, \"page\": 0}"
 
 	createPostDescriptionFmt = "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}"
 
@@ -225,6 +230,24 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 		return "no posts found", nil
 	}
 
+	// Paginate the thread in memory when per_page is provided so callers can page
+	// through large threads instead of receiving every reply at once.
+	totalThreadPosts := len(posts)
+	pageStart := 0
+	paginated := includeThread && args.PerPage > 0
+	paging := newPagination(args.Page, args.PerPage, paginationOptions{
+		MaxPerPage: readPostMaxPerPage,
+	})
+	if paginated {
+		pageEnd := 0
+		var ok bool
+		pageStart, pageEnd, ok = paging.SliceBounds(totalThreadPosts)
+		if !ok {
+			return fmt.Sprintf("no posts found on page %d (thread has %d posts)", paging.Page, totalThreadPosts), nil
+		}
+		posts = posts[pageStart:pageEnd]
+	}
+
 	// Get channel and team info for context (using the first post's channel)
 	var channelName, teamName string
 	if len(posts) > 0 {
@@ -263,8 +286,12 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 	}
 	result.WriteString("\n")
 
-	if includeThread && len(posts) > 1 {
-		result.WriteString(fmt.Sprintf("Thread with %d posts:\n\n", len(posts)))
+	if includeThread && totalThreadPosts > 1 {
+		if paginated {
+			result.WriteString(fmt.Sprintf("Thread with %d posts (page %d, showing %d):\n\n", totalThreadPosts, paging.Page, len(posts)))
+		} else {
+			result.WriteString(fmt.Sprintf("Thread with %d posts:\n\n", totalThreadPosts))
+		}
 	}
 
 	for i, post := range posts {
@@ -276,10 +303,14 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 			username = user.Username
 		}
 		format.WritePost(&result, format.PostEntry{
-			HeaderLabel: fmt.Sprintf("Post %d", i+1),
+			HeaderLabel: fmt.Sprintf("Post %d", pageStart+i+1),
 			Username:    username,
 			Post:        post,
 		})
+	}
+
+	if paginated && pageStart+len(posts) < totalThreadPosts {
+		result.WriteString(fmt.Sprintf("More posts in this thread — call read_post again with page=%d to retrieve the next page.\n", paging.Page+1))
 	}
 
 	return result.String(), nil

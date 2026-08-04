@@ -22,6 +22,8 @@ Read a specific post and its thread from Mattermost.
 **Parameters:**
 - `post_id` (required): The ID of the post to read
 - `include_thread` (optional): Whether to include the entire thread (default: true)
+- `per_page` (optional): Maximum number of thread posts to return per page (max: 200). Omit to return the whole thread. Only applies when `include_thread` is true
+- `page` (optional): Page number for paginating large threads, starting at 0 (default: 0)
 
 ### `read_channel`
 Read recent posts from a Mattermost channel.
