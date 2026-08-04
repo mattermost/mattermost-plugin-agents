@@ -52,6 +52,18 @@ func (s *recordingStreamingService) FinishStreaming(string) {}
 
 var _ streaming.Service = (*recordingStreamingService)(nil)
 
+// recordingAutoReplyRefresher captures RefreshChannel calls so the cluster
+// event handler can be tested without a database.
+type recordingAutoReplyRefresher struct {
+	refreshed  []string
+	refreshErr error
+}
+
+func (r *recordingAutoReplyRefresher) RefreshChannel(channelID string) error {
+	r.refreshed = append(r.refreshed, channelID)
+	return r.refreshErr
+}
+
 func TestOnPluginClusterEventStreamStop(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -261,6 +273,228 @@ func TestPublishStreamStop(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPublishChannelAutoReplyInvalidate(t *testing.T) {
+	tests := []struct {
+		name             string
+		channelID        string
+		publishErr       error
+		expectPublish    bool
+		expectReturnErr  bool
+		expectPayloadHas string
+	}{
+		{
+			name:             "publishes payload with channelID",
+			channelID:        "channel1234567890123456789ab",
+			expectPublish:    true,
+			expectPayloadHas: "channel1234567890123456789ab",
+		},
+		{
+			name:            "empty channelID is a no-op",
+			channelID:       "",
+			expectPublish:   false,
+			expectReturnErr: false,
+		},
+		{
+			name:             "publish error is returned",
+			channelID:        "channel1234567890123456789ab",
+			publishErr:       errors.New("boom"),
+			expectPublish:    true,
+			expectReturnErr:  true,
+			expectPayloadHas: "channel1234567890123456789ab",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockAPI := &plugintest.API{}
+			defer mockAPI.AssertExpectations(t)
+
+			if test.expectPublish {
+				mockAPI.On("PublishPluginClusterEvent",
+					mock.MatchedBy(func(ev model.PluginClusterEvent) bool {
+						if ev.Id != clusterEventChannelAutoReplyInvalidate {
+							return false
+						}
+						var payload channelAutoReplyInvalidateClusterPayload
+						if err := json.Unmarshal(ev.Data, &payload); err != nil {
+							return false
+						}
+						return payload.ChannelID == test.expectPayloadHas
+					}),
+					mock.MatchedBy(func(opts model.PluginClusterEventSendOptions) bool {
+						return opts.SendType == model.PluginClusterEventSendTypeReliable
+					}),
+				).Return(test.publishErr).Once()
+			}
+
+			if test.expectReturnErr {
+				mockAPI.On("LogError",
+					"Failed to publish cluster event",
+					mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+				).Once()
+			}
+
+			p := &Plugin{
+				pluginAPI: pluginapi.NewClient(mockAPI, nil),
+			}
+			p.SetAPI(mockAPI)
+
+			err := p.PublishChannelAutoReplyInvalidate(test.channelID)
+			if test.expectReturnErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestOnPluginClusterEventChannelAutoReplyInvalidate(t *testing.T) {
+	tests := []struct {
+		name            string
+		event           model.PluginClusterEvent
+		refreshErr      error
+		expectRefreshed []string
+		expectErrorLog  string
+	}{
+		{
+			name: "valid event triggers local RefreshChannel",
+			event: model.PluginClusterEvent{
+				Id:   clusterEventChannelAutoReplyInvalidate,
+				Data: mustMarshal(t, channelAutoReplyInvalidateClusterPayload{ChannelID: "channel1234567890123456789ab"}),
+			},
+			expectRefreshed: []string{"channel1234567890123456789ab"},
+		},
+		{
+			name: "malformed payload is logged and ignored",
+			event: model.PluginClusterEvent{
+				Id:   clusterEventChannelAutoReplyInvalidate,
+				Data: []byte("not json"),
+			},
+			expectRefreshed: nil,
+			expectErrorLog:  "Failed to unmarshal channel auto-reply cluster invalidation payload",
+		},
+		{
+			name: "empty channelID is logged and ignored",
+			event: model.PluginClusterEvent{
+				Id:   clusterEventChannelAutoReplyInvalidate,
+				Data: mustMarshal(t, channelAutoReplyInvalidateClusterPayload{}),
+			},
+			expectRefreshed: nil,
+			expectErrorLog:  "Received channel auto-reply cluster invalidation with empty channelID",
+		},
+		{
+			name: "unrelated event id is a no-op",
+			event: model.PluginClusterEvent{
+				Id:   "some_other_event",
+				Data: mustMarshal(t, channelAutoReplyInvalidateClusterPayload{ChannelID: "channel1234567890123456789ab"}),
+			},
+			expectRefreshed: nil,
+		},
+		{
+			name: "refresh error is logged and does not panic",
+			event: model.PluginClusterEvent{
+				Id:   clusterEventChannelAutoReplyInvalidate,
+				Data: mustMarshal(t, channelAutoReplyInvalidateClusterPayload{ChannelID: "channel1234567890123456789ab"}),
+			},
+			refreshErr:      errors.New("db down"),
+			expectRefreshed: []string{"channel1234567890123456789ab"},
+			expectErrorLog:  "Failed to refresh channel auto-reply cache on cluster event",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockAPI := &plugintest.API{}
+			defer mockAPI.AssertExpectations(t)
+
+			if test.expectErrorLog != "" {
+				mockAPI.On("LogError",
+					test.expectErrorLog,
+					mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+				).Once()
+			}
+
+			refresher := &recordingAutoReplyRefresher{refreshErr: test.refreshErr}
+			p := &Plugin{
+				pluginAPI:        pluginapi.NewClient(mockAPI, nil),
+				autoreplyService: refresher,
+			}
+			p.SetAPI(mockAPI)
+
+			require.NotPanics(t, func() {
+				p.OnPluginClusterEvent(&plugin.Context{}, test.event)
+			})
+
+			require.Equal(t, test.expectRefreshed, refresher.refreshed)
+		})
+	}
+}
+
+// TestChannelAutoReplyClusterRoundTrip wires PublishChannelAutoReplyInvalidate
+// on a publisher Plugin into OnPluginClusterEvent on a receiver Plugin to
+// prove the payload format the publisher emits is the payload format the
+// receiver decodes. Divergence between the two halves would let peer nodes
+// silently serve stale auto-reply settings.
+func TestChannelAutoReplyClusterRoundTrip(t *testing.T) {
+	const channelID = "channel1234567890123456789ab"
+
+	publisherAPI := &plugintest.API{}
+	defer publisherAPI.AssertExpectations(t)
+	receiverAPI := &plugintest.API{}
+	defer receiverAPI.AssertExpectations(t)
+
+	receiverRefresher := &recordingAutoReplyRefresher{}
+	receiver := &Plugin{
+		pluginAPI:        pluginapi.NewClient(receiverAPI, nil),
+		autoreplyService: receiverRefresher,
+	}
+	receiver.SetAPI(receiverAPI)
+
+	publisher := &Plugin{
+		pluginAPI: pluginapi.NewClient(publisherAPI, nil),
+	}
+	publisher.SetAPI(publisherAPI)
+
+	// Capture the broadcast event on the publisher and feed it verbatim
+	// to the receiver's OnPluginClusterEvent, exactly like the Mattermost
+	// cluster does across nodes.
+	publisherAPI.On("PublishPluginClusterEvent",
+		mock.AnythingOfType("model.PluginClusterEvent"),
+		mock.MatchedBy(func(opts model.PluginClusterEventSendOptions) bool {
+			return opts.SendType == model.PluginClusterEventSendTypeReliable
+		}),
+	).Return(nil).Run(func(args mock.Arguments) {
+		ev := args.Get(0).(model.PluginClusterEvent)
+		receiver.OnPluginClusterEvent(&plugin.Context{}, ev)
+	}).Once()
+
+	require.NoError(t, publisher.PublishChannelAutoReplyInvalidate(channelID))
+
+	require.Equal(t, []string{channelID}, receiverRefresher.refreshed,
+		"a published auto-reply invalidation must be decoded and applied by peer nodes verbatim")
+}
+
+// TestOnPluginClusterEventChannelAutoReplyWithoutService verifies the handler
+// is safe when the auto-reply service has not yet been wired (e.g. an event
+// arrives during plugin activation).
+func TestOnPluginClusterEventChannelAutoReplyWithoutService(t *testing.T) {
+	mockAPI := &plugintest.API{}
+	defer mockAPI.AssertExpectations(t)
+
+	p := &Plugin{
+		pluginAPI: pluginapi.NewClient(mockAPI, nil),
+	}
+	p.SetAPI(mockAPI)
+
+	require.NotPanics(t, func() {
+		p.OnPluginClusterEvent(&plugin.Context{}, model.PluginClusterEvent{
+			Id:   clusterEventChannelAutoReplyInvalidate,
+			Data: mustMarshal(t, channelAutoReplyInvalidateClusterPayload{ChannelID: "channel1234567890123456789ab"}),
+		})
+	})
 }
 
 func mustMarshal(t *testing.T, v interface{}) []byte {
