@@ -160,6 +160,30 @@ export class MattermostPage {
     }
 
     /**
+     * Poll until the bot has posted a reply inside the given thread whose streamed content
+     * contains `expectedText` (proves streaming completed), and return the matching post.
+     */
+    async expectBotThreadReplyFromApi(
+        client: Client4,
+        channelId: string,
+        botUserId: string,
+        rootId: string,
+        expectedText: string,
+        options?: { timeoutMs?: number },
+    ): Promise<Post> {
+        const timeout = options?.timeoutMs ?? 45000;
+        let match: Post | undefined;
+        await expect.poll(async () => {
+            const posts = await fetchPostsForChannel(client, channelId);
+            match = posts.find(
+                (p) => p.user_id === botUserId && p.root_id === rootId && p.message.includes(expectedText),
+            );
+            return Boolean(match);
+        }, { timeout, intervals: [500, 1000, 2000] }).toBe(true);
+        return match!;
+    }
+
+    /**
      * After the user sends a message, assert the bot user posts at least one reply in the DM channel.
      */
     async expectBotDmReplyFromApi(
