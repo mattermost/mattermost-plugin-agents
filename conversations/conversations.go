@@ -47,6 +47,7 @@ type Conversations struct {
 	configProvider    ConfigProvider
 	toolPolicyChecker mcp.ToolPolicyChecker
 	convService       *conversation.Service
+	autoReplySettings AutoReplySettings
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -90,6 +91,12 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 // and DM auto-run decisions.
 func (c *Conversations) SetToolPolicyChecker(checker mcp.ToolPolicyChecker) {
 	c.toolPolicyChecker = checker
+}
+
+// SetAutoReplySettings sets the per-channel auto-reply settings lookup.
+// The auto-reply feature is disabled when unset.
+func (c *Conversations) SetAutoReplySettings(s AutoReplySettings) {
+	c.autoReplySettings = s
 }
 
 // SetConversationService sets the conversation entity service.

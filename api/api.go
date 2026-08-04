@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -113,6 +114,16 @@ type ConversationStore interface {
 	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
 }
 
+// ChannelAutoReplyStore provides read/write access to per-channel auto-reply settings.
+// Implemented by *autoreply.Service (Phase 1). Get reads the database so API reads are
+// read-your-writes across cluster nodes; Set/Delete validate, persist, and handle
+// cluster cache invalidation internally.
+type ChannelAutoReplyStore interface {
+	Get(channelID string) (*autoreply.Setting, error)
+	Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error)
+	Delete(channelID string) error
+}
+
 // ClusterAgentNotifier broadcasts agent update events to other cluster nodes.
 type ClusterAgentNotifier interface {
 	PublishAgentUpdate() error
@@ -164,6 +175,7 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+	autoReplyStore        ChannelAutoReplyStore
 
 	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
 	// is the only supported entry point for tests.
@@ -205,6 +217,7 @@ func New(
 	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
+	autoReplyStore ChannelAutoReplyStore,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -238,6 +251,7 @@ func New(
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
+		autoReplyStore:        autoReplyStore,
 	}
 }
 
@@ -363,6 +377,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	channelRouter.Use(a.channelAuthorizationRequired)
 	channelRouter.POST("/analyze", a.channelAnalysisLicenseRequired, a.handleChannelAnalysis)
 	channelRouter.POST("/interval", a.channelAnalysisLicenseRequired, a.handleInterval)
+	channelRouter.GET("/autoreply", a.handleGetChannelAutoReply)
+	channelRouter.PUT("/autoreply", a.handlePutChannelAutoReply)
 
 	adminRouter := router.Group("/admin")
 	adminRouter.Use(a.mattermostAdminAuthorizationRequired)

@@ -419,6 +419,7 @@ func (p *Plugin) OnActivate() error {
 
 	convService := conversation.NewService(p.store, prompts, mmClient, bots)
 	conversationsService.SetConversationService(convService)
+	conversationsService.SetAutoReplySettings(autoreplyService)
 	searchService.SetConversationService(convService)
 
 	meetingsService := meetings.NewService(
@@ -488,6 +489,7 @@ func (p *Plugin) OnActivate() error {
 		p.store,
 		getSearchInitError,
 		customPromptsStore,
+		autoreplyService,
 	)
 
 	apiService.SetConversationService(convService)
