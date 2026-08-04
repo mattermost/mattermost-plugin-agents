@@ -299,7 +299,7 @@ func (c *Client) ChatStream(ctx context.Context, request ChatRequest) (<-chan St
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:bodyclose // closed by the reader goroutine (or the error paths below)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("north chat stream request failed: %w", err)
