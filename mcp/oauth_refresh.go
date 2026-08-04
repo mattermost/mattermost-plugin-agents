@@ -1,6 +1,44 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+// This file hand-implements the OAuth refresh_token grant instead of using
+// golang.org/x/oauth2's built-in refresh (oauth2.Config.TokenSource) or the
+// go-sdk's auth package. That is a deliberate tradeoff:
+//
+// Why the libraries cannot be used here:
+//   - RFC 8707 resource parameter: the MCP spec requires the canonical
+//     resource on EVERY token request, but x/oauth2's internal tokenRefresher
+//     offers no way to add form parameters to a refresh (SetAuthURLParam only
+//     applies to AuthCodeURL/Exchange). Strict servers reject resource-less
+//     refreshes; permissive multi-resource servers may issue replayable
+//     default-audience tokens. The go-sdk's own refresh is just
+//     oauth2.Config.TokenSource, so it inherits the same gap (and oauthex has
+//     no refresh helper at all).
+//   - Pinned client authentication: the grant envelope pins
+//     token_endpoint_auth_method so every HA node refreshes with the method
+//     that actually works. x/oauth2 auto-detects basic-vs-post and caches the
+//     result per endpoint in process memory only, with no way to read or
+//     persist which style succeeded.
+//   - Typed error classification: invalid_grant (dead token → clear grant,
+//     re-authenticate) must be distinguished from client-auth failures
+//     (→ retry with the other auth method) via the parsed RFC 6749 §5.2
+//     error field, and each refresh must run under its own bounded context
+//     (x/oauth2 token sources capture their context for all future
+//     refreshes).
+//
+// The cost we accept: we own security-sensitive wire code and do not inherit
+// x/oauth2's accumulated tolerance for provider quirks — e.g. quoted
+// "expires_in" strings, which x/oauth2 accepts and our first version
+// rejected (now handled by flexibleNumber). Changes here should cross-check
+// x/oauth2's internal/token.go for provider-compatibility behavior we may be
+// missing.
+//
+// When this file can be removed: if the go-sdk (or x/oauth2) grows a refresh
+// API that (a) sends the RFC 8707 resource parameter, (b) lets the caller
+// select and observe the client authentication method, and (c) surfaces
+// typed token-endpoint errors, this implementation can be replaced with it,
+// keeping only the grant-envelope wiring in oauth_handler.go.
+
 package mcp
 
 import (
