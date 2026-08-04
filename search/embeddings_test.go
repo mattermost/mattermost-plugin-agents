@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -108,7 +108,7 @@ func TestInitEmbeddingsSearch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			licenseChecker := createLicenseChecker(t, tc.licensed)
 
-			search, err := InitEmbeddingsSearch(nil, &http.Client{}, tc.cfg, licenseChecker)
+			search, err := InitEmbeddingsSearch(nil, &http.Client{}, tc.cfg, licenseChecker, false)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -161,7 +161,7 @@ func TestNewVectorStore(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := newVectorStore(nil, tc.config, tc.dimensions)
+			store, err := newVectorStore(nil, tc.config, tc.dimensions, false)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -405,7 +405,7 @@ func TestVectorStoreConfigUnmarshalEdgeCases(t *testing.T) {
 				Parameters: tc.parameters,
 			}
 
-			store, err := newVectorStore(nil, config, 1536)
+			store, err := newVectorStore(nil, config, 1536, false)
 
 			if tc.expectError {
 				require.Error(t, err)

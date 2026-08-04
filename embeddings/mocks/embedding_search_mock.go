@@ -7,7 +7,7 @@ package mocks
 import (
 	"context"
 
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	mock "github.com/stretchr/testify/mock"
 )
 

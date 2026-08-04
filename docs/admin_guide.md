@@ -142,11 +142,11 @@ Some capabilities depend on the selected Service type and, for OpenAI Compatible
 |---------|-------------|
 | **Enable Web Search** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Gemini and Vertex map this to Google Search grounding via the provider's Responses API. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
 | **Reasoning Enabled** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. For Gemini / Vertex, Bifrost maps a token budget to `thinkingConfig.thinkingBudget` and an effort level to `thinkingConfig.thinkingLevel` on Gemini 3.0+. |
-| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the model returns structured JSON matching that schema. Compatible model support is still required. |
+| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the schema is sent natively to the provider so the model returns structured JSON matching it. Compatible model support is still required. When disabled, the schema is converted into prompt instructions instead of being sent to the provider, so requests still work with models that lack native structured output support. |
 
 New agents enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
 
-For Anthropic services, **Structured Output** and extended thinking can't be used at the same time.
+For Anthropic services, **Structured Output** and extended thinking can both be enabled on the same agent, but Anthropic doesn't support using them on the same request. Requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
 
 If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
 
@@ -160,11 +160,14 @@ Use this tab to control who can interact with and manage the agent:
 
 #### MCPs tab
 
-Use this tab to control which MCP tools the agent can use. This tab is available only when **Enable Tools** is turned on.
+Use this tab to control how the agent can use MCP tools. This tab is available only when **Enable Tools** is turned on.
 
+- **Dynamic tool loading** is on by default. It exposes MCP discovery and loading helpers first, then loads full MCP tool schemas only when the agent needs them. Turn it off to expose the full MCP tool list to this agent up front.
 - **Automatically enable all MCP tools** gives the agent access to every currently available MCP tool and any MCP tools added later.
 - When **Automatically enable all MCP tools** is off, select the specific MCP tools the agent may use.
 - If a previously selected MCP tool is no longer available, it is removed from the agent configuration when you save.
+
+Dynamic tool loading and automatically enabled MCP tools are separate controls: auto-enable controls which tools the agent is allowed to use, while dynamic loading controls when tool schemas are exposed to the model.
 
 Updating an agent's display name also updates the linked Mattermost bot display name. Deleting an agent deactivates the linked Mattermost bot account.
 
@@ -282,7 +285,29 @@ Configure chunking options based on your needs:
 | **Chunk Size** | 512-1024 tokens | Varies by strategy |
 | **Chunk Overlap** | 20-50 tokens | For better context continuity |
 
+Bulk reindexing throughput can be tuned for large datasets:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Reindex Worker Count** | 4 (max 32) | Concurrent embedding/storage workers during bulk reindexing. Raise for faster reindexing if your embedding provider rate limits allow (limits are respected automatically via retry with backoff); lower to reduce database and provider load. Values above the maximum are clamped. |
+| **Reindex Batch Size** | 200 (max 1000) | Posts fetched and embedded per batch. Larger batches amortize request overhead; requests are split automatically to stay within provider per-request limits. Values above the maximum are clamped. |
+| **Reindex Index Strategy** | Maintain index during reindex | Controls how the vector similarity index is handled during a full reindex. `maintain` keeps the index up to date on every insert (default). `defer` drops the index up front, bulk-loads without index maintenance, and rebuilds the index once at the end — much faster for large databases, but semantic search is unavailable until the rebuild completes. |
+
+The defaults stay comfortably within OpenAI Tier 1 rate limits. On Azure OpenAI, throughput is capped by your deployment's tokens-per-minute quota — raise it to benefit from higher worker counts.
+
 Run the initial indexing process after configuration.
+
+#### Large database reindexing
+
+For large installations (tens of millions of posts), set **Reindex Index Strategy** to `defer` before a full reindex. Maintaining the HNSW index on every insert dominates cost at scale (especially once it no longer fits in memory); dropping it for the bulk load and rebuilding once afterwards is typically an order of magnitude faster.
+
+Notes on deferred reindex:
+
+- **Semantic search is unavailable** from reindex start until the final index build finishes (API returns HTTP 503). Live posts still index during the bulk load. During the final build (hours on large DBs), live indexing, deletions, and retention pause instead of blocking on CREATE INDEX — catch-up repairs new posts, the repair pass handles edits/deletions, and retention runs on its next schedule.
+- **Repair phase after the build.** Search returns once the index exists; the job then enters a short `repairing` phase to re-embed posts edited while live indexing was paused (catch-up sweeps new posts). If the job stops after the build but before repair finishes, the `repairing` marker stays durable — resume or reindex to finish. Search works in this phase; a few recent edits may be slightly stale until repair completes.
+- **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + 300)` bytes (~1.7 KB/element at 256 dims, ~34 GB for 20M posts). Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`.
+- **Crash recovery.** Lifecycle state is durable. After a restart, **Check Index Health** shows the vector index state and search stays gated until you resume or start a full reindex (the plugin never rebuilds during activation). Canceling or failing mid-bulk-load likewise leaves the index dropped rather than rebuilding it over a partial corpus, so a resume continues defer-style. Any full or resumed reindex rebuilds a dropped index and finishes pending repair, even if strategy was changed back to `maintain`.
+- Strategy applies to full reindexes only. Catch-up never drops the index. Live indexing maintains the index except during the final build.
 
 ### Permission configuration
 
@@ -337,13 +362,13 @@ jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_to
 
 ### Post indexing
 
-Post indexing occurs automatically during initial setup and when changing embedding providers:
+Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, or **dimensions** requires a **Full Reindex** (do not use Resume for a dimension change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions change so new vectors match the configured width.
 
 1. Navigate to **System Console > Plugins > Agents > Embedding Search**
 2. Use the reindex controls to:
    
    - Monitor indexing progress during initial setup.
-   - Trigger reindexing when changing embedding providers.
+   - Trigger a Full Reindex when changing embedding providers, models, or dimensions.
    - Check indexing status.
 
 ### OpenTelemetry tracing
@@ -521,6 +546,8 @@ The Model Context Protocol (MCP) integration lets Agents use tools exposed by MC
 
 The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers and connection timeout from the MCP UI in the System Console. The **Tools** tab also shows plugin-registered MCP servers, where admins can enable or disable each plugin server and set per-tool enabled state and approval policies. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
 
+Remote and external MCP servers require a license (see [license requirements](#license-requirements)). Without one, the remote server configuration UI is not shown and tools from remote servers are not made available to agents; the embedded Mattermost MCP tools remain available on all plans.
+
 ### Configuration
 
 1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**.
@@ -530,8 +557,8 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
    - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
    - Remote MCP servers, including URL, custom headers, OAuth client settings, and per-server enablement.
 
-3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Plugin-registered MCP servers appear as separate plugin rows in this tab.
-4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
+3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Expand a tool row to add an optional **Retrieval description override** for dynamic tool loading search; this helps the agent find the tool but does not change the tool schema sent after loading. Plugin-registered MCP servers appear as separate plugin rows in this tab.
+4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools, and whether MCP tool schemas are loaded dynamically or exposed up front.
 
 Agent MCP access is filtered by admin tool policy, the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request.
 
@@ -590,7 +617,7 @@ Dynamic loading applies to normal agent conversation turns. Bridge integrations 
 - **Connection Management**: The system automatically manages user connections to MCP servers
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
-- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools
+- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools, and to add optional retrieval description overrides used by dynamic tool loading search
 - **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
 
 ### OAuth-backed MCP servers
@@ -676,10 +703,28 @@ The built-in Mattermost MCP server provides the following native Mattermost tool
 - **get_team_info**: Retrieve team details by ID or name
 - **search_users**: Find users by username, email, or name
 - **get_channel_members**: List all members of a channel
-- **add_user_to_channel**: Add a user to a channel
+- **add_channel_member**: Add a user to a channel
 - **get_user_channels**: List the channels the current user is a member of
 - **get_team_members**: List all members of a team
+- **add_team_member**: Add a user to a team
 - **list_agents**: List the AI agents (bots) available to the current user, including each agent's ID, display name, and username
+
+The plugin also registers an extended catalog of read and write tools spanning Mattermost's main domains. Because the plugin supports dynamic tool loading, agents discover these on demand via the `search_tools` and `load_tool` meta-tools rather than carrying every schema in context. Write/destructive/permission-sensitive tools are marked with ⚠ and follow each user's Mattermost permissions.
+
+- **Posts & messages**: get_post_info, list_pinned_posts, list_saved_posts, ⚠ update_post, ⚠ delete_post, ⚠ pin_post, ⚠ unpin_post, ⚠ save_post, ⚠ acknowledge_post
+- **Scheduled posts & reminders**: list_scheduled_posts, ⚠ create_scheduled_post, ⚠ update_scheduled_post, ⚠ delete_scheduled_post, ⚠ set_post_reminder
+- **Reactions & emoji**: get_post_reactions, get_bulk_reactions, list_custom_emoji, search_custom_emoji, ⚠ add_reaction, ⚠ remove_reaction
+- **Threads, mentions & unread**: get_threads, get_mentions, get_unread_counts, get_channel_unread, get_posts_around_unread, ⚠ mark_channel_read, ⚠ mark_channels_viewed, ⚠ mark_post_unread, ⚠ set_thread_follow
+- **Channels**: get_channel_stats, get_channel_member_counts, search_channels, list_team_channels, list_archived_channels, ⚠ update_channel, ⚠ archive_channel, ⚠ restore_channel, ⚠ convert_channel_privacy
+- **Channel members & settings**: get_channel_member, get_channel_members_by_ids, get_channel_members_by_status, get_user_channel_memberships, get_users_not_in_channel, search_users_in_channel, list_sidebar_categories, ⚠ add_channel_members, ⚠ remove_channel_member, ⚠ set_channel_mute, ⚠ set_channel_favorite, ⚠ update_channel_notify_props
+- **Channel bookmarks**: list_channel_bookmarks, ⚠ create_channel_bookmark, ⚠ update_channel_bookmark, ⚠ delete_channel_bookmark
+- **Users & profiles**: get_me, get_user, get_user_by_username, get_user_by_email, get_users_by_ids, get_users_by_usernames, get_user_stats, get_user_cpa_values, list_cpa_fields, ⚠ update_user
+- **Status & presence**: get_user_status, get_users_statuses, get_user_custom_status, ⚠ set_status, ⚠ set_dnd
+- **Teams & team members**: get_team_member, get_team_stats, get_user_teams, get_users_in_team, get_users_not_in_team, get_new_users_in_team, get_dm_common_teams, search_teams, search_users_in_team, ⚠ add_team_members, ⚠ remove_team_member, ⚠ update_team, ⚠ invite_users_to_team, ⚠ invite_users_to_team_and_channels
+- **Files & attachments**: get_file_info, get_post_files, get_file_link, search_files, ⚠ upload_file
+- **Integrations**: get_bot, list_bots, list_incoming_webhooks, list_outgoing_webhooks
+- **Groups**: get_group_info, list_groups, get_user_groups, get_channel_groups, get_team_groups, get_users_in_group_channels
+- **Roles & permissions**: get_role, get_channel_moderations, ⚠ update_channel_member_roles, ⚠ update_team_member_roles
 
 When the Channel Automation plugin is installed, the MCP server also exposes the following tools. They proxy requests to that plugin; execution follows the same MCP tool policies as other tools and each user's Mattermost permissions.
 
@@ -761,11 +806,11 @@ The following table outlines which features require a license:
 | Basic agent configuration (single agent) | No license required |
 | Chat with agents in DMs and channels | No license required |
 | Image analysis (vision capabilities) | No license required |
-| Basic tool integrations | No license required |
+| Basic tool integrations (built-in tools and the embedded Mattermost MCP server) | No license required |
 | Multiple agent configurations | Entry, Enterprise, and Enterprise Advanced |
 | Fine-grained access controls | Entry, Enterprise, and Enterprise Advanced |
 | Embedding search (semantic AI search) | Entry, Enterprise, and Enterprise Advanced |
-| MCP Support | Entry, Enterprise, and Enterprise Advanced |
+| MCP Support (remote and external MCP servers) | Entry, Enterprise, and Enterprise Advanced |
 | Usage analytics and token tracking | Entry, Enterprise, and Enterprise Advanced |
 | AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
 | Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |

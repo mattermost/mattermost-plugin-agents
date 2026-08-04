@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 )
 
 // PluginHTTPRoundTripper routes requests to a source plugin's MCP endpoint via

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 )
@@ -704,4 +704,77 @@ func TestWriteFileDescriptor(t *testing.T) {
 			assert.Equal(t, tt.expected, buf.String())
 		})
 	}
+}
+
+func TestWritePostInfo(t *testing.T) {
+	var buf strings.Builder
+	WritePostInfo(&buf, PostInfoEntry{
+		PostID: "post12345678901234567890ab",
+		PostInfo: &model.PostInfo{
+			ChannelId:          "chan12345678901234567890ab",
+			ChannelType:        model.ChannelTypeOpen,
+			ChannelDisplayName: "General",
+			TeamId:             "team12345678901234567890ab",
+			TeamDisplayName:    "Engineering",
+			HasJoinedChannel:   true,
+			HasJoinedTeam:      false,
+		},
+	})
+	out := buf.String()
+	assert.Contains(t, out, "Post ID: post12345678901234567890ab")
+	assert.Contains(t, out, "Channel: General")
+	assert.Contains(t, out, "Team: Engineering (ID: team12345678901234567890ab)")
+	assert.Contains(t, out, "You are a member of this channel: true")
+	assert.Contains(t, out, "You are a member of this team: false")
+}
+
+func TestTimeFromMillis(t *testing.T) {
+	tests := []struct {
+		name     string
+		millis   int64
+		expected string
+	}{
+		{
+			name:     "formats as RFC3339 UTC",
+			millis:   1704067200000,
+			expected: "2024-01-01T00:00:00Z",
+		},
+		{
+			name:     "zero returns empty string",
+			millis:   0,
+			expected: "",
+		},
+		{
+			name:     "negative returns empty string",
+			millis:   -1,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, TimeFromMillis(tt.millis))
+		})
+	}
+}
+
+func TestWriteScheduledPost(t *testing.T) {
+	sp := &model.ScheduledPost{
+		Draft:       model.Draft{ChannelId: "chan12345678901234567890ab", Message: "scheduled hello"},
+		ScheduledAt: 1700000000000,
+	}
+	sp.Id = "sched1234567890123456789ab"
+
+	var buf strings.Builder
+	WriteScheduledPost(&buf, ScheduledPostEntry{
+		HeaderLabel:   "Scheduled Post 1",
+		ScheduledPost: sp,
+		ChannelName:   "Town Square",
+	})
+	out := buf.String()
+	assert.Contains(t, out, "**Scheduled Post 1**:")
+	assert.Contains(t, out, "ID: sched1234567890123456789ab")
+	assert.Contains(t, out, "Channel: Town Square")
+	assert.Contains(t, out, "Scheduled for: 2023-11-14T22:13:20Z")
+	assert.Contains(t, out, "Message: scheduled hello")
 }

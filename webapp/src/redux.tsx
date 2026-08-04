@@ -16,7 +16,6 @@ export const BotsHandler = manifest.id + '_bots';
 export const CustomPromptsHandler = 'SET_CUSTOM_PROMPTS';
 export const PinnedPromptIdsHandler = 'SET_PINNED_PROMPT_IDS';
 export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
-export const SelectedBotIdHandler = 'SET_SELECTED_BOT_ID';
 
 export async function setupRedux(registry: any, store: WebappStore) {
     const reducer = combineReducers({
@@ -29,7 +28,6 @@ export async function setupRedux(registry: any, store: WebappStore) {
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
-        selectedBotId,
     });
     registry.registerReducer(reducer);
 
@@ -134,15 +132,6 @@ function showCustomPromptsModal(state = false, action: any) {
     switch (action.type) {
     case ShowCustomPromptsModalHandler:
         return action.show;
-    default:
-        return state;
-    }
-}
-
-function selectedBotId(state: string | null = null, action: any) {
-    switch (action.type) {
-    case SelectedBotIdHandler:
-        return action.botId;
     default:
         return state;
     }

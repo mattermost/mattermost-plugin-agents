@@ -13,7 +13,7 @@ Until the Agents plugin cuts a release tag with `external/pluginmcp/`
 exported, point your `go.mod` at a local checkout:
 
 ```go
-replace github.com/mattermost/mattermost-plugin-agents => ../mattermost-plugin-agents
+replace github.com/mattermost/mattermost-plugin-agents/v2 => ../mattermost-plugin-agents
 ```
 
 ## Quickstart
@@ -31,7 +31,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-agents/external/pluginmcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/external/pluginmcp"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"

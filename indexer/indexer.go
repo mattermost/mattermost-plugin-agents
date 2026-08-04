@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/format"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 )
@@ -26,6 +26,12 @@ type Indexer struct {
 	bots         *bots.MMBots
 	db           *sqlx.DB
 	clusterMutex cluster.MutexPluginAPI
+
+	// Store retry policy and heartbeat cadence; overridable in tests to
+	// avoid long sleeps.
+	storeRetryAttempts  int
+	storeRetryBaseDelay time.Duration
+	heartbeatInterval   time.Duration
 }
 
 func New(
@@ -37,12 +43,15 @@ func New(
 	clusterMutex cluster.MutexPluginAPI,
 ) *Indexer {
 	return &Indexer{
-		getSearch:    getSearch,
-		configGetter: configGetter,
-		pluginAPI:    pluginAPI,
-		bots:         bots,
-		db:           db,
-		clusterMutex: clusterMutex,
+		getSearch:           getSearch,
+		configGetter:        configGetter,
+		pluginAPI:           pluginAPI,
+		bots:                bots,
+		db:                  db,
+		clusterMutex:        clusterMutex,
+		storeRetryAttempts:  defaultStoreRetryAttempts,
+		storeRetryBaseDelay: defaultStoreRetryBaseDelay,
+		heartbeatInterval:   defaultHeartbeatInterval,
 	}
 }
 
@@ -58,6 +67,12 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 	search := s.getSearch()
 	if search == nil {
 		return nil // Search not configured
+	}
+
+	// Skipped posts: catch-up (new) or repair (edits) after the build.
+	if s.deferredBuildWriteGated() {
+		s.pluginAPI.LogDebug("Skipping live post indexing while the vector index is being rebuilt", "post_id", post.Id)
+		return nil
 	}
 
 	// Create document
@@ -84,6 +99,12 @@ func (s *Indexer) DeletePost(ctx context.Context, postID string) error {
 		return nil // Search not configured
 	}
 
+	// Safe to skip: repair's stale-row DELETE removes them after the build.
+	if s.deferredBuildWriteGated() {
+		s.pluginAPI.LogDebug("Skipping post deletion from the index while the vector index is being rebuilt", "post_id", postID)
+		return nil
+	}
+
 	return search.Delete(ctx, []string{postID})
 }
 
@@ -94,6 +115,12 @@ func (s *Indexer) RunDataRetention(ctx context.Context, nowTime, batchSize int64
 	}
 	search := s.getSearch()
 	if search == nil {
+		return 0, nil
+	}
+
+	// Safe to skip: retention re-runs on schedule.
+	if s.deferredBuildWriteGated() {
+		s.pluginAPI.LogDebug("Skipping embeddings data retention while the vector index is being rebuilt")
 		return 0, nil
 	}
 
@@ -161,16 +188,19 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		NodeID:    s.getNodeID(),
 	}
 
-	// When resuming, preserve CutoffAt, TotalRows, and ProcessedRows from the previous job
-	// so the UI shows accurate progress and catch-up covers posts from original start time
+	// When resuming, preserve CutoffAt, TotalRows, ProcessedRows, and the
+	// start-time model snapshot from the previous job so the UI shows
+	// accurate progress and completion unlocks the model actually indexed.
 	if !clearIndex && hasExisting {
 		newJobStatus.TotalRows = jobStatus.TotalRows
 		newJobStatus.CutoffAt = jobStatus.CutoffAt
 		newJobStatus.ProcessedRows = jobStatus.ProcessedRows
+		newJobStatus.ModelInfo = jobStatus.ModelInfo
 	} else {
-		// Fresh start - calculate new values
+		// Fresh start - calculate new values and snapshot current model.
 		newJobStatus.TotalRows = count
 		newJobStatus.CutoffAt = cutoffTimestamp
+		newJobStatus.ModelInfo = s.getModelInfoFromConfig()
 	}
 
 	// CAS routes through master; the predicate rejects the write if the row
@@ -194,10 +224,23 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		}
 	}
 
+	// Claim deferred-index ownership before start; fail if lifecycle unknown.
+	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
+	if deferErr != nil {
+		failedStatus := newJobStatus
+		failedStatus.Status = JobStatusFailed
+		failedStatus.Error = deferErr.Error()
+		failedStatus.CompletedAt = time.Now()
+		if _, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, newJobStatus, failedStatus); casErr != nil {
+			s.pluginAPI.LogError("Failed to record reindex job failure", "error", casErr)
+		}
+		return JobStatus{}, deferErr
+	}
+
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
 	// Start the reindexing job in background
-	go s.runReindexJob(&newJobStatus, clearIndex)
+	go s.runReindexJob(&newJobStatus, clearIndex, deferRun)
 
 	return returnStatus, nil
 }
@@ -368,8 +411,8 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 
 	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
-	// Start catch-up job (reuses runReindexJob with clearIndex=false)
-	go s.runReindexJob(&newJobStatus, false)
+	// Catch-up never defers the index (small tail only); ModelInfo stays nil.
+	go s.runReindexJob(&newJobStatus, false, nil)
 
 	return returnStatus, nil
 }
@@ -382,6 +425,11 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 
 	result := HealthCheckResult{
 		CheckedAt: time.Now(),
+	}
+
+	// Surface deferred-index ownership (explains search unavailability).
+	if state, stateErr := s.loadVectorIndexState(); stateErr == nil && state != nil {
+		result.VectorIndexState = state
 	}
 
 	// Get bot user IDs to exclude from count (matching shouldIndexPost behavior)
@@ -579,6 +627,7 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	newStatus.Error = fmt.Sprintf("Job orphaned: heartbeat older than %s on node %q",
 		StaleJobThreshold, jobStatus.NodeID)
 	newStatus.CompletedAt = time.Now()
+	newStatus.Phase = "" // phase is live-only; do not leave building_index on a terminal row
 
 	s.pluginAPI.LogWarn("Reclaiming stale reindex job",
 		"job_id", jobStatus.JobID,

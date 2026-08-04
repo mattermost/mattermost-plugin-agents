@@ -30,9 +30,7 @@ Read recent posts from a Mattermost channel.
 
 **Parameters:**
 - `channel_id` (required): The ID of the channel to read from
-- `per_page` (optional): Number of posts to retrieve per page (default: 20, max: 200)
-- `page` (optional): Page number for pagination, starting at 0 (default: 0). Increment to retrieve more than `per_page` posts
-- `limit` (optional, deprecated): Alias for `per_page`; use `per_page` instead
+- `limit` (optional): Number of posts to retrieve (default: 20, max: 100)
 - `since` (optional): Only get posts since this timestamp (ISO 8601 format)
 
 ### `search_posts`
@@ -102,6 +100,20 @@ Get all members of a specific team with their details.
 **Parameters:**
 - `team_id` (required): ID of the team to get members for
 
+### `add_channel_member`
+Add a user to a channel.
+
+**Parameters:**
+- `user_id` (required), `channel_id` (required)
+
+### `add_team_member`
+Add a user to a team.
+
+**Parameters:**
+- `user_id` (required), `team_id` (required)
+
+> **Additional tools:** The Agents plugin registers a large catalog of additional read and write tools spanning posts, reactions, threads, channels, members, bookmarks, users, status, teams, files, integrations, groups, and roles. Agents discover them on demand via the `search_tools` and `load_tool` meta-tools rather than carrying every schema in context.
+
 ### Development Tools (Dev Mode Only)
 
 The following tools are only available when the `-dev` flag is enabled:
@@ -117,14 +129,6 @@ Create a new team.
 - **Parameters:** `name`, `display_name`, `type` (O for open, I for invite only), `description` (optional), `team_icon` (optional): File path or URL to set as team icon (supports .jpeg, .jpg, .png, .gif)
   - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
   - **File Path Format**: Use relative paths like `team-logo.png` (files are accessed from the `mcpserver/data/` directory)
-
-#### `add_user_to_team`
-Add a user to a team.
-- **Parameters:** `user_id`, `team_id`
-
-#### `add_user_to_channel`
-Add a user to a channel.
-- **Parameters:** `user_id`, `channel_id`
 
 #### `create_post_as_user`
 Create a post as a specific user using username/password login. Simply provide the username and password of created users.

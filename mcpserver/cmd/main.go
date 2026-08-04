@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
-	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
 	"github.com/spf13/cobra"
 )
 

@@ -165,7 +165,7 @@ export class AgentPageHelper {
     }
 
     getReasoningEffortSelect(): Locator {
-        return this.getExactLabel('Reasoning Effort').locator('xpath=following-sibling::select[1]');
+        return this.getExactLabel('Reasoning Effort').locator('xpath=ancestor::div[1]//select[1]');
     }
 
     getThinkingBudgetInput(): Locator {
@@ -173,7 +173,20 @@ export class AgentPageHelper {
     }
 
     getStructuredOutputNote(): Locator {
-        return this.page.getByText('Extended thinking is turned off while structured output is enabled', {exact: false});
+        return this.page.getByText('Requests that ask for structured JSON output will skip extended thinking', {exact: false});
+    }
+
+    getAdvancedConfigurationToggle(): Locator {
+        return this.page.getByRole('button', {name: /Advanced configuration/i});
+    }
+
+    async expandAdvancedConfiguration(): Promise<void> {
+        const toggle = this.getAdvancedConfigurationToggle();
+        await toggle.waitFor({state: 'visible', timeout: 10000});
+        if (await toggle.getAttribute('aria-expanded') !== 'true') {
+            await toggle.click();
+            await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        }
     }
 
     // --- Delete Dialog ---

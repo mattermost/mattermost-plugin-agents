@@ -9,15 +9,15 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	embeddingmocks "github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	llmmocks "github.com/mattermost/mattermost-plugin-agents/llm/mocks"
-	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	embeddingmocks "github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	llmmocks "github.com/mattermost/mattermost-plugin-agents/v2/llm/mocks"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -279,6 +279,7 @@ func TestSearchQueryCreatesConversation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockEmbedding := embeddingmocks.NewMockEmbeddingSearch(t)
 			mockClient := mmapimocks.NewMockClient(t)
+			allowVectorIndexStateRead(mockClient)
 			mockLLM := llmmocks.NewMockLanguageModel(t)
 			fakeStore := newFakeConversationStore()
 
@@ -328,6 +329,7 @@ func TestSearchQueryToolsAlwaysDisabled(t *testing.T) {
 
 	mockEmbedding := embeddingmocks.NewMockEmbeddingSearch(t)
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 	mockLLM := llmmocks.NewMockLanguageModel(t)
 	fakeStore := newFakeConversationStore()
 
@@ -378,6 +380,7 @@ func TestSearchQueryUsesConversationCompletionRequest(t *testing.T) {
 
 	mockEmbedding := embeddingmocks.NewMockEmbeddingSearch(t)
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 	mockLLM := llmmocks.NewMockLanguageModel(t)
 	fakeStore := newFakeConversationStore()
 
@@ -427,6 +430,7 @@ func TestSearchQueryNilConversationServiceFallsBack(t *testing.T) {
 
 	mockEmbedding := embeddingmocks.NewMockEmbeddingSearch(t)
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 	mockLLM := llmmocks.NewMockLanguageModel(t)
 
 	setupMockClientForSearch(mockClient)

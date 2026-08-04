@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 )
 
 // HTTPSemanticSearchService provides semantic search by calling back to the plugin API.
@@ -54,6 +54,7 @@ type httpSearchResult struct {
 	Username    string  `json:"username"`
 	Content     string  `json:"content"`
 	Score       float32 `json:"score"`
+	CreateAt    int64   `json:"create_at"` // Post creation timestamp (Unix millis)
 }
 
 // httpSearchResponse represents the response from the plugin endpoint
@@ -104,6 +105,7 @@ func (s *HTTPSemanticSearchService) Search(ctx context.Context, query string, op
 			Username:    r.Username,
 			Content:     r.Content,
 			Score:       r.Score,
+			CreateAt:    r.CreateAt,
 		})
 	}
 

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 func TestToolRunner_ServerOriginPreserved(t *testing.T) {
@@ -567,6 +567,60 @@ func TestExecuteToolsDefensiveUnloadedGuard(t *testing.T) {
 	assert.True(t, results[0].IsError)
 	assert.Contains(t, results[0].Result, "available but not loaded")
 	assert.Contains(t, results[0].Result, `load_tool`)
+}
+
+// TestToolRunner_AllApprovedMarksOnlyPendingCallsWouldAutoExecute pins that an
+// all-approved batch stamps WouldAutoExecute on the pending broadcast only;
+// the resolved broadcast and the persisted tool turns drop the flag once
+// execution completes.
+func TestToolRunner_AllApprovedMarksOnlyPendingCallsWouldAutoExecute(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "tool_a", Arguments: json.RawMessage(`{}`)},
+					{ID: "tc2", Name: "tool_b", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "done"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	store := newTestToolStore(
+		testToolDef{name: "tool_a", result: "result_a"},
+		testToolDef{name: "tool_b", result: "result_b"},
+	)
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	var toolCallEvents [][]llm.ToolCall
+	for event := range result.Stream.Stream {
+		if event.Type == llm.EventTypeToolCalls {
+			toolCallEvents = append(toolCallEvents, event.Value.([]llm.ToolCall))
+		}
+	}
+
+	require.Len(t, toolCallEvents, 2)
+	for _, call := range toolCallEvents[0] {
+		assert.Equal(t, llm.ToolCallStatusPending, call.Status)
+		assert.True(t, call.WouldAutoExecute)
+	}
+	for _, call := range toolCallEvents[1] {
+		assert.Equal(t, llm.ToolCallStatusAutoApproved, call.Status)
+		assert.False(t, call.WouldAutoExecute)
+	}
+
+	require.Len(t, result.ToolTurns, 1)
+	for _, call := range result.ToolTurns[0].AssistantToolCalls {
+		assert.False(t, call.WouldAutoExecute)
+	}
 }
 
 // TestToolRunner_PausedBatchMarksWouldAutoExecute pins that a paused mixed

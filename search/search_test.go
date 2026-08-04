@@ -10,14 +10,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	llmmocks "github.com/mattermost/mattermost-plugin-agents/llm/mocks"
-	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	llmmocks "github.com/mattermost/mattermost-plugin-agents/v2/llm/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -25,6 +27,11 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
+
+// allowVectorIndexStateRead: availability check sees no deferred reindex.
+func allowVectorIndexStateRead(m *mmapimocks.MockClient) {
+	m.On("KVGet", indexer.VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+}
 
 func TestEnrichResults(t *testing.T) {
 	tests := []struct {
@@ -226,6 +233,7 @@ func TestEnrichResults(t *testing.T) {
 				{
 					Document: embeddings.PostDocument{
 						PostID:    "post1",
+						CreateAt:  1700000000000,
 						ChannelID: "channel1",
 						UserID:    "user1",
 						Content:   "content 1",
@@ -235,6 +243,7 @@ func TestEnrichResults(t *testing.T) {
 				{
 					Document: embeddings.PostDocument{
 						PostID:    "post2",
+						CreateAt:  1700000060000,
 						ChannelID: "channel2",
 						UserID:    "user2",
 						Content:   "content 2",
@@ -267,9 +276,11 @@ func TestEnrichResults(t *testing.T) {
 				require.Equal(t, "post1", results[0].PostID)
 				require.Equal(t, "Channel One", results[0].ChannelName)
 				require.Equal(t, "user_one", results[0].Username)
+				require.Equal(t, int64(1700000000000), results[0].CreateAt)
 				require.Equal(t, "post2", results[1].PostID)
 				require.Equal(t, "Channel Two", results[1].ChannelName)
 				require.Equal(t, "user_two", results[1].Username)
+				require.Equal(t, int64(1700000060000), results[1].CreateAt)
 			},
 		},
 	}
@@ -277,6 +288,7 @@ func TestEnrichResults(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			mockClient := mmapimocks.NewMockClient(t)
+			allowVectorIndexStateRead(mockClient)
 			if tc.setupMock != nil {
 				tc.setupMock(mockClient)
 			}
@@ -396,6 +408,7 @@ func TestExecuteSearch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 			mockClient := mmapimocks.NewMockClient(t)
+			allowVectorIndexStateRead(mockClient)
 
 			if tc.setupMocks != nil {
 				tc.setupMocks(mockEmbedding, mockClient)
@@ -468,6 +481,40 @@ func TestBuildPrompt(t *testing.T) {
 			expectError: false,
 			validate: func(t *testing.T, req llm.CompletionRequest) {
 				require.Contains(t, req.Posts[0].Message, "important information")
+			},
+		},
+		{
+			name:  "system message contains message timestamps",
+			query: "search query",
+			results: []RAGResult{
+				// 2024-01-01T00:00:00Z
+				{PostID: "post1", Content: "dated content", ChannelName: "General", Username: "testuser", Score: 0.95, CreateAt: 1704067200000},
+			},
+			expectError: false,
+			validate: func(t *testing.T, req llm.CompletionRequest) {
+				require.Contains(t, req.Posts[0].Message, `time="2024-01-01T00:00:00Z"`)
+			},
+		},
+		{
+			name:  "missing timestamp omits the time attribute",
+			query: "search query",
+			results: []RAGResult{
+				{PostID: "post1", Content: "undated content", ChannelName: "General", Username: "testuser", Score: 0.95},
+			},
+			expectError: false,
+			validate: func(t *testing.T, req llm.CompletionRequest) {
+				require.NotContains(t, req.Posts[0].Message, "time=")
+			},
+		},
+		{
+			name:  "negative timestamp omits the time attribute",
+			query: "search query",
+			results: []RAGResult{
+				{PostID: "post1", Content: "undated content", ChannelName: "General", Username: "testuser", Score: 0.95, CreateAt: -1},
+			},
+			expectError: false,
+			validate: func(t *testing.T, req llm.CompletionRequest) {
+				require.NotContains(t, req.Posts[0].Message, "time=")
 			},
 		},
 	}
@@ -602,6 +649,7 @@ func TestSearchQuery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 			mockClient := mmapimocks.NewMockClient(t)
+			allowVectorIndexStateRead(mockClient)
 			mockLLM := llmmocks.NewMockLanguageModel(t)
 
 			if tc.setupMocks != nil {
@@ -635,9 +683,50 @@ func TestSearchQuery(t *testing.T) {
 	}
 }
 
+// mockDeferredReindexActive gates search via deferred reindex state.
+func mockDeferredReindexActive(m *mmapimocks.MockClient) {
+	m.On("KVGet", indexer.VectorIndexStateKey, mock.AnythingOfType("*indexer.VectorIndexState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*indexer.VectorIndexState)
+			state.JobID = "job1"
+			state.Phase = indexer.VectorIndexPhaseDropped
+		}).
+		Return(nil)
+}
+
+func TestSearchUnavailableDuringDeferredReindex(t *testing.T) {
+	t.Run("executeSearch returns ErrSearchUnavailable without querying the store", func(t *testing.T) {
+		// Strict mock: any Search call on the store fails the test.
+		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+		mockClient := mmapimocks.NewMockClient(t)
+		mockDeferredReindexActive(mockClient)
+
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
+		results, err := s.executeSearch(context.Background(), "test query", Options{Limit: 5})
+
+		require.ErrorIs(t, err, ErrSearchUnavailable)
+		require.Nil(t, results)
+	})
+
+	t.Run("RunSearch fails fast before creating any posts", func(t *testing.T) {
+		// Strict mock: any DM call fails the test.
+		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+		mockClient := mmapimocks.NewMockClient(t)
+		mockDeferredReindexActive(mockClient)
+
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
+		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
+
+		_, err := s.RunSearch(context.Background(), "user1", bot, "test query", "", "", 5)
+
+		require.ErrorIs(t, err, ErrSearchUnavailable)
+	})
+}
+
 func TestRunSearch(t *testing.T) {
 	t.Run("search not enabled returns error", func(t *testing.T) {
 		mockClient := mmapimocks.NewMockClient(t)
+		allowVectorIndexStateRead(mockClient)
 		s := New(func() embeddings.EmbeddingSearch { return nil }, mockClient, nil, nil, nil, nil)
 		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
 
@@ -650,6 +739,7 @@ func TestRunSearch(t *testing.T) {
 	t.Run("empty query returns error", func(t *testing.T) {
 		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 		mockClient := mmapimocks.NewMockClient(t)
+		allowVectorIndexStateRead(mockClient)
 		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
 		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
 
@@ -662,6 +752,7 @@ func TestRunSearch(t *testing.T) {
 	t.Run("DM creation failure returns error", func(t *testing.T) {
 		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 		mockClient := mmapimocks.NewMockClient(t)
+		allowVectorIndexStateRead(mockClient)
 		mockClient.On("DM", "user1", "bot1", mock.Anything).
 			Return(errors.New("failed to create DM"))
 
@@ -677,6 +768,7 @@ func TestRunSearch(t *testing.T) {
 	t.Run("successful RunSearch returns post info", func(t *testing.T) {
 		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 		mockClient := mmapimocks.NewMockClient(t)
+		allowVectorIndexStateRead(mockClient)
 		searchDone := make(chan struct{})
 
 		// First DM is for question post (synchronous)
@@ -741,6 +833,7 @@ func TestRunSearch_SpanCoversAsyncWork(t *testing.T) {
 
 	mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 
 	mockClient.On("DM", "user1", "bot1", mock.Anything).
 		Run(func(args mock.Arguments) {
@@ -799,6 +892,7 @@ func TestEnrichResultsSameChannelMultipleTimes(t *testing.T) {
 	// Test that enrichResults correctly populates channel/user info
 	// when the same channel appears in multiple results
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 
 	mockClient.On("GetChannel", "channel1").Return(&model.Channel{
 		Id:          "channel1",
@@ -846,6 +940,7 @@ func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
 	// Test that enrichResults correctly populates user info
 	// when the same user appears in results across different channels
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 
 	mockClient.On("GetChannel", "channel1").Return(&model.Channel{
 		Id:          "channel1",
@@ -951,6 +1046,7 @@ func TestSearchQueryWithEmptyQuery(t *testing.T) {
 
 	mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
 
 	s := New(
 		func() embeddings.EmbeddingSearch { return mockEmbedding },

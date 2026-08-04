@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/testhelpers"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/testhelpers"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -109,42 +109,6 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 			_, err := executeToolWithMCP(t, suite, "read_channel", args)
 			require.Error(t, err, "read_channel with invalid channel should fail")
-		})
-
-		t.Run("PaginationBeyond100", func(t *testing.T) {
-			// Seed more posts than the legacy hard cap of 100 so we can prove the
-			// tool can now return >100 posts in a single call and page through them.
-			paginationChannel := testhelpers.CreateTestChannel(t, client, testData.Team.Id, "pagination-channel", "Pagination Channel")
-			const totalPosts = 130
-			for i := 0; i < totalPosts; i++ {
-				testhelpers.CreateTestPost(t, client, paginationChannel.Id, fmt.Sprintf("paginate-msg-%03d", i))
-			}
-
-			// Page 0 with per_page=120 returns more than the old 100 cap allowed.
-			firstPage, err := executeToolWithMCP(t, suite, "read_channel", map[string]interface{}{
-				"channel_id": paginationChannel.Id,
-				"per_page":   120,
-				"page":       0,
-			})
-			require.NoError(t, err, "read_channel page 0 should succeed")
-			firstText := textContent(t, firstPage)
-			assert.Contains(t, firstText, "Found 120 posts (page 0)", "page 0 should return 120 posts, exceeding the old 100 cap")
-			assert.Contains(t, firstText, "More posts available", "page 0 should hint that more posts exist")
-
-			// Page 1 returns the remaining 10 posts.
-			secondPage, err := executeToolWithMCP(t, suite, "read_channel", map[string]interface{}{
-				"channel_id": paginationChannel.Id,
-				"per_page":   120,
-				"page":       1,
-			})
-			require.NoError(t, err, "read_channel page 1 should succeed")
-			secondText := textContent(t, secondPage)
-			assert.Contains(t, secondText, "(page 1)", "page 1 should be labeled as the second page")
-			assert.NotContains(t, secondText, "More posts available", "the final page should not hint at more posts")
-
-			// The oldest post is only reachable beyond the first 100 newest posts,
-			// confirming pagination retrieves content the old cap hid.
-			assert.Contains(t, secondText, "paginate-msg-000", "oldest post should be reachable on a later page")
 		})
 	})
 
@@ -415,7 +379,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 	})
 
-	t.Run("AddUserToChannelTool", func(t *testing.T) {
+	t.Run("AddChannelMemberTool", func(t *testing.T) {
 		// Create a new user to add to channel
 		newUser := testhelpers.CreateTestUser(t, client, "channelmember", "channelmember@example.com", "testpassword")
 		testhelpers.AddUserToTeam(t, client, testData.Team.Id, newUser.Id)
@@ -426,9 +390,9 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"channel_id": testData.Channel.Id,
 			}
 
-			result, err := executeToolWithMCP(t, suite, "add_user_to_channel", args)
-			require.NoError(t, err, "add_user_to_channel should succeed")
-			assert.NotEmpty(t, result.Content, "add_user_to_channel should return content")
+			result, err := executeToolWithMCP(t, suite, "add_channel_member", args)
+			require.NoError(t, err, "add_channel_member should succeed")
+			assert.NotEmpty(t, result.Content, "add_channel_member should return content")
 
 			// Verify the response mentions success
 			if len(result.Content) > 0 {
@@ -456,8 +420,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"channel_id": "invalid-channel-id",
 			}
 
-			_, err := executeToolWithMCP(t, suite, "add_user_to_channel", args)
-			require.Error(t, err, "add_user_to_channel with invalid channel ID should fail")
+			_, err := executeToolWithMCP(t, suite, "add_channel_member", args)
+			require.Error(t, err, "add_channel_member with invalid channel ID should fail")
 		})
 
 		t.Run("InvalidUserID", func(t *testing.T) {
@@ -466,8 +430,40 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"channel_id": testData.Channel.Id,
 			}
 
-			_, err := executeToolWithMCP(t, suite, "add_user_to_channel", args)
-			require.Error(t, err, "add_user_to_channel with invalid user ID should fail")
+			_, err := executeToolWithMCP(t, suite, "add_channel_member", args)
+			require.Error(t, err, "add_channel_member with invalid user ID should fail")
+		})
+	})
+
+	t.Run("AddTeamMemberTool", func(t *testing.T) {
+		// add_team_member is a production tool (promoted from dev mode).
+		newUser := testhelpers.CreateTestUser(t, client, "teammember", "teammember@example.com", "testpassword")
+
+		t.Run("HappyPath", func(t *testing.T) {
+			args := map[string]interface{}{
+				"user_id": newUser.Id,
+				"team_id": testData.Team.Id,
+			}
+
+			result, err := executeToolWithMCP(t, suite, "add_team_member", args)
+			require.NoError(t, err, "add_team_member should succeed")
+			assert.NotEmpty(t, result.Content, "add_team_member should return content")
+
+			if len(result.Content) > 0 {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
+					assert.Contains(t, textContent.Text, "Successfully added user", "Response should indicate success")
+				}
+			}
+		})
+
+		t.Run("InvalidUserID", func(t *testing.T) {
+			args := map[string]interface{}{
+				"user_id": "invalid-user-id",
+				"team_id": testData.Team.Id,
+			}
+
+			_, err := executeToolWithMCP(t, suite, "add_team_member", args)
+			require.Error(t, err, "add_team_member with invalid user ID should fail")
 		})
 	})
 

@@ -6,7 +6,7 @@ package mcp
 import (
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // ToolPolicyChecker looks up the per-tool policy for a given MCP server/tool.

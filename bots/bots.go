@@ -11,15 +11,16 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"unicode/utf8"
 
-	"github.com/mattermost/mattermost-plugin-agents/assets"
-	"github.com/mattermost/mattermost-plugin-agents/bifrost"
-	"github.com/mattermost/mattermost-plugin-agents/config"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/loadtest"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/v2/assets"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
@@ -361,7 +362,7 @@ func (b *MMBots) EnsureBots() error {
 	// For each bot in the configuration, try to find an existing bot matching the username.
 	// If it exists, update it to match. Otherwise, create a new bot.
 	for _, bot := range bots {
-		description := "Powered by " + bot.service.Type
+		description := poweredByDescription(bot.service.Type, bot.service.DefaultModel)
 		if prevBot, ok := prevousMMBotsByUsername[bot.cfg.Name]; ok {
 			var err error
 			bot.mmBot, err = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
@@ -683,4 +684,18 @@ func (b *MMBots) GetAllBotUserIDs() []string {
 		}
 	}
 	return ids
+}
+
+// poweredByDescription builds the Mattermost bot description shown in the UI.
+func poweredByDescription(serviceType, modelName string) string {
+	var description string
+	if modelName == "" {
+		description = "Powered by " + serviceType
+	} else {
+		description = "Powered by " + serviceType + " - " + modelName
+	}
+	if utf8.RuneCountInString(description) > model.BotDescriptionMaxRunes {
+		return string([]rune(description)[:model.BotDescriptionMaxRunes])
+	}
+	return description
 }

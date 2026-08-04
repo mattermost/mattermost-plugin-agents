@@ -4,8 +4,8 @@
 package bots
 
 import (
-	"github.com/mattermost/mattermost-plugin-agents/bifrost"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -51,6 +51,12 @@ func (b *Bot) GetService() llm.ServiceConfig {
 func (b *Bot) HasNativeWebSearchEnabled() bool {
 	if !bifrost.SupportsNativeTools(b.service.Type) {
 		return false
+	}
+	switch b.service.Type {
+	case llm.ServiceTypeOpenAICompatible, llm.ServiceTypeAzure:
+		if !llm.ServiceUsesResponsesAPI(b.service) {
+			return false
+		}
 	}
 	for _, tool := range b.cfg.EnabledNativeTools {
 		if tool == "web_search" {

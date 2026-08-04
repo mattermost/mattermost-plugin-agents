@@ -13,7 +13,19 @@ import {
     deriveApprovalStageForPost,
     hasAutoApprovedToolsForPost,
     buildRoundsFromTurns,
+    computeRenderedRounds,
+    type Round,
 } from './turn_content_utils';
+
+function makeRound(id: string, text: string): Round {
+    return {
+        id,
+        text,
+        toolCalls: [],
+        reasoning: {summary: '', signature: ''},
+        annotations: [],
+    };
+}
 
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
     return {
@@ -517,6 +529,147 @@ describe('hasAutoApprovedToolsForPost', () => {
         });
         const conv = makeConversation([anchor]);
         expect(hasAutoApprovedToolsForPost(conv, 'post_missing')).toBe(false);
+    });
+});
+
+describe('computeRenderedRounds', () => {
+    const liveRound = makeRound('live', 'streamed summary text');
+
+    // Regression for MM-69476: meeting-summary posts have no conversation
+    // entity, so their content lives only in the live round. When the stream
+    // ends `generating` flips to false; the summary must remain visible.
+    test('keeps the live round for a legacy post (no conversation) after streaming ends', () => {
+        const result = computeRenderedRounds({
+            regenerating: false,
+            hasConversation: false,
+            persistedRounds: [],
+            liveRounds: [],
+            generating: false,
+            currentRound: liveRound,
+        });
+        expect(result).toEqual([liveRound]);
+    });
+
+    test('shows the live round for a legacy post while streaming', () => {
+        const result = computeRenderedRounds({
+            regenerating: false,
+            hasConversation: false,
+            persistedRounds: [],
+            liveRounds: [],
+            generating: true,
+            currentRound: liveRound,
+        });
+        expect(result).toEqual([liveRound]);
+    });
+
+    test('renders nothing for a legacy post with no content', () => {
+        const result = computeRenderedRounds({
+            regenerating: false,
+            hasConversation: false,
+            persistedRounds: [],
+            liveRounds: [],
+            generating: false,
+            currentRound: null,
+        });
+        expect(result).toEqual([]);
+    });
+
+    // Conversation posts persist their content as turns, so once streaming
+    // ends the live round is dropped in favor of the refetched persisted
+    // rounds — avoiding a duplicate render.
+    test('drops the live round for a conversation post after streaming ends', () => {
+        const persisted = makeRound('turn_1', 'persisted answer');
+        const result = computeRenderedRounds({
+            regenerating: false,
+            hasConversation: true,
+            persistedRounds: [persisted],
+            liveRounds: [],
+            generating: false,
+            currentRound: liveRound,
+        });
+        expect(result).toEqual([persisted]);
+    });
+
+    test('appends the live round for a conversation post while streaming', () => {
+        const persisted = makeRound('turn_1', 'persisted answer');
+        const result = computeRenderedRounds({
+            regenerating: false,
+            hasConversation: true,
+            persistedRounds: [persisted],
+            liveRounds: [],
+            generating: true,
+            currentRound: liveRound,
+        });
+        expect(result).toEqual([persisted, liveRound]);
+    });
+
+    test('keeps the live round for a conversation post while a refetch is pending', () => {
+        const persisted = makeRound('turn_1', 'persisted answer');
+        const result = computeRenderedRounds({
+            regenerating: false,
+            hasConversation: true,
+            persistedRounds: [persisted],
+            liveRounds: [],
+            generating: false,
+            pendingRefetch: true,
+            currentRound: liveRound,
+        });
+        expect(result).toEqual([persisted, liveRound]);
+    });
+
+    test('keeps the live round for a conversation post until persisted rounds load', () => {
+        const result = computeRenderedRounds({
+            regenerating: false,
+            hasConversation: true,
+            persistedRounds: [],
+            liveRounds: [],
+            generating: false,
+            currentRound: liveRound,
+        });
+        expect(result).toEqual([liveRound]);
+    });
+
+    test('suppresses persisted rounds while regenerating but keeps live rounds and the current round', () => {
+        const persisted = makeRound('turn_1', 'old answer');
+        const completedLive = makeRound('live-0', 'first regen round');
+        const result = computeRenderedRounds({
+            regenerating: true,
+            hasConversation: true,
+            persistedRounds: [persisted],
+            liveRounds: [completedLive],
+            generating: true,
+            currentRound: liveRound,
+        });
+        expect(result).toEqual([completedLive, liveRound]);
+    });
+
+    test('keeps multiple completed live rounds in order while regenerating between rounds', () => {
+        const persisted = makeRound('turn_1', 'old answer');
+        const firstRegen = makeRound('live-0', 'first regen round');
+        const secondRegen = makeRound('live-1', 'second regen round');
+        const result = computeRenderedRounds({
+            regenerating: true,
+            hasConversation: true,
+            persistedRounds: [persisted],
+            liveRounds: [firstRegen, secondRegen],
+            generating: false,
+            currentRound: null,
+        });
+        expect(result).toEqual([firstRegen, secondRegen]);
+    });
+
+    test('orders persisted rounds before completed live rounds and the current round', () => {
+        const persisted = makeRound('turn_1', 'persisted');
+        const completedLive = makeRound('live-0', 'completed live round');
+        const result = computeRenderedRounds({
+            regenerating: false,
+            hasConversation: true,
+            persistedRounds: [persisted],
+            liveRounds: [completedLive],
+            generating: true,
+            currentRound: liveRound,
+        });
+        expect(result).toEqual([persisted, completedLive, liveRound]);
     });
 });
 

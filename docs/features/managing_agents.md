@@ -31,7 +31,7 @@ You can reach the Agents page in three ways:
 - Open the URL `/plug/mattermost-ai/agents` directly.
 - From a conversation, open **AI Actions > Manage agents**.
 
-The **System Console > AI Bots** page no longer hosts the agent editor. Instead, it shows an **AI bot configuration has moved** notice with a link back to the Agents page. System administrators can still set the default bot in the same System Console section, just below the redirect notice — but creating, editing, and deleting agents happens on the Agents page.
+The **System Console > AI Bots** page no longer hosts the agent editor. Instead, it shows an **AI bot configuration has moved** notice with a link back to the Agents page. System administrators can still set the default bot in the same System Console section, just below the redirect notice — but creating, editing, and deleting agents happens on the Agents page. The default bot is the fallback agent for users who have not made an explicit selection; a user's own choice takes precedence.
 
 The Agents page itself shows:
 
@@ -100,7 +100,7 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
 | **Native provider tools** | Available when the selected provider exposes native tools (Anthropic, OpenAI on Responses API, Gemini, Vertex AI, and OpenAI Compatible/Azure when **Use Responses API** is on). Pick which native tools (such as web search) the agent may use. |
 | **Reasoning** | Available for Anthropic, OpenAI (Responses API), Gemini, and Vertex AI services. Lets you enable extended thinking and pick a reasoning effort or thinking budget. |
-| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure services. When enabled and a JSON schema is supplied at request time, the model returns valid JSON matching the schema. For Anthropic services, **Structured Output** and extended thinking cannot be enabled at the same time — turning Structured Output on temporarily disables reasoning, and turning it off restores your previous reasoning setting. |
+| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure services. When enabled and a JSON schema is supplied at request time, the model returns valid JSON matching the schema. For Anthropic services, **Structured Output** and extended thinking can both stay enabled; because Anthropic doesn't support both on the same request, requests that ask for structured JSON output skip extended thinking while all other requests keep using it. |
 
 Switching the **AI Service** to a service of a different type clears the model field and resets the native tools, reasoning, thinking budget, and structured output fields back to defaults so you don't carry stale provider-specific values across providers. Switching between two services of the same type (for example two OpenAI Compatible entries) preserves those fields.
 
@@ -125,15 +125,16 @@ These rules are enforced both for `@mentions` in channels and for direct convers
 
 ### MCPs tab
 
-The MCPs tab is available only when **Enable Tools** is on (Configuration tab). It controls which MCP tools the agent may call.
+The MCPs tab is available only when **Enable Tools** is on (Configuration tab). It controls which MCP tools the agent may call and how MCP tool schemas are exposed to the model.
 
+- **Dynamic tool loading**: enabled by default for new agents and for existing agents that do not yet have this setting. The agent starts with MCP discovery and loading helpers, then loads full MCP tool schemas only when needed. Disable this to use the full MCP tool list for this agent up front. Once a tool is loaded in a conversation, it can be used in later turns in that same conversation without repeating the search/load prelude.
 - **Automatically enable all MCP tools**: the agent has access to every MCP tool available in the server right now and to any MCP tools added later. This is the default for new agents and the setting used by all migrated legacy bots.
 - When the auto-grant is off, pick the specific MCP tools to enable. Tools that are no longer present on the server are dropped from the agent's allowlist when you save.
 - For OAuth-backed MCP servers, you can also start the per-user **Connect** flow directly from this tab. Enabling a server that is currently disconnected stores a wildcard grant — once you finish the OAuth flow, the agent gets every tool that server exposes. The tab refreshes automatically when you connect or disconnect (`mcp_connection_updated` websocket event).
 
-Agents also support an API field, `mcpDynamicToolLoading`, that lets the agent search and load MCP tool schemas as needed instead of presenting every full MCP schema in the prompt. This does not grant additional tools: the MCPs tab allowlist or auto-grant setting still determines which tools the agent may use.
+Dynamic tool loading and the auto-grant are separate controls: dynamic loading decides when schemas are shown to the model, while the auto-grant decides which MCP tools the agent is allowed to use.
 
-Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. For more on MCP setup, see [Model Context Protocol (MCP)](../admin_guide.md#model-context-protocol-mcp-integration) in the Admin Guide. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
+Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. MCP discovery and loading helpers run automatically, but MCP tools that are dynamically loaded still follow their configured approval policy. For more on MCP setup, see [Model Context Protocol (MCP)](../admin_guide.md#model-context-protocol-mcp-integration) in the Admin Guide. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
 
 ## Editing an agent
 

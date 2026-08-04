@@ -15,20 +15,20 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversations"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/metrics"
-	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
-	prompttemplates "github.com/mattermost/mattermost-plugin-agents/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
-	"github.com/mattermost/mattermost-plugin-agents/search"
-	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	prompttemplates "github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
+	"github.com/mattermost/mattermost-plugin-agents/v2/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -569,9 +569,12 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockAPI.On("LogError", args...).Maybe()
 	}
 
-	// Mock GetConfig and GetLicense for WithLLMContextServerInfo used in bridge context building.
+	// Mock GetConfig and GetLicense for WithLLMContextServerInfo and the
+	// context builder's remote-MCP license gate. Default to a licensed
+	// server so remote MCP tools are supplied; tests asserting unlicensed
+	// behavior override via OverrideLicense.
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 
 	conversationsService := conversations.New(
 		llmPrompts,
@@ -1095,6 +1098,53 @@ func TestHandleGetAIBotsDefaultBotAfterFilteredBot(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, response.Bots, 1)
 	require.Equal(t, "ai", response.Bots[0].Username)
+	require.True(t, response.Bots[0].IsDefault, "default bot should be flagged with isDefault")
+}
+
+func TestHandleGetAIBotsIsDefaultFlag(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	defaultBot := bots.NewBot(
+		llm.BotConfig{Name: "ai", DisplayName: "Default Agent"},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "defaultbotuserid1234567890", Username: "ai", DisplayName: "Default Agent"},
+		nil,
+	)
+	otherBot := bots.NewBot(
+		llm.BotConfig{Name: "other", DisplayName: "Other Agent"},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "otherbotuserid12345678901a", Username: "other", DisplayName: "Other Agent"},
+		nil,
+	)
+	e.bots.SetBotsForTesting([]*bots.Bot{otherBot, defaultBot})
+
+	e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
+	request.Header.Add("Mattermost-User-ID", "userid")
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response AIBotsResponse
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Len(t, response.Bots, 2)
+
+	byUsername := make(map[string]AIBotInfo, len(response.Bots))
+	for _, b := range response.Bots {
+		byUsername[b.Username] = b
+	}
+	require.True(t, byUsername["ai"].IsDefault, "configured default bot should have isDefault=true")
+	require.False(t, byUsername["other"].IsDefault, "non-default bot should have isDefault=false")
 }
 
 func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {

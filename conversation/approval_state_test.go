@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,6 +46,17 @@ func TestComputePostApprovalState(t *testing.T) {
 				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
 				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
 					{Type: BlockTypeToolUse, ID: "tc1", Name: "x", Status: StatusPending},
+				})},
+			},
+			want: ApprovalStageCall,
+		},
+		{
+			name:   "post with only pending auto-execute tool_use returns call",
+			postID: "p1",
+			turns: []store.Turn{
+				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
+				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolUse, ID: "tc1", Name: "x", Status: StatusPending, WouldAutoExecute: true},
 				})},
 			},
 			want: ApprovalStageCall,

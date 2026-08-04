@@ -8,12 +8,12 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	embeddingmocks "github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/evals"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	embeddingmocks "github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/evals"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -80,6 +80,7 @@ func TestSearchCitationFormat(t *testing.T) {
 
 			// Mock mmapi.Client for enrichment and prompt context
 			mockClient := mmapimocks.NewMockClient(t.T)
+			allowVectorIndexStateRead(mockClient)
 			mockClient.On("GetChannel", channelID).Return(&model.Channel{
 				Id:          channelID,
 				DisplayName: "General",

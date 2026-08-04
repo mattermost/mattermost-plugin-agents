@@ -14,7 +14,7 @@ import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
 
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
+import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
@@ -99,39 +99,40 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
 
     ];
 
-    const toggleTool = (toolId: string) => {
+    const setToolEnabled = (toolId: string, enabled: boolean) => {
         const currentTools = props.enabledTools || [];
-        if (currentTools.includes(toolId)) {
-            props.onChange(currentTools.filter((t) => t !== toolId));
-        } else {
-            props.onChange([...currentTools, toolId]);
+        if (enabled) {
+            if (!currentTools.includes(toolId)) {
+                props.onChange([...currentTools, toolId]);
+            }
+            return;
         }
+        props.onChange(currentTools.filter((t) => t !== toolId));
     };
 
     const titleMessage = nativeToolsTitle(provider, intl);
 
     return (
-        <>
+        <FormRow>
             <ItemLabel>
                 {titleMessage}
             </ItemLabel>
-            <div>
+            <NativeToolsColumn>
                 {availableNativeTools.map((tool) => (
-                    <NativeToolContainer key={tool.id}>
-                        <StyledCheckbox
-                            type='checkbox'
-                            data-testid={`native-tool-${tool.id}`}
-                            checked={(props.enabledTools || []).includes(tool.id)}
-                            onChange={() => toggleTool(tool.id)}
-                        />
-                        <NativeToolLabel>
-                            <div>{tool.label}</div>
-                            <HelpText>{tool.helpText}</HelpText>
-                        </NativeToolLabel>
-                    </NativeToolContainer>
+                    <NativeToolField key={tool.id}>
+                        <FieldControlRow>
+                            <InlineCheckbox
+                                testId={`native-tool-${tool.id}`}
+                                label={tool.label}
+                                checked={(props.enabledTools || []).includes(tool.id)}
+                                onChange={(checked) => setToolEnabled(tool.id, checked)}
+                            />
+                        </FieldControlRow>
+                        <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
+                    </NativeToolField>
                 ))}
-            </div>
-        </>
+            </NativeToolsColumn>
+        </FormRow>
     );
 };
 
@@ -306,7 +307,7 @@ const Bot = (props: Props) => {
                                 value={props.bot.model}
                                 options={availableModels}
                                 placeholder={intl.formatMessage({defaultMessage: 'Use service default'})}
-                                onChange={(e) => props.onChange({...props.bot, model: e.target.value})}
+                                onChange={(value) => props.onChange({...props.bot, model: value})}
                                 helptext={intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Select from the list or type a custom model name.'})}
                             />
                         ) : (
@@ -409,7 +410,7 @@ const Bot = (props: Props) => {
                                             value={props.bot.structuredOutputEnabled ?? false}
                                             onChange={(to: boolean) => props.onChange({...props.bot, structuredOutputEnabled: to})}
                                             helpText={selectedService.type === 'anthropic' ?
-                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Structured output and extended thinking cannot be used simultaneously.'}) :
+                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Requests that ask for structured JSON output will skip extended thinking; all other requests keep using it.'}) :
                                                 intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
                                             }
                                         />
@@ -490,30 +491,20 @@ const HeaderContainer = styled.div`
 	cursor: pointer;
 `;
 
-const NativeToolContainer = styled.div`
-	display: flex;
-	flex-direction: row;
-	align-items: flex-start;
-	gap: 8px;
-	margin-bottom: 12px;
-`;
-
-const NativeToolLabel = styled.label`
+const NativeToolsColumn = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
-	cursor: pointer;
-
-	div:first-child {
-		font-size: 14px;
-		font-weight: 400;
-		line-height: 20px;
-	}
+	gap: 12px;
 `;
 
-const StyledCheckbox = styled.input`
-	margin-top: 2px;
-	cursor: pointer;
+const NativeToolField = styled.div`
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+`;
+
+const NativeToolHelpText = styled(HelpText)`
+	padding-left: 0;
 `;
 
 export default Bot;

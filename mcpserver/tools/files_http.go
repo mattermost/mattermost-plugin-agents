@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/files"
+	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 )
 
 // HTTPFileContentService reads file contents by calling back to the plugin API.

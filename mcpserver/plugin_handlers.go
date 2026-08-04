@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	mcppkg "github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
-	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	mcppkg "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

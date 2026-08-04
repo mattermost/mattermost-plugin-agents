@@ -22,7 +22,7 @@ Complete every item before starting the upgrade. Do not skip the database backup
 2. **Confirm your Mattermost server version.** v2.0.0 requires Mattermost Server v10.0 or later. The optional external MCP HTTP server requires Mattermost Server v11.2 or later.
 3. **Back up the Mattermost database.** v2.0.0 runs schema migrations on first start (see [Section 4](#4-what-gets-migrated-automatically)). Some migrations are not safely reversible (see [Section 8](#8-rollback-considerations)). In particular, migration 000007 drops the legacy `LLM_PostMeta` table without migrating its contents into the new conversation-entities tables — v1.x conversation titles cannot be recovered after the upgrade except from this backup. See [Section 5](#5-breaking-changes) for the full list of v1.x data that does not survive the upgrade.
 4. **Back up `config.json`.** The legacy bot migration removes entries from stored plugin configuration after copying them into the database. Keeping a pre-upgrade copy of `config.json` is the simplest way to recover original bot definitions if you need to roll back.
-5. **Verify your license is current.** Multi-agent configurations, fine-grained access controls, MCP support, and embedding search require an Entry, Enterprise, or Enterprise Advanced license. See [License requirements](admin_guide.md#license-requirements).
+5. **Verify your license is current.** Multi-agent configurations, fine-grained access controls, MCP support (remote and external MCP servers; the embedded Mattermost MCP server does not require a license), and embedding search require an Entry, Enterprise, or Enterprise Advanced license. See [License requirements](admin_guide.md#license-requirements).
 6. **Capture a list of currently configured bots.** From your existing System Console > Plugins > Agents (or AI Bots) page, note the username, display name, service binding, and access rules of each bot. After the upgrade, you can compare this list against the migrated agents on the new **Agents** product page.
 7. **Identify any external integrations that read the `LLM_PostMeta` table directly.** That table is dropped by migration 000007. To our knowledge, no documented integration depends on this table.
 8. **Schedule a maintenance window.** The plugin must be stopped and restarted, and the migrations must complete before users resume traffic. Typical windows in non-HA environments complete in minutes; HA clusters should plan additional time for migration coordination (see [Section 9](#9-ha-specific-notes)).
@@ -58,6 +58,7 @@ After the schema migrations run, the plugin performs a one-time migration of leg
     - `CreatorID` left empty (migrated agents do not have a creator).
     - `AdminUserIDs` cleared. Migrated agents are managed by system admins.
     - `AutoEnableNewMCPTools = true` so migrated agents preserve the v1.x behavior of having access to every MCP tool, including ones added later.
+    - `MCPDynamicToolLoading = true` when the legacy bot did not explicitly store a value, so MCP tool schemas are loaded dynamically by default. Disable **Dynamic tool loading** on the agent's **MCPs** tab to expose the full MCP tool list up front.
 5. The plugin clears `config.bots` from stored configuration to prevent duplicate bot registration on subsequent restarts.
 6. The plugin sets `legacy_config_bots_migrated = true`.
 
@@ -126,7 +127,7 @@ Defaults that ship with v2.0.0 differ from v1.x in the following ways. None of t
 
 > **Reasoning is on by default for migrated agents.** Migration 000006 backfills `ReasoningEnabled = true` for existing rows. If your environment relies on agents *not* using extended thinking — for example, to reduce token spend or to keep latency predictable for a particular agent — explicitly turn off **Reasoning Enabled** on each affected agent after the upgrade.
 
-> **Anthropic structured output and extended thinking are mutually exclusive.** When Anthropic structured output is enabled, the UI disables extended thinking for that agent — the two cannot be active simultaneously.
+> **Anthropic structured output and extended thinking.** Both toggles can be enabled on the same agent. Because Anthropic doesn't support extended thinking together with structured output, requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
 
 ## 7. Step-by-step upgrade procedure
 

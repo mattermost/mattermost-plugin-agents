@@ -15,27 +15,27 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
-	"github.com/mattermost/mattermost-plugin-agents/bifrost"
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/config"
-	"github.com/mattermost/mattermost-plugin-agents/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/conversations"
-	"github.com/mattermost/mattermost-plugin-agents/customprompts"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/enterprise"
-	"github.com/mattermost/mattermost-plugin-agents/files"
-	"github.com/mattermost/mattermost-plugin-agents/i18n"
-	"github.com/mattermost/mattermost-plugin-agents/indexer"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
-	"github.com/mattermost/mattermost-plugin-agents/meetings"
-	"github.com/mattermost/mattermost-plugin-agents/metrics"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/search"
-	"github.com/mattermost/mattermost-plugin-agents/store"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/files"
+	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -509,6 +509,7 @@ type AIBotInfo struct {
 	UserIDs               []string               `json:"userIDs"`
 	EnabledMCPTools       []llm.EnabledMCPTool   `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools bool                   `json:"autoEnableNewMCPTools"`
+	IsDefault             bool                   `json:"isDefault,omitempty"`
 }
 
 type AIBotsResponse struct {
@@ -540,6 +541,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			dmChannelID = botDMChannel.Id
 		}
 
+		isDefault := bot.GetMMBot().Username == defaultBotName
 		bots = append(bots, AIBotInfo{
 			ID:                    bot.GetMMBot().UserId,
 			DisplayName:           bot.GetMMBot().DisplayName,
@@ -552,8 +554,9 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			UserIDs:               bot.GetConfig().UserIDs,
 			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
 			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
+			IsDefault:             isDefault,
 		})
-		if bot.GetMMBot().Username == defaultBotName {
+		if isDefault {
 			last := len(bots) - 1
 			bots[0], bots[last] = bots[last], bots[0]
 		}

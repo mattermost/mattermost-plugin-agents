@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 )
 
 // ErrUserPreferencesInvalid indicates normalized preferences violate size or count limits.

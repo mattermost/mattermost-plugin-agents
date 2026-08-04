@@ -13,13 +13,13 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/i18n"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/prompts"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
-	"github.com/mattermost/mattermost-plugin-agents/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -157,6 +157,11 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
 			}
 		}()
+		defer func() {
+			if r := recover(); r != nil {
+				reterr = fmt.Errorf("panic summarizing transcription: %v", r)
+			}
+		}()
 
 		transcriptionFileID, err := GetCaptionsFileIDFromProps(transcriptionPost)
 		if err != nil {
@@ -239,6 +244,11 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 					s.pluginAPI.Log.Error("Failed to update post in error handling handleCallRecordingPost", "error", err)
 				}
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
+			}
+		}()
+		defer func() {
+			if r := recover(); r != nil {
+				reterr = fmt.Errorf("panic summarizing call recording: %v", r)
 			}
 		}()
 

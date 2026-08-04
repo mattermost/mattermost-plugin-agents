@@ -6,9 +6,9 @@ package conversations
 import (
 	"encoding/json"
 
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/mmtools"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -58,6 +58,13 @@ func (c *Conversations) unmarshalWebSearchContext(webSearchContextJSON string, p
 	if err := json.Unmarshal([]byte(webSearchContextJSON), &params); err != nil {
 		c.mmClient.LogError("Failed to unmarshal web search context", "error", err, "post_id", postID)
 		return nil
+	}
+
+	// Unmarshaling the literal JSON "null" succeeds and leaves params nil, which
+	// would make the unconditional writes below panic ("assignment to entry in
+	// nil map"). A user can set this prop to any value, so guard against it.
+	if params == nil {
+		params = make(map[string]interface{})
 	}
 
 	// Reconstruct proper types for web search context values

@@ -11,8 +11,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +35,7 @@ func TestHTTPSemanticSearchService_Search(t *testing.T) {
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				resp := httpSearchResponse{
 					Results: []httpSearchResult{
-						{PostID: "p1", ChannelID: "c1", ChannelName: "General", UserID: "u1", Username: "alice", Content: "hello world", Score: 0.95},
+						{PostID: "p1", ChannelID: "c1", ChannelName: "General", UserID: "u1", Username: "alice", Content: "hello world", Score: 0.95, CreateAt: 1700000000000},
 						{PostID: "p2", ChannelID: "c2", ChannelName: "Dev", UserID: "u2", Username: "bob", Content: "test post", Score: 0.80},
 					},
 				}
@@ -48,6 +48,7 @@ func TestHTTPSemanticSearchService_Search(t *testing.T) {
 				assert.Equal(t, "p1", results[0].PostID)
 				assert.Equal(t, "alice", results[0].Username)
 				assert.InDelta(t, 0.95, float64(results[0].Score), 0.01)
+				assert.Equal(t, int64(1700000000000), results[0].CreateAt)
 				assert.Equal(t, "p2", results[1].PostID)
 			},
 		},

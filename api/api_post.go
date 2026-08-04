@@ -10,14 +10,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/conversations"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/mmtools"
-	"github.com/mattermost/mattermost-plugin-agents/react"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
-	"github.com/mattermost/mattermost-plugin-agents/telemetry"
-	"github.com/mattermost/mattermost-plugin-agents/threads"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/react"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/threads"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -304,11 +304,6 @@ func (a *API) handleToolCall(c *gin.Context) {
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
-
 	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
 		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
@@ -343,15 +338,16 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 // toolApprovalHTTPStatus maps errors from HandleToolCall/HandleToolResult to
 // HTTP statuses. Stale-click and missing-conversation cases are client-side
-// issues (400); requester-mismatch is a permission denial (403); everything
-// else falls through to 500.
+// issues (400); requester-mismatch and unlicensed remote MCP use are
+// permission denials (403); everything else falls through to 500.
 func toolApprovalHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrStaleToolClick),
 		errors.Is(err, conversations.ErrPostMissingConversationID),
 		errors.Is(err, conversations.ErrInvalidToolAnswer):
 		return http.StatusBadRequest
-	case errors.Is(err, conversations.ErrNotRequester):
+	case errors.Is(err, conversations.ErrNotRequester),
+		errors.Is(err, conversations.ErrRemoteMCPNotLicensed):
 		return http.StatusForbidden
 	default:
 		return http.StatusInternalServerError
@@ -362,11 +358,6 @@ func (a *API) handleToolResult(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
 
 	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {

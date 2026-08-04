@@ -9,21 +9,25 @@ import {
     PencilOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
+//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
+import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
 import {getProfilePictureUrl} from '@/client';
+import {getPortalTarget} from '@/utils/dom';
 
 import {UserAgent, ServiceInfo} from '@/types/agents';
 
 type Props = {
     agent: UserAgent;
     services: ServiceInfo[];
+    servicesLoaded: boolean;
     canManage: boolean;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, canManage, onEdit, onDelete} = props;
+    const {agent, services, servicesLoaded, canManage, onEdit, onDelete} = props;
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
@@ -32,7 +36,10 @@ const AgentRow = (props: Props) => {
     const autoEnableNewMCPTools = agent.autoEnableNewMCPTools ?? false;
     const toolCount = autoEnableNewMCPTools ? 0 : (agent.enabledMCPTools?.length ?? 0);
     const service = services.find((s) => s.id === agent.serviceID);
-    const serviceUnavailable = agent.serviceID && !service;
+
+    // Only flag a missing service once the list has loaded; users without
+    // agent-management permission never fetch it, so empty means unknown.
+    const serviceUnavailable = servicesLoaded && agent.serviceID && !service;
 
     let mcpBadge: React.ReactNode = null;
     if (autoEnableNewMCPTools) {
@@ -142,6 +149,26 @@ const AgentRow = (props: Props) => {
                         <ServiceWarningBadge>
                             <FormattedMessage defaultMessage='Service unavailable'/>
                         </ServiceWarningBadge>
+                    )}
+                    {!canManage && (
+                        <OverlayTrigger
+                            placement='top'
+                            container={getPortalTarget}
+                            overlay={
+                                <Tooltip id={`read-only-agent-tooltip-${agent.id}`}>
+                                    <FormattedMessage
+                                        defaultMessage='Mention @{username} in a channel or direct message to chat with this agent.'
+                                        values={{username: agent.name}}
+                                    />
+                                </Tooltip>
+                            }
+                        >
+                            <ReadOnlyBadgeTrigger tabIndex={0}>
+                                <ReadOnlyBadge>
+                                    <FormattedMessage defaultMessage='Read only'/>
+                                </ReadOnlyBadge>
+                            </ReadOnlyBadgeTrigger>
+                        </OverlayTrigger>
                     )}
                     {mcpBadge}
                 </BadgesColumn>
@@ -268,6 +295,22 @@ const ServiceWarningBadge = styled.span`
     background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
     color: var(--dnd-indicator, #D24B4E);
     font-size: 12px;
+    white-space: nowrap;
+`;
+
+const ReadOnlyBadgeTrigger = styled.span`
+    display: inline-flex;
+    flex-shrink: 0;
+    cursor: default;
+`;
+
+const ReadOnlyBadge = styled.span`
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(var(--center-channel-color-rgb), 0.08);
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    font-size: 12px;
+    font-weight: 600;
     white-space: nowrap;
 `;
 

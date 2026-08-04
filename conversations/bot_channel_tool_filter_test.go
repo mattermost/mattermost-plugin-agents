@@ -9,12 +9,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -89,11 +89,17 @@ func channelFollowUpTestMCPTool(name, origin, description string) llm.Tool {
 }
 
 func newChannelFollowUpTestBuilder(t *testing.T, mcpTools []llm.Tool, config *channelFollowUpTestConfig) *llmcontext.Builder {
+	return newChannelFollowUpTestBuilderWithLicense(t, mcpTools, config, true)
+}
+
+// newChannelFollowUpTestBuilderWithLicense builds a context builder whose
+// license state controls remote MCP tool supply: unlicensed builders drop
+// remote-origin tools before they reach the LLM context.
+func newChannelFollowUpTestBuilderWithLicense(t *testing.T, mcpTools []llm.Tool, config *channelFollowUpTestConfig, licensed bool) *llmcontext.Builder {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockLicenseState(mockAPI, licensed)
 	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 
 	return llmcontext.NewLLMContextBuilder(

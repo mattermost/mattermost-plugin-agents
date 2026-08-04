@@ -18,15 +18,15 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/mattermost/mattermost-plugin-agents/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/evals"
-	"github.com/mattermost/mattermost-plugin-agents/files"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/testhelpers"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
-	"github.com/mattermost/mattermost-plugin-agents/postgres"
-	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/evals"
+	"github.com/mattermost/mattermost-plugin-agents/v2/files"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/testhelpers"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/postgres"
+	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -319,7 +319,7 @@ func setupEmbeddingSearch(t *testing.T, data *evalChannelData, serverURL, adminT
 		ChunkSize:        500,
 		ChunkOverlap:     50,
 		ChunkingStrategy: "sentences",
-	})
+	}, embeddings.RecencyBiasSettings{})
 
 	// Fetch all posts from Mattermost and index them into PGVector
 	client := model.NewAPIv4Client(serverURL)

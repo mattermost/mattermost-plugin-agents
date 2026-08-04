@@ -3,7 +3,7 @@
 
 import React from 'react';
 import {FormattedMessage} from 'react-intl';
-import styled from 'styled-components';
+import styled, {keyframes} from 'styled-components';
 
 import {PrimaryButton, SecondaryButton, TertiaryButton} from '../../assets/buttons';
 
@@ -48,6 +48,22 @@ const ProgressBar = styled.div<{progress: number}>`
     width: ${(props) => props.progress}%;
     background-color: var(--button-bg);
     transition: width 0.3s ease-in-out;
+`;
+
+const indeterminateSlide = keyframes`
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(250%);
+    }
+`;
+
+const IndeterminateProgressBar = styled.div`
+    height: 100%;
+    width: 40%;
+    background-color: var(--button-bg);
+    animation: ${indeterminateSlide} 1.5s ease-in-out infinite;
 `;
 
 const ProgressText = styled(HelpText)`
@@ -195,6 +211,20 @@ const StaleActions = styled.div`
     gap: 8px;
 `;
 
+// Unknown phases get fallback text (may come from a newer plugin version).
+const renderVectorIndexPhase = (phase: string) => {
+    switch (phase) {
+    case 'dropped':
+        return <FormattedMessage defaultMessage='Dropped for bulk load — search unavailable'/>;
+    case 'building':
+        return <FormattedMessage defaultMessage='Rebuilding — search unavailable'/>;
+    case 'repairing':
+        return <FormattedMessage defaultMessage='Re-indexing posts edited during rebuild'/>;
+    default:
+        return <FormattedMessage defaultMessage='Unknown state'/>;
+    }
+};
+
 interface ReindexSectionProps {
     jobStatus: JobStatusType | null;
     statusMessage: StatusMessageType;
@@ -330,20 +360,30 @@ export const ReindexSection = ({
 
                             {jobStatus && (
                                 <>
-                                    <ProgressText>
-                                        <FormattedMessage
-                                            defaultMessage='Processing: {processed} of {total} posts ({percent}%)'
-                                            values={{
-                                                processed: jobStatus.processed_rows.toLocaleString(),
-                                                total: jobStatus.total_rows.toLocaleString(),
-                                                percent: jobStatus.total_rows ? Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100) : 0,
-                                            }}
-                                        />
-                                    </ProgressText>
+                                    {jobStatus.phase === 'building_index' ? (
+                                        <ProgressText>
+                                            <FormattedMessage defaultMessage='Bulk load complete — building the vector index. This can take a while on large workspaces; search stays unavailable until it finishes.'/>
+                                        </ProgressText>
+                                    ) : (
+                                        <ProgressText>
+                                            <FormattedMessage
+                                                defaultMessage='Processing: {processed} of {total} posts ({percent}%)'
+                                                values={{
+                                                    processed: jobStatus.processed_rows.toLocaleString(),
+                                                    total: jobStatus.total_rows.toLocaleString(),
+                                                    percent: jobStatus.total_rows ? Math.min(Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100), 100) : 0,
+                                                }}
+                                            />
+                                        </ProgressText>
+                                    )}
                                     <ProgressContainer>
-                                        <ProgressBar
-                                            progress={jobStatus.total_rows ? Math.min((jobStatus.processed_rows / jobStatus.total_rows) * 100, 100) : 0}
-                                        />
+                                        {jobStatus.phase === 'building_index' ? (
+                                            <IndeterminateProgressBar/>
+                                        ) : (
+                                            <ProgressBar
+                                                progress={jobStatus.total_rows ? Math.min((jobStatus.processed_rows / jobStatus.total_rows) * 100, 100) : 0}
+                                            />
+                                        )}
                                     </ProgressContainer>
                                     <JobInfoCard>
                                         {jobStatus.node_id && (
@@ -385,7 +425,7 @@ export const ReindexSection = ({
                                     values={{
                                         processed: jobStatus.processed_rows.toLocaleString(),
                                         total: jobStatus.total_rows.toLocaleString(),
-                                        percent: jobStatus.total_rows ? Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100) : 0,
+                                        percent: jobStatus.total_rows ? Math.min(Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100), 100) : 0,
                                     }}
                                 />
                             </ProgressText>
@@ -475,6 +515,16 @@ export const ReindexSection = ({
                                         </HealthCheckLabel>
                                         <HealthCheckValue>
                                             {healthCheckResult.missing_posts.toLocaleString()}
+                                        </HealthCheckValue>
+                                    </HealthCheckRow>
+                                )}
+                                {healthCheckResult.vector_index_state && (
+                                    <HealthCheckRow>
+                                        <HealthCheckLabel>
+                                            <FormattedMessage defaultMessage='Vector Index'/>
+                                        </HealthCheckLabel>
+                                        <HealthCheckValue>
+                                            {renderVectorIndexPhase(healthCheckResult.vector_index_state.phase)}
                                         </HealthCheckValue>
                                     </HealthCheckRow>
                                 )}

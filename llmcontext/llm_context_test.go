@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -105,7 +105,7 @@ func newTestBuilder(t *testing.T, toolProvider ToolProvider, mcpProvider MCPTool
 		TeamSettings:    model.TeamSettings{SiteName: &siteName},
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
@@ -214,7 +214,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		TeamSettings:    model.TeamSettings{SiteName: &siteName},
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	client := pluginapi.NewClient(mockAPI, nil)
@@ -243,7 +243,7 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 		TeamSettings:    model.TeamSettings{SiteName: &siteName},
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	client := pluginapi.NewClient(mockAPI, nil)
@@ -272,7 +272,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 		TeamSettings:    model.TeamSettings{SiteName: &siteName},
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	client := pluginapi.NewClient(mockAPI, nil)

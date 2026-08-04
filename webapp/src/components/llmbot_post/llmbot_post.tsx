@@ -14,8 +14,10 @@ import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
 
+import {isValidId} from '@/utils/ids';
+
 import PostText from '../post_text';
-import {SearchSources} from '../search_sources';
+import {SearchSources, parseSearchSources} from '../search_sources';
 import ToolApprovalSet from '../tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
@@ -23,6 +25,7 @@ import {Annotation} from '../citations/types';
 import {
     Round,
     buildRoundsFromTurns,
+    computeRenderedRounds,
     deriveApprovalStageForPost,
 } from './turn_content_utils';
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
@@ -66,7 +69,11 @@ function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
 export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
 
-    const conversationId: string | undefined = props.post.props?.conversation_id;
+    // Post props are free-form JSON; a conversation_id that is not a
+    // well-formed id is treated as absent so no request is built from it and
+    // the component falls back to its no-conversation rendering path.
+    const rawConversationId: unknown = props.post.props?.conversation_id;
+    const conversationId: string | undefined = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
     // Meeting summarization posts have no conversation entity yet; fall back to
@@ -119,6 +126,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
             setMessage(props.post.message);
+            setPrecontent(false);
         }
     }, [props.post.message]);
 
@@ -311,22 +319,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         };
     }, [message, toolCalls, reasoningSummary, annotations]);
 
-    const renderedRounds = useMemo(() => {
-        if (regenerating) {
-            // Suppress stablePersisted (still the pre-regen turn) but keep
-            // liveRounds so multi-round regens don't visually empty between rounds.
-            const out: Round[] = [...liveRounds];
-            if (currentRound) {
-                out.push(currentRound);
-            }
-            return out;
-        }
-        const out: Round[] = [...stablePersisted, ...liveRounds];
-        if (generating && currentRound) {
-            out.push(currentRound);
-        }
-        return out;
-    }, [regenerating, stablePersisted, liveRounds, generating, currentRound]);
+    const renderedRounds = useMemo(() => computeRenderedRounds({
+        regenerating,
+        hasConversation: Boolean(conversationId),
+        persistedRounds: stablePersisted,
+        liveRounds,
+        generating,
+        pendingRefetch,
+        currentRound,
+    }), [regenerating, conversationId, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
 
     const regnerate = () => {
         setMessage('');
@@ -391,6 +392,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         return 'done';
     };
 
+    // Parsed defensively: search_results is a free-form post prop, so a
+    // malformed value yields an empty list instead of throwing during render.
+    const searchSources = useMemo(
+        () => parseSearchSources(props.post.props?.[SearchResultsPropKey]),
+        [props.post.props],
+    );
+
     const isReasoningCollapsed = (roundId: string): boolean => !expandedReasoning[roundId];
     const toggleReasoning = (roundId: string, collapsed: boolean) => {
         setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
@@ -440,13 +448,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     />
                 );
             })}
-            {props.post.props?.[SearchResultsPropKey] && (
+            {searchSources.length > 0 && (
                 <SearchSources
-                    sources={JSON.parse(props.post.props[SearchResultsPropKey])}
+                    sources={searchSources}
                 />
             )}
             { showPostbackButton &&
-            <PostSummaryHelpMessage>
+            <PostSummaryHelpMessage data-testid='llm-bot-post-summary-help'>
                 <FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>
             </PostSummaryHelpMessage>
             }

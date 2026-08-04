@@ -13,10 +13,10 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/maximhq/bifrost/core/schemas"
 
-	"github.com/mattermost/mattermost-plugin-agents/bifrost"
-	"github.com/mattermost/mattermost-plugin-agents/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/postgres"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/postgres"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -172,7 +172,7 @@ func createRealEmbeddingSearch(t *testing.T, db *sqlx.DB, apiKey string) embeddi
 		ChunkingStrategy: "sentences",
 	}
 
-	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts)
+	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts, embeddings.RecencyBiasSettings{})
 }
 
 // TestSemanticSearchRelevance tests that semantically similar content ranks higher

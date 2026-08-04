@@ -11,11 +11,11 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/types"
-	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -125,10 +125,20 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 	// automation plugin is absent.
 	groups := []func() []MCPTool{
 		p.getPostTools,
+		p.getScheduledPostTools,
+		p.getReactionTools,
+		p.getThreadTools,
 		p.getChannelTools,
+		p.getChannelMemberTools,
+		p.getBookmarkTools,
+		p.getUserTools,
+		p.getStatusTools,
 		p.getTeamTools,
 		p.getSearchTools,
 		p.getFileTools,
+		p.getIntegrationTools,
+		p.getGroupTools,
+		p.getRoleTools,
 		p.getAgentTools,
 		p.getAutomationTools,
 	}
