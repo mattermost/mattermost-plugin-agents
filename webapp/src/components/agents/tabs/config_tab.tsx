@@ -7,7 +7,13 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
 import {fetchModelsForAgentService} from '@/client';
-import {ServiceInfo} from '@/types/agents';
+import {
+    codePointLength,
+    DefaultMaxToolTurns,
+    MaxAllowedMaxToolTurns,
+    MaxCustomInstructionsRunes,
+    ServiceInfo,
+} from '@/types/agents';
 import {
     BooleanItem,
     ComboboxItem,
@@ -31,7 +37,7 @@ import {IntItem} from '@/components/system_console/number_items';
 import ReasoningConfigItem from '@/components/system_console/reasoning_config';
 import {LLMService} from '@/components/system_console/service';
 
-import {AgentDraft, DefaultMaxToolTurns, MaxAllowedMaxToolTurns} from '../agent_config_view';
+import {AgentDraft} from '../agent_config_view';
 
 type Props = {
     draft: AgentDraft;
@@ -48,12 +54,16 @@ type Props = {
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
 const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'];
 const openAIStructuredOutputServiceTypes = ['openai', 'openaicompatible', 'azure'];
+const CUSTOM_INSTRUCTIONS_LENGTH_WARNING_THRESHOLD = MaxCustomInstructionsRunes * 0.9;
 
 const ConfigTab = (props: Props) => {
     const {draft, onChange, onAvatarChange, services, errors = {}, usernameLocked = false} = props;
     const intl = useIntl();
     const [advancedExpanded, setAdvancedExpanded] = useState(false);
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
+    const customInstructionsLength = useMemo(() => codePointLength(draft.customInstructions), [draft.customInstructions]);
+    const showCustomInstructionsCounter = customInstructionsLength >= CUSTOM_INSTRUCTIONS_LENGTH_WARNING_THRESHOLD;
+    const customInstructionsOverLimit = customInstructionsLength > MaxCustomInstructionsRunes;
 
     useEffect(() => {
         if (errors.maxToolTurns) {
@@ -330,6 +340,14 @@ const ConfigTab = (props: Props) => {
                     multiline={true}
                     value={draft.customInstructions}
                     onChange={(e) => onChange({customInstructions: e.target.value})}
+                    error={errors.customInstructions}
+                    helptext={showCustomInstructionsCounter && (
+                        <CharacterCounter $hasError={customInstructionsOverLimit}>
+                            {intl.formatNumber(customInstructionsLength)}
+                            {' / '}
+                            {intl.formatNumber(MaxCustomInstructionsRunes)}
+                        </CharacterCounter>
+                    )}
                 />
             </ItemList>
 
@@ -469,6 +487,11 @@ const FormContainer = styled.div`
     display: flex;
     flex-direction: column;
     gap: 24px;
+`;
+
+const CharacterCounter = styled.div<{$hasError: boolean}>`
+    color: ${({$hasError}) => ($hasError ? 'var(--error-text)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
+    text-align: right;
 `;
 
 const AdvancedSection = styled.div`

@@ -10,6 +10,8 @@ import manifest from './manifest';
 
 import {
     doLoopInAgent,
+    getConversation,
+    getConversationContext,
     normalizeConversationResponse,
     searchAllChannels,
     setSiteURL,
@@ -71,7 +73,7 @@ function okResponse(): Response {
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
 
-// The post id reaches doLoopInAgent straight off a post prop, so a caller can hand it anything.
+// These ids reach the client straight off free-form post props, so a caller can hand them anything.
 const NOT_WELL_FORMED_IDS: Array<{name: string; id: string}> = [
     {name: 'empty', id: ''},
     {name: 'relative path segments', id: '../../some/other/route'},
@@ -221,6 +223,40 @@ describe('doLoopInAgent', () => {
 
     test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the post id is not well-formed: $name', async ({id}) => {
         await expect(doLoopInAgent(id, 'matty')).rejects.toThrow();
+
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('getConversation', () => {
+    test('requests the conversation route for a well-formed id', async () => {
+        await expect(getConversation(WELL_FORMED_ID)).resolves.toEqual({turns: []});
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/conversations/${WELL_FORMED_ID}`);
+        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
+    });
+
+    test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the conversation id is not well-formed: $name', async ({id}) => {
+        await expect(getConversation(id)).rejects.toThrow();
+
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('getConversationContext', () => {
+    test('requests the conversation context route for a well-formed id', async () => {
+        await expect(getConversationContext(WELL_FORMED_ID)).resolves.toEqual({});
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/conversations/${WELL_FORMED_ID}/context`);
+        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
+    });
+
+    test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the conversation id is not well-formed: $name', async ({id}) => {
+        await expect(getConversationContext(id)).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
     });

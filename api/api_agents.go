@@ -34,9 +34,10 @@ const WebsocketEventBotsInvalidate = "bots_invalidate"
 // WebsocketEventMCPConnectionUpdated is the event name for user-scoped MCP OAuth connection updates (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventMCPConnectionUpdated = "mcp_connection_updated"
 
-// MaxAgentRequestBodyBytes caps the JSON body size for agent create/update requests
-// to protect against oversized payloads in the various ID slices and MCP tool lists.
-const MaxAgentRequestBodyBytes = 512 << 10 // 512 KiB
+// MaxAgentRequestBodyBytes caps agent create/update JSON bodies. It must comfortably
+// exceed the worst-case encoded size of llm.MaxCustomInstructionsRunes plus the
+// remaining payload.
+const MaxAgentRequestBodyBytes = 2 << 20 // 2 MiB
 
 // agentErrorResponse is the JSON body returned for failed agent requests. The
 // webapp surfaces Error directly to the user, so the message must be

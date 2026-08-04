@@ -3,6 +3,18 @@
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 
+// Mirrors llm.MaxCustomInstructionsRunes on the backend.
+export const MaxCustomInstructionsRunes = 100000;
+
+// Mirrors llm.DefaultMaxToolTurns on the backend.
+export const DefaultMaxToolTurns = 30;
+
+// Mirrors llm.MaxAllowedMaxToolTurns on the backend.
+export const MaxAllowedMaxToolTurns = 250;
+
+// Counts Unicode code points to match Go's utf8.RuneCountInString.
+export const codePointLength = (s: string): number => Array.from(s).length;
+
 // EnabledTool matches llm.EnabledMCPTool (persisted agents and config bots).
 // Inner field names stay snake_case to match the backend's json:"server_origin"
 // / json:"tool_name" tags; see .planning/phase-1/PLAN.md pitfall P2.

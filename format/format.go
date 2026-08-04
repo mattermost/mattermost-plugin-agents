@@ -104,6 +104,16 @@ func AuthoredPost(post *model.Post, username string) string {
 	return "@" + username + ": " + PostBody(post)
 }
 
+// TimeFromMillis formats a Unix-milliseconds timestamp as RFC3339 UTC for
+// LLM consumption. Returns "" for non-positive values so callers/templates
+// can omit the attribute when the timestamp is unknown.
+func TimeFromMillis(millis int64) string {
+	if millis <= 0 {
+		return ""
+	}
+	return time.UnixMilli(millis).UTC().Format(time.RFC3339)
+}
+
 // PostEntry holds pre-resolved data for formatting a single post.
 // Used by MCP tools and other callers that need structured post output.
 type PostEntry struct {
@@ -165,8 +175,7 @@ func WritePost(w *strings.Builder, entry PostEntry) {
 
 	// Timestamp (only when available)
 	if entry.Post.CreateAt > 0 {
-		t := time.Unix(entry.Post.CreateAt/1000, (entry.Post.CreateAt%1000)*int64(time.Millisecond))
-		fmt.Fprintf(w, "Time: %s\n", t.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Time: %s\n", TimeFromMillis(entry.Post.CreateAt))
 	}
 
 	fmt.Fprintf(w, "Message: %s\n\n", PostBody(entry.Post))

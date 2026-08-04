@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"strings"
 	"text/template"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 )
 
 type Prompts struct {
@@ -28,6 +30,7 @@ func EscapePromptContent(s string) string {
 func NewPrompts(input fs.FS) (*Prompts, error) {
 	funcMap := template.FuncMap{
 		"escapeContent": EscapePromptContent,
+		"formatTime":    format.TimeFromMillis,
 	}
 	templates, err := template.New("").Funcs(funcMap).ParseFS(input, "*.tmpl")
 	if err != nil {
