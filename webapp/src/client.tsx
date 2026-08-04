@@ -811,6 +811,48 @@ export async function updateUserToolPreferences(prefs: {disabled_servers: string
     });
 }
 
+export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads';
+
+export type ChannelAutoReplySettings = {
+    bot_id: string;
+    mode: ChannelAutoReplyMode;
+};
+
+export async function getChannelAutoReply(channelId: string): Promise<ChannelAutoReplySettings> {
+    const url = `${channelRoute(channelId)}/autoreply`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function updateChannelAutoReply(channelId: string, settings: ChannelAutoReplySettings): Promise<void> {
+    const url = `${channelRoute(channelId)}/autoreply`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(settings),
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function disconnectMCPOAuth(serverName: string): Promise<void> {
     const url = `${baseRoute()}/mcp/oauth/${encodeURIComponent(serverName)}`;
     const response = await fetch(url, Client4.getOptions({
