@@ -276,10 +276,11 @@ const QuestionOptions: React.FC<QuestionOptionsProps> = ({
                 const selected = selections.includes(opt.label);
                 return (
                     <OptionRow
-                        key={opt.label}
+                        key={`${idx}-${opt.label}`}
                         type='button'
                         $selected={selected}
                         $disabled={!interactive}
+                        disabled={!interactive}
                         onClick={() => onToggleOption(opt.label)}
                     >
                         {multiSelect ? (
@@ -305,6 +306,7 @@ const QuestionOptions: React.FC<QuestionOptionsProps> = ({
                         <FreeFormToggle
                             type='button'
                             $disabled={!interactive}
+                            disabled={!interactive}
                             onClick={onToggleFreeForm}
                         >
                             {multiSelect ? (
@@ -320,6 +322,7 @@ const QuestionOptions: React.FC<QuestionOptionsProps> = ({
                                 rows={3}
                                 value={customText}
                                 placeholder={freeFormPlaceholder}
+                                aria-label={freeFormPlaceholder}
                                 disabled={!interactive}
                                 onChange={(e) => onChangeCustomText(e.target.value)}
                             />
@@ -327,6 +330,7 @@ const QuestionOptions: React.FC<QuestionOptionsProps> = ({
                             <FreeFormInput
                                 value={customText}
                                 placeholder={freeFormPlaceholder}
+                                aria-label={freeFormPlaceholder}
                                 disabled={!interactive}
                                 onChange={(e) => onChangeCustomText(e.target.value)}
                             />
@@ -337,6 +341,7 @@ const QuestionOptions: React.FC<QuestionOptionsProps> = ({
                         type='button'
                         $selected={false}
                         $disabled={!interactive}
+                        disabled={!interactive}
                         onClick={onToggleFreeForm}
                     >
                         {multiSelect ? (

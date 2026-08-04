@@ -212,6 +212,19 @@ describe('ToolCard declined rendering', () => {
         expect(screen.queryByText('Rejected')).toBeNull();
     });
 
+    test('renders the unknown-decliner message when no username is available', () => {
+        // Redacted/empty arguments and a result without target_username: the
+        // decline is known but the decliner is not.
+        renderComponent(makeTool({
+            name: AskAnotherUserToolName,
+            status: ToolCallStatus.Rejected,
+            result: '{"status":"declined"}',
+        }));
+
+        expect(screen.getByText('Declined to answer')).not.toBeNull();
+        expect(screen.queryByText('Rejected')).toBeNull();
+    });
+
     test('an ordinary rejected tool still renders Rejected', () => {
         renderComponent(makeTool({status: ToolCallStatus.Rejected}));
 

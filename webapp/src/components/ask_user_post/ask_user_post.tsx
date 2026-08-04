@@ -381,8 +381,13 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
     const selection = useOptionSelection(data?.multiSelect ?? false);
 
     // Free-form-only questions (no options) use a standalone textarea instead
-    // of the shared option selector.
+    // of the shared option selector. The placeholder doubles as the accessible
+    // name since the field has no visible label.
     const [freeFormOnlyText, setFreeFormOnlyText] = useState('');
+    const freeFormOnlyPlaceholder = formatMessage({
+        id: 'ai.ask_user.free_form_placeholder',
+        defaultMessage: 'Type your answer…',
+    });
     const [submitState, setSubmitState] = useState<SubmitState>({phase: 'idle'});
 
     if (!data) {
@@ -523,10 +528,8 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
                         <FreeFormTextarea
                             rows={3}
                             value={freeFormOnlyText}
-                            placeholder={formatMessage({
-                                id: 'ai.ask_user.free_form_placeholder',
-                                defaultMessage: 'Type your answer…',
-                            })}
+                            placeholder={freeFormOnlyPlaceholder}
+                            aria-label={freeFormOnlyPlaceholder}
                             disabled={!interactive}
                             onChange={(e) => setFreeFormOnlyText(e.target.value)}
                         />
