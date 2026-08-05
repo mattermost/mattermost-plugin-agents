@@ -189,6 +189,12 @@ const StaleText = styled.div`
     flex: 1;
 `;
 
+const StaleActions = styled.div`
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+`;
+
 interface ReindexSectionProps {
     jobStatus: JobStatusType | null;
     statusMessage: StatusMessageType;
@@ -221,6 +227,8 @@ export const ReindexSection = ({
     // cancel_requested is non-terminal: the worker is still running until it
     // observes the request and writes canceled.
     const isReindexing = jobStatus?.status === 'running' || jobStatus?.status === 'cancel_requested';
+
+    const hasProgress = (jobStatus?.processed_rows ?? 0) > 0;
 
     // Check if job can be resumed (failed or canceled with progress)
     const canResume = (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
@@ -266,9 +274,19 @@ export const ReindexSection = ({
                         <strong><FormattedMessage defaultMessage='Job May Be Stale'/></strong>
                         <br/>
                         <FormattedMessage
-                            defaultMessage='The reindex job has not updated in over 10 minutes. The node running it ({nodeId}) may have crashed. You can start a new reindex to resume from where it left off.'
+                            defaultMessage='The reindex job has not updated in over 10 minutes. The node running it ({nodeId}) may have crashed. Start a new run to take over from where it left off.'
                             values={{nodeId: jobStatus?.node_id || 'unknown'}}
                         />
+                        <StaleActions>
+                            {hasProgress && (
+                                <SecondaryButton onClick={onResumeClick}>
+                                    <FormattedMessage defaultMessage='Resume from checkpoint'/>
+                                </SecondaryButton>
+                            )}
+                            <SecondaryButton onClick={onReindexClick}>
+                                <FormattedMessage defaultMessage='Reindex from scratch'/>
+                            </SecondaryButton>
+                        </StaleActions>
                     </StaleText>
                 </StaleBanner>
             )}
