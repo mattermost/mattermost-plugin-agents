@@ -6,6 +6,15 @@ export interface UpstreamConfig {
     parameters: Record<string, unknown>;
 }
 
+// Mirror the server's reindex throughput defaults and bounds
+// (embeddings.DefaultReindexWorkers etc. in embeddings/embeddings.go).
+export const REINDEX_DEFAULTS = {
+    workers: 4,
+    maxWorkers: 32,
+    batchSize: 200,
+    maxBatchSize: 1000,
+} as const;
+
 export interface ChunkingOptions {
     chunkSize: number;
     chunkOverlap: number;
@@ -19,6 +28,8 @@ export interface EmbeddingSearchConfig {
     parameters: Record<string, unknown>;
     dimensions: number;
     chunkingOptions?: ChunkingOptions;
+    reindexWorkers?: number;
+    reindexBatchSize?: number;
 }
 
 // Match the server's JobStatus struct field names

@@ -13,7 +13,7 @@ import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
 import {IntItem} from '../number_items';
 
-import {EmbeddingSearchConfig} from './types';
+import {EmbeddingSearchConfig, REINDEX_DEFAULTS} from './types';
 import {OpenAIProviderConfig, OpenAICompatibleProviderConfig} from './provider_configs';
 import {ChunkingOptionsConfig} from './chunking_options';
 import {ReindexSection} from './reindex_section';
@@ -26,6 +26,16 @@ const Horizontal = styled.div`
     align-items: center;
     gap: 8px;
 `;
+
+// Mirror the server's normalization (GetReindexWorkers/GetReindexBatchSize):
+// unset or non-positive falls back to the default, oversized is clamped. This
+// keeps the form showing the value the server will actually use.
+const normalizeReindexValue = (value: number | undefined, fallback: number, max: number): number => {
+    if (typeof value !== 'number' || isNaN(value) || value <= 0) {
+        return fallback;
+    }
+    return Math.min(value, max);
+};
 
 interface Props {
     value: EmbeddingSearchConfig;
@@ -124,6 +134,8 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     chunkOverlap: 200,
                                     chunkingStrategy: 'sentences',
                                 },
+                                reindexWorkers: REINDEX_DEFAULTS.workers,
+                                reindexBatchSize: REINDEX_DEFAULTS.batchSize,
                             });
                         } else {
                             onChange({
@@ -215,6 +227,26 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                         <ChunkingOptionsConfig
                             value={value}
                             onChange={onChange}
+                        />
+
+                        <IntItem
+                            label={intl.formatMessage({defaultMessage: 'Reindex Worker Count'})}
+                            placeholder={REINDEX_DEFAULTS.workers.toString()}
+                            value={normalizeReindexValue(value.reindexWorkers, REINDEX_DEFAULTS.workers, REINDEX_DEFAULTS.maxWorkers)}
+                            onChange={(reindexWorkers) => onChange({...value, reindexWorkers})}
+                            min={1}
+                            max={REINDEX_DEFAULTS.maxWorkers}
+                            helptext={intl.formatMessage({defaultMessage: 'Number of concurrent workers used during bulk reindexing. Higher values speed up reindexing but increase load on the embedding provider and database. Lower this if you hit provider rate limits frequently.'})}
+                        />
+
+                        <IntItem
+                            label={intl.formatMessage({defaultMessage: 'Reindex Batch Size'})}
+                            placeholder={REINDEX_DEFAULTS.batchSize.toString()}
+                            value={normalizeReindexValue(value.reindexBatchSize, REINDEX_DEFAULTS.batchSize, REINDEX_DEFAULTS.maxBatchSize)}
+                            onChange={(reindexBatchSize) => onChange({...value, reindexBatchSize})}
+                            min={1}
+                            max={REINDEX_DEFAULTS.maxBatchSize}
+                            helptext={intl.formatMessage({defaultMessage: 'Number of posts fetched and embedded per batch during bulk reindexing.'})}
                         />
                     </>
                 )}
