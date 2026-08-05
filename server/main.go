@@ -259,12 +259,13 @@ func (p *Plugin) OnActivate() error {
 		return val.(string)
 	}
 
-	// Initialize embedding search
+	// Skip constructor CREATE while a deferred reindex owns the ANN index.
 	embeddingsSearch, err := search.InitEmbeddingsSearch(
 		dbClient.DB,
 		llmUpstreamHTTPClient,
 		p.configuration.EmbeddingSearchConfig(),
 		licenseChecker,
+		indexer.DeferredIndexRebuildActive(mmClient),
 	)
 	if err != nil {
 		pluginAPI.Log.Warn("failed to initialize search infrastructure", "error", err)
@@ -303,6 +304,11 @@ func (p *Plugin) OnActivate() error {
 		lastSearchInitError.Store("") // Clear any previous error
 	}
 
+	// Reconcile leftover deferred-index state (never auto-build on activate).
+	if reconcileErr := indexerService.ReconcileVectorIndexState(context.Background()); reconcileErr != nil {
+		pluginAPI.Log.Warn("Failed to reconcile vector index state", "error", reconcileErr)
+	}
+
 	// Create search service with getter function
 	searchService := search.New(
 		getSearch,
@@ -320,6 +326,7 @@ func (p *Plugin) OnActivate() error {
 			llmUpstreamHTTPClient,
 			p.configuration.EmbeddingSearchConfig(),
 			licenseChecker,
+			indexer.DeferredIndexRebuildActive(mmClient),
 		)
 		if initErr != nil {
 			pluginAPI.Log.Error("Failed to reinitialize embedding search on config change", "error", initErr)
