@@ -723,9 +723,9 @@ func waitForJobStatus(t *testing.T, store *jobKVStore, want string, timeout time
 	return status
 }
 
-// TestResumeRefreshesModelInfo covers start-time ModelInfo snapshotting:
-// fail mid-pass → resume completes → IndexerModelKey gets the original
-// snapshot (not live config). Also covers catch-up writing nothing.
+// TestResumeRefreshesModelInfo covers model snapshots across a retry:
+// unchanged configuration resumes, while changed configuration restarts.
+// Also covers catch-up writing nothing.
 func TestResumeRefreshesModelInfo(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -742,11 +742,11 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 			compatAgainst:   "model-a",
 		},
 		{
-			name:                 "resume after config change still writes the original snapshot and stays locked",
+			name:                 "resume after config change restarts and unlocks the new model",
 			changeConfigOnResume: true,
 			resumeModelName:      "model-b",
-			wantStoredModel:      "model-a",
-			wantCompatible:       false,
+			wantStoredModel:      "model-b",
+			wantCompatible:       true,
 			compatAgainst:        "model-b",
 		},
 	}
@@ -780,6 +780,9 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 
 			// First run fails on Store; resume succeeds.
 			mockSearch.On("Clear", mock.Anything).Return(nil).Once()
+			if tt.changeConfigOnResume {
+				mockSearch.On("Clear", mock.Anything).Return(nil).Once()
+			}
 			mockSearch.On("Store", mock.Anything, mock.Anything).Return(errors.New("store blew up")).Once()
 			mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -813,7 +816,7 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 			require.NoError(t, err)
 			completed := waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
 			require.NotNil(t, completed.ModelInfo)
-			assert.Equal(t, "model-a", completed.ModelInfo.ModelName, "resume must carry the original snapshot")
+			assert.Equal(t, tt.wantStoredModel, completed.ModelInfo.ModelName)
 
 			store.mu.Lock()
 			require.NotNil(t, store.model)
@@ -867,6 +870,106 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		assert.Equal(t, "old-model", store.model.ModelName, "catch-up must not rewrite IndexerModelKey")
 		store.mu.Unlock()
 	})
+}
+
+func TestResumeAfterEmbeddingSearchReplacementDoesNotMixModels(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	now := model.GetMillis()
+	_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ('post-a', $1, 0, 'first', '', 'channel1'), ('post-b', $2, 0, 'second', '', 'channel1')", now-20000, now-10000)
+	require.NoError(t, err)
+
+	store := &jobKVStore{}
+	mockClient := mocks.NewMockClient(t)
+	mockMutexAPI := &plugintest.API{}
+	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+	store.wire(mockClient)
+	mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+	mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+	searchA := embeddingsmocks.NewMockEmbeddingSearch(t)
+	searchB := embeddingsmocks.NewMockEmbeddingSearch(t)
+	var writesMu sync.Mutex
+	var successfulAWrites, successfulBWrites []string
+
+	searchA.On("Clear", mock.Anything).Return(nil).Once()
+	searchA.On("Store", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			writesMu.Lock()
+			defer writesMu.Unlock()
+			for _, doc := range args.Get(1).([]embeddings.PostDocument) {
+				successfulAWrites = append(successfulAWrites, doc.PostID)
+			}
+		}).
+		Return(nil).Once()
+	searchA.On("Store", mock.Anything, mock.Anything).Return(errors.New("model A interrupted")).Once()
+	searchB.On("Clear", mock.Anything).Return(nil).Once()
+	searchB.On("Store", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			writesMu.Lock()
+			defer writesMu.Unlock()
+			for _, doc := range args.Get(1).([]embeddings.PostDocument) {
+				successfulBWrites = append(successfulBWrites, doc.PostID)
+			}
+		}).
+		Return(nil).Maybe()
+
+	var stateMu sync.Mutex
+	currentSearch := embeddings.EmbeddingSearch(searchA)
+	currentCfg := modelCfg("openai", "model-a", 1536)
+	currentCfg.ReindexWorkers = 1
+	currentCfg.ReindexBatchSize = 1
+	idx := New(
+		func() embeddings.EmbeddingSearch {
+			stateMu.Lock()
+			defer stateMu.Unlock()
+			return currentSearch
+		},
+		func() embeddings.EmbeddingSearchConfig {
+			stateMu.Lock()
+			defer stateMu.Unlock()
+			return currentCfg
+		},
+		mockClient, &bots.MMBots{}, db, mockMutexAPI,
+	)
+	idx.storeRetryAttempts = 1
+
+	_, err = idx.StartReindexJob(true)
+	require.NoError(t, err)
+	failed := waitForJobStatus(t, store, JobStatusFailed, 5*time.Second)
+	require.NotNil(t, failed.ModelInfo)
+	require.Equal(t, "model-a", failed.ModelInfo.ModelName)
+
+	stateMu.Lock()
+	currentSearch = searchB
+	currentCfg = modelCfg("openai", "model-b", 1536)
+	currentCfg.ReindexWorkers = 1
+	currentCfg.ReindexBatchSize = 1
+	stateMu.Unlock()
+
+	_, err = idx.StartReindexJob(false)
+	require.NoError(t, err)
+	completed := waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+	require.NotNil(t, completed.ModelInfo)
+	assert.Equal(t, "model-b", completed.ModelInfo.ModelName)
+	assert.Equal(t, int64(2), completed.ProcessedRows)
+
+	writesMu.Lock()
+	aWrites := append([]string(nil), successfulAWrites...)
+	bWrites := append([]string(nil), successfulBWrites...)
+	writesMu.Unlock()
+	store.mu.Lock()
+	require.NotNil(t, store.model)
+	storedModel := store.model.ModelName
+	store.mu.Unlock()
+
+	assert.Equal(t, []string{"post-a"}, aWrites)
+	assert.Equal(t, []string{"post-a", "post-b"}, bWrites)
+	assert.Equal(t, "model-b", storedModel)
 }
 
 func TestStartCatchUpJob(t *testing.T) {
