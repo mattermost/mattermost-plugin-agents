@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -205,6 +207,95 @@ func TestUploadInlineFiles(t *testing.T) {
 			assert.Equal(t, tt.wantFilenames, rec.filenames)
 			assert.Equal(t, tt.wantContents, rec.contents)
 			assert.Equal(t, rec.fileIDs, fileIDs)
+		})
+	}
+}
+
+func TestFetchFileDataForLocal_AbsolutePathRoots(t *testing.T) {
+	allowedDir := t.TempDir()
+	otherDir := t.TempDir()
+
+	fileContent := []byte("attachment payload")
+	allowedFile := filepath.Join(allowedDir, "report.txt")
+	require.NoError(t, os.WriteFile(allowedFile, fileContent, 0600))
+
+	nestedFile := filepath.Join(allowedDir, "sub", "nested.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(nestedFile), 0700))
+	require.NoError(t, os.WriteFile(nestedFile, fileContent, 0600))
+
+	outsideFile := filepath.Join(otherDir, "secret.txt")
+	require.NoError(t, os.WriteFile(outsideFile, fileContent, 0600))
+
+	linkToOutside := filepath.Join(allowedDir, "escape-link")
+	require.NoError(t, os.Symlink(outsideFile, linkToOutside))
+
+	testCases := []struct {
+		name     string
+		roots    string
+		filespec string
+		wantData bool
+	}{
+		{
+			name:     "no roots configured rejects absolute paths",
+			roots:    "",
+			filespec: allowedFile,
+			wantData: false,
+		},
+		{
+			name:     "file inside an allowed root is readable",
+			roots:    allowedDir,
+			filespec: allowedFile,
+			wantData: true,
+		},
+		{
+			name:     "nested file inside an allowed root is readable",
+			roots:    allowedDir,
+			filespec: nestedFile,
+			wantData: true,
+		},
+		{
+			name:     "second entry in the root list also matches",
+			roots:    otherDir + string(filepath.ListSeparator) + allowedDir,
+			filespec: allowedFile,
+			wantData: true,
+		},
+		{
+			name:     "file outside every allowed root is rejected",
+			roots:    allowedDir,
+			filespec: outsideFile,
+			wantData: false,
+		},
+		{
+			name:     "path traversal out of an allowed root is rejected",
+			roots:    allowedDir,
+			filespec: filepath.Join(allowedDir, "..", filepath.Base(otherDir), "secret.txt"),
+			wantData: false,
+		},
+		{
+			name:     "symlink escaping an allowed root is rejected",
+			roots:    allowedDir,
+			filespec: linkToOutside,
+			wantData: false,
+		},
+		{
+			name:     "relative root entries are ignored",
+			roots:    "relative/dir",
+			filespec: allowedFile,
+			wantData: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(AttachmentRootsEnvVar, tc.roots)
+
+			data, err := fetchFileDataForLocal(t.Context(), tc.filespec, AccessModeLocal)
+			if tc.wantData {
+				require.NoError(t, err)
+				require.Equal(t, fileContent, data)
+			} else {
+				require.Error(t, err)
+			}
 		})
 	}
 }

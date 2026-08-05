@@ -109,6 +109,46 @@ func EnsureDataDirectory() error {
 	return os.MkdirAll(dataDir, 0700)
 }
 
+// AttachmentRootsEnvVar names the environment variable listing extra directories
+// (separated by the OS path-list separator, e.g. ":" on Unix) that local-mode
+// attachments may be read from using absolute paths. Relative paths always
+// resolve inside the data directory regardless of this setting.
+const AttachmentRootsEnvVar = "MM_MCP_ATTACHMENT_ROOTS"
+
+// readLocalFileFromAllowedRoots reads an absolute attachment path, but only when it
+// falls under one of the operator-configured attachment roots. Each root is opened
+// via os.Root so symlinks cannot escape the allowed directory.
+func readLocalFileFromAllowedRoots(absPath string) ([]byte, error) {
+	for _, rootDir := range filepath.SplitList(os.Getenv(AttachmentRootsEnvVar)) {
+		rootDir = strings.TrimSpace(rootDir)
+		if rootDir == "" || !filepath.IsAbs(rootDir) {
+			continue
+		}
+		rootDir = filepath.Clean(rootDir)
+
+		rel, err := filepath.Rel(rootDir, absPath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+
+		root, err := os.OpenRoot(rootDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open attachment root %q: %w", rootDir, err)
+		}
+		defer root.Close()
+
+		file, err := root.Open(rel)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file: %w", err)
+		}
+		defer file.Close()
+
+		return readLimitedToMaxMCPBytes(file)
+	}
+
+	return nil, fmt.Errorf("absolute path %q is not inside any allowed attachment root; set the %s environment variable on the MCP server, or use a path relative to the data directory", absPath, AttachmentRootsEnvVar)
+}
+
 // fetchFileDataForLocal fetches file data from a file path or URL (local access only)
 func fetchFileDataForLocal(ctx context.Context, filespec string, accessMode AccessMode) ([]byte, error) {
 	if filespec == "" {
@@ -157,6 +197,11 @@ func fetchFileDataForLocal(ctx context.Context, filespec string, accessMode Acce
 	}
 
 	cleanPath := filepath.Clean(filespec)
+
+	// Absolute paths are only served from operator-configured attachment roots.
+	if filepath.IsAbs(cleanPath) {
+		return readLocalFileFromAllowedRoots(cleanPath)
+	}
 
 	// Use data directory as base for file operations
 	dataDir, err := GetDataDirectoryInternal()
