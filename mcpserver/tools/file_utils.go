@@ -336,11 +336,9 @@ func uploadInlineFiles(ctx context.Context, client *model.Client4, channelID str
 	return fileIDs, nil
 }
 
-// checkCombinedFileCap returns a model-facing error when resolved legacy attachment
-// IDs plus requested inline files would exceed the per-post attachment cap. Resolvers
-// call it after resolving legacy attachments but before uploading any inline file, so
-// a cap violation never orphans inline uploads (best-effort legacy attachment uploads
-// may still be orphaned when the cap trips).
+// checkCombinedFileCap returns a model-facing error when legacy attachments plus
+// requested inline files would exceed the per-post attachment cap. Resolvers call
+// it before any upload, so a cap violation cannot orphan uploads.
 func checkCombinedFileCap(attachmentIDCount, inlineFileCount int) error {
 	if total := attachmentIDCount + inlineFileCount; total > maxFilesPerPost {
 		return fmt.Errorf("too many attachments: %d files and attachments combined but a post can have at most %d - reduce the number of inline files or attachments", total, maxFilesPerPost)
@@ -370,18 +368,19 @@ func inlineFilesMessage(count int) string {
 }
 
 // resolvePostFiles resolves a posting tool's legacy attachments and inline
-// files into the post's file IDs plus a success-message suffix. Legacy
-// attachments resolve first so the combined cap is enforced before any inline
-// upload; a failure on either path aborts because a post missing files the
-// model explicitly asked for is broken output.
+// files into the post's file IDs plus a success-message suffix. The combined
+// cap is enforced up front — each attachment resolves to exactly one file ID,
+// so the total is known before any upload — and a failure on either path
+// aborts because a post missing files the model explicitly asked for is
+// broken output.
 func resolvePostFiles(ctx context.Context, client *model.Client4, channelID string, attachments []string, files []InlineFile, accessMode AccessMode) ([]string, string, error) {
+	if capErr := checkCombinedFileCap(len(attachments), len(files)); capErr != nil {
+		return nil, "", capErr
+	}
+
 	attachmentFileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, channelID, attachments, accessMode)
 	if err != nil {
 		return nil, "", err
-	}
-
-	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(files)); capErr != nil {
-		return nil, "", capErr
 	}
 
 	inlineFileIDs, err := uploadInlineFiles(ctx, client, channelID, files)

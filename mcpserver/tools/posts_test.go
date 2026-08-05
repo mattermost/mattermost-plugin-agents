@@ -489,10 +489,10 @@ func TestToolCreatePostWithInlineFiles(t *testing.T) {
 }
 
 // TestPostToolsCombinedAttachmentCap pins the cap-before-upload ordering of the three
-// posting resolvers: when resolved legacy attachment IDs plus requested inline files
-// exceed the per-post cap, the resolver fails before any inline file is uploaded and
-// before any post is created. It also pins that remote-mode attachments abort the
-// call before any upload instead of being silently dropped from the post.
+// posting resolvers: when legacy attachments plus requested inline files exceed the
+// per-post cap, the resolver fails before any file is uploaded and before any post
+// is created. It also pins that remote-mode attachments abort the call before any
+// upload instead of being silently dropped from the post.
 func TestPostToolsCombinedAttachmentCap(t *testing.T) {
 	channelID := model.NewId()
 	teamID := model.NewId()
@@ -542,18 +542,17 @@ func TestPostToolsCombinedAttachmentCap(t *testing.T) {
 		wantUploads []string // exact filenames the upload endpoint must see, in order
 	}{
 		{
-			name:        "over the cap fails before any inline upload",
+			name:        "over the cap fails before any upload",
 			accessMode:  AccessModeLocal,
 			attachments: legacyNames,
 			inlineCount: 8,
 			wantErr:     "at most 10",
-			wantUploads: legacyNames,
 		},
 		{
 			name:        "remote-mode attachments abort before any upload instead of being dropped",
 			accessMode:  AccessModeRemote,
 			attachments: legacyNames,
-			inlineCount: maxFilesPerPost,
+			inlineCount: 2,
 			wantErr:     "not supported in remote access mode",
 		},
 	}
