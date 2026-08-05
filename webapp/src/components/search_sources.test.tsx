@@ -3,6 +3,10 @@
 
 import {MAX_SEARCH_SOURCES, parseSearchSources} from './search_sources';
 
+jest.mock('./post_preview', () => ({
+    PostPreview: () => null,
+}));
+
 const VALID_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
 
 function source(index: number) {
