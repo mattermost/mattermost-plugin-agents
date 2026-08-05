@@ -88,6 +88,7 @@ func TestToolReadFile(t *testing.T) {
 		wantErrContains string
 		wantText        []string // substring matches against concatenated text content
 		wantImage       bool
+		wantImageMIME   string // expected MIME on the image block; defaults to info.MimeType
 	}{
 		{
 			name:            "invalid file id",
@@ -106,6 +107,16 @@ func TestToolReadFile(t *testing.T) {
 			wantText: []string{"Image: photo.png (image/png"},
 
 			wantImage: true,
+		},
+		{
+			name:          "image MIME type with parameters is normalized on the image block",
+			fileID:        fileID,
+			info:          &model.FileInfo{Id: fileID, Name: "scan.png", MimeType: "image/PNG; charset=binary", Size: 4, Width: 2, Height: 2},
+			fileData:      []byte{0x89, 0x50, 0x4E, 0x47},
+			service:       &fakeFileContentService{},
+			wantText:      []string{"Image: scan.png (image/PNG; charset=binary"},
+			wantImage:     true,
+			wantImageMIME: "image/png",
 		},
 		{
 			name:      "oversized image returns metadata only",
@@ -204,7 +215,11 @@ func TestToolReadFile(t *testing.T) {
 			image := firstImage(contents)
 			if tt.wantImage {
 				require.NotNil(t, image, "expected an ImageContent block")
-				assert.Equal(t, tt.info.MimeType, image.MIMEType)
+				wantMIME := tt.wantImageMIME
+				if wantMIME == "" {
+					wantMIME = tt.info.MimeType
+				}
+				assert.Equal(t, wantMIME, image.MIMEType)
 				assert.Equal(t, tt.fileData, image.Data)
 			} else {
 				assert.Nil(t, image, "expected no ImageContent block")

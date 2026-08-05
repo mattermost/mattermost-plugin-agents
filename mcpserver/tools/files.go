@@ -79,10 +79,18 @@ func (p *MattermostToolProvider) getFileTools() []MCPTool {
 // limit mirrors the common LLM provider per-image request cap (5 MB).
 const maxInlineImageBytes = 5 * 1024 * 1024
 
+// baseMimeType normalizes a MIME type to its lower-cased base form, stripping
+// any parameters (e.g. "image/PNG; charset=binary" -> "image/png"). Strict MCP
+// clients validate media types against an exact list, so emitted content blocks
+// must carry the normalized form.
+func baseMimeType(mimeType string) string {
+	return strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0]))
+}
+
 // isInlineImageMimeType reports whether mimeType is an image format that LLM
 // providers accept as inline image content.
 func isInlineImageMimeType(mimeType string) bool {
-	switch strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0])) {
+	switch baseMimeType(mimeType) {
 	case "image/jpeg", "image/png", "image/gif", "image/webp":
 		return true
 	}
@@ -92,7 +100,7 @@ func isInlineImageMimeType(mimeType string) bool {
 // isTextLikeMimeType reports whether mimeType can be served as plain text
 // straight from the raw file bytes, without server-side extraction.
 func isTextLikeMimeType(mimeType string) bool {
-	base := strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0]))
+	base := baseMimeType(mimeType)
 	if strings.HasPrefix(base, "text/") {
 		return true
 	}
@@ -158,7 +166,7 @@ func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, args R
 		}
 		return []mcp.Content{
 			&mcp.TextContent{Text: fmt.Sprintf("Image: %s (%s, %dx%d, %d bytes)", info.Name, info.MimeType, info.Width, info.Height, info.Size)},
-			&mcp.ImageContent{Data: data, MIMEType: info.MimeType},
+			&mcp.ImageContent{Data: data, MIMEType: baseMimeType(info.MimeType)},
 		}, nil
 	}
 
