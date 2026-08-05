@@ -20,6 +20,7 @@ type fakeStreamingClient struct {
 	kv           map[string]interface{}
 	updatedPosts []*model.Post
 	events       []publishedEvent
+	warnings     []string
 }
 
 func (c *fakeStreamingClient) PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast) {
@@ -73,5 +74,9 @@ func (c *fakeStreamingClient) KVSet(key string, value interface{}) error {
 }
 
 func (c *fakeStreamingClient) LogError(_ string, _ ...interface{}) {}
+
+func (c *fakeStreamingClient) LogWarn(msg string, _ ...interface{}) {
+	c.warnings = append(c.warnings, msg)
+}
 
 func (c *fakeStreamingClient) LogDebug(_ string, _ ...interface{}) {}

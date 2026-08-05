@@ -72,6 +72,9 @@ export const AIMOCK_COMPATIBLE_SERVICE = {
 export const EMBEDDED_GET_CHANNEL_INFO_TOOL = 'mattermost__get_channel_info';
 export const EMBEDDED_CREATE_POST_TOOL = 'mattermost__create_post';
 
+/** Runtime name of the built-in response-file tool (mmtools.CreateFileToolName). */
+export const CREATE_FILE_TOOL = 'CreateFile';
+
 export const TITLE_GENERATION_PROMPT_PREFIX =
     'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:';
 
@@ -346,6 +349,32 @@ export function buildToolNameAndTextResponse(options: {
     });
 }
 
+/**
+ * Two-turn sequence for the built-in CreateFile tool: the first model turn
+ * calls CreateFile with {file_name, content}; after the (auto-executed) tool
+ * result comes back, the second turn answers with plain text.
+ */
+export function buildCreateFileSequence(options: {
+    userPrompt: string;
+    fileName: string;
+    fileContent: string;
+    finalText: string;
+    toolCallId?: string;
+    title?: string;
+}): AIMockFixtureFile {
+    return buildToolCallThenTextFile({
+        firstTurnMatch: { userMessage: options.userPrompt },
+        toolCallId: options.toolCallId ?? `call_create_file_${Date.now()}`,
+        toolName: CREATE_FILE_TOOL,
+        toolArguments: {
+            file_name: options.fileName,
+            content: options.fileContent,
+        },
+        finalContent: options.finalText,
+        title: options.title,
+    });
+}
+
 export type MultiTurnToolSequenceOptions = {
     title?: string;
     userPromptMarker: string;
@@ -457,6 +486,9 @@ export function buildPostToolSequence(options: {
     teamDisplayName: string;
     postText: string;
     finalText: string;
+
+    /** Inline text files the create_post call attaches to the new post. */
+    files?: Array<{name: string; content: string}>;
 }): AIMockFixtureFile {
     return buildMultiTurnToolSequence({
         title: options.title,
@@ -476,6 +508,7 @@ export function buildPostToolSequence(options: {
                     channel_display_name: options.channelDisplayName,
                     team_display_name: options.teamDisplayName,
                     message: options.postText,
+                    ...(options.files ? {files: options.files} : {}),
                 },
             },
             {

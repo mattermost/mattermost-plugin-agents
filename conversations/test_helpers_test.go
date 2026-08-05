@@ -211,6 +211,10 @@ func (c *fakeMMClient) GetFile(string) (io.ReadCloser, error) {
 	return nil, errors.New("not implemented")
 }
 
+func (c *fakeMMClient) UploadFile(io.Reader, string, string) (*model.FileInfo, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (c *fakeMMClient) SendEphemeralPost(userID string, post *model.Post) {
 	c.ephemeralPosts = append(c.ephemeralPosts, post.Clone())
 	c.ephemeralPostUserIDs = append(c.ephemeralPostUserIDs, userID)

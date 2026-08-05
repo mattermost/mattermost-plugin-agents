@@ -115,6 +115,50 @@ func TestShouldAutoExecuteToolMetaToolDoesNotAuthorizeBusinessTool(t *testing.T)
 	assert.False(t, c.shouldAutoExecuteTool(nil, true)(llm.ToolCall{Name: "jira__get_issue"}))
 }
 
+// TestShouldAutoExecuteTool_AutoExecuteBuiltIn pins that auto-execute
+// built-ins (e.g. CreateFile) bypass approval in both DMs and channels — even
+// with no policy checker wired up — while an MCP tool carrying the flag must
+// still go through policy and therefore fails closed here.
+func TestShouldAutoExecuteTool_AutoExecuteBuiltIn(t *testing.T) {
+	const mcpOrigin = "https://mcp.example.com/mcp"
+
+	cases := []struct {
+		name   string
+		isDM   bool
+		origin string
+		want   bool
+	}{
+		{name: "DM built-in auto-executes", isDM: true, want: true},
+		{name: "channel built-in auto-executes", isDM: false, want: true},
+		{name: "DM MCP tool with flag follows policy", isDM: true, origin: mcpOrigin, want: false},
+		{name: "channel MCP tool with flag follows policy", isDM: false, origin: mcpOrigin, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Conversations{toolPolicyChecker: nil}
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: "CreateFile", ServerOrigin: tc.origin, AutoExecute: true}})
+
+			got := c.shouldAutoExecuteTool(llmCtx, tc.isDM)(llm.ToolCall{Name: "CreateFile", ServerOrigin: tc.origin})
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestShouldAutoExecuteTool_AutoExecuteBuiltInSkipsPolicyLookup(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAsk, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: "CreateFile", AutoExecute: true}})
+
+	got := c.shouldAutoExecuteTool(llmCtx, false)(llm.ToolCall{Name: "CreateFile"})
+
+	assert.True(t, got)
+	assert.Zero(t, checker.calls)
+}
+
 // TestShouldAutoExecuteTool_UserInteractionNeverAutoExecutes pins the contract
 // that tools answered by the user (e.g. AskUserQuestion) never auto-execute,
 // even if a policy claims auto_run — auto-running one would skip the question.
@@ -311,6 +355,36 @@ func TestAllToolsAutoRunEverywhereMetaOnlyBypassesPolicy(t *testing.T) {
 	}}
 
 	assert.True(t, c.allToolsAutoRunEverywhere(turns, nil))
+}
+
+// TestAllToolsAutoRunEverywhere_AutoExecuteBuiltIn pins that a round made up
+// only of auto-execute built-ins (e.g. CreateFile) is written shared=true even
+// with no policy checker, while an MCP tool carrying the flag still requires
+// an auto_run_everywhere policy and so fails closed here.
+func TestAllToolsAutoRunEverywhere_AutoExecuteBuiltIn(t *testing.T) {
+	const mcpOrigin = "https://mcp.example.com/mcp"
+
+	cases := []struct {
+		name   string
+		origin string
+		want   bool
+	}{
+		{name: "built-in only round is shared", origin: "", want: true},
+		{name: "MCP tool with flag still requires policy", origin: mcpOrigin, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Conversations{toolPolicyChecker: nil}
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: "CreateFile", ServerOrigin: tc.origin, AutoExecute: true}})
+			turns := []toolrunner.ToolTurn{{
+				AssistantToolCalls: []llm.ToolCall{{Name: "CreateFile", ServerOrigin: tc.origin}},
+			}}
+
+			assert.Equal(t, tc.want, c.allToolsAutoRunEverywhere(turns, llmCtx))
+		})
+	}
 }
 
 func TestAllToolsAutoRunEverywhereMixedMetaAndAutoRunBusinessTool(t *testing.T) {
