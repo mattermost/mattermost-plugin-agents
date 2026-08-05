@@ -11,9 +11,9 @@ import {Pill} from '../../pill';
 import EnterpriseChip from '../enterprise_chip';
 import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
-import {IntItem} from '../number_items';
+import {FloatItem, IntItem} from '../number_items';
 
-import {EmbeddingSearchConfig, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, ReindexIndexStrategy} from './types';
+import {EmbeddingSearchConfig, RECENCY_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, ReindexIndexStrategy} from './types';
 import {OpenAIProviderConfig, OpenAICompatibleProviderConfig} from './provider_configs';
 import {ChunkingOptionsConfig} from './chunking_options';
 import {ReindexSection} from './reindex_section';
@@ -43,6 +43,18 @@ const normalizeReindexIndexStrategy = (value: string | undefined): ReindexIndexS
         return REINDEX_INDEX_STRATEGY.defer;
     }
     return REINDEX_INDEX_STRATEGY.maintain;
+};
+
+// Mirror the server's GetRecencyBiasSettings normalization: unset or
+// non-positive falls back to the default, oversized is clamped.
+const normalizeRecencyValue = (value: number | undefined, fallback: number, max?: number): number => {
+    if (typeof value !== 'number' || isNaN(value) || value <= 0) {
+        return fallback;
+    }
+    if (typeof max === 'number') {
+        return Math.min(value, max);
+    }
+    return value;
 };
 
 interface Props {
@@ -237,6 +249,36 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                             value={value}
                             onChange={onChange}
                         />
+
+                        <BooleanItem
+                            label={intl.formatMessage({defaultMessage: 'Recency Bias'})}
+                            value={value.recencyBiasEnabled ?? false}
+                            onChange={(recencyBiasEnabled) => onChange({...value, recencyBiasEnabled})}
+                            helpText={intl.formatMessage({defaultMessage: 'Rank more recent messages higher in semantic search results. Results are still selected by relevance; recency influences their ordering.'})}
+                        />
+
+                        {value.recencyBiasEnabled && (
+                            <>
+                                <FloatItem
+                                    label={intl.formatMessage({defaultMessage: 'Recency Half-Life (days)'})}
+                                    placeholder={RECENCY_DEFAULTS.halfLifeDays.toString()}
+                                    value={normalizeRecencyValue(value.recencyHalfLifeDays, RECENCY_DEFAULTS.halfLifeDays)}
+                                    onChange={(recencyHalfLifeDays) => onChange({...value, recencyHalfLifeDays})}
+                                    min={0.1}
+                                    helptext={intl.formatMessage({defaultMessage: 'How quickly the recency boost fades. A message this many days old loses half of its recency boost. Lower values favor newer messages more strongly.'})}
+                                />
+
+                                <FloatItem
+                                    label={intl.formatMessage({defaultMessage: 'Recency Floor'})}
+                                    placeholder={RECENCY_DEFAULTS.floor.toString()}
+                                    value={normalizeRecencyValue(value.recencyFloor, RECENCY_DEFAULTS.floor, 1)}
+                                    onChange={(recencyFloor) => onChange({...value, recencyFloor})}
+                                    min={0.01}
+                                    max={1}
+                                    helptext={intl.formatMessage({defaultMessage: 'Minimum score multiplier for old messages (0-1). Higher values preserve old but highly relevant results; 1 disables the recency effect.'})}
+                                />
+                            </>
+                        )}
 
                         <IntItem
                             label={intl.formatMessage({defaultMessage: 'Reindex Worker Count'})}

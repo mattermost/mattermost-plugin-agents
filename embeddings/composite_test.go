@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/chunking"
 	"github.com/stretchr/testify/assert"
@@ -277,7 +278,7 @@ func TestCompositeSearch_Store(t *testing.T) {
 			store := &stubVectorStore{storeFunc: tt.storeFunc}
 			provider := &stubEmbeddingProvider{batchCreateEmbeddingsFunc: tt.batchEmbedFunc}
 
-			cs := NewCompositeSearch(store, provider, tt.options)
+			cs := NewCompositeSearch(store, provider, tt.options, RecencyBiasSettings{})
 
 			err := cs.Store(context.Background(), tt.docs)
 
@@ -420,7 +421,7 @@ func TestCompositeSearch_Search(t *testing.T) {
 			store := &stubVectorStore{searchFunc: tt.searchFunc}
 			provider := &stubEmbeddingProvider{createEmbeddingFunc: tt.createEmbedFunc}
 
-			cs := NewCompositeSearch(store, provider, defaultOptions)
+			cs := NewCompositeSearch(store, provider, defaultOptions, RecencyBiasSettings{})
 
 			results, err := cs.Search(context.Background(), tt.query, tt.searchOpts)
 
@@ -436,6 +437,156 @@ func TestCompositeSearch_Search(t *testing.T) {
 
 			if tt.verify != nil {
 				tt.verify(t, store, provider)
+			}
+		})
+	}
+}
+
+func TestCompositeSearch_RecencyBias(t *testing.T) {
+	defaultOptions := chunking.Options{
+		ChunkSize:        1000,
+		ChunkOverlap:     200,
+		ChunkingStrategy: "sentences",
+	}
+	enabled := RecencyBiasSettings{Enabled: true, HalfLifeDays: 7, Floor: 0.7}
+
+	now := time.Now().UnixMilli()
+	createAtDaysAgo := func(days int64) int64 { return now - days*millisPerDay }
+
+	// Raw similarity order: old-strong, fresh-mid, fresh-weak.
+	// Adjusted (half-life 7d, floor 0.7): old-strong 0.80*~0.70=~0.56,
+	// fresh-mid ~0.78, fresh-weak ~0.60 -> fresh-mid, fresh-weak, old-strong.
+	defaultStoreResults := func() []SearchResult {
+		return []SearchResult{
+			{Document: PostDocument{PostID: "old-strong", CreateAt: createAtDaysAgo(60)}, Score: 0.80},
+			{Document: PostDocument{PostID: "fresh-mid", CreateAt: createAtDaysAgo(0)}, Score: 0.78},
+			{Document: PostDocument{PostID: "fresh-weak", CreateAt: createAtDaysAgo(0)}, Score: 0.60},
+		}
+	}
+
+	tests := []struct {
+		name                string
+		recency             RecencyBiasSettings
+		searchOpts          SearchOptions
+		storeResults        func() []SearchResult
+		expectedFetchLimit  int
+		expectedFetchOffset int
+		expectedOrder       []string
+	}{
+		{
+			name:                "disabled passes options through and preserves store order",
+			recency:             RecencyBiasSettings{},
+			searchOpts:          SearchOptions{Limit: 5, Offset: 2},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  5,
+			expectedFetchOffset: 2,
+			expectedOrder:       []string{"old-strong", "fresh-mid", "fresh-weak"},
+		},
+		{
+			name:                "over-fetches, reranks by recency, truncates to limit",
+			recency:             enabled,
+			searchOpts:          SearchOptions{Limit: 2},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  recencyMinCandidates,
+			expectedFetchOffset: 0,
+			expectedOrder:       []string{"fresh-mid", "fresh-weak"},
+		},
+		{
+			name:       "floor keeps old canonical answer above weak fresh result",
+			recency:    enabled,
+			searchOpts: SearchOptions{Limit: 2},
+			storeResults: func() []SearchResult {
+				return []SearchResult{
+					{Document: PostDocument{PostID: "old-canonical", CreateAt: createAtDaysAgo(365)}, Score: 0.90},
+					{Document: PostDocument{PostID: "weak-fresh", CreateAt: createAtDaysAgo(0)}, Score: 0.50},
+				}
+			},
+			expectedFetchLimit:  recencyMinCandidates,
+			expectedFetchOffset: 0,
+			expectedOrder:       []string{"old-canonical", "weak-fresh"},
+		},
+		{
+			name:                "offset applies to the reranked order",
+			recency:             enabled,
+			searchOpts:          SearchOptions{Limit: 1, Offset: 1},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  recencyMinCandidates + 1,
+			expectedFetchOffset: 0,
+			expectedOrder:       []string{"fresh-weak"},
+		},
+		{
+			name:                "offset beyond candidates returns no results",
+			recency:             enabled,
+			searchOpts:          SearchOptions{Limit: 5, Offset: 10},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  recencyMinCandidates + 10,
+			expectedFetchOffset: 0,
+			expectedOrder:       []string{},
+		},
+		{
+			// The window extends past the store's hard cap, so reranking
+			// cannot serve it; pagination must fall through to the store
+			// (raw similarity order) instead of returning a truncated page.
+			name:                "window beyond store cap falls back to store pagination",
+			recency:             enabled,
+			searchOpts:          SearchOptions{Limit: 5, Offset: MaxSearchResults},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  5,
+			expectedFetchOffset: MaxSearchResults,
+			expectedOrder:       []string{"old-strong", "fresh-mid", "fresh-weak"},
+		},
+		{
+			name:                "unbounded limit with offset falls back to store pagination",
+			recency:             enabled,
+			searchOpts:          SearchOptions{Limit: 0, Offset: 5},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  0,
+			expectedFetchOffset: 5,
+			expectedOrder:       []string{"old-strong", "fresh-mid", "fresh-weak"},
+		},
+		{
+			name:                "unbounded limit without offset reranks everything",
+			recency:             enabled,
+			searchOpts:          SearchOptions{Limit: 0},
+			storeResults:        defaultStoreResults,
+			expectedFetchLimit:  0,
+			expectedFetchOffset: 0,
+			expectedOrder:       []string{"fresh-mid", "fresh-weak", "old-strong"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rawScores := make(map[string]float32)
+			for _, r := range tt.storeResults() {
+				rawScores[r.Document.PostID] = r.Score
+			}
+
+			store := &stubVectorStore{
+				searchFunc: func(ctx context.Context, embedding []float32, opts SearchOptions) ([]SearchResult, error) {
+					return tt.storeResults(), nil
+				},
+			}
+			provider := &stubEmbeddingProvider{}
+			cs := NewCompositeSearch(store, provider, defaultOptions, tt.recency)
+
+			results, err := cs.Search(context.Background(), "query", tt.searchOpts)
+			require.NoError(t, err)
+
+			require.Len(t, store.searchCalls, 1)
+			assert.Equal(t, tt.expectedFetchLimit, store.searchCalls[0].opts.Limit, "store fetch limit")
+			assert.Equal(t, tt.expectedFetchOffset, store.searchCalls[0].opts.Offset, "store fetch offset")
+
+			order := make([]string, 0, len(results))
+			for _, r := range results {
+				order = append(order, r.Document.PostID)
+			}
+			assert.Equal(t, tt.expectedOrder, order)
+
+			// The returned Score stays the raw similarity; recency only reorders.
+			for _, r := range results {
+				assert.Equal(t, rawScores[r.Document.PostID], r.Score,
+					"raw score of %s must be preserved", r.Document.PostID)
 			}
 		})
 	}
@@ -509,7 +660,7 @@ func TestCompositeSearch_Delete(t *testing.T) {
 			store := &stubVectorStore{deleteFunc: tt.deleteFunc}
 			provider := &stubEmbeddingProvider{}
 
-			cs := NewCompositeSearch(store, provider, defaultOptions)
+			cs := NewCompositeSearch(store, provider, defaultOptions, RecencyBiasSettings{})
 
 			err := cs.Delete(context.Background(), tt.postIDs)
 
@@ -575,7 +726,7 @@ func TestCompositeSearch_Clear(t *testing.T) {
 			store := &stubVectorStore{clearFunc: tt.clearFunc}
 			provider := &stubEmbeddingProvider{}
 
-			cs := NewCompositeSearch(store, provider, defaultOptions)
+			cs := NewCompositeSearch(store, provider, defaultOptions, RecencyBiasSettings{})
 
 			err := cs.Clear(context.Background())
 
@@ -616,7 +767,7 @@ func TestCompositeSearch_ContextCancellation(t *testing.T) {
 			},
 		}
 
-		cs := NewCompositeSearch(store, provider, defaultOptions)
+		cs := NewCompositeSearch(store, provider, defaultOptions, RecencyBiasSettings{})
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
@@ -641,7 +792,7 @@ func TestCompositeSearch_ContextCancellation(t *testing.T) {
 			},
 		}
 
-		cs := NewCompositeSearch(store, provider, defaultOptions)
+		cs := NewCompositeSearch(store, provider, defaultOptions, RecencyBiasSettings{})
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
