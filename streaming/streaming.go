@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -31,8 +32,13 @@ type Client interface {
 	GetConfig() *model.Config
 	KVSet(key string, value interface{}) error
 	LogError(msg string, keyValuePairs ...interface{})
+	LogWarn(msg string, keyValuePairs ...interface{})
 	LogDebug(msg string, keyValuePairs ...interface{})
 }
+
+// maxPostAttachments independently caps file IDs merged onto a streamed post
+// so an emitter cannot grow post.FileIds unboundedly.
+const maxPostAttachments = llm.MaxPostAttachments
 
 const PostStreamingControlCancel = "cancel"
 const PostStreamingControlEnd = "end"
@@ -559,6 +565,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	var messageBuilder strings.Builder
 	messageBuilder.Grow(4096) // Pre-allocate for typical response size
 	var reasoningBuffer strings.Builder
+	attachmentCapWarned := false
 
 	for {
 		select {
@@ -581,13 +588,36 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						acc.text.WriteString(textChunk)
 					}
 				}
+			case llm.EventTypeFiles:
+				// File IDs created during the turn. Merge into the post so
+				// the final UpdatePost attaches them server-side; the server
+				// strips any ID that is not attachable. Cap the merged total
+				// independently of emitter discipline.
+				if ids, ok := event.Value.([]string); ok {
+					dropped := 0
+					for _, id := range ids {
+						if slices.Contains(post.FileIds, id) {
+							continue
+						}
+						if len(post.FileIds) >= maxPostAttachments {
+							dropped++
+							continue
+						}
+						post.FileIds = append(post.FileIds, id)
+					}
+					if dropped > 0 && !attachmentCapWarned {
+						attachmentCapWarned = true
+						p.mmClient.LogWarn("Streaming truncated attachments over the per-post limit",
+							"post_id", post.Id, "dropped", dropped, "limit", maxPostAttachments)
+					}
+				}
 			case llm.EventTypeEnd:
 				// Stream has closed cleanly. The "empty" fallback message only
 				// applies when the LLM truly produced nothing; a stream that
 				// stopped after emitting tool_use blocks (e.g. awaiting user
-				// approval) is a valid response rendered via the tool UI.
+				// approval) or attached files is a valid response.
 				hasToolCalls := acc != nil && len(acc.toolCalls) > 0
-				if strings.TrimSpace(post.Message) == "" && !hasToolCalls {
+				if strings.TrimSpace(post.Message) == "" && !hasToolCalls && len(post.FileIds) == 0 {
 					p.mmClient.LogError("LLM closed stream with no result")
 					T := i18n.LocalizerFunc(p.i18n, userLocale)
 					emptyText := T("agents.stream_to_post_llm_not_return", "Sorry! The LLM did not return a result.")

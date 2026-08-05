@@ -192,6 +192,16 @@ func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
 	}
 }
 
+// WithLLMContextResponseFiles marks the context as supporting response-post
+// file attachments (ToolRuntime.CreatedFiles are attached to the streamed
+// response post at end of turn). Must be configured before default tools
+// are built so CreateFile is cataloged.
+func (b *Builder) WithLLMContextResponseFiles() llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ToolCatalog.ResponseFilesSupported = true
+	}
+}
+
 // sanitizeUserProfileField strips characters that could be used for prompt injection
 // in user profile fields rendered into the system prompt. It collapses newlines, carriage
 // returns, and tabs to spaces, removes other control characters, and trims the result.

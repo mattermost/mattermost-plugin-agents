@@ -42,6 +42,13 @@ type Tool struct {
 	// the Resolver is only an error backstop. Empty for normal tools.
 	UserInteraction string
 
+	// AutoExecute marks a built-in tool that runs without user approval, like
+	// the MCP dynamic-loading meta-tools. Reserve it for tools whose only side
+	// effect is scoped to the assistant's own response (e.g. CreateFile
+	// attaching a file to the reply post). Only honored for tools with an
+	// empty ServerOrigin — MCP tools must never auto-execute through this flag.
+	AutoExecute bool
+
 	// CallMetadata is forwarded to the tool implementation as MCP CallToolParams.Meta.
 	// It is invisible to the LLM, not part of the input schema, and not parsed from the
 	// model's arguments. Set it at scope-time via WithCallMetadata when callers need to
