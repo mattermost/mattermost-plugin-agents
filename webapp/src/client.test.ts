@@ -6,7 +6,8 @@ import type {OptsSignalExt} from '@mattermost/types/client4';
 
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
-import {normalizeConversationResponse, searchAllChannels} from './client';
+import {getConversation, normalizeConversationResponse, searchAllChannels, setSiteURL} from './client';
+import manifest from './manifest';
 
 type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
 
@@ -20,7 +21,16 @@ jest.mock('@mattermost/client', () => {
 
         // client.tsx constructs `new Client4()`; the mocked class exposes instance methods.
         Client4: class Client4 {
+            url = '';
             searchAllChannels = mockSearchAllChannels;
+
+            setUrl(url: string) {
+                this.url = url;
+            }
+
+            getOptions(options: RequestInit) {
+                return options;
+            }
         },
         ClientError: class extends Error {},
         mockSearchAllChannels,
@@ -32,6 +42,12 @@ const {mockSearchAllChannels} = jest.requireMock('@mattermost/client') as {
         (term: string, opts?: SearchAllChannelsOpts) => Promise<ChannelWithTeamData[]>
     >;
 };
+
+const mockFetch = jest.fn<Promise<Response>, [string, RequestInit]>();
+global.fetch = mockFetch as unknown as typeof fetch;
+
+const siteURL = 'http://localhost:8065';
+const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
 
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
     return {
@@ -120,5 +136,36 @@ describe('searchAllChannels', () => {
             include_deleted: false,
             deleted: false,
         });
+    });
+});
+
+describe('getConversation', () => {
+    beforeEach(() => {
+        mockFetch.mockReset();
+        setSiteURL(siteURL);
+    });
+
+    test('requests the encoded conversation route for a well-formed id', async () => {
+        mockFetch.mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(makeConv()),
+        } as Response);
+
+        await expect(getConversation(WELL_FORMED_ID)).resolves.toEqual(makeConv());
+        expect(mockFetch).toHaveBeenCalledWith(
+            `${siteURL}/plugins/${manifest.id}/conversations/${WELL_FORMED_ID}`,
+            expect.objectContaining({method: 'GET'}),
+        );
+    });
+
+    test.each([
+        {name: 'empty', id: ''},
+        {name: 'relative path segments', id: '../../some/other/route'},
+        {name: 'separator', id: 'abcdefghijklmnopqrstuvwxy/'},
+        {name: 'leading whitespace', id: ` ${WELL_FORMED_ID}`},
+    ])('does not issue a request for a malformed id: $name', async ({id}) => {
+        await expect(getConversation(id)).rejects.toThrow();
+        expect(mockFetch).not.toHaveBeenCalled();
     });
 });
