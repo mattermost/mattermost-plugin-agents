@@ -180,6 +180,13 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		count = 0 // Continue with zero estimate
 	}
 
+	currentModelInfo := s.getModelInfoFromConfig()
+	if !clearIndex && hasExisting && !sameEmbeddingModel(jobStatus.ModelInfo, currentModelInfo) {
+		// A cursor is only valid for the model that produced the preceding
+		// embeddings. Restart from the beginning rather than mixing models.
+		clearIndex = true
+	}
+
 	newJobStatus := JobStatus{
 		JobID:     model.NewId(),
 		Status:    JobStatusRunning,
@@ -200,7 +207,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		// Fresh start - calculate new values and snapshot current model.
 		newJobStatus.TotalRows = count
 		newJobStatus.CutoffAt = cutoffTimestamp
-		newJobStatus.ModelInfo = s.getModelInfoFromConfig()
+		newJobStatus.ModelInfo = currentModelInfo
 	}
 
 	// CAS routes through master; the predicate rejects the write if the row
@@ -656,4 +663,14 @@ func (s *Indexer) getModelInfoFromConfig() *ModelInfo {
 		ModelName:    cfg.GetModelName(),
 		Dimensions:   cfg.Dimensions,
 	}
+}
+
+func sameEmbeddingModel(left, right *ModelInfo) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+
+	return left.ProviderType == right.ProviderType &&
+		left.ModelName == right.ModelName &&
+		left.Dimensions == right.Dimensions
 }
