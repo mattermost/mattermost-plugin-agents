@@ -291,11 +291,6 @@ func (a *API) handleToolCall(c *gin.Context) {
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
-
 	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
 		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
@@ -326,14 +321,15 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 // toolApprovalHTTPStatus maps errors from HandleToolCall/HandleToolResult to
 // HTTP statuses. Stale-click and missing-conversation cases are client-side
-// issues (400); requester-mismatch is a permission denial (403); everything
-// else falls through to 500.
+// issues (400); requester-mismatch and unlicensed remote MCP use are
+// permission denials (403); everything else falls through to 500.
 func toolApprovalHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrStaleToolClick),
 		errors.Is(err, conversations.ErrPostMissingConversationID):
 		return http.StatusBadRequest
-	case errors.Is(err, conversations.ErrNotRequester):
+	case errors.Is(err, conversations.ErrNotRequester),
+		errors.Is(err, conversations.ErrRemoteMCPNotLicensed):
 		return http.StatusForbidden
 	default:
 		return http.StatusInternalServerError
@@ -344,11 +340,6 @@ func (a *API) handleToolResult(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
 
 	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {

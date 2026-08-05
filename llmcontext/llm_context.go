@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -38,6 +39,7 @@ type Builder struct {
 	toolProvider    ToolProvider
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
+	licenseChecker  *enterprise.LicenseChecker
 }
 
 // NewLLMContextBuilder creates a new LLM context builder
@@ -52,6 +54,7 @@ func NewLLMContextBuilder(
 		toolProvider:    toolProvider,
 		mcpToolProvider: mcpToolProvider,
 		configProvider:  configProvider,
+		licenseChecker:  enterprise.NewLicenseChecker(pluginAPI),
 	}
 }
 
@@ -146,6 +149,20 @@ func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []ll
 	})
 }
 
+func filterMCPToolsByPredicate(tools []llm.Tool, keep func(llm.Tool) bool) []llm.Tool {
+	if len(tools) == 0 || keep == nil {
+		return tools
+	}
+
+	filtered := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if keep(tool) {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
 // sanitizeUserProfileField strips characters that could be used for prompt injection
 // in user profile fields rendered into the system prompt. It collapses newlines, carriage
 // returns, and tabs to spaces, removes other control characters, and trims the result.
@@ -201,6 +218,18 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 		// Get tools from all connected servers
 		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID)
 
+		// Remote/external MCP servers are the licensed "MCP Support" feature.
+		// Without a license their tools are never supplied to the LLM: they
+		// are dropped before being added to the tool store, so the model
+		// cannot see or call them. Embedded Mattermost MCP tools are basic
+		// tool integrations and are not filtered.
+		remoteMCPLicensed := b.licenseChecker == nil || b.licenseChecker.IsBasicsLicensed()
+		if !remoteMCPLicensed {
+			mcpTools = filterMCPToolsByPredicate(mcpTools, func(tool llm.Tool) bool {
+				return !mcp.IsRemoteServerOrigin(tool.ServerOrigin)
+			})
+		}
+
 		// Add tools from successfully connected servers even if some had errors
 		// These will be disabled in non-DM channels via WithToolsDisabled()
 		if len(mcpTools) > 0 {
@@ -222,6 +251,12 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 				authErrors = filterToolAuthErrorsForAllowlist(mcpErrors.ToolAuthErrors, botCfg.EnabledMCPTools)
 			}
 			for _, authError := range authErrors {
+				// Auth errors from remote servers are dropped with the tools
+				// so users are not prompted to authenticate to servers whose
+				// tools cannot be used without a license.
+				if !remoteMCPLicensed && mcp.IsRemoteServerOrigin(authError.ServerOrigin) {
+					continue
+				}
 				store.AddAuthError(authError)
 			}
 		}
