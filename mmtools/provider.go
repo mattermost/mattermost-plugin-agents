@@ -34,9 +34,11 @@ func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService) *MMTo
 // WithToolsDisabled() based on context (e.g., DM vs channel). This allows LLMs to be
 // aware of tool capabilities even when they can't be executed in the current context.
 //
-// The exception is user-interaction tools: advertising them where nobody can
-// answer would strand the conversation, so they are only cataloged when the
-// context says an interactive user is present.
+// The exceptions are context-dependent tools: user-interaction tools are only
+// cataloged when the context says an interactive user is present (advertising
+// them where nobody can answer would strand the conversation), and
+// response-file tools are only cataloged when the flow can attach files to
+// the response post.
 func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.Tool {
 	builtInTools := []llm.Tool{}
 
@@ -49,6 +51,10 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 		if sourceTool := p.webSearch.SourceTool(bot); sourceTool != nil {
 			builtInTools = append(builtInTools, *sourceTool)
 		}
+	}
+
+	if p.pluginAPI != nil && llmContext != nil && llmContext.ToolCatalog.ResponseFilesSupported {
+		builtInTools = append(builtInTools, NewCreateFileTool(p.pluginAPI))
 	}
 
 	if llmContext != nil && llmContext.ToolCatalog.InteractiveUserPresent {

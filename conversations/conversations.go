@@ -252,16 +252,27 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 		if isMCPMetaToolCall(tc, llmCtx) {
 			return true
 		}
-		if c.toolPolicyChecker == nil {
-			return false
+		var lookup llm.ToolLookup
+		var found bool
+		if llmCtx != nil {
+			lookup, found = llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
 		}
-		lookup, ok := llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
-		if !ok {
+		if !found {
 			return false
 		}
 		// Interaction tools are answered by the user; auto-executing one
 		// would bypass the question entirely.
 		if lookup.Tool.UserInteraction != "" {
+			return false
+		}
+		// Auto-execute built-ins (e.g. CreateFile) run without approval, like
+		// the MCP meta-tools: their only side effect is scoped to the
+		// assistant's own response. Only honored for built-ins — an MCP tool
+		// carrying the flag must still go through policy.
+		if isAutoExecuteBuiltIn(lookup.Tool) {
+			return true
+		}
+		if c.toolPolicyChecker == nil {
 			return false
 		}
 		policy, enabled := c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
@@ -286,11 +297,20 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 			if isMCPMetaToolCall(tc, llmCtx) {
 				continue
 			}
-			if c.toolPolicyChecker == nil {
+			var lookup llm.ToolLookup
+			var found bool
+			if llmCtx != nil {
+				lookup, found = llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
+			}
+			if !found {
 				return false
 			}
-			lookup, ok := llmCtx.Tools.LookupTool(tc.Name, tc.ServerOrigin)
-			if !ok {
+			// Auto-execute built-ins never require approval, so a round made
+			// up only of them can still be written shared=true.
+			if isAutoExecuteBuiltIn(lookup.Tool) {
+				continue
+			}
+			if c.toolPolicyChecker == nil {
 				return false
 			}
 			policy, enabled := c.toolPolicyChecker.GetToolPolicy(lookup.ServerOrigin, lookup.BareName)
@@ -300,6 +320,13 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 		}
 	}
 	return sawToolCall
+}
+
+// isAutoExecuteBuiltIn reports whether the tool is a built-in flagged to run
+// without user approval. The AutoExecute flag is only honored for built-ins
+// (empty ServerOrigin) — MCP tools must always go through policy.
+func isAutoExecuteBuiltIn(tool llm.Tool) bool {
+	return tool.AutoExecute && tool.ServerOrigin == ""
 }
 
 func isMCPMetaToolCall(tc llm.ToolCall, llmCtx *llm.Context) bool {

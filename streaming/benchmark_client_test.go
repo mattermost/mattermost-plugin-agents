@@ -46,4 +46,6 @@ func (c *benchmarkClient) KVSet(_ string, _ interface{}) error {
 
 func (c *benchmarkClient) LogError(_ string, _ ...interface{}) {}
 
+func (c *benchmarkClient) LogWarn(_ string, _ ...interface{}) {}
+
 func (c *benchmarkClient) LogDebug(_ string, _ ...interface{}) {}

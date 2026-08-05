@@ -147,13 +147,18 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 
 	// Build the execution context bound to this conversation. A tool-approval
-	// click is by definition an interactive user action.
+	// click is by definition an interactive user action. ResponseFiles keeps
+	// CreateFile in the catalog so approved/auto-resumed CreateFile blocks
+	// can resolve and record their created files.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, user, channel,
 		"Failed to load user tool preferences for tool approval",
 		c.contextBuilder.WithLLMContextInteractive(),
+		c.contextBuilder.WithLLMContextResponseFiles(),
 	)
+	// The clicked post may already carry attachments from an earlier round.
+	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
 	conversation.RestoreLoadedMCPToolsFromTurns(llmContext.Tools, turns)
 
@@ -679,6 +684,7 @@ func (c *Conversations) streamToolFollowUp(
 	if !channelToolsAutoRunEverywhereOnly {
 		channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextInteractive())
 	}
+	channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextResponseFiles())
 	// Build the execution context bound to this conversation.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
@@ -686,6 +692,8 @@ func (c *Conversations) streamToolFollowUp(
 		"Failed to load user tool preferences for tool follow-up",
 		channelToolFilterOpts...,
 	)
+	// The continuation post may already carry attachments from an earlier round.
+	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
 	toolsDisabled := !isDM
 	if !isDM && c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling() {
@@ -730,6 +738,14 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	stream := decorateStreamWithWebSearchAnnotations(runResult.Stream, approvalContext)
+
+	// Recover files created in earlier requests of this run (e.g. an
+	// approved CreateFile whose share decision arrives in a later request,
+	// where the in-memory registry is gone) from the persisted turns.
+	// approvalContext is nil on the HandleToolResult path; the decorator
+	// tolerates nil contexts.
+	extraFileIDs := c.collectCreatedFileIDsFromTurns(conv.ID, post.Id)
+	stream = c.decorateStreamWithCreatedFiles(stream, post, extraFileIDs, llmContext, approvalContext)
 
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.

@@ -255,6 +255,7 @@ func (c *Conversations) regenerateViaConversation(
 		ctx, bot, user, channel,
 		"Failed to load user tool preferences on regen, proceeding without filtering",
 		c.contextBuilder.WithLLMContextInteractive(),
+		c.contextBuilder.WithLLMContextResponseFiles(),
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
@@ -286,6 +287,14 @@ func (c *Conversations) regenerateViaConversation(
 		c.mmClient.LogError("Failed to scrub prior response turns on regen", "error", delErr.Error(), "post_id", post.Id, "conversation_id", conv.ID)
 	}
 
+	// Clear prior attachments so the regenerated response starts clean.
+	// Safe: conversation-flow bot posts only ever carry CreateFile
+	// attachments (meeting-summary regen never reaches this path).
+	// An explicit empty list — not nil — tells the server's UpdatePost
+	// file-change processing to detach the previous generation's attachments
+	// even if the new run creates none; nil could be treated as "no change".
+	post.FileIds = []string{}
+
 	var opts []llm.LanguageModelOption
 	if toolsDisabled {
 		opts = append(opts, llm.WithToolsDisabled())
@@ -308,5 +317,5 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
-	return runResult.Stream, nil
+	return c.decorateStreamWithCreatedFiles(runResult.Stream, post, nil, llmContext), nil
 }
