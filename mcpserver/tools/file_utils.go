@@ -371,14 +371,17 @@ func inlineFilesMessage(count int) string {
 
 // resolvePostFiles resolves a posting tool's legacy attachments and inline
 // files into the post's file IDs plus a success-message suffix. Legacy
-// attachments resolve first (best-effort) so the combined cap is enforced
-// before any inline upload; an inline-file failure aborts because a post
-// missing files the model explicitly asked to create is broken output.
+// attachments resolve first so the combined cap is enforced before any inline
+// upload; a failure on either path aborts because a post missing files the
+// model explicitly asked for is broken output.
 func resolvePostFiles(ctx context.Context, client *model.Client4, channelID string, attachments []string, files []InlineFile, accessMode AccessMode) ([]string, string, error) {
-	attachmentFileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, channelID, attachments, accessMode)
-
-	if err := checkCombinedFileCap(len(attachmentFileIDs), len(files)); err != nil {
+	attachmentFileIDs, attachmentMessage, err := uploadFilesAndUrlsForLocal(ctx, client, channelID, attachments, accessMode)
+	if err != nil {
 		return nil, "", err
+	}
+
+	if capErr := checkCombinedFileCap(len(attachmentFileIDs), len(files)); capErr != nil {
+		return nil, "", capErr
 	}
 
 	inlineFileIDs, err := uploadInlineFiles(ctx, client, channelID, files)
@@ -394,29 +397,26 @@ func resolvePostFiles(ctx context.Context, client *model.Client4, channelID stri
 	return fileIDs, attachmentMessage + inlineFilesMessage(len(inlineFileIDs)), nil
 }
 
-// uploadFilesAndUrlsForLocal uploads files from URLs or file paths (local access only) and returns file IDs and status message
-func uploadFilesAndUrlsForLocal(ctx context.Context, client *model.Client4, channelID string, attachments []string, accessMode AccessMode) ([]string, string) {
-	var fileIDs []string
-	var attachmentMessage string
-
-	if len(attachments) > 0 {
-		if accessMode != AccessModeLocal {
-			attachmentMessage = " (file attachments not supported in remote access mode)"
-			return nil, attachmentMessage
-		}
-
-		uploadedFileIDs, uploadErr := uploadFilesForLocal(ctx, client, channelID, attachments, accessMode)
-		if uploadErr != nil {
-			if errors.Is(uploadErr, errMCPFileUploadFailed) {
-				attachmentMessage = " (file upload failed)"
-			} else {
-				attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", uploadErr)
-			}
-		} else {
-			fileIDs = uploadedFileIDs
-			attachmentMessage = fmt.Sprintf(" (uploaded %d files)", len(fileIDs))
-		}
+// uploadFilesAndUrlsForLocal uploads files from URLs or file paths (local access only)
+// and returns file IDs and a status message for the success response. When any
+// attachment fails to upload it returns an error so callers can abort instead of
+// posting a message without its attachments.
+func uploadFilesAndUrlsForLocal(ctx context.Context, client *model.Client4, channelID string, attachments []string, accessMode AccessMode) ([]string, string, error) {
+	if len(attachments) == 0 {
+		return nil, "", nil
 	}
 
-	return fileIDs, attachmentMessage
+	if accessMode != AccessModeLocal {
+		return nil, "", fmt.Errorf("file attachments are not supported in remote access mode; the post was NOT created - retry without attachments if the message alone is acceptable")
+	}
+
+	fileIDs, uploadErr := uploadFilesForLocal(ctx, client, channelID, attachments, accessMode)
+	if uploadErr != nil {
+		if errors.Is(uploadErr, errMCPFileUploadFailed) {
+			return nil, "", fmt.Errorf("file upload failed; the post was NOT created - fix the attachment or retry without it")
+		}
+		return nil, "", fmt.Errorf("file upload failed (%v); the post was NOT created - fix the attachment or retry without it", uploadErr)
+	}
+
+	return fileIDs, fmt.Sprintf(" (uploaded %d files)", len(fileIDs)), nil
 }

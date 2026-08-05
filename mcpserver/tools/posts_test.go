@@ -162,6 +162,188 @@ const (
 	siblingPostMessage = "this is a thread reply sibling"
 )
 
+func TestResolveThreadRoot(t *testing.T) {
+	channelID := model.NewId()
+	otherChannelID := model.NewId()
+	rootID := model.NewId()
+	replyID := model.NewId()
+	foreignID := model.NewId()
+	missingID := model.NewId()
+
+	mux := http.NewServeMux()
+	postsByID := map[string]*model.Post{
+		rootID:    {Id: rootID, ChannelId: channelID},
+		replyID:   {Id: replyID, ChannelId: channelID, RootId: rootID},
+		foreignID: {Id: foreignID, ChannelId: otherChannelID},
+	}
+	for id, post := range postsByID {
+		mux.HandleFunc("/api/v4/posts/"+id, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(post)
+		})
+	}
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: newTestClient(ts.URL)}
+
+	tests := []struct {
+		name     string
+		rootID   string
+		wantRoot string
+		wantErr  bool
+	}{
+		{
+			name:     "empty root id resolves to empty",
+			rootID:   "",
+			wantRoot: "",
+		},
+		{
+			name:    "malformed root id is rejected",
+			rootID:  "notanid",
+			wantErr: true,
+		},
+		{
+			name:     "root post resolves to itself",
+			rootID:   rootID,
+			wantRoot: rootID,
+		},
+		{
+			name:     "reply resolves to its thread root",
+			rootID:   replyID,
+			wantRoot: rootID,
+		},
+		{
+			name:    "post from another conversation is rejected",
+			rootID:  foreignID,
+			wantErr: true,
+		},
+		{
+			name:    "missing post is rejected",
+			rootID:  missingID,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveThreadRoot(mcpCtx, channelID, tt.rootID)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRoot, got)
+		})
+	}
+}
+
+func TestToolCreatePostChannelValidation(t *testing.T) {
+	teamID := model.NewId()
+
+	tests := []struct {
+		name               string
+		channelType        model.ChannelType
+		channelDisplayName string
+		channelTeamID      string
+		argsDisplayName    string
+		argsTeamName       string
+		wantErr            bool
+		wantTeamFetch      bool
+	}{
+		{
+			name:               "direct channel skips display name validation",
+			channelType:        model.ChannelTypeDirect,
+			channelDisplayName: "",
+			channelTeamID:      "",
+			argsDisplayName:    "Direct Message",
+			argsTeamName:       "N/A",
+			wantErr:            false,
+			wantTeamFetch:      false,
+		},
+		{
+			name:               "group channel skips display name validation",
+			channelType:        model.ChannelTypeGroup,
+			channelDisplayName: "alice, bob, carol",
+			channelTeamID:      "",
+			argsDisplayName:    "Group Message",
+			argsTeamName:       "N/A",
+			wantErr:            false,
+			wantTeamFetch:      false,
+		},
+		{
+			name:               "regular channel still validates display name",
+			channelType:        model.ChannelTypeOpen,
+			channelDisplayName: "Town Square",
+			channelTeamID:      teamID,
+			argsDisplayName:    "Wrong Name",
+			argsTeamName:       "Core Team",
+			wantErr:            true,
+			wantTeamFetch:      false,
+		},
+		{
+			name:               "regular channel with matching names succeeds",
+			channelType:        model.ChannelTypeOpen,
+			channelDisplayName: "Town Square",
+			channelTeamID:      teamID,
+			argsDisplayName:    "Town Square",
+			argsTeamName:       "Core Team",
+			wantErr:            false,
+			wantTeamFetch:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			channelID := model.NewId()
+			teamFetched := false
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v4/channels/"+channelID, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&model.Channel{
+					Id:          channelID,
+					Type:        tt.channelType,
+					DisplayName: tt.channelDisplayName,
+					TeamId:      tt.channelTeamID,
+				})
+			})
+			mux.HandleFunc("/api/v4/teams/"+teamID, func(w http.ResponseWriter, r *http.Request) {
+				teamFetched = true
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&model.Team{Id: teamID, DisplayName: "Core Team"})
+			})
+			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
+				var post model.Post
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&post))
+				post.Id = model.NewId()
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(&post)
+			})
+			ts := httptest.NewServer(mux)
+			t.Cleanup(ts.Close)
+
+			provider := newTestProvider(t, ts.URL)
+			mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: newTestClient(ts.URL)}
+
+			result, err := provider.toolCreatePost(mcpCtx, CreatePostArgs{
+				ChannelID:          channelID,
+				ChannelDisplayName: tt.argsDisplayName,
+				TeamDisplayName:    tt.argsTeamName,
+				Message:            "hello",
+			})
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Contains(t, result, "Successfully created post")
+			assert.Equal(t, tt.wantTeamFetch, teamFetched, "team endpoint hit")
+		})
+	}
+}
+
 func TestReadPostIncludeThread(t *testing.T) {
 	rootID := model.NewId()
 	channelID := model.NewId()
@@ -309,9 +491,8 @@ func TestToolCreatePostWithInlineFiles(t *testing.T) {
 // TestPostToolsCombinedAttachmentCap pins the cap-before-upload ordering of the three
 // posting resolvers: when resolved legacy attachment IDs plus requested inline files
 // exceed the per-post cap, the resolver fails before any inline file is uploaded and
-// before any post is created. It also pins that the cap counts RESOLVED attachment
-// IDs: in remote mode attachments are skipped (zero IDs), so a full set of inline
-// files must still be accepted.
+// before any post is created. It also pins that remote-mode attachments abort the
+// call before any upload instead of being silently dropped from the post.
 func TestPostToolsCombinedAttachmentCap(t *testing.T) {
 	channelID := model.NewId()
 	teamID := model.NewId()
@@ -329,15 +510,6 @@ func TestPostToolsCombinedAttachmentCap(t *testing.T) {
 	originalGetDataDirectory := GetDataDirectoryInternal
 	GetDataDirectoryInternal = func() (string, error) { return dataDir, nil }
 	t.Cleanup(func() { GetDataDirectoryInternal = originalGetDataDirectory })
-
-	// inlineNames mirrors the names produced by makeInlineFiles.
-	inlineNames := func(n int) []string {
-		names := make([]string, n)
-		for i := range names {
-			names[i] = fmt.Sprintf("file-%d.txt", i)
-		}
-		return names
-	}
 
 	resolvers := []struct {
 		name string
@@ -378,11 +550,11 @@ func TestPostToolsCombinedAttachmentCap(t *testing.T) {
 			wantUploads: legacyNames,
 		},
 		{
-			name:        "remote-mode skipped attachments do not count against the cap",
+			name:        "remote-mode attachments abort before any upload instead of being dropped",
 			accessMode:  AccessModeRemote,
 			attachments: legacyNames,
 			inlineCount: maxFilesPerPost,
-			wantUploads: inlineNames(maxFilesPerPost),
+			wantErr:     "not supported in remote access mode",
 		},
 	}
 
