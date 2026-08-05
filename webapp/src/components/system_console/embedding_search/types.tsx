@@ -56,6 +56,9 @@ export interface JobStatusType {
     cutoff_at?: number;
     last_updated_at?: string;
     is_stale?: boolean;
+
+    // Known values: 'building_index' (HNSW CREATE INDEX after bulk load).
+    phase?: string;
 }
 
 // Mirror the server's vector index phases
