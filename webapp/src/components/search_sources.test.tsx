@@ -17,7 +17,7 @@ function source(index: number) {
 
 describe('parseSearchSources', () => {
     test.each([
-        {name: 'missing', raw: undefined},
+        {name: 'null', raw: null},
         {name: 'non-string', raw: 42},
         {name: 'invalid JSON', raw: '{'},
         {name: 'non-array JSON', raw: '{}'},
