@@ -21,6 +21,7 @@ import {
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
+import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
@@ -205,6 +206,9 @@ const AgentConfigView = (props: Props) => {
     const {mode, agent, services, onBack, onSaved} = props;
     const intl = useIntl();
 
+    // Same manage_system gate as the MCPs tab / server canSaveServiceAccountAuth check.
+    const canEditServiceAccountAuth = useCurrentUserHasSystemPermission('manage_system');
+
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const initialDraft = useMemo(() => {
         if (agent) {
@@ -225,12 +229,19 @@ const AgentConfigView = (props: Props) => {
     const showDiscardDialogRef = useRef(false);
     showDiscardDialogRef.current = showDiscardDialog;
 
+    // Non-admins may not save while service account auth stays enabled; turning
+    // the draft flag off re-enables Save (mirrors the server-side admin gate).
+    const serviceAccountSaveLocked = !canEditServiceAccountAuth && draft.useServiceAccountAuth;
+
+    // The MCPs tab stays reachable while save-locked so the off switch is available.
+    const mcpsTabDisabled = draft.disableTools && !serviceAccountSaveLocked;
+
     // Leave MCPs tab if tools are disabled
     useEffect(() => {
-        if (draft.disableTools && activeTab === 'mcps') {
+        if (mcpsTabDisabled && activeTab === 'mcps') {
             setActiveTab('config');
         }
-    }, [draft.disableTools, activeTab]);
+    }, [mcpsTabDisabled, activeTab]);
 
     const isDirty = useMemo(
         () => avatarFile !== null || !draftsEqual(draft, baselineDraft),
@@ -411,10 +422,10 @@ const AgentConfigView = (props: Props) => {
                     </TabButton>
                     <TabButton
                         $active={activeTab === 'mcps'}
-                        disabled={draft.disableTools}
-                        title={draft.disableTools ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : ''}
+                        disabled={mcpsTabDisabled}
+                        title={mcpsTabDisabled ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : ''}
                         onClick={() => {
-                            if (!draft.disableTools) {
+                            if (!mcpsTabDisabled) {
                                 setActiveTab('mcps');
                             }
                         }}
@@ -425,6 +436,11 @@ const AgentConfigView = (props: Props) => {
 
                 <ViewBody>
                     {errors.general && <ErrorBanner>{errors.general}</ErrorBanner>}
+                    {serviceAccountSaveLocked && (
+                        <WarningBanner>
+                            <FormattedMessage defaultMessage='This agent uses service account authentication. Only system administrators can modify it while that setting is enabled. Turn the setting off on the MCPs tab to re-enable saving.'/>
+                        </WarningBanner>
+                    )}
 
                     {activeTab === 'config' && (
                         <ConfigTab
@@ -464,7 +480,7 @@ const AgentConfigView = (props: Props) => {
                     </CancelButton>
                     <SaveButton
                         onClick={handleSave}
-                        disabled={saving}
+                        disabled={saving || serviceAccountSaveLocked}
                     >
                         {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
                         }
@@ -595,6 +611,16 @@ const ErrorBanner = styled.div`
     border: 1px solid rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3);
     color: var(--dnd-indicator, #D24B4E);
     font-size: 14px;
+`;
+
+const WarningBanner = styled.div.attrs({role: 'status'})`
+    padding: 8px 12px;
+    margin-bottom: 16px;
+    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.08);
+    border-radius: 4px;
+    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.3);
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    font-size: 13px;
 `;
 
 const ViewFooter = styled.div`

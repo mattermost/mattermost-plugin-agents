@@ -367,6 +367,7 @@
   "eTCUmEmb": "Optional: Override the service's default model ({defaultModel}) for this agent. Select from the list or type a custom model name.",
   "eWrMxamu": "Remote MCP servers require a qualifying Mattermost plan",
   "eXWn5pY2": "Allow for selected channels",
+  "egsWaQSw": "This agent uses service account authentication. Only system administrators can modify it while that setting is enabled. Turn the setting off on the MCPs tab to re-enable saving.",
   "eiVgJmO6": "Add an AI Bot",
   "euJ6bQRD": "Enter a brief description",
   "eyVC9HNQ": "Describe when the agent should use this tool...",

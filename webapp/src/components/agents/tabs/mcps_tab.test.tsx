@@ -4,10 +4,9 @@
 import React from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
-import {useSelector} from 'react-redux';
 
 import {getUserMCPTools} from '@/client';
-import {userHasSystemPermission} from '@/utils/permissions';
+import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
 import McpsTab from './mcps_tab';
 
@@ -25,16 +24,12 @@ jest.mock('react-intl', () => {
     };
 });
 
-jest.mock('react-redux', () => ({
-    useSelector: jest.fn(),
-}));
-
 jest.mock('@/client', () => ({
     getUserMCPTools: jest.fn(),
 }));
 
 jest.mock('@/utils/permissions', () => ({
-    userHasSystemPermission: jest.fn(),
+    useCurrentUserHasSystemPermission: jest.fn(),
 }));
 
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
@@ -42,8 +37,7 @@ jest.mock('@/hooks/use_mcp_connection_events', () => ({
 }));
 
 const mockedGetUserMCPTools = getUserMCPTools as unknown as jest.Mock;
-const mockedUseSelector = useSelector as unknown as jest.Mock;
-const mockedUserHasSystemPermission = userHasSystemPermission as unknown as jest.Mock;
+const mockedUseCurrentUserHasSystemPermission = useCurrentUserHasSystemPermission as unknown as jest.Mock;
 
 const serviceAccountToggleName = /^Use service accounts for authentication/;
 const serviceAccountWarning = /^Anyone who can use this agent acts with its shared service account access/;
@@ -104,10 +98,7 @@ function renderWithOrphanedTool(useServiceAccountAuth: boolean) {
 describe('McpsTab', () => {
     beforeEach(() => {
         mockedGetUserMCPTools.mockReset();
-        mockedUseSelector.mockImplementation((selector: (state: unknown) => unknown) => selector({
-            entities: {users: {currentUserId: 'user_1'}},
-        }));
-        mockedUserHasSystemPermission.mockReturnValue(true);
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(true);
     });
 
     // MM-69185 regression: when the live MCP catalog drops entries that were
@@ -184,11 +175,9 @@ describe('McpsTab', () => {
         expect(screen.getByText(serviceAccountWarning)).not.toBeNull();
     });
 
-    // The server rejects non-admin attempts to enable the setting with a 403, so the
-    // toggle is admin-only. Non-admins editing an agent that already uses service
-    // accounts still see the warning explaining what that means.
-    test('hides the service account toggle from users without manage_system', async () => {
-        mockedUserHasSystemPermission.mockReturnValue(false);
+    // Non-admins cannot enable the setting, but can turn it off when it is already on.
+    test('lets users without manage_system turn service account auth off', async () => {
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);
         mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
 
         const off = renderTab(false);
@@ -197,10 +186,14 @@ describe('McpsTab', () => {
         expect(screen.queryByText(serviceAccountWarning)).toBeNull();
         off.unmount();
 
-        renderTab(true);
+        const on = renderTab(true);
         await screen.findByText('Mattermost');
-        expect(screen.queryByRole('checkbox', {name: serviceAccountToggleName})).toBeNull();
+        const toggle = screen.getByRole('checkbox', {name: serviceAccountToggleName});
+        expect((toggle as HTMLInputElement).checked).toBe(true);
         expect(screen.getByText(serviceAccountWarning)).not.toBeNull();
+
+        fireEvent.click(toggle);
+        expect(on.onChange).toHaveBeenCalledWith({useServiceAccountAuth: false});
     });
 
     // The setting must stay reachable even when the catalog renders no servers.

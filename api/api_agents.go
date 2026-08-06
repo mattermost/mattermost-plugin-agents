@@ -25,8 +25,8 @@ import (
 var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
 // errServiceAccountAuthRequiresAdmin is returned when a caller without
-// PermissionManageSystem tries to turn the service account flag on.
-var errServiceAccountAuthRequiresAdmin = errors.New("only system administrators can enable service account authentication for an agent")
+// PermissionManageSystem tries to save an agent with the service account flag on.
+var errServiceAccountAuthRequiresAdmin = errors.New("only system administrators can save an agent with service account authentication enabled; turn the setting off to make other changes")
 
 // WebsocketEventBotsInvalidate is the event name for PublishWebSocketEvent (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventBotsInvalidate = "bots_invalidate"
@@ -200,10 +200,11 @@ func canCreateAgent(client *pluginapi.Client, userID string) bool {
 	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
 }
 
-// canEnableServiceAccountAuth reports whether userID may turn the service account
-// flag on. It grants the agent the admin-provisioned MCP credentials, so enabling
-// it is restricted to system admins even when the caller can manage the agent.
-func canEnableServiceAccountAuth(client *pluginapi.Client, userID string) bool {
+// canSaveServiceAccountAuth reports whether userID may save an agent whose
+// resulting state has the service account flag on. The flag grants
+// admin-provisioned MCP credentials, so it is restricted to system admins even
+// when the caller can manage the agent.
+func canSaveServiceAccountAuth(client *pluginapi.Client, userID string) bool {
 	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
 }
 
@@ -362,7 +363,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	if req.UseServiceAccountAuth && !canEnableServiceAccountAuth(a.pluginAPI, userID) {
+	if req.UseServiceAccountAuth && !canSaveServiceAccountAuth(a.pluginAPI, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
@@ -500,9 +501,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// Only the false→true transition escalates; an already-enabled flag was
-	// admin-granted, so keeping or clearing it needs no extra permission.
-	if req.UseServiceAccountAuth && !cfg.UseServiceAccountAuth && !canEnableServiceAccountAuth(a.pluginAPI, userID) {
+	// Any save that keeps service account auth enabled is admin-only, since every
+	// field shapes what the admin-granted credentials can do; anyone who can
+	// manage the agent may still turn it off.
+	if req.UseServiceAccountAuth && !canSaveServiceAccountAuth(a.pluginAPI, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}

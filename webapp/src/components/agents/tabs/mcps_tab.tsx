@@ -4,15 +4,12 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {useSelector} from 'react-redux';
 import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
-
-import {GlobalState} from '@mattermost/types/store';
 
 import {getUserMCPTools, type UserMCPServerInfo} from '@/client';
 import {EnabledTool} from '@/types/agents';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
-import {userHasSystemPermission} from '@/utils/permissions';
+import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
 
 import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
@@ -45,11 +42,9 @@ const McpsTab = (props: Props) => {
     const {enabledTools, autoEnableNewMCPTools, useServiceAccountAuth, onChange, onReconcileEnabledTools} = props;
     const intl = useIntl();
 
-    // Mirrors the server-side PermissionManageSystem check on this setting, which
-    // rejects non-admin attempts to enable it with a 403.
-    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const canEditServiceAccountAuth = useSelector((state: GlobalState) =>
-        userHasSystemPermission(state, currentUserId, 'manage_system'));
+    // Mirrors the server-side PermissionManageSystem check: only system admins may
+    // enable or keep service account auth; non-admins may still turn it off.
+    const canEditServiceAccountAuth = useCurrentUserHasSystemPermission('manage_system');
 
     const [servers, setServers] = useState<UserMCPServerInfo[]>([]);
     const [loading, setLoading] = useState(true);
@@ -203,28 +198,27 @@ const McpsTab = (props: Props) => {
     );
 
     // Rendered above every catalog state so the setting stays reachable while
-    // the catalog is loading, failed or empty. Non-admins only see the section when
-    // the setting is already on, so they can tell it applies without being able to change it.
+    // the catalog is loading, failed or empty. Non-admins see the checkbox only
+    // while the draft still has the flag on, so they can turn it off; unchecking
+    // unmounts the section (Cancel restores the persisted value).
     const serviceAccountSection = (!canEditServiceAccountAuth && !useServiceAccountAuth) ? null : (
         <ServiceAccountSection>
-            {canEditServiceAccountAuth && (
-                <CheckboxRow>
-                    <CheckboxInput
-                        type='checkbox'
-                        id='mcp-use-service-accounts'
-                        checked={useServiceAccountAuth}
-                        onChange={(e) => onChange({useServiceAccountAuth: e.target.checked})}
-                    />
-                    <CheckboxLabel htmlFor='mcp-use-service-accounts'>
-                        <CheckboxTitle>
-                            <FormattedMessage defaultMessage='Use service accounts for authentication'/>
-                        </CheckboxTitle>
-                        <CheckboxHint>
-                            <FormattedMessage defaultMessage="Tool calls from this agent authenticate with admin-configured service account credentials on external MCP servers and act as the agent's bot account inside Mattermost. Users are never asked to connect their own accounts. An Enterprise license is required for service account authentication to take effect."/>
-                        </CheckboxHint>
-                    </CheckboxLabel>
-                </CheckboxRow>
-            )}
+            <CheckboxRow>
+                <CheckboxInput
+                    type='checkbox'
+                    id='mcp-use-service-accounts'
+                    checked={useServiceAccountAuth}
+                    onChange={(e) => onChange({useServiceAccountAuth: e.target.checked})}
+                />
+                <CheckboxLabel htmlFor='mcp-use-service-accounts'>
+                    <CheckboxTitle>
+                        <FormattedMessage defaultMessage='Use service accounts for authentication'/>
+                    </CheckboxTitle>
+                    <CheckboxHint>
+                        <FormattedMessage defaultMessage="Tool calls from this agent authenticate with admin-configured service account credentials on external MCP servers and act as the agent's bot account inside Mattermost. Users are never asked to connect their own accounts. An Enterprise license is required for service account authentication to take effect."/>
+                    </CheckboxHint>
+                </CheckboxLabel>
+            </CheckboxRow>
             {useServiceAccountAuth && (
                 <WarningBanner>
                     <FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers and with its bot account's access inside Mattermost. The bot's channel membership is the internal access boundary. Restrict who can use this agent on the Access tab, and only add its bot account to channels it should be able to read. External MCP servers without service account credentials configured are excluded from this agent."/>

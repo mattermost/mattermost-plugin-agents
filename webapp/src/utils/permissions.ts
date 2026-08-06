@@ -1,6 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import {useSelector} from 'react-redux';
+
 import {GlobalState} from '@mattermost/types/store';
 
 /**
@@ -21,4 +23,12 @@ export function userHasSystemPermission(state: GlobalState, userId: string, perm
         }
     }
     return false;
+}
+
+/**
+ * Selector hook: whether the current user's system roles include the permission id.
+ */
+export function useCurrentUserHasSystemPermission(permissionId: string): boolean {
+    return useSelector((state: GlobalState) =>
+        userHasSystemPermission(state, state.entities.users.currentUserId, permissionId));
 }

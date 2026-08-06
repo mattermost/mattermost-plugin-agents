@@ -7,6 +7,7 @@ import {IntlProvider} from 'react-intl';
 
 import {createAgent, updateAgent} from '@/client';
 import {EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, UserAgent} from '@/types/agents';
+import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
 
@@ -30,6 +31,10 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('@/utils/permissions', () => ({
+    useCurrentUserHasSystemPermission: jest.fn(),
+}));
+
 jest.mock('@/client', () => ({
     createAgent: jest.fn(),
     updateAgent: jest.fn(),
@@ -40,6 +45,8 @@ jest.mock('@/client', () => ({
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
+
+const mockedUseCurrentUserHasSystemPermission = useCurrentUserHasSystemPermission as unknown as jest.Mock;
 
 jest.mock('@/components/system_console/bot', () => ({
     ChannelAccessLevel: {
@@ -183,9 +190,12 @@ function renderView(onBack = jest.fn()) {
     };
 }
 
+const serviceAccountSaveBanner = /Only system administrators can modify it while that setting is enabled/;
+
 describe('AgentConfigView', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(true);
     });
 
     test('confirms before dismissing unsaved changes from back button', async () => {
@@ -552,5 +562,39 @@ describe('AgentConfigView', () => {
             mcpDynamicToolLoading: false,
             useServiceAccountAuth: true,
         }));
+    });
+
+    // Non-admins may not save while a persisted service-account agent stays enabled;
+    // turning the draft flag off re-enables Save (server kill switch).
+    test('disables Save for non-admins while service account auth stays enabled', async () => {
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);
+        const agent = {
+            ...savedAgent,
+            id: 'agent_sa',
+            name: 'saagent',
+            displayName: 'SA Agent',
+            useServiceAccountAuth: true,
+        };
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={agent}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        const saveButton = screen.getByRole('button', {name: 'Save'});
+        expect((saveButton as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByText(serviceAccountSaveBanner)).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByLabelText('Use service accounts'));
+        expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.queryByText(serviceAccountSaveBanner)).toBeNull();
     });
 });

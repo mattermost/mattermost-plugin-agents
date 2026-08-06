@@ -684,8 +684,8 @@ func TestUpdateAgentOwnedByOtherWithManageOthersPermission(t *testing.T) {
 }
 
 // Service account auth hands the agent the admin-provisioned MCP credentials, so
-// only system admins may switch it on; anyone who can manage the agent may keep an
-// already-granted flag or clear it.
+// only system admins may create/update an agent that keeps the flag on. Anyone who
+// can manage the agent may turn it off (and change other fields in that same request).
 func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -693,6 +693,8 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 		systemAdmin    bool
 		storedValue    bool
 		requestValue   bool
+		omitField      bool // send a body without the useServiceAccountAuth key
+		extraOverrides map[string]any
 		expectedStatus int
 		expectStored   bool
 	}{
@@ -723,15 +725,50 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 			expectStored:   true,
 		},
 		{
-			name:           "non-admin can update an agent that already uses service account auth",
+			// Pins the JSON binding: an omitted field decodes to false and counts as
+			// turning the flag off (privilege reduction), never as keeping it on.
+			name:           "non-admin body omitting the field turns service account auth off",
 			storedValue:    true,
-			requestValue:   true,
+			omitField:      true,
+			expectedStatus: http.StatusOK,
+			expectStored:   false,
+		},
+		{
+			name:         "non-admin cannot keep service account auth while changing other fields",
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"userAccessLevel":    int(llm.UserAccessLevelAll),
+				"customInstructions": "widened",
+			},
+			expectedStatus: http.StatusForbidden,
+			expectStored:   true,
+		},
+		{
+			name:         "admin can keep service account auth enabled and change fields",
+			systemAdmin:  true,
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"userAccessLevel":    int(llm.UserAccessLevelAll),
+				"customInstructions": "admin update",
+			},
 			expectedStatus: http.StatusOK,
 			expectStored:   true,
 		},
 		{
-			name:           "non-admin can turn service account auth off",
-			storedValue:    true,
+			name:         "non-admin can turn service account auth off while widening access",
+			storedValue:  true,
+			requestValue: false,
+			extraOverrides: map[string]any{
+				"userAccessLevel": int(llm.UserAccessLevelAll),
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "non-admin can update a non-service-account agent",
+			storedValue:    false,
+			requestValue:   false,
 			expectedStatus: http.StatusOK,
 		},
 	}
@@ -772,21 +809,38 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 			stored := &llm.BotConfig{
 				ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
 				DisplayName: "Original", Name: "original", ServiceID: "svc-1",
+				UserAccessLevel:       llm.UserAccessLevelNone,
 				UseServiceAccountAuth: tc.storedValue,
 			}
 			e.agentStore.agents["agent-1"] = stored
 			e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
 
-			body := updateAgentBodyFromStored(stored, map[string]any{
+			overrides := map[string]any{
 				"displayName":           "Updated",
 				"useServiceAccountAuth": tc.requestValue,
-			})
+			}
+			for k, v := range tc.extraOverrides {
+				overrides[k] = v
+			}
+			body := updateAgentBodyFromStored(stored, overrides)
+			if tc.omitField {
+				delete(body, "useServiceAccountAuth")
+			}
 			recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
 			require.Equal(t, tc.expectedStatus, recorder.Result().StatusCode)
 			if tc.expectedStatus == http.StatusForbidden {
 				assert.Contains(t, decodeAgentError(t, recorder), "system administrators")
 			}
 			assert.Equal(t, tc.expectStored, e.agentStore.agents["agent-1"].UseServiceAccountAuth)
+			if tc.expectedStatus == http.StatusOK {
+				assert.Equal(t, "Updated", e.agentStore.agents["agent-1"].DisplayName)
+				if level, ok := tc.extraOverrides["userAccessLevel"]; ok {
+					assert.Equal(t, llm.UserAccessLevel(level.(int)), e.agentStore.agents["agent-1"].UserAccessLevel)
+				}
+				if instructions, ok := tc.extraOverrides["customInstructions"]; ok {
+					assert.Equal(t, instructions, e.agentStore.agents["agent-1"].CustomInstructions)
+				}
+			}
 		})
 	}
 }
