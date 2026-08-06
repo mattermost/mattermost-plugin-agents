@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"golang.org/x/oauth2"
@@ -14,12 +15,13 @@ import (
 
 // authenticationTransport handles 401 responses for MCP
 type authenticationTransport struct {
-	userID      string
-	serverName  string
-	serverURL   string
-	manager     *OAuthManager
-	staticCreds *StaticOAuthCredentials
-	base        http.RoundTripper
+	userID       string
+	serverName   string
+	serverURL    string
+	serverOrigin *url.URL // parsed serverURL origin; nil disables token injection
+	manager      *OAuthManager
+	staticCreds  *StaticOAuthCredentials
+	base         http.RoundTripper
 }
 
 type mcpUnauthorized struct {
@@ -67,8 +69,8 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 
 	transport := t.base
 
-	// Include the token if found
-	if token != nil {
+	// Include the token only for the configured server origin (skip on cross-origin redirects).
+	if token != nil && sameOrigin(t.serverOrigin, req.URL) {
 		oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "", t.staticCreds)
 		if configErr != nil {
 			return nil, fmt.Errorf("failed to create OAuth config: %w", configErr)

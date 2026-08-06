@@ -574,7 +574,7 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 1. On the **Configuration** tab, select **Add Remote MCP Server** to configure a new server.
 2. Configure server settings:
 
-   - **Server URL**: The endpoint URL for your MCP server.
+   - **Server URL**: The endpoint URL for your MCP server. Use the server's final address: redirects to a different origin (including `http` to `https` upgrades) are refused so credentials cannot leak to another host.
    - **Custom Headers**: Additional headers required by your MCP server (optional).
    - **Service Account Authentication**: Static headers used in place of per-user OAuth by agents with **Use service accounts for authentication** enabled (optional). See [Service account authentication](#service-account-authentication).
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
