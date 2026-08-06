@@ -111,7 +111,7 @@ Obtain a [Cohere API key](https://dashboard.cohere.com/api-keys), then select **
 
 ## Cohere North (Experimental)
 
-[Cohere North](https://cohere.com/north) is Cohere's self-hosted enterprise agents platform. It can be connected in two ways: as an OpenAI-compatible model endpoint (the plugin's agent loop and Mattermost tools keep working, using the **OpenAI Compatible** service type with **Use Responses API** enabled), or via the **Cohere North (Experimental)** service type, which fully delegates the agent loop — including tool execution — to an agent hosted on your North instance.
+[Cohere North](https://cohere.com/north) is Cohere's self-hosted enterprise agents platform. It can be connected in several ways: as an OpenAI-compatible model endpoint (the plugin's agent loop and Mattermost tools keep working, using the **OpenAI Compatible** service type with **Use Responses API** enabled), via the **Cohere North (Experimental)** service type, which fully delegates the agent loop — including tool execution — to an agent hosted on your North instance, or as a **hybrid**: a Cohere North service with Mattermost tools enabled combines the North agent's persona and hosted tools with Mattermost tools in one agent.
 
 ### Configuration Options (Cohere North service type)
 
