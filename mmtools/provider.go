@@ -7,6 +7,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/north"
 )
 
 // ToolProvider provides built-in tools for the AI assistant. The context is
@@ -53,6 +54,15 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 
 	if llmContext != nil && llmContext.ToolCatalog.InteractiveUserPresent {
 		builtInTools = append(builtInTools, NewAskUserQuestionTool())
+	}
+
+	// North-backed bots with tools enabled run in hybrid mode: North rejects
+	// mixing its hosted tools with function tools, so hosted capabilities are
+	// reached through the north_agent_task bridge tool instead.
+	if bot != nil {
+		if bridgeTool := north.BridgeToolForBot(bot.GetService(), bot.GetConfig()); bridgeTool != nil {
+			builtInTools = append(builtInTools, *bridgeTool)
+		}
 	}
 
 	return builtInTools

@@ -148,16 +148,20 @@ func TestHybridRequestToolMapping(t *testing.T) {
 			wantToolNames: nil,
 		},
 		{
-			name:          "mattermost tools forwarded as function tools plus bridge",
+			name:          "mattermost tools forwarded as function tools",
 			store:         newWeatherStore(nil),
 			agentTools:    hostedTools,
-			wantToolNames: []string{"get_weather", BridgeToolName},
+			wantToolNames: []string{"get_weather"},
 		},
 		{
-			name:          "no bridge when the north agent has no hosted tools",
-			store:         newWeatherStore(nil),
-			agentTools:    nil,
-			wantToolNames: []string{"get_weather"},
+			name: "bridge tool in the store forwarded like any other tool",
+			store: func() *llm.ToolStore {
+				store := newWeatherStore(nil)
+				store.AddTools([]llm.Tool{newBridgeTool(NewClient("http://localhost", "t", 0), "agent-id", []string{"tavily_web_search"})})
+				return store
+			}(),
+			agentTools:    hostedTools,
+			wantToolNames: []string{"get_weather", BridgeToolName},
 		},
 		{
 			name:          "tools disabled option omits tools entirely",
@@ -368,6 +372,68 @@ func TestHybridFullToolLoop(t *testing.T) {
 	assert.True(t, sawToolResult, "round 2 request must contain the role:tool result message")
 }
 
+func TestBridgeToolForBot(t *testing.T) {
+	withHostedTools := []ChatTool{{Type: "north_tool", NorthTool: &HostedToolDefinition{Name: "tavily_web_search"}}}
+
+	tests := []struct {
+		name        string
+		serviceType string
+		botModel    string
+		agentTools  []ChatTool
+		wantTool    bool
+	}{
+		{
+			name:        "north service with hosted tools yields the bridge",
+			serviceType: llm.ServiceTypeNorth,
+			botModel:    "agent-id",
+			agentTools:  withHostedTools,
+			wantTool:    true,
+		},
+		{
+			name:        "non-north service yields nothing",
+			serviceType: llm.ServiceTypeOpenAICompatible,
+			botModel:    "agent-id",
+			agentTools:  withHostedTools,
+			wantTool:    false,
+		},
+		{
+			name:        "no agent id yields nothing",
+			serviceType: llm.ServiceTypeNorth,
+			botModel:    "",
+			agentTools:  withHostedTools,
+			wantTool:    false,
+		},
+		{
+			name:        "agent without hosted tools yields nothing",
+			serviceType: llm.ServiceTypeNorth,
+			botModel:    "agent-id",
+			agentTools:  nil,
+			wantTool:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(hybridHandler(t, tt.agentTools, func(round int, req ChatRequest, w http.ResponseWriter) {
+				t.Error("no chat request expected during catalog build")
+			}))
+			defer server.Close()
+
+			tool := BridgeToolForBot(
+				llm.ServiceConfig{Type: tt.serviceType, APIURL: server.URL, APIKey: "test-token"},
+				llm.BotConfig{Model: tt.botModel},
+			)
+			if !tt.wantTool {
+				assert.Nil(t, tool)
+				return
+			}
+			require.NotNil(t, tool)
+			assert.Equal(t, BridgeToolName, tool.Name)
+			assert.Contains(t, tool.Description, "tavily_web_search")
+		})
+	}
+}
+
 func TestBridgeToolResolverRunsNestedHostedCall(t *testing.T) {
 	var nestedRequest *ChatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -399,11 +465,11 @@ func TestBridgeToolResolverRunsNestedHostedCall(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := newTestProvider(server.URL, "agent-id")
-	names := provider.hostedToolNames(context.Background(), "agent-id")
-	require.Equal(t, []string{"tavily_web_search"}, names)
-
-	tool := provider.bridgeTool("agent-id", names)
+	tool := BridgeToolForBot(
+		llm.ServiceConfig{Type: llm.ServiceTypeNorth, APIURL: server.URL, APIKey: "test-token"},
+		llm.BotConfig{Model: "agent-id"},
+	)
+	require.NotNil(t, tool)
 	assert.Equal(t, BridgeToolName, tool.Name)
 	assert.Contains(t, tool.Description, "tavily_web_search")
 
@@ -452,8 +518,7 @@ func TestBridgeToolResolverErrors(t *testing.T) {
 			server := httptest.NewServer(tt.handler)
 			defer server.Close()
 
-			provider := newTestProvider(server.URL, "agent-id")
-			tool := provider.bridgeTool("agent-id", []string{"tavily_web_search"})
+			tool := newBridgeTool(NewClient(server.URL, "test-token", 0), "agent-id", []string{"tavily_web_search"})
 			_, err := tool.Resolver(context.Background(), &llm.Context{}, func(args any) error {
 				return json.Unmarshal([]byte(tt.args), args)
 			})
@@ -475,9 +540,9 @@ func TestHostedToolNamesCaching(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := newTestProvider(server.URL, "agent-id")
+	client := NewClient(server.URL, "test-token", 0)
 	for range 3 {
-		assert.Equal(t, []string{"web_scrape"}, provider.hostedToolNames(context.Background(), "agent-id"))
+		assert.Equal(t, []string{"web_scrape"}, cachedHostedToolNames(client, "agent-id"))
 	}
 	assert.Equal(t, int32(1), fetches.Load(), "successful lookups must be cached")
 }

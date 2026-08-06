@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/codes"
@@ -31,9 +30,9 @@ import (
 //     client-executed function tools. North returns TOOL_CALL rounds that the
 //     plugin's tool runner executes locally (approval flow included). Because
 //     North rejects mixing hosted and function tools in one request
-//     (CANNOT_MIX_CUSTOM_AND_MANAGED_TOOLS), the provider also injects a
-//     bridge tool (north_agent_task) that reaches the agent's hosted tools
-//     through a nested, hosted-tools-only North call.
+//     (CANNOT_MIX_CUSTOM_AND_MANAGED_TOOLS), hosted capabilities are reached
+//     through the north_agent_task built-in tool (see bridge_tool.go), which
+//     is part of the regular tool catalog for North-backed bots.
 //
 // The North agent to delegate to is carried in the model fields
 // (BotConfig.Model, falling back to ServiceConfig.DefaultModel); an empty
@@ -43,11 +42,6 @@ type Provider struct {
 	defaultAgentID   string
 	inputTokenLimit  int
 	outputTokenLimit int
-
-	// hostedToolsMu guards hostedToolsCache, which caches the hosted-tool
-	// names of North agents (successful lookups only).
-	hostedToolsMu    sync.Mutex
-	hostedToolsCache map[string][]string
 }
 
 // New creates a North-backed language model from the service and bot
@@ -66,7 +60,6 @@ func New(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) *Provider {
 		defaultAgentID:   agentID,
 		inputTokenLimit:  serviceConfig.InputTokenLimit,
 		outputTokenLimit: serviceConfig.OutputTokenLimit,
-		hostedToolsCache: make(map[string][]string),
 	}
 }
 
@@ -225,134 +218,6 @@ func (p *Provider) startSpan(ctx context.Context, operation string, cfg llm.Lang
 	)
 }
 
-// BridgeToolName is the synthetic function tool that gives hybrid agents
-// access to the North agent's hosted tools. North rejects requests mixing
-// hosted and function tools, so hosted capabilities are reached through a
-// nested, hosted-tools-only chat call instead.
-const BridgeToolName = "north_agent_task"
-
-type northAgentTaskArgs struct {
-	Task string `json:"task" jsonschema:"A fully self-contained task for the North agent, including all context it needs."`
-}
-
-// maybeInjectBridgeTool adds the north_agent_task tool to the request's tool
-// store when the request runs in hybrid mode (Mattermost tools present) and
-// the target North agent actually has hosted tools. Failures to look up the
-// agent silently skip injection; the next round retries.
-func (p *Provider) maybeInjectBridgeTool(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig) {
-	if cfg.ToolsDisabled || cfg.Model == "" {
-		return
-	}
-	store := toolStore(request)
-	if store == nil || len(store.GetTools()) == 0 {
-		return
-	}
-	hostedNames := p.hostedToolNames(ctx, cfg.Model)
-	if len(hostedNames) == 0 {
-		return
-	}
-	store.AddTools([]llm.Tool{p.bridgeTool(cfg.Model, hostedNames)})
-}
-
-// hostedToolNames returns the hosted-tool names of a North agent, caching
-// successful lookups per agent ID.
-func (p *Provider) hostedToolNames(ctx context.Context, agentID string) []string {
-	p.hostedToolsMu.Lock()
-	defer p.hostedToolsMu.Unlock()
-	if names, ok := p.hostedToolsCache[agentID]; ok {
-		return names
-	}
-	agent, err := p.client.GetAgent(ctx, agentID)
-	if err != nil {
-		// Not cached: transient failures should not permanently disable the
-		// bridge for this provider instance.
-		return nil
-	}
-	names := make([]string, 0, len(agent.Tools))
-	for _, tool := range agent.Tools {
-		if tool.NorthTool != nil && tool.NorthTool.Name != "" {
-			names = append(names, tool.NorthTool.Name)
-		}
-	}
-	p.hostedToolsCache[agentID] = names
-	return names
-}
-
-// bridgeTool builds the north_agent_task tool bound to a North agent.
-func (p *Provider) bridgeTool(agentID string, hostedToolNames []string) llm.Tool {
-	return llm.Tool{
-		Name: BridgeToolName,
-		Description: fmt.Sprintf(
-			"Delegate a task to the Cohere North agent, which executes it server-side using its own tools (%s). "+
-				"Use this for anything that needs live web information, fetching/scraping a URL, or running code/data analysis. "+
-				"The task must be fully self-contained: include all relevant context, since the North agent cannot see this conversation.",
-			strings.Join(hostedToolNames, ", "),
-		),
-		Schema: llm.NewJSONSchemaFromStruct[northAgentTaskArgs](),
-		Resolver: func(ctx context.Context, llmCtx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
-			var args northAgentTaskArgs
-			if err := argsGetter(&args); err != nil {
-				return "", fmt.Errorf("failed to get north_agent_task arguments: %w", err)
-			}
-			if strings.TrimSpace(args.Task) == "" {
-				return "", errors.New("task must not be empty")
-			}
-			return p.runAgentTask(ctx, agentID, args.Task)
-		},
-	}
-}
-
-// runAgentTask performs the nested hosted-tools-only North call backing the
-// bridge tool and formats the result (answer text plus source URLs).
-func (p *Provider) runAgentTask(ctx context.Context, agentID, task string) (string, error) {
-	response, err := p.client.Chat(ctx, ChatRequest{
-		Messages:  []ChatMessage{{Role: "user", Content: task}},
-		Stateless: true,
-		Agent:     &AgentRef{ID: agentID},
-		// Tools omitted on purpose: the agent's hosted tools run server-side.
-	})
-	if err != nil {
-		return "", err
-	}
-	if response.Error != nil {
-		return "", response.Error
-	}
-
-	var text strings.Builder
-	var sources []string
-	seenSources := make(map[string]bool)
-	for _, message := range response.Messages {
-		if message.Role != "" && message.Role != "assistant" {
-			continue
-		}
-		for _, item := range message.ContentItems() {
-			if item.Type == "text" {
-				text.WriteString(item.Text)
-			}
-		}
-		for _, citation := range message.Citations {
-			url, title := citationSourceURL(citation)
-			if url == "" || seenSources[url] {
-				continue
-			}
-			seenSources[url] = true
-			if title != "" {
-				sources = append(sources, fmt.Sprintf("- %s: %s", title, url))
-			} else {
-				sources = append(sources, "- "+url)
-			}
-		}
-	}
-	if text.Len() == 0 {
-		return "", errors.New("north agent returned no text")
-	}
-	if len(sources) > 0 {
-		text.WriteString("\n\nSources:\n")
-		text.WriteString(strings.Join(sources, "\n"))
-	}
-	return text.String(), nil
-}
-
 // ChatCompletion sends the conversation to North and streams the delegated
 // agent's response back as plugin stream events.
 func (p *Provider) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
@@ -360,7 +225,6 @@ func (p *Provider) ChatCompletion(ctx context.Context, request llm.CompletionReq
 
 	ctx, span := p.startSpan(ctx, request.Operation, cfg, true)
 
-	p.maybeInjectBridgeTool(ctx, request, cfg)
 	chatRequest := p.buildChatRequest(request, cfg)
 
 	events, err := p.client.ChatStream(ctx, chatRequest)
