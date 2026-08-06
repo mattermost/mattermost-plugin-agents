@@ -116,7 +116,7 @@ type HostedToolDefinition struct {
 type ChatTool struct {
 	Type      string                  `json:"type"` // "function" or "north_tool"
 	Function  *FunctionToolDefinition `json:"function,omitempty"`
-	NorthTool *HostedToolDefinition    `json:"north_tool,omitempty"`
+	NorthTool *HostedToolDefinition   `json:"north_tool,omitempty"`
 }
 
 // AgentRef selects the North agent that handles the request.
