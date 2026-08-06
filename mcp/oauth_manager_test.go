@@ -156,7 +156,7 @@ func TestLoadOrCreateClientCredentials_ExistingCredentials(t *testing.T) {
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -175,7 +175,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentials(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -194,7 +194,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentialsSkipKVStore(t *testing.T
 	}
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -220,7 +220,7 @@ func TestLoadOrCreateClientCredentials_NilStaticCredsFallsBackToKVStore(t *testi
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -246,7 +246,7 @@ func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *tes
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, &StaticOAuthCredentials{}, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, &StaticOAuthCredentials{}, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)

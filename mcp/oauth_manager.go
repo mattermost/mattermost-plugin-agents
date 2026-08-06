@@ -102,7 +102,7 @@ type StaticOAuthCredentials struct {
 
 // loadOrCreateClientCredentials gets existing client credentials or creates new ones using dynamic client registration.
 // If staticCreds is non-nil and has a ClientID, those credentials are used directly (skipping DCR).
-func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, serverURL string, staticCreds *StaticOAuthCredentials, registrationEndpoint string) (*ClientCredentials, error) {
+func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, serverURL string, staticCreds *StaticOAuthCredentials, registrationEndpoint string, supportedAuthMethods []string) (*ClientCredentials, error) {
 	if staticCreds != nil && staticCreds.ClientID != "" {
 		return &ClientCredentials{
 			ClientID:     staticCreds.ClientID,
@@ -137,9 +137,16 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 	// application_type is required by the MCP 2026-07-28 spec and inferred
 	// from the callback URI (loopback => native, otherwise web), matching the
 	// SDK's higher-level handler; strict OIDC servers reject a mismatch.
+	//
+	// The token endpoint auth method is chosen from what the server's
+	// metadata advertises: registering with a method the server does not
+	// support is rejected with invalid_client_metadata (e.g. Mattermost
+	// servers advertise only "none" and "client_secret_post", not the RFC
+	// 7591 default "client_secret_basic").
+	authMethod := selectTokenEndpointAuthMethod(supportedAuthMethods)
 	response, err := oauthex.RegisterClient(ctx, registrationEndpoint, &oauthex.ClientRegistrationMetadata{
 		RedirectURIs:            []string{m.callbackURL},
-		TokenEndpointAuthMethod: "client_secret_basic",
+		TokenEndpointAuthMethod: authMethod,
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
 		ClientName:              oauthClientName,
@@ -152,12 +159,18 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 	// Create new credentials from registration response, preserving the
 	// authentication method (public clients register with
 	// token_endpoint_auth_method "none" and no secret) and secret expiry.
+	// Fall back to the method we requested when the server does not echo one,
+	// so refresh uses the right method instead of having to auto-detect.
+	grantedAuthMethod := response.TokenEndpointAuthMethod
+	if grantedAuthMethod == "" {
+		grantedAuthMethod = authMethod
+	}
 	newCreds := &ClientCredentials{
 		ClientID:                response.ClientID,
 		ClientSecret:            response.ClientSecret,
 		ServerURL:               serverURL,
 		CreatedAt:               time.Now(),
-		TokenEndpointAuthMethod: response.TokenEndpointAuthMethod,
+		TokenEndpointAuthMethod: grantedAuthMethod,
 	}
 	if !response.ClientSecretExpiresAt.IsZero() {
 		newCreds.SecretExpiresAt = response.ClientSecretExpiresAt.Unix()
@@ -219,6 +232,10 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 	resource := serverURL // Fallback: canonical resource is the MCP server URL
 	registrationEndpoint := ""
 	var scopes []string
+	// authMethodsSupported carries the server's advertised
+	// token_endpoint_auth_methods_supported so dynamic client registration
+	// requests a method the server actually accepts.
+	var authMethodsSupported []string
 
 	// Attempt discovery (best effort, fall back to hardcoded endpoints if it fails).
 	// Pass serverURL (not baseURL) so the well-known URL preserves any path component
@@ -237,6 +254,13 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 			issuer = authMetadata.Issuer
 			requireIss = authMetadata.AuthorizationResponseIssParameterSupported
 			registrationEndpoint = authMetadata.RegistrationEndpoint
+			authMethodsSupported = authMetadata.TokenEndpointAuthMethodsSupported
+			// Fall back to the AS metadata's advertised scopes when the
+			// resource metadata did not carry any (some servers, e.g.
+			// Mattermost, advertise scopes only here).
+			if len(scopes) == 0 {
+				scopes = authMetadata.ScopesSupported
+			}
 		} else {
 			// Discovery explicitly named an authorization server but its
 			// metadata is unavailable: fall back to conventional endpoints on
@@ -264,6 +288,8 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 			issuer = authMetadata.Issuer
 			requireIss = authMetadata.AuthorizationResponseIssParameterSupported
 			registrationEndpoint = authMetadata.RegistrationEndpoint
+			authMethodsSupported = authMetadata.TokenEndpointAuthMethodsSupported
+			scopes = authMetadata.ScopesSupported
 			// authServerURL already set to baseURL above
 		} else {
 			// Complete discovery failure: the conventional /authorize and
@@ -286,7 +312,7 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 	// Per OAuth 2.0 best practices, client credentials are registered with and belong to
 	// the authorization server, not the protected resource.
 	// If static credentials are provided, they are used directly (skipping DCR).
-	clientCreds, err := m.loadOrCreateClientCredentials(ctx, authServerURL, staticCreds, registrationEndpoint)
+	clientCreds, err := m.loadOrCreateClientCredentials(ctx, authServerURL, staticCreds, registrationEndpoint, authMethodsSupported)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client credentials: %w", err)
 	}

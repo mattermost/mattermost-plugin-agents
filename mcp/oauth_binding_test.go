@@ -160,7 +160,7 @@ func TestDCRResponseBodyIsSizeLimited(t *testing.T) {
 	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
 
-	_, err := manager.loadOrCreateClientCredentials(context.Background(), server.URL, nil, server.URL+"/register")
+	_, err := manager.loadOrCreateClientCredentials(context.Background(), server.URL, nil, server.URL+"/register", nil)
 	// The truncated body is invalid JSON, so registration fails — crucially
 	// without reading the unbounded stream into memory.
 	require.Error(t, err)

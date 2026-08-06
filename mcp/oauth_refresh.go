@@ -49,6 +49,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -89,6 +90,30 @@ const (
 	authMethodBasic = "client_secret_basic"
 	authMethodPost  = "client_secret_post"
 )
+
+// selectTokenEndpointAuthMethod chooses the client authentication method to
+// request during dynamic client registration from what the authorization
+// server advertises. Preference order among the methods we implement:
+// client_secret_basic (RFC-preferred, confidential) > client_secret_post
+// (confidential) > none (public client, protected by PKCE).
+//
+// When the server advertises nothing we default to client_secret_basic (the
+// RFC 7591 default, and the plugin's prior behavior). When it advertises only
+// methods we do not implement (e.g. private_key_jwt), we also request
+// client_secret_basic so registration fails with a clear
+// invalid_client_metadata error rather than silently picking an unsupported
+// method.
+func selectTokenEndpointAuthMethod(supported []string) string {
+	if len(supported) == 0 {
+		return authMethodBasic
+	}
+	for _, preferred := range []string{authMethodBasic, authMethodPost, authMethodNone} {
+		if slices.Contains(supported, preferred) {
+			return preferred
+		}
+	}
+	return authMethodBasic
+}
 
 // refreshGrant redeems the grant's refresh token against exactly the token
 // endpoint and client the grant envelope is pinned to — no discovery — and

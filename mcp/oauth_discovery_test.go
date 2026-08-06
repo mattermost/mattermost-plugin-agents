@@ -425,7 +425,7 @@ func TestLoadOrCreateClientCredentials_Registration(t *testing.T) {
 			if tt.registrationEndpt {
 				registrationEndpoint = server.URL + "/register"
 			}
-			creds, err := manager.loadOrCreateClientCredentials(context.Background(), server.URL, nil, registrationEndpoint)
+			creds, err := manager.loadOrCreateClientCredentials(context.Background(), server.URL, nil, registrationEndpoint, nil)
 
 			if tt.wantErrContains != "" {
 				require.Error(t, err)
@@ -538,6 +538,105 @@ func TestFetchAuthorizationServerMetadataIssuerFollowIsOneHop(t *testing.T) {
 	require.Error(t, err, "a second issuer hop must not be followed")
 }
 
+// TestSelectTokenEndpointAuthMethod pins the DCR auth-method selection.
+func TestSelectTokenEndpointAuthMethod(t *testing.T) {
+	tests := []struct {
+		name      string
+		supported []string
+		want      string
+	}{
+		{"empty defaults to basic", nil, "client_secret_basic"},
+		{"basic preferred", []string{"none", "client_secret_post", "client_secret_basic"}, "client_secret_basic"},
+		{"post when basic absent (Mattermost)", []string{"none", "client_secret_post"}, "client_secret_post"},
+		{"none when only public", []string{"none"}, "none"},
+		{"unsupported-only falls back to basic (fails clearly at registration)", []string{"private_key_jwt", "tls_client_auth"}, "client_secret_basic"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, selectTokenEndpointAuthMethod(tt.supported))
+		})
+	}
+}
+
+// TestDCRHonorsServerAuthMethods reproduces the real Mattermost-server
+// topology that failed in the field: the authorization server advertises only
+// ["none","client_secret_post"] and rejects any other token_endpoint_auth_method
+// at registration. Discovery must therefore register with client_secret_post,
+// and that method must be persisted for later refreshes.
+func TestDCRHonorsServerAuthMethods(t *testing.T) {
+	var serverURL string
+	var registeredMethod string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp":
+			// Mattermost serves its SPA (HTML) here, not RFC 9728 metadata.
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte("<!doctype html>"))
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+				Issuer:                            serverURL,
+				AuthorizationEndpoint:             serverURL + "/oauth/authorize",
+				TokenEndpoint:                     serverURL + "/oauth/access_token",
+				RegistrationEndpoint:              serverURL + "/register",
+				CodeChallengeMethodsSupported:     []string{"S256"},
+				ScopesSupported:                   []string{"user"},
+				TokenEndpointAuthMethodsSupported: []string{"none", "client_secret_post"},
+			}))
+		case "/register":
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			registeredMethod, _ = body["token_endpoint_auth_method"].(string)
+			// Reject anything the server doesn't support, like Mattermost does.
+			if registeredMethod != "none" && registeredMethod != "client_secret_post" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error":             "invalid_client_metadata",
+					"error_description": "Unsupported token_endpoint_auth_method supplied.",
+				})
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"client_id":                  "mm-client",
+				"client_secret":              "mm-secret",
+				"token_endpoint_auth_method": registeredMethod,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	serverURL = server.URL
+
+	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
+	mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
+	var stored []byte
+	mockClient.On("KVGet", buildClientCredentialsKey(serverURL), mock.AnythingOfType("*mcp.ClientCredentials")).
+		Run(func(args mock.Arguments) {
+			if stored != nil {
+				require.NoError(t, json.Unmarshal(stored, args.Get(1)))
+			}
+		}).Return(nil)
+	mockClient.On("KVSet", buildClientCredentialsKey(serverURL), mock.Anything).
+		Run(func(args mock.Arguments) { stored = args.Get(1).([]byte) }).Return(nil)
+
+	resolved, err := manager.resolveOAuthConfig(context.Background(), serverURL+"/mcp", "", nil)
+	require.NoError(t, err)
+	require.Equal(t, "client_secret_post", registeredMethod,
+		"must register with a method the server advertises, not the hardcoded basic")
+	require.Equal(t, "mm-client", resolved.config.ClientID)
+	require.Equal(t, []string{"user"}, resolved.config.Scopes, "scopes fall back to AS metadata")
+
+	// The granted method is persisted so refresh uses it directly.
+	require.NotNil(t, stored)
+	var creds ClientCredentials
+	require.NoError(t, json.Unmarshal(stored, &creds))
+	require.Equal(t, "client_secret_post", creds.TokenEndpointAuthMethod)
+}
+
 // TestInferApplicationType pins the RFC 7591 application_type inference used
 // in dynamic client registration.
 func TestInferApplicationType(t *testing.T) {
@@ -580,7 +679,7 @@ func TestDCRSendsApplicationType(t *testing.T) {
 	mockClient.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
 	mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
 	// callbackURL defaults to http://test.com/callback (web) in the test helper.
-	_, err := manager.loadOrCreateClientCredentials(context.Background(), server.URL, nil, server.URL+"/register")
+	_, err := manager.loadOrCreateClientCredentials(context.Background(), server.URL, nil, server.URL+"/register", nil)
 	require.NoError(t, err)
 	require.Equal(t, "web", gotAppType)
 }
