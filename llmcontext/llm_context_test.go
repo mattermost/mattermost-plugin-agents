@@ -509,6 +509,15 @@ func TestWithLLMContextRequestingUser_NilUser(t *testing.T) {
 	assert.Nil(t, ctx.RequestingUser)
 }
 
+func TestWithLLMContextResponseFiles(t *testing.T) {
+	builder := &Builder{}
+
+	ctx := llm.NewContext(builder.WithLLMContextResponseFiles())
+	assert.True(t, ctx.ToolCatalog.ResponseFilesSupported)
+
+	assert.False(t, llm.NewContext().ToolCatalog.ResponseFilesSupported)
+}
+
 func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {
 	allowlist := []llm.EnabledMCPTool{
 		{ServerOrigin: "https://allowed.example/", ToolName: "t1"},

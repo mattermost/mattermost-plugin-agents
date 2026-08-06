@@ -51,6 +51,7 @@ type Client interface {
 	HasPermissionToChannel(userID, channelID string, permission *model.Permission) bool
 	GetFileInfo(fileID string) (*model.FileInfo, error)
 	GetFile(fileID string) (io.ReadCloser, error)
+	UploadFile(content io.Reader, fileName, channelID string) (*model.FileInfo, error)
 	SendEphemeralPost(userID string, post *model.Post)
 }
 
@@ -175,6 +176,10 @@ func (m *client) GetFile(fileID string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	return io.NopCloser(file), nil
+}
+
+func (m *client) UploadFile(content io.Reader, fileName, channelID string) (*model.FileInfo, error) {
+	return m.pluginAPI.File.Upload(content, fileName, channelID)
 }
 
 func (m *client) SendEphemeralPost(userID string, post *model.Post) {
