@@ -125,18 +125,29 @@ func functionToolsFromStore(store *llm.ToolStore) []ChatTool {
 }
 
 // schemaToParameters converts a tool schema (typically *jsonschema.Schema)
-// into the plain JSON object North expects for function parameters.
+// into the plain JSON object North expects for function parameters. North
+// validates function schemas strictly and rejects object schemas without a
+// properties key (INVALID_FUNCTION_TOOL: "Schema is missing required keys"),
+// which no-parameter tools commonly omit.
 func schemaToParameters(schema any) map[string]any {
+	minimal := func() map[string]any {
+		return map[string]any{"type": "object", "properties": map[string]any{}}
+	}
 	if schema == nil {
-		return map[string]any{"type": "object"}
+		return minimal()
 	}
 	raw, err := json.Marshal(schema)
 	if err != nil {
-		return map[string]any{"type": "object"}
+		return minimal()
 	}
 	var params map[string]any
 	if err := json.Unmarshal(raw, &params); err != nil || len(params) == 0 {
-		return map[string]any{"type": "object"}
+		return minimal()
+	}
+	if schemaType, _ := params["type"].(string); schemaType == "object" || schemaType == "" {
+		if _, ok := params["properties"]; !ok {
+			params["properties"] = map[string]any{}
+		}
 	}
 	return params
 }

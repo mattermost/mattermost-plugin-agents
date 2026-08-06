@@ -87,6 +87,44 @@ func toolNames(tools []ChatTool) []string {
 	return names
 }
 
+func TestSchemaToParameters(t *testing.T) {
+	tests := []struct {
+		name   string
+		schema any
+		want   map[string]any
+	}{
+		{
+			name:   "nil schema becomes minimal object schema",
+			schema: nil,
+			want:   map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			name:   "object schema without properties gains empty properties",
+			schema: map[string]any{"type": "object", "additionalProperties": false},
+			want:   map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{}},
+		},
+		{
+			name: "existing properties preserved",
+			schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"location": map[string]any{"type": "string"}},
+				"required":   []any{"location"},
+			},
+			want: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"location": map[string]any{"type": "string"}},
+				"required":   []any{"location"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, schemaToParameters(tt.schema))
+		})
+	}
+}
+
 func TestHybridRequestToolMapping(t *testing.T) {
 	hostedTools := []ChatTool{{Type: "north_tool", NorthTool: &HostedToolDefinition{Name: "tavily_web_search"}}}
 
