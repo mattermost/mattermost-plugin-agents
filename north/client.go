@@ -103,9 +103,9 @@ type FunctionToolDefinition struct {
 	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
-// NorthToolDefinition references a North-hosted (managed) tool by its
+// HostedToolDefinition references a North-hosted (managed) tool by its
 // internal name.
-type NorthToolDefinition struct {
+type HostedToolDefinition struct {
 	Name    string         `json:"name"`
 	Options map[string]any `json:"options,omitempty"`
 }
@@ -116,7 +116,7 @@ type NorthToolDefinition struct {
 type ChatTool struct {
 	Type      string                  `json:"type"` // "function" or "north_tool"
 	Function  *FunctionToolDefinition `json:"function,omitempty"`
-	NorthTool *NorthToolDefinition    `json:"north_tool,omitempty"`
+	NorthTool *HostedToolDefinition    `json:"north_tool,omitempty"`
 }
 
 // AgentRef selects the North agent that handles the request.
