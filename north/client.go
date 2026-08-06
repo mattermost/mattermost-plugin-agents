@@ -73,7 +73,50 @@ func normalizeBaseURL(apiURL string) string {
 // ChatMessage is a single message in a North native chat request.
 type ChatMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content string `json:"content,omitempty"`
+
+	// ToolCalls carries the function calls of an assistant message when
+	// replaying tool history.
+	ToolCalls []MessageToolCall `json:"tool_calls,omitempty"`
+
+	// ToolCallID links a role:"tool" result message to its originating call.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+}
+
+// MessageToolCall is a function call attached to an assistant message.
+type MessageToolCall struct {
+	ToolCallID string              `json:"tool_call_id"`
+	Type       string              `json:"type"`
+	Function   MessageToolFunction `json:"function"`
+}
+
+// MessageToolFunction is the function payload of a MessageToolCall.
+type MessageToolFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// FunctionToolDefinition defines a client-executed function tool.
+type FunctionToolDefinition struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+// NorthToolDefinition references a North-hosted (managed) tool by its
+// internal name.
+type NorthToolDefinition struct {
+	Name    string         `json:"name"`
+	Options map[string]any `json:"options,omitempty"`
+}
+
+// ChatTool is the request tool union: exactly one of Function or NorthTool is
+// set. North rejects requests that mix the two kinds
+// (CANNOT_MIX_CUSTOM_AND_MANAGED_TOOLS).
+type ChatTool struct {
+	Type      string                  `json:"type"` // "function" or "north_tool"
+	Function  *FunctionToolDefinition `json:"function,omitempty"`
+	NorthTool *NorthToolDefinition    `json:"north_tool,omitempty"`
 }
 
 // AgentRef selects the North agent that handles the request.
@@ -96,6 +139,11 @@ type ChatRequest struct {
 	Agent     *AgentRef        `json:"agent,omitempty"`
 	Thinking  *ThinkingOptions `json:"thinking,omitempty"`
 	MaxTokens int              `json:"max_tokens,omitempty"`
+
+	// Tools controls the tool set for the request. Omitted (nil) means the
+	// North agent's own hosted tools stay active server-side; a non-empty
+	// list of function tools replaces them with client-executed tools.
+	Tools []ChatTool `json:"tools,omitempty"`
 }
 
 // Usage mirrors North's token usage block.
@@ -129,8 +177,9 @@ type ContentItem struct {
 
 // ResponseMessage is a message in a non-streaming chat response.
 type ResponseMessage struct {
-	Role    string          `json:"role"`
-	Content json.RawMessage `json:"content"`
+	Role      string          `json:"role"`
+	Content   json.RawMessage `json:"content"`
+	Citations []Citation      `json:"citations"`
 }
 
 // ContentItems decodes the message content, which North serializes either as
@@ -176,8 +225,10 @@ type CitationSource struct {
 	Document map[string]any `json:"document"`
 }
 
-// ToolCallDelta mirrors the tool_calls payload of tool-call-start events.
+// ToolCallDelta mirrors the tool_calls payload of tool-call-start and
+// tool-call-delta events.
 type ToolCallDelta struct {
+	ToolCallID  string `json:"tool_call_id"`
 	DisplayName string `json:"display_name"`
 	Function    *struct {
 		Name      string `json:"name"`
@@ -221,6 +272,7 @@ type StreamDelta struct {
 // StreamEvent is a single parsed North SSE event.
 type StreamEvent struct {
 	Type  string       `json:"type"`
+	Index *int         `json:"index"`
 	Delta *StreamDelta `json:"delta"`
 }
 
@@ -253,6 +305,42 @@ func decodeErrorResponse(statusCode int, body []byte) error {
 		return fmt.Errorf("north API error (HTTP %d, %s): %s", statusCode, errResp.ErrorCode, errResp.Message)
 	}
 	return fmt.Errorf("north API error (HTTP %d)", statusCode)
+}
+
+// Agent is the subset of a North agent record the provider uses.
+type Agent struct {
+	ID    string     `json:"id"`
+	Name  string     `json:"name"`
+	Tools []ChatTool `json:"tools"`
+}
+
+// GetAgent fetches a North agent record (GET {base}/v1/agents/{id}).
+func (c *Client) GetAgent(ctx context.Context, agentID string) (*Agent, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/agents/"+agentID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create north agent request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("north agent request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read north agent response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, decodeErrorResponse(resp.StatusCode, body)
+	}
+
+	var agent Agent
+	if err := json.Unmarshal(body, &agent); err != nil {
+		return nil, fmt.Errorf("failed to decode north agent response: %w", err)
+	}
+	return &agent, nil
 }
 
 // Chat performs a non-streaming chat request.
