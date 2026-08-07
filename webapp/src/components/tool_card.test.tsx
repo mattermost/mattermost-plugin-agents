@@ -41,6 +41,7 @@ function renderComponent(
         isCollapsed?: boolean;
         onCancelAsk?: () => void;
         askCancelState?: AskCancelState;
+        askCancelDisabled?: boolean;
     } = {},
 ) {
     return render(
@@ -249,6 +250,17 @@ describe('ToolCard cancel control', () => {
         fireEvent.click(button);
 
         expect(onCancelAsk).toHaveBeenCalledTimes(1);
+    });
+
+    test('renders the button disabled while the bot profile is loading and swallows the click', () => {
+        const onCancelAsk = jest.fn();
+        renderComponent(waitingAskTool(), {approvalStage: 'done', onCancelAsk, askCancelState: 'idle', askCancelDisabled: true});
+
+        const button = screen.getByRole('button', {name: 'Cancel question'});
+        expect(button).toHaveProperty('disabled', true);
+
+        fireEvent.click(button);
+        expect(onCancelAsk).not.toHaveBeenCalled();
     });
 
     test('renders no cancel control without an onCancelAsk handler (observer)', () => {

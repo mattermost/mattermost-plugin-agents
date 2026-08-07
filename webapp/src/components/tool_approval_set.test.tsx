@@ -10,7 +10,9 @@ import {AskAnotherUserToolName, ToolApprovalStage, ToolCall, ToolCallStatus} fro
 
 const mockDoToolCall = jest.fn();
 const mockDoAskUserCancel = jest.fn();
+const mockGetProfilesByIds = jest.fn();
 const mockInvalidateConversation = jest.fn();
+const mockDispatch = jest.fn();
 
 jest.mock('@/client', () => ({
     doToolCall: (postID: string, toolIDs: string[], toolAnswers: Record<string, unknown>) =>
@@ -18,6 +20,7 @@ jest.mock('@/client', () => ({
     doToolResult: jest.fn(),
     doAskUserCancel: (postID: string, botUsername: string, body: {tool_use_id: string}) =>
         mockDoAskUserCancel(postID, botUsername, body),
+    getProfilesByIds: (ids: string[]) => mockGetProfilesByIds(ids),
 }));
 
 jest.mock('@/hooks/use_conversation', () => ({
@@ -25,16 +28,18 @@ jest.mock('@/hooks/use_conversation', () => ({
 }));
 
 // The component resolves the anchor post's author (the bot) from redux to
-// send botUsername on cancel requests.
+// send botUsername on cancel requests. Profiles are reset per test so the
+// uncached-bot case can be simulated.
 const mockReduxState = {
     entities: {
         posts: {posts: {post_1: {id: 'post_1', user_id: 'bot_user_1'}}},
-        users: {profiles: {bot_user_1: {id: 'bot_user_1', username: 'agentbot'}}},
+        users: {profiles: {} as Record<string, {id: string; username: string}>},
     },
 };
 
 jest.mock('react-redux', () => ({
     useSelector: (selector: (state: unknown) => unknown) => selector(mockReduxState),
+    useDispatch: () => mockDispatch,
 }));
 
 type MockToolCardProps = {
@@ -44,6 +49,7 @@ type MockToolCardProps = {
     isAutoApproved?: boolean;
     onCancelAsk?: () => void;
     askCancelState?: 'idle' | 'submitting' | 'error';
+    askCancelDisabled?: boolean;
 };
 
 const mockToolCard = jest.fn<null, [MockToolCardProps]>(() => null);
@@ -94,7 +100,11 @@ beforeEach(() => {
     mockDoToolCall.mockImplementation(() => Promise.resolve());
     mockDoAskUserCancel.mockReset();
     mockDoAskUserCancel.mockResolvedValue({status: 'canceled'});
+    mockGetProfilesByIds.mockReset();
+    mockGetProfilesByIds.mockResolvedValue([{id: 'bot_user_1', username: 'agentbot'}]);
     mockInvalidateConversation.mockClear();
+    mockDispatch.mockClear();
+    mockReduxState.entities.users.profiles = {bot_user_1: {id: 'bot_user_1', username: 'agentbot'}};
 });
 
 // Latest render's props for a tool, so state transitions are observable.
@@ -221,6 +231,8 @@ describe('ToolApprovalSet AskAnotherUser cancel wiring', () => {
         const props = getLatestToolCardProps('tool_ask');
         expect(props.onCancelAsk).toEqual(expect.any(Function));
         expect(props.askCancelState).toBe('idle');
+        expect(props.askCancelDisabled).toBe(false);
+        expect(mockGetProfilesByIds).not.toHaveBeenCalled();
     });
 
     test('offers no cancel handler to observers', () => {
@@ -233,6 +245,31 @@ describe('ToolApprovalSet AskAnotherUser cancel wiring', () => {
         renderComponent([makeTool({id: 'tool_other', status: ToolCallStatus.Waiting})], 'done');
 
         expect(getLatestToolCardProps('tool_other').onCancelAsk).toBeUndefined();
+    });
+
+    test('offers no cancel handler for a pending (not yet waiting) AskAnotherUser call', () => {
+        renderComponent([makeTool({id: 'tool_ask_pending', name: AskAnotherUserToolName, status: ToolCallStatus.Pending})]);
+
+        const props = getLatestToolCardProps('tool_ask_pending');
+        expect(props.onCancelAsk).toBeUndefined();
+        expect(props.askCancelState).toBeUndefined();
+    });
+
+    test('disables the cancel control and hydrates the bot profile when it is not cached', async () => {
+        mockReduxState.entities.users.profiles = {};
+        renderComponent([waitingAskTool()], 'done');
+
+        expect(getLatestToolCardProps('tool_ask').askCancelDisabled).toBe(true);
+
+        await waitFor(() => {
+            expect(mockGetProfilesByIds).toHaveBeenCalledWith(['bot_user_1']);
+        });
+        await waitFor(() => {
+            expect(mockDispatch).toHaveBeenCalledWith({
+                type: 'RECEIVED_PROFILES',
+                data: {bot_user_1: {id: 'bot_user_1', username: 'agentbot'}},
+            });
+        });
     });
 
     test('cancel calls doAskUserCancel with the post, bot, and tool_use id, then refreshes', async () => {

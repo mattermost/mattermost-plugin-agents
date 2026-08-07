@@ -317,6 +317,12 @@ const SystemContextIcon = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
+// Icon-less detail lines (requester identity) indent by the icon + gap width
+// (14px + 6px) so their text column aligns with the icon-prefixed lines.
+const SystemContextDetailLine = styled(SystemContextLine)`
+    padding-left: 20px;
+`;
+
 // v2 attribution line above the model region; same line treatment as the
 // system context block but with the card's 12px left inset.
 const AttributionLine = styled(SystemContextLine)`
@@ -948,7 +954,7 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
                         </SystemContextLine>
                     )}
                     {identityDetail !== '' && (
-                        <SystemContextLine>{identityDetail}</SystemContextLine>
+                        <SystemContextDetailLine>{identityDetail}</SystemContextDetailLine>
                     )}
                     {showPolicyLine && (
                         <SystemContextLine>

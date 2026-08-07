@@ -513,8 +513,11 @@ func (a *API) handleAskUserCancel(c *gin.Context) {
 
 	// Detach: the cancel resumes the conversation with an async LLM
 	// follow-up stream that must outlive this request (see
-	// telemetry.DetachContext).
-	if err := a.conversationsService.HandleAskUserCancel(telemetry.DetachContext(c.Request.Context()), userID, post, channel, data.ToolUseID); err != nil {
+	// telemetry.DetachContext). DetachContext keeps only the trace span, so
+	// the audit record is re-attached: the service's KeyAgentID enrichment
+	// runs synchronously before the middleware's deferred emit (V2-C10).
+	ctx := audit.WithRecord(telemetry.DetachContext(c.Request.Context()), rec)
+	if err := a.conversationsService.HandleAskUserCancel(ctx, userID, post, channel, data.ToolUseID); err != nil {
 		c.AbortWithError(askUserCancelHTTPStatus(err), err)
 		return
 	}

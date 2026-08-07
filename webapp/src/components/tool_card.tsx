@@ -184,6 +184,12 @@ const AcceptRejectButton = styled.button`
 // Right-aligned secondary control on the waiting AskAnotherUser row (F5).
 const CancelAskButton = styled(AcceptRejectButton)`
     margin-left: auto;
+
+    &:disabled {
+        cursor: not-allowed;
+        background: rgba(var(--center-channel-color-rgb), 0.08);
+        color: rgba(var(--center-channel-color-rgb), 0.32);
+    }
 `;
 
 const CancelingText = styled.span`
@@ -352,9 +358,11 @@ interface ToolCardProps {
     isAutoApproved?: boolean;
 
     // F5: initiator-side cancel of a waiting AskAnotherUser call. Only set
-    // when the viewer may cancel (the conversation requester).
+    // when the viewer may cancel (the conversation requester). The control
+    // renders disabled while a prerequisite (the bot profile) is loading.
     onCancelAsk?: () => void;
     askCancelState?: AskCancelState;
+    askCancelDisabled?: boolean;
 }
 
 export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']): boolean {
@@ -429,6 +437,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
     isAutoApproved = false,
     onCancelAsk,
     askCancelState = 'idle',
+    askCancelDisabled = false,
 }) => {
     const {formatMessage} = useIntl();
 
@@ -774,6 +783,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
                         {onCancelAsk && askCancelState !== 'submitting' && (
                             <CancelAskButton
                                 type='button'
+                                disabled={askCancelDisabled}
                                 onClick={onCancelAsk}
                             >
                                 <FormattedMessage

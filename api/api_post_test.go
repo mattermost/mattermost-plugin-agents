@@ -629,6 +629,7 @@ func TestHandleAskUserCancelHTTP(t *testing.T) {
 		expectedStatus    int
 		expectResultTurn  bool
 		expectAuditToolID bool
+		expectAgentID     bool
 	}{
 		{
 			name:           "missing session header is unauthorized",
@@ -675,6 +676,7 @@ func TestHandleAskUserCancelHTTP(t *testing.T) {
 			blockStatus:       conversation.StatusSuccess,
 			expectedStatus:    http.StatusConflict,
 			expectAuditToolID: true,
+			expectAgentID:     true,
 		},
 		{
 			name:              "cancel resolves the waiting question",
@@ -683,6 +685,7 @@ func TestHandleAskUserCancelHTTP(t *testing.T) {
 			expectedStatus:    http.StatusOK,
 			expectResultTurn:  true,
 			expectAuditToolID: true,
+			expectAgentID:     true,
 		},
 	}
 
@@ -813,6 +816,10 @@ func TestHandleAskUserCancelHTTP(t *testing.T) {
 			}
 			if test.expectAuditToolID {
 				assert.Equal(t, []string{toolUseID}, auditRec.EventData.Parameters["tool_use_id"])
+			}
+			if test.expectAgentID {
+				assert.Equal(t, testBotUserID, auditRec.EventData.Parameters[audit.KeyAgentID],
+					"service-layer enrichment must reach the same record via the request context")
 			}
 			if test.expectedStatus == http.StatusOK {
 				assert.Equal(t, model.AuditStatusSuccess, auditRec.Status)

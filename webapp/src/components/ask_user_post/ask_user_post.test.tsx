@@ -407,6 +407,14 @@ describe('AskUserPost v2 destination disclosure', () => {
             'Your answer will be shared with the person who asked the agent.',
         ],
         [
+            'dm from a human requester whose username is missing degrades to the unknown copy',
+            {
+                ask_user_requester_kind: 'user',
+                ask_user_requester_username: '',
+            },
+            'Your answer will be shared with the person who asked the agent.',
+        ],
+        [
             'channel with name and member count',
             {
                 ask_user_destination_type: 'channel',

@@ -801,6 +801,14 @@ func (c *Conversations) HandleAskUserCancel(ctx context.Context, userID string, 
 	)
 	defer span.End()
 
+	// Resolve BEFORE claiming, mirroring the answer path: the resolve is
+	// side-effect-free, so a failure here must never burn the one-shot
+	// claim and strand the block in a permanently-conflicting state.
+	resultJSON, resolveErr := mmtools.ResolveAskAnotherUserCancel(block.Input)
+	if resolveErr != nil {
+		return fmt.Errorf("failed to build cancel result: %w", resolveErr)
+	}
+
 	// Atomic claim on the SAME key as answer/decline: exactly one of
 	// {answer, decline, cancel} resolves this question. Losing means the
 	// other resolution already happened.
@@ -810,11 +818,6 @@ func (c *Conversations) HandleAskUserCancel(ctx context.Context, userID string, 
 	}
 	if !won {
 		return ErrAskNotPending
-	}
-
-	resultJSON, resolveErr := mmtools.ResolveAskAnotherUserCancel(block.Input)
-	if resolveErr != nil {
-		return fmt.Errorf("failed to build cancel result: %w", resolveErr)
 	}
 
 	// Flip the block BEFORE side effects, mirroring the answer path. No new
