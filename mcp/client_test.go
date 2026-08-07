@@ -4,8 +4,12 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -163,6 +167,61 @@ func startStreamableMCPServer(t *testing.T, server *mcp.Server) *httptest.Server
 	}, nil))
 	t.Cleanup(httpServer.Close)
 	return httpServer
+}
+
+// connectToolListRewritingSession connects a production-configured client to a
+// real streamable MCP server fronted by a proxy that replaces the JSON-RPC
+// result of every tools/list response with rawResult. Rewriting the wire bytes
+// is the only way to reach these shapes: the go-sdk server refuses to emit a
+// nil result, and jsonrpc2 rejects one before it reaches the transport.
+func connectToolListRewritingSession(t *testing.T, rawResult string) *mcp.ClientSession {
+	t.Helper()
+
+	server := newTestMCPServer(0, "tool_1")
+	upstream := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server },
+		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+	)
+
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqBody, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		r.Body = io.NopCloser(bytes.NewReader(reqBody))
+
+		var jsonReq struct {
+			Method string          `json:"method"`
+			ID     json.RawMessage `json:"id"`
+		}
+		_ = json.Unmarshal(reqBody, &jsonReq)
+
+		rec := httptest.NewRecorder()
+		upstream.ServeHTTP(rec, r)
+		maps.Copy(w.Header(), rec.Header())
+
+		if jsonReq.Method != listToolsMethod {
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write(rec.Body.Bytes())
+			return
+		}
+
+		w.Header().Del("Content-Length")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":%s}`, jsonReq.ID, rawResult)
+	}))
+	t.Cleanup(proxy.Close)
+
+	client := NewSDKClient(&mcp.Implementation{
+		Name:    "test-client",
+		Version: "1.0.0",
+	}, nil)
+	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
+		Endpoint:   proxy.URL,
+		HTTPClient: proxy.Client(),
+	}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	return session
 }
 
 func newTestToolsCache() *ToolsCache {
@@ -345,6 +404,66 @@ func TestListAllToolsSkipsNilTools(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tools, 1)
 	require.Contains(t, tools, "tool_1")
+}
+
+// TestListAllToolsHandlesMalformedToolListResults pins down what a hostile
+// third-party server can do to tool discovery over the wire. Every shape here
+// must either yield tools or an error; none may panic the plugin.
+func TestListAllToolsHandlesMalformedToolListResults(t *testing.T) {
+	testCases := []struct {
+		name          string
+		rawResult     string
+		expectedErr   bool
+		expectedTools []string
+	}{
+		{
+			// The go-sdk decodes into a preallocated ListToolsResult, so a null
+			// result yields a zero value rather than a nil pointer, and nothing
+			// downstream dereferences through nil.
+			name:      "null result",
+			rawResult: `null`,
+		},
+		{
+			name:      "null tools array",
+			rawResult: `{"tools":null}`,
+		},
+		{
+			name:      "null tool entry",
+			rawResult: `{"tools":[null]}`,
+		},
+		{
+			name:          "null tool entry alongside a real tool",
+			rawResult:     `{"tools":[null,{"name":"tool_1","description":"d","inputSchema":{"type":"object"}}]}`,
+			expectedTools: []string{"tool_1"},
+		},
+		{
+			name:        "result of the wrong JSON type",
+			rawResult:   `"not-an-object"`,
+			expectedErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			session := connectToolListRewritingSession(t, tc.rawResult)
+
+			var tools map[string]*mcp.Tool
+			var err error
+			require.NotPanics(t, func() {
+				tools, err = listAllTools(context.Background(), session)
+			})
+
+			if tc.expectedErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, tools, len(tc.expectedTools))
+			for _, toolName := range tc.expectedTools {
+				require.Contains(t, tools, toolName)
+			}
+		})
+	}
 }
 
 func TestNewClientDiscoversPaginatedRemoteTools(t *testing.T) {
