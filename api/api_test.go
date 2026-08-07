@@ -109,21 +109,22 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager        *mcp.OAuthManager
-	tools               []llm.Tool
-	mcpErrors           *mcp.Errors
-	config              mcp.Config
-	embeddedServer      mcp.EmbeddedMCPServer
-	processOAuthSession *mcp.OAuthSession
-	processOAuthErr     error
-	disconnectCalls     []mcpDisconnectCall
-	disconnectErr       error
-	oauthNeededCalls    []mcpDisconnectCall
-	refreshErr          error
-	refreshCalls        []string
-	getContexts         []context.Context
-	refreshContexts     []context.Context
-	ensureSessionErr    error
+	oauthManager         *mcp.OAuthManager
+	tools                []llm.Tool
+	mcpErrors            *mcp.Errors
+	config               mcp.Config
+	embeddedServer       mcp.EmbeddedMCPServer
+	processOAuthSession  *mcp.OAuthSession
+	processOAuthErr      error
+	disconnectCalls      []mcpDisconnectCall
+	disconnectErr        error
+	oauthNeededCalls     []mcpDisconnectCall
+	refreshErr           error
+	refreshCalls         []string
+	getContexts          []context.Context
+	refreshContexts      []context.Context
+	ensureSessionErr     error
+	ensureSessionCreated bool
 
 	registerCalls   []mcp.PluginServerConfig
 	unregisterCalls []string
@@ -178,11 +179,11 @@ func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
 	return m.embeddedServer
 }
 
-func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {
+func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, bool, error) {
 	if m.ensureSessionErr != nil {
-		return "", m.ensureSessionErr
+		return "", false, m.ensureSessionErr
 	}
-	return "mock-session-id", nil
+	return "mock-session-id", m.ensureSessionCreated, nil
 }
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
@@ -468,6 +469,29 @@ func (e *TestEnvironment) OverrideLicense(license *model.License) {
 	e.mockAPI.On("GetLicense").Return(license).Maybe()
 }
 
+// CaptureAuditRecords replaces the default LogAuditRec mock registered by
+// SetupTestEnvironment with one that appends every logged record to the
+// returned slice, so tests can assert on emitted audit record contents.
+// The returned pointer must only be dereferenced after the request completes.
+func (e *TestEnvironment) CaptureAuditRecords() *[]*model.AuditRecord {
+	filtered := make([]*mock.Call, 0, len(e.mockAPI.ExpectedCalls))
+	for _, call := range e.mockAPI.ExpectedCalls {
+		if call.Method != "LogAuditRec" {
+			filtered = append(filtered, call)
+		}
+	}
+	e.mockAPI.ExpectedCalls = filtered
+
+	records := &[]*model.AuditRecord{}
+	e.mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {
+		rec, ok := args.Get(0).(*model.AuditRecord)
+		if ok {
+			*records = append(*records, rec)
+		}
+	}).Maybe()
+	return records
+}
+
 // OverrideConfig replaces the default GetConfig mock registered by
 // SetupTestEnvironment so that tests can control the config value.
 func (e *TestEnvironment) OverrideConfig(config *model.Config) {
@@ -575,6 +599,11 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	// behavior override via OverrideLicense.
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
+
+	// The audit middleware logs a record for every audited route; accept them
+	// by default so unrelated tests don't have to care. Tests asserting audit
+	// behavior replace this with CaptureAuditRecords.
+	mockAPI.On("LogAuditRec", mock.Anything).Maybe()
 
 	conversationsService := conversations.New(
 		llmPrompts,

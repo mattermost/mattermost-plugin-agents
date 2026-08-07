@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -70,10 +71,25 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	cfg = normalizeAdminConfig(cfg)
 
+	// Audit which top-level config sections change — never their values,
+	// since services/webSearch/mcp carry credentials. Best effort: a failed
+	// read of the prior config must not block the save, so the record then
+	// simply omits changed_keys.
+	if rec := auditRec(c); rec != nil {
+		if prev, err := a.configStore.GetConfig(); err == nil {
+			audit.AddParam(rec, "changed_keys", audit.ChangedJSONKeys(prev, cfg))
+		}
+	}
+
 	if err := a.configStore.SaveConfig(cfg); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
 		return
 	}
+
+	// From here on the config HAS changed in the database. If a later step
+	// fails (cluster notify), the audit record's fail status would otherwise
+	// hide a real mutation — mark it explicitly.
+	audit.AddParam(auditRec(c), "persisted", true)
 
 	// Update in-memory config on this node
 	a.configUpdater.Update(&cfg)
