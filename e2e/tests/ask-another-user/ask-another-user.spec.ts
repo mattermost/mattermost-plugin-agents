@@ -66,6 +66,8 @@ test.describe('Ask Another User (Aimock)', () => {
             defaultBotName: botUsername,
             botId: 'ask-user-test-bot',
             botDisplayName: 'Ask User Test Bot',
+            // V2-C1: the tool is master-gated off by default.
+            enableAskAnotherUser: true,
         });
         await setupUsers(mattermost);
         aimock = await RunAIMockSidecar(mattermost.network, {
@@ -150,6 +152,21 @@ test.describe('Ask Another User (Aimock)', () => {
             await expect(askCard.getByText(contextLine)).toBeVisible();
             await expect(askCard.getByText(`Asked on behalf of @${initiatorUsername}`)).toBeVisible();
             await expect(askCard.getByRole('button', {name: new RegExp(optionAnswer)})).toBeVisible();
+
+            // V2 anti-impersonation layout: the model-authored text (question,
+            // context, options) is contained in the captioned AI region, while
+            // the system chrome renders outside it, from props only.
+            const aiRegion = askCard.getByTestId('ask-user-ai-content');
+            await expect(aiRegion.getByText('AI-generated content')).toBeVisible();
+            await expect(aiRegion.getByText(question)).toBeVisible();
+            await expect(aiRegion.getByText(contextLine)).toBeVisible();
+
+            // V2 destination disclosure for a DM-initiated ask names the
+            // human requester; both system lines stay outside the AI region.
+            const disclosureLine = `Your answer will be shared with @${initiatorUsername}.`;
+            await expect(askCard.getByText(disclosureLine)).toBeVisible();
+            await expect(aiRegion.getByText(disclosureLine)).toHaveCount(0);
+            await expect(aiRegion.getByText(`Asked on behalf of @${initiatorUsername}`)).toHaveCount(0);
 
             const answerButton = askCard.getByRole('button', {name: 'Answer', exact: true});
             const declineButton = askCard.getByRole('button', {name: 'Decline', exact: true});
@@ -269,6 +286,93 @@ test.describe('Ask Another User (Aimock)', () => {
             // resolved card is collapsed by default — expand via the header.
             await rhs.getByText(askAnotherUserToolName, {exact: true}).last().click();
             await expect(rhs.getByText(`@${targetUsername} declined to answer`)).toBeVisible({timeout: 15000});
+        } finally {
+            await initiatorContext.close();
+            await targetContext.close();
+        }
+    });
+
+    test('cancel: initiator cancels the outstanding question and the target card resolves', async ({browser}) => {
+        test.setTimeout(300000);
+
+        const cancelPrompt = `ask another user cancel ${Date.now()}`;
+        const cancelCallId = `call_ask_user_cancel_${Date.now()}`;
+        const cancelQuestion = `Do you have capacity to take the on-call shift? (${Date.now()})`;
+        const cancelFinalText = `ASK_CANCEL_FINAL_${Date.now()} proceeding without an answer`;
+
+        // The follow-up fixture matches on the tool call id, so the same
+        // builder covers the cancel resume: after the canceled tool result is
+        // recorded the plugin requests a continuation carrying this call id.
+        await aimock.setFixtures(buildToolCallAndTextResponse({
+            userMessage: cancelPrompt,
+            toolCallId: cancelCallId,
+            toolName: askAnotherUserToolName,
+            toolArguments: {
+                username: targetUsername,
+                question: cancelQuestion,
+            },
+            finalContent: cancelFinalText,
+            title: 'Ask another user cancel path',
+        }));
+
+        const initiatorContext = await browser.newContext();
+        const targetContext = await browser.newContext();
+        const initiatorPage = await initiatorContext.newPage();
+        const targetPage = await targetContext.newPage();
+
+        try {
+            const initiatorMM = new MattermostPage(initiatorPage);
+            const targetMM = new MattermostPage(targetPage);
+            const aiPlugin = new AIPlugin(initiatorPage);
+            const baseUrl = mattermost.url();
+
+            await initiatorMM.login(baseUrl, initiatorUsername, initiatorPassword);
+            await aiPlugin.openRHS();
+            await aiPlugin.resetState();
+            await aiPlugin.sendMessage(cancelPrompt);
+
+            const rhs = initiatorPage.getByTestId('mattermost-ai-rhs');
+            await expect(rhs.locator('[data-testid="llm-bot-post"]').last()).toBeVisible({timeout: 90000});
+            await expect(rhs.getByText(askAnotherUserToolName, {exact: true})).toBeVisible({timeout: 90000});
+
+            const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
+            await expect(acceptButton).toBeVisible();
+            await acceptButton.click();
+
+            // Waiting card with the requester-only cancel control (F5).
+            await expect(rhs.getByText(waitingForTargetRegex)).toBeVisible({timeout: 30000});
+            const cancelButton = rhs.getByRole('button', {name: 'Cancel question'});
+            await expect(cancelButton).toBeVisible();
+
+            // Target opens the DM BEFORE the cancel so the flip to the
+            // terminal state is delivered live over the post-edit event.
+            await targetMM.login(baseUrl, targetUsername, targetPassword);
+            await targetPage.goto(`${baseUrl}/test/messages/@${botUsername}`);
+            const channelView = targetPage.getByTestId('channel_view');
+
+            const askCard = channelView.getByTestId('postContent').filter({hasText: cancelQuestion});
+            await expect(askCard).toBeVisible({timeout: 30000});
+            const answerButton = askCard.getByRole('button', {name: 'Answer', exact: true});
+            const declineButton = askCard.getByRole('button', {name: 'Decline', exact: true});
+            await expect(declineButton).toBeVisible();
+
+            // Initiator cancels; the conversation resumes without an answer.
+            await cancelButton.click();
+            await expect(rhs.getByText(cancelFinalText)).toBeVisible({timeout: 60000});
+            await expect(rhs.getByText(waitingForTargetRegex)).not.toBeVisible();
+            await expect(initiatorPage.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
+
+            // Target card settles into the neutral terminal state — no
+            // controls, no error styling (a late answer is a graceful no-op).
+            await expect(askCard.getByText('This question is no longer needed.')).toBeVisible({timeout: 30000});
+            await expect(answerButton).not.toBeVisible();
+            await expect(declineButton).not.toBeVisible();
+            await expect(askCard.getByText('Failed to submit your response. Please try again.')).toHaveCount(0);
+
+            // The canceled terminal line renders inside the collapsible card
+            // body; the resolved card is collapsed by default — expand it.
+            await rhs.getByText(askAnotherUserToolName, {exact: true}).last().click();
+            await expect(rhs.getByText('Canceled — the agent continued without an answer')).toBeVisible({timeout: 15000});
         } finally {
             await initiatorContext.close();
             await targetContext.close();

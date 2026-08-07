@@ -172,15 +172,29 @@ This is the intentional behavior. If a workflow needs an Agent to invoke `ask`-p
 
 ## 10. Asking another user: the target as a second actor
 
-The built-in `AskAnotherUser` tool lets an Agent ask a specific other user a clarifying question mid-task. This is a deliberate extension of the multiplayer model: it introduces a second first-class human actor — the **target** — alongside the initiator. While the question is outstanding, the conversation blocks (the tool call sits in a waiting state and the Agent produces no follow-up); once the target answers or declines, the conversation resumes with the answer (or the decline) recorded as an ordinary tool result.
+The built-in `AskAnotherUser` tool lets an Agent ask a specific other user a clarifying question mid-task. The capability is experimental and **off by default**: an admin must enable the **Enable Agents to Ask Other Users** setting before the tool is offered to models at all, and while the setting is off the answer and cancel endpoints refuse — the switch is superordinate to any configured tool policy. When enabled, this is a deliberate extension of the multiplayer model: it introduces a second first-class human actor — the **target** — alongside the initiator. While the question is outstanding, the conversation blocks (the tool call sits in a waiting state and the Agent produces no follow-up); once the target answers or declines — or the initiator cancels — the conversation resumes with the outcome recorded as an ordinary tool result.
 
 ### Delivery is DM-only
 
-The question is delivered as an interactive card in the target's DM with the Agent bot — never posted into the originating channel, even when the initiating conversation is a channel thread. The card carries a permalink back to the initiating conversation and, when a person started the conversation, an "Asked on behalf of @initiator" attribution line. Attribution is carried in post props and rendered by the client — it is never authored by the model. Autonomous flows without a human requester show no attribution.
+The question is delivered as an interactive card in the target's DM with the Agent bot — never posted into the originating channel, even when the initiating conversation is a channel thread. The card carries a permalink back to the initiating conversation and a set of system-authored trust lines (below). All of them are computed server-side at dispatch time, carried in post props, and rendered by the client — never authored by the model.
+
+### Disclosure and anti-impersonation
+
+The card visually separates what the model wrote from what the system asserts. The model-authored region — question, context, answer options — renders inside a contained block captioned **AI-generated content**; every trust-bearing line renders outside it. The server additionally strips model attempts to forge system lines: question or context lines matching reserved system phrasing ("Asked on behalf of…", "Your answer will be shared…", and similar) are dropped before dispatch, and option labels or descriptions containing them are rejected as error tool results the model can react to.
+
+The system lines themselves, frozen at ask time:
+
+- **Attribution.** "Asked on behalf of @initiator" for a human requester, with the requester's display name and job title underneath when available. Autonomous runs are labeled explicitly ("Asked by the {agent} agent running unattended (no human requester)"), and a failed requester lookup is distinguished from that ("Asked via the {agent} agent (requester identity unavailable)") — a card never implies a human vouched for the question when none did.
+- **Destination disclosure.** A DM-initiated ask says the answer "will be shared with @initiator"; a channel-initiated ask says it "may be shared with the N members of ~channel-name", with the name and member count resolved best-effort at dispatch. Every lookup failure degrades toward the *broader* audience claim (a generic "shared in the channel where the agent was asked"), never a narrower one. Group messages get dedicated copy without the misleading `~` prefix.
+- **Access context.** When the originating channel is governed by an attribute-based access policy, the card says so. The plugin API only exposes the boolean policy-enforced flag — the policy's attributes and rules are not readable by the plugin — so when nothing is reachable the card omits the line entirely rather than rendering anything that could imply "no restrictions".
 
 ### Ownership split
 
-The initiator still owns Accept / Reject of the tool call itself — §4's rules are unchanged, and under the default `ask` policy the question card is dispatched only after the initiator accepts. The **target** exclusively owns the answer: the answer endpoint verifies the caller is the recorded target and rejects anyone else, including the initiator and admins. Decline is a first-class outcome, not an error — the Agent is instructed to proceed gracefully without the answer.
+The initiator still owns Accept / Reject of the tool call itself — §4's rules are unchanged, and under the default `ask` policy the question card is dispatched only after the initiator accepts. The **target** exclusively owns the answer: the answer endpoint verifies the caller is the recorded target and rejects anyone else, including the initiator and admins. Decline is a first-class outcome, not an error — the Agent is instructed to proceed gracefully without the answer. The initiator (and only the initiator — observers see neither control) additionally owns cancellation of an outstanding question.
+
+### Initiator cancel
+
+The waiting tool card offers the initiator a **Cancel question** control. Cancel resolves the waiting call with a valid, non-error "no answer received" tool result, so the conversation resumes immediately with the Agent continuing without the answer, and the target's card flips to the neutral "This question is no longer needed." terminal state. Answer, decline, and cancel contend for a single one-shot claim, so exactly one resolution ever wins: a late answer or decline after a cancel (or a late cancel after an answer) is a graceful no-op — the loser's card settles into the winner's terminal state with no error.
 
 ### No Share / Keep Private stage
 
@@ -188,11 +202,11 @@ The answer is authored by the target, not produced by a third-party tool, so it 
 
 ### Policy
 
-`AskAnotherUser` is a regular built-in tool under the standard `ask` / `auto_run_in_dm` / `auto_run_everywhere` policies (see the admin guide's "Built-in tool policies" section). It ships with an explicit `ask` default. Consistent with §9, it is excluded from `activate_ai` bot-triggered channel flows — a question card is never dispatched from a flow with no accountable human.
+`AskAnotherUser` is a regular built-in tool under the standard `ask` / `auto_run_in_dm` / `auto_run_everywhere` policies (see the admin guide's "Built-in tool policies" section). It ships with an explicit `ask` default. Consistent with §9, it is excluded from `activate_ai` bot-triggered channel flows — a question card is never dispatched from a flow with no accountable human. The policy only matters while the **Enable Agents to Ask Other Users** master switch is on; off wins unconditionally.
 
-### Limitations (v1)
+### Limitations
 
-Regenerating or stopping the conversation while a question is outstanding orphans the card: a late answer fails with an error and the card stays pending, mirroring the "pending tool calls remain pending" behavior in §4. There is no initiator-side cancel of an outstanding question. The Mattermost mobile apps show a plain-text fallback and cannot answer; targets must use web or desktop.
+Regenerating or stopping the conversation while a question is outstanding orphans the card: a late answer fails with an error and the card stays pending, mirroring the "pending tool calls remain pending" behavior in §4 — an initiator who wants a clean resolution should use **Cancel question** instead, which closes out the target's card. Disabling the master switch while a question is outstanding parks it: answering and canceling both refuse until an admin re-enables the setting or the initiator regenerates the conversation. The Mattermost mobile apps show a plain-text fallback and cannot answer; targets must use web or desktop.
 
 ## 11. Operational guidance for admins
 
