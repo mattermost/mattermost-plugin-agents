@@ -105,6 +105,13 @@ type ToolRuntimeContext struct {
 	// attachment to the response post.
 	CreatedFiles []CreatedFile
 
+	// SandboxFileIDs records the provider-side file ids observed in this
+	// request's server-tool activity (e.g. Anthropic code-execution output
+	// files). The AttachSandboxFile tool only downloads ids recorded here, so
+	// a prompt-injected or hallucinating model cannot pull arbitrary files
+	// reachable with the provider API key into the channel.
+	SandboxFileIDs map[string]bool
+
 	// ResponseAttachmentBudget caps how many files response tools may create
 	// this turn. 0 means unset (full MaxPostAttachments budget); -1 means the
 	// response post has no room left. Set via SetResponseAttachmentBudget.
@@ -255,6 +262,46 @@ func (t *ToolRuntimeContext) AddCreatedFile(f CreatedFile) {
 		return
 	}
 	t.CreatedFiles = append(t.CreatedFiles, f)
+}
+
+// AddSandboxFileIDs records provider-side sandbox file ids observed in this
+// request's server-tool activity. Empty ids are skipped.
+func (c *Context) AddSandboxFileIDs(ids ...string) {
+	if c == nil {
+		return
+	}
+	c.ToolRuntime.AddSandboxFileIDs(ids...)
+}
+
+func (t *ToolRuntimeContext) AddSandboxFileIDs(ids ...string) {
+	if t == nil {
+		return
+	}
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if t.SandboxFileIDs == nil {
+			t.SandboxFileIDs = make(map[string]bool)
+		}
+		t.SandboxFileIDs[id] = true
+	}
+}
+
+// IsSandboxFileID reports whether the id was observed in this request's
+// server-tool activity.
+func (c *Context) IsSandboxFileID(id string) bool {
+	if c == nil {
+		return false
+	}
+	return c.ToolRuntime.IsSandboxFileID(id)
+}
+
+func (t *ToolRuntimeContext) IsSandboxFileID(id string) bool {
+	if t == nil {
+		return false
+	}
+	return t.SandboxFileIDs[id]
 }
 
 // CreatedFilesList returns the files created by tools during this turn.

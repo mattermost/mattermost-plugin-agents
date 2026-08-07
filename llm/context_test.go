@@ -263,6 +263,27 @@ func TestContextCreatedFilesNilReceiver(t *testing.T) {
 	assert.Nil(t, rt.CreatedFilesList())
 }
 
+func TestContextSandboxFileIDs(t *testing.T) {
+	c := &Context{}
+
+	assert.False(t, c.IsSandboxFileID("file_1"), "unknown ids are rejected")
+
+	c.AddSandboxFileIDs("file_1", "", "file_2")
+	assert.True(t, c.IsSandboxFileID("file_1"))
+	assert.True(t, c.IsSandboxFileID("file_2"))
+	assert.False(t, c.IsSandboxFileID(""), "empty ids are never registered")
+	assert.False(t, c.IsSandboxFileID("file_3"))
+
+	// Nil receivers are safe: recording is a no-op and lookups reject.
+	var nilCtx *Context
+	nilCtx.AddSandboxFileIDs("file_1")
+	assert.False(t, nilCtx.IsSandboxFileID("file_1"))
+
+	var nilRuntime *ToolRuntimeContext
+	nilRuntime.AddSandboxFileIDs("file_1")
+	assert.False(t, nilRuntime.IsSandboxFileID("file_1"))
+}
+
 func TestContextMCPDynamicSearchLoadCallSuccessState(t *testing.T) {
 	c := &Context{}
 

@@ -226,6 +226,11 @@ func (r *ToolRunner) runLoop(
 				// keep the latest so a tool round persists it (see ToolTurn).
 				if uses, ok := event.Value.([]llm.ServerToolUse); ok {
 					serverTools = uses
+					// Register sandbox output files so AttachSandboxFile can
+					// verify requested ids were actually created this request.
+					for _, use := range uses {
+						request.Context.AddSandboxFileIDs(use.FileIDs...)
+					}
 				}
 				output <- event
 			case llm.EventTypeEnd:

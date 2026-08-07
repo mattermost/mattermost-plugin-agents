@@ -261,6 +261,7 @@ func TestToolRunner_ServerToolActivityPersistsInToolTurn(t *testing.T) {
 	}}
 	final := []llm.ServerToolUse{{
 		ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess, Query: "weather NYC",
+		FileIDs: []string{"file_from_sandbox"},
 	}}
 
 	inner := &testLLM{
@@ -310,6 +311,11 @@ func TestToolRunner_ServerToolActivityPersistsInToolTurn(t *testing.T) {
 	// The second round had no server tools; nothing to assert there because
 	// it produced no ToolTurn (it was the final text response).
 	assert.Equal(t, 2, inner.callCount)
+
+	// Observed sandbox file ids must be registered on the context so the
+	// AttachSandboxFile tool can validate them at resolve time.
+	assert.True(t, request.Context.IsSandboxFileID("file_from_sandbox"))
+	assert.False(t, request.Context.IsSandboxFileID("file_never_seen"))
 }
 
 func TestToolRunner_MultipleToolRounds(t *testing.T) {
