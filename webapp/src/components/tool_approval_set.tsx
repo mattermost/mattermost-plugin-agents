@@ -62,7 +62,7 @@ const BatchButton = styled.button`
  * Returns an empty list when the viewer is not the requester, or when the
  * server-computed stage says no decision remains.
  */
-export function selectDecisionToolCalls(
+function selectDecisionToolCalls(
     toolCalls: ToolCall[],
     approvalStage: ToolApprovalStage,
     canApprove: boolean,
@@ -101,7 +101,7 @@ export function selectDecisionToolCalls(
  * interrupted (e.g. a manual call elsewhere in the response). It needs a
  * single "Run tools" confirmation rather than per-tool decisions.
  */
-export function isInterruptedAutoApprovalRound(
+function isInterruptedAutoApprovalRound(
     toolCalls: ToolCall[],
     approvalStage: ToolApprovalStage,
 ): boolean {
@@ -118,6 +118,8 @@ export function needsViewerDecision(
     approvalStage: ToolApprovalStage,
     canApprove: boolean,
 ): boolean {
+    // The guard covers both halves: isInterruptedAutoApprovalRound describes
+    // the round alone and has no notion of who is looking at it.
     if (!canApprove) {
         return false;
     }
@@ -133,8 +135,6 @@ interface ToolApprovalSetProps {
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
     canExpand: boolean;
-    showArguments: boolean;
-    showResults: boolean;
 }
 
 // Define a type for tool decisions
@@ -162,6 +162,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
     const isInterruptedAutoRound = isInterruptedAutoApprovalRound(props.toolCalls, props.approvalStage);
+
+    // Onlookers get redacted calls with neither arguments nor results, so the
+    // sections are offered only when the round actually carries them.
+    const showArguments = props.toolCalls.some((call) => call.arguments != null);
+    const showResults = props.toolCalls.some((call) => call.result != null);
 
     // Approval is per pending tool. Earlier auto-approved tools in the same
     // response should not suppress controls for later manual ones.
@@ -389,8 +394,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         onApprove={isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined} // eslint-disable-line no-undefined
                         onReject={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
                         canExpand={props.canExpand}
-                        showArguments={props.showArguments}
-                        showResults={props.showResults}
+                        showArguments={showArguments}
+                        showResults={showResults}
                         approvalStage={props.approvalStage}
                         isAutoApproved={tool.status === ToolCallStatus.AutoApproved}
                     />

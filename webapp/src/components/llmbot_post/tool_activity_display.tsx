@@ -9,11 +9,11 @@ import {ChevronRightIcon} from '@mattermost/compass-icons/components';
 
 import {toolDisplayName} from '@/utils/tool_names';
 
-import ToolApprovalSet, {needsViewerDecision} from '../tool_approval_set';
 import ToolStatusIcon from '../tool_status_icon';
-import {ToolApprovalStage, ToolCallStatus} from '../tool_types';
+import {ToolCallStatus} from '../tool_types';
 
-import {ActivityItem, PostActivity} from './activity_items';
+import {PostActivity} from './activity_items';
+import {CollapseChevron, CollapseHeaderRow} from './collapse_header';
 import {Round} from './turn_content_utils';
 
 // Length of the roll-in/roll-out transition, and the slightly longer window
@@ -43,28 +43,38 @@ function useSlotSequence(sequence: string[]): string {
     sequenceRef.current = sequence;
     const sequenceKey = sequence.join('\u0000');
 
-    useEffect(() => {
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        const seq = sequenceRef.current;
-        const targetIdx = seq.length - 1;
-        const currentIdx = seq.indexOf(displayed);
+    // The effect re-runs on every append. Timing the wait from the last step
+    // rather than from the re-run keeps a burst moving; otherwise each new
+    // item would reset the clock and the row would sit still until the
+    // backlog grew past MAX_CATCHUP and skipped everything.
+    const lastStepAtRef = useRef(Date.now());
 
-        if (targetIdx >= 0) {
-            if (currentIdx === -1 || targetIdx - currentIdx > MAX_CATCHUP) {
-                // Either the list was rebuilt under us (persisted rounds
-                // replacing live ones, which changes every key) or updates
-                // outran the animation. Jump rather than run a long backlog.
-                setDisplayed(seq[targetIdx]);
-            } else if (currentIdx < targetIdx) {
-                timer = setTimeout(() => setDisplayed(seq[currentIdx + 1]), SLOT_STEP_MS);
-            }
+    useEffect(() => {
+        const targetIdx = sequenceRef.current.length - 1;
+        const currentIdx = sequenceRef.current.indexOf(displayed);
+        if (targetIdx < 0 || currentIdx === targetIdx) {
+            return undefined; // eslint-disable-line no-undefined
         }
 
-        return () => {
-            if (timer) {
-                clearTimeout(timer);
-            }
-        };
+        if (currentIdx === -1 || targetIdx - currentIdx > MAX_CATCHUP) {
+            // Either the list was rebuilt under us (persisted rounds replacing
+            // live ones, which changes every key) or updates outran the
+            // animation. Jump rather than run a long backlog.
+            lastStepAtRef.current = Date.now();
+            setDisplayed(sequenceRef.current[targetIdx]);
+            return undefined; // eslint-disable-line no-undefined
+        }
+
+        const timer = setTimeout(() => {
+            // Resolve the next key at fire time: more items may have arrived
+            // while this timer was pending.
+            const latest = sequenceRef.current;
+            const idx = latest.indexOf(displayed);
+            lastStepAtRef.current = Date.now();
+            setDisplayed(idx === -1 || idx + 1 >= latest.length ? latest[latest.length - 1] : latest[idx + 1]);
+        }, Math.max(0, SLOT_STEP_MS - (Date.now() - lastStepAtRef.current)));
+
+        return () => clearTimeout(timer);
     }, [sequenceKey, displayed]);
 
     return displayed;
@@ -115,63 +125,37 @@ interface ToolActivityDisplayProps {
     expanded: boolean;
     onToggleExpanded: (expanded: boolean) => void;
 
-    /** True while the response is still being generated. */
+    /** True while the response is unfinished — still generating, or paused on a decision. */
     inProgress: boolean;
 
     /** Renders one round of the expanded stack; supplied by the post. */
-    renderRound: (round: Round, index: number) => React.ReactNode;
-
-    postID: string;
-    conversationID?: string;
-    canApprove: boolean;
-    canExpand: boolean;
-
-    /** Approval stage of the last activity round. */
-    approvalStage: ToolApprovalStage;
+    renderRound: (round: Round) => React.ReactNode;
 }
 
 /**
  * The collapsed "current activity" area of a bot post. Collapsed it is a
  * single row showing the activity item in flight (or, once the response is
  * done, a summary of the tools used); expanded it is the full stack of
- * intermediate rounds. Approval controls stay visible either way.
+ * intermediate rounds.
  *
- * The row is only rendered when it stands for something the viewer cannot
- * already see, so a post whose sole activity is the tool call awaiting a
- * decision shows just the approval card.
+ * Rounds the viewer owes a decision on never reach here — they render below
+ * the activity area through the ordinary round path — so this component knows
+ * nothing about approval.
  */
 const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
     const {activity, expanded, inProgress} = props;
 
+    // A tool can still be running after the stream stops, so completion is
+    // not simply "not generating".
     const showSummary = !inProgress && !activity.hasRunningTool;
 
-    // Only the last activity round can still be awaiting a decision; earlier
-    // rounds were resolved before the response moved on.
-    const approvalRound = activity.activityRounds.length > 0 ?
-        activity.activityRounds[activity.activityRounds.length - 1] :
-        null;
-    const showCollapsedApproval = !expanded && approvalRound !== null &&
-        needsViewerDecision(approvalRound.toolCalls, props.approvalStage, props.canApprove);
-
-    // The approval card renders that round in full right below the row, so
-    // leaving its items in the row would just repeat the tool name.
-    const rowItems = showCollapsedApproval ?
-        activity.items.filter((item) => item.roundId !== approvalRound.id) :
-        activity.items;
-
-    const sequence = rowItems.map((item) => item.id);
+    const sequence = activity.items.map((item) => item.id);
     if (showSummary) {
         sequence.push(SUMMARY_KEY);
     }
 
-    const itemsByKey = new Map<string, ActivityItem>(rowItems.map((item) => [item.id, item]));
-
     const displayedKey = useSlotSequence(sequence);
     const outgoingKey = useSlotTransition(displayedKey);
-
-    if (activity.items.length === 0 || approvalRound === null) {
-        return null;
-    }
 
     const renderRowContent = (key: string): React.ReactNode => {
         if (key === SUMMARY_KEY) {
@@ -189,7 +173,7 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
             );
         }
 
-        const item = itemsByKey.get(key);
+        const item = activity.items.find((candidate) => candidate.id === key);
         if (!item) {
             return null;
         }
@@ -213,52 +197,37 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
 
     return (
         <ActivityContainer data-testid='llm-bot-tool-activity'>
-            {sequence.length > 0 && (
-                <ActivityHeader
-                    data-testid='llm-bot-tool-activity-header'
-                    onClick={() => props.onToggleExpanded(!expanded)}
-                >
-                    <ActivityChevron $expanded={expanded}>
-                        <ChevronRightIcon/>
-                    </ActivityChevron>
-                    <SlotViewport>
-                        {outgoingKey !== null && (
-                            <SlotRow
-                                key={`out-${outgoingKey}`}
-                                $phase='out'
-                                aria-hidden={true}
-                            >
-                                {renderRowContent(outgoingKey)}
-                            </SlotRow>
-                        )}
+            <CollapseHeaderRow
+                data-testid='llm-bot-tool-activity-header'
+                onClick={() => props.onToggleExpanded(!expanded)}
+            >
+                <CollapseChevron $expanded={expanded}>
+                    <ChevronRightIcon/>
+                </CollapseChevron>
+                <SlotViewport>
+                    {outgoingKey !== null && (
                         <SlotRow
-                            key={displayedKey}
-                            $phase={outgoingKey === null ? 'static' : 'in'}
-                            data-testid='llm-bot-tool-activity-current'
+                            key={`out-${outgoingKey}`}
+                            $phase='out'
+                            aria-hidden={true}
                         >
-                            {renderRowContent(displayedKey)}
+                            {renderRowContent(outgoingKey)}
                         </SlotRow>
-                    </SlotViewport>
-                </ActivityHeader>
-            )}
+                    )}
+                    <SlotRow
+                        key={displayedKey}
+                        $phase={outgoingKey === null ? 'static' : 'in'}
+                        data-testid='llm-bot-tool-activity-current'
+                    >
+                        {renderRowContent(displayedKey)}
+                    </SlotRow>
+                </SlotViewport>
+            </CollapseHeaderRow>
 
             {expanded && (
                 <ExpandedRounds data-testid='llm-bot-tool-activity-rounds'>
                     {activity.activityRounds.map(props.renderRound)}
                 </ExpandedRounds>
-            )}
-
-            {showCollapsedApproval && (
-                <ToolApprovalSet
-                    postID={props.postID}
-                    conversationID={props.conversationID}
-                    toolCalls={approvalRound.toolCalls}
-                    approvalStage={props.approvalStage}
-                    canApprove={props.canApprove}
-                    canExpand={props.canExpand}
-                    showArguments={approvalRound.toolCalls.some((tc) => tc.arguments != null)}
-                    showResults={approvalRound.toolCalls.some((tc) => tc.result != null)}
-                />
             )}
         </ActivityContainer>
     );
@@ -268,36 +237,6 @@ export default ToolActivityDisplay;
 
 const ActivityContainer = styled.div`
     margin: 4px 0;
-`;
-
-const ActivityHeader = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: rgba(var(--center-channel-color-rgb), 0.75);
-    cursor: pointer;
-    user-select: none;
-
-    &:hover {
-        color: rgba(var(--center-channel-color-rgb), 0.8);
-    }
-`;
-
-const ActivityChevron = styled.div<{$expanded: boolean}>`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-    transition: transform 0.2s ease;
-    transform: ${(props) => (props.$expanded ? 'rotate(90deg)' : 'rotate(0)')};
-
-    svg {
-        width: 14px;
-        height: 14px;
-    }
 `;
 
 const SlotViewport = styled.div`

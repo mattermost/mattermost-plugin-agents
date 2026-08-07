@@ -74,10 +74,21 @@ export function isTerminalToolStatus(status: ToolCallStatus): boolean {
  *
  * A post with no tool calls anywhere produces no items and no activity
  * rounds, so it renders exactly as it did before the activity area existed.
+ *
+ * `pendingDecisionRoundId` names a round the viewer still owes a decision on.
+ * It and everything after it stay out of the activity area so the approval
+ * card renders in full, next to the text that asked for it. Whether a round
+ * needs a decision depends on who is looking, which is why the caller decides
+ * it and this function stays pure.
  */
-export function deriveActivity(rounds: Round[]): PostActivity {
+export function deriveActivity(rounds: Round[], pendingDecisionRoundId?: string): PostActivity {
+    const pendingIdx = pendingDecisionRoundId === undefined ? // eslint-disable-line no-undefined
+        -1 :
+        rounds.findIndex((round) => round.id === pendingDecisionRoundId);
+    const searchEnd = pendingIdx === -1 ? rounds.length : pendingIdx;
+
     let lastToolRoundIdx = -1;
-    for (let i = rounds.length - 1; i >= 0; i--) {
+    for (let i = searchEnd - 1; i >= 0; i--) {
         if (rounds[i].toolCalls.length > 0) {
             lastToolRoundIdx = i;
             break;

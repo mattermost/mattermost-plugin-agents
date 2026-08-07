@@ -40,15 +40,6 @@ export function stripPluginPrefix(toolName: string, pluginID: string): string {
     return toolName;
 }
 
-// Human-readable label for a wire tool name, e.g. "search_tools" -> "Search Tools".
-export function toolDisplayName(toolName: string): string {
-    return stripWirePrefix(toolName).
-        replace(/_/g, ' ').
-        split(' ').
-        map((word) => word.charAt(0).toUpperCase() + word.slice(1)).
-        join(' ');
-}
-
 // Heuristic prefix strip for call sites without server context.
 export function stripWirePrefix(toolName: string): string {
     const idx = toolName.indexOf('__');
@@ -60,4 +51,13 @@ export function stripWirePrefix(toolName: string): string {
         return toolName;
     }
     return toolName.slice(idx + 2);
+}
+
+// Human-readable label for a wire tool name, e.g. "search_tools" -> "Search Tools".
+export function toolDisplayName(toolName: string): string {
+    return stripWirePrefix(toolName).
+        replace(/_/g, ' ').
+        split(' ').
+        map((word) => word.charAt(0).toUpperCase() + word.slice(1)).
+        join(' ');
 }

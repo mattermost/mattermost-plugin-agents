@@ -151,6 +151,68 @@ describe('deriveActivity', () => {
         expect(activity.hasRejected).toBe(rejected);
     });
 
+    // A round the viewer must decide on renders in full below the activity
+    // area, so neither it nor its text may be folded into the row.
+    test('splits before a round the viewer owes a decision on', () => {
+        const first = makeRound('r1', 'Let me look that up', [makeTool({id: 'tc_a', name: 'search_tools'})]);
+        const pending = makeRound('r2', 'I will post that', [makeTool({id: 'tc_b', status: ToolCallStatus.Pending})]);
+
+        const activity = deriveActivity([first, pending], 'r2');
+
+        expect(activity.activityRounds).toEqual([first]);
+        expect(activity.answerRounds).toEqual([pending]);
+        expect(activity.items.map((item) => item.id)).toEqual(['r1:text', 'r1:tool:tc_a']);
+        expect(activity.toolCount).toBe(1);
+    });
+
+    // Nothing precedes the pending round, so there is no activity area at all
+    // and the post renders as a plain message plus its approval card.
+    test('produces no activity when the only tool round awaits a decision', () => {
+        const pending = makeRound('r1', 'I will post that', [makeTool({id: 'tc_a', status: ToolCallStatus.Pending})]);
+
+        const activity = deriveActivity([pending], 'r1');
+
+        expect(activity.items).toEqual([]);
+        expect(activity.activityRounds).toEqual([]);
+        expect(activity.answerRounds).toEqual([pending]);
+    });
+
+    // Onlookers owe no decision, so the caller passes no id and the pending
+    // round folds in exactly like a resolved one.
+    test('folds the pending round in when no decision is owed', () => {
+        const pending = makeRound('r1', 'I will post that', [makeTool({id: 'tc_a', status: ToolCallStatus.Pending})]);
+
+        const activity = deriveActivity([pending]);
+
+        expect(activity.activityRounds).toEqual([pending]);
+        expect(activity.answerRounds).toEqual([]);
+        expect(activity.hasRunningTool).toBe(true);
+    });
+
+    // Text-only rounds between the last folded tool round and the pending one
+    // belong to the answer, not the activity area.
+    test('keeps text-only rounds before a pending round out of the activity area', () => {
+        const toolRound = makeRound('r1', 'looking', [makeTool({id: 'tc_a'})]);
+        const textOnly = makeRound('r2', 'almost there');
+        const pending = makeRound('r3', 'I will post that', [makeTool({id: 'tc_b', status: ToolCallStatus.Pending})]);
+
+        const activity = deriveActivity([toolRound, textOnly, pending], 'r3');
+
+        expect(activity.activityRounds).toEqual([toolRound]);
+        expect(activity.answerRounds).toEqual([textOnly, pending]);
+    });
+
+    // A stale id (the round already resolved and was replaced) must not
+    // silently drop the whole activity area.
+    test('ignores a pending round id that is not in the list', () => {
+        const rounds = [makeRound('r1', 'looking', [makeTool({id: 'tc_a'})])];
+
+        const activity = deriveActivity(rounds, 'gone');
+
+        expect(activity.activityRounds).toEqual(rounds);
+        expect(activity.items).toHaveLength(2);
+    });
+
     test('counts tools across every activity round', () => {
         const activity = deriveActivity([
             makeRound('r1', '', [makeTool({id: 'tc_a'}), makeTool({id: 'tc_b'})]),

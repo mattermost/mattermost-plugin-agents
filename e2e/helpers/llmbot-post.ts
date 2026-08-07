@@ -17,12 +17,13 @@ export const TOOL_ACTIVITY_ROUNDS_SELECTOR = '[data-testid="llm-bot-tool-activit
  * milliseconds after expanding it can still name a tool that the stack also
  * shows, which would make a post-wide locator ambiguous.
  *
- * Approval controls are rendered while collapsed too, so specs that only
- * click Accept/Reject/Share do not need this.
+ * A round awaiting the viewer's decision renders below the activity area
+ * instead of inside it, so specs that only click Accept/Reject/Share do not
+ * need this.
  */
-export async function expandToolActivity(scope: Locator, timeout: number = 30000): Promise<Locator> {
+export async function expandToolActivity(scope: Locator): Promise<Locator> {
     const areas = scope.locator(TOOL_ACTIVITY_SELECTOR);
-    await expect(areas.first()).toBeVisible({ timeout });
+    await expect(areas.first()).toBeVisible({ timeout: 30000 });
 
     const count = await areas.count();
     for (let i = 0; i < count; i++) {
@@ -32,15 +33,7 @@ export async function expandToolActivity(scope: Locator, timeout: number = 30000
             continue;
         }
 
-        // An area whose only activity is the tool call awaiting a decision
-        // renders no header, because the approval card below it already shows
-        // everything there is to see. Nothing to expand.
-        const header = area.locator(TOOL_ACTIVITY_HEADER_SELECTOR);
-        if ((await header.count()) === 0) {
-            continue;
-        }
-
-        await header.click();
+        await area.locator(TOOL_ACTIVITY_HEADER_SELECTOR).click();
         await expect(rounds).toHaveCount(1, { timeout: 10000 });
     }
 
@@ -138,43 +131,9 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getReasoningChevron(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // ChevronRight is inside MinimalExpandIcon or ExpandedChevron containers
-        return baseLocator.locator('[class*="MinimalExpandIcon"] svg, [class*="ExpandedChevron"] svg').first();
-    }
-
-    /**
-     * Get the collapsed tool-activity area of a post
-     * @param postId - Optional post ID to scope the search
-     */
-    getToolActivity(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        return baseLocator.locator(TOOL_ACTIVITY_SELECTOR);
-    }
-
-    /**
-     * Get the current activity row (the single item shown while collapsed)
-     * @param postId - Optional post ID to scope the search
-     */
-    getToolActivityCurrentItem(postId?: string): Locator {
-        return this.getToolActivity(postId).locator(TOOL_ACTIVITY_CURRENT_SELECTOR);
-    }
-
-    /**
-     * Get the stacked rounds revealed by expanding the activity area
-     * @param postId - Optional post ID to scope the search
-     */
-    getToolActivityRounds(postId?: string): Locator {
-        return this.getToolActivity(postId).locator(TOOL_ACTIVITY_ROUNDS_SELECTOR);
-    }
-
-    /**
-     * Expand the tool-activity area so tool cards become visible
-     * @param postId - Optional post ID to scope the action
-     */
-    async expandToolActivity(postId?: string): Promise<void> {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        await expandToolActivity(baseLocator);
+        // ChevronRight sits in the shared CollapseChevron container, which the
+        // tool activity row also uses — scope to the reasoning row itself.
+        return this.getReasoningDisplay(postId).locator('[class*="CollapseChevron"] svg').first();
     }
 
     /**

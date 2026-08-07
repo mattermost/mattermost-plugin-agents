@@ -46,19 +46,25 @@ jest.mock('@/mm_webapp', () => ({
     PostMessagePreview: null,
 }));
 
+const mockPostTextRender = jest.fn<void, [string]>();
 jest.mock('../post_text', () => {
     const ReactLocal = jest.requireActual('react') as typeof React;
 
     return {
         __esModule: true,
-        default: ({message}: {message: string}) => ReactLocal.createElement('div', null, message),
+        default: ({message}: {message: string}) => {
+            mockPostTextRender(message);
+            return ReactLocal.createElement('div', null, message);
+        },
     };
 });
 
+// Referenced lazily so the factory does not read it before initialization.
+const mockNeedsViewerDecision = jest.fn<boolean, unknown[]>(() => false);
 jest.mock('../tool_approval_set', () => ({
     __esModule: true,
     default: () => null,
-    needsViewerDecision: () => false,
+    needsViewerDecision: (...args: unknown[]) => mockNeedsViewerDecision(...args),
 }));
 
 // The preview fetches the source post and profile on mount; stub it out so the
@@ -140,6 +146,9 @@ beforeEach(() => {
         loading: false,
         error: null,
     });
+
+    mockNeedsViewerDecision.mockReturnValue(false);
+    mockPostTextRender.mockClear();
 });
 
 describe('LLMBotPost streaming fallback rendering', () => {
@@ -272,6 +281,194 @@ describe('LLMBotPost tool activity area', () => {
 
         expect(screen.getByText('Let me look that up')).toBeTruthy();
         expect(screen.getByText('Here is the answer')).toBeTruthy();
+    });
+});
+
+describe('LLMBotPost streaming re-renders', () => {
+    function conversationWithPersistedAnswer() {
+        return {
+            id: WELL_FORMED_ID,
+            user_id: 'user_1',
+            bot_id: 'bot_1',
+            channel_id: 'channel_1',
+            root_post_id: 'root_1',
+            title: '',
+            operation: 'conversation',
+            turns: [
+                {
+                    id: 'u1',
+                    post_id: 'user_post',
+                    role: 'user',
+                    sequence: 1,
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    content: [{type: 'text', text: 'hello'}],
+                },
+                {
+                    id: 'anchor',
+                    post_id: 'post_1',
+                    role: 'assistant',
+                    sequence: 2,
+                    approval_state: 'done',
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    content: [{type: 'text', text: 'Persisted answer'}],
+                },
+            ],
+        };
+    }
+
+    // Every chunk re-renders the post. Rounds that already finished have not
+    // changed, so re-rendering their markdown on each chunk is wasted work on
+    // the hottest path in the component.
+    test('does not re-render a settled round for each streamed chunk', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: conversationWithPersistedAnswer(),
+            loading: false,
+            error: null,
+        });
+
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const settledRenders = () => mockPostTextRender.mock.calls.filter(([msg]) => msg === 'Persisted answer').length;
+
+        const send = listener!;
+        act(() => {
+            send(postUpdateMessage({post_id: 'post_1', next: 'chunk one'}));
+        });
+        const afterFirstChunk = settledRenders();
+
+        for (const next of ['chunk one two', 'chunk one two three', 'chunk one two three four']) {
+            act(() => {
+                send(postUpdateMessage({post_id: 'post_1', next}));
+            });
+        }
+
+        expect(settledRenders()).toBe(afterFirstChunk);
+        expect(screen.getByText('chunk one two three four')).toBeTruthy();
+    });
+});
+
+describe('LLMBotPost rounds awaiting a decision', () => {
+    // A response that stopped on a tool call: the anchor round holds both the
+    // text asking to run the tool and the call itself.
+    function conversationAwaitingApproval() {
+        return {
+            id: WELL_FORMED_ID,
+            user_id: 'user_1',
+            bot_id: 'bot_1',
+            channel_id: 'channel_1',
+            root_post_id: 'root_1',
+            title: '',
+            operation: 'conversation',
+            turns: [
+                {
+                    id: 'u1',
+                    post_id: 'user_post',
+                    role: 'user',
+                    sequence: 1,
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    content: [{type: 'text', text: 'post that for me'}],
+                },
+                {
+                    id: 'anchor',
+                    post_id: 'post_1',
+                    role: 'assistant',
+                    sequence: 2,
+                    approval_state: 'call',
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    content: [
+                        {type: 'text', text: 'I will post that'},
+                        {type: 'tool_use', id: 'tc_a', name: 'create_post', status: 'pending'},
+                    ],
+                },
+            ],
+        };
+    }
+
+    beforeEach(() => {
+        mockUseConversation.mockReturnValue({
+            conversation: conversationAwaitingApproval(),
+            loading: false,
+            error: null,
+        });
+    });
+
+    // The approval card needs the request that produced it, so the round
+    // renders in full rather than folding into the collapsed row.
+    test('keeps a round the viewer must decide on out of the activity area', () => {
+        mockNeedsViewerDecision.mockReturnValue(true);
+
+        renderPost();
+
+        expect(screen.getByText('I will post that')).toBeTruthy();
+        expect(screen.queryByTestId('llm-bot-tool-activity')).toBeNull();
+    });
+
+    // Onlookers are never asked to decide, so the same round is just activity.
+    test('folds the same round into the activity area for a viewer who owes no decision', () => {
+        mockNeedsViewerDecision.mockReturnValue(false);
+
+        renderPost();
+
+        expect(screen.queryByText('I will post that')).toBeNull();
+        expect(screen.getByTestId('llm-bot-tool-activity')).toBeTruthy();
+    });
+
+    // A response paused on a decision is not finished, so the row must keep
+    // naming what happened last instead of summarizing as if it were done.
+    test('does not summarize the activity row while a decision is pending', () => {
+        mockNeedsViewerDecision.mockReturnValue(true);
+        mockUseConversation.mockReturnValue({
+            conversation: {
+                ...conversationAwaitingApproval(),
+                turns: [
+                    {
+                        id: 'u1',
+                        post_id: 'user_post',
+                        role: 'user',
+                        sequence: 1,
+                        tokens_in: 0,
+                        tokens_out: 0,
+                        content: [{type: 'text', text: 'post that for me'}],
+                    },
+                    {
+                        id: 'meta',
+                        post_id: null,
+                        role: 'assistant',
+                        sequence: 2,
+                        tokens_in: 0,
+                        tokens_out: 0,
+                        content: [{type: 'tool_use', id: 'tc_meta', name: 'search_tools', status: 'auto_approved'}],
+                    },
+                    {
+                        id: 'anchor',
+                        post_id: 'post_1',
+                        role: 'assistant',
+                        sequence: 3,
+                        approval_state: 'call',
+                        tokens_in: 0,
+                        tokens_out: 0,
+                        content: [
+                            {type: 'text', text: 'I will post that'},
+                            {type: 'tool_use', id: 'tc_a', name: 'create_post', status: 'pending'},
+                        ],
+                    },
+                ],
+            },
+            loading: false,
+            error: null,
+        });
+
+        renderPost();
+
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Search Tools');
+        expect(screen.queryByText('Used 1 tool')).toBeNull();
     });
 });
 

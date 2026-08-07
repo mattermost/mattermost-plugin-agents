@@ -11,7 +11,7 @@ import {ToolApprovalStage} from '../tool_types';
 import {Round} from './turn_content_utils';
 import {ReasoningDisplay} from './reasoning_display';
 
-export interface RoundViewProps {
+interface RoundViewProps {
     round: Round;
     postID: string;
     conversationID?: string;
@@ -22,14 +22,19 @@ export interface RoundViewProps {
     showCursor: boolean;
     reasoningLoading: boolean;
     reasoningCollapsed: boolean;
-    onToggleReasoning: (collapsed: boolean) => void;
+
+    /** Takes the round id so the post can pass one callback to every round. */
+    onToggleReasoning: (roundId: string, collapsed: boolean) => void;
 }
 
-/** One assistant round: reasoning, text, then the tool cards it produced. */
-export function RoundView(props: RoundViewProps) {
+/**
+ * One assistant round: reasoning, text, then the tool cards it produced.
+ *
+ * Memoized because a streaming response re-renders the post on every chunk
+ * while only the live round's content actually changes.
+ */
+export const RoundView = React.memo((props: RoundViewProps) => {
     const {round} = props;
-    const showArguments = round.toolCalls.some((tc) => tc.arguments != null);
-    const showResults = round.toolCalls.some((tc) => tc.result != null);
     return (
         <RoundContainer>
             {round.reasoning.summary !== '' && (
@@ -37,7 +42,7 @@ export function RoundView(props: RoundViewProps) {
                     reasoningSummary={round.reasoning.summary}
                     isReasoningCollapsed={props.reasoningCollapsed}
                     isReasoningLoading={props.reasoningLoading}
-                    onToggleCollapse={props.onToggleReasoning}
+                    onToggleCollapse={(collapsed) => props.onToggleReasoning(round.id, collapsed)}
                 />
             )}
             {round.text !== '' && (
@@ -57,13 +62,12 @@ export function RoundView(props: RoundViewProps) {
                     approvalStage={props.approvalStage}
                     canApprove={props.canApprove}
                     canExpand={props.canExpand}
-                    showArguments={showArguments}
-                    showResults={showResults}
                 />
             )}
         </RoundContainer>
     );
-}
+});
+RoundView.displayName = 'RoundView';
 
 const RoundContainer = styled.div`
     & + & {

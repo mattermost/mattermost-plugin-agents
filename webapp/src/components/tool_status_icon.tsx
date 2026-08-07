@@ -11,7 +11,7 @@ import LoadingSpinner from './assets/loading_spinner';
 
 const StatusIcon = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
-	width: 12px;
+    width: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -57,9 +57,9 @@ const ToolStatusIcon: React.FC<ToolStatusIconProps> = ({status, isProcessing = f
     return (
         <StatusIcon>
             {showSpinner && <SmallSpinner/>}
-            {!showSpinner && (status === ToolCallStatus.Success || status === ToolCallStatus.AutoApproved) && <SmallSuccessIcon size={16}/>}
-            {!showSpinner && status === ToolCallStatus.Error && <SmallErrorIcon size={16}/>}
-            {!showSpinner && status === ToolCallStatus.Rejected && <SmallRejectedIcon size={16}/>}
+            {!showSpinner && (status === ToolCallStatus.Success || status === ToolCallStatus.AutoApproved) && <SmallSuccessIcon/>}
+            {!showSpinner && status === ToolCallStatus.Error && <SmallErrorIcon/>}
+            {!showSpinner && status === ToolCallStatus.Rejected && <SmallRejectedIcon/>}
         </StatusIcon>
     );
 };
