@@ -15,14 +15,17 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -511,6 +514,127 @@ func TestHandleAskUserResponse(t *testing.T) {
 			} else if test.blockStatus != "" {
 				require.Len(t, turns, 1, "rejected requests must not write result turns")
 			}
+		})
+	}
+}
+
+// TestToolApprovalAuditRecords proves the tool approval endpoints enrich the
+// middleware-created audit record with the objects of the human decision: the
+// approval post, its channel, the accepted tool-use block IDs, and — once the
+// service layer is reached — the agent whose tool calls are being resolved.
+// Without these parameters an auditor cannot link the authorization to the
+// server-level records the approved tools produce afterwards.
+func TestToolApprovalAuditRecords(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		postID         = "post12345678901234567890ab"
+		channelID      = "chan12345678901234567890ab"
+		conversationID = "conv12345678901234567890ab"
+	)
+
+	tests := []struct {
+		name     string
+		endpoint string
+		event    string
+		// conversationOwner seeds a conversation entity owned by that user.
+		// When empty, ownership passes via the legacy requester prop and the
+		// service rejects the missing conversation_id with a controlled 400
+		// after the handler and service enrichment already ran.
+		conversationOwner   string
+		body                string
+		expectedStatus      int
+		expectedAcceptedIDs []string // nil asserts the parameter is absent
+		expectAgentID       bool
+	}{
+		{
+			name:                "tool_call reaching the service records the decision objects",
+			endpoint:            "/post/" + postID + "/tool_call",
+			event:               AuditEventToolCallApproval,
+			body:                `{"accepted_tool_ids":["tool-use-1","tool-use-2"]}`,
+			expectedStatus:      http.StatusBadRequest,
+			expectedAcceptedIDs: []string{"tool-use-1", "tool-use-2"},
+			expectAgentID:       true,
+		},
+		{
+			name:              "tool_call requester mismatch records post and channel on the 403 fail",
+			endpoint:          "/post/" + postID + "/tool_call",
+			event:             AuditEventToolCallApproval,
+			conversationOwner: testOtherUserID,
+			body:              `{"accepted_tool_ids":["tool-use-1"]}`,
+			expectedStatus:    http.StatusForbidden,
+		},
+		{
+			name:                "tool_result reaching the service records the decision objects",
+			endpoint:            "/post/" + postID + "/tool_result",
+			event:               AuditEventToolResultApproval,
+			body:                `{"accepted_tool_ids":["tool-use-1"]}`,
+			expectedStatus:      http.StatusBadRequest,
+			expectedAcceptedIDs: []string{"tool-use-1"},
+			expectAgentID:       true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			records := e.CaptureAuditRecords()
+
+			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
+			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+			e.OverrideLicense(&model.License{SkuShortName: "advanced"})
+
+			post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID}
+			if test.conversationOwner == "" {
+				post.AddProp(streaming.LLMRequesterUserIDProp, testUserID)
+			} else {
+				post.AddProp(streaming.ConversationIDProp, conversationID)
+				e.conversationStore.conversations[conversationID] = &store.Conversation{
+					ID:     conversationID,
+					UserID: test.conversationOwner,
+					BotID:  testBotUserID,
+				}
+			}
+
+			e.mockAPI.On("GetPost", postID).Return(post, nil)
+			e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{
+				Id:   channelID,
+				Name: testBotUserID + "__" + testUserID,
+				Type: model.ChannelTypeDirect,
+			}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+
+			req := httptest.NewRequest(http.MethodPost, test.endpoint, strings.NewReader(test.body))
+			req.Header.Add("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, test.expectedStatus, recorder.Result().StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, test.event, rec.EventName)
+			assert.Equal(t, testUserID, rec.Actor.UserId)
+			assert.Equal(t, postID, rec.EventData.Parameters[audit.KeyPostID])
+			assert.Equal(t, channelID, rec.EventData.Parameters[audit.KeyChannelID])
+
+			if test.expectedAcceptedIDs != nil {
+				assert.Equal(t, test.expectedAcceptedIDs, rec.EventData.Parameters["accepted_tool_ids"])
+			} else {
+				assert.NotContains(t, rec.EventData.Parameters, "accepted_tool_ids",
+					"a request denied before body binding must not claim accepted tool IDs")
+			}
+
+			if test.expectAgentID {
+				assert.Equal(t, testBotUserID, rec.EventData.Parameters[audit.KeyAgentID],
+					"service-layer enrichment must reach the same record via the request context")
+			}
+
+			assert.Equal(t, model.AuditStatusFail, rec.Status)
+			assert.Equal(t, test.expectedStatus, rec.Error.Code)
 		})
 	}
 }

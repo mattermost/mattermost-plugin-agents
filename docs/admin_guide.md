@@ -498,6 +498,14 @@ Traces include these semantic attributes for filtering and analysis. Cached toke
 | `agents.post.id` | Post ID | `abc123def456` |
 | `agents.thread.root_post.id` | Root post ID for thread correlation | `abc123def456` |
 
+### Audit logging
+
+The plugin emits a server audit record for every state-changing operation: configuration saves, admin reindex and MCP cache operations, agent and custom prompt CRUD, MCP OAuth credential grant/revocation, per-user MCP preferences, inter-plugin MCP server registration, in-channel tool call approvals, and MCP session grants for external clients.
+
+Records identify the actor (user ID, session, IP), the event, the request path, the outcome (including failures and permission denials, as HTTP status codes), the OpenTelemetry `trace_id` for pivoting into traces, and identifiers of affected objects using the same attribute names as the table above. Records never contain prompt content, conversation or channel content, tool arguments or results, configuration values, or free-form error text — a configuration save records only which top-level sections changed, and failure detail stays in the server log (correlate by timestamp, actor, or `trace_id`).
+
+There is no plugin-side toggle: records are always handed to the server, and persistence is governed entirely by the server's [audit logging configuration](https://docs.mattermost.com/administration-guide/manage/logging.html) (System Console → Compliance, or `ExperimentalAuditSettings`).
+
 ### Backup and restore
 
 The plugin stores agent data across both plugin configuration and plugin database tables. To backup:

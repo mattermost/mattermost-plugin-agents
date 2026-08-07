@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -88,6 +89,13 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
 	}
+
+	// Enrich the request's audit record (nil outside an audited request) with
+	// which agent's tool calls this human decision resolves. Tool names are
+	// added below where the accept/reject resolution happens; arguments,
+	// results, and answers never enter the record.
+	auditRec := audit.RecordFromContext(ctx)
+	audit.AddParam(auditRec, audit.KeyAgentID, bot.GetMMBot().UserId)
 
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
@@ -170,10 +178,14 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 
-	// Execute approved tools and build results.
+	// Execute approved tools and build results. Blocks resolved in a prior
+	// call keep their status and are not part of this decision, so they enter
+	// neither audit list; anything auto-executed this call counts as accepted.
 	autoExec := c.shouldAutoExecuteTool(llmContext, isDM)
 	autoExecutedNow := make(map[string]bool)
 	executedAny := false
+	acceptedToolNames := []string{}
+	rejectedToolNames := []string{}
 	var toolResults []toolrunner.ToolResult
 	for i := range pendingBlocks {
 		block := &pendingBlocks[i]
@@ -235,6 +247,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			}
 			// Success: no tool result yet; the follow-up is gated below.
 		case slices.Contains(acceptedToolIDs, block.ID) && block.UserInteraction != "":
+			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Shared so the channel-visible follow-up may reference the answer.
 			block.Status = conversation.StatusSuccess
 			block.Shared = conversation.BoolPtr(true)
@@ -246,6 +259,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				IsError:    false,
 			})
 		case slices.Contains(acceptedToolIDs, block.ID):
+			acceptedToolNames = append(acceptedToolNames, block.Name)
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			executedAny = true
 			if resolveErr != nil {
@@ -266,6 +280,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				})
 			}
 		case block.UserInteraction != "":
+			rejectedToolNames = append(rejectedToolNames, block.Name)
 			// Skipped question: record the decline as the result and stream a
 			// follow-up so the model can proceed without the answer, per the
 			// tool contract. Shared because the decline is user-authored, not
@@ -280,6 +295,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				IsError:    true,
 			})
 		case block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}):
+			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Runs on resume without a click. Requiring both the marker and a
 			// fresh policy check means a mid-turn policy flip can neither
 			// auto-run a tool the user was asked to approve (or rejected) nor
@@ -307,6 +323,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				})
 			}
 		default:
+			rejectedToolNames = append(rejectedToolNames, block.Name)
 			block.Status = conversation.StatusRejected
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
@@ -316,6 +333,13 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			})
 		}
 	}
+
+	// Unlike HandleToolResult (which defers these until after its idempotency
+	// gate), the names here describe tools that already executed above — real
+	// side effects, not persisted state — so they stay on the record even if
+	// persisting the resolved turn below fails.
+	audit.AddParam(auditRec, "accepted_tools", acceptedToolNames)
+	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
 
 	// Update the assistant turn with resolved statuses.
 	if persistErr := c.persistBlocks(pendingTurn.ID, pendingBlocks); persistErr != nil {
@@ -482,6 +506,13 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return fmt.Errorf("unable to get bot")
 	}
 
+	// Enrich the request's audit record (nil outside an audited request) with
+	// which agent's tool results this human decision covers. Tool names are
+	// added below once the share/keep-private resolution is known; result
+	// content never enters the record.
+	auditRec := audit.RecordFromContext(ctx)
+	audit.AddParam(auditRec, audit.KeyAgentID, bot.GetMMBot().UserId)
+
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
 		return ErrPostMissingConversationID
@@ -518,6 +549,8 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	clickedPostToolUseIDs := make(map[string]struct{})
 	clickedPostHasExecutedTool := false
 	anchorHasUnresolvedToolUse := false
+	acceptedToolNames := []string{}
+	rejectedToolNames := []string{}
 	acceptedRemoteMCPTool := false
 	for _, turn := range turns {
 		if turn.Role != "assistant" || turn.PostID == nil || *turn.PostID != post.Id {
@@ -535,6 +568,11 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 				continue
 			}
 			clickedPostToolUseIDs[b.ID] = struct{}{}
+			if acceptedSet[b.ID] {
+				acceptedToolNames = append(acceptedToolNames, b.Name)
+			} else {
+				rejectedToolNames = append(rejectedToolNames, b.Name)
+			}
 			if b.Status == conversation.StatusSuccess ||
 				b.Status == conversation.StatusError ||
 				b.Status == conversation.StatusAutoApproved {
@@ -574,6 +612,13 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	if sawMatchingResult && alreadyDecided {
 		return nil
 	}
+
+	// Audit the decision only after the idempotency gate: a repeat click
+	// changes nothing, so its record must not claim a share resolution. The
+	// license gate below may still deny the share — that record then carries
+	// the attempted names with a fail status, which is the point.
+	audit.AddParam(auditRec, "accepted_tools", acceptedToolNames)
+	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
 
 	// Sharing output from remote/external MCP tools is part of the licensed
 	// "MCP Support" feature (see HandleToolCall). Keep-private decisions are

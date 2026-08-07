@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 )
@@ -33,6 +34,13 @@ func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
 // handleMCPRegister handles POST /bridge/v1/mcp/register using the authenticated
 // Mattermost-Plugin-ID header.
 func (a *API) handleMCPRegister(c *gin.Context) {
+	// Attribute the caller before anything can fail, so every audit fail
+	// path carries it. The header is set by the Mattermost server for
+	// inter-plugin requests and is the registered PluginID too, so one
+	// parameter covers both the actor and the affected server.
+	trustedPluginID := c.GetHeader("Mattermost-Plugin-ID")
+	audit.AddParam(auditRec(c), audit.KeyCallerPluginID, audit.TruncateID(trustedPluginID))
+
 	var req struct {
 		PluginID       string           `json:"plugin_id"`
 		Name           string           `json:"name"`
@@ -48,7 +56,13 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		return
 	}
 
-	trustedPluginID := c.GetHeader("Mattermost-Plugin-ID")
+	// Name and path are unvalidated caller text; clamp them. Whether tool
+	// configs were sent is recorded — never the configs themselves.
+	audit.AddParam(auditRec(c), "server_name", audit.TruncateID(req.Name))
+	audit.AddParam(auditRec(c), "path", audit.TruncateID(req.Path))
+	audit.AddParam(auditRec(c), "expose_external", req.ExposeExternal)
+	audit.AddParam(auditRec(c), "tool_configs_provided", req.ToolConfigs != nil)
+
 	cfg := mcp.PluginServerConfig{
 		PluginID:       trustedPluginID,
 		Name:           req.Name,
@@ -94,6 +108,11 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		cfg.Enabled = persisted.Enabled
 		cfg.ToolConfigs = persisted.ToolConfigs
 	}
+
+	// Effective final value after the preserve-on-reregister merge, not the
+	// raw request flag.
+	audit.AddParam(auditRec(c), "enabled", cfg.Enabled)
+
 	a.mcpClientManager.RegisterPluginServer(cfg)
 
 	newEffectiveExternal := cfg.Enabled && cfg.ExposeExternal
@@ -121,6 +140,11 @@ func (a *API) pluginServerExternallyExposed(pluginID string) bool {
 // handleMCPUnregister handles POST /bridge/v1/mcp/unregister using the
 // authenticated Mattermost-Plugin-ID header.
 func (a *API) handleMCPUnregister(c *gin.Context) {
+	// Attribute the caller before anything can fail; the trusted header is
+	// also the PluginID being unregistered.
+	trustedPluginID := c.GetHeader("Mattermost-Plugin-ID")
+	audit.AddParam(auditRec(c), audit.KeyCallerPluginID, audit.TruncateID(trustedPluginID))
+
 	var req struct{}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
@@ -129,7 +153,7 @@ func (a *API) handleMCPUnregister(c *gin.Context) {
 		return
 	}
 
-	a.mcpClientManager.UnregisterPluginServer(c.GetHeader("Mattermost-Plugin-ID"))
+	a.mcpClientManager.UnregisterPluginServer(trustedPluginID)
 
 	// Always rebuild on unregister so stale proxy tools disappear.
 	if rb := a.resolveExternalServerRebuilder(); rb != nil {

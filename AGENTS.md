@@ -56,6 +56,15 @@ Linters (golangci-lint, ESLint, gofmt/goimports, header check, editorconfig) alr
 - E2E shard maintenance: when adding a new spec that should run in CI, assign it in `e2e/scripts/ci-test-groups.mjs` in the same change. `make check-shards` validates coverage and is part of `make check`. Use the lightest `e2e-shard-*` group and balance by expected runtime, not alphabetically.
 - Test for behavior that could break due to a real bug. Before writing a test ask: "If this test fails, does it indicate a real bug in our code?" In particular, do not assert on implementation details like validation order or which error appears first.
 
+## Audit logging
+
+Every state-changing operation must emit a server audit record. Agent-relevant rules:
+
+- **New state-changing route?** Add an event constant and a registry row in `api/audit_events.go` — the middleware in `api/audit_middleware.go` then emits actor, outcome, and trace ID automatically. Auditing is explicit per-route opt-in; never infer it from the HTTP method (some mutating routes are `GET`s), and don't audit read-only routes.
+- Enrich records with object identifiers only, via `audit.AddParam(auditRec(c), ...)` in handlers or `audit.RecordFromContext(ctx)` in services. Reuse `audit.Key*` constants; clamp unvalidated request values with `audit.TruncateID`/`TruncateIDs`.
+- **Never put content in a record**: no prompts, tool arguments/results, message content, credentials, config values, or free-form error text (fail records carry status codes; error detail belongs in the server log). Keep handler error messages rich — the middleware never copies them into records.
+- Test with `e.CaptureAuditRecords()`: assert the emitted record's fields, and plant sentinel content in requests asserting it is absent from the JSON-marshaled record.
+
 ## OpenTelemetry tracing
 
 The plugin emits OpenTelemetry traces. Agent-relevant rules:
