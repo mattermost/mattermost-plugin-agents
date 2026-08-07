@@ -73,7 +73,8 @@ func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *plugin
 
 // EnsureMCPSessionID ensures there is a valid MCP session for the user
 // This is used by both embedded and HTTP MCP servers to get a dedicated session
-func (m *ClientManager) EnsureMCPSessionID(userID string) (string, error) {
+// created reports whether a new session was minted rather than reused.
+func (m *ClientManager) EnsureMCPSessionID(userID string) (sessionID string, created bool, err error) {
 	return m.ensureEmbeddedSessionID(userID)
 }
 
@@ -223,7 +224,7 @@ func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]l
 	// them. Only the remote connect uses cacheableContext(ctx) (in
 	// createAndStoreUserClient) because its result is cached across requests.
 	if m.embeddedClient != nil {
-		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
+		ensuredSessionID, _, ensureErr := m.ensureEmbeddedSessionID(userID)
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
 		} else if ensuredSessionID != "" {
