@@ -51,6 +51,9 @@ type fullFlowOAuthServer struct {
 	pkceVerified        bool
 	refreshCalls        int
 	lastAuthorizedToken string
+
+	revokeCalls   int
+	revokedTokens []string
 }
 
 // counters returns the server-side observation fields under s.mu so test
@@ -59,6 +62,13 @@ func (s *fullFlowOAuthServer) counters() (registerCalls, refreshCalls int, pkceV
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.registerCalls, s.refreshCalls, s.pkceVerified, s.lastAuthorizedToken
+}
+
+// revocations returns the number of revocation calls and the tokens revoked.
+func (s *fullFlowOAuthServer) revocations() (int, []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.revokeCalls, append([]string(nil), s.revokedTokens...)
 }
 
 func newFullFlowOAuthServer(t *testing.T) *fullFlowOAuthServer {
@@ -115,6 +125,7 @@ func newFullFlowOAuthServer(t *testing.T) *fullFlowOAuthServer {
 	mux.HandleFunc("/register", s.handleRegister)
 	mux.HandleFunc("/authorize", s.handleAuthorize)
 	mux.HandleFunc("/token", s.handleToken)
+	mux.HandleFunc("/revoke", s.handleRevoke)
 
 	return s
 }
@@ -139,6 +150,7 @@ func (s *fullFlowOAuthServer) handleAuthServerMetadata(w http.ResponseWriter, _ 
 		"authorization_endpoint":                s.baseURL + "/authorize",
 		"token_endpoint":                        s.baseURL + "/token",
 		"registration_endpoint":                 s.baseURL + "/register",
+		"revocation_endpoint":                   s.baseURL + "/revoke",
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
@@ -302,6 +314,46 @@ func (s *fullFlowOAuthServer) handleToken(w http.ResponseWriter, r *http.Request
 	default:
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type")
 	}
+}
+
+// handleRevoke implements RFC 7009 token revocation. It authenticates the
+// (DCR, client_secret_basic) client, invalidates the presented token and any
+// tokens it is associated with, and returns 200.
+func (s *fullFlowOAuthServer) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	clientID, clientSecret, ok := r.BasicAuth()
+	if !ok {
+		clientID = r.PostFormValue("client_id")
+		clientSecret = r.PostFormValue("client_secret")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if clientID != s.clientID || clientSecret != s.clientSecret || s.clientID == "" {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client")
+		return
+	}
+
+	token := r.PostFormValue("token")
+	s.revokeCalls++
+	s.revokedTokens = append(s.revokedTokens, token)
+	// Revoking the refresh token invalidates it and all its access tokens
+	// (RFC 7009 §2.1).
+	if token == s.refreshToken {
+		s.refreshToken = ""
+		s.accessTokens = map[string]time.Time{}
+	} else {
+		delete(s.accessTokens, token)
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s *fullFlowOAuthServer) issueTokensLocked(w http.ResponseWriter) {
@@ -472,4 +524,21 @@ func TestOAuthFullFlowAgainstGoSDKServer(t *testing.T) {
 
 	registerCalls, _, _, _ = oauthServer.counters()
 	require.Equal(t, 1, registerCalls, "DCR credentials must be reused from KV, not re-registered")
+
+	// --- Step 7: disconnect revokes the grant at the AS (RFC 7009) ---
+	// The discovered revocation endpoint must have been pinned into the stored
+	// grant so disconnect can reach it.
+	storedEnvelope := kv.storedEnvelope(t, userID, serverName)
+	require.NotNil(t, storedEnvelope)
+	require.Equal(t, oauthServer.baseURL+"/revoke", storedEnvelope.RevocationEndpoint,
+		"discovered revocation endpoint must be pinned into the stored grant")
+
+	require.NoError(t, manager.DeleteUserToken(ctx, userID, serverName))
+
+	revokeCalls, revokedTokens := oauthServer.revocations()
+	require.Equal(t, 1, revokeCalls, "disconnect must revoke exactly once at the authorization server")
+	require.Equal(t, []string{"refresh-token-2"}, revokedTokens,
+		"disconnect must revoke the current (rotated) refresh token")
+	require.False(t, kv.exists(userID, serverName), "grant must be deleted locally after revocation")
+	t.Logf("step 7 OK: disconnect revoked %v at the authorization server", revokedTokens)
 }
