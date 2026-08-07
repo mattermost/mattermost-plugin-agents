@@ -432,7 +432,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		nil,
 	)
 
-	httpClient := c.httpClientForMCP(headers)
+	httpClient := c.httpClientForMCP(serverConfig.BaseURL, headers)
 
 	// OAuth-capable clients get a per-connection handler; embedded and
 	// plugin-bridge clients (nil oauthManager) do not use OAuth.
@@ -467,7 +467,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// field, so OAuth is applied through a RoundTripper adapter instead.
 	session, errSSE := client.Connect(ctx, &mcp.SSEClientTransport{
 		Endpoint:   serverConfig.BaseURL,
-		HTTPClient: c.httpClientForLegacySSE(oauthHandler, headers),
+		HTTPClient: c.httpClientForLegacySSE(serverConfig.BaseURL, oauthHandler, headers),
 	}, nil)
 	if errSSE == nil {
 		// Successfully connected using SSE transport

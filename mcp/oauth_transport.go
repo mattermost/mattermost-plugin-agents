@@ -57,6 +57,13 @@ func (e *mcpUnauthorized) Unwrap() error {
 type oauthRoundTripper struct {
 	handler *userOAuthHandler
 	base    http.RoundTripper
+	// expectedOrigin pins the origin the bearer token may be sent to. Go
+	// strips Authorization on cross-host redirects only for headers set on the
+	// original request; because we (re)attach the token inside RoundTrip, it
+	// would otherwise be re-added on every redirect hop and leak to a
+	// third-party host. Attaching only for the pinned origin closes that gap
+	// (defense in depth alongside the client's CheckRedirect).
+	expectedOrigin string
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -75,11 +82,15 @@ func (t *oauthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		base = http.DefaultTransport
 	}
 
+	// Only attach the bearer token when the request is still bound for the
+	// pinned server origin; never on a redirect to another host.
+	sameOrigin := t.expectedOrigin == "" || canonicalOrigin(req.URL) == t.expectedOrigin
+
 	tokenSource, err := t.handler.TokenSource(req.Context())
 	if err != nil {
 		return nil, err
 	}
-	if tokenSource != nil {
+	if tokenSource != nil && sameOrigin {
 		token, tokenErr := tokenSource.Token()
 		if tokenErr != nil {
 			return nil, tokenErr
