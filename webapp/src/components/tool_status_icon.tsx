@@ -40,6 +40,27 @@ const SmallRejectedIcon = styled(CloseCircleOutlineIcon)`
     height: 12px;
 `;
 
+type StatusGlyph = 'running' | 'success' | 'error' | 'rejected';
+
+function glyphFor(status: ToolCallStatus): StatusGlyph {
+    switch (status) {
+    case ToolCallStatus.Pending:
+    case ToolCallStatus.Accepted:
+        return 'running';
+    case ToolCallStatus.Success:
+    case ToolCallStatus.AutoApproved:
+        return 'success';
+    case ToolCallStatus.Error:
+        return 'error';
+    case ToolCallStatus.Rejected:
+        return 'rejected';
+    default: {
+        const exhaustive: never = status;
+        return exhaustive;
+    }
+    }
+}
+
 interface ToolStatusIconProps {
     status: ToolCallStatus;
 
@@ -50,16 +71,17 @@ interface ToolStatusIconProps {
 
 /** The 12px status glyph shown next to a tool name. */
 const ToolStatusIcon: React.FC<ToolStatusIconProps> = ({status, isProcessing = false}) => {
-    const showSpinner = isProcessing ||
-        status === ToolCallStatus.Pending ||
-        status === ToolCallStatus.Accepted;
+    const glyph = isProcessing ? 'running' : glyphFor(status);
 
     return (
-        <StatusIcon>
-            {showSpinner && <SmallSpinner/>}
-            {!showSpinner && (status === ToolCallStatus.Success || status === ToolCallStatus.AutoApproved) && <SmallSuccessIcon/>}
-            {!showSpinner && status === ToolCallStatus.Error && <SmallErrorIcon/>}
-            {!showSpinner && status === ToolCallStatus.Rejected && <SmallRejectedIcon/>}
+        <StatusIcon
+            data-testid='llm-bot-tool-status'
+            data-status={glyph}
+        >
+            {glyph === 'running' && <SmallSpinner/>}
+            {glyph === 'success' && <SmallSuccessIcon/>}
+            {glyph === 'error' && <SmallErrorIcon/>}
+            {glyph === 'rejected' && <SmallRejectedIcon/>}
         </StatusIcon>
     );
 };

@@ -3,7 +3,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse, mergeFixtureFiles } from 'helpers/aimock-fixtures';
-import { expandToolActivity, TOOL_ACTIVITY_CURRENT_SELECTOR } from 'helpers/llmbot-post';
+import { expandToolActivity } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 import { createToolConfigAPIHelper } from 'helpers/tool-config';
 

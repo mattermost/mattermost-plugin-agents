@@ -4,7 +4,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
-import { expandToolActivity } from 'helpers/llmbot-post';
+import { expandToolActivity, expectToolActivitySummary } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 
 const username = 'regularuser';
@@ -69,7 +69,7 @@ test.describe('Auto Run (DM) Policy (Aimock)', () => {
         // Auto-run tools never interrupt, so once the response finishes they
         // are only a collapsed "Used 1 tool" summary until it is expanded.
         await expect(latestBotPost.getByText(getChannelInfoLabel, { exact: true })).toHaveCount(0);
-        await expect(latestBotPost.getByText('Used 1 tool')).toBeVisible();
+        await expectToolActivitySummary(latestBotPost, 1);
 
         const activityRounds = await expandToolActivity(latestBotPost);
         await expect(activityRounds.getByText(getChannelInfoLabel, { exact: true })).toBeVisible({

@@ -9,9 +9,14 @@ import {
     buildRejectAfterFirstToolSequence,
     buildTitleFixture,
     EMBEDDED_CREATE_POST_TOOL,
+    EMBEDDED_GET_CHANNEL_INFO_TOOL,
     mergeFixtureFiles,
 } from 'helpers/aimock-fixtures';
-import {expandToolActivity, TOOL_ACTIVITY_CURRENT_SELECTOR} from 'helpers/llmbot-post';
+import {
+    expandToolActivity,
+    expectNoToolActivity,
+    expectToolActivityCurrent,
+} from 'helpers/llmbot-post';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {
@@ -32,6 +37,12 @@ const onlookerPassword = 'seconduser';
 const botUsername = 'toolbot';
 const createPostToolLabel = 'Create Post';
 const getChannelInfoToolLabel = 'Get Channel Info';
+
+// A tool card only offers expansion when the viewer may see its arguments and
+// results, which is what the chevron in its header signals.
+const TOOL_CARD_SELECTOR = '[class*="ToolCallCard"]';
+const TOOL_CARD_CHEVRON_SELECTOR = '[class*="StyledChevronIcon"]';
+const TOOL_CARD_ARGUMENTS_SELECTOR = '[class*="ToolCallArguments"]';
 
 const multiplayerCustomInstructions = [
     'You have access to Mattermost tools including create_post and get_channel_info.',
@@ -355,7 +366,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             // while the resolved first round stays folded into the row above.
             const invokerPost = rhs.locator('[data-testid="llm-bot-post"]').last();
             await expect(invokerPost.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 45000});
-            await expect(invokerPost.locator(TOOL_ACTIVITY_CURRENT_SELECTOR)).toContainText(getChannelInfoToolLabel);
+            await expectToolActivityCurrent(invokerPost, getChannelInfoToolLabel);
             expect(await completeOneToolCallRound(invokerPage, 'accept-keep-private')).toBe(true);
 
             await waitForApprovalFlowToSettle(invokerPage);
@@ -422,8 +433,12 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             const onlookerRhs = onlookerPage.locator('#rhsContainer');
             await expect(onlookerRhs.locator('[data-testid="llm-bot-post"]').last()).toBeVisible({timeout: 30000});
 
-            // Onlookers see the pending call only as the current activity item.
-            await expect(onlookerRhs.locator(TOOL_ACTIVITY_CURRENT_SELECTOR).last()).toBeVisible({timeout: 30000});
+            // Onlookers owe no decision, so the pending call folds into the
+            // activity area instead of rendering as an approval card.
+            await expectToolActivityCurrent(
+                onlookerRhs.locator('[data-testid="llm-bot-post"]').last(),
+                getChannelInfoToolLabel,
+            );
             await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
             await expect(onlookerRhs.getByRole('button', {name: 'Reject'})).not.toBeVisible();
 
@@ -506,6 +521,78 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             await expect(page.getByText(rejectPostText)).not.toBeVisible();
         } finally {
             await context.close();
+        }
+    });
+
+    test('Onlooker can open the activity area but not the tool cards inside it', async ({browser}) => {
+        test.setTimeout(480000);
+
+        const prompt = `multiplayer onlooker expand ${Date.now()}`;
+        const infoCallId = `call_onlooker_info_${Date.now()}`;
+
+        await aimock.setFixtures(mergeFixtureFiles(
+            titleFixtures('Multiplayer onlooker expand'),
+            buildRejectAfterFirstToolSequence({
+                userPromptMarker: prompt,
+                toolCallId: infoCallId,
+                toolName: EMBEDDED_GET_CHANNEL_INFO_TOOL,
+                toolArguments: {channel_name: townSquare.displayName},
+                finalContent: `ONLOOKER_FINAL_${Date.now()}`,
+            }),
+        ));
+
+        const invokerContext = await browser.newContext();
+        const onlookerContext = await browser.newContext();
+        const invokerPage = await invokerContext.newPage();
+        const onlookerPage = await onlookerContext.newPage();
+
+        try {
+            const invokerMM = new MattermostPage(invokerPage);
+            const onlookerMM = new MattermostPage(onlookerPage);
+            const baseUrl = mattermost.url();
+
+            await invokerMM.login(baseUrl, invokerUsername, invokerPassword);
+            await onlookerMM.login(baseUrl, onlookerUsername, onlookerPassword);
+            await navigateToChannel(invokerPage, baseUrl, 'off-topic');
+            await navigateToChannel(onlookerPage, baseUrl, 'off-topic');
+
+            const replyCountBeforeSend = await captureReplyCount(invokerPage);
+            await invokerMM.mentionBot(botUsername, prompt);
+            await waitForReplyAndOpenThread(invokerPage, replyCountBeforeSend);
+            await openLatestThread(onlookerPage);
+            await waitForAnyButtonInThread(invokerPage, ['Accept']);
+
+            // Requester: the round they owe a decision on renders below the
+            // activity area (which does not exist yet), and its card expands.
+            const invokerPost = invokerPage.locator('#rhsContainer').locator('[data-testid="llm-bot-post"]').last();
+            await expectNoToolActivity(invokerPost);
+            const invokerCard = invokerPost.locator(TOOL_CARD_SELECTOR).first();
+            const invokerChevron = invokerCard.locator(TOOL_CARD_CHEVRON_SELECTOR);
+            await expect(invokerChevron).toHaveCount(1);
+            await expect(invokerCard.locator(TOOL_CARD_ARGUMENTS_SELECTOR)).toBeVisible({timeout: 30000});
+            await invokerChevron.click();
+            await expect(invokerCard.locator(TOOL_CARD_ARGUMENTS_SELECTOR)).toHaveCount(0);
+            await invokerChevron.click();
+            await expect(invokerCard.locator(TOOL_CARD_ARGUMENTS_SELECTOR)).toBeVisible();
+
+            // Onlooker: the same round folds into the activity area, which
+            // they can open, but its redacted card offers no expansion.
+            const onlookerPost = onlookerPage.locator('#rhsContainer').locator('[data-testid="llm-bot-post"]').last();
+            await expectToolActivityCurrent(onlookerPost, getChannelInfoToolLabel);
+            const onlookerRounds = await expandToolActivity(onlookerPost);
+            const onlookerCard = onlookerRounds.locator(TOOL_CARD_SELECTOR).first();
+            await expect(onlookerCard.getByText(getChannelInfoToolLabel, {exact: true})).toBeVisible({timeout: 30000});
+            await expect(onlookerCard.locator(TOOL_CARD_CHEVRON_SELECTOR)).toHaveCount(0);
+
+            await onlookerCard.getByText(getChannelInfoToolLabel, {exact: true}).click();
+            await expect(onlookerCard.locator(TOOL_CARD_ARGUMENTS_SELECTOR)).toHaveCount(0);
+
+            // Settle the round so the shared container is left idle.
+            await clickAllButtonsInThread(invokerPage, 'Reject');
+            await waitForApprovalFlowToSettle(invokerPage, 60000);
+        } finally {
+            await invokerContext.close();
+            await onlookerContext.close();
         }
     });
 });

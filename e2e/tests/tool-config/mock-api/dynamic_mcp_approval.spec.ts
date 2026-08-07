@@ -1,7 +1,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
-import { expandToolActivity, TOOL_ACTIVITY_CURRENT_SELECTOR } from 'helpers/llmbot-post';
+import { expandToolActivity, expectToolActivityCurrent } from 'helpers/llmbot-post';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
@@ -189,7 +189,7 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
 
         // The meta-tools auto-ran during the dynamic prelude, so they are
         // folded away; only the newest of them names the collapsed row.
-        await expect(initialBotPost.locator(TOOL_ACTIVITY_CURRENT_SELECTOR)).toContainText(loadToolLabel);
+        await expectToolActivityCurrent(initialBotPost, loadToolLabel);
         await expect(initialBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
 
         const activityRounds = await expandToolActivity(initialBotPost);

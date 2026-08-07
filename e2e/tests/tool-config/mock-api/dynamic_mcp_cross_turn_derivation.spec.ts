@@ -1,7 +1,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
-import { expandToolActivity, TOOL_ACTIVITY_CURRENT_SELECTOR, TOOL_ACTIVITY_SELECTOR } from 'helpers/llmbot-post';
+import { expandToolActivity, expectNoToolActivity, expectToolActivityCurrent } from 'helpers/llmbot-post';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
@@ -225,7 +225,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         // renders without expanding; the meta-tools that auto-ran before it
         // are folded away, with only the newest naming the collapsed row.
         await expect(firstBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(firstBotPost.locator(TOOL_ACTIVITY_CURRENT_SELECTOR)).toContainText(loadToolLabel);
+        await expectToolActivityCurrent(firstBotPost, loadToolLabel);
         await expect(firstBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
 
         const firstRounds = await expandToolActivity(firstBotPost);
@@ -254,7 +254,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         // decision, which renders in full below the activity area, so there is
         // no activity area at all.
         await expect(secondBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(secondBotPost.locator(TOOL_ACTIVITY_SELECTOR)).toHaveCount(0);
+        await expectNoToolActivity(secondBotPost);
 
         // The deriver restored the tool, so the second turn re-runs neither
         // meta-tool. Nothing is collapsed here, so a post-wide count is the

@@ -4,7 +4,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
-import { TOOL_ACTIVITY_SELECTOR } from 'helpers/llmbot-post';
+import { expectNoToolActivity } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 
 const username = 'regularuser';
@@ -67,7 +67,7 @@ test.describe('Ask Policy (Aimock)', () => {
         await expect(latestBotPost.getByText(getChannelInfoLabel, { exact: true })).toBeVisible({
             timeout: 90000,
         });
-        await expect(latestBotPost.locator(TOOL_ACTIVITY_SELECTOR)).toHaveCount(0);
+        await expectNoToolActivity(latestBotPost);
 
         const acceptButton = rhsContainer.getByRole('button', { name: /^accept$/i });
         const rejectButton = rhsContainer.getByRole('button', { name: /^reject$/i });
