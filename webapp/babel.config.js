@@ -5,13 +5,15 @@ const config = {
     presets: [
         ['@babel/preset-env', {
 
+            // Minimum supported browsers, per
+            // https://docs.mattermost.com/deployment-guide/software-hardware-requirements.html
             // Strings, not numbers: a numeric target loses trailing zeroes, so
             // a version like 16.10 would be read as 16.1.
             targets: {
-                chrome: '110',
-                firefox: '102',
-                edge: '110',
-                safari: '16.2',
+                chrome: '146',
+                firefox: '140',
+                edge: '146',
+                safari: '26.2',
             },
             modules: false,
             corejs: 3,
