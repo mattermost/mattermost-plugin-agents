@@ -11,6 +11,7 @@ import {WebSocketMessage} from '@mattermost/client';
 import {useConversation} from '@/hooks/use_conversation';
 
 import {MAX_SEARCH_SOURCES} from '../search_sources';
+import {ToolCallStatus} from '../tool_types';
 
 import {LLMBotPost, PostUpdateWebsocketMessage} from './llmbot_post';
 
@@ -280,6 +281,177 @@ describe('LLMBotPost tool activity area', () => {
         fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
 
         expect(screen.getByText('Let me look that up')).toBeTruthy();
+        expect(screen.getByText('Here is the answer')).toBeTruthy();
+    });
+});
+
+describe('LLMBotPost mid-stream text routing', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.clearAllTimers();
+        jest.useRealTimers();
+    });
+
+    // Two passes: the state update that retires a transient row only schedules
+    // its own follow-up timer once React has flushed the first one.
+    function advanceAnimation() {
+        act(() => {
+            jest.advanceTimersByTime(1000);
+        });
+        act(() => {
+            jest.advanceTimersByTime(1000);
+        });
+    }
+
+    // Drives one post over the websocket the way the server does.
+    function streamingPost() {
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const send = listener!;
+        return (data: Omit<PostUpdateWebsocketMessage, 'post_id'>) => act(() => {
+            send(postUpdateMessage({post_id: 'post_1', ...data}));
+        });
+    }
+
+    // ToolRunner emits the round's calls again with terminal statuses once
+    // they have run; that second event is what closes the round.
+    function resolvedToolCall(id: string, name: string) {
+        return {
+            control: 'tool_call',
+            tool_call: JSON.stringify([{id, name, description: '', status: ToolCallStatus.Success}]),
+        };
+    }
+
+    const currentRow = () => screen.getByTestId('llm-bot-tool-activity-current').textContent;
+
+    // Nothing has called a tool yet, so there is no way to tell this text from
+    // an answer: it streams into the main area, and has to leave gracefully.
+    test('streams the first round into the main area and folds it away when a tool call lands', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send({next: 'Let me look that up'});
+
+        expect(screen.queryByTestId('llm-bot-tool-activity')).toBeNull();
+        expect(screen.getByText('Let me look that up')).toBeTruthy();
+
+        send(resolvedToolCall('tc_a', 'search_tools'));
+
+        expect(screen.getByTestId('llm-bot-tool-activity')).toBeTruthy();
+        expect(screen.getByTestId('llm-bot-folding-text').textContent).toBe('Let me look that up');
+
+        advanceAnimation();
+        expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
+    });
+
+    // Every round after the first: a tool call has already happened, so the
+    // narration goes straight to the row and the main area never moves.
+    test('streams trailing text into the activity row instead of the main area', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send({next: 'Let me look that up'});
+        send(resolvedToolCall('tc_a', 'search_tools'));
+        advanceAnimation();
+
+        send({next: 'Here is what'});
+        send({next: 'Here is what I found'});
+
+        expect(mockPostTextRender).not.toHaveBeenCalledWith('Here is what I found');
+        expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
+
+        advanceAnimation();
+        expect(currentRow()).toBe('Here is what I found');
+    });
+
+    test('hands the trailing text back to the main area when the response ends', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send({next: 'Let me look that up'});
+        send(resolvedToolCall('tc_a', 'search_tools'));
+        send({next: 'Here is what I found'});
+
+        expect(mockPostTextRender).not.toHaveBeenCalledWith('Here is what I found');
+
+        send({control: 'end'});
+
+        expect(screen.getByText('Here is what I found')).toBeTruthy();
+        expect(screen.getByTestId('llm-bot-tool-activity')).toBeTruthy();
+    });
+
+    // Stopping mid-response settles it just like a natural end, so the text
+    // held in the row has to be released rather than stranded there.
+    test('hands the trailing text back to the main area when generation is cancelled', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send({next: 'Let me look that up'});
+        send(resolvedToolCall('tc_a', 'search_tools'));
+        send({next: 'Here is what I fou'});
+
+        send({control: 'cancel'});
+
+        expect(screen.getByText('Here is what I fou')).toBeTruthy();
+    });
+
+    // A reader who expanded the area has asked to watch the whole thing, so
+    // nothing is rerouted and the text streams where it always did.
+    test('leaves trailing text in the main area while the activity area is expanded', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send({next: 'Let me look that up'});
+        send(resolvedToolCall('tc_a', 'search_tools'));
+
+        act(() => {
+            fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
+        });
+        send({next: 'Here is what I found'});
+
+        expect(mockPostTextRender).toHaveBeenCalledWith('Here is what I found');
+        expect(screen.getByText('Here is what I found')).toBeTruthy();
+    });
+
+    // Collapsing mid-stream pulls the text into the row; it must fold on the
+    // way rather than blink out, and come back on expanding again.
+    test('folds and restores the trailing text as the area is toggled mid-stream', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send({next: 'Let me look that up'});
+        send(resolvedToolCall('tc_a', 'search_tools'));
+        act(() => {
+            fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
+        });
+        send({next: 'Here is what I found'});
+        advanceAnimation();
+
+        act(() => {
+            fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
+        });
+        expect(screen.getByTestId('llm-bot-folding-text').textContent).toBe('Here is what I found');
+
+        advanceAnimation();
+        expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
+        expect(currentRow()).toBe('Here is what I found');
+
+        act(() => {
+            fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
+        });
+        expect(screen.getByText('Here is what I found')).toBeTruthy();
+    });
+
+    // A response that never calls a tool has no activity area to reroute
+    // into, so it must keep streaming into the main area untouched.
+    test('leaves a response without tool calls streaming in the main area', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send({next: 'Here is'});
+        send({next: 'Here is the answer'});
+
+        expect(screen.queryByTestId('llm-bot-tool-activity')).toBeNull();
+        expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
         expect(screen.getByText('Here is the answer')).toBeTruthy();
     });
 });

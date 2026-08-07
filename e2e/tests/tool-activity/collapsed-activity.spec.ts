@@ -1,4 +1,4 @@
-import {test, expect} from '@playwright/test';
+import {test, expect, Locator} from '@playwright/test';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
@@ -13,6 +13,7 @@ import {
     collapseToolActivity,
     expandToolActivity,
     expectToolActivityCollapsed,
+    expectToolActivityCurrent,
     expectToolActivitySummary,
     TOOL_STATUS_SELECTOR,
 } from 'helpers/llmbot-post';
@@ -46,10 +47,27 @@ const reasoningPrompt = 'tool activity reasoning with tools';
 const reasoningText = 'Weighing the channel metadata before replying.';
 const reasoningFinal = 'REASONING_ANSWER: the channel looks healthy.';
 
+const midStreamPrompt = 'tool activity mid stream routing';
+const midStreamMarker = 'MIDSTREAM_ANSWER: routing check';
+const midStreamTail = 'and a long tail so the stream is still open while this is asserted. ';
+const midStreamAnswer = `${midStreamMarker} ${midStreamTail.repeat(8)}`;
+
 const stopPrompt = 'tool activity stop mid tools';
 const stopAnswerStart = 'STOP_ANSWER: beginning a long explanation';
 const stopAnswerTail = 'that keeps going for a while so the stream is still open when Stop is pressed. ';
 const stopAnswer = `${stopAnswerStart} ${stopAnswerTail.repeat(16)}`;
+
+/**
+ * Everything the post shows outside its activity area, which is what proves
+ * that streaming text is only in the collapsed row and not in the post body.
+ */
+async function mainAreaText(post: Locator): Promise<string> {
+    return post.evaluate((el) => {
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll('[data-testid="llm-bot-tool-activity"]').forEach((node) => node.remove());
+        return clone.textContent ?? '';
+    });
+}
 
 test.describe('Collapsed Tool Activity (Aimock)', () => {
     test.describe.configure({mode: 'serial'});
@@ -145,6 +163,29 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
                     {
                         match: {toolCallId: 'call_ta_reasoning'},
                         response: {reasoning: reasoningText, content: reasoningFinal},
+                    },
+
+                    // Held back so the post is mounted and listening long
+                    // before the tool call lands: a client that misses that
+                    // websocket event shows no activity area until the turn
+                    // is persisted, and there would be nothing to assert on.
+                    {
+                        match: {userMessage: midStreamPrompt, hasToolResult: false},
+                        response: {
+                            toolCalls: [{
+                                id: 'call_ta_midstream',
+                                name: EMBEDDED_GET_CHANNEL_INFO_TOOL,
+                                arguments: {channel_name: 'Town Square'},
+                            }],
+                            finishReason: 'tool_calls',
+                        },
+                        streamingProfile: {ttft: 1500, tps: 20, jitter: 0},
+                    },
+                    {
+                        match: {toolCallId: 'call_ta_midstream'},
+                        response: {content: midStreamAnswer},
+                        chunkSize: 2,
+                        streamingProfile: {ttft: 300, tps: 4, jitter: 0},
                     },
 
                     // The answer trickles in after the tool round, so the
@@ -256,6 +297,26 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         // Collapsing the activity area leaves the reasoning open.
         await collapseToolActivity(botPost);
         await llmBotHelper.expectReasoningText(reasoningText);
+    });
+
+    // Once a response has called a tool, putting its next text in the post
+    // body only to pull it back out when the following tool call arrives is
+    // what made the thread jump. It streams into the collapsed row instead,
+    // and reaches the body once the response is over.
+    test('streams the answer into the activity row and only reveals it in the post at the end', async ({page}) => {
+        test.setTimeout(180000);
+
+        const {botPost} = await askAimockBot(page, mattermost.url(), midStreamPrompt);
+
+        await expectToolActivityCollapsed(botPost);
+        await expectToolActivityCurrent(botPost, midStreamMarker);
+        expect(await mainAreaText(botPost)).not.toContain(midStreamMarker);
+
+        await expect(page.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 120000});
+        await expect
+            .poll(() => mainAreaText(botPost), {timeout: 30000})
+            .toContain(midStreamMarker);
+        await expectToolActivitySummary(botPost, 1, 'success');
     });
 
     test('settles the post without a stuck spinner when generation is stopped after a tool round', async ({page}) => {

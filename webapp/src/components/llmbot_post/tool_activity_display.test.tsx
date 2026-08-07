@@ -34,12 +34,13 @@ function makeRound(id: string, text: string, toolCalls: ToolCall[] = []): Round 
 function activityElement(rounds: Round[], options: {
     expanded?: boolean;
     inProgress?: boolean;
+    foldTrailingText?: boolean;
     onToggleExpanded?: (expanded: boolean) => void;
 } = {}) {
     return (
         <IntlProvider locale='en'>
             <ToolActivityDisplay
-                activity={deriveActivity(rounds)}
+                activity={deriveActivity(rounds, {foldTrailingText: options.foldTrailingText})}
                 expanded={options.expanded ?? false}
                 onToggleExpanded={options.onToggleExpanded ?? jest.fn()}
                 inProgress={options.inProgress ?? false}
@@ -110,6 +111,40 @@ describe('ToolActivityDisplay collapsed rendering', () => {
 
         fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
         expect(onToggleExpanded).toHaveBeenLastCalledWith(false);
+    });
+});
+
+describe('ToolActivityDisplay live text item', () => {
+    const streamed = (text: string) => [
+        makeRound('r1', '', [makeTool({id: 'tc_a', name: 'search_tools'})]),
+        makeRound('live', text),
+    ];
+
+    // While a tool-using response streams with the area collapsed its trailing
+    // text is routed here instead of to the main post body, so the row has to
+    // track it chunk by chunk rather than only on the next item.
+    test('updates the current row in place as the trailing text grows', () => {
+        const {rerender} = render(activityElement(streamed('Here is'), {inProgress: true, foldTrailingText: true}));
+
+        const current = () => screen.getByTestId('llm-bot-tool-activity-current').textContent;
+        expect(current()).toBe('Here is');
+
+        rerender(activityElement(streamed('Here is what I found'), {inProgress: true, foldTrailingText: true}));
+
+        expect(current()).toBe('Here is what I found');
+        expect(screen.queryByText('Here is')).toBeNull();
+    });
+
+    // A growing snippet is one item, not a stream of them: rolling the row on
+    // every chunk would make it unreadable.
+    test('does not animate the row while only the text changes', () => {
+        const {container, rerender} = render(
+            activityElement(streamed('Here is'), {inProgress: true, foldTrailingText: true}),
+        );
+
+        rerender(activityElement(streamed('Here is what I found'), {inProgress: true, foldTrailingText: true}));
+
+        expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(0);
     });
 });
 
