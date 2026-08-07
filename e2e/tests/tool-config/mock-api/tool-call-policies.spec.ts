@@ -555,11 +555,12 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         // Tool cards and the auto-approved badge only exist once the
         // collapsed activity area is expanded.
-        await expect((await expandToolActivity(latestBotPost)).getByText(embeddedReadChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
+        const activityRounds = await expandToolActivity(latestBotPost);
+        await expect(activityRounds.getByText(embeddedReadChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
         await expect(rhs.getByText('Auto-approved')).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
-        await latestBotPost.getByText(embeddedReadChannelLabel, {exact: true}).click();
+        await activityRounds.getByText(embeddedReadChannelLabel, {exact: true}).click();
         // read_channel result is rendered as markdown; the seed string is not a single text node (bold, etc.).
         await expect(latestBotPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
