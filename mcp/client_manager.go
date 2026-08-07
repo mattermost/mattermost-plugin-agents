@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,8 +16,12 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
+
+// Only PluginID, Name, Path, and ExposeExternal are authoritative here; Enabled and ToolConfigs come from admin config.
+const pluginRegistrationsKVKey = "mcp_plugin_registrations_v1"
 
 var ErrOAuthNotConfigured = errors.New("oauth not configured")
 
@@ -46,8 +51,8 @@ type ClientManager struct {
 	// pluginServersMu must not be held across PluginHTTP round trips.
 	pluginServersMu sync.RWMutex
 	pluginServers   map[string]PluginServerConfig // keyed by PluginID
-	// pluginRegistered marks entries with a live RegisterPluginServer call;
-	// orphan entries hydrated only from persisted config are absent.
+	// pluginRegistered marks entries backed by a source-plugin registration;
+	// config-only orphan entries are absent.
 	pluginRegistered map[string]bool
 	// sourcePluginAPI is the agents-plugin mmapi.Client; used by
 	// PluginHTTPRoundTripper to dispatch to source plugins.
@@ -67,6 +72,9 @@ func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *plugin
 		pluginRegistered: make(map[string]bool),
 		sourcePluginAPI:  sourcePluginAPI,
 	}
+	manager.hydratePluginRegistrations()
+	// PluginMCPHandlers is constructed later and builds the external aggregate
+	// from this hydrated registry.
 	manager.ReInit(config, embeddedServer)
 	return manager
 }
@@ -463,6 +471,16 @@ func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
 	defer m.pluginServersMu.Unlock()
 	m.pluginServers[cfg.PluginID] = cfg
 	m.pluginRegistered[cfg.PluginID] = true
+	m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
+		registrations[cfg.PluginID] = cfg
+	})
+}
+
+// UpdatePluginServer applies admin-owned fields without changing registration state.
+func (m *ClientManager) UpdatePluginServer(cfg PluginServerConfig) {
+	m.pluginServersMu.Lock()
+	defer m.pluginServersMu.Unlock()
+	m.pluginServers[cfg.PluginID] = cfg
 }
 
 func (m *ClientManager) UnregisterPluginServer(pluginID string) {
@@ -470,6 +488,9 @@ func (m *ClientManager) UnregisterPluginServer(pluginID string) {
 	defer m.pluginServersMu.Unlock()
 	delete(m.pluginServers, pluginID)
 	delete(m.pluginRegistered, pluginID)
+	m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
+		delete(registrations, pluginID)
+	})
 }
 
 func (m *ClientManager) ListPluginServers() []PluginServerConfig {
@@ -490,13 +511,90 @@ func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bo
 	return cfg, ok
 }
 
-// IsPluginRegistered reports whether the source plugin currently has a live
-// in-process registration. Returns false for entries hydrated only from
-// persisted config.
+// IsPluginRegistered reports whether an entry is backed by a source-plugin
+// registration, including one restored from the KV store.
 func (m *ClientManager) IsPluginRegistered(pluginID string) bool {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
 	return m.pluginRegistered[pluginID]
+}
+
+func (m *ClientManager) hydratePluginRegistrations() {
+	m.pluginServersMu.Lock()
+	defer m.pluginServersMu.Unlock()
+
+	registrations, ok := m.loadPersistedPluginRegistrationsLocked()
+	if !ok {
+		return
+	}
+
+	verifyPluginStates := len(registrations) > 0
+	var pluginStates map[string]*model.PluginState
+	if verifyPluginStates {
+		serverConfig := m.pluginAPI.Configuration.GetConfig()
+		if serverConfig == nil {
+			m.log.Warn("Unable to verify plugin states while restoring MCP registrations; keeping all registrations")
+			verifyPluginStates = false
+		} else {
+			pluginStates = serverConfig.PluginSettings.PluginStates
+		}
+	}
+
+	prunedPluginIDs := make([]string, 0)
+	restored := 0
+	for pluginID, cfg := range registrations {
+		if verifyPluginStates {
+			state := pluginStates[pluginID]
+			if state == nil || !state.Enable {
+				prunedPluginIDs = append(prunedPluginIDs, pluginID)
+				continue
+			}
+		}
+
+		m.pluginServers[pluginID] = cfg
+		m.pluginRegistered[pluginID] = true
+		restored++
+	}
+
+	if len(prunedPluginIDs) > 0 {
+		m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
+			for _, pluginID := range prunedPluginIDs {
+				delete(registrations, pluginID)
+			}
+		})
+	}
+	m.log.Debug("Restored plugin MCP registrations from KV store", "count", restored, "pruned", len(prunedPluginIDs))
+}
+
+func (m *ClientManager) mutatePersistedPluginRegistrations(update func(map[string]PluginServerConfig)) {
+	err := m.pluginAPI.KV.SetAtomicWithRetries(pluginRegistrationsKVKey, func(oldValue []byte) (any, error) {
+		registrations := make(map[string]PluginServerConfig)
+		if len(oldValue) > 0 {
+			if err := json.Unmarshal(oldValue, &registrations); err != nil {
+				return nil, fmt.Errorf("unmarshal plugin MCP registrations: %w", err)
+			}
+		}
+		if registrations == nil {
+			registrations = make(map[string]PluginServerConfig)
+		}
+		update(registrations)
+		return registrations, nil
+	})
+	if err != nil {
+		m.log.Error("Failed to persist plugin MCP registrations to KV store", "error", err)
+	}
+}
+
+func (m *ClientManager) loadPersistedPluginRegistrationsLocked() (map[string]PluginServerConfig, bool) {
+	var registrations map[string]PluginServerConfig
+	if err := m.pluginAPI.KV.Get(pluginRegistrationsKVKey, &registrations); err != nil {
+		m.log.Error("Failed to load plugin MCP registrations from KV store", "error", err)
+		return nil, false
+	}
+	if registrations == nil {
+		registrations = make(map[string]PluginServerConfig)
+	}
+	return registrations, true
 }
 
 // syncPluginServersFromConfig merges persisted admin-owned plugin-server fields
