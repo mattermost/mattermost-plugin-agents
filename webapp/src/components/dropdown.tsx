@@ -24,7 +24,7 @@ const FloatingContainer = styled.div`
 `;
 
 type DropdownProps = {
-    target: React.JSX.Element;
+    target: JSX.Element;
     children: React.ReactNode;
     placement?: Placement;
     offset?: Parameters<typeof offset>[0];

@@ -48,7 +48,7 @@ export interface PostUpdateWebsocketMessage {
 
 interface LLMBotPostProps {
     post: any;
-    websocketRegister?: (postID: string, listenerID: string, handler: (msg: PluginWebSocketMessage<any>) => void) => void;
+    websocketRegister?: (postID: string, listenerID: string, handler: (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
 }
 

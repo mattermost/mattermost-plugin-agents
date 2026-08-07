@@ -5,7 +5,8 @@ const config = {
     presets: [
         ['@babel/preset-env', {
 
-            // Strings, not numbers: Babel parses a decimal like 16.2 as 16.1.
+            // Strings, not numbers: a numeric target loses trailing zeroes, so
+            // a version like 16.10 would be read as 16.1.
             targets: {
                 chrome: '110',
                 firefox: '102',
