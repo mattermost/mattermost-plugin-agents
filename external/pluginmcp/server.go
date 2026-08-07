@@ -38,6 +38,10 @@ func (s *Server) streamableHandler() http.Handler {
 		&mcp.StreamableHTTPOptions{
 			Stateless:    true,
 			JSONResponse: true,
+			// Explicitly the SDK default (introduced in go-sdk v1.7.0,
+			// previously unlimited): requests are LLM-generated tool calls,
+			// so 4 MiB is ample.
+			MaxRequestBodyBytes: mcp.DefaultMaxRequestBodyBytes,
 		},
 	)
 	s.handlerBuiltOK = true

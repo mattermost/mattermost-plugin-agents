@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,11 @@ func setupTestOAuthManagerWithLookup(t *testing.T, lookup ServerConfigLookup) (*
 
 func setupTestOAuthManagerFull(t *testing.T, lookup ServerConfigLookup, httpClient *http.Client) (*OAuthManager, *mocks.MockClient) {
 	mockClient := mocks.NewMockClient(t)
+	// Discovery emits step-by-step LogDebug diagnostics; they are never
+	// asserted on, so accept them everywhere. LogWarn is deliberately NOT
+	// stubbed here: tests register it explicitly, so an unexpected warning
+	// (e.g. an unintended lenient fallback) fails the test.
+	mockClient.On("LogDebug", mock.AnythingOfType("string"), mock.Anything).Return().Maybe()
 	manager := NewOAuthManager(mockClient, "http://test.com/callback", httpClient, lookup)
 	return manager, mockClient
 }
@@ -150,7 +156,7 @@ func TestLoadOrCreateClientCredentials_ExistingCredentials(t *testing.T) {
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -169,7 +175,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentials(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -188,7 +194,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentialsSkipKVStore(t *testing.T
 	}
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -214,7 +220,7 @@ func TestLoadOrCreateClientCredentials_NilStaticCredsFallsBackToKVStore(t *testi
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -240,7 +246,7 @@ func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *tes
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, &StaticOAuthCredentials{}, "")
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, &StaticOAuthCredentials{}, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
@@ -254,14 +260,16 @@ func TestCreateOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 	// (e.g. /v1/mcp), protected resource metadata is unavailable, and
 	// authorization server metadata is only at the base well-known URL.
 	// Per MCP spec, the path must be stripped for auth server discovery.
+	var serverURL string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			metadata := AuthorizationServerMetadata{
-				Issuer:                "https://auth.example.com",
-				AuthorizationEndpoint: "https://auth.example.com/authorize",
-				TokenEndpoint:         "https://auth.example.com/token",
+			metadata := oauthex.AuthServerMeta{
+				Issuer:                        serverURL,
+				AuthorizationEndpoint:         "https://auth.example.com/authorize",
+				TokenEndpoint:                 "https://auth.example.com/token",
+				CodeChallengeMethodsSupported: []string{"S256"},
 			}
 			_ = json.NewEncoder(w).Encode(metadata)
 		default:
@@ -270,6 +278,7 @@ func TestCreateOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	serverURL = server.URL
 
 	manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
 
@@ -296,26 +305,27 @@ func TestCreateOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-protected-resource/mcp":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(ProtectedResourceMetadata{
+			_ = json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
 				Resource:             serverURL + "/mcp",
 				AuthorizationServers: []string{serverURL + "/resources/res_123"},
 			})
 		case "/.well-known/oauth-authorization-server/resources/res_123":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(AuthorizationServerMetadata{
-				Issuer:                serverURL,
-				AuthorizationEndpoint: serverURL + "/authorize",
-				TokenEndpoint:         serverURL + "/token",
-				RegistrationEndpoint:  serverURL + "/resources/res_123/register",
+			_ = json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+				Issuer:                        serverURL + "/resources/res_123",
+				AuthorizationEndpoint:         serverURL + "/authorize",
+				TokenEndpoint:                 serverURL + "/token",
+				RegistrationEndpoint:          serverURL + "/resources/res_123/register",
+				CodeChallengeMethodsSupported: []string{"S256"},
 			})
 		case "/resources/res_123/register":
 			registrationCalled = true
 			require.Equal(t, http.MethodPost, r.Method)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(RegistrationResponse{
-				ClientID:     "registered-client",
-				ClientSecret: "registered-secret",
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"client_id":     "registered-client",
+				"client_secret": "registered-secret",
 			})
 		case "/.well-known/oauth-authorization-server":
 			hostMetadataCalled = true
@@ -330,7 +340,6 @@ func TestCreateOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
 	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
 	mockClient.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
-	mockClient.On("LogDebug", mock.Anything, mock.Anything).Return().Once()
 
 	config, err := manager.createOAuthConfig(context.Background(), serverURL+"/mcp", serverURL+"/.well-known/oauth-protected-resource/mcp", nil)
 
@@ -455,6 +464,11 @@ func TestDeleteUserTokenCleanup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			manager, mockClient := setupTestOAuthManager(t)
 
+			// No stored grant to revoke: revocation is skipped and the delete
+			// proceeds. (Revocation behavior itself is covered separately.)
+			mockClient.On("KVGet", buildTokenKey(userID, serverID), mock.AnythingOfType("*[]uint8")).
+				Return(mmapi.ErrKVNotFound).
+				Once()
 			mockClient.On("KVDelete", buildTokenKey(userID, serverID)).
 				Return(tc.tokenDeleteErr).
 				Once()
@@ -462,7 +476,7 @@ func TestDeleteUserTokenCleanup(t *testing.T) {
 				Return(tc.authNeededDeleteErr).
 				Once()
 
-			err := manager.DeleteUserToken(userID, serverID)
+			err := manager.DeleteUserToken(context.Background(), userID, serverID)
 
 			if tc.expectedErr == nil {
 				require.NoError(t, err)
@@ -491,7 +505,7 @@ func TestProcessCallback_InvalidSession(t *testing.T) {
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Return(mmapi.ErrKVNotFound)
 
 	ctx := context.Background()
-	session, err := manager.ProcessCallback(ctx, userID, state, code)
+	session, err := manager.ProcessCallback(ctx, userID, state, code, "")
 
 	require.Error(t, err)
 	require.Nil(t, session)
@@ -526,7 +540,7 @@ func TestProcessCallback_StateValidation(t *testing.T) {
 	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Once()
 
 	ctx := context.Background()
-	session, err := manager.ProcessCallback(ctx, userID, wrongState, "auth-code")
+	session, err := manager.ProcessCallback(ctx, userID, wrongState, "auth-code", "")
 
 	require.Error(t, err)
 	require.Nil(t, session)
@@ -561,7 +575,7 @@ func TestProcessCallback_UserIDValidation(t *testing.T) {
 	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Once()
 
 	ctx := context.Background()
-	session, err := manager.ProcessCallback(ctx, wrongUserID, state, "auth-code")
+	session, err := manager.ProcessCallback(ctx, wrongUserID, state, "auth-code", "")
 
 	require.Error(t, err)
 	require.Nil(t, session)
@@ -584,10 +598,11 @@ func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
 			http.NotFound(w, r)
 		case "/.well-known/oauth-authorization-server":
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(AuthorizationServerMetadata{
-				Issuer:                authServer.URL,
-				AuthorizationEndpoint: authServer.URL + "/authorize",
-				TokenEndpoint:         authServer.URL + "/token",
+			require.NoError(t, json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+				Issuer:                        authServer.URL,
+				AuthorizationEndpoint:         authServer.URL + "/authorize",
+				TokenEndpoint:                 authServer.URL + "/token",
+				CodeChallengeMethodsSupported: []string{"S256"},
 			}))
 		case "/token":
 			w.Header().Set("Content-Type", "application/json")
@@ -623,6 +638,10 @@ func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
 		State:          state,
 		StaticClientID: "client-id",
 		CreatedAt:      time.Now(),
+		Issuer:         authServer.URL,
+		AuthServerURL:  authServer.URL,
+		TokenEndpoint:  authServer.URL + "/token",
+		ClientID:       "client-id",
 	}
 	clearErr := model.NewAppError("test", "auth_needed_delete_failed", nil, "auth-needed delete failed", http.StatusInternalServerError)
 
@@ -646,7 +665,7 @@ func TestProcessCallbackReturnsSessionWhenAuthNeededCleanupFails(t *testing.T) {
 		Return().
 		Once()
 
-	gotSession, err := manager.ProcessCallback(context.Background(), userID, state, code)
+	gotSession, err := manager.ProcessCallback(context.Background(), userID, state, code, "")
 
 	require.NoError(t, err)
 	require.Equal(t, session, gotSession)
@@ -682,6 +701,10 @@ func TestProcessCallback_RederivesStaticCredsFromConfig(t *testing.T) {
 		State:             state,
 		StaticClientID:    "cfg-client-id",
 		CreatedAt:         time.Now(),
+		Issuer:            serverURL,
+		AuthServerURL:     serverURL,
+		TokenEndpoint:     serverURL + "/token",
+		ClientID:          "cfg-client-id",
 	}
 
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Run(func(args mock.Arguments) {
@@ -695,7 +718,7 @@ func TestProcessCallback_RederivesStaticCredsFromConfig(t *testing.T) {
 	// but we can verify it gets past session validation and attempts to create
 	// an OAuth config -- which means the static creds were successfully
 	// re-derived from the config lookup.
-	result, err := manager.ProcessCallback(ctx, userID, state, "auth-code")
+	result, err := manager.ProcessCallback(ctx, userID, state, "auth-code", "")
 
 	require.Error(t, err)
 	require.Nil(t, result)
@@ -722,6 +745,10 @@ func TestProcessCallback_LogsWarningWhenLookupMissesServer(t *testing.T) {
 		State:             state,
 		StaticClientID:    "some-client-id",
 		CreatedAt:         time.Now(),
+		Issuer:            "https://api.example.com",
+		AuthServerURL:     "https://api.example.com",
+		TokenEndpoint:     "https://api.example.com/token",
+		ClientID:          "some-client-id",
 	}
 
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Run(func(args mock.Arguments) {
@@ -733,11 +760,14 @@ func TestProcessCallback_LogsWarningWhenLookupMissesServer(t *testing.T) {
 	mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return()
 
 	ctx := context.Background()
-	result, err := manager.ProcessCallback(ctx, userID, state, "auth-code")
+	result, err := manager.ProcessCallback(ctx, userID, state, "auth-code", "")
 
 	require.Error(t, err)
 	require.Nil(t, result)
 
-	expectedMsg := "Static OAuth credentials were expected but server config not found; falling back to dynamic registration"
+	require.Contains(t, err.Error(), "restart authorization",
+		"credentials must be load-only at callback time; no registration fallback")
+
+	expectedMsg := "Static OAuth credentials were expected but server config not found"
 	mockClient.AssertCalled(t, "LogWarn", expectedMsg, []interface{}{"serverID", serverID})
 }

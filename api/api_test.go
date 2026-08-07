@@ -156,11 +156,11 @@ func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 	return nil
 }
 
-func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
+func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*mcp.OAuthSession, error) {
 	return m.processOAuthSession, m.processOAuthErr
 }
 
-func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
+func (m *mockMCPClientManager) DisconnectUserOAuth(_ context.Context, userID, serverName string) error {
 	m.disconnectCalls = append(m.disconnectCalls, mcpDisconnectCall{
 		userID:     userID,
 		serverName: serverName,

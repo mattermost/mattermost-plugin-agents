@@ -98,7 +98,12 @@ func NewPluginMCPHandlers(
 		srv := h.currentServer
 		h.mu.RUnlock()
 		return srv
-	}, &mcp.StreamableHTTPOptions{Stateless: true})
+	}, &mcp.StreamableHTTPOptions{
+		Stateless: true,
+		// Explicitly the SDK default (introduced in go-sdk v1.7.0, previously
+		// unlimited): requests are LLM-generated tool calls, so 4 MiB is ample.
+		MaxRequestBodyBytes: mcp.DefaultMaxRequestBodyBytes,
+	})
 
 	resourceURL := fmt.Sprintf("%s/plugins/mattermost-ai/mcp-server", siteURL)
 	metadataHandler := CreateOAuthMetadataHandler(resourceURL, siteURL, "Mattermost MCP Server")
