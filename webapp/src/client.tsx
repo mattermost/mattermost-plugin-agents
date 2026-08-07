@@ -278,6 +278,34 @@ export async function doAskUserResponse(postid: string, botUsername: string, bod
     });
 }
 
+// Request body for the ask_user_cancel endpoint. Mirrors the V2-C4 contract:
+// tool_use_id is the provider-issued id of the waiting tool_use block.
+export interface AskUserCancelBody {
+    tool_use_id: string;
+}
+
+// Cancels an outstanding AskAnotherUser question from the initiator's anchor
+// post. botUsername names the conversation bot (the anchor post's author) so
+// the endpoint middleware runs its checks against that bot rather than the
+// default one (same rationale as doAskUserResponse).
+export async function doAskUserCancel(postid: string, botUsername: string, body: AskUserCancelBody): Promise<{status: string}> {
+    const url = `${postRoute(postid)}/ask_user_cancel?botUsername=${encodeURIComponent(botUsername)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(body),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doToolResult(postid: string, toolIDs: string[]): Promise<void> {
     const url = `${postRoute(postid)}/tool_result`;
     const response = await fetch(url, Client4.getOptions({

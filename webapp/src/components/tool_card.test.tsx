@@ -2,11 +2,11 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 import {useSelector} from 'react-redux';
 
-import ToolCard, {parseAskAnotherUserDecline, parseAskAnotherUserTarget} from './tool_card';
+import ToolCard, {parseAskAnotherUserCanceled, parseAskAnotherUserDecline, parseAskAnotherUserTarget, type AskCancelState} from './tool_card';
 import {AskAnotherUserToolName, ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
 jest.mock('react-redux', () => ({
@@ -39,6 +39,8 @@ function renderComponent(
         onReject?: () => void;
         approvalStage?: ToolApprovalStage;
         isCollapsed?: boolean;
+        onCancelAsk?: () => void;
+        askCancelState?: AskCancelState;
     } = {},
 ) {
     return render(
@@ -197,6 +199,98 @@ describe('ToolCard waiting state', () => {
         );
 
         expect(screen.getByText('Waiting for @bob to answer…')).not.toBeNull();
+    });
+});
+
+describe('parseAskAnotherUserCanceled', () => {
+    test.each<[string, Partial<ToolCall>, boolean]>([
+        [
+            'canceled result JSON',
+            {name: AskAnotherUserToolName, result: '{"status":"canceled","target_username":"bob"}'},
+            true,
+        ],
+        [
+            'declined result JSON',
+            {name: AskAnotherUserToolName, result: '{"status":"declined","target_username":"bob"}'},
+            false,
+        ],
+        [
+            'non-JSON result',
+            {name: AskAnotherUserToolName, result: 'not json'},
+            false,
+        ],
+        [
+            'missing result',
+            {name: AskAnotherUserToolName},
+            false,
+        ],
+        [
+            'canceled JSON on a different tool',
+            {name: 'other_tool', result: '{"status":"canceled"}'},
+            false,
+        ],
+    ])('%s', (_label, overrides, expected) => {
+        expect(parseAskAnotherUserCanceled(makeTool(overrides))).toBe(expected);
+    });
+});
+
+describe('ToolCard cancel control', () => {
+    const waitingAskTool = () => makeTool({
+        name: AskAnotherUserToolName,
+        status: ToolCallStatus.Waiting,
+        arguments: {username: 'bob', question: 'q'},
+    });
+
+    test('renders the cancel button while idle and forwards the click', () => {
+        const onCancelAsk = jest.fn();
+        renderComponent(waitingAskTool(), {approvalStage: 'done', onCancelAsk, askCancelState: 'idle'});
+
+        const button = screen.getByRole('button', {name: 'Cancel question'});
+        fireEvent.click(button);
+
+        expect(onCancelAsk).toHaveBeenCalledTimes(1);
+    });
+
+    test('renders no cancel control without an onCancelAsk handler (observer)', () => {
+        renderComponent(waitingAskTool(), {approvalStage: 'done'});
+
+        expect(screen.queryByRole('button', {name: 'Cancel question'})).toBeNull();
+        expect(screen.getByText('Waiting for @bob to answer…')).not.toBeNull();
+    });
+
+    test('replaces the button with the canceling text while submitting', () => {
+        renderComponent(waitingAskTool(), {approvalStage: 'done', onCancelAsk: jest.fn(), askCancelState: 'submitting'});
+
+        expect(screen.queryByRole('button', {name: 'Cancel question'})).toBeNull();
+        expect(screen.getByText('Canceling…')).not.toBeNull();
+    });
+
+    test('shows the failure line and keeps the button on error', () => {
+        renderComponent(waitingAskTool(), {approvalStage: 'done', onCancelAsk: jest.fn(), askCancelState: 'error'});
+
+        expect(screen.getByText('Failed to cancel the question. Please try again.')).not.toBeNull();
+        expect(screen.getByRole('button', {name: 'Cancel question'})).not.toBeNull();
+    });
+});
+
+describe('ToolCard canceled terminal rendering', () => {
+    test('renders the canceled line for an expanded canceled AskAnotherUser call', () => {
+        renderComponent(makeTool({
+            name: AskAnotherUserToolName,
+            status: ToolCallStatus.Success,
+            result: '{"status":"canceled","target_username":"bob"}',
+        }));
+
+        expect(screen.getByText('Canceled — the agent continued without an answer')).not.toBeNull();
+    });
+
+    test('renders no canceled line for an ordinary successful tool', () => {
+        renderComponent(makeTool({
+            status: ToolCallStatus.Success,
+            result: '{"ok":true}',
+        }));
+
+        expect(screen.queryByText(/Canceled — the agent continued/)).toBeNull();
     });
 });
 

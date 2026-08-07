@@ -5,7 +5,7 @@ import React, {useEffect, useMemo, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
-import {CheckIcon} from '@mattermost/compass-icons/components';
+import {AccountOutlineIcon, CheckIcon, EyeOutlineIcon, ShieldOutlineIcon} from '@mattermost/compass-icons/components';
 
 import type {ClientError} from '@mattermost/client';
 
@@ -38,7 +38,23 @@ const PROP_SOURCE_POST_ID = 'ask_user_source_post_id';
 const PROP_ANSWERED_AT = 'ask_user_answered_at';
 const PROP_ANSWER_PREVIEW = 'ask_user_answer_preview';
 
-export type AskUserStatus = 'pending' | 'answered' | 'declined';
+// Contract V2-C2 prop keys — all optional on the read side. A card without
+// ask_user_requester_kind is a pre-v2 card and renders the exact v1 layout.
+const PROP_REQUESTER_KIND = 'ask_user_requester_kind';
+const PROP_REQUESTER_USERNAME = 'ask_user_requester_username';
+const PROP_REQUESTER_DISPLAY_NAME = 'ask_user_requester_display_name';
+const PROP_REQUESTER_POSITION = 'ask_user_requester_position';
+const PROP_AGENT_DISPLAY_NAME = 'ask_user_agent_display_name';
+const PROP_DESTINATION_TYPE = 'ask_user_destination_type';
+const PROP_DESTINATION_CHANNEL_NAME = 'ask_user_destination_channel_display_name';
+const PROP_DESTINATION_MEMBER_COUNT = 'ask_user_destination_member_count';
+const PROP_DESTINATION_POLICY_ENFORCED = 'ask_user_destination_policy_enforced';
+
+export type AskUserStatus = 'pending' | 'answered' | 'declined' | 'canceled';
+
+// '' = the prop is absent or malformed (pre-v2 card / unknown destination).
+export type AskUserRequesterKind = 'user' | 'bot' | 'unknown' | '';
+export type AskUserDestinationType = 'dm' | 'gm' | 'channel' | '';
 
 export interface AskUserCardData {
     status: AskUserStatus;
@@ -52,6 +68,17 @@ export interface AskUserCardData {
     sourcePostId: string; // '' = no permalink
     answeredAt: number; // ms; 0 when absent
     answerPreview: string;
+
+    // v2 (V2-C2) — every field degrades to its zero value on pre-v2 cards.
+    requesterKind: AskUserRequesterKind; // '' = pre-v2 card, render v1 layout
+    requesterUsername: string;
+    requesterDisplayName: string;
+    requesterPosition: string;
+    agentDisplayName: string;
+    destinationType: AskUserDestinationType;
+    destinationChannelName: string;
+    destinationMemberCount: number; // <= 0 = unknown
+    destinationPolicyEnforced: boolean;
 }
 
 function stringProp(value: unknown): string {
@@ -66,7 +93,7 @@ export function parseAskUserProps(props: Record<string, unknown> | undefined): A
     }
 
     const status = props[PROP_STATUS];
-    if (status !== 'pending' && status !== 'answered' && status !== 'declined') {
+    if (status !== 'pending' && status !== 'answered' && status !== 'declined' && status !== 'canceled') {
         return null;
     }
 
@@ -124,6 +151,20 @@ export function parseAskUserProps(props: Record<string, unknown> | undefined): A
     const rawAnsweredAt = props[PROP_ANSWERED_AT];
     const answeredAt = typeof rawAnsweredAt === 'number' && Number.isFinite(rawAnsweredAt) && rawAnsweredAt > 0 ? rawAnsweredAt : 0;
 
+    // v2 props (V2-C2). Every one is optional and a malformed value is treated
+    // as absent — a bad v2 prop must never break an otherwise valid card.
+    const rawKind = props[PROP_REQUESTER_KIND];
+    const requesterKind: AskUserRequesterKind =
+        rawKind === 'user' || rawKind === 'bot' || rawKind === 'unknown' ? rawKind : '';
+
+    const rawDestinationType = props[PROP_DESTINATION_TYPE];
+    const destinationType: AskUserDestinationType =
+        rawDestinationType === 'dm' || rawDestinationType === 'gm' || rawDestinationType === 'channel' ? rawDestinationType : '';
+
+    const rawMemberCount = props[PROP_DESTINATION_MEMBER_COUNT];
+    const destinationMemberCount =
+        typeof rawMemberCount === 'number' && Number.isFinite(rawMemberCount) && rawMemberCount > 0 ? rawMemberCount : 0;
+
     return {
         status,
         question,
@@ -136,6 +177,15 @@ export function parseAskUserProps(props: Record<string, unknown> | undefined): A
         sourcePostId: stringProp(props[PROP_SOURCE_POST_ID]),
         answeredAt,
         answerPreview: stringProp(props[PROP_ANSWER_PREVIEW]),
+        requesterKind,
+        requesterUsername: stringProp(props[PROP_REQUESTER_USERNAME]),
+        requesterDisplayName: stringProp(props[PROP_REQUESTER_DISPLAY_NAME]),
+        requesterPosition: stringProp(props[PROP_REQUESTER_POSITION]),
+        agentDisplayName: stringProp(props[PROP_AGENT_DISPLAY_NAME]),
+        destinationType,
+        destinationChannelName: stringProp(props[PROP_DESTINATION_CHANNEL_NAME]),
+        destinationMemberCount,
+        destinationPolicyEnforced: props[PROP_DESTINATION_POLICY_ENFORCED] === true,
     };
 }
 
@@ -204,6 +254,73 @@ const AttributionRow = styled.div`
     font-weight: 400;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
+`;
+
+// F4a (V2-C7): visually contained region for MODEL-authored text (question,
+// context, option labels/descriptions, free-form input). System chrome must
+// never render inside it, so injected text cannot forge system lines.
+const AIContentSection = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-left: 12px;
+    padding: 12px;
+    background: rgba(var(--center-channel-color-rgb), 0.04);
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+    border-radius: 4px;
+`;
+
+const AIContentLabel = styled.div`
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
+// Inside the AI region the section supplies the left inset, so the v1 12px
+// question/context padding is dropped.
+const AIQuestionText = styled(QuestionText)`
+    padding-left: 0;
+`;
+
+const AIContextLine = styled(ContextLine)`
+    padding-left: 0;
+`;
+
+// SYSTEM-authored context (destination disclosure, requester identity,
+// access-policy note) below the model region and above the footer buttons.
+const SystemContextSection = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-left: 12px;
+    padding: 8px 0 0;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+`;
+
+const SystemContextLine = styled.div`
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 16px;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+`;
+
+const SystemContextIcon = styled.span`
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    height: 16px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
+// v2 attribution line above the model region; same line treatment as the
+// system context block but with the card's 12px left inset.
+const AttributionLine = styled(SystemContextLine)`
+    margin-left: 12px;
 `;
 
 const ErrorLine = styled.div`
@@ -339,9 +456,13 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
     const {formatMessage} = useIntl();
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const siteURL = useSelector<GlobalState, string | undefined>((state) => state.entities.general.config.SiteURL);
-    const requesterId = data?.requesterId ?? '';
-    const requesterUsername = useSelector<GlobalState, string | undefined>(
-        (state) => state.entities.users.profiles[requesterId]?.username,
+
+    // Pre-v2 cards attribute via the requester id + a client profile fetch.
+    // v2 cards (requesterKind set) carry the username in props and never
+    // depend on the profile store for attribution.
+    const legacyRequesterId = (data?.requesterKind ?? '') === '' ? (data?.requesterId ?? '') : '';
+    const legacyRequesterUsername = useSelector<GlobalState, string | undefined>(
+        (state) => state.entities.users.profiles[legacyRequesterId]?.username,
     );
 
     // The card post's author is the bot. Its username must accompany every
@@ -355,8 +476,8 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
 
     useEffect(() => {
         const missing: string[] = [];
-        if (requesterId && !requesterUsername) {
-            missing.push(requesterId);
+        if (legacyRequesterId && !legacyRequesterUsername) {
+            missing.push(legacyRequesterId);
         }
         if (botUserId && !botUsername) {
             missing.push(botUserId);
@@ -376,7 +497,7 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
             // (e.g. another consumer fetches them) or the card remounts and
             // the effect runs again.
         });
-    }, [requesterId, requesterUsername, botUserId, botUsername, dispatch]);
+    }, [legacyRequesterId, legacyRequesterUsername, botUserId, botUsername, dispatch]);
 
     const selection = useOptionSelection(data?.multiSelect ?? false);
 
@@ -457,9 +578,9 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
     };
 
     // Props always win over the local snapshot: the server patches the card
-    // post on answer/decline and the post-edit event delivers new props. The
-    // local snapshot only bridges the gap until that event lands.
-    let resolution: 'answered' | 'declined' | null = null;
+    // post on answer/decline/cancel and the post-edit event delivers new
+    // props. The local snapshot only bridges the gap until that event lands.
+    let resolution: 'answered' | 'declined' | 'canceled' | null = null;
     let preview = '';
     let resolvedAt = 0;
     if (data.status === 'answered') {
@@ -468,6 +589,8 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
         resolvedAt = data.answeredAt;
     } else if (data.status === 'declined') {
         resolution = 'declined';
+    } else if (data.status === 'canceled') {
+        resolution = 'canceled';
     } else if (submitState.phase === 'resolved') {
         resolution = submitState.resolution;
         preview = submitState.preview;
@@ -483,6 +606,17 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
                         defaultMessage='You declined to answer'
                     />
                 </DeclinedText>
+            );
+        }
+        if (resolution === 'canceled') {
+            // Neutral terminal state (V2-C6): no preview, no timestamp.
+            return (
+                <StatusLine>
+                    <FormattedMessage
+                        id='ai.ask_user.no_longer_needed'
+                        defaultMessage='This question is no longer needed.'
+                    />
+                </StatusLine>
             );
         }
         return (
@@ -506,50 +640,62 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
         );
     };
 
-    const renderPending = () => (
+    // MODEL-authored answer inputs (option labels/descriptions, free-form
+    // field). In the v2 layout these render inside the AI content region.
+    const renderAnswerInputs = () => (
+        hasOptions ? (
+            <QuestionOptions
+                options={data.options}
+                multiSelect={data.multiSelect}
+                allowFreeForm={data.allowFreeForm}
+                interactive={interactive}
+                multilineFreeForm={true}
+                selections={selection.selections}
+                freeFormSelected={selection.freeFormSelected}
+                customText={selection.customText}
+                onToggleOption={guardedToggleOption}
+                onToggleFreeForm={guardedToggleFreeForm}
+                onChangeCustomText={selection.setCustomText}
+            />
+        ) : (
+            canRespond && (
+                <FreeFormOnlyRow>
+                    <FreeFormTextarea
+                        rows={3}
+                        value={freeFormOnlyText}
+                        placeholder={freeFormOnlyPlaceholder}
+                        aria-label={freeFormOnlyPlaceholder}
+                        disabled={!interactive}
+                        onChange={(e) => setFreeFormOnlyText(e.target.value)}
+                    />
+                </FreeFormOnlyRow>
+            )
+        )
+    );
+
+    // SYSTEM-authored pending chrome: submit status/error lines + footer
+    // buttons. In the v2 layout these render outside the AI content region.
+    const renderPendingChrome = () => (
         <>
-            {hasOptions ? (
-                <QuestionOptions
-                    options={data.options}
-                    multiSelect={data.multiSelect}
-                    allowFreeForm={data.allowFreeForm}
-                    interactive={interactive}
-                    multilineFreeForm={true}
-                    selections={selection.selections}
-                    freeFormSelected={selection.freeFormSelected}
-                    customText={selection.customText}
-                    onToggleOption={guardedToggleOption}
-                    onToggleFreeForm={guardedToggleFreeForm}
-                    onChangeCustomText={selection.setCustomText}
-                />
-            ) : (
-                canRespond && (
-                    <FreeFormOnlyRow>
-                        <FreeFormTextarea
-                            rows={3}
-                            value={freeFormOnlyText}
-                            placeholder={freeFormOnlyPlaceholder}
-                            aria-label={freeFormOnlyPlaceholder}
-                            disabled={!interactive}
-                            onChange={(e) => setFreeFormOnlyText(e.target.value)}
-                        />
-                    </FreeFormOnlyRow>
-                )
-            )}
-            {submitState.phase === 'error' && (
+            {submitState.phase === 'error' && !submitState.conflict && (
                 <ErrorLine>
-                    {submitState.conflict ? (
-                        <FormattedMessage
-                            id='ai.ask_user.no_longer_active'
-                            defaultMessage='This question is no longer active.'
-                        />
-                    ) : (
-                        <FormattedMessage
-                            id='ai.ask_user.submit_failed'
-                            defaultMessage='Failed to submit your response. Please try again.'
-                        />
-                    )}
+                    <FormattedMessage
+                        id='ai.ask_user.submit_failed'
+                        defaultMessage='Failed to submit your response. Please try again.'
+                    />
                 </ErrorLine>
+            )}
+            {submitState.phase === 'error' && submitState.conflict && (
+
+                // A 409 means the question was resolved elsewhere (an answer
+                // race or an initiator cancel). Neutral line, not an error;
+                // the patched props settle the final rendering (V2-C4).
+                <StatusLine>
+                    <FormattedMessage
+                        id='ai.ask_user.no_longer_needed'
+                        defaultMessage='This question is no longer needed.'
+                    />
+                </StatusLine>
             )}
             {submitState.phase === 'submitting' && (
                 <StatusLine>
@@ -600,28 +746,226 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
         </>
     );
 
+    const renderPending = () => (
+        <>
+            {renderAnswerInputs()}
+            {renderPendingChrome()}
+        </>
+    );
+
+    const permalink = isValidId(data.sourcePostId) && Boolean(siteURL) && (
+        <ViewConversationLink href={`${siteURL}/_redirect/pl/${data.sourcePostId}`}>
+            <FormattedMessage
+                id='ai.ask_user.view_conversation'
+                defaultMessage='View conversation'
+            />
+        </ViewConversationLink>
+    );
+
+    // Pre-v2 card: render the exact v1 layout (V2-C2 backward-compat rule).
+    if (data.requesterKind === '') {
+        return (
+            <Card>
+                <QuestionText>{data.question}</QuestionText>
+                {data.context !== '' && <ContextLine>{data.context}</ContextLine>}
+                {legacyRequesterId !== '' && legacyRequesterUsername && (
+                    <AttributionRow>
+                        <FormattedMessage
+                            id='ai.ask_user.on_behalf_of'
+                            defaultMessage='Asked on behalf of @{username}'
+                            values={{username: legacyRequesterUsername}}
+                        />
+                    </AttributionRow>
+                )}
+                {resolution === null ? renderPending() : renderResolved()}
+                {permalink}
+            </Card>
+        );
+    }
+
+    // F4c attribution — always from props, never from model text. An empty
+    // name value (malformed props) omits the row rather than rendering a
+    // broken sentence.
+    const renderAttribution = () => {
+        if (data.requesterKind === 'user' && data.requesterUsername !== '') {
+            return (
+                <AttributionLine>
+                    <SystemContextIcon><AccountOutlineIcon size={14}/></SystemContextIcon>
+                    <span>
+                        <FormattedMessage
+                            id='ai.ask_user.on_behalf_of'
+                            defaultMessage='Asked on behalf of @{username}'
+                            values={{username: data.requesterUsername}}
+                        />
+                    </span>
+                </AttributionLine>
+            );
+        }
+        if (data.requesterKind === 'bot' && data.agentDisplayName !== '') {
+            return (
+                <AttributionLine>
+                    <SystemContextIcon><AccountOutlineIcon size={14}/></SystemContextIcon>
+                    <span>
+                        <FormattedMessage
+                            id='ai.ask_user.asked_by_agent_unattended'
+                            defaultMessage='Asked by the {agentName} agent running unattended (no human requester)'
+                            values={{agentName: data.agentDisplayName}}
+                        />
+                    </span>
+                </AttributionLine>
+            );
+        }
+        if (data.requesterKind === 'unknown' && data.agentDisplayName !== '') {
+            return (
+                <AttributionLine>
+                    <SystemContextIcon><AccountOutlineIcon size={14}/></SystemContextIcon>
+                    <span>
+                        <FormattedMessage
+                            id='ai.ask_user.asked_by_agent_unknown_requester'
+                            defaultMessage='Asked via the {agentName} agent (requester identity unavailable)'
+                            values={{agentName: data.agentDisplayName}}
+                        />
+                    </span>
+                </AttributionLine>
+            );
+        }
+        return null;
+    };
+
+    // Destination disclosure — the full V2-C2 rendering matrix. Every lookup
+    // failure at dispatch degraded toward the broader audience claim, so the
+    // fallbacks here go in the same direction.
+    const renderDestinationMessage = () => {
+        if (data.destinationType === 'dm') {
+            if (data.requesterKind === 'user' && data.requesterUsername !== '') {
+                return (
+                    <FormattedMessage
+                        id='ai.ask_user.destination_dm'
+                        defaultMessage='Your answer will be shared with @{username}.'
+                        values={{username: data.requesterUsername}}
+                    />
+                );
+            }
+            if (data.requesterKind === 'bot' && data.agentDisplayName !== '') {
+                return (
+                    <FormattedMessage
+                        id='ai.ask_user.destination_dm_agent'
+                        defaultMessage='Your answer will be shared with the {agentName} agent.'
+                        values={{agentName: data.agentDisplayName}}
+                    />
+                );
+            }
+            return (
+                <FormattedMessage
+                    id='ai.ask_user.destination_dm_unknown'
+                    defaultMessage='Your answer will be shared with the person who asked the agent.'
+                />
+            );
+        }
+        if (data.destinationType === 'channel') {
+            if (data.destinationChannelName !== '' && data.destinationMemberCount > 0) {
+                return (
+                    <FormattedMessage
+                        id='ai.ask_user.destination_channel'
+                        defaultMessage='Your answer may be shared with the {count, plural, one {# member} other {# members}} of ~{channelName}.'
+                        values={{count: data.destinationMemberCount, channelName: data.destinationChannelName}}
+                    />
+                );
+            }
+            if (data.destinationChannelName !== '') {
+                return (
+                    <FormattedMessage
+                        id='ai.ask_user.destination_channel_no_count'
+                        defaultMessage='Your answer may be shared with the members of ~{channelName}.'
+                        values={{channelName: data.destinationChannelName}}
+                    />
+                );
+            }
+            return (
+                <FormattedMessage
+                    id='ai.ask_user.destination_channel_unknown'
+                    defaultMessage='Your answer may be shared in the channel where the agent was asked.'
+                />
+            );
+        }
+        if (data.destinationType === 'gm') {
+            if (data.destinationMemberCount > 0) {
+                return (
+                    <FormattedMessage
+                        id='ai.ask_user.destination_gm'
+                        defaultMessage='Your answer may be shared with the {count, plural, one {# member} other {# members}} of a group message.'
+                        values={{count: data.destinationMemberCount}}
+                    />
+                );
+            }
+            return (
+                <FormattedMessage
+                    id='ai.ask_user.destination_gm_no_count'
+                    defaultMessage='Your answer may be shared with the members of a group message.'
+                />
+            );
+        }
+        return null;
+    };
+
+    const destinationMessage = renderDestinationMessage();
+
+    // Identity detail (kind=user only): non-empty parts joined with ' · ' in
+    // code — pure formatting, no i18n message (V2-C2).
+    const identityDetail = data.requesterKind === 'user' ?
+        [data.requesterDisplayName, data.requesterPosition].filter((part) => part !== '').join(' · ') :
+        '';
+
+    // The policy flag can only come from the same channel read that produced
+    // the display name; anything unavailable means the line is omitted —
+    // never render an empty or "no restrictions" statement (V2-C2).
+    const showPolicyLine = data.destinationType === 'channel' &&
+        data.destinationPolicyEnforced &&
+        data.destinationChannelName !== '';
+
+    const hasSystemContext = destinationMessage !== null || identityDetail !== '' || showPolicyLine;
+
     return (
         <Card>
-            <QuestionText>{data.question}</QuestionText>
-            {data.context !== '' && <ContextLine>{data.context}</ContextLine>}
-            {requesterId !== '' && requesterUsername && (
-                <AttributionRow>
+            {renderAttribution()}
+            <AIContentSection data-testid='ask-user-ai-content'>
+                <AIContentLabel>
                     <FormattedMessage
-                        id='ai.ask_user.on_behalf_of'
-                        defaultMessage='Asked on behalf of @{username}'
-                        values={{username: requesterUsername}}
+                        id='ai.ask_user.agent_generated_label'
+                        defaultMessage='AI-generated content'
                     />
-                </AttributionRow>
+                </AIContentLabel>
+                <AIQuestionText>{data.question}</AIQuestionText>
+                {data.context !== '' && <AIContextLine>{data.context}</AIContextLine>}
+                {resolution === null && renderAnswerInputs()}
+            </AIContentSection>
+            {hasSystemContext && (
+                <SystemContextSection>
+                    {destinationMessage !== null && (
+                        <SystemContextLine>
+                            <SystemContextIcon><EyeOutlineIcon size={14}/></SystemContextIcon>
+                            <span>{destinationMessage}</span>
+                        </SystemContextLine>
+                    )}
+                    {identityDetail !== '' && (
+                        <SystemContextLine>{identityDetail}</SystemContextLine>
+                    )}
+                    {showPolicyLine && (
+                        <SystemContextLine>
+                            <SystemContextIcon><ShieldOutlineIcon size={14}/></SystemContextIcon>
+                            <span>
+                                <FormattedMessage
+                                    id='ai.ask_user.channel_policy_enforced'
+                                    defaultMessage='Access to ~{channelName} is restricted by an attribute-based access policy.'
+                                    values={{channelName: data.destinationChannelName}}
+                                />
+                            </span>
+                        </SystemContextLine>
+                    )}
+                </SystemContextSection>
             )}
-            {resolution === null ? renderPending() : renderResolved()}
-            {isValidId(data.sourcePostId) && Boolean(siteURL) && (
-                <ViewConversationLink href={`${siteURL}/_redirect/pl/${data.sourcePostId}`}>
-                    <FormattedMessage
-                        id='ai.ask_user.view_conversation'
-                        defaultMessage='View conversation'
-                    />
-                </ViewConversationLink>
-            )}
+            {resolution === null ? renderPendingChrome() : renderResolved()}
+            {permalink}
         </Card>
     );
 };

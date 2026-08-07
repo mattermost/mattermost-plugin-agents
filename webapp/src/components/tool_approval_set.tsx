@@ -4,12 +4,17 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
+import {useSelector} from 'react-redux';
 
-import {doToolCall, doToolResult} from '@/client';
+import type {ClientError} from '@mattermost/client';
+
+import {GlobalState} from '@mattermost/types/store';
+
+import {doAskUserCancel, doToolCall, doToolResult} from '@/client';
 import {invalidateConversation} from '@/hooks/use_conversation';
 
-import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus, UserInteractionSelect} from './tool_types';
-import ToolCard from './tool_card';
+import {AskAnotherUserToolName, ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus, UserInteractionSelect} from './tool_types';
+import ToolCard, {type AskCancelState} from './tool_card';
 import QuestionCard, {parseQuestionArgs} from './question_card';
 
 // Styled components
@@ -91,6 +96,18 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     // call ID. Sent as tool_answers alongside accepted_tool_ids.
     const toolAnswersRef = useRef<Record<string, ToolAnswer>>({});
 
+    // Cancel state per waiting AskAnotherUser call (F5). A successful cancel
+    // stays 'submitting' until the conversation refetch removes the waiting
+    // card, so the control cannot be clicked twice.
+    const [askCancelStates, setAskCancelStates] = useState<Record<string, AskCancelState>>({});
+
+    // The anchor post's author is the conversation bot; its username rides
+    // along on the cancel request (same rationale as doAskUserResponse).
+    const botUsername = useSelector<GlobalState, string | undefined>((state) => {
+        const authorID = state.entities.posts.posts[props.postID]?.user_id;
+        return authorID ? state.entities.users.profiles[authorID]?.username : undefined; // eslint-disable-line no-undefined
+    });
+
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
     const pendingToolCalls = useMemo(() => {
@@ -142,6 +159,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         setToolDecisions({});
         setIsSubmitting(false);
         setError('');
+        setAskCancelStates({});
         submitInFlightRef.current = false;
         toolDecisionsRef.current = {};
         toolAnswersRef.current = {};
@@ -213,6 +231,33 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
         submitDecisions(approvedToolIDs);
     }, [effectiveCanApprove, isSubmitting, decisionToolIDSet, decisionToolCalls, submitDecisions]);
+
+    const handleAskCancel = useCallback(async (toolID: string) => {
+        if (!botUsername || askCancelStates[toolID] === 'submitting') {
+            return;
+        }
+        setAskCancelStates((prev) => ({...prev, [toolID]: 'submitting'}));
+        try {
+            await doAskUserCancel(props.postID, botUsername, {tool_use_id: toolID});
+            if (props.conversationID) {
+                invalidateConversation(props.conversationID);
+            }
+
+            // Stay 'submitting': the refetched conversation removes the
+            // waiting card (or renders the terminal state) and the state
+            // reset effect clears this entry.
+        } catch (err) {
+            if ((err as ClientError).status_code === 409) {
+                // The question was resolved by a racing answer/decline —
+                // not an error; the refetched terminal state settles the UI.
+                if (props.conversationID) {
+                    invalidateConversation(props.conversationID);
+                }
+            } else {
+                setAskCancelStates((prev) => ({...prev, [toolID]: 'error'}));
+            }
+        }
+    }, [botUsername, askCancelStates, props.postID, props.conversationID]);
 
     const handleQuestionAnswer = useCallback((toolID: string, selections: string[], custom: string) => {
         const answer: ToolAnswer = custom ? {selected: selections, custom} : {selected: selections};
@@ -339,6 +384,12 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     }
                 }
 
+                // Requester-only cancel control for outstanding
+                // AskAnotherUser questions (F5). Observers never see it.
+                const canCancelAsk = props.canApprove &&
+                    tool.name === AskAnotherUserToolName &&
+                    tool.status === ToolCallStatus.Waiting;
+
                 return (
                     <ToolCard
                         key={tool.id}
@@ -355,6 +406,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         showResults={props.showResults}
                         approvalStage={props.approvalStage}
                         isAutoApproved={tool.status === ToolCallStatus.AutoApproved}
+                        onCancelAsk={canCancelAsk ? () => handleAskCancel(tool.id) : undefined} // eslint-disable-line no-undefined
+                        askCancelState={canCancelAsk ? (askCancelStates[tool.id] ?? 'idle') : undefined} // eslint-disable-line no-undefined
                     />
                 );
             })}

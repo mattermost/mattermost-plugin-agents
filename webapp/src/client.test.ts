@@ -9,6 +9,7 @@ import type {ConversationResponse, Turn} from '@/types/conversation';
 import manifest from './manifest';
 
 import {
+    doAskUserCancel,
     doAskUserResponse,
     doLoopInAgent,
     getConversation,
@@ -286,6 +287,39 @@ describe('doAskUserResponse', () => {
         mockFetch.mockResolvedValue({ok: false, status: 409} as unknown as Response);
 
         await expect(doAskUserResponse(WELL_FORMED_ID, 'agentbot', {action: 'answer', selected: ['A'], free_form: ''})).
+            rejects.toMatchObject({status_code: 409});
+    });
+});
+
+describe('doAskUserCancel', () => {
+    test('posts the tool_use_id body to the ask_user_cancel route with the bot in the query', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({status: 'canceled'}));
+
+        await expect(doAskUserCancel(WELL_FORMED_ID, 'agentbot', {tool_use_id: 'toolu_123'})).
+            resolves.toEqual({status: 'canceled'});
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/ask_user_cancel?botUsername=agentbot`);
+        expect(options).toEqual(expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({tool_use_id: 'toolu_123'}),
+        }));
+    });
+
+    test('percent-encodes the bot username in the query string', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({status: 'canceled'}));
+
+        await doAskUserCancel(WELL_FORMED_ID, 'agent bot&x=1', {tool_use_id: 'toolu_123'});
+
+        const [url] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/ask_user_cancel?botUsername=agent%20bot%26x%3D1`);
+    });
+
+    test('rejects with the response status code on a non-OK response', async () => {
+        mockFetch.mockResolvedValue({ok: false, status: 409} as unknown as Response);
+
+        await expect(doAskUserCancel(WELL_FORMED_ID, 'agentbot', {tool_use_id: 'toolu_123'})).
             rejects.toMatchObject({status_code: 409});
     });
 });

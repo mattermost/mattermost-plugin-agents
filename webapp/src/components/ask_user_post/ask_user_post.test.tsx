@@ -65,6 +65,24 @@ function omit(props: Record<string, unknown>, key: string): Record<string, unkno
     return out;
 }
 
+// v2 (V2-C2) prop set: a human requester asking from a DM. Tests override
+// individual keys to walk the destination/attribution matrices.
+const V2_BASE: Record<string, unknown> = {
+    ask_user_requester_kind: 'user',
+    ask_user_requester_username: 'jane',
+    ask_user_requester_display_name: 'Jane Doe',
+    ask_user_requester_position: 'Engineering Lead',
+    ask_user_agent_display_name: 'Matty',
+    ask_user_destination_type: 'dm',
+    ask_user_destination_channel_display_name: '',
+    ask_user_destination_member_count: 0,
+    ask_user_destination_policy_enforced: false,
+};
+
+function makeV2Props(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return makeProps({...V2_BASE, ...overrides});
+}
+
 type StateOverrides = {
     currentUserId?: string;
     profiles?: Record<string, {id: string; username: string}>;
@@ -105,6 +123,10 @@ function renderPost(propOverrides: Record<string, unknown> = {}) {
     return render(buildPostElement(propOverrides));
 }
 
+function renderV2Post(propOverrides: Record<string, unknown> = {}) {
+    return renderPost({...V2_BASE, ...propOverrides});
+}
+
 beforeEach(() => {
     mockDoAskUserResponse.mockReset();
     mockDoAskUserResponse.mockResolvedValue({status: 'answered'});
@@ -129,6 +151,15 @@ describe('parseAskUserProps', () => {
             sourcePostId: SOURCE_POST_ID,
             answeredAt: 0,
             answerPreview: '',
+            requesterKind: '',
+            requesterUsername: '',
+            requesterDisplayName: '',
+            requesterPosition: '',
+            agentDisplayName: '',
+            destinationType: '',
+            destinationChannelName: '',
+            destinationMemberCount: 0,
+            destinationPolicyEnforced: false,
         });
     });
 
@@ -175,6 +206,55 @@ describe('parseAskUserProps', () => {
     test('treats a non-numeric answered_at as absent', () => {
         expect(parseAskUserProps(makeProps({ask_user_answered_at: 'noon'}))?.answeredAt).toBe(0);
     });
+
+    test('parses the full v2 prop set', () => {
+        expect(parseAskUserProps(makeV2Props({
+            ask_user_destination_type: 'channel',
+            ask_user_destination_channel_display_name: 'Town Square',
+            ask_user_destination_member_count: 12,
+            ask_user_destination_policy_enforced: true,
+        }))).toMatchObject({
+            requesterKind: 'user',
+            requesterUsername: 'jane',
+            requesterDisplayName: 'Jane Doe',
+            requesterPosition: 'Engineering Lead',
+            agentDisplayName: 'Matty',
+            destinationType: 'channel',
+            destinationChannelName: 'Town Square',
+            destinationMemberCount: 12,
+            destinationPolicyEnforced: true,
+        });
+    });
+
+    test('defaults every v2 prop on a pre-v2 card', () => {
+        expect(parseAskUserProps(makeProps())).toMatchObject({
+            requesterKind: '',
+            requesterUsername: '',
+            requesterDisplayName: '',
+            requesterPosition: '',
+            agentDisplayName: '',
+            destinationType: '',
+            destinationChannelName: '',
+            destinationMemberCount: 0,
+            destinationPolicyEnforced: false,
+        });
+    });
+
+    // A malformed v2 prop must degrade to absent, never break the card.
+    test.each([
+        ['numeric requester kind', {ask_user_requester_kind: 42}, {requesterKind: ''}],
+        ['unknown requester kind string', {ask_user_requester_kind: 'martian'}, {requesterKind: ''}],
+        ['unknown destination type', {ask_user_destination_type: 'broadcast'}, {destinationType: ''}],
+        ['member count as string', {ask_user_destination_member_count: '12'}, {destinationMemberCount: 0}],
+        ['negative member count', {ask_user_destination_member_count: -3}, {destinationMemberCount: 0}],
+        ['policy flag as string', {ask_user_destination_policy_enforced: 'yes'}, {destinationPolicyEnforced: false}],
+    ])('treats a malformed v2 prop as absent: %s', (_label, overrides, expected) => {
+        expect(parseAskUserProps(makeV2Props(overrides))).toMatchObject(expected);
+    });
+
+    test('accepts the canceled status', () => {
+        expect(parseAskUserProps(makeProps({ask_user_status: 'canceled'}))?.status).toBe('canceled');
+    });
 });
 
 // Pins the client preview against the server rule (askUserAnswerPreview in
@@ -213,6 +293,13 @@ describe('AskUserPost rendering', () => {
 
         const link = screen.getByRole('link', {name: 'View conversation'});
         expect(link.getAttribute('href')).toBe(`http://localhost:8065/_redirect/pl/${SOURCE_POST_ID}`);
+    });
+
+    test('pre-v2 cards render the v1 layout without any v2 chrome', () => {
+        renderPost();
+
+        expect(screen.queryByText('AI-generated content')).toBeNull();
+        expect(screen.queryByText(/Your answer (will|may) be shared/)).toBeNull();
     });
 
     test('omits the attribution row when there is no requester', () => {
@@ -284,6 +371,226 @@ describe('AskUserPost rendering', () => {
         renderPost({ask_user_status: 'bogus'});
 
         expect(screen.getByText(FALLBACK_MESSAGE)).not.toBeNull();
+        expect(screen.queryByText('Answer')).toBeNull();
+    });
+});
+
+describe('AskUserPost v2 destination disclosure', () => {
+    // The full V2-C2 rendering matrix, one row per destination/requester
+    // combination.
+    test.each([
+        [
+            'dm from a human requester',
+            {},
+            'Your answer will be shared with @jane.',
+        ],
+        [
+            'dm from an unattended agent',
+            {
+                ask_user_requester_kind: 'bot',
+                ask_user_requester_username: '',
+                ask_user_requester_display_name: '',
+                ask_user_requester_position: '',
+                ask_user_requester_id: '',
+            },
+            'Your answer will be shared with the Matty agent.',
+        ],
+        [
+            'dm with an unknown requester',
+            {
+                ask_user_requester_kind: 'unknown',
+                ask_user_requester_username: '',
+                ask_user_requester_display_name: '',
+                ask_user_requester_position: '',
+                ask_user_requester_id: '',
+            },
+            'Your answer will be shared with the person who asked the agent.',
+        ],
+        [
+            'channel with name and member count',
+            {
+                ask_user_destination_type: 'channel',
+                ask_user_destination_channel_display_name: 'Town Square',
+                ask_user_destination_member_count: 12,
+            },
+            'Your answer may be shared with the 12 members of ~Town Square.',
+        ],
+        [
+            'channel with name only',
+            {
+                ask_user_destination_type: 'channel',
+                ask_user_destination_channel_display_name: 'Town Square',
+                ask_user_destination_member_count: 0,
+            },
+            'Your answer may be shared with the members of ~Town Square.',
+        ],
+        [
+            'channel with nothing known',
+            {
+                ask_user_destination_type: 'channel',
+                ask_user_destination_channel_display_name: '',
+                ask_user_destination_member_count: 0,
+            },
+            'Your answer may be shared in the channel where the agent was asked.',
+        ],
+        [
+            'group message with member count',
+            {
+                ask_user_destination_type: 'gm',
+                ask_user_destination_member_count: 3,
+            },
+            'Your answer may be shared with the 3 members of a group message.',
+        ],
+        [
+            'group message without member count',
+            {
+                ask_user_destination_type: 'gm',
+                ask_user_destination_member_count: 0,
+            },
+            'Your answer may be shared with the members of a group message.',
+        ],
+    ])('%s', (_label, overrides, expected) => {
+        renderV2Post(overrides as Record<string, unknown>);
+
+        expect(screen.getByText(expected as string)).not.toBeNull();
+    });
+});
+
+describe('AskUserPost v2 access context', () => {
+    test('renders the policy line only when the flag is true', () => {
+        const {unmount} = renderV2Post({
+            ask_user_destination_type: 'channel',
+            ask_user_destination_channel_display_name: 'Town Square',
+            ask_user_destination_member_count: 12,
+            ask_user_destination_policy_enforced: true,
+        });
+
+        expect(screen.getByText('Access to ~Town Square is restricted by an attribute-based access policy.')).not.toBeNull();
+        unmount();
+
+        renderV2Post({
+            ask_user_destination_type: 'channel',
+            ask_user_destination_channel_display_name: 'Town Square',
+            ask_user_destination_member_count: 12,
+            ask_user_destination_policy_enforced: false,
+        });
+
+        expect(screen.queryByText(/attribute-based access policy/)).toBeNull();
+    });
+
+    test('never renders a policy line without a channel name', () => {
+        renderV2Post({
+            ask_user_destination_type: 'channel',
+            ask_user_destination_channel_display_name: '',
+            ask_user_destination_policy_enforced: true,
+        });
+
+        expect(screen.queryByText(/attribute-based access policy/)).toBeNull();
+    });
+
+    test.each([
+        ['display name and position', 'Jane Doe', 'Engineering Lead', 'Jane Doe · Engineering Lead'],
+        ['display name only', 'Jane Doe', '', 'Jane Doe'],
+        ['position only', '', 'Engineering Lead', 'Engineering Lead'],
+    ])('identity detail line with %s', (_label, displayName, position, expected) => {
+        renderV2Post({
+            ask_user_requester_display_name: displayName,
+            ask_user_requester_position: position,
+        });
+
+        expect(screen.getByText(expected)).not.toBeNull();
+    });
+
+    test('omits the identity line when both parts are empty', () => {
+        renderV2Post({
+            ask_user_requester_display_name: '',
+            ask_user_requester_position: '',
+        });
+
+        expect(screen.queryByText(/ · /)).toBeNull();
+        expect(screen.queryByText('Jane Doe')).toBeNull();
+    });
+});
+
+describe('AskUserPost v2 attribution', () => {
+    test('human requester attributes from props without a profile fetch', () => {
+        renderV2Post();
+
+        expect(screen.getByText('Asked on behalf of @jane')).not.toBeNull();
+
+        // The bot profile is cached in the fixture and the requester comes
+        // from props, so no hydration request is needed at all.
+        expect(mockGetProfilesByIds).not.toHaveBeenCalled();
+    });
+
+    test('unattended agent requester renders the unattended copy', () => {
+        renderV2Post({
+            ask_user_requester_kind: 'bot',
+            ask_user_requester_username: '',
+            ask_user_requester_display_name: '',
+            ask_user_requester_position: '',
+            ask_user_requester_id: '',
+        });
+
+        expect(screen.getByText('Asked by the Matty agent running unattended (no human requester)')).not.toBeNull();
+        expect(screen.queryByText(/Asked on behalf of/)).toBeNull();
+    });
+
+    test('unknown requester renders the unknown-requester copy', () => {
+        renderV2Post({
+            ask_user_requester_kind: 'unknown',
+            ask_user_requester_username: '',
+            ask_user_requester_display_name: '',
+            ask_user_requester_position: '',
+            ask_user_requester_id: '',
+        });
+
+        expect(screen.getByText('Asked via the Matty agent (requester identity unavailable)')).not.toBeNull();
+    });
+});
+
+describe('AskUserPost v2 visual separation', () => {
+    test('model-authored content renders inside the AI region; system chrome outside', () => {
+        renderV2Post();
+
+        const caption = screen.getByText('AI-generated content');
+        const aiRegion = caption.parentElement as HTMLElement;
+
+        // Model-authored: question, context, option labels, free-form toggle.
+        expect(aiRegion.textContent).toContain('Which release broke it?');
+        expect(aiRegion.textContent).toContain('Needed to finish the RCA');
+        expect(aiRegion.textContent).toContain('4.2.0');
+        expect(aiRegion.textContent).toContain('4.2.1');
+
+        // System-authored chrome must live outside the region so injected
+        // text cannot forge it: attribution, disclosure, and the buttons.
+        expect(aiRegion.textContent).not.toContain('Asked on behalf of');
+        expect(aiRegion.textContent).not.toContain('Your answer will be shared');
+        expect(aiRegion.textContent).not.toContain('Answer');
+        expect(aiRegion.textContent).not.toContain('Decline');
+
+        // The chrome itself still renders — just elsewhere in the card.
+        expect(screen.getByText('Asked on behalf of @jane')).not.toBeNull();
+        expect(screen.getByText('Your answer will be shared with @jane.')).not.toBeNull();
+        expect(screen.getByText('Answer')).not.toBeNull();
+    });
+});
+
+describe('AskUserPost canceled state', () => {
+    test('canceled props render the neutral terminal line without controls', () => {
+        renderV2Post({ask_user_status: 'canceled'});
+
+        expect(screen.getByText('This question is no longer needed.')).not.toBeNull();
+        expect(screen.queryByText('Answer')).toBeNull();
+        expect(screen.queryByText('Decline')).toBeNull();
+        expect(screen.queryByText('Answered')).toBeNull();
+        expect(screen.queryByText('4.2.0')).toBeNull();
+    });
+
+    test('a pre-v2 canceled card also renders the terminal line', () => {
+        renderPost({ask_user_status: 'canceled'});
+
+        expect(screen.getByText('This question is no longer needed.')).not.toBeNull();
         expect(screen.queryByText('Answer')).toBeNull();
     });
 });
@@ -443,20 +750,23 @@ describe('AskUserPost interaction', () => {
         expect(mockDoAskUserResponse).toHaveBeenCalledTimes(1);
     });
 
-    test('409 conflict shows the no-longer-active error and resolves from patched props', async () => {
+    test('409 conflict shows the neutral no-longer-needed state and resolves from patched props', async () => {
         mockDoAskUserResponse.mockRejectedValue({status_code: 409});
         const {rerender} = renderPost();
 
         fireEvent.click(screen.getByText('4.2.0'));
         fireEvent.click(screen.getByText('Answer'));
 
-        expect(await screen.findByText('This question is no longer active.')).not.toBeNull();
+        // The question was resolved elsewhere (answer race or initiator
+        // cancel) — a neutral line, never the red error copy (V2-C4).
+        expect(await screen.findByText('This question is no longer needed.')).not.toBeNull();
+        expect(screen.queryByText('Failed to submit your response. Please try again.')).toBeNull();
 
         // Conflict means someone else resolved the question; controls are dead.
         expect(screen.queryByText('Answer')).toBeNull();
 
         // The server patch arrives as new props via the post-edited event;
-        // props win over local state and the error banner clears.
+        // props win over local state and the neutral line clears.
         rerender(buildPostElement({
             ask_user_status: 'answered',
             ask_user_answer_preview: '4.2.1',
@@ -465,7 +775,25 @@ describe('AskUserPost interaction', () => {
 
         expect(screen.getByText('Answered')).not.toBeNull();
         expect(screen.getByText('4.2.1')).not.toBeNull();
-        expect(screen.queryByText('This question is no longer active.')).toBeNull();
+        expect(screen.queryByText('This question is no longer needed.')).toBeNull();
+    });
+
+    test('a 409 raced by a cancel settles into the canceled terminal state from props', async () => {
+        mockDoAskUserResponse.mockRejectedValue({status_code: 409});
+        const {rerender} = renderPost({...V2_BASE});
+
+        fireEvent.click(screen.getByText('4.2.0'));
+        fireEvent.click(screen.getByText('Answer'));
+
+        expect(await screen.findByText('This question is no longer needed.')).not.toBeNull();
+
+        // The canceled card patch arrives; props win and the terminal
+        // canceled rendering takes over (same copy, no controls).
+        rerender(buildPostElement({...V2_BASE, ask_user_status: 'canceled'}));
+
+        expect(screen.getByText('This question is no longer needed.')).not.toBeNull();
+        expect(screen.queryByText('Answer')).toBeNull();
+        expect(screen.queryByText('4.2.0')).toBeNull();
     });
 
     test('generic failure shows the retry error and keeps controls enabled', async () => {
