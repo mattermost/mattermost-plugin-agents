@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -72,6 +73,12 @@ type storedTokenEnvelope struct {
 	AuthMethod string `json:"authMethod,omitempty"`
 	// Resource is the canonical RFC 8707 resource the grant is bound to.
 	Resource string `json:"resource,omitempty"`
+	// RevocationEndpoint is the authorization server's RFC 7009 revocation
+	// endpoint, when it advertised one. Disconnecting revokes the grant there
+	// so access is actually cut off at the provider, not just locally. Empty
+	// for grants stored before this field existed (revocation is skipped) or
+	// when the AS advertises no revocation endpoint.
+	RevocationEndpoint string `json:"revocationEndpoint,omitempty"`
 }
 
 // loadTokenEnvelope retrieves the stored OAuth grant for a user and server.
@@ -256,8 +263,13 @@ func (m *OAuthManager) deleteToken(userID, serverID string) error {
 }
 
 // DeleteUserToken removes the stored OAuth token for a user and server,
-// effectively disconnecting the user from that MCP server.
-func (m *OAuthManager) DeleteUserToken(userID, serverID string) error {
+// effectively disconnecting the user from that MCP server. It first makes a
+// best-effort RFC 7009 revocation at the authorization server so the grant is
+// actually invalidated at the provider (not just in our KV store); revocation
+// failures never block the local delete.
+func (m *OAuthManager) DeleteUserToken(ctx context.Context, userID, serverID string) error {
+	m.revokeGrantBeforeDelete(ctx, userID, serverID)
+
 	tokenErr := m.deleteToken(userID, serverID)
 	authNeededErr := m.DeleteAuthNeededState(userID, serverID)
 	return errors.Join(tokenErr, authNeededErr)
@@ -362,6 +374,9 @@ type OAuthSession struct {
 	// with any other client.
 	ClientID   string `json:"clientID,omitempty"`
 	AuthMethod string `json:"authMethod,omitempty"`
+	// RevocationEndpoint is the AS's RFC 7009 revocation endpoint, carried
+	// into the stored grant so disconnect can revoke at the provider.
+	RevocationEndpoint string `json:"revocationEndpoint,omitempty"`
 }
 
 // Unlike the other loaders, a missing key surfaces as an error here:

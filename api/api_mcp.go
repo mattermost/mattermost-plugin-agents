@@ -298,7 +298,7 @@ func (a *API) handleDeleteUserMCPOAuth(c *gin.Context) {
 		return
 	}
 
-	if err := a.mcpClientManager.DisconnectUserOAuth(userID, serverName); err != nil {
+	if err := a.mcpClientManager.DisconnectUserOAuth(c.Request.Context(), userID, serverName); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to disconnect: %w", err))
 		return
 	}

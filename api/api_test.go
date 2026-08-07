@@ -158,7 +158,7 @@ func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedI
 	return m.processOAuthSession, m.processOAuthErr
 }
 
-func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
+func (m *mockMCPClientManager) DisconnectUserOAuth(_ context.Context, userID, serverName string) error {
 	m.disconnectCalls = append(m.disconnectCalls, mcpDisconnectCall{
 		userID:     userID,
 		serverName: serverName,

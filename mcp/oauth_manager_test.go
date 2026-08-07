@@ -464,6 +464,11 @@ func TestDeleteUserTokenCleanup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			manager, mockClient := setupTestOAuthManager(t)
 
+			// No stored grant to revoke: revocation is skipped and the delete
+			// proceeds. (Revocation behavior itself is covered separately.)
+			mockClient.On("KVGet", buildTokenKey(userID, serverID), mock.AnythingOfType("*[]uint8")).
+				Return(mmapi.ErrKVNotFound).
+				Once()
 			mockClient.On("KVDelete", buildTokenKey(userID, serverID)).
 				Return(tc.tokenDeleteErr).
 				Once()
@@ -471,7 +476,7 @@ func TestDeleteUserTokenCleanup(t *testing.T) {
 				Return(tc.authNeededDeleteErr).
 				Once()
 
-			err := manager.DeleteUserToken(userID, serverID)
+			err := manager.DeleteUserToken(context.Background(), userID, serverID)
 
 			if tc.expectedErr == nil {
 				require.NoError(t, err)

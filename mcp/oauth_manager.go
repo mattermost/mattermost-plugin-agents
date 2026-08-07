@@ -204,6 +204,9 @@ type resolvedOAuthConfig struct {
 	// resource is the canonical RFC 8707 resource identifier of the MCP
 	// server (the PRM resource value when discovery produced one).
 	resource string
+	// revocationEndpoint is the AS's RFC 7009 revocation endpoint, when
+	// advertised, so disconnecting can invalidate the grant at the provider.
+	revocationEndpoint string
 	// creds are the client credentials the config was assembled from.
 	creds *ClientCredentials
 }
@@ -231,6 +234,7 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 	requireIss := false
 	resource := serverURL // Fallback: canonical resource is the MCP server URL
 	registrationEndpoint := ""
+	revocationEndpoint := ""
 	var scopes []string
 	// authMethodsSupported carries the server's advertised
 	// token_endpoint_auth_methods_supported so dynamic client registration
@@ -254,6 +258,7 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 			issuer = authMetadata.Issuer
 			requireIss = authMetadata.AuthorizationResponseIssParameterSupported
 			registrationEndpoint = authMetadata.RegistrationEndpoint
+			revocationEndpoint = authMetadata.RevocationEndpoint
 			authMethodsSupported = authMetadata.TokenEndpointAuthMethodsSupported
 			// Fall back to the AS metadata's advertised scopes when the
 			// resource metadata did not carry any (some servers, e.g.
@@ -288,6 +293,7 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 			issuer = authMetadata.Issuer
 			requireIss = authMetadata.AuthorizationResponseIssParameterSupported
 			registrationEndpoint = authMetadata.RegistrationEndpoint
+			revocationEndpoint = authMetadata.RevocationEndpoint
 			authMethodsSupported = authMetadata.TokenEndpointAuthMethodsSupported
 			scopes = authMetadata.ScopesSupported
 			// authServerURL already set to baseURL above
@@ -318,12 +324,13 @@ func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metada
 	}
 
 	return &resolvedOAuthConfig{
-		config:        m.oauthConfigFromCredentials(clientCreds, authURL, tokenURL, scopes),
-		issuer:        issuer,
-		requireIss:    requireIss,
-		authServerURL: authServerURL,
-		resource:      resource,
-		creds:         clientCreds,
+		config:             m.oauthConfigFromCredentials(clientCreds, authURL, tokenURL, scopes),
+		issuer:             issuer,
+		requireIss:         requireIss,
+		authServerURL:      authServerURL,
+		resource:           resource,
+		revocationEndpoint: revocationEndpoint,
+		creds:              clientCreds,
 	}, nil
 }
 
@@ -415,9 +422,10 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 		AuthServerURL:     resolved.authServerURL,
 		TokenEndpoint:     resolved.config.Endpoint.TokenURL,
 		ResourceURL:       resolved.resource,
-		Scopes:            resolved.config.Scopes,
-		ClientID:          resolved.creds.ClientID,
-		AuthMethod:        resolved.creds.TokenEndpointAuthMethod,
+		Scopes:             resolved.config.Scopes,
+		ClientID:           resolved.creds.ClientID,
+		AuthMethod:         resolved.creds.TokenEndpointAuthMethod,
+		RevocationEndpoint: resolved.revocationEndpoint,
 	}); err != nil {
 		return "", fmt.Errorf("failed to store OAuth session: %w", err)
 	}
@@ -600,9 +608,10 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		Issuer:        session.Issuer,
 		TokenEndpoint: session.TokenEndpoint,
 		AuthServerURL: session.AuthServerURL,
-		ClientID:      clientCreds.ClientID,
-		AuthMethod:    clientCreds.TokenEndpointAuthMethod,
-		Resource:      session.ResourceURL,
+		ClientID:           clientCreds.ClientID,
+		AuthMethod:         clientCreds.TokenEndpointAuthMethod,
+		Resource:           session.ResourceURL,
+		RevocationEndpoint: session.RevocationEndpoint,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}

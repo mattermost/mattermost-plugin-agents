@@ -1057,7 +1057,7 @@ func TestClientManagerProcessOAuthCallbackRequiresOAuthManager(t *testing.T) {
 func TestClientManagerDisconnectUserOAuthRequiresOAuthManager(t *testing.T) {
 	manager := &ClientManager{}
 
-	err := manager.DisconnectUserOAuth("user-1", "GitHub")
+	err := manager.DisconnectUserOAuth(context.Background(), "user-1", "GitHub")
 
 	require.ErrorIs(t, err, ErrOAuthNotConfigured)
 }
