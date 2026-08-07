@@ -92,8 +92,8 @@ func (m *OAuthManager) revokeGrant(ctx context.Context, envelope *storedTokenEnv
 	}
 	// The endpoint comes from server-controlled metadata; validate its scheme
 	// before sending a token to it (HTTPS, or HTTP only for loopback).
-	if err := checkHTTPSOrLoopbackURL(envelope.RevocationEndpoint); err != nil {
-		return fmt.Errorf("refusing to use revocation endpoint %q: %w", envelope.RevocationEndpoint, err)
+	if schemeErr := checkHTTPSOrLoopbackURL(envelope.RevocationEndpoint); schemeErr != nil {
+		return fmt.Errorf("refusing to use revocation endpoint %q: %w", envelope.RevocationEndpoint, schemeErr)
 	}
 
 	tokenValue := envelope.Token.RefreshToken
