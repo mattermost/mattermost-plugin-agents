@@ -513,16 +513,18 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	target := newFakePluginMCPServer(t, 1)
 	t.Cleanup(target.Close)
 
-	var calls atomic.Int32
+	// The go-sdk retries transient 5xx responses while connecting, so the plugin
+	// has to stay down for the whole first request rather than a single call.
+	var pluginDown atomic.Bool
+	pluginDown.Store(true)
 	mockAPI := &fakePluginHTTPClient{
 		pluginHTTP: func(req *http.Request) *http.Response {
-			if calls.Add(1) == 1 {
-				rec := httptest.NewRecorder()
+			rec := httptest.NewRecorder()
+			if pluginDown.Load() {
 				rec.WriteHeader(http.StatusInternalServerError)
 				return rec.Result()
 			}
 
-			rec := httptest.NewRecorder()
 			target.Config.Handler.ServeHTTP(rec, req)
 			return rec.Result()
 		},
@@ -545,6 +547,8 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	require.Empty(t, tools)
 	require.NotNil(t, mcpErrors)
 	require.NotEmpty(t, mcpErrors.Errors)
+
+	pluginDown.Store(false)
 
 	tools, mcpErrors = m.GetToolsForUser(context.Background(), "alice")
 	require.Nil(t, mcpErrors, "successful plugin reconnect must not return the prior transient error")

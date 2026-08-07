@@ -21,8 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testListToolsMethod = "tools/list"
-
 type fixedPluginAPI struct {
 	plugintest.API
 	kvGet       func(string) ([]byte, *model.AppError)
@@ -146,7 +144,7 @@ func connectInMemoryTestSession(t *testing.T, server *mcp.Server) *mcp.ClientSes
 		_ = server.Run(ctx, serverTransport)
 	}()
 
-	client := mcp.NewClient(&mcp.Implementation{
+	client := NewSDKClient(&mcp.Implementation{
 		Name:    "test-client",
 		Version: "1.0.0",
 	}, nil)
@@ -332,7 +330,7 @@ func TestListAllToolsSkipsNilTools(t *testing.T) {
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			result, err := next(ctx, method, req)
-			if err != nil || method != testListToolsMethod {
+			if err != nil || method != listToolsMethod {
 				return result, err
 			}
 			listResult, ok := result.(*mcp.ListToolsResult)
@@ -401,7 +399,7 @@ func TestNewClientUsesCacheWithoutPaginationCall(t *testing.T) {
 	server := newStaticToolListMCPServer(2, "server_tool")
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			if method == testListToolsMethod {
+			if method == listToolsMethod {
 				listCalls.Add(1)
 				return nil, fmt.Errorf("unexpected tools/list call on cache hit")
 			}
@@ -435,7 +433,7 @@ func TestNewClientDoesNotCachePartialPaginationOnError(t *testing.T) {
 	server := newTestMCPServer(2, "tool_1", "tool_2", "tool_3")
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			if method == testListToolsMethod {
+			if method == listToolsMethod {
 				if params, ok := req.GetParams().(*mcp.ListToolsParams); ok && params.Cursor != "" {
 					return nil, fmt.Errorf("page 2 failed")
 				}

@@ -28,6 +28,8 @@ const (
 	EmbeddedServerName = "Mattermost"
 	EmbeddedClientKey  = "embedded://mattermost"
 
+	listToolsMethod = "tools/list"
+
 	ToolPolicyAsk               = config.MCPToolPolicyAsk
 	ToolPolicyAutoRunInDM       = config.MCPToolPolicyAutoRunInDM
 	ToolPolicyAutoRunEverywhere = config.MCPToolPolicyAutoRunEverywhere
@@ -136,6 +138,39 @@ func NewEmbeddedServerClientWithCache(server EmbeddedMCPServer, log pluginapi.Lo
 	return client
 }
 
+// NewSDKClient builds a go-sdk MCP client hardened against hostile tools/list
+// responses. Use it instead of calling mcp.NewClient directly.
+func NewSDKClient(impl *mcp.Implementation, opts *mcp.ClientOptions) *mcp.Client {
+	client := mcp.NewClient(impl, opts)
+	client.AddSendingMiddleware(dropNilTools)
+	return client
+}
+
+// dropNilTools removes null entries from tools/list responses. The go-sdk
+// dereferences every returned tool while validating header annotations, so a
+// server that sends `"tools": [null]` would panic the plugin before any of our
+// own nil checks could run.
+func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if err != nil || method != listToolsMethod {
+			return result, err
+		}
+		listResult, ok := result.(*mcp.ListToolsResult)
+		if !ok || listResult == nil {
+			return result, nil
+		}
+		kept := listResult.Tools[:0]
+		for _, tool := range listResult.Tools {
+			if tool != nil {
+				kept = append(kept, tool)
+			}
+		}
+		listResult.Tools = kept
+		return listResult, nil
+	}
+}
+
 func listAllTools(ctx context.Context, session *mcp.ClientSession) (map[string]*mcp.Tool, error) {
 	tools := make(map[string]*mcp.Tool)
 	for tool, err := range session.Tools(ctx, &mcp.ListToolsParams{}) {
@@ -177,7 +212,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	}
 
 	// Create MCP client
-	mcpClient := mcp.NewClient(
+	mcpClient := NewSDKClient(
 		&mcp.Implementation{
 			Name:    "mattermost-agents-embedded",
 			Version: "1.0",
@@ -344,7 +379,7 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 		httpClient: httpClient,
 	}
 
-	mcpClient := mcp.NewClient(
+	mcpClient := NewSDKClient(
 		&mcp.Implementation{
 			Name:    "mattermost-agents-plugin-bridge",
 			Version: "1.0",
@@ -457,7 +492,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// TODO: Load and check cached authentication information
 
 	// We have no information about this server, so try to connect various ways.
-	client := mcp.NewClient(
+	client := NewSDKClient(
 		&mcp.Implementation{
 			Name:    "mattermost-agents",
 			Version: "1.0",
