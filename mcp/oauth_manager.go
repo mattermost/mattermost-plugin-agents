@@ -582,7 +582,11 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 	if session.ResourceURL != "" {
 		exchangeOpts = append(exchangeOpts, oauth2.SetAuthURLParam("resource", session.ResourceURL))
 	}
-	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, m.httpClient)
+	// Use a client that refuses redirects: the code exchange sends the
+	// authorization code, PKCE verifier, and client secret, and the token
+	// endpoint the session was pinned to has no reason to redirect them
+	// elsewhere.
+	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, noRedirectClient(m.httpClient))
 	token, err := oauthConfig.Exchange(ctxWithClient, code, exchangeOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)

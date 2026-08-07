@@ -208,11 +208,10 @@ func (m *OAuthManager) doRefresh(ctx context.Context, envelope *storedTokenEnvel
 		req.SetBasicAuth(url.QueryEscape(creds.ClientID), url.QueryEscape(creds.ClientSecret))
 	}
 
-	httpClient := m.httpClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	resp, err := httpClient.Do(req)
+	// A token endpoint must not redirect us elsewhere: refuse to follow any
+	// redirect so the refresh token and client secret are never replayed to
+	// another host.
+	resp, err := noRedirectClient(m.httpClient).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token refresh request failed: %w", err)
 	}
