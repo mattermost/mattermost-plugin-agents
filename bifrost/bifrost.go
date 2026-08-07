@@ -35,6 +35,10 @@ const (
 	// CountTokensTimeout caps the count-tokens preflight so a wedged provider
 	// can't block the request handler.
 	CountTokensTimeout = 30 * time.Second
+	// FileDownloadTimeout caps a provider file-content download (sandbox
+	// output files can be sizeable, but a wedged provider must not hold a
+	// tool resolution open indefinitely).
+	FileDownloadTimeout = 60 * time.Second
 )
 
 type webSearchFallbackSource struct {
@@ -852,6 +856,33 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 		return 0, fmt.Errorf("bifrost count tokens returned nil response")
 	}
 	return resp.InputTokens, nil
+}
+
+// DownloadProviderFile implements llm.ProviderFileDownloader: it downloads a
+// provider-side file's content (e.g. an Anthropic code-execution output file)
+// through Bifrost's Files API support, using the primary provider's
+// credentials and base URL. Bifrost's Anthropic provider hits
+// GET /v1/files/{id}/content and attaches the files-api beta header itself.
+func (b *LLM) DownloadProviderFile(ctx context.Context, fileID string) ([]byte, string, error) {
+	if fileID == "" {
+		return nil, "", fmt.Errorf("file id is required")
+	}
+
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, FileDownloadTimeout)
+	defer cancel()
+
+	resp, bifrostErr := b.client.FileContentRequest(bifrostCtx, &schemas.BifrostFileContentRequest{
+		Provider: b.provider,
+		FileID:   fileID,
+	})
+	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file content error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		return nil, "", err
+	}
+	if resp == nil {
+		return nil, "", fmt.Errorf("bifrost file content returned nil response")
+	}
+	return resp.Content, resp.ContentType, nil
 }
 
 // functionToolsForCount keeps only function (custom) tool definitions, which

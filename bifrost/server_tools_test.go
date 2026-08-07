@@ -270,6 +270,54 @@ func flatten(groups ...[]string) []string {
 	return out
 }
 
+// TestDownloadProviderFile drives the real Bifrost client against a mock
+// Anthropic Files API and asserts the content, MIME type, auth header and
+// URL path — the contract AttachSandboxFile depends on. Also pins that the
+// implementation satisfies llm.ProviderFileDownloader, which gates the tool's
+// cataloging via a type assertion on the bot's LanguageModel.
+func TestDownloadProviderFile(t *testing.T) {
+	fileBytes := []byte("col1,col2\n1,2\n")
+	var gotPath, gotAPIKey string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("x-api-key")
+		if r.URL.Path != "/v1/files/file_011abc/content" {
+			http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"file not found"}}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/csv")
+		_, _ = w.Write(fileBytes)
+	}))
+	defer backend.Close()
+
+	llmClient, err := New(Config{
+		ProviderSettings: ProviderSettings{
+			Provider:         schemas.Anthropic,
+			APIKey:           "test-key",
+			APIURL:           backend.URL,
+			DefaultModel:     "claude-sonnet-4-6",
+			StreamingTimeout: 10 * time.Second,
+		},
+	})
+	require.NoError(t, err)
+	defer llmClient.Shutdown()
+
+	var downloader llm.ProviderFileDownloader = llmClient // compile-time + runtime contract
+
+	content, contentType, err := downloader.DownloadProviderFile(context.Background(), "file_011abc")
+	require.NoError(t, err)
+	assert.Equal(t, fileBytes, content)
+	assert.Equal(t, "text/csv", contentType)
+	assert.Equal(t, "/v1/files/file_011abc/content", gotPath)
+	assert.Equal(t, "test-key", gotAPIKey, "download must use the service credentials")
+
+	_, _, err = downloader.DownloadProviderFile(context.Background(), "file_missing")
+	require.Error(t, err, "provider errors must surface to the tool")
+
+	_, _, err = downloader.DownloadProviderFile(context.Background(), "")
+	require.Error(t, err, "empty file id is rejected before any request")
+}
+
 // TestMapServerToolStatus pins the item-status mapping. "incomplete" (e.g. an
 // OpenAI code_interpreter_call cut off by max tokens) must be terminal: mapping
 // it to in-progress leaves a spinner in the UI after the stream ends.
