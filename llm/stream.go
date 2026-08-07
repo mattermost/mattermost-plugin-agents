@@ -75,6 +75,10 @@ type ServerToolUse struct {
 	Output string `json:"output,omitempty"`
 	// ErrorCode is the provider error code when the invocation failed.
 	ErrorCode string `json:"error_code,omitempty"`
+	// FileIDs are provider-side ids of files this invocation created (e.g.
+	// Anthropic code-execution output files). They gate which files the
+	// AttachSandboxFile tool may download and attach.
+	FileIDs []string `json:"file_ids,omitempty"`
 }
 
 // Sanitize escapes Unicode bidi/spoofing characters in every LLM- or
@@ -87,6 +91,9 @@ func (s *ServerToolUse) Sanitize() {
 	s.Command = SanitizeNonPrintableChars(s.Command)
 	s.Output = SanitizeNonPrintableChars(s.Output)
 	s.ErrorCode = SanitizeNonPrintableChars(s.ErrorCode)
+	for i := range s.FileIDs {
+		s.FileIDs[i] = SanitizeNonPrintableChars(s.FileIDs[i])
+	}
 }
 
 // TokenUsage represents token usage statistics for an LLM request. Cached,

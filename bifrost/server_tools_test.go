@@ -77,7 +77,7 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 					`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"py"}}`,
 					`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"thon3 -c statistics\"}"}}`,
 					`{"type":"content_block_stop","index":1}`,
-					`{"type":"content_block_start","index":2,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_bash","content":{"type":"bash_code_execution_result","stdout":"Mean: 5.5\n","stderr":"","return_code":0,"content":[]}}}`,
+					`{"type":"content_block_start","index":2,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_bash","content":{"type":"bash_code_execution_result","stdout":"Mean: 5.5\n","stderr":"","return_code":0,"content":[{"type":"bash_code_execution_output","file_id":"file_011abc"}]}}}`,
 					`{"type":"content_block_stop","index":2}`,
 				},
 				textBlock(3, "The mean is 5.5."),
@@ -91,6 +91,7 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 				SubTool: "bash",
 				Command: "python3 -c statistics",
 				Output:  "Mean: 5.5\n",
+				FileIDs: []string{"file_011abc"},
 			}},
 		},
 		{

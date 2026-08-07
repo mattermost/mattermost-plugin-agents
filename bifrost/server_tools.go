@@ -79,6 +79,9 @@ func (t *serverToolTracker) upsert(use llm.ServerToolUse) {
 	if use.ErrorCode != "" {
 		existing.ErrorCode = use.ErrorCode
 	}
+	if len(use.FileIDs) > 0 {
+		existing.FileIDs = use.FileIDs
+	}
 }
 
 // setCommand records the sandbox code/command for an already-tracked
@@ -189,6 +192,14 @@ func populateCodeExecutionFields(use *llm.ServerToolUse, tm *schemas.ResponsesTo
 	use.SubTool = codeExecutionSubTool(carry.ToolName)
 	if use.Command == "" && carry.Input != nil {
 		use.Command = truncateForDisplay(*carry.Input, serverToolCommandMaxLen)
+	}
+
+	// Provider-side ids of files this execution created. They feed the
+	// AttachSandboxFile allowlist (llm.Context) so the model can attach them.
+	for _, file := range carry.Files {
+		if file.FileID != "" {
+			use.FileIDs = append(use.FileIDs, file.FileID)
+		}
 	}
 
 	output := ""
