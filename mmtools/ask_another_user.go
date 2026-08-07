@@ -25,9 +25,11 @@ const (
 		"Ask only specific, self-contained questions answerable without extra context. The user may decline; if they do, proceed sensibly without the answer. " +
 		"The result contains the answer (selected options and/or free-form text) or a decline marker. Ask one user one question at a time."
 
-	// Result status values in the C7 tool-result JSON.
+	// Result status values in the C7 tool-result JSON. The enum is
+	// answered | declined | canceled (V2-C5).
 	askAnotherUserStatusAnswered = "answered"
 	askAnotherUserStatusDeclined = "declined"
+	askAnotherUserStatusCanceled = "canceled"
 
 	// Maximum lengths (in runes) accepted by ValidateAskAnotherUserArgs.
 	// Oversized fields become error tool results so the model can shorten
@@ -61,6 +63,74 @@ func (a AskAnotherUserArgs) FreeFormEnabled() bool {
 // must run against the canonical form.
 func CanonicalAskUsername(raw string) string {
 	return strings.TrimPrefix(strings.TrimSpace(raw), "@")
+}
+
+// AskUserReservedPhrases are the canonical system phrases of the ask-user
+// question card (V2-C3): substrings of the server-authored attribution,
+// destination-disclosure, access-policy, and AI-content-caption lines. Model
+// text must never be able to fake that chrome, so
+// SanitizeAskAnotherUserArgs strips or rejects arguments containing them.
+// Matching is a case-insensitive substring check per line — deliberately
+// minimal (no fuzzy/regex/confusable handling); the real defense is the
+// card's visual separation of model text from system chrome (F4a).
+var AskUserReservedPhrases = []string{
+	"asked on behalf of",
+	"asked by the",
+	"asked via the",
+	"your answer will be shared",
+	"your answer may be shared",
+	"running unattended",
+	"is restricted by an attribute-based",
+	"ai-generated content",
+}
+
+// containsAskUserReservedPhrase reports whether s contains any reserved
+// phrase, case-insensitively.
+func containsAskUserReservedPhrase(s string) bool {
+	lower := strings.ToLower(s)
+	for _, phrase := range AskUserReservedPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripAskUserReservedLines drops every line of s that contains a reserved
+// phrase and rejoins the remainder.
+func stripAskUserReservedLines(s string) string {
+	if !containsAskUserReservedPhrase(s) {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !containsAskUserReservedPhrase(line) {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// SanitizeAskAnotherUserArgs applies the V2-C3 anti-impersonation rule:
+// multi-line fields (question, context) have offending lines STRIPPED so an
+// accidental match keeps the model productive; single-line option labels and
+// descriptions are REJECTED outright because silently removing part of a
+// choice would change its meaning. Called after ValidateAskAnotherUserArgs;
+// stripping can only shorten fields, so no re-validation is needed. Errors
+// become error tool results the model can react to by rephrasing.
+func SanitizeAskAnotherUserArgs(args AskAnotherUserArgs) (AskAnotherUserArgs, error) {
+	args.Question = stripAskUserReservedLines(args.Question)
+	args.Context = stripAskUserReservedLines(args.Context)
+	if strings.TrimSpace(args.Question) == "" {
+		return args, errors.New("question must not be empty after removing reserved system phrasing")
+	}
+	for _, opt := range args.Options {
+		if containsAskUserReservedPhrase(opt.Label) || containsAskUserReservedPhrase(opt.Description) {
+			return args, errors.New("option labels and descriptions must not contain reserved system phrasing")
+		}
+	}
+	return args, nil
 }
 
 // AskAnotherUserAnswer is the target's submitted answer.
@@ -135,6 +205,29 @@ func ValidateAskAnotherUserArgs(args AskAnotherUserArgs) error {
 		return errors.New("allow_free_form must not be false when no options are provided")
 	}
 	return nil
+}
+
+// ResolveAskAnotherUserCancel returns the C7-family tool-result JSON for an
+// initiator-canceled question (V2-C4):
+// {"status":"canceled","target_username":"<username>"}. The username is
+// parsed best-effort from the original tool input; an unparseable input
+// yields an empty username but still a valid payload — the cancel result
+// must always be writable.
+func ResolveAskAnotherUserCancel(input json.RawMessage) (string, error) {
+	targetUsername := ""
+	var args AskAnotherUserArgs
+	if err := json.Unmarshal(input, &args); err == nil {
+		targetUsername = CanonicalAskUsername(args.Username)
+	}
+
+	result, err := json.Marshal(struct {
+		Status         string `json:"status"`
+		TargetUsername string `json:"target_username"`
+	}{Status: askAnotherUserStatusCanceled, TargetUsername: targetUsername})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal cancel result: %w", err)
+	}
+	return string(result), nil
 }
 
 // ResolveAskAnotherUserAnswer validates the target's answer against the

@@ -53,6 +53,7 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+	EnableAskAnotherUser() bool
 }
 
 type MCPClientManager interface {
@@ -365,6 +366,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/tool_call", a.handleToolCall)
 	postRouter.POST("/tool_result", a.handleToolResult)
 	postRouter.POST("/ask_user_response", a.handleAskUserResponse)
+	postRouter.POST("/ask_user_cancel", a.handleAskUserCancel)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
 	postRouter.POST("/loop_in_agent", a.handleLoopInAgent)
 

@@ -347,6 +347,9 @@ func (p *Plugin) OnActivate() error {
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
 		webSearchService,
+		func() *config.Config {
+			return p.configuration.Config()
+		},
 	)
 
 	// Build redirect URI

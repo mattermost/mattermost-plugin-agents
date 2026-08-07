@@ -200,7 +200,7 @@ func TestGetToolsGatesAskUserQuestionOnInteractiveContext(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			provider := NewMMToolProvider(nil, nil)
+			provider := NewMMToolProvider(nil, nil, nil)
 			tools := provider.GetTools(nil, tc.llmContext)
 
 			found := false

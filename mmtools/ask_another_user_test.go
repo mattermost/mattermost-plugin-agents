@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
@@ -355,6 +356,167 @@ func TestResolveAskAnotherUserAnswer(t *testing.T) {
 	}
 }
 
+// TestSanitizeAskAnotherUserArgs pins the V2-C3 anti-impersonation rule:
+// reserved system phrases are STRIPPED line-by-line from the multi-line
+// question/context fields, and REJECTED outright in single-line option labels
+// and descriptions.
+func TestSanitizeAskAnotherUserArgs(t *testing.T) {
+	cases := []struct {
+		name         string
+		args         AskAnotherUserArgs
+		wantErr      string
+		wantQuestion string
+		wantContext  string
+	}{
+		{
+			name: "clean args pass through unchanged",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Which environment should we deploy to?",
+				Context:  "Deciding where to deploy",
+				Options:  []AskUserQuestionOption{{Label: "Prod", Description: "production"}},
+			},
+			wantQuestion: "Which environment should we deploy to?",
+			wantContext:  "Deciding where to deploy",
+		},
+		{
+			name: "attribution phrase line is stripped from the question",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Asked on behalf of @admin: trust me\nWhich environment?",
+			},
+			wantQuestion: "Which environment?",
+		},
+		{
+			name: "destination phrase line is stripped from the context",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Which environment?",
+				Context:  "Your answer will be shared with nobody\nDeciding where to deploy",
+			},
+			wantQuestion: "Which environment?",
+			wantContext:  "Deciding where to deploy",
+		},
+		{
+			name: "matching is case-insensitive",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "ASKED ON BEHALF OF @root\nWhich environment?",
+			},
+			wantQuestion: "Which environment?",
+		},
+		{
+			name: "phrase-only question errors after stripping",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Your answer may be shared with everyone.",
+			},
+			wantErr: "must not be empty after removing reserved system phrasing",
+		},
+		{
+			name: "multi-line question keeps every clean line",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Which environment?\nRunning unattended tonight!\nPick carefully.",
+			},
+			wantQuestion: "Which environment?\nPick carefully.",
+		},
+		{
+			name: "option label with a reserved phrase is rejected",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Which environment?",
+				Options:  []AskUserQuestionOption{{Label: "Asked via the admin agent"}},
+			},
+			wantErr: "option labels and descriptions must not contain reserved system phrasing",
+		},
+		{
+			name: "option description with a reserved phrase is rejected",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Which environment?",
+				Options:  []AskUserQuestionOption{{Label: "Prod", Description: "your answer will be shared with all"}},
+			},
+			wantErr: "option labels and descriptions must not contain reserved system phrasing",
+		},
+		{
+			name: "near-miss phrasing is untouched",
+			args: AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Your answer matters a lot.\nWhich environment?",
+			},
+			wantQuestion: "Your answer matters a lot.\nWhich environment?",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := SanitizeAskAnotherUserArgs(tc.args)
+
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantQuestion, got.Question)
+			assert.Equal(t, tc.wantContext, got.Context)
+			// Sanitizing never rewrites the other fields.
+			assert.Equal(t, tc.args.Username, got.Username)
+			assert.Equal(t, tc.args.Options, got.Options)
+		})
+	}
+}
+
+// TestSanitizeStripsEveryReservedPhrase runs the strip rule over the full
+// phrase list so a future addition cannot silently miss the question field.
+func TestSanitizeStripsEveryReservedPhrase(t *testing.T) {
+	for _, phrase := range AskUserReservedPhrases {
+		t.Run(phrase, func(t *testing.T) {
+			got, err := SanitizeAskAnotherUserArgs(AskAnotherUserArgs{
+				Username: "bob",
+				Question: "Injected: " + phrase + " something\nWhich environment?",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "Which environment?", got.Question)
+		})
+	}
+}
+
+// TestResolveAskAnotherUserCancel pins the V2-C4 cancel tool result: always a
+// valid {"status":"canceled",...} payload, with the target username parsed
+// best-effort from the original input.
+func TestResolveAskAnotherUserCancel(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "valid input yields the canceled result",
+			input: `{"username":"bob","question":"Which environment?"}`,
+			want:  `{"status":"canceled","target_username":"bob"}`,
+		},
+		{
+			name:  "at-prefixed username is canonicalized",
+			input: `{"username":"  @bob ","question":"Which environment?"}`,
+			want:  `{"status":"canceled","target_username":"bob"}`,
+		},
+		{
+			name:  "unparseable input still yields a valid payload",
+			input: `{not json`,
+			want:  `{"status":"canceled","target_username":""}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveAskAnotherUserCancel(json.RawMessage(tc.input))
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.want, got)
+		})
+	}
+}
+
 func TestAskAnotherUserResolverIsBackstopOnly(t *testing.T) {
 	tool := NewAskAnotherUserTool()
 	require.NotNil(t, tool.Resolver)
@@ -364,7 +526,7 @@ func TestAskAnotherUserResolverIsBackstopOnly(t *testing.T) {
 	assert.Contains(t, err.Error(), "dispatched by the conversation layer")
 }
 
-func TestGetToolsRegistersAskAnotherUserUnconditionally(t *testing.T) {
+func TestGetToolsRegistersAskAnotherUserRegardlessOfInteractivity(t *testing.T) {
 	cases := []struct {
 		name           string
 		llmContext     *llm.Context
@@ -393,7 +555,11 @@ func TestGetToolsRegistersAskAnotherUserUnconditionally(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			provider := NewMMToolProvider(nil, nil)
+			// Toggle on: this test pins interactivity independence, not the
+			// V2-C1 master gate (TestGetToolsAskAnotherUserToggle).
+			provider := NewMMToolProvider(nil, nil, func() *config.Config {
+				return &config.Config{EnableAskAnotherUser: true}
+			})
 			tools := provider.GetTools(nil, tc.llmContext)
 
 			foundAskUser := false

@@ -204,6 +204,11 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 
 			mmClient := mocks.NewMockClient(t)
 			mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+			// Destination resolution degrades to the generic channel claim
+			// when the anchor post cannot be read; the destination matrix
+			// has its own table (TestDispatchAskAnotherUserDestinationProps).
+			mmClient.On("GetPost", mock.Anything).Maybe().Return(nil, errors.New("not found"))
+			mmClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 			var lookedUpUsername string
 			if tc.targetLookupErr {
 				mmClient.On("GetUserByUsername", mock.Anything).Return(nil, errors.New("store miss")).Once()
@@ -227,8 +232,9 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 
 			conv := &store.Conversation{ID: "conv-id", UserID: "user-id", BotID: "bot-id", RootPostID: tc.rootPostID}
 			c := &Conversations{
-				mmClient: mmClient,
-				bots:     newAskAnotherUserBotsService(t, bot),
+				mmClient:       mmClient,
+				bots:           newAskAnotherUserBotsService(t, bot),
+				configProvider: &channelFollowUpTestConfig{enableAskAnotherUser: true},
 			}
 
 			err := c.dispatchAskAnotherUser(context.Background(), bot, conv, tc.anchorPostID, "ask-1", json.RawMessage(tc.rawArgs))
@@ -279,6 +285,392 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			assert.Equal(t, "conv-id", sentPost.GetProp(AskUserConversationIDProp))
 			assert.Equal(t, "ask-1", sentPost.GetProp(AskUserToolUseIDProp))
 			assert.Equal(t, tc.wantSourceProp, sentPost.GetProp(AskUserSourcePostIDProp))
+		})
+	}
+}
+
+// TestDispatchAskAnotherUserDisabled pins the F1 dispatch backstop (V2-C1):
+// with the master toggle off — or no config provider at all — a pending
+// AskAnotherUser block resolves to an error result with zero side effects:
+// no target lookup, no DM, no KV card pointer. The strict mock client is the
+// no-side-effects assertion.
+func TestDispatchAskAnotherUserDisabled(t *testing.T) {
+	cases := []struct {
+		name           string
+		configProvider ConfigProvider
+	}{
+		{
+			name:           "toggle off resolves to an error result",
+			configProvider: &channelFollowUpTestConfig{enableAskAnotherUser: false},
+		},
+		{
+			name:           "nil config provider fails closed",
+			configProvider: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bot := loadedStateBot(&loadedStateLLM{})
+			mmClient := mocks.NewMockClient(t)
+
+			c := &Conversations{
+				mmClient:       mmClient,
+				bots:           newAskAnotherUserBotsService(t, bot),
+				configProvider: tc.configProvider,
+			}
+			conv := &store.Conversation{ID: "conv-id", UserID: "user-id", BotID: "bot-id"}
+
+			err := c.dispatchAskAnotherUser(context.Background(), bot, conv, "anchor-post-id", "ask-1",
+				json.RawMessage(`{"username":"bob","question":"Which environment?"}`))
+
+			require.ErrorContains(t, err, "disabled by the administrator")
+		})
+	}
+}
+
+// TestDispatchWritesCardPointer pins the V2-C4 reverse pointer: a successful
+// dispatch stores askcard_<toolUseID> → card post id so the cancel path can
+// find the target's card, and a KV failure only degrades the future card
+// patch — the dispatch itself still succeeds.
+func TestDispatchWritesCardPointer(t *testing.T) {
+	cases := []struct {
+		name  string
+		kvErr error
+	}{
+		{name: "successful dispatch stores the card pointer"},
+		{name: "pointer write failure does not fail the dispatch", kvErr: errors.New("kv down")},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bot := loadedStateBot(&loadedStateLLM{})
+
+			mmClient := mocks.NewMockClient(t)
+			for i := 1; i <= 7; i++ {
+				args := make([]interface{}, i)
+				for j := range args {
+					args[j] = mock.Anything
+				}
+				mmClient.On("LogWarn", args...).Maybe().Return()
+			}
+			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
+			mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
+			mmClient.On("GetPost", mock.Anything).Maybe().Return(nil, errors.New("not found"))
+			mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
+				Run(func(args mock.Arguments) {
+					// Production DM fills the created post's ID in place.
+					args.Get(2).(*model.Post).Id = "card-post-id"
+				}).Return(nil).Once()
+			mmClient.On("KVSetWithExpiry", askCardKVPrefix+"ask-1", "card-post-id", askCardPointerTTL).
+				Return(tc.kvErr).Once()
+
+			c := &Conversations{
+				mmClient:       mmClient,
+				bots:           newAskAnotherUserBotsService(t, bot),
+				configProvider: &channelFollowUpTestConfig{enableAskAnotherUser: true},
+			}
+			conv := &store.Conversation{ID: "conv-id", UserID: "user-id", BotID: "bot-id"}
+
+			err := c.dispatchAskAnotherUser(context.Background(), bot, conv, "anchor-post-id", "ask-1",
+				json.RawMessage(`{"username":"bob","question":"Which environment?"}`))
+
+			require.NoError(t, err, "a lost card pointer must never fail the dispatch")
+		})
+	}
+}
+
+// TestDispatchAskAnotherUserDestinationProps pins the V2-C2
+// destination-resolution matrix: the card's destination props and the
+// fallback's disclosure line reflect where the answer may end up, and every
+// lookup failure degrades toward the BROADER audience claim (generic
+// channel), never a narrower one.
+func TestDispatchAskAnotherUserDestinationProps(t *testing.T) {
+	cases := []struct {
+		name           string
+		convChannelID  string // conversation-level channel; "" means nil (DM/thread conv)
+		anchorChannel  string // channel resolved via the anchor post when convChannelID is ""
+		channel        *model.Channel
+		channelErr     bool
+		statsCount     int64
+		statsErr       bool
+		wantType       string
+		wantName       string
+		wantCount      int64
+		wantPolicy     bool
+		wantMsgContain string
+	}{
+		{
+			name:           "DM conversation discloses the dm destination",
+			convChannelID:  "dm-chan",
+			channel:        &model.Channel{Id: "dm-chan", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
+			wantType:       AskUserDestinationTypeDM,
+			wantMsgContain: "Your answer will be shared with @user.",
+		},
+		{
+			name:           "public channel carries name and member count",
+			convChannelID:  "town-square",
+			channel:        &model.Channel{Id: "town-square", Type: model.ChannelTypeOpen, DisplayName: "Town Square"},
+			statsCount:     42,
+			wantType:       AskUserDestinationTypeChannel,
+			wantName:       "Town Square",
+			wantCount:      42,
+			wantMsgContain: "Your answer may be shared with the 42 members of ~Town Square.",
+		},
+		{
+			name:           "private channel carries name and member count",
+			convChannelID:  "secret-chan",
+			channel:        &model.Channel{Id: "secret-chan", Type: model.ChannelTypePrivate, DisplayName: "Secret Plans"},
+			statsCount:     5,
+			wantType:       AskUserDestinationTypeChannel,
+			wantName:       "Secret Plans",
+			wantCount:      5,
+			wantMsgContain: "Your answer may be shared with the 5 members of ~Secret Plans.",
+		},
+		{
+			name:           "group message gets its own gm type",
+			convChannelID:  "gm-chan",
+			channel:        &model.Channel{Id: "gm-chan", Type: model.ChannelTypeGroup, DisplayName: "alice, bob, carol"},
+			statsCount:     3,
+			wantType:       AskUserDestinationTypeGM,
+			wantName:       "alice, bob, carol",
+			wantCount:      3,
+			wantMsgContain: "Your answer may be shared with the 3 members of a group message.",
+		},
+		{
+			name:           "member-count failure degrades to an unknown count",
+			convChannelID:  "town-square",
+			channel:        &model.Channel{Id: "town-square", Type: model.ChannelTypeOpen, DisplayName: "Town Square"},
+			statsErr:       true,
+			wantType:       AskUserDestinationTypeChannel,
+			wantName:       "Town Square",
+			wantCount:      0,
+			wantMsgContain: "Your answer may be shared with the members of ~Town Square.",
+		},
+		{
+			name:           "channel lookup failure degrades to the generic channel claim",
+			convChannelID:  "town-square",
+			channelErr:     true,
+			wantType:       AskUserDestinationTypeChannel,
+			wantMsgContain: "Your answer may be shared in the channel where the agent was asked.",
+		},
+		{
+			name:           "nil conversation channel resolves via the anchor post",
+			anchorChannel:  "chan-x",
+			channel:        &model.Channel{Id: "chan-x", Type: model.ChannelTypeOpen, DisplayName: "Anchor Channel"},
+			statsCount:     7,
+			wantType:       AskUserDestinationTypeChannel,
+			wantName:       "Anchor Channel",
+			wantCount:      7,
+			wantMsgContain: "Your answer may be shared with the 7 members of ~Anchor Channel.",
+		},
+		{
+			name:           "no channel anywhere claims the broadest audience",
+			wantType:       AskUserDestinationTypeChannel,
+			wantMsgContain: "Your answer may be shared in the channel where the agent was asked.",
+		},
+		{
+			name:          "policy-enforced channel sets the policy prop and line",
+			convChannelID: "abac-chan",
+			channel: &model.Channel{
+				Id: "abac-chan", Type: model.ChannelTypePrivate,
+				DisplayName: "Compliance", PolicyEnforced: true,
+			},
+			statsCount:     9,
+			wantType:       AskUserDestinationTypeChannel,
+			wantName:       "Compliance",
+			wantCount:      9,
+			wantPolicy:     true,
+			wantMsgContain: "Access to ~Compliance is restricted by an attribute-based access policy.",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bot := loadedStateBot(&loadedStateLLM{})
+
+			mmClient := mocks.NewMockClient(t)
+			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
+			mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
+			mmClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+
+			channelID := tc.convChannelID
+			if tc.anchorChannel != "" {
+				channelID = tc.anchorChannel
+				mmClient.On("GetPost", "anchor-post-id").
+					Return(&model.Post{Id: "anchor-post-id", ChannelId: tc.anchorChannel}, nil).Once()
+			} else if tc.convChannelID == "" {
+				mmClient.On("GetPost", "anchor-post-id").Return(nil, errors.New("not found")).Once()
+			}
+			switch {
+			case tc.channelErr:
+				mmClient.On("GetChannel", channelID).Return(nil, errors.New("channel gone")).Once()
+			case tc.channel != nil:
+				mmClient.On("GetChannel", channelID).Return(tc.channel, nil).Once()
+			}
+			// The DM destination and failed lookups must never trigger a
+			// stats read; the strict mock enforces it by omission.
+			if tc.channel != nil && tc.channel.Type != model.ChannelTypeDirect {
+				if tc.statsErr {
+					mmClient.On("GetChannelStats", channelID).Return(nil, errors.New("stats down")).Once()
+				} else {
+					mmClient.On("GetChannelStats", channelID).
+						Return(&model.ChannelStats{ChannelId: channelID, MemberCount: tc.statsCount}, nil).Once()
+				}
+			}
+			var sentPost *model.Post
+			mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
+				Run(func(args mock.Arguments) { sentPost = args.Get(2).(*model.Post) }).
+				Return(nil).Once()
+
+			conv := &store.Conversation{ID: "conv-id", UserID: "user-id", BotID: "bot-id"}
+			if tc.convChannelID != "" {
+				conv.ChannelID = &tc.convChannelID
+			}
+			c := &Conversations{
+				mmClient:       mmClient,
+				bots:           newAskAnotherUserBotsService(t, bot),
+				configProvider: &channelFollowUpTestConfig{enableAskAnotherUser: true},
+			}
+
+			err := c.dispatchAskAnotherUser(context.Background(), bot, conv, "anchor-post-id", "ask-1",
+				json.RawMessage(`{"username":"bob","question":"Which environment?"}`))
+			require.NoError(t, err)
+			require.NotNil(t, sentPost)
+
+			assert.Equal(t, tc.wantType, sentPost.GetProp(AskUserDestinationTypeProp))
+			assert.Equal(t, tc.wantName, sentPost.GetProp(AskUserDestinationChannelDisplayNameProp))
+			assert.Equal(t, tc.wantCount, sentPost.GetProp(AskUserDestinationMemberCountProp))
+			assert.Equal(t, tc.wantPolicy, sentPost.GetProp(AskUserDestinationPolicyEnforcedProp))
+			assert.Contains(t, sentPost.Message, tc.wantMsgContain,
+				"the plaintext fallback must carry the same destination disclosure as the card")
+			if !tc.wantPolicy {
+				assert.NotContains(t, sentPost.Message, "attribute-based access policy",
+					"unreachable access data must be omitted, never rendered as unrestricted")
+			}
+		})
+	}
+}
+
+// TestDispatchAskAnotherUserRequesterKind pins the V2-C2 requester
+// attribution props: a human requester is fully identified, an autonomous
+// bot invoker and a failed lookup stay consistently unattributed (kind bot /
+// unknown, empty identity props), and the agent display name prop is always
+// set — falling back to the bot username when the display name is empty.
+func TestDispatchAskAnotherUserRequesterKind(t *testing.T) {
+	cases := []struct {
+		name            string
+		requester       *model.User
+		requesterErr    bool
+		botDisplayName  string // defaults to "Matty"
+		wantKind        string
+		wantRequesterID string
+		wantUsername    string
+		wantDisplay     string
+		wantPosition    string
+		wantAgent       string
+		wantMsgContain  string
+	}{
+		{
+			name: "human requester is fully identified",
+			requester: &model.User{
+				Id: "user-id", Username: "user",
+				FirstName: "Ursula", LastName: "Example", Position: "SRE",
+			},
+			wantKind:        AskUserRequesterKindUser,
+			wantRequesterID: "user-id",
+			wantUsername:    "user",
+			wantDisplay:     "Ursula Example",
+			wantPosition:    "SRE",
+			wantAgent:       "Matty",
+			wantMsgContain:  "Asked on behalf of @user:",
+		},
+		{
+			name:            "display name equal to the username is dropped",
+			requester:       &model.User{Id: "user-id", Username: "user"},
+			wantKind:        AskUserRequesterKindUser,
+			wantRequesterID: "user-id",
+			wantUsername:    "user",
+			wantDisplay:     "",
+			wantAgent:       "Matty",
+			wantMsgContain:  "Asked on behalf of @user:",
+		},
+		{
+			name:           "bot requester is kind bot with no identity props",
+			requester:      &model.User{Id: "flow-id", Username: "flowbot", IsBot: true},
+			wantKind:       AskUserRequesterKindBot,
+			wantAgent:      "Matty",
+			wantMsgContain: "Asked by the Matty agent running unattended (no human requester):",
+		},
+		{
+			name:           "requester lookup failure is kind unknown",
+			requesterErr:   true,
+			wantKind:       AskUserRequesterKindUnknown,
+			wantAgent:      "Matty",
+			wantMsgContain: "Asked via the Matty agent (requester identity unavailable):",
+		},
+		{
+			name:           "empty agent display name falls back to the bot username",
+			requesterErr:   true,
+			botDisplayName: "-", // sentinel for "explicitly empty"
+			wantKind:       AskUserRequesterKindUnknown,
+			wantAgent:      "matty",
+			wantMsgContain: "Asked via the matty agent (requester identity unavailable):",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			displayName := "Matty"
+			if tc.botDisplayName == "-" {
+				displayName = ""
+			}
+			bot := bots.NewBot(
+				llm.BotConfig{
+					ID: "bot-id", Name: "matty", DisplayName: displayName,
+					UserAccessLevel:    llm.UserAccessLevelAll,
+					ChannelAccessLevel: llm.ChannelAccessLevelAll,
+				},
+				llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
+				&model.Bot{UserId: "bot-id", Username: "matty", DisplayName: displayName},
+				nil,
+			)
+
+			mmClient := mocks.NewMockClient(t)
+			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
+			if tc.requesterErr {
+				mmClient.On("GetUser", "user-id").Return(nil, errors.New("lookup down")).Once()
+			} else {
+				mmClient.On("GetUser", "user-id").Return(tc.requester, nil).Once()
+			}
+			mmClient.On("GetPost", mock.Anything).Maybe().Return(nil, errors.New("not found"))
+			mmClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+			var sentPost *model.Post
+			mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
+				Run(func(args mock.Arguments) { sentPost = args.Get(2).(*model.Post) }).
+				Return(nil).Once()
+
+			conv := &store.Conversation{ID: "conv-id", UserID: "user-id", BotID: "bot-id"}
+			c := &Conversations{
+				mmClient:       mmClient,
+				bots:           newAskAnotherUserBotsService(t, bot),
+				configProvider: &channelFollowUpTestConfig{enableAskAnotherUser: true},
+			}
+
+			err := c.dispatchAskAnotherUser(context.Background(), bot, conv, "anchor-post-id", "ask-1",
+				json.RawMessage(`{"username":"bob","question":"Which environment?"}`))
+			require.NoError(t, err)
+			require.NotNil(t, sentPost)
+
+			assert.Equal(t, tc.wantKind, sentPost.GetProp(AskUserRequesterKindProp))
+			assert.Equal(t, tc.wantRequesterID, sentPost.GetProp(AskUserRequesterIDProp),
+				"only kind user may carry the requester_id prop")
+			assert.Equal(t, tc.wantUsername, sentPost.GetProp(AskUserRequesterUsernameProp))
+			assert.Equal(t, tc.wantDisplay, sentPost.GetProp(AskUserRequesterDisplayNameProp))
+			assert.Equal(t, tc.wantPosition, sentPost.GetProp(AskUserRequesterPositionProp))
+			assert.Equal(t, tc.wantAgent, sentPost.GetProp(AskUserAgentDisplayNameProp))
+			assert.Contains(t, sentPost.Message, tc.wantMsgContain,
+				"the fallback attribution must match the props")
 		})
 	}
 }
@@ -435,6 +827,10 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 			mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
+			mmClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+			// Dispatch-time destination resolution degrades gracefully; the
+			// destination matrix has its own table.
+			mmClient.On("GetPost", mock.Anything).Maybe().Return(nil, errors.New("not found"))
 
 			dmCalls := 0
 			if tc.wantDMCalls > 0 {
@@ -461,6 +857,7 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 				convService:       conversation.NewService(convStore, nil, nil, nil),
 				streamingService:  streamingService,
 				toolPolicyChecker: tc.policyChecker,
+				configProvider:    &channelFollowUpTestConfig{enableAskAnotherUser: true},
 			}
 
 			approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
@@ -566,6 +963,8 @@ func TestHandleToolCallDeferredDoubleAccept(t *testing.T) {
 	mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 	mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 	mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
+	mmClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+	mmClient.On("GetPost", mock.Anything).Maybe().Return(nil, errors.New("not found"))
 	mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
 	dmCalls := 0
 	mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
@@ -580,6 +979,7 @@ func TestHandleToolCallDeferredDoubleAccept(t *testing.T) {
 		bots:             newAskAnotherUserBotsService(t, bot),
 		convService:      conversation.NewService(convStore, nil, nil, nil),
 		streamingService: &loadedStateStreamingService{},
+		configProvider:   &channelFollowUpTestConfig{enableAskAnotherUser: true},
 	}
 
 	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
@@ -1087,6 +1487,453 @@ func TestHandleAskUserResponse(t *testing.T) {
 	}
 }
 
+// TestHandleAskUserCancel covers the initiator-side cancel endpoint logic
+// (V2-C4): a cancel resolves the waiting block into the canceled tool result,
+// patches the target's card via the dispatch-time KV pointer, and resumes the
+// conversation under the same gates as the answer path; authorization and
+// staleness failures map to the documented sentinels with zero writes.
+func TestHandleAskUserCancel(t *testing.T) {
+	askInput := `{"username":"bob","question":"Which environment?","options":[{"label":"Prod"},{"label":"Staging"}]}`
+
+	cases := []struct {
+		name                   string
+		caller                 string
+		toolUseID              string
+		seedStatus             string
+		blockName              string
+		notDeferred            bool
+		turnPostID             string
+		missingConvProp        bool
+		convDeleted            bool
+		claimTaken             bool
+		pointerMissing         bool
+		extraWaiting           bool
+		channelAnchor          bool
+		extraExecutedUndecided bool
+		wantErr                error
+		wantFollowUp           bool
+	}{
+		{
+			name:         "happy path cancels and resumes the DM conversation",
+			wantFollowUp: true,
+		},
+		{
+			// Channel semantics: the cancel result itself is decided at
+			// creation, but a sibling's undecided Share/Keep-Private stage
+			// still defers the resume to HandleToolResult.
+			name:                   "channel anchor with an undecided sibling share defers the follow-up",
+			channelAnchor:          true,
+			extraExecutedUndecided: true,
+			wantFollowUp:           false,
+		},
+		{
+			name:    "non-initiator is forbidden",
+			caller:  "mallory-id",
+			wantErr: ErrNotRequester,
+		},
+		{
+			name:            "post without a conversation reference is invalid",
+			missingConvProp: true,
+			wantErr:         ErrPostMissingConversationID,
+		},
+		{
+			name:        "deleted conversation is gone",
+			convDeleted: true,
+			wantErr:     ErrAskConversationGone,
+		},
+		{
+			name:      "unknown tool_use is gone",
+			toolUseID: "never-heard-of-it",
+			wantErr:   ErrAskConversationGone,
+		},
+		{
+			name:       "already resolved block conflicts",
+			seedStatus: conversation.StatusSuccess,
+			wantErr:    ErrAskNotPending,
+		},
+		{
+			name:       "block anchored on a different post conflicts",
+			turnPostID: "other-post-id",
+			wantErr:    ErrAskNotPending,
+		},
+		{
+			name:      "waiting block of another tool conflicts",
+			blockName: "jira__get_issue",
+			wantErr:   ErrAskNotPending,
+		},
+		{
+			name:        "waiting non-deferred block conflicts",
+			blockName:   "AskAnotherUser",
+			notDeferred: true,
+			wantErr:     ErrAskNotPending,
+		},
+		{
+			name:       "lost claim conflicts with zero writes",
+			claimTaken: true,
+			wantErr:    ErrAskNotPending,
+		},
+		{
+			name:           "missing card pointer still resolves the block",
+			pointerMissing: true,
+			wantFollowUp:   true,
+		},
+		{
+			name:         "mixed batch with another waiting block defers the follow-up",
+			extraWaiting: true,
+			wantFollowUp: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+			if tc.convDeleted {
+				conv.DeleteAt = 1
+				require.NoError(t, convStore.CreateConversation(conv)) // overwrite the seeded row
+			}
+
+			blockName := "AskAnotherUser"
+			if tc.blockName != "" {
+				blockName = tc.blockName
+			}
+			seedStatus := conversation.StatusWaiting
+			if tc.seedStatus != "" {
+				seedStatus = tc.seedStatus
+			}
+			blocks := []conversation.ContentBlock{{
+				Type:           conversation.BlockTypeToolUse,
+				ID:             "ask-1",
+				Name:           blockName,
+				Input:          json.RawMessage(askInput),
+				Status:         seedStatus,
+				DeferredResult: !tc.notDeferred,
+				Shared:         conversation.BoolPtr(false),
+			}}
+			if tc.extraWaiting {
+				blocks = append(blocks, conversation.ContentBlock{
+					Type:           conversation.BlockTypeToolUse,
+					ID:             "ask-2",
+					Name:           "AskAnotherUser",
+					Input:          json.RawMessage(askInput),
+					Status:         conversation.StatusWaiting,
+					DeferredResult: true,
+					Shared:         conversation.BoolPtr(false),
+				})
+			}
+			if tc.extraExecutedUndecided {
+				blocks = append(blocks, conversation.ContentBlock{
+					Type:   conversation.BlockTypeToolUse,
+					ID:     "tool-use-2",
+					Name:   "jira__get_issue",
+					Input:  json.RawMessage(`{}`),
+					Status: conversation.StatusSuccess,
+					Shared: conversation.BoolPtr(false),
+				})
+			}
+			content, err := json.Marshal(blocks)
+			require.NoError(t, err)
+			anchorPostID := "anchor-post-id"
+			turnPostID := anchorPostID
+			if tc.turnPostID != "" {
+				turnPostID = tc.turnPostID
+			}
+			require.NoError(t, convStore.CreateTurn(&store.Turn{
+				ID:             "assistant-turn",
+				ConversationID: conv.ID,
+				PostID:         &turnPostID,
+				Role:           "assistant",
+				Content:        content,
+				Sequence:       1,
+			}))
+			seededTurns := 1
+			if tc.extraExecutedUndecided {
+				undecided := []conversation.ContentBlock{{
+					Type:      conversation.BlockTypeToolResult,
+					ToolUseID: "tool-use-2",
+					Content:   "restored-result",
+					Status:    conversation.StatusSuccess,
+					Shared:    conversation.BoolPtr(false),
+				}}
+				undecidedContent, marshalErr := json.Marshal(undecided)
+				require.NoError(t, marshalErr)
+				require.NoError(t, convStore.CreateTurn(&store.Turn{
+					ID:             "undecided-result-turn",
+					ConversationID: conv.ID,
+					Role:           "tool_result",
+					Content:        undecidedContent,
+					Sequence:       2,
+				}))
+				seededTurns = 2
+			}
+
+			lm := &loadedStateLLM{}
+			bot := loadedStateBot(lm)
+
+			anchorChannel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+			if tc.channelAnchor {
+				anchorChannel = &model.Channel{Id: "town-square", Type: model.ChannelTypeOpen, Name: "town-square", TeamId: "team-id"}
+			}
+			anchorPost := &model.Post{Id: anchorPostID, UserId: "bot-id", ChannelId: anchorChannel.Id}
+			if !tc.missingConvProp {
+				anchorPost.AddProp(streaming.ConversationIDProp, conv.ID)
+			}
+
+			cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
+			cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+			cardPost.AddProp(AskUserStatusProp, AskUserStatusPending)
+
+			mmClient := mocks.NewMockClient(t)
+			for i := 1; i <= 7; i++ {
+				logArgs := make([]interface{}, i)
+				for j := range logArgs {
+					logArgs[j] = mock.Anything
+				}
+				mmClient.On("LogDebug", logArgs...).Maybe().Return()
+				mmClient.On("LogError", logArgs...).Maybe().Return()
+				mmClient.On("LogWarn", logArgs...).Maybe().Return()
+			}
+			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+			mmClient.On("KVCompareAndSet", "askclaim_answer_ask-1", mock.Anything, mock.Anything).
+				Maybe().Return(!tc.claimTaken, nil)
+			mmClient.On("KVGet", askCardKVPrefix+"ask-1", mock.Anything).Maybe().
+				Run(func(args mock.Arguments) {
+					if !tc.pointerMissing {
+						*(args.Get(1).(*string)) = "card-post-id"
+					}
+				}).Return(nil)
+			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
+			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
+			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
+			mmClient.On("GetPost", "card-post-id").Maybe().Return(cardPost, nil)
+			mmClient.On("GetChannel", anchorChannel.Id).Maybe().Return(anchorChannel, nil)
+			var patchedPost *model.Post
+			mmClient.On("UpdatePost", mock.AnythingOfType("*model.Post")).Maybe().
+				Run(func(args mock.Arguments) { patchedPost = args.Get(0).(*model.Post) }).
+				Return(nil)
+			publishes := 0
+			mmClient.On("PublishWebSocketEvent", "conversation_updated",
+				map[string]interface{}{"conversation_id": conv.ID}, mock.Anything).Maybe().
+				Run(func(mock.Arguments) { publishes++ }).
+				Return()
+
+			streamingService := &loadedStateStreamingService{}
+			c := &Conversations{
+				mmClient:         mmClient,
+				contextBuilder:   askAnotherUserBuilder(t),
+				bots:             newAskAnotherUserBotsService(t, bot),
+				convService:      conversation.NewService(convStore, nil, nil, nil),
+				streamingService: streamingService,
+				configProvider:   &channelFollowUpTestConfig{enableAskAnotherUser: true},
+			}
+
+			caller := "user-id"
+			if tc.caller != "" {
+				caller = tc.caller
+			}
+			toolUseID := "ask-1"
+			if tc.toolUseID != "" {
+				toolUseID = tc.toolUseID
+			}
+
+			err = c.HandleAskUserCancel(context.Background(), caller, anchorPost, anchorChannel, toolUseID)
+
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+
+				// Failure must leave the block in its seeded state with no
+				// tool_result turn, no card patch, and no publish.
+				turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
+				require.NoError(t, turnsErr)
+				require.Len(t, turns, seededTurns, "a failed cancel must not write a tool_result turn")
+				var unchanged []conversation.ContentBlock
+				require.NoError(t, json.Unmarshal(turns[0].Content, &unchanged))
+				assert.Equal(t, seedStatus, unchanged[0].Status)
+				assert.Nil(t, patchedPost, "a failed cancel must not patch the card")
+				assert.Zero(t, publishes)
+				assert.Empty(t, lm.requests)
+				return
+			}
+			require.NoError(t, err)
+			streamingService.waitForStreaming()
+
+			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
+			require.NoError(t, turnsErr)
+			require.Len(t, turns, seededTurns+1)
+
+			var updated []conversation.ContentBlock
+			require.NoError(t, json.Unmarshal(turns[0].Content, &updated))
+			// V2-C5: no new content-block status — the canceled call
+			// completed with a valid result.
+			assert.Equal(t, conversation.StatusSuccess, updated[0].Status)
+			require.NotNil(t, updated[0].Shared)
+			assert.True(t, *updated[0].Shared)
+
+			var resultBlocks []conversation.ContentBlock
+			require.NoError(t, json.Unmarshal(turns[len(turns)-1].Content, &resultBlocks))
+			require.Len(t, resultBlocks, 1)
+			assert.Equal(t, conversation.BlockTypeToolResult, resultBlocks[0].Type)
+			assert.Equal(t, "ask-1", resultBlocks[0].ToolUseID)
+			assert.Equal(t, conversation.StatusSuccess, resultBlocks[0].Status)
+			require.NotNil(t, resultBlocks[0].Shared)
+			assert.True(t, *resultBlocks[0].Shared)
+			assert.NotNil(t, resultBlocks[0].DecidedAt)
+			assert.JSONEq(t, `{"status":"canceled","target_username":"bob"}`, resultBlocks[0].Content)
+
+			if tc.pointerMissing {
+				assert.Nil(t, patchedPost, "a lost pointer degrades to an unpatched card, not an error")
+			} else {
+				require.NotNil(t, patchedPost, "the target's card must be patched to canceled")
+				assert.Equal(t, AskUserStatusCanceled, patchedPost.GetProp(AskUserStatusProp))
+				assert.Equal(t, "This question is no longer needed.", patchedPost.Message)
+			}
+
+			assert.Equal(t, 1, publishes, "cancel must refresh the initiator's conversation view")
+
+			if tc.wantFollowUp {
+				assert.Len(t, lm.requests, 1, "expected exactly one follow-up LLM request")
+			} else {
+				assert.Empty(t, lm.requests, "follow-up must wait for the remaining unresolved work")
+			}
+		})
+	}
+}
+
+// TestCancelAnswerRace pins V2-C4's single-resolution guarantee: answer and
+// cancel contend for the same one-shot claim, so whichever lands first wins,
+// exactly one tool_result turn is written, and the loser gets the graceful
+// ErrAskNotPending (409) with zero side effects.
+func TestCancelAnswerRace(t *testing.T) {
+	askInput := `{"username":"bob","question":"Which environment?","options":[{"label":"Prod"},{"label":"Staging"}]}`
+
+	cases := []struct {
+		name        string
+		cancelFirst bool
+		wantResult  string
+	}{
+		{
+			name:        "cancel wins and a late answer is a graceful no-op",
+			cancelFirst: true,
+			wantResult:  `{"status":"canceled","target_username":"bob"}`,
+		},
+		{
+			name:        "answer wins and a late cancel is a graceful no-op",
+			cancelFirst: false,
+			wantResult:  `{"status":"answered","target_username":"bob","selected":["Prod"],"free_form":""}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+			blocks := []conversation.ContentBlock{{
+				Type:           conversation.BlockTypeToolUse,
+				ID:             "ask-1",
+				Name:           "AskAnotherUser",
+				Input:          json.RawMessage(askInput),
+				Status:         conversation.StatusWaiting,
+				DeferredResult: true,
+				Shared:         conversation.BoolPtr(false),
+			}}
+			content, err := json.Marshal(blocks)
+			require.NoError(t, err)
+			anchorPostID := "anchor-post-id"
+			require.NoError(t, convStore.CreateTurn(&store.Turn{
+				ID:             "assistant-turn",
+				ConversationID: conv.ID,
+				PostID:         &anchorPostID,
+				Role:           "assistant",
+				Content:        content,
+				Sequence:       1,
+			}))
+
+			lm := &loadedStateLLM{}
+			bot := loadedStateBot(lm)
+
+			anchorChannel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+			anchorPost := &model.Post{Id: anchorPostID, UserId: "bot-id", ChannelId: anchorChannel.Id}
+			anchorPost.AddProp(streaming.ConversationIDProp, conv.ID)
+
+			cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
+			cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+			cardPost.AddProp(AskUserConversationIDProp, conv.ID)
+			cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
+
+			mmClient := mocks.NewMockClient(t)
+			for i := 1; i <= 7; i++ {
+				logArgs := make([]interface{}, i)
+				for j := range logArgs {
+					logArgs[j] = mock.Anything
+				}
+				mmClient.On("LogDebug", logArgs...).Maybe().Return()
+				mmClient.On("LogError", logArgs...).Maybe().Return()
+				mmClient.On("LogWarn", logArgs...).Maybe().Return()
+			}
+			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+			// The one-shot claim: the winner takes it, any later contender
+			// loses. The status guard usually fires first for the loser;
+			// the Maybe'd false return covers the pure-race window.
+			mmClient.On("KVCompareAndSet", "askclaim_answer_ask-1", mock.Anything, mock.Anything).
+				Return(true, nil).Once()
+			mmClient.On("KVCompareAndSet", "askclaim_answer_ask-1", mock.Anything, mock.Anything).
+				Maybe().Return(false, nil)
+			mmClient.On("KVGet", askCardKVPrefix+"ask-1", mock.Anything).Maybe().
+				Run(func(args mock.Arguments) { *(args.Get(1).(*string)) = "card-post-id" }).
+				Return(nil)
+			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
+			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
+			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
+			mmClient.On("GetPost", "card-post-id").Maybe().Return(cardPost, nil)
+			mmClient.On("GetChannel", anchorChannel.Id).Maybe().Return(anchorChannel, nil)
+			mmClient.On("UpdatePost", mock.AnythingOfType("*model.Post")).Maybe().Return(nil)
+			mmClient.On("PublishWebSocketEvent", "conversation_updated", mock.Anything, mock.Anything).Maybe().Return()
+
+			streamingService := &loadedStateStreamingService{}
+			c := &Conversations{
+				mmClient:         mmClient,
+				contextBuilder:   askAnotherUserBuilder(t),
+				bots:             newAskAnotherUserBotsService(t, bot),
+				convService:      conversation.NewService(convStore, nil, nil, nil),
+				streamingService: streamingService,
+				configProvider:   &channelFollowUpTestConfig{enableAskAnotherUser: true},
+			}
+
+			cancel := func() error {
+				return c.HandleAskUserCancel(context.Background(), "user-id", anchorPost, anchorChannel, "ask-1")
+			}
+			answer := func() error {
+				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
+				return c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
+					Action:   AskUserActionAnswer,
+					Selected: []string{"Prod"},
+				})
+			}
+
+			first, second := cancel, answer
+			if !tc.cancelFirst {
+				first, second = answer, cancel
+			}
+
+			require.NoError(t, first())
+			streamingService.waitForStreaming()
+
+			err = second()
+			require.ErrorIs(t, err, ErrAskNotPending, "the loser must get the graceful 409 path")
+
+			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
+			require.NoError(t, turnsErr)
+			require.Len(t, turns, 2, "exactly one resolution may write a tool_result turn")
+			var resultBlocks []conversation.ContentBlock
+			require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
+			require.Len(t, resultBlocks, 1)
+			assert.JSONEq(t, tc.wantResult, resultBlocks[0].Content)
+
+			assert.Len(t, lm.requests, 1, "the resume must stream exactly once, for the winner")
+		})
+	}
+}
+
 // TestChannelMixedBatchShareAnswerOrdering is the MAJOR-1 regression: a
 // channel conversation with a mixed batch (normal tool + AskAnotherUser)
 // must stream the resume exactly once, only after BOTH the requester's
@@ -1175,7 +2022,9 @@ func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
 			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
 			mmClient.On("GetPost", "card-post-id").Maybe().Return(cardPost, nil)
 			mmClient.On("GetChannel", channel.Id).Maybe().Return(channel, nil)
+			mmClient.On("GetChannelStats", channel.Id).Maybe().Return(nil, errors.New("stats unavailable"))
 			mmClient.On("UpdatePost", mock.AnythingOfType("*model.Post")).Maybe().Return(nil)
+			mmClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 			mmClient.On("PublishWebSocketEvent", "conversation_updated", mock.Anything, mock.Anything).Maybe().Return()
 
 			streamingService := &loadedStateStreamingService{}
@@ -1185,6 +2034,7 @@ func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
 				bots:             newAskAnotherUserBotsService(t, bot),
 				convService:      conversation.NewService(convStore, nil, nil, nil),
 				streamingService: streamingService,
+				configProvider:   &channelFollowUpTestConfig{enableAskAnotherUser: true},
 			}
 
 			// Stage 1: the initiator accepts both. The normal tool executes

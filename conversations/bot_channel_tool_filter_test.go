@@ -58,10 +58,15 @@ func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(context.Context, st
 
 type channelFollowUpTestConfig struct {
 	enableChannelMentionToolCalling bool
+	enableAskAnotherUser            bool
 }
 
 func (c *channelFollowUpTestConfig) EnableChannelMentionToolCalling() bool {
 	return c.enableChannelMentionToolCalling
+}
+
+func (c *channelFollowUpTestConfig) EnableAskAnotherUser() bool {
+	return c.enableAskAnotherUser
 }
 
 func (c *channelFollowUpTestConfig) AllowNativeWebSearchInChannels() bool {

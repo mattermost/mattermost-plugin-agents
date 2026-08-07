@@ -30,6 +30,7 @@ const AnalysisTypeProp = "prompt_type"
 // ConfigProvider provides configuration values for conversation behavior
 type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
+	EnableAskAnotherUser() bool
 	AllowNativeWebSearchInChannels() bool
 	MCP() mcp.Config
 }

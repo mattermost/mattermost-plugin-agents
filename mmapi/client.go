@@ -31,6 +31,7 @@ type Client interface {
 	DM(senderID, receiverID string, post *model.Post) error
 	GetTeam(teamID string) (*model.Team, error)
 	GetChannel(channelID string) (*model.Channel, error)
+	GetChannelStats(channelID string) (*model.ChannelStats, error)
 	GetDirectChannel(userID1, userID2 string) (*model.Channel, error)
 	PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)
 	GetConfig() *model.Config
@@ -83,6 +84,10 @@ func (m *client) GetTeam(teamID string) (*model.Team, error) {
 
 func (m *client) GetChannel(channelID string) (*model.Channel, error) {
 	return m.pluginAPI.Channel.Get(channelID)
+}
+
+func (m *client) GetChannelStats(channelID string) (*model.ChannelStats, error) {
+	return m.pluginAPI.Channel.GetChannelStats(channelID)
 }
 
 func (m *client) GetDirectChannel(userID1, userID2 string) (*model.Channel, error) {

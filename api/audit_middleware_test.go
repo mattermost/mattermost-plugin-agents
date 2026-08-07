@@ -249,6 +249,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUnregisterMCPPluginServer, method: http.MethodPost, path: "/bridge/v1/mcp/unregister", bridge: true},
 		{event: AuditEventToolCallApproval, method: http.MethodPost, path: "/post/postid/tool_call"},
 		{event: AuditEventToolResultApproval, method: http.MethodPost, path: "/post/postid/tool_result"},
+		{event: AuditEventAskUserCancel, method: http.MethodPost, path: "/post/postid/ask_user_cancel"},
 	}
 
 	// One case per registry row, no more and no fewer (the session grant is
