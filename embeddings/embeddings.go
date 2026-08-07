@@ -47,6 +47,10 @@ type SearchResult struct {
 	Score    float32
 }
 
+// MaxSearchResults is the hard cap on rows a vector store returns for a
+// single search; stores clamp unset (<=0) or larger limits to this value.
+const MaxSearchResults = 1000
+
 // SearchOptions contains parameters for search operations
 type SearchOptions struct {
 	Limit         int
@@ -159,6 +163,9 @@ type EmbeddingSearchConfig struct {
 	ReindexWorkers       int              `json:"reindexWorkers,omitempty"`
 	ReindexBatchSize     int              `json:"reindexBatchSize,omitempty"`
 	ReindexIndexStrategy string           `json:"reindexIndexStrategy,omitempty"`
+	RecencyBiasEnabled   bool             `json:"recencyBiasEnabled,omitempty"`
+	RecencyHalfLifeDays  float64          `json:"recencyHalfLifeDays,omitempty"`
+	RecencyFloor         float64          `json:"recencyFloor,omitempty"`
 }
 
 // GetReindexWorkers returns the configured reindex worker count, clamped to
@@ -177,6 +184,25 @@ func (c *EmbeddingSearchConfig) GetReindexBatchSize() int {
 		return DefaultReindexBatchSize
 	}
 	return min(c.ReindexBatchSize, MaxReindexBatchSize)
+}
+
+// GetRecencyBiasSettings resolves the recency bias config: unset (<=0)
+// half-life and floor fall back to defaults; the floor is clamped to [0, 1].
+// These are query-time-only settings; changing them never requires a reindex.
+func (c *EmbeddingSearchConfig) GetRecencyBiasSettings() RecencyBiasSettings {
+	settings := RecencyBiasSettings{
+		Enabled:      c.RecencyBiasEnabled,
+		HalfLifeDays: c.RecencyHalfLifeDays,
+		Floor:        c.RecencyFloor,
+	}
+	if settings.HalfLifeDays <= 0 {
+		settings.HalfLifeDays = DefaultRecencyHalfLifeDays
+	}
+	if settings.Floor <= 0 {
+		settings.Floor = DefaultRecencyFloor
+	}
+	settings.Floor = min(settings.Floor, 1)
+	return settings
 }
 
 // EffectiveReindexIndexStrategy: defer if set, otherwise maintain.

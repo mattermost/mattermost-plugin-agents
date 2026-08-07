@@ -89,11 +89,17 @@ func channelFollowUpTestMCPTool(name, origin, description string) llm.Tool {
 }
 
 func newChannelFollowUpTestBuilder(t *testing.T, mcpTools []llm.Tool, config *channelFollowUpTestConfig) *llmcontext.Builder {
+	return newChannelFollowUpTestBuilderWithLicense(t, mcpTools, config, true)
+}
+
+// newChannelFollowUpTestBuilderWithLicense builds a context builder whose
+// license state controls remote MCP tool supply: unlicensed builders drop
+// remote-origin tools before they reach the LLM context.
+func newChannelFollowUpTestBuilderWithLicense(t *testing.T, mcpTools []llm.Tool, config *channelFollowUpTestConfig, licensed bool) *llmcontext.Builder {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockLicenseState(mockAPI, licensed)
 	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 
 	return llmcontext.NewLLMContextBuilder(
@@ -330,6 +336,54 @@ func TestBotChannelAutoEverywhereFilterKeepsMetaToolsWithNilChecker(t *testing.T
 		disabledNames = append(disabledNames, info.Name)
 	}
 	require.ElementsMatch(t, []string{"builtin", "ask_tool"}, disabledNames)
+}
+
+// TestBotChannelAutoEverywhereKeepToolAutoExecuteBuiltIn pins that
+// auto-execute built-ins survive the strict bot-channel filter like
+// meta-tools do, while a plain built-in and an MCP tool carrying the flag are
+// still removed.
+func TestBotChannelAutoEverywhereKeepToolAutoExecuteBuiltIn(t *testing.T) {
+	cases := []struct {
+		name string
+		tool llm.Tool
+		want bool
+	}{
+		{name: "auto-execute built-in kept", tool: llm.Tool{Name: "CreateFile", AutoExecute: true}, want: true},
+		{name: "plain built-in removed", tool: llm.Tool{Name: "builtin"}, want: false},
+		{name: "MCP tool with flag not kept by the flag", tool: llm.Tool{Name: "mcp_tool", ServerOrigin: "https://mcp.example.com", AutoExecute: true}, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, botChannelAutoEverywhereKeepTool(nil, tc.tool))
+		})
+	}
+}
+
+func TestBotChannelAutoEverywhereFilterKeepsAutoExecuteBuiltInWithNilChecker(t *testing.T) {
+	c := &Conversations{toolPolicyChecker: nil}
+
+	llmContext := &llm.Context{
+		Tools: llm.NewToolStore(),
+	}
+	llmContext.Tools.AddTools([]llm.Tool{
+		{Name: "CreateFile", AutoExecute: true, Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "builtin", Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "", nil }},
+	})
+
+	c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+
+	toolNames := make([]string, 0, len(llmContext.Tools.GetTools()))
+	for _, tool := range llmContext.Tools.GetTools() {
+		toolNames = append(toolNames, tool.Name)
+	}
+	require.ElementsMatch(t, []string{"CreateFile"}, toolNames)
+
+	disabledNames := make([]string, 0, len(llmContext.DisabledToolsInfo))
+	for _, info := range llmContext.DisabledToolsInfo {
+		disabledNames = append(disabledNames, info.Name)
+	}
+	require.ElementsMatch(t, []string{"builtin"}, disabledNames)
 }
 
 func TestBotChannelAutoEverywhereFilterDenormalizesNamespacedTool(t *testing.T) {

@@ -252,7 +252,10 @@ func (c *Conversations) regenerateViaConversation(
 	// Regeneration is triggered by the requester clicking the regen control,
 	// so the user is interactively present. Delegation conversations keep
 	// ask_agent excluded on regen too.
-	regenOpts := []llm.ContextOption{c.contextBuilder.WithLLMContextInteractive()}
+	regenOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextInteractive(),
+		c.contextBuilder.WithLLMContextResponseFiles(),
+	}
 	regenOpts = append(regenOpts, c.delegationConversationContextOptions(conv)...)
 	llmContext := c.buildConversationContextWithTools(
 		ctx, bot, user, channel,
@@ -289,6 +292,14 @@ func (c *Conversations) regenerateViaConversation(
 		c.mmClient.LogError("Failed to scrub prior response turns on regen", "error", delErr.Error(), "post_id", post.Id, "conversation_id", conv.ID)
 	}
 
+	// Clear prior attachments so the regenerated response starts clean.
+	// Safe: conversation-flow bot posts only ever carry CreateFile
+	// attachments (meeting-summary regen never reaches this path).
+	// An explicit empty list — not nil — tells the server's UpdatePost
+	// file-change processing to detach the previous generation's attachments
+	// even if the new run creates none; nil could be treated as "no change".
+	post.FileIds = []string{}
+
 	var opts []llm.LanguageModelOption
 	if toolsDisabled {
 		opts = append(opts, llm.WithToolsDisabled())
@@ -310,5 +321,5 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
-	return runResult.Stream, nil
+	return c.decorateStreamWithCreatedFiles(runResult.Stream, post, nil, llmContext), nil
 }

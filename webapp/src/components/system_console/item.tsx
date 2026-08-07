@@ -63,7 +63,7 @@ export type TextItemProps = {
     label: string,
     value: string,
     type?: string,
-    helptext?: string,
+    helptext?: React.ReactNode,
     multiline?: boolean,
     placeholder?: string,
     maxLength?: number,

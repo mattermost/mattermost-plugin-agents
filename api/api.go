@@ -64,7 +64,7 @@ type MCPClientManager interface {
 	DisconnectUserOAuth(userID, serverName string) error
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
-	EnsureMCPSessionID(userID string) (string, error)
+	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
 	GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors)
 	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
 	GetConfig() mcp.Config
@@ -167,6 +167,10 @@ type API struct {
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
 
+	// auditEvents maps gin handler names to audit event names for routes
+	// that emit server audit records. Built once in New; read-only after.
+	auditEvents map[string]string
+
 	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
 	// is the only supported entry point for tests.
 	externalRebuilderForTest externalServerRebuilder
@@ -208,7 +212,7 @@ func New(
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
 ) *API {
-	return &API{
+	a := &API{
 		bots:                  bots,
 		conversationsService:  conversationsService,
 		meetingsService:       meetingsService,
@@ -241,6 +245,8 @@ func New(
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
 	}
+	a.auditEvents = buildAuditEventRegistry(a)
+	return a
 }
 
 // SetConversationService sets the conversation entity service for channel analysis.
@@ -254,6 +260,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.Use(otelgin.Middleware("mattermost-ai-agents"))
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
+	router.Use(a.auditMiddleware(c))
 
 	// LLM Bridge API v1 routes - inter-plugin only
 	llmBridgeRoute := router.Group("/bridge/v1")
@@ -280,7 +287,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 		// Store plugin.Context in gin.Context for MCP endpoints
 		mcpServerGroup.Use(func(gc *gin.Context) {
-			gc.Set("pluginContext", c)
+			gc.Set(pluginContextGinKey, c)
 			gc.Next()
 		})
 

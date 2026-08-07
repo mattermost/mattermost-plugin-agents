@@ -12,6 +12,7 @@ import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import type {DelegationStatus} from '@/types/delegation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
 
@@ -60,16 +61,21 @@ function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
 }
 
+// Interpolated ids are encoded so each one can only ever occupy one path segment.
 function postRoute(postid: string): string {
-    return `${baseRoute()}/post/${postid}`;
+    return `${baseRoute()}/post/${encodeURIComponent(postid)}`;
 }
 
 function channelRoute(channelid: string): string {
-    return `${baseRoute()}/channel/${channelid}`;
+    return `${baseRoute()}/channel/${encodeURIComponent(channelid)}`;
 }
 
 function agentRoute(agentId: string): string {
-    return `${baseRoute()}/agents/${agentId}`;
+    return `${baseRoute()}/agents/${encodeURIComponent(agentId)}`;
+}
+
+function conversationRoute(conversationId: string): string {
+    return `${baseRoute()}/conversations/${encodeURIComponent(conversationId)}`;
 }
 
 // readAgentErrorMessage extracts the server-provided error message from an
@@ -279,6 +285,14 @@ export async function doPostbackSummary(postid: string) {
 }
 
 export async function doLoopInAgent(postid: string, botUsername: string) {
+    if (!isValidId(postid)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid post id',
+            status_code: 400,
+            url: Client4.url,
+        });
+    }
+
     const url = `${postRoute(postid)}/loop_in_agent?botUsername=${encodeURIComponent(botUsername)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
@@ -343,7 +357,17 @@ export function normalizeConversationResponse(raw: ConversationResponse): Conver
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationResponse> {
-    const url = `${baseRoute()}/conversations/${conversationId}`;
+    // The id can arrive straight off a free-form post prop; refuse to build a
+    // request from a value that is not a well-formed id.
+    if (!isValidId(conversationId)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid conversation id',
+            status_code: 400,
+            url: Client4.url,
+        });
+    }
+
+    const url = conversationRoute(conversationId);
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -378,7 +402,16 @@ export async function getDelegationStatus(parentToolCallId: string): Promise<Del
 }
 
 export async function getConversationContext(conversationId: string): Promise<Composition> {
-    const url = `${baseRoute()}/conversations/${conversationId}/context`;
+    // Same as getConversation: never build a request from a malformed id.
+    if (!isValidId(conversationId)) {
+        throw new ClientError(Client4.url, {
+            message: 'Invalid conversation id',
+            status_code: 400,
+            url: Client4.url,
+        });
+    }
+
+    const url = `${conversationRoute(conversationId)}/context`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
