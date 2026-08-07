@@ -16,8 +16,9 @@ import {
     expandToolActivity,
     expectNoToolActivity,
     expectToolActivityCurrent,
+    TOOL_CARD_SELECTOR,
 } from 'helpers/llmbot-post';
-import MattermostContainer from 'helpers/mmcontainer';
+import MattermostContainer, {getTownSquareChannel, TownSquareChannel} from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {
     MULTIPLAYER_ASK_TOOL_CONFIGS,
@@ -40,7 +41,6 @@ const getChannelInfoToolLabel = 'Get Channel Info';
 
 // A tool card only offers expansion when the viewer may see its arguments and
 // results, which is what the chevron in its header signals.
-const TOOL_CARD_SELECTOR = '[class*="ToolCallCard"]';
 const TOOL_CARD_CHEVRON_SELECTOR = '[class*="StyledChevronIcon"]';
 const TOOL_CARD_ARGUMENTS_SELECTOR = '[class*="ToolCallArguments"]';
 
@@ -51,12 +51,6 @@ const multiplayerCustomInstructions = [
 
 let mattermost: MattermostContainer;
 let aimock: AIMockContainer;
-
-type TownSquareChannel = {
-    id: string;
-    displayName: string;
-    teamDisplayName: string;
-};
 
 async function setupMultiplayerUsers(mattermostInstance: MattermostContainer): Promise<void> {
     await mattermostInstance.createUser('regularuser@sample.com', invokerUsername, invokerPassword);
@@ -83,24 +77,6 @@ async function setupMultiplayerUsers(mattermostInstance: MattermostContainer): P
 
     const adminClient = await mattermostInstance.getAdminClient();
     await adminClient.completeSetup({organization: 'test', install_plugins: []});
-}
-
-async function getTownSquareChannel(mattermostInstance: MattermostContainer): Promise<TownSquareChannel> {
-    const client = await mattermostInstance.getClient(invokerUsername, invokerPassword);
-    const teams = await client.getMyTeams();
-    const team = teams[0];
-    const channels = await client.getMyChannels(team.id);
-    const townSquare = channels.find((channel: {name: string}) => channel.name === 'town-square');
-
-    if (!townSquare) {
-        throw new Error('Could not find town-square channel');
-    }
-
-    return {
-        id: townSquare.id,
-        displayName: townSquare.display_name || 'Town Square',
-        teamDisplayName: team.display_name || 'Test',
-    };
 }
 
 function titleFixtures(title: string) {
@@ -300,7 +276,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             botDisplayName: 'Tool Test Bot',
         });
         await setupMultiplayerUsers(mattermost);
-        townSquare = await getTownSquareChannel(mattermost);
+        townSquare = await getTownSquareChannel(mattermost, invokerUsername, invokerPassword);
         aimock = await RunAIMockSidecar(mattermost.network, {
             fixtures: {fixtures: [buildTitleFixture('Multiplayer bootstrap')]},
         });

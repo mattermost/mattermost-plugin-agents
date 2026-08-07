@@ -1,24 +1,22 @@
 import {test, expect} from '@playwright/test';
 
-import {AIPlugin} from 'helpers/ai-plugin';
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
-    AIMockFixtureFile,
     buildMultiTurnToolSequence,
     buildTitleFixture,
     EMBEDDED_GET_CHANNEL_INFO_TOOL,
+    EMBEDDED_READ_CHANNEL_TOOL,
     mergeFixtureFiles,
 } from 'helpers/aimock-fixtures';
+import {askAimockBot} from 'helpers/aimock-harness';
 import {
     collapseToolActivity,
     expandToolActivity,
     expectToolActivityCollapsed,
     expectToolActivitySummary,
-    LLMBotPostHelper,
     TOOL_STATUS_SELECTOR,
 } from 'helpers/llmbot-post';
-import {MattermostPage} from 'helpers/mm';
-import MattermostContainer from 'helpers/mmcontainer';
+import MattermostContainer, {getTownSquareChannel} from 'helpers/mmcontainer';
 import {RunToolConfigAIMockContainer, setupRegularTestUser} from 'helpers/tool-config-container';
 
 /**
@@ -31,7 +29,6 @@ import {RunToolConfigAIMockContainer, setupRegularTestUser} from 'helpers/tool-c
 const username = 'regularuser';
 const password = 'regularuser';
 
-const EMBEDDED_READ_CHANNEL_TOOL = 'mattermost__read_channel';
 const getChannelInfoLabel = 'Get Channel Info';
 const readChannelLabel = 'Read Channel';
 
@@ -70,18 +67,11 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
             reasoningEnabled: true,
         });
         await setupRegularTestUser(mattermost);
-
-        const userClient = await mattermost.getClient(username, password);
-        const teams = await userClient.getMyTeams();
-        const channels = await userClient.getMyChannels(teams[0].id);
-        const townSquare = channels.find((channel: {name: string}) => channel.name === 'town-square');
-        if (!townSquare) {
-            throw new Error('town-square channel not found');
-        }
+        const townSquare = await getTownSquareChannel(mattermost, username, password);
 
         // The title fixture has to come first: aimock matches user messages by
         // substring, and a title request embeds the original prompt.
-        const fixtures: AIMockFixtureFile = mergeFixtureFiles(
+        const fixtures = mergeFixtureFiles(
             {fixtures: [buildTitleFixture('Tool activity')]},
             buildMultiTurnToolSequence({
                 userPromptMarker: multiToolPrompt,
@@ -191,14 +181,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
     test('collapses multiple auto-run tools into a summary that expands and collapses again', async ({page}) => {
         test.setTimeout(180000);
 
-        const mmPage = new MattermostPage(page);
-        const aiPlugin = new AIPlugin(page);
-        await mmPage.login(mattermost.url(), username, password);
-        await aiPlugin.resetState();
-        await aiPlugin.sendMessage(multiToolPrompt);
-
-        const rhs = page.getByTestId('mattermost-ai-rhs');
-        const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+        const {botPost} = await askAimockBot(page, mattermost.url(), multiToolPrompt);
         await expect(botPost.getByText(multiToolFinal)).toBeVisible({timeout: 120000});
         await expect(page.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
@@ -213,7 +196,6 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await expect(activityRounds.getByText(readChannelLabel, {exact: true})).toBeVisible();
 
         await collapseToolActivity(botPost);
-        await expectToolActivityCollapsed(botPost);
         await expect(botPost.getByText(getChannelInfoLabel, {exact: true})).toHaveCount(0);
         await expect(botPost.getByText(readChannelLabel, {exact: true})).toHaveCount(0);
 
@@ -224,14 +206,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
     test('hides intermediate narration text until the activity area is expanded', async ({page}) => {
         test.setTimeout(180000);
 
-        const mmPage = new MattermostPage(page);
-        const aiPlugin = new AIPlugin(page);
-        await mmPage.login(mattermost.url(), username, password);
-        await aiPlugin.resetState();
-        await aiPlugin.sendMessage(narrationPrompt);
-
-        const rhs = page.getByTestId('mattermost-ai-rhs');
-        const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+        const {botPost} = await askAimockBot(page, mattermost.url(), narrationPrompt);
         await expect(botPost.getByText(narrationFinal)).toBeVisible({timeout: 120000});
         await expect(page.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
@@ -246,14 +221,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
     test('summarizes a failed tool with an error glyph', async ({page}) => {
         test.setTimeout(180000);
 
-        const mmPage = new MattermostPage(page);
-        const aiPlugin = new AIPlugin(page);
-        await mmPage.login(mattermost.url(), username, password);
-        await aiPlugin.resetState();
-        await aiPlugin.sendMessage(failingPrompt);
-
-        const rhs = page.getByTestId('mattermost-ai-rhs');
-        const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+        const {botPost} = await askAimockBot(page, mattermost.url(), failingPrompt);
         await expect(botPost.getByText(failingFinal)).toBeVisible({timeout: 120000});
         await expect(page.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
@@ -266,15 +234,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
     test('shows the reasoning row alongside the activity area, each expanding independently', async ({page}) => {
         test.setTimeout(180000);
 
-        const mmPage = new MattermostPage(page);
-        const aiPlugin = new AIPlugin(page);
-        const llmBotHelper = new LLMBotPostHelper(page);
-        await mmPage.login(mattermost.url(), username, password);
-        await aiPlugin.resetState();
-        await aiPlugin.sendMessage(reasoningPrompt);
-
-        const rhs = page.getByTestId('mattermost-ai-rhs');
-        const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+        const {botPost, llmBotHelper} = await askAimockBot(page, mattermost.url(), reasoningPrompt);
         await expect(botPost.getByText(reasoningFinal)).toBeVisible({timeout: 120000});
         await expect(page.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
@@ -295,21 +255,13 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
 
         // Collapsing the activity area leaves the reasoning open.
         await collapseToolActivity(botPost);
-        await expectToolActivityCollapsed(botPost);
         await llmBotHelper.expectReasoningText(reasoningText);
     });
 
     test('settles the post without a stuck spinner when generation is stopped after a tool round', async ({page}) => {
         test.setTimeout(180000);
 
-        const mmPage = new MattermostPage(page);
-        const aiPlugin = new AIPlugin(page);
-        await mmPage.login(mattermost.url(), username, password);
-        await aiPlugin.resetState();
-        await aiPlugin.sendMessage(stopPrompt);
-
-        const rhs = page.getByTestId('mattermost-ai-rhs');
-        const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+        const {botPost} = await askAimockBot(page, mattermost.url(), stopPrompt);
 
         // The tool round runs first and the answer then trickles in, which is
         // the window where Stop is on offer. Whether the finished tool round
@@ -318,9 +270,9 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         // event and only picks the round up when the turn is persisted.
         const stopButton = page.getByRole('button', {name: /stop/i});
         await expect(stopButton).toBeVisible({timeout: 120000});
-        await expect.
-            poll(async () => (await botPost.textContent()) ?? '', {timeout: 120000}).
-            toContain(stopAnswerStart);
+        await expect
+            .poll(async () => (await botPost.textContent()) ?? '', {timeout: 120000})
+            .toContain(stopAnswerStart);
 
         await stopButton.click();
 

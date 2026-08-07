@@ -1,22 +1,23 @@
 import {test, expect, type Locator} from '@playwright/test';
 
-import {AIPlugin} from 'helpers/ai-plugin';
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
     buildMultiTurnToolSequence,
     buildTitleFixture,
     EMBEDDED_GET_CHANNEL_INFO_TOOL,
+    EMBEDDED_READ_CHANNEL_TOOL,
     mergeFixtureFiles,
 } from 'helpers/aimock-fixtures';
+import {askAimockBot} from 'helpers/aimock-harness';
 import {
     expandToolActivity,
     expectToolActivityCollapsed,
     expectToolActivityCurrent,
     expectToolActivitySummary,
+    TOOL_CARD_SELECTOR,
     TOOL_STATUS_SELECTOR,
 } from 'helpers/llmbot-post';
-import {MattermostPage} from 'helpers/mm';
-import MattermostContainer from 'helpers/mmcontainer';
+import MattermostContainer, {getTownSquareChannel} from 'helpers/mmcontainer';
 import {RunToolConfigAIMockContainer, setupRegularTestUser} from 'helpers/tool-config-container';
 
 /**
@@ -28,7 +29,6 @@ import {RunToolConfigAIMockContainer, setupRegularTestUser} from 'helpers/tool-c
 const username = 'regularuser';
 const password = 'regularuser';
 
-const EMBEDDED_READ_CHANNEL_TOOL = 'mattermost__read_channel';
 const getChannelInfoLabel = 'Get Channel Info';
 const readChannelLabel = 'Read Channel';
 
@@ -41,24 +41,34 @@ const rejectPrompt = 'tool activity rejection after prelude';
 // DM; the fixture keeps aimock's strict matching satisfied either way.
 const rejectFinal = 'REJECTION_ANSWER: I skipped the lookup.';
 
+type ApprovalPlacement = 'below' | 'above' | 'nested' | 'missing-activity' | 'missing-accept';
+
 /**
- * True when the Accept button is a sibling that follows the activity area
- * rather than something nested inside it.
+ * Where the Accept button sits relative to the activity area. 'below' is the
+ * wanted placement: a sibling that follows the area rather than living inside
+ * it. The other results name what went wrong instead of just failing.
  */
-async function approvalRendersBelowActivity(post: Locator): Promise<boolean> {
+async function approvalPlacement(post: Locator): Promise<ApprovalPlacement> {
     return post.evaluate((el) => {
         const activity = el.querySelector('[data-testid="llm-bot-tool-activity"]');
+        if (!activity) {
+            return 'missing-activity';
+        }
+
         const accept = Array.from(el.querySelectorAll('button')).find(
             (button) => button.textContent?.trim() === 'Accept',
         );
-        if (!activity || !accept) {
-            return false;
+        if (!accept) {
+            return 'missing-accept';
         }
 
+        // CONTAINED_BY comes with FOLLOWING set, so nesting has to be ruled
+        // out before reading the sibling order.
         const relation = activity.compareDocumentPosition(accept);
-        const follows = (relation & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
-        const nested = (relation & Node.DOCUMENT_POSITION_CONTAINED_BY) !== 0;
-        return follows && !nested;
+        if ((relation & Node.DOCUMENT_POSITION_CONTAINED_BY) !== 0) {
+            return 'nested';
+        }
+        return (relation & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 ? 'below' : 'above';
     });
 }
 
@@ -77,14 +87,7 @@ test.describe('Tool Activity Approval Placement (Aimock)', () => {
             ],
         });
         await setupRegularTestUser(mattermost);
-
-        const userClient = await mattermost.getClient(username, password);
-        const teams = await userClient.getMyTeams();
-        const channels = await userClient.getMyChannels(teams[0].id);
-        const townSquare = channels.find((channel: {name: string}) => channel.name === 'town-square');
-        if (!townSquare) {
-            throw new Error('town-square channel not found');
-        }
+        const townSquare = await getTownSquareChannel(mattermost, username, password);
 
         const preludeThenAsk = (options: {
             prompt: string;
@@ -138,14 +141,7 @@ test.describe('Tool Activity Approval Placement (Aimock)', () => {
     test('renders the approval card below the collapsed activity area and folds it back in on accept', async ({page}) => {
         test.setTimeout(180000);
 
-        const mmPage = new MattermostPage(page);
-        const aiPlugin = new AIPlugin(page);
-        await mmPage.login(mattermost.url(), username, password);
-        await aiPlugin.resetState();
-        await aiPlugin.sendMessage(acceptPrompt);
-
-        const rhs = page.getByTestId('mattermost-ai-rhs');
-        const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+        const {rhs, botPost} = await askAimockBot(page, mattermost.url(), acceptPrompt);
 
         const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
         await expect(acceptButton).toBeVisible({timeout: 120000});
@@ -155,13 +151,13 @@ test.describe('Tool Activity Approval Placement (Aimock)', () => {
         await expectToolActivityCollapsed(botPost);
         await expectToolActivityCurrent(botPost, readChannelLabel);
         await expect(botPost.getByText(getChannelInfoLabel, {exact: true})).toBeVisible();
-        expect(await approvalRendersBelowActivity(botPost)).toBe(true);
+        expect(await approvalPlacement(botPost)).toBe('below');
 
         await acceptButton.click();
 
         await expect(botPost.getByText(acceptFinal)).toBeVisible({timeout: 120000});
         await expect(page.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
-        await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
+        await expect(acceptButton).not.toBeVisible();
         await expect(rhs.getByRole('button', {name: /^reject$/i})).not.toBeVisible();
 
         // With no decision outstanding, both tools fold into one summary.
@@ -177,14 +173,7 @@ test.describe('Tool Activity Approval Placement (Aimock)', () => {
     test('summarizes a rejected tool as rejected', async ({page}) => {
         test.setTimeout(180000);
 
-        const mmPage = new MattermostPage(page);
-        const aiPlugin = new AIPlugin(page);
-        await mmPage.login(mattermost.url(), username, password);
-        await aiPlugin.resetState();
-        await aiPlugin.sendMessage(rejectPrompt);
-
-        const rhs = page.getByTestId('mattermost-ai-rhs');
-        const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+        const {rhs, botPost} = await askAimockBot(page, mattermost.url(), rejectPrompt);
 
         const rejectButton = rhs.getByRole('button', {name: /^reject$/i});
         await expect(rejectButton).toBeVisible({timeout: 120000});
@@ -202,9 +191,9 @@ test.describe('Tool Activity Approval Placement (Aimock)', () => {
         // The rejected call is still in the stack, carrying the glyph the
         // summary borrowed from it.
         const activityRounds = await expandToolActivity(botPost);
-        const rejectedCard = activityRounds.
-            locator('[class*="ToolCallCard"]').
-            filter({hasText: getChannelInfoLabel});
+        const rejectedCard = activityRounds
+            .locator(TOOL_CARD_SELECTOR)
+            .filter({hasText: getChannelInfoLabel});
         await expect(rejectedCard).toBeVisible({timeout: 30000});
         await expect(rejectedCard.locator(TOOL_STATUS_SELECTOR)).toHaveAttribute('data-status', 'rejected');
     });

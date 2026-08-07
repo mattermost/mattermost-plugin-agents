@@ -8,6 +8,9 @@ const TOOL_ACTIVITY_ROUNDS_SELECTOR = '[data-testid="llm-bot-tool-activity-round
 /** The status glyph next to a tool name, both on cards and on the collapsed row. */
 export const TOOL_STATUS_SELECTOR = '[data-testid="llm-bot-tool-status"]';
 
+/** One tool call's card: its name, status, and — when expanded — its arguments and result. */
+export const TOOL_CARD_SELECTOR = '[class*="ToolCallCard"]';
+
 /** The glyph ToolStatusIcon renders, exposed as its data-status attribute. */
 export type ToolStatusGlyph = 'running' | 'success' | 'error' | 'rejected';
 
@@ -46,14 +49,21 @@ export async function expandToolActivity(scope: Locator): Promise<Locator> {
     return scope.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR);
 }
 
-/** Re-collapses an expanded activity area, hiding the round stack again. */
+/**
+ * Re-collapses an expanded activity area, hiding the round stack again. Unlike
+ * `expandToolActivity`, this acts on the first activity area in `scope` only.
+ */
 export async function collapseToolActivity(scope: Locator): Promise<void> {
     const area = scope.locator(TOOL_ACTIVITY_SELECTOR).first();
     await area.locator(TOOL_ACTIVITY_HEADER_SELECTOR).click();
     await expect(area.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR)).toHaveCount(0, { timeout: 10000 });
 }
 
-/** Asserts an activity area exists and is showing only its one-line header. */
+/**
+ * Asserts an activity area exists and is showing only its one-line header. The
+ * header check reads the first area in `scope`; the round check covers all of
+ * them, since a collapsed post has no round stack anywhere.
+ */
 export async function expectToolActivityCollapsed(scope: Locator): Promise<void> {
     await expect(scope.locator(TOOL_ACTIVITY_HEADER_SELECTOR).first()).toBeVisible({ timeout: 30000 });
     await expect(scope.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR)).toHaveCount(0);
