@@ -1,5 +1,52 @@
 import { Page, Locator, expect } from '@playwright/test';
 
+export const TOOL_ACTIVITY_SELECTOR = '[data-testid="llm-bot-tool-activity"]';
+export const TOOL_ACTIVITY_HEADER_SELECTOR = '[data-testid="llm-bot-tool-activity-header"]';
+export const TOOL_ACTIVITY_CURRENT_SELECTOR = '[data-testid="llm-bot-tool-activity-current"]';
+export const TOOL_ACTIVITY_ROUNDS_SELECTOR = '[data-testid="llm-bot-tool-activity-rounds"]';
+
+/**
+ * Bot posts collapse their tool calls into a single activity row by default;
+ * tool cards, arguments, results and the "Auto-approved" badge only exist in
+ * the DOM once the row is expanded. Expands every collapsed activity area
+ * inside `scope` (already-expanded ones are left alone) and returns the
+ * revealed rounds.
+ *
+ * Assert tool labels against the returned locator rather than the whole post:
+ * the collapsed row animates towards the newest item, so for a few hundred
+ * milliseconds after expanding it can still name a tool that the stack also
+ * shows, which would make a post-wide locator ambiguous.
+ *
+ * Approval controls are rendered while collapsed too, so specs that only
+ * click Accept/Reject/Share do not need this.
+ */
+export async function expandToolActivity(scope: Locator, timeout: number = 30000): Promise<Locator> {
+    const areas = scope.locator(TOOL_ACTIVITY_SELECTOR);
+    await expect(areas.first()).toBeVisible({ timeout });
+
+    const count = await areas.count();
+    for (let i = 0; i < count; i++) {
+        const area = areas.nth(i);
+        const rounds = area.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR);
+        if ((await rounds.count()) > 0) {
+            continue;
+        }
+
+        // An area whose only activity is the tool call awaiting a decision
+        // renders no header, because the approval card below it already shows
+        // everything there is to see. Nothing to expand.
+        const header = area.locator(TOOL_ACTIVITY_HEADER_SELECTOR);
+        if ((await header.count()) === 0) {
+            continue;
+        }
+
+        await header.click();
+        await expect(rounds).toHaveCount(1, { timeout: 10000 });
+    }
+
+    return scope.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR);
+}
+
 /**
  * LLMBotPostHelper - Page object for LLMBot post component interactions
  *
@@ -94,6 +141,40 @@ export class LLMBotPostHelper {
         const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
         // ChevronRight is inside MinimalExpandIcon or ExpandedChevron containers
         return baseLocator.locator('[class*="MinimalExpandIcon"] svg, [class*="ExpandedChevron"] svg').first();
+    }
+
+    /**
+     * Get the collapsed tool-activity area of a post
+     * @param postId - Optional post ID to scope the search
+     */
+    getToolActivity(postId?: string): Locator {
+        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
+        return baseLocator.locator(TOOL_ACTIVITY_SELECTOR);
+    }
+
+    /**
+     * Get the current activity row (the single item shown while collapsed)
+     * @param postId - Optional post ID to scope the search
+     */
+    getToolActivityCurrentItem(postId?: string): Locator {
+        return this.getToolActivity(postId).locator(TOOL_ACTIVITY_CURRENT_SELECTOR);
+    }
+
+    /**
+     * Get the stacked rounds revealed by expanding the activity area
+     * @param postId - Optional post ID to scope the search
+     */
+    getToolActivityRounds(postId?: string): Locator {
+        return this.getToolActivity(postId).locator(TOOL_ACTIVITY_ROUNDS_SELECTOR);
+    }
+
+    /**
+     * Expand the tool-activity area so tool cards become visible
+     * @param postId - Optional post ID to scope the action
+     */
+    async expandToolActivity(postId?: string): Promise<void> {
+        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
+        await expandToolActivity(baseLocator);
     }
 
     /**

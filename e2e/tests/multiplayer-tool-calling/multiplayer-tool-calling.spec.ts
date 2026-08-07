@@ -11,6 +11,7 @@ import {
     EMBEDDED_CREATE_POST_TOOL,
     mergeFixtureFiles,
 } from 'helpers/aimock-fixtures';
+import {expandToolActivity, TOOL_ACTIVITY_CURRENT_SELECTOR} from 'helpers/llmbot-post';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {
@@ -30,6 +31,7 @@ const onlookerUsername = 'seconduser';
 const onlookerPassword = 'seconduser';
 const botUsername = 'toolbot';
 const createPostToolLabel = 'Create Post';
+const getChannelInfoToolLabel = 'Get Channel Info';
 
 const multiplayerCustomInstructions = [
     'You have access to Mattermost tools including create_post and get_channel_info.',
@@ -348,7 +350,12 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             await waitForAnyButtonInThread(invokerPage, ['Accept', 'Share', 'Keep private']);
 
             expect(await completeOneToolCallRound(invokerPage, 'accept-share')).toBe(true);
-            await expect(rhs.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+
+            // The second round's approval card renders without expanding,
+            // while the resolved first round stays folded into the row above.
+            const invokerPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+            await expect(invokerPost.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+            await expect(invokerPost.locator(TOOL_ACTIVITY_CURRENT_SELECTOR)).toContainText(getChannelInfoToolLabel);
             expect(await completeOneToolCallRound(invokerPage, 'accept-keep-private')).toBe(true);
 
             await waitForApprovalFlowToSettle(invokerPage);
@@ -414,6 +421,9 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
 
             const onlookerRhs = onlookerPage.locator('#rhsContainer');
             await expect(onlookerRhs.locator('[data-testid="llm-bot-post"]').last()).toBeVisible({timeout: 30000});
+
+            // Onlookers see the pending call only as the current activity item.
+            await expect(onlookerRhs.locator(TOOL_ACTIVITY_CURRENT_SELECTOR).last()).toBeVisible({timeout: 30000});
             await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
             await expect(onlookerRhs.getByRole('button', {name: 'Reject'})).not.toBeVisible();
 
@@ -485,7 +495,12 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             await waitForApprovalFlowToSettle(page, 60000);
             await expect(rhs.getByRole('button', {name: 'Share'})).not.toBeVisible();
             await expect(rhs.getByRole('button', {name: 'Keep private'})).not.toBeVisible();
-            await expect(rhs.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 30000});
+
+            // With the decision made, the rejected tool folds back into the
+            // collapsed activity area and only reappears when expanded.
+            await expect(rhs.getByText(createPostToolLabel, {exact: true})).toHaveCount(0);
+            const activityRounds = await expandToolActivity(rhs.locator('[data-testid="llm-bot-post"]').last());
+            await expect(activityRounds.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 30000});
 
             await navigateToChannel(page, baseUrl, 'town-square');
             await expect(page.getByText(rejectPostText)).not.toBeVisible();

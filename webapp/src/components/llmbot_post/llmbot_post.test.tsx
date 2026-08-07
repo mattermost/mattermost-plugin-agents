@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 import {useSelector} from 'react-redux';
 
@@ -58,6 +58,7 @@ jest.mock('../post_text', () => {
 jest.mock('../tool_approval_set', () => ({
     __esModule: true,
     default: () => null,
+    needsViewerDecision: () => false,
 }));
 
 // The preview fetches the source post and profile on mount; stub it out so the
@@ -188,6 +189,89 @@ describe('LLMBotPost streaming fallback rendering', () => {
             expect(screen.getByText(errorText)).toBeTruthy();
         });
         expect(screen.queryByText('Starting...')).toBeNull();
+    });
+});
+
+describe('LLMBotPost tool activity area', () => {
+    // A response that used a tool: the intermediate round's text folds into
+    // the collapsed activity area, the anchor round stays the post message.
+    function conversationWithToolRound() {
+        return {
+            id: WELL_FORMED_ID,
+            user_id: 'user_1',
+            bot_id: 'bot_1',
+            channel_id: 'channel_1',
+            root_post_id: 'root_1',
+            title: '',
+            operation: 'conversation',
+            turns: [
+                {
+                    id: 'u1',
+                    post_id: 'user_post',
+                    role: 'user',
+                    sequence: 1,
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    content: [{type: 'text', text: 'look that up'}],
+                },
+                {
+                    id: 'r1',
+                    post_id: null,
+                    role: 'assistant',
+                    sequence: 2,
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    content: [
+                        {type: 'text', text: 'Let me look that up'},
+                        {type: 'tool_use', id: 'tc_a', name: 'search_tools', status: 'auto_approved'},
+                    ],
+                },
+                {
+                    id: 'tr1',
+                    post_id: null,
+                    role: 'tool_result',
+                    sequence: 3,
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    content: [{type: 'tool_result', tool_use_id: 'tc_a', content: 'ok', status: 'success'}],
+                },
+                {
+                    id: 'anchor',
+                    post_id: 'post_1',
+                    role: 'assistant',
+                    sequence: 4,
+                    approval_state: 'done',
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    content: [{type: 'text', text: 'Here is the answer'}],
+                },
+            ],
+        };
+    }
+
+    beforeEach(() => {
+        mockUseConversation.mockReturnValue({
+            conversation: conversationWithToolRound(),
+            loading: false,
+            error: null,
+        });
+    });
+
+    test('hides intermediate text behind the collapsed activity row and keeps the answer visible', () => {
+        renderPost();
+
+        expect(screen.getByText('Here is the answer')).toBeTruthy();
+        expect(screen.queryByText('Let me look that up')).toBeNull();
+        expect(screen.getByTestId('llm-bot-tool-activity')).toBeTruthy();
+    });
+
+    test('reveals the intermediate round when the activity row is expanded', () => {
+        renderPost();
+
+        fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
+
+        expect(screen.getByText('Let me look that up')).toBeTruthy();
+        expect(screen.getByText('Here is the answer')).toBeTruthy();
     });
 });
 

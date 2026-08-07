@@ -16,9 +16,7 @@ import {PostMessagePreview} from '@/mm_webapp';
 
 import {isValidId} from '@/utils/ids';
 
-import PostText from '../post_text';
 import {SearchSources, parseSearchSources} from '../search_sources';
-import ToolApprovalSet from '../tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 
@@ -28,9 +26,12 @@ import {
     computeRenderedRounds,
     deriveApprovalStageForPost,
 } from './turn_content_utils';
-import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
+import {deriveActivity} from './activity_items';
+import {LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
+import {RoundView} from './round_view';
+import ToolActivityDisplay from './tool_activity_display';
 
 const SearchResultsPropKey = 'search_results';
 
@@ -108,6 +109,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
     const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+
+    // Per-post UI state for the collapsed tool-activity area.
+    const [activityExpanded, setActivityExpanded] = useState(false);
 
     // Rounds completed during this stream, before turns land via refetch.
     const [liveRounds, setLiveRounds] = useState<Round[]>([]);
@@ -404,6 +408,33 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
     };
 
+    // Intermediate rounds fold into the activity area; the trailing rounds
+    // after the last tool call are the answer and render as a normal post.
+    const activity = deriveActivity(renderedRounds);
+    const activityApprovalStage: ToolApprovalStage = activity.activityRounds.length > 0 ?
+        stageForRound(activity.activityRounds.length - 1) :
+        'done';
+
+    const renderRound = (round: Round, idx: number) => {
+        const isLiveRound = round.id === LIVE_ROUND_ID;
+        return (
+            <RoundView
+                key={round.id}
+                round={round}
+                postID={props.post.id}
+                conversationID={conversationId}
+                channelID={props.post.channel_id}
+                approvalStage={stageForRound(idx)}
+                canApprove={requesterIsCurrentUser}
+                canExpand={requesterIsCurrentUser}
+                showCursor={generating && isLiveRound && !precontent}
+                reasoningLoading={isLiveRound && isReasoningLoading}
+                reasoningCollapsed={isReasoningCollapsed(round.id)}
+                onToggleReasoning={(collapsed) => toggleReasoning(round.id, collapsed)}
+            />
+        );
+    };
+
     return (
         <PostBody
             data-testid='llm-bot-post'
@@ -427,27 +458,21 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     </span>
                 </MinimalReasoningContainer>
             )}
-            {renderedRounds.map((round, idx) => {
-                const isLiveRound = round.id === LIVE_ROUND_ID;
-                const showCursor = generating && isLiveRound && !precontent;
-                const reasoningLoading = isLiveRound && isReasoningLoading;
-                return (
-                    <RoundView
-                        key={round.id}
-                        round={round}
-                        postID={props.post.id}
-                        conversationID={conversationId}
-                        channelID={props.post.channel_id}
-                        approvalStage={stageForRound(idx)}
-                        canApprove={requesterIsCurrentUser}
-                        canExpand={requesterIsCurrentUser}
-                        showCursor={showCursor}
-                        reasoningLoading={reasoningLoading}
-                        reasoningCollapsed={isReasoningCollapsed(round.id)}
-                        onToggleReasoning={(collapsed) => toggleReasoning(round.id, collapsed)}
-                    />
-                );
-            })}
+            {activity.items.length > 0 && (
+                <ToolActivityDisplay
+                    activity={activity}
+                    expanded={activityExpanded}
+                    onToggleExpanded={setActivityExpanded}
+                    inProgress={isGenerationInProgress}
+                    renderRound={renderRound}
+                    postID={props.post.id}
+                    conversationID={conversationId}
+                    canApprove={requesterIsCurrentUser}
+                    canExpand={requesterIsCurrentUser}
+                    approvalStage={activityApprovalStage}
+                />
+            )}
+            {activity.answerRounds.map((round, idx) => renderRound(round, activity.activityRounds.length + idx))}
             {searchSources.length > 0 && (
                 <SearchSources
                     sources={searchSources}
@@ -472,66 +497,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     );
 };
 
-interface RoundViewProps {
-    round: Round;
-    postID: string;
-    conversationID?: string;
-    channelID: string;
-    approvalStage: ToolApprovalStage;
-    canApprove: boolean;
-    canExpand: boolean;
-    showCursor: boolean;
-    reasoningLoading: boolean;
-    reasoningCollapsed: boolean;
-    onToggleReasoning: (collapsed: boolean) => void;
-}
-
-function RoundView(props: RoundViewProps) {
-    const {round} = props;
-    const showArguments = round.toolCalls.some((tc) => tc.arguments != null);
-    const showResults = round.toolCalls.some((tc) => tc.result != null);
-    return (
-        <RoundContainer>
-            {round.reasoning.summary !== '' && (
-                <ReasoningDisplay
-                    reasoningSummary={round.reasoning.summary}
-                    isReasoningCollapsed={props.reasoningCollapsed}
-                    isReasoningLoading={props.reasoningLoading}
-                    onToggleCollapse={props.onToggleReasoning}
-                />
-            )}
-            {round.text !== '' && (
-                <PostText
-                    message={round.text}
-                    channelID={props.channelID}
-                    postID={props.postID}
-                    showCursor={props.showCursor}
-                    annotations={round.annotations.length > 0 ? round.annotations : undefined} // eslint-disable-line no-undefined
-                />
-            )}
-            {round.toolCalls.length > 0 && (
-                <ToolApprovalSet
-                    postID={props.postID}
-                    conversationID={props.conversationID}
-                    toolCalls={round.toolCalls}
-                    approvalStage={props.approvalStage}
-                    canApprove={props.canApprove}
-                    canExpand={props.canExpand}
-                    showArguments={showArguments}
-                    showResults={showResults}
-                />
-            )}
-        </RoundContainer>
-    );
-}
-
 const PostBody = styled.div`
-`;
-
-const RoundContainer = styled.div`
-    & + & {
-        margin-top: 8px;
-    }
 `;
 
 const SpinnerWrapper = styled.div`

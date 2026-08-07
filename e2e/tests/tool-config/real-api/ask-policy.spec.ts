@@ -4,6 +4,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
+import { TOOL_ACTIVITY_CURRENT_SELECTOR, TOOL_ACTIVITY_ROUNDS_SELECTOR } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 
 const username = 'regularuser';
@@ -59,9 +60,14 @@ test.describe('Ask Policy (Aimock)', () => {
         const botPosts = rhsContainer.locator('[data-testid="llm-bot-post"]');
         const latestBotPost = botPosts.last();
         await expect(latestBotPost).toBeVisible({ timeout: 90000 });
+
+        // The approval card renders without expanding anything, and it is the
+        // only place the tool is named — the collapsed row would just repeat it.
         await expect(latestBotPost.getByText(getChannelInfoLabel, { exact: true })).toBeVisible({
             timeout: 90000,
         });
+        await expect(latestBotPost.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR)).toHaveCount(0);
+        await expect(latestBotPost.locator(TOOL_ACTIVITY_CURRENT_SELECTOR)).toHaveCount(0);
 
         const acceptButton = rhsContainer.getByRole('button', { name: /^accept$/i });
         const rejectButton = rhsContainer.getByRole('button', { name: /^reject$/i });
