@@ -44,9 +44,14 @@ export type ChannelAutoReplyTabRegistration = {
     onSave: (values: ChannelSettingsValues, channel: Channel) => Promise<void>;
 };
 
-function botsFromState(state: GlobalState): LLMBot[] | null {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (state as any)['plugins-' + manifest.id]?.bots ?? null;
+// The plugin's redux slice is registered dynamically, so GlobalState carries
+// no typed entry for it; narrow through a keyed record of the one field read
+// here instead of `any`.
+type PluginStateSlice = {bots?: LLMBot[] | null};
+
+export function botsFromState(state: GlobalState): LLMBot[] | null {
+    const slice = (state as unknown as Record<string, PluginStateSlice | undefined>)['plugins-' + manifest.id];
+    return slice?.bots ?? null;
 }
 
 // Synchronous and cheap: the host evaluates this inside a selector on every
@@ -87,7 +92,10 @@ export const makeLoadValues = (store: WebappStore) => async (channel: Channel): 
     if (!bots) {
         bots = await fetchAndStoreBots(store.dispatch).catch(() => null);
     }
-    const saved = normalizeChannelAutoReply(raw, bots ?? [], channel.id);
+
+    // bots stays null when the fetch failed; normalization then preserves the
+    // saved agent instead of clearing it like an empty agent list would.
+    const saved = normalizeChannelAutoReply(raw, bots, channel.id);
     setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
     return {mode: saved.mode, bot_id: saved.bot_id};
 };

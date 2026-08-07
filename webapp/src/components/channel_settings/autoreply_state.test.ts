@@ -196,6 +196,17 @@ describe('normalizeChannelAutoReply', () => {
         const normalized = normalizeChannelAutoReply({bot_id: 'other', mode: 'threads'}, [], CHANNEL_ID);
         expect(normalized).toEqual({bot_id: '', mode: 'threads'});
     });
+
+    test('preserves the saved bot (while still validating the mode) when the bot list is unknown', () => {
+        const normalized = normalizeChannelAutoReply({bot_id: 'other', mode: 'banana'} as unknown as ChannelAutoReplySettings, null, CHANNEL_ID);
+        expect(normalized).toEqual({bot_id: 'other', mode: 'off'});
+    });
+
+    test('tolerates a missing bot_id when the bot list is unknown', () => {
+        // eslint-disable-next-line no-undefined
+        const normalized = normalizeChannelAutoReply({bot_id: undefined, mode: 'threads'} as unknown as ChannelAutoReplySettings, null, CHANNEL_ID);
+        expect(normalized).toEqual({bot_id: '', mode: 'threads'});
+    });
 });
 
 describe('handleChannelAutoReplyUpdated', () => {
@@ -224,6 +235,15 @@ describe('handleChannelAutoReplyUpdated', () => {
         await handleChannelAutoReplyUpdated(getBots, {channel_id: CHANNEL_ID});
 
         expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: 'def', mode: 'off'});
+    });
+
+    test('preserves the fetched bot_id when the bots cache is cold during a re-sync', async () => {
+        setChannelAutoReplyDraft(makeDraft({saved: {bot_id: 'def', mode: 'off'}}));
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+
+        await handleChannelAutoReplyUpdated(() => null, {channel_id: CHANNEL_ID});
+
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: 'other', mode: 'threads'});
     });
 
     test('does not fetch when the event targets a different channel', async () => {

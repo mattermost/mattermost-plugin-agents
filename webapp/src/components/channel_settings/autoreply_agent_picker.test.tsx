@@ -138,6 +138,33 @@ describe('AutoReplyAgentPicker', () => {
         expect(informChange).not.toHaveBeenCalled();
     });
 
+    test('marks the selected agent avatar as decorative with an empty alt', () => {
+        seedDraft('alpha');
+
+        renderPicker();
+
+        const avatar = screen.getByTestId('autoreply-agent-picker').querySelector('img');
+        expect(avatar).not.toBeNull();
+        expect(avatar!.getAttribute('alt')).toBe('');
+    });
+
+    test('labels the dropdown trigger with the field label and the current selection', () => {
+        seedDraft('alpha');
+
+        renderPicker();
+
+        const trigger = screen.getByTestId('autoreply-agent-picker');
+        const labelledBy = trigger.getAttribute('aria-labelledby');
+        expect(labelledBy).not.toBeNull();
+
+        const referencedText = labelledBy!.
+            split(' ').
+            map((id) => document.getElementById(id)?.textContent ?? '').
+            join(' ');
+        expect(referencedText).toContain('Auto-replying agent');
+        expect(referencedText).toContain('alpha');
+    });
+
     test('shows the placeholder when the draft has no agent to display', () => {
         seedDraft('');
 

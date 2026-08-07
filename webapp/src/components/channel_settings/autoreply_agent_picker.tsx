@@ -17,6 +17,13 @@ type Props = {
     informChange: (name: string, value: string) => void;
 };
 
+// Static ids are safe: only one Channel Settings modal (and thus one picker)
+// exists at a time. The trigger references both the label and itself so its
+// accessible name stays "<label> <current selection>" — aria-labelledby alone
+// would drop the selection from the name.
+const LABEL_ID = 'autoreply-agent-picker-label';
+const TRIGGER_ID = 'autoreply-agent-picker-trigger';
+
 // The custom bot_id setting for the channel-settings auto-reply tab. The host
 // hands custom settings nothing but informChange, so the current channel and
 // saved values come from the module-level draft seeded by loadValues.
@@ -52,7 +59,7 @@ export const AutoReplyAgentPicker = ({informChange}: Props) => {
 
     return (
         <Container>
-            <Label>
+            <Label id={LABEL_ID}>
                 <FormattedMessage defaultMessage='Auto-replying agent'/>
             </Label>
             <BotDropdown
@@ -68,7 +75,10 @@ export const AutoReplyAgentPicker = ({informChange}: Props) => {
             >
                 {selectedBot ? (
                     <>
-                        <AgentAvatar src={getProfilePictureUrl(selectedBot.id, selectedBot.lastIconUpdate)}/>
+                        <AgentAvatar
+                            src={getProfilePictureUrl(selectedBot.id, selectedBot.lastIconUpdate)}
+                            alt=''
+                        />
                         <AgentName>{selectedBot.displayName}</AgentName>
                         <ChevronDownIcon/>
                     </>
@@ -125,7 +135,12 @@ const ErrorText = styled.div`
     font-size: 12px;
 `;
 
-const PickerButtonContainer = styled.div`
+// DotMenu passes no aria props through to its trigger, so the association
+// rides on the container component itself.
+const PickerButtonContainer = styled.div.attrs({
+    id: TRIGGER_ID,
+    'aria-labelledby': `${LABEL_ID} ${TRIGGER_ID}`,
+})`
     display: flex;
     flex-direction: row;
     align-items: center;

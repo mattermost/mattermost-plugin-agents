@@ -196,9 +196,20 @@ describe('makeLoadValues', () => {
         expect(values).toEqual({mode: 'off', bot_id: 'other'});
     });
 
-    test('normalizes against an empty agent list when the bots fetch fails', async () => {
+    test('preserves the saved agent when the bots fetch fails', async () => {
         mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
         mockedGetAIBots.mockRejectedValue(new Error('bots unavailable'));
+        const store = makeTestStore(makeState({bots: null}));
+
+        const values = await makeLoadValues(store)(makeChannel('O'));
+
+        expect(values).toEqual({mode: 'threads', bot_id: 'other'});
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: 'other', mode: 'threads'});
+    });
+
+    test('clears the saved agent when the fetch returns a genuinely empty agent list', async () => {
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+        mockedGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));

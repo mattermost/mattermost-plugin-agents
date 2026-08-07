@@ -102,7 +102,7 @@ export const useBotlist = () => {
     // Load bots
     useEffect(() => {
         if (!bots) {
-            fetchAndStoreBots(dispatch);
+            fetchAndStoreBots(dispatch).catch(() => { /* best effort */ });
         }
     }, [currentUserId, bots, dispatch]);
 

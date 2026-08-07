@@ -44,7 +44,7 @@ import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_co
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
 import {useBotlist, resolveActiveBot, getSelectedAgentId, fetchAndStoreBots} from './bots';
-import {makeChannelAutoReplySchema} from './components/channel_settings/autoreply_schema';
+import {botsFromState, makeChannelAutoReplySchema} from './components/channel_settings/autoreply_schema';
 import {handleChannelAutoReplyUpdated, ChannelAutoReplyUpdatedEvent} from './components/channel_settings/autoreply_state';
 import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
@@ -268,7 +268,7 @@ export default class Plugin {
                 'custom_mattermost-ai_channel_autoreply_updated',
                 (msg: WebSocketMessage<ChannelAutoReplyUpdatedEvent>) => {
                     handleChannelAutoReplyUpdated(
-                        () => (store.getState() as any)['plugins-' + manifest.id]?.bots ?? [],
+                        () => botsFromState(store.getState()),
                         msg.data,
                     );
                 },

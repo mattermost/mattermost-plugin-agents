@@ -160,8 +160,10 @@ export class MattermostPage {
     }
 
     /**
-     * Poll until the bot has posted a reply inside the given thread whose streamed content
-     * contains `expectedText` (proves streaming completed), and return the matching post.
+     * Poll until the bot has posted a reply inside the given thread whose content contains
+     * `expectedText`, and return the matching post. This is a substring match on the post as
+     * fetched, so it proves the text has appeared — not that streaming has finished. Pass text
+     * that only occurs in the completed reply, or the returned post may still be streaming.
      */
     async expectBotThreadReplyFromApi(
         client: Client4,

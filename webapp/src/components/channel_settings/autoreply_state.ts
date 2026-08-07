@@ -71,9 +71,17 @@ export function useChannelAutoReplyDraft(): ChannelAutoReplyDraft | null {
  * unknown modes collapse to 'off', and the saved bot id falls back to the
  * system-default agent, then the first agent available in the channel, so the
  * picker can display a selection without ever calling informChange on mount.
+ *
+ * `bots` is null when the bot list is unknown (fetch failed or cache cold). In
+ * that case the saved bot id is preserved as-is: treating it like an empty
+ * list would clear a configured agent and a subsequent save could persist the
+ * cleared state. Only a genuinely empty list triggers the reselection flow.
  */
-export function normalizeChannelAutoReply(raw: ChannelAutoReplySettings, bots: LLMBot[], channelId: string): ChannelAutoReplySettings {
+export function normalizeChannelAutoReply(raw: ChannelAutoReplySettings, bots: LLMBot[] | null, channelId: string): ChannelAutoReplySettings {
     const mode: ChannelAutoReplyMode = raw.mode === 'root_posts' || raw.mode === 'threads' ? raw.mode : 'off';
+    if (bots === null) {
+        return {mode, bot_id: raw.bot_id ?? ''};
+    }
     const resolved = resolveActiveBot(filterBotsByChannelAccess(bots, channelId), raw.bot_id ?? '');
     return {mode, bot_id: resolved?.id ?? ''};
 }
@@ -86,10 +94,11 @@ export type ChannelAutoReplyUpdatedEvent = {channel_id?: string};
 /**
  * Remote change while a modal may be open: if the event targets the hydrated
  * channel, re-fetch (never trust the payload beyond channel_id), re-normalize
- * against the current bots cache, and update the draft. Errors are swallowed —
- * the draft simply stays as-is. Fire-and-forget.
+ * against the current bots cache (null when cold, which preserves the fetched
+ * bot id), and update the draft. Errors are swallowed — the draft simply stays
+ * as-is. Fire-and-forget.
  */
-export async function handleChannelAutoReplyUpdated(getBots: () => LLMBot[], event: ChannelAutoReplyUpdatedEvent): Promise<void> {
+export async function handleChannelAutoReplyUpdated(getBots: () => LLMBot[] | null, event: ChannelAutoReplyUpdatedEvent): Promise<void> {
     const hydrated = draft;
     if (!hydrated || !event.channel_id || event.channel_id !== hydrated.channelId) {
         return;
