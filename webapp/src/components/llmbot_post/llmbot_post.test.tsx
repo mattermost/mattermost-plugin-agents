@@ -14,6 +14,7 @@ import {MAX_SEARCH_SOURCES} from '../search_sources';
 import {ToolCallStatus} from '../tool_types';
 
 import {LLMBotPost, PostUpdateWebsocketMessage} from './llmbot_post';
+import {advanceAnimation} from './test_support';
 
 jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
@@ -295,17 +296,6 @@ describe('LLMBotPost mid-stream text routing', () => {
         jest.useRealTimers();
     });
 
-    // Two passes: the state update that retires a transient row only schedules
-    // its own follow-up timer once React has flushed the first one.
-    function advanceAnimation() {
-        act(() => {
-            jest.advanceTimersByTime(1000);
-        });
-        act(() => {
-            jest.advanceTimersByTime(1000);
-        });
-    }
-
     // Drives one post over the websocket the way the server does.
     function streamingPost() {
         let listener: PostUpdateHandler | undefined;
@@ -330,6 +320,15 @@ describe('LLMBotPost mid-stream text routing', () => {
 
     const currentRow = () => screen.getByTestId('llm-bot-tool-activity-current').textContent;
 
+    // What the post shows outside its activity area — the same contract the
+    // e2e suite asserts, and the one that says whether text is in the main
+    // area or only in the collapsed row.
+    function mainAreaText(): string {
+        const post = screen.getByTestId('llm-bot-post').cloneNode(true) as HTMLElement;
+        post.querySelectorAll('[data-testid="llm-bot-tool-activity"]').forEach((node) => node.remove());
+        return post.textContent ?? '';
+    }
+
     // Nothing has called a tool yet, so there is no way to tell this text from
     // an answer: it streams into the main area, and has to leave gracefully.
     test('streams the first round into the main area and folds it away when a tool call lands', () => {
@@ -349,8 +348,8 @@ describe('LLMBotPost mid-stream text routing', () => {
         expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
     });
 
-    // Every round after the first: a tool call has already happened, so the
-    // narration goes straight to the row and the main area never moves.
+    // The narration of every round after the first goes straight to the row,
+    // so the main area never moves.
     test('streams trailing text into the activity row instead of the main area', () => {
         const send = streamingPost();
         send({control: 'start'});
@@ -361,7 +360,7 @@ describe('LLMBotPost mid-stream text routing', () => {
         send({next: 'Here is what'});
         send({next: 'Here is what I found'});
 
-        expect(mockPostTextRender).not.toHaveBeenCalledWith('Here is what I found');
+        expect(mainAreaText()).not.toContain('Here is what I found');
         expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
 
         advanceAnimation();
@@ -375,7 +374,7 @@ describe('LLMBotPost mid-stream text routing', () => {
         send(resolvedToolCall('tc_a', 'search_tools'));
         send({next: 'Here is what I found'});
 
-        expect(mockPostTextRender).not.toHaveBeenCalledWith('Here is what I found');
+        expect(mainAreaText()).not.toContain('Here is what I found');
 
         send({control: 'end'});
 
@@ -410,8 +409,7 @@ describe('LLMBotPost mid-stream text routing', () => {
         });
         send({next: 'Here is what I found'});
 
-        expect(mockPostTextRender).toHaveBeenCalledWith('Here is what I found');
-        expect(screen.getByText('Here is what I found')).toBeTruthy();
+        expect(mainAreaText()).toContain('Here is what I found');
     });
 
     // Collapsing mid-stream pulls the text into the row; it must fold on the

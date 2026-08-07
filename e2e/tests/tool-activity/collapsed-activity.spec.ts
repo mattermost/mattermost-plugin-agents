@@ -1,4 +1,4 @@
-import {test, expect, Locator} from '@playwright/test';
+import {test, expect} from '@playwright/test';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {
@@ -15,6 +15,7 @@ import {
     expectToolActivityCollapsed,
     expectToolActivityCurrent,
     expectToolActivitySummary,
+    mainAreaText,
     TOOL_STATUS_SELECTOR,
 } from 'helpers/llmbot-post';
 import MattermostContainer, {getTownSquareChannel} from 'helpers/mmcontainer';
@@ -56,18 +57,6 @@ const stopPrompt = 'tool activity stop mid tools';
 const stopAnswerStart = 'STOP_ANSWER: beginning a long explanation';
 const stopAnswerTail = 'that keeps going for a while so the stream is still open when Stop is pressed. ';
 const stopAnswer = `${stopAnswerStart} ${stopAnswerTail.repeat(16)}`;
-
-/**
- * Everything the post shows outside its activity area, which is what proves
- * that streaming text is only in the collapsed row and not in the post body.
- */
-async function mainAreaText(post: Locator): Promise<string> {
-    return post.evaluate((el) => {
-        const clone = el.cloneNode(true) as HTMLElement;
-        clone.querySelectorAll('[data-testid="llm-bot-tool-activity"]').forEach((node) => node.remove());
-        return clone.textContent ?? '';
-    });
-}
 
 test.describe('Collapsed Tool Activity (Aimock)', () => {
     test.describe.configure({mode: 'serial'});
@@ -179,7 +168,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
                             }],
                             finishReason: 'tool_calls',
                         },
-                        streamingProfile: {ttft: 1500, tps: 20, jitter: 0},
+                        streamingProfile: {ttft: 5000, tps: 20, jitter: 0},
                     },
                     {
                         match: {toolCallId: 'call_ta_midstream'},

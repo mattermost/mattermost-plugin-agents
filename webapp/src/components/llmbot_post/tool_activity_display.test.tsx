@@ -2,34 +2,15 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, fireEvent, render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {ToolCall, ToolCallStatus} from '../tool_types';
+import {ToolCallStatus} from '../tool_types';
 
 import {deriveActivity} from './activity_items';
+import {advanceAnimation, advanceBy, makeRound, makeTool} from './test_support';
 import ToolActivityDisplay from './tool_activity_display';
 import type {Round} from './turn_content_utils';
-
-function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
-    return {
-        id: 'tc_1',
-        name: 'search_tools',
-        description: '',
-        status: ToolCallStatus.Success,
-        ...overrides,
-    };
-}
-
-function makeRound(id: string, text: string, toolCalls: ToolCall[] = []): Round {
-    return {
-        id,
-        text,
-        toolCalls,
-        reasoning: {summary: '', signature: ''},
-        annotations: [],
-    };
-}
 
 function activityElement(rounds: Round[], options: {
     expanded?: boolean;
@@ -120,9 +101,8 @@ describe('ToolActivityDisplay live text item', () => {
         makeRound('live', text),
     ];
 
-    // While a tool-using response streams with the area collapsed its trailing
-    // text is routed here instead of to the main post body, so the row has to
-    // track it chunk by chunk rather than only on the next item.
+    // The row has to track the routed trailing text chunk by chunk rather
+    // than only when the next item arrives.
     test('updates the current row in place as the trailing text grows', () => {
         const {rerender} = render(activityElement(streamed('Here is'), {inProgress: true, foldTrailingText: true}));
 
@@ -137,14 +117,12 @@ describe('ToolActivityDisplay live text item', () => {
 
     // A growing snippet is one item, not a stream of them: rolling the row on
     // every chunk would make it unreadable.
-    test('does not animate the row while only the text changes', () => {
-        const {container, rerender} = render(
-            activityElement(streamed('Here is'), {inProgress: true, foldTrailingText: true}),
-        );
+    test('does not roll the row while only the text changes', () => {
+        const {rerender} = render(activityElement(streamed('Here is'), {inProgress: true, foldTrailingText: true}));
 
         rerender(activityElement(streamed('Here is what I found'), {inProgress: true, foldTrailingText: true}));
 
-        expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(0);
+        expect(screen.queryByTestId('llm-bot-tool-activity-outgoing')).toBeNull();
     });
 });
 
@@ -157,20 +135,6 @@ describe('ToolActivityDisplay current item sequencing', () => {
         jest.clearAllTimers();
         jest.useRealTimers();
     });
-
-    function advanceBy(ms: number) {
-        act(() => {
-            jest.advanceTimersByTime(ms);
-        });
-    }
-
-    // Advancing has to happen in two passes: the state update that swaps the
-    // row only schedules the timer that retires the outgoing row once React
-    // has flushed it.
-    function advanceAnimation() {
-        advanceBy(1000);
-        advanceBy(1000);
-    }
 
     const startingRounds = [
         makeRound('r1', 'Looking that up', [makeTool({id: 'tc_a', name: 'search_tools', status: ToolCallStatus.Pending})]),

@@ -14,6 +14,7 @@ import {ToolCallStatus} from '../tool_types';
 
 import {PostActivity} from './activity_items';
 import {CollapseChevron, CollapseHeaderRow} from './collapse_header';
+import {noMotionWhenReduced} from './motion';
 import {Round} from './turn_content_utils';
 
 // Length of the roll-in/roll-out transition, and the slightly longer window
@@ -209,6 +210,7 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
                         <SlotRow
                             key={`out-${outgoingKey}`}
                             $phase='out'
+                            data-testid='llm-bot-tool-activity-outgoing'
                             aria-hidden={true}
                         >
                             {renderRowContent(outgoingKey)}
@@ -285,9 +287,7 @@ const SlotRow = styled.div<{$phase: 'in' | 'out' | 'static'}>`
         animation: ${rollOut} ${SLOT_ANIM_MS}ms ease-in forwards;
     `}
 
-    @media (prefers-reduced-motion: reduce) {
-        animation: none;
-    }
+    ${noMotionWhenReduced}
 `;
 
 const ActivityLabel = styled.span`

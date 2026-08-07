@@ -105,6 +105,19 @@ export async function expectNoToolActivity(scope: Locator): Promise<void> {
 }
 
 /**
+ * Everything `post` shows outside its activity area. While a tool-using
+ * response streams, its text lives in the collapsed row and not here, so this
+ * is what distinguishes the two rather than a post-wide text match.
+ */
+export async function mainAreaText(post: Locator): Promise<string> {
+    return post.evaluate((el, selector) => {
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll(selector).forEach((node) => node.remove());
+        return clone.textContent ?? '';
+    }, TOOL_ACTIVITY_SELECTOR);
+}
+
+/**
  * LLMBotPostHelper - Page object for LLMBot post component interactions
  *
  * Provides locators, actions, and assertions for testing:

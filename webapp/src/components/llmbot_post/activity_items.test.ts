@@ -1,30 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {ToolCall, ToolCallStatus} from '../tool_types';
+import {ToolCallStatus} from '../tool_types';
 
 import {deriveActivity, isTerminalToolStatus} from './activity_items';
-import type {Round} from './turn_content_utils';
-
-function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
-    return {
-        id: 'tc_1',
-        name: 'search_tools',
-        description: '',
-        status: ToolCallStatus.Success,
-        ...overrides,
-    };
-}
-
-function makeRound(id: string, text: string, toolCalls: ToolCall[] = []): Round {
-    return {
-        id,
-        text,
-        toolCalls,
-        reasoning: {summary: '', signature: ''},
-        annotations: [],
-    };
-}
+import {makeRound, makeTool} from './test_support';
 
 describe('isTerminalToolStatus', () => {
     test.each([
@@ -104,6 +84,7 @@ describe('deriveActivity', () => {
 
         const activity = deriveActivity([toolRound, answer]);
 
+        expect(activity.activityRounds).toEqual([toolRound]);
         expect(activity.answerRounds).toEqual([answer]);
         expect(activity.items).toHaveLength(2);
     });
@@ -225,9 +206,6 @@ describe('deriveActivity', () => {
 describe('deriveActivity with foldTrailingText', () => {
     const toolRound = makeRound('r1', 'looking that up', [makeTool({id: 'tc_a'})]);
 
-    // The narration that follows a tool call is almost never the answer, so
-    // while the response is still streaming it belongs to the activity area
-    // rather than to the main post body.
     test('folds a streaming text-only round into the activity area', () => {
         const streaming = makeRound('live', 'here is what I fou');
 
@@ -246,17 +224,6 @@ describe('deriveActivity with foldTrailingText', () => {
 
         expect(longer.items.map((item) => item.id)).toEqual(short.items.map((item) => item.id));
         expect(longer.items[2]).toMatchObject({kind: 'text', text: 'here is what I found'});
-    });
-
-    // The same rounds, once the caller drops the flag at the end of the
-    // response: the trailing round is the answer again.
-    test('releases the trailing round as the answer when the flag clears', () => {
-        const trailing = makeRound('live', 'here is what I found');
-
-        const settled = deriveActivity([toolRound, trailing]);
-
-        expect(settled.activityRounds).toEqual([toolRound]);
-        expect(settled.answerRounds).toEqual([trailing]);
     });
 
     // Nothing has called a tool yet, so there is no activity area to route

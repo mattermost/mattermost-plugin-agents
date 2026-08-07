@@ -4,7 +4,7 @@
 import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
-import styled, {keyframes} from 'styled-components';
+import styled from 'styled-components';
 
 import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
@@ -31,7 +31,7 @@ import {deriveActivity, isTerminalToolStatus} from './activity_items';
 import {LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
-import {FoldingText, useFoldingText} from './folding_text';
+import {AnswerArea, FoldingText, useAnswerHandover} from './answer_handover';
 import {RoundView} from './round_view';
 import ToolActivityDisplay from './tool_activity_display';
 
@@ -406,11 +406,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         needsViewerDecision(anchorRound.toolCalls, anchorStage, requesterIsCurrentUser);
     const pendingDecisionRoundId = awaitingDecision ? anchorRound.id : undefined; // eslint-disable-line no-undefined
 
-    // While a tool-using response streams with the area collapsed, its
-    // trailing text belongs in the activity row: it is narration between tool
-    // calls far more often than the answer, and the main area would only have
-    // to give it back when the next tool call lands. Expanded, everything
-    // stacks and streams as it always has.
+    // A reader who expanded the area asked to watch the whole thing, so
+    // nothing is rerouted for them; see deriveActivity for why the trailing
+    // text of a streaming response belongs in the row at all.
     const foldTrailingText = isGenerationInProgress && !activityExpanded;
 
     // Intermediate rounds fold into the activity area; whatever is left over
@@ -420,14 +418,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         [renderedRounds, pendingDecisionRoundId, foldTrailingText],
     );
 
-    // The one text that cannot be routed in advance is the first round's: with
-    // no tool call yet there is nothing to suggest one is coming, so it streams
-    // into the main area and then has to leave. It collapses on its way out.
-    const answerText = useMemo(
-        () => activity.answerRounds.map((round) => round.text).filter((text) => text !== '').join('\n\n'),
-        [activity],
+    // Text still moves between the main area and the row in two cases the
+    // routing cannot prevent: the first round streams into the main area
+    // before any tool call exists to reroute it, and the whole answer comes
+    // back at the end of the response. Both get animated instead of cutting.
+    const answerText = activity.answerRounds.map((round) => round.text).filter((text) => text !== '').join('\n\n');
+    const {foldingText, revealAnswer} = useAnswerHandover(
+        answerText,
+        foldTrailingText && activity.items.length > 0,
     );
-    const foldingText = useFoldingText(answerText, foldTrailingText);
 
     const renderRound = useCallback((round: Round) => {
         const isLiveRound = round.id === LIVE_ROUND_ID;
@@ -460,15 +459,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         expandedReasoning,
         toggleReasoning,
     ]);
-
-    // A tool-using response hands over its whole answer at once when the
-    // stream ends, so the answer gets an entrance rather than appearing
-    // between frames. A response that never called a tool renders unwrapped,
-    // exactly as it did before the activity area existed.
-    const answerRoundViews = activity.answerRounds.map(renderRound);
-    const answerView = activity.items.length > 0 && activity.answerRounds.length > 0 ? (
-        <AnswerReveal>{answerRoundViews}</AnswerReveal>
-    ) : answerRoundViews;
 
     return (
         <PostBody
@@ -509,7 +499,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     postID={props.post.id}
                 />
             )}
-            {answerView}
+            <AnswerArea $reveal={revealAnswer}>
+                {activity.answerRounds.map(renderRound)}
+            </AnswerArea>
             {searchSources.length > 0 && (
                 <SearchSources
                     sources={searchSources}
@@ -535,25 +527,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 };
 
 const PostBody = styled.div`
-`;
-
-const answerIn = keyframes`
-    from {
-        opacity: 0;
-        transform: translateY(4px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-`;
-
-const AnswerReveal = styled.div`
-    animation: ${answerIn} 200ms ease-out;
-
-    @media (prefers-reduced-motion: reduce) {
-        animation: none;
-    }
 `;
 
 const SpinnerWrapper = styled.div`
