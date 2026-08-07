@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
@@ -25,9 +26,9 @@ import (
 )
 
 // setupChannelAutoReplyTest prepares a test environment with a registered bot
-// (so aiBotRequired resolves), a real license checker backed by the mock API's
-// default Enterprise license, and a channel of the given type resolvable by
-// the channelAuthorizationRequired middleware.
+// (the selectable target for PUT bodies), a real license checker backed by the
+// mock API's default Enterprise license, and a channel of the given type
+// resolvable by the channelReadAuthorizationRequired middleware.
 func setupChannelAutoReplyTest(t *testing.T, channelType model.ChannelType) *TestEnvironment {
 	t.Helper()
 	gin.SetMode(gin.ReleaseMode)
@@ -220,6 +221,13 @@ func TestPutChannelAutoReplyPermissionMatrix(t *testing.T) {
 			defer e.Cleanup(t)
 			tc.envSetup(e)
 
+			if !tc.expectPersist {
+				// A rejected PUT must not publish a websocket event: the
+				// strict mock has no expectations, so any
+				// PublishWebSocketEvent call fails the test.
+				e.api.mmClient = mmapimocks.NewMockClient(t)
+			}
+
 			resp := e.doChannelAutoReplyRequest(t, http.MethodPut, validBody)
 			require.Equal(t, tc.expectedStatus, resp.StatusCode)
 
@@ -310,9 +318,170 @@ func TestPutChannelAutoReplyValidation(t *testing.T) {
 				tc.storeSetup(e.autoReplyStore)
 			}
 
+			// A rejected PUT must not publish a websocket event: the strict
+			// mock has no expectations, so any PublishWebSocketEvent call
+			// fails the test.
+			e.api.mmClient = mmapimocks.NewMockClient(t)
+
 			resp := e.doChannelAutoReplyRequest(t, http.MethodPut, tc.body)
 			require.Equal(t, tc.expectedStatus, resp.StatusCode)
 			require.Empty(t, e.autoReplyStore.settings, "failed request must not leave a persisted setting")
+		})
+	}
+}
+
+// TestChannelAutoReplyIndependentOfDefaultBot pins that the auto-reply
+// endpoints have no default-agent dependency: a restricted default agent or an
+// instance with zero configured agents must not block reading or clearing
+// channel auto-reply settings. The PUT validates the *selected* bot (handler
+// pre-check plus autoreply service), never the default one.
+func TestChannelAutoReplyIndependentOfDefaultBot(t *testing.T) {
+	// "ai" is the configured default bot name in the test environment; this
+	// variant is restricted from every user and channel.
+	restrictedDefaultBot := func() *bots.Bot {
+		return bots.NewBot(
+			llm.BotConfig{
+				Name:               "ai",
+				DisplayName:        "Restricted Default",
+				ChannelAccessLevel: llm.ChannelAccessLevelNone,
+				UserAccessLevel:    llm.UserAccessLevelNone,
+			},
+			llm.ServiceConfig{},
+			&model.Bot{UserId: "defaultbotuserid1234567890", Username: "ai", DisplayName: "Restricted Default"},
+			nil,
+		)
+	}
+	permittedBot := func() *bots.Bot {
+		return bots.NewBot(
+			llm.BotConfig{Name: "permtest"},
+			llm.ServiceConfig{},
+			&model.Bot{UserId: testBotUserID, Username: "permtest"},
+			nil,
+		)
+	}
+
+	tests := []struct {
+		name           string
+		method         string
+		body           string
+		envSetup       func(e *TestEnvironment)
+		expectedStatus int
+		expectedBody   string
+	}{
+		{
+			name:   "GET works when the default agent is restricted",
+			method: http.MethodGet,
+			envSetup: func(e *TestEnvironment) {
+				e.bots.SetBotsForTesting([]*bots.Bot{restrictedDefaultBot(), permittedBot()})
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody:   `{"bot_id":"","mode":"off"}`,
+		},
+		{
+			name:   "PUT selecting a permitted agent works when the default agent is restricted",
+			method: http.MethodPut,
+			body:   fmt.Sprintf(`{"bot_id":%q,"mode":"root_posts"}`, testBotUserID),
+			envSetup: func(e *TestEnvironment) {
+				e.bots.SetBotsForTesting([]*bots.Bot{restrictedDefaultBot(), permittedBot()})
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody:   fmt.Sprintf(`{"bot_id":%q,"mode":"root_posts"}`, testBotUserID),
+		},
+		{
+			name:   "GET works with zero configured agents",
+			method: http.MethodGet,
+			envSetup: func(e *TestEnvironment) {
+				e.bots.SetBotsForTesting(nil)
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody:   `{"bot_id":"","mode":"off"}`,
+		},
+		{
+			name:   "PUT off works with zero configured agents",
+			method: http.MethodPut,
+			body:   `{"bot_id":"","mode":"off"}`,
+			envSetup: func(e *TestEnvironment) {
+				e.bots.SetBotsForTesting(nil)
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody:   `{"bot_id":"","mode":"off"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupChannelAutoReplyTest(t, model.ChannelTypeOpen)
+			defer e.Cleanup(t)
+			tc.envSetup(e)
+
+			resp := e.doChannelAutoReplyRequest(t, tc.method, tc.body)
+			require.Equal(t, tc.expectedStatus, resp.StatusCode)
+
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.JSONEq(t, tc.expectedBody, string(body))
+		})
+	}
+}
+
+// TestPutChannelAutoReplyUnlicensed pins the license gate to the enabling
+// modes only: after a license downgrade an existing setting must remain
+// clearable (mode "off" deletes the row), while enabling stays forbidden.
+func TestPutChannelAutoReplyUnlicensed(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		expectedStatus int
+		expectDeletes  []string
+	}{
+		{
+			name:           "off deletes the existing setting without a license",
+			body:           `{"bot_id":"","mode":"off"}`,
+			expectedStatus: http.StatusOK,
+			expectDeletes:  []string{"channelid"},
+		},
+		{
+			name:           "root_posts is forbidden without a license",
+			body:           fmt.Sprintf(`{"bot_id":%q,"mode":"root_posts"}`, testBotUserID),
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "threads is forbidden without a license",
+			body:           fmt.Sprintf(`{"bot_id":%q,"mode":"threads"}`, testBotUserID),
+			expectedStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupChannelAutoReplyTest(t, model.ChannelTypeOpen)
+			defer e.Cleanup(t)
+			e.OverrideLicense(&model.License{})
+			e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
+			// Simulate a setting written while the server was still licensed.
+			e.autoReplyStore.settings["channelid"] = &autoreply.Setting{
+				ChannelID: "channelid",
+				BotID:     testBotUserID,
+				Mode:      autoreply.ModeThreads,
+			}
+
+			resp := e.doChannelAutoReplyRequest(t, http.MethodPut, tc.body)
+			require.Equal(t, tc.expectedStatus, resp.StatusCode)
+
+			require.Equal(t, tc.expectDeletes, e.autoReplyStore.deleteCalls)
+			if tc.expectDeletes == nil {
+				require.NotEmpty(t, e.autoReplyStore.settings, "a forbidden request must not delete the setting")
+				require.Empty(t, e.autoReplyStore.setCalls, "a forbidden request must not persist")
+			} else {
+				require.NotContains(t, e.autoReplyStore.settings, "channelid")
+			}
 		})
 	}
 }

@@ -31,16 +31,27 @@ type ClusterNotifier interface {
 
 // Service validates, persists, and caches per-channel auto-reply settings.
 //
-// Locking model: cache is a plain map guarded by mu. GetCached takes RLock
-// only. Set, Delete, and RefreshChannel hold the write lock across their DB
-// operation *and* the cache mutation so the local cache always converges to
-// the last DB write; writes are rare (channel-settings changes), so blocking
-// hot-path readers for one DB round-trip is acceptable.
+// Locking model: two locks with distinct jobs.
+//
+//   - writeMu serializes every cache-mutating operation (LoadCache, Set,
+//     Delete, RefreshChannel) end-to-end, DB round-trip included. Fully
+//     serialized writers make the cache-mutation order match the DB-write
+//     order, so the local cache always converges to the last DB write
+//     (the invariant the cluster invalidation protocol relies on).
+//   - mu guards the cache map itself and is only ever held for the map
+//     read/write — never across a DB call — so the GetCached hot path
+//     (MessageHasBeenPosted, every post server-wide) can never stall behind
+//     a slow or hung database operation.
+//
+// Lock order is always writeMu before mu; mu is never held while acquiring
+// writeMu.
 type Service struct {
 	store    *Store
 	bots     *bots.MMBots
 	mmClient mmapi.Client
 	notifier ClusterNotifier
+
+	writeMu sync.Mutex
 
 	mu    sync.RWMutex
 	cache map[string]Setting
@@ -59,8 +70,12 @@ func NewService(store *Store, botsService *bots.MMBots, mmClient mmapi.Client, n
 }
 
 // LoadCache replaces the in-memory cache with the full table contents. Called
-// once from OnActivate after migrations have run.
+// once from OnActivate after migrations have run; it still takes writeMu so
+// the full reload cannot interleave with a concurrent write.
 func (s *Service) LoadCache() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	settings, err := s.store.ListAll()
 	if err != nil {
 		return fmt.Errorf("failed to load channel auto-reply cache: %w", err)
@@ -137,13 +152,15 @@ func (s *Service) Set(channelID, botID string, mode Mode, updatedBy string) (*Se
 		UpdateAt:  model.GetMillis(),
 	}
 
-	s.mu.Lock()
+	s.writeMu.Lock()
 	if storeErr := s.store.Set(setting); storeErr != nil {
-		s.mu.Unlock()
+		s.writeMu.Unlock()
 		return nil, storeErr
 	}
+	s.mu.Lock()
 	s.cache[channelID] = setting
 	s.mu.Unlock()
+	s.writeMu.Unlock()
 
 	s.notifyPeers(channelID)
 
@@ -159,13 +176,15 @@ func (s *Service) Delete(channelID string) error {
 		return fmt.Errorf("channel ID is required: %w", ErrValidation)
 	}
 
-	s.mu.Lock()
+	s.writeMu.Lock()
 	if err := s.store.Delete(channelID); err != nil {
-		s.mu.Unlock()
+		s.writeMu.Unlock()
 		return err
 	}
+	s.mu.Lock()
 	delete(s.cache, channelID)
 	s.mu.Unlock()
+	s.writeMu.Unlock()
 
 	s.notifyPeers(channelID)
 
@@ -176,14 +195,16 @@ func (s *Service) Delete(channelID string) error {
 // cache to match. Called by the cluster event handler when a peer node changed
 // the setting.
 func (s *Service) RefreshChannel(channelID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 
 	setting, err := s.store.Get(channelID)
 	if err != nil {
 		return err
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if setting == nil {
 		delete(s.cache, channelID)
 		return nil

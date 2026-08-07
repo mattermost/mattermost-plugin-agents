@@ -377,8 +377,16 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	channelRouter.Use(a.channelAuthorizationRequired)
 	channelRouter.POST("/analyze", a.channelAnalysisLicenseRequired, a.handleChannelAnalysis)
 	channelRouter.POST("/interval", a.channelAnalysisLicenseRequired, a.handleInterval)
-	channelRouter.GET("/autoreply", a.handleGetChannelAutoReply)
-	channelRouter.PUT("/autoreply", a.handlePutChannelAutoReply)
+
+	// Auto-reply settings are channel configuration, not a bot invocation:
+	// they must not depend on the default agent (restricted default agents and
+	// zero-agent installs must not block reading or clearing a setting), so
+	// they are registered outside the aiBotRequired group. The PUT handler and
+	// the autoreply service validate the selected bot themselves.
+	autoReplyRouter := router.Group("/channel/:channelid")
+	autoReplyRouter.Use(a.channelReadAuthorizationRequired)
+	autoReplyRouter.GET("/autoreply", a.handleGetChannelAutoReply)
+	autoReplyRouter.PUT("/autoreply", a.handlePutChannelAutoReply)
 
 	adminRouter := router.Group("/admin")
 	adminRouter.Use(a.mattermostAdminAuthorizationRequired)

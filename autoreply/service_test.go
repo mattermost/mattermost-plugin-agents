@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -599,6 +600,82 @@ func TestServiceNotifierFailureDoesNotFailWrite(t *testing.T) {
 	}
 }
 
+// TestServiceStalledDBWriteDoesNotBlockGetCached pins the split-lock model:
+// a writer stuck inside its DB round-trip must not block the GetCached hot
+// path. The stall is real: an uncommitted conflicting row makes Set's upsert
+// wait on the Postgres row lock until the blocking transaction ends. Under a
+// locking model that holds the cache lock across the DB call, the GetCached
+// goroutine below blocks until the rollback and the test fails.
+func TestServiceStalledDBWriteDoesNotBlockGetCached(t *testing.T) {
+	dbClient := testDB(t)
+	store := NewStore(dbClient)
+
+	// Seed one cached channel for the reader to hit while the writer stalls.
+	cachedSetting := Setting{ChannelID: model.NewId(), BotID: model.NewId(), Mode: ModeThreads, UpdatedBy: model.NewId(), UpdateAt: 100}
+	require.NoError(t, store.Set(cachedSetting))
+
+	stalledChannelID := model.NewId()
+	botID := model.NewId()
+
+	mmClient := mocks.NewMockClient(t)
+	mmClient.EXPECT().GetChannel(stalledChannelID).Return(&model.Channel{Id: stalledChannelID, Type: model.ChannelTypeOpen}, nil).Once()
+
+	bot := newTestBot(botID, llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAll})
+	svc := newTestService(t, dbClient, &recordingNotifier{}, mmClient, []*bots.Bot{bot})
+	require.NoError(t, svc.LoadCache())
+
+	// Uncommitted insert for the same channel ID: Set's upsert now blocks on
+	// the row lock until this transaction ends.
+	tx, err := dbClient.Beginx()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(
+		`INSERT INTO Agents_ChannelAutoReply (ChannelID, BotID, Mode, UpdatedBy, UpdateAt) VALUES ($1, $2, $3, $4, $5)`,
+		stalledChannelID, botID, string(ModeRootPosts), "blocker", int64(1))
+	require.NoError(t, err)
+
+	setDone := make(chan error, 1)
+	go func() {
+		_, setErr := svc.Set(stalledChannelID, botID, ModeThreads, model.NewId())
+		setDone <- setErr
+	}()
+
+	// Wait until Postgres reports the upsert waiting on the row lock so the
+	// read below provably runs while the write is stalled mid-DB-call.
+	require.Eventually(t, func() bool {
+		var waiting int
+		qErr := dbClient.Get(&waiting,
+			`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND state = 'active' AND query ILIKE 'INSERT INTO Agents_ChannelAutoReply%'`)
+		return qErr == nil && waiting > 0
+	}, 10*time.Second, 20*time.Millisecond, "Set never blocked on the row lock")
+
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		cached, ok := svc.GetCached(cachedSetting.ChannelID)
+		assert.True(t, ok)
+		assert.Equal(t, cachedSetting, cached)
+	}()
+
+	select {
+	case <-readDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("GetCached blocked behind a stalled DB write; readers must never wait on the database")
+	}
+
+	// Unblock the writer and confirm the write completes and converges.
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, <-setDone)
+
+	stored, err := svc.Get(stalledChannelID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	require.Equal(t, ModeThreads, stored.Mode)
+	cached, ok := svc.GetCached(stalledChannelID)
+	require.True(t, ok)
+	require.Equal(t, *stored, cached)
+}
+
 // TestServiceConcurrentAccess is a smoke test for the locking model: cached
 // reads run concurrently with writes and refreshes. The race detector (go
 // test -race) is the point; the final assertion pins the invariant that the
@@ -669,8 +746,8 @@ func TestServiceConcurrentAccess(t *testing.T) {
 	readers.Wait()
 
 	// Once writes quiesce the cache must match the database for every
-	// channel — the write lock covers both the DB write and the cache
-	// mutation, so they cannot diverge.
+	// channel — writers are fully serialized by writeMu across the DB write
+	// and the cache mutation, so they cannot diverge.
 	for _, channelID := range channelIDs {
 		stored, err := svc.Get(channelID)
 		require.NoError(t, err)

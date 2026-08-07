@@ -329,6 +329,9 @@ func TestCheckUsageRestrictionsForChannel(t *testing.T) {
 		bot           *Bot
 		channel       *model.Channel
 		expectedError error
+		// expectAnyError pins fail-closed behavior for errors that do not
+		// wrap ErrUsageRestriction (e.g. a corrupt access level).
+		expectAnyError bool
 	}{
 		{
 			name: "access level all allows any channel",
@@ -391,14 +394,25 @@ func TestCheckUsageRestrictionsForChannel(t *testing.T) {
 			channel:       &model.Channel{Id: "channel1"},
 			expectedError: nil,
 		},
+		{
+			name: "out-of-range access level fails closed",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelNone + 1,
+			}, mmBot: nil},
+			channel:        &model.Channel{Id: "channel1"},
+			expectAnyError: true,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := e.bots.CheckUsageRestrictionsForChannel(tc.bot, tc.channel)
-			if tc.expectedError != nil {
+			switch {
+			case tc.expectAnyError:
+				require.Error(t, err)
+			case tc.expectedError != nil:
 				require.ErrorIs(t, err, tc.expectedError)
-			} else {
+			default:
 				require.NoError(t, err)
 			}
 		})

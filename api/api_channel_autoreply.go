@@ -54,17 +54,14 @@ func (a *API) handleGetChannelAutoReply(c *gin.Context) {
 }
 
 // handlePutChannelAutoReply updates the channel's auto-reply setting. Requires
-// a license and the channel-management permission matching the channel type;
-// DM/GM channels are rejected. Mode "off" deletes the row. On success the new
-// state is published as a channel-scoped websocket event and echoed back.
+// the channel-management permission matching the channel type; DM/GM channels
+// are rejected. Enabling (root_posts/threads) additionally requires a license;
+// mode "off" deletes the row and is never license-gated so an existing setting
+// stays clearable after a license downgrade. On success the new state is
+// published as a channel-scoped websocket event and echoed back.
 func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
 
 	var perm *model.Permission
 	switch channel.Type {
@@ -104,6 +101,10 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 		}
 		saved = ChannelAutoReply{BotID: "", Mode: channelAutoReplyModeOff}
 	case channelAutoReplyModeRootPosts, channelAutoReplyModeThreads:
+		if !a.licenseChecker.IsBasicsLicensed() {
+			c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+			return
+		}
 		if req.BotID == "" {
 			c.AbortWithError(http.StatusBadRequest, errors.New("bot_id is required"))
 			return
