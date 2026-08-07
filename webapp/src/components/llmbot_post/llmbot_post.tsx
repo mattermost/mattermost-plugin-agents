@@ -6,10 +6,10 @@ import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
 
-import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
 
 import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
+import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
@@ -48,7 +48,7 @@ export interface PostUpdateWebsocketMessage {
 
 interface LLMBotPostProps {
     post: any;
-    websocketRegister?: (postID: string, listenerID: string, handler: (msg: WebSocketMessage<any>) => void) => void;
+    websocketRegister?: (postID: string, listenerID: string, handler: (msg: PluginWebSocketMessage<any>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
 }
 
@@ -170,7 +170,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
         const listenerID = Math.random().toString(36).substring(7);
 
-        props.websocketRegister(props.post.id, listenerID, (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => {
+        props.websocketRegister(props.post.id, listenerID, (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => {
             const data = msg.data;
 
             if (data.post_id !== props.post.id) {

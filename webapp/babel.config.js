@@ -4,11 +4,13 @@
 const config = {
     presets: [
         ['@babel/preset-env', {
+
+            // Strings, not numbers: Babel parses a decimal like 16.2 as 16.1.
             targets: {
-                chrome: 110,
-                firefox: 102,
-                edge: 110,
-                safari: 16.2,
+                chrome: '110',
+                firefox: '102',
+                edge: '110',
+                safari: '16.2',
             },
             modules: false,
             corejs: 3,
