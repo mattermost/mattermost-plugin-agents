@@ -55,6 +55,15 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 
 	if p.pluginAPI != nil && llmContext != nil && llmContext.ToolCatalog.ResponseFilesSupported {
 		builtInTools = append(builtInTools, NewCreateFileTool(p.pluginAPI))
+
+		// Sandbox file attachment needs the provider sandbox enabled AND a
+		// language model that can download provider files (the type assertion
+		// also excludes mocks/wrappers that can't).
+		if bot != nil && bot.HasNativeCodeExecutionEnabled() {
+			if downloader, ok := bot.LLM().(llm.ProviderFileDownloader); ok {
+				builtInTools = append(builtInTools, NewAttachSandboxFileTool(p.pluginAPI, downloader))
+			}
+		}
 	}
 
 	if llmContext != nil && llmContext.ToolCatalog.InteractiveUserPresent {

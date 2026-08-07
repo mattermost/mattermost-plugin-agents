@@ -145,7 +145,10 @@ func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 			switch b.Type {
 			case conversation.BlockTypeToolUse:
 				// Empty ServerOrigin excludes MCP tools that share the name.
-				if turns[i].Role == "assistant" && b.Name == mmtools.CreateFileToolName && b.ServerOrigin == "" && b.ID != "" {
+				// AttachSandboxFile results share the CreateFileResult shape,
+				// so its uses are collected the same way.
+				isResponseFileTool := b.Name == mmtools.CreateFileToolName || b.Name == mmtools.AttachSandboxFileToolName
+				if turns[i].Role == "assistant" && isResponseFileTool && b.ServerOrigin == "" && b.ID != "" {
 					createFileUses[b.ID] = true
 				}
 			case conversation.BlockTypeToolResult:

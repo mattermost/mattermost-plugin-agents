@@ -1150,6 +1150,54 @@ func TestHasNativeWebSearchEnabledRequiresResponsesAPIForOpenAICompatibleService
 	}
 }
 
+func TestHasNativeCodeExecutionEnabled(t *testing.T) {
+	tests := []struct {
+		name        string
+		serviceType string
+		nativeTools []string
+		expected    bool
+	}{
+		{
+			name:        "anthropic with code_interpreter enabled",
+			serviceType: llm.ServiceTypeAnthropic,
+			nativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter},
+			expected:    true,
+		},
+		{
+			name:        "anthropic without code_interpreter",
+			serviceType: llm.ServiceTypeAnthropic,
+			nativeTools: []string{llm.NativeToolWebSearch},
+			expected:    false,
+		},
+		{
+			// OpenAI's code-interpreter container files use a different
+			// retrieval API; sandbox file attachment is Anthropic-only.
+			name:        "openai with code_interpreter is not sandbox-capable",
+			serviceType: llm.ServiceTypeOpenAI,
+			nativeTools: []string{llm.NativeToolCodeInterpreter},
+			expected:    false,
+		},
+		{
+			name:        "anthropic with no native tools",
+			serviceType: llm.ServiceTypeAnthropic,
+			nativeTools: nil,
+			expected:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBot(
+				llm.BotConfig{EnabledNativeTools: tt.nativeTools},
+				llm.ServiceConfig{Type: tt.serviceType},
+				&model.Bot{UserId: "b1"},
+				nil,
+			)
+			require.Equal(t, tt.expected, b.HasNativeCodeExecutionEnabled())
+		})
+	}
+}
+
 func TestPoweredByDescription(t *testing.T) {
 	prefix := "Powered by openai - "
 	longModel := strings.Repeat("m", model.BotDescriptionMaxRunes)

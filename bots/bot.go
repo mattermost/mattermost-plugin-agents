@@ -66,6 +66,24 @@ func (b *Bot) HasNativeWebSearchEnabled() bool {
 	return false
 }
 
+// HasNativeCodeExecutionEnabled reports whether the bot is configured to use
+// Anthropic's code-execution sandbox: the code_interpreter native tool is
+// enabled AND the service is Anthropic. Sandbox file attachment
+// (AttachSandboxFile) is only cataloged when this is true — OpenAI's
+// code-interpreter container files use a different retrieval API and are not
+// supported yet.
+func (b *Bot) HasNativeCodeExecutionEnabled() bool {
+	if b.service.Type != llm.ServiceTypeAnthropic {
+		return false
+	}
+	for _, tool := range b.cfg.EnabledNativeTools {
+		if tool == llm.NativeToolCodeInterpreter {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *Bot) SetLLMForTest(llm llm.LanguageModel) {
 	b.llm = llm
 }
