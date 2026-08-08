@@ -6,12 +6,16 @@ import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {ToolCallStatus} from '../tool_types';
+import en from '../../i18n/en.json';
 
 import {deriveActivity} from './activity_items';
 import {advanceAnimation, advanceBy, makeRound, makeTool} from './test_support';
 import ToolActivityDisplay from './tool_activity_display';
 import type {Round} from './turn_content_utils';
 
+// The shipped en.json — not just the compiled defaultMessage. At runtime the
+// plugin registers this file with the host, and a registered message wins over
+// the default, so it is the artifact whose wording actually reaches the screen.
 function activityElement(rounds: Round[], options: {
     expanded?: boolean;
     inProgress?: boolean;
@@ -19,7 +23,10 @@ function activityElement(rounds: Round[], options: {
     onToggleExpanded?: (expanded: boolean) => void;
 } = {}) {
     return (
-        <IntlProvider locale='en'>
+        <IntlProvider
+            locale='en'
+            messages={en}
+        >
             <ToolActivityDisplay
                 activity={deriveActivity(rounds, {foldTrailingText: options.foldTrailingText})}
                 expanded={options.expanded ?? false}
