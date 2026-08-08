@@ -59,8 +59,8 @@ type MCPClientManager interface {
 	GetOAuthManager() *mcp.OAuthManager
 	GetToolsCache() *mcp.ToolsCache
 	GetHTTPClient() *http.Client
-	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
-	DisconnectUserOAuth(userID, serverName string) error
+	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*mcp.OAuthSession, error)
+	DisconnectUserOAuth(ctx context.Context, userID, serverName string) error
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
@@ -69,6 +69,7 @@ type MCPClientManager interface {
 	GetConfig() mcp.Config
 
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
+	UpdatePluginServer(cfg mcp.PluginServerConfig)
 	UnregisterPluginServer(pluginID string)
 	ListPluginServers() []mcp.PluginServerConfig
 	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
@@ -164,6 +165,7 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+	mcpRequestLimiter     *mcpRequestLimiter
 
 	// auditEvents maps gin handler names to audit event names for routes
 	// that emit server audit records. Built once in New; read-only after.
@@ -211,6 +213,7 @@ func New(
 	customPromptsStore *customprompts.Store,
 ) *API {
 	a := &API{
+		mcpRequestLimiter:     newMCPRequestLimiter(),
 		bots:                  bots,
 		conversationsService:  conversationsService,
 		meetingsService:       meetingsService,

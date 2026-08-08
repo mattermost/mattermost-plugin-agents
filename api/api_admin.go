@@ -535,7 +535,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	a.mcpClientManager.RegisterPluginServer(updated)
+	a.mcpClientManager.UpdatePluginServer(updated)
 	a.configUpdater.Update(cfg)
 
 	// Rebuild when either old or new state was external so removed tools

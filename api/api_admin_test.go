@@ -579,11 +579,12 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 		body                   string
 		hasAdminPerm           bool
 		expectStatus           int
-		expectRegisterCalls    int
+		expectRegistryCalls    int
 		expectEnabledAfter     bool
 		expectExposeAfter      bool
 		expectToolConfigsAfter []mcp.ToolConfig
 		expectRebuildCalls     int
+		orphanPluginIDs        map[string]bool
 	}{
 		{
 			name:     "happy path: flips Enabled true->false",
@@ -594,7 +595,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			body:                `{"enabled": false}`,
 			hasAdminPerm:        true,
 			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
+			expectRegistryCalls: 1,
 			expectEnabledAfter:  false,
 			expectExposeAfter:   false,
 			expectRebuildCalls:  0,
@@ -609,7 +610,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			body:                `{"enabled": false}`,
 			hasAdminPerm:        true,
 			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
+			expectRegistryCalls: 1,
 			expectEnabledAfter:  false,
 			expectExposeAfter:   true,
 			expectRebuildCalls:  1,
@@ -624,7 +625,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			body:                `{"expose_external": true}`,
 			hasAdminPerm:        true,
 			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
+			expectRegistryCalls: 1,
 			expectEnabledAfter:  true,
 			expectExposeAfter:   false,
 			expectRebuildCalls:  0,
@@ -639,10 +640,23 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			body:                `{}`,
 			hasAdminPerm:        true,
 			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
+			expectRegistryCalls: 1,
 			expectEnabledAfter:  true,
 			expectExposeAfter:   true,
 			expectRebuildCalls:  1,
+		},
+		{
+			name:     "admin update keeps config-only orphan unregistered",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+			}},
+			orphanPluginIDs:     map[string]bool{"com.mattermost.demo": true},
+			body:                `{"enabled": false}`,
+			hasAdminPerm:        true,
+			expectStatus:        http.StatusOK,
+			expectRegistryCalls: 1,
+			expectEnabledAfter:  false,
 		},
 		{
 			name:         "404 when pluginID not registered",
@@ -670,7 +684,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			body:                `{"enabled": false}`,
 			hasAdminPerm:        false,
 			expectStatus:        http.StatusForbidden,
-			expectRegisterCalls: 0,
+			expectRegistryCalls: 0,
 		},
 		{
 			name:     "tool_configs partial PUT sets policy, preserves enabled",
@@ -682,7 +696,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			body:                `{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`,
 			hasAdminPerm:        true,
 			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
+			expectRegistryCalls: 1,
 			expectEnabledAfter:  true,
 			expectExposeAfter:   false,
 			expectToolConfigsAfter: []mcp.ToolConfig{
@@ -702,7 +716,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			body:                   `{"tool_configs": []}`,
 			hasAdminPerm:           true,
 			expectStatus:           http.StatusOK,
-			expectRegisterCalls:    1,
+			expectRegistryCalls:    1,
 			expectEnabledAfter:     true,
 			expectExposeAfter:      false,
 			expectToolConfigsAfter: []mcp.ToolConfig{},
@@ -721,7 +735,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			body:                `{"enabled": false}`,
 			hasAdminPerm:        true,
 			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
+			expectRegistryCalls: 1,
 			expectEnabledAfter:  false,
 			expectExposeAfter:   false,
 			expectToolConfigsAfter: []mcp.ToolConfig{
@@ -741,6 +755,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 
 			mgr := api.mcpClientManager.(*mockMCPClientManager)
 			mgr.pluginServers = tt.preRegistered
+			mgr.orphanPluginIDs = tt.orphanPluginIDs
 
 			// Seed a baseline persisted config so the handler can clone it
 			// instead of treating the store's nil as a 500.
@@ -759,15 +774,19 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			resp := recorder.Result()
 			require.Equal(t, tt.expectStatus, resp.StatusCode)
 
-			require.Len(t, mgr.registerCalls, tt.expectRegisterCalls)
+			require.Empty(t, mgr.registerCalls)
+			require.Len(t, mgr.updateCalls, tt.expectRegistryCalls)
 			if tt.expectStatus == http.StatusOK {
-				require.Equal(t, tt.expectEnabledAfter, mgr.registerCalls[0].Enabled)
-				require.Equal(t, tt.expectExposeAfter, mgr.registerCalls[0].ExposeExternal)
-				require.Equal(t, "Demo", mgr.registerCalls[0].Name)
-				require.Equal(t, "/mcp", mgr.registerCalls[0].Path)
-				require.Equal(t, "com.mattermost.demo", mgr.registerCalls[0].PluginID)
+				require.Equal(t, tt.expectEnabledAfter, mgr.updateCalls[0].Enabled)
+				require.Equal(t, tt.expectExposeAfter, mgr.updateCalls[0].ExposeExternal)
+				require.Equal(t, "Demo", mgr.updateCalls[0].Name)
+				require.Equal(t, "/mcp", mgr.updateCalls[0].Path)
+				require.Equal(t, "com.mattermost.demo", mgr.updateCalls[0].PluginID)
 				if tt.expectToolConfigsAfter != nil {
-					require.Equal(t, tt.expectToolConfigsAfter, mgr.registerCalls[0].ToolConfigs, "ToolConfigs assertion")
+					require.Equal(t, tt.expectToolConfigsAfter, mgr.updateCalls[0].ToolConfigs, "ToolConfigs assertion")
+				}
+				if tt.orphanPluginIDs[tt.pluginID] {
+					require.False(t, mgr.IsPluginRegistered(tt.pluginID))
 				}
 			}
 			require.Equal(t, tt.expectRebuildCalls, spy.callCount)
@@ -789,7 +808,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 		expectSaveCalls       int
 		expectUpdateCalls     int
 		expectPublishCalls    int
-		expectRegisterCalls   int
+		expectRegistryCalls   int
 		expectUnregisterCalls int
 		assertPersistedState  func(t *testing.T, savedCfg *config.Config)
 	}{
@@ -806,7 +825,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       1,
 			expectUpdateCalls:     1,
 			expectPublishCalls:    1,
-			expectRegisterCalls:   1,
+			expectRegistryCalls:   1,
 			expectUnregisterCalls: 0,
 			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
 				require.Len(t, savedCfg.MCP.PluginServers, 1)
@@ -851,7 +870,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       1,
 			expectUpdateCalls:     1,
 			expectPublishCalls:    1,
-			expectRegisterCalls:   1,
+			expectRegistryCalls:   1,
 			expectUnregisterCalls: 0,
 			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
 				require.Len(t, savedCfg.MCP.PluginServers, 2,
@@ -887,7 +906,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       0,
 			expectUpdateCalls:     0,
 			expectPublishCalls:    0,
-			expectRegisterCalls:   0,
+			expectRegistryCalls:   0,
 			expectUnregisterCalls: 0,
 		},
 		{
@@ -901,7 +920,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       1,
 			expectUpdateCalls:     0,
 			expectPublishCalls:    0,
-			expectRegisterCalls:   0,
+			expectRegistryCalls:   0,
 			expectUnregisterCalls: 0,
 		},
 		{
@@ -915,7 +934,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       1,
 			expectUpdateCalls:     0,
 			expectPublishCalls:    1,
-			expectRegisterCalls:   0,
+			expectRegistryCalls:   0,
 			expectUnregisterCalls: 0,
 		},
 		{
@@ -932,7 +951,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       0,
 			expectUpdateCalls:     0,
 			expectPublishCalls:    0,
-			expectRegisterCalls:   0,
+			expectRegistryCalls:   0,
 			expectUnregisterCalls: 0,
 		},
 	}
@@ -986,7 +1005,8 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			require.Equal(t, tt.expectUpdateCalls, stores.configUpdater.callCount)
 			require.Equal(t, tt.expectPublishCalls, stores.clusterNotifier.callCount)
 
-			require.Len(t, mgr.registerCalls, tt.expectRegisterCalls, "live plugin registry must not be mutated on failure paths")
+			require.Empty(t, mgr.registerCalls)
+			require.Len(t, mgr.updateCalls, tt.expectRegistryCalls, "live plugin registry must not be mutated on failure paths")
 			require.Len(t, mgr.unregisterCalls, tt.expectUnregisterCalls, "live plugin registry must not be mutated on failure paths")
 
 			if tt.assertPersistedState != nil {

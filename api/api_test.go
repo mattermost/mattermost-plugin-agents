@@ -127,6 +127,7 @@ type mockMCPClientManager struct {
 	ensureSessionCreated bool
 
 	registerCalls   []mcp.PluginServerConfig
+	updateCalls     []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig
 	// orphanPluginIDs simulates entries present in pluginServers but with
@@ -155,11 +156,11 @@ func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 	return nil
 }
 
-func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
+func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*mcp.OAuthSession, error) {
 	return m.processOAuthSession, m.processOAuthErr
 }
 
-func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
+func (m *mockMCPClientManager) DisconnectUserOAuth(_ context.Context, userID, serverName string) error {
 	m.disconnectCalls = append(m.disconnectCalls, mcpDisconnectCall{
 		userID:     userID,
 		serverName: serverName,
@@ -207,7 +208,16 @@ func (m *mockMCPClientManager) GetConfig() mcp.Config {
 
 func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) {
 	m.registerCalls = append(m.registerCalls, cfg)
-	// Mirror real ClientManager: same PluginID replaces existing entry.
+	delete(m.orphanPluginIDs, cfg.PluginID)
+	m.storePluginServer(cfg)
+}
+
+func (m *mockMCPClientManager) UpdatePluginServer(cfg mcp.PluginServerConfig) {
+	m.updateCalls = append(m.updateCalls, cfg)
+	m.storePluginServer(cfg)
+}
+
+func (m *mockMCPClientManager) storePluginServer(cfg mcp.PluginServerConfig) {
 	for i, existing := range m.pluginServers {
 		if existing.PluginID == cfg.PluginID {
 			m.pluginServers[i] = cfg
