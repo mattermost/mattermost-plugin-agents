@@ -28,6 +28,8 @@ const (
 	EmbeddedServerName = "Mattermost"
 	EmbeddedClientKey  = "embedded://mattermost"
 
+	listToolsMethod = "tools/list"
+
 	ToolPolicyAsk               = config.MCPToolPolicyAsk
 	ToolPolicyAutoRunInDM       = config.MCPToolPolicyAutoRunInDM
 	ToolPolicyAutoRunEverywhere = config.MCPToolPolicyAutoRunEverywhere
@@ -136,12 +138,46 @@ func NewEmbeddedServerClientWithCache(server EmbeddedMCPServer, log pluginapi.Lo
 	return client
 }
 
+// NewSDKClient builds a go-sdk MCP client hardened against hostile tools/list
+// responses. Use it instead of calling mcp.NewClient directly.
+func NewSDKClient(impl *mcp.Implementation, opts *mcp.ClientOptions) *mcp.Client {
+	client := mcp.NewClient(impl, opts)
+	client.AddSendingMiddleware(dropNilTools)
+	return client
+}
+
+// dropNilTools removes null entries from tools/list responses. go-sdk v1.7.0's
+// ListTools panics (nil dereference in filterValidTools) when a server's
+// tools/list result contains a JSON null tool entry, so a misbehaving remote
+// MCP server could crash the whole plugin process before any of our own nil
+// checks run. Stripping the entries in sending middleware runs before the
+// SDK's validation pass. Upstream report:
+// https://github.com/modelcontextprotocol/go-sdk/issues/1119
+func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if err != nil || method != listToolsMethod {
+			return result, err
+		}
+		listResult, ok := result.(*mcp.ListToolsResult)
+		if !ok || listResult == nil {
+			return result, nil
+		}
+		kept := listResult.Tools[:0]
+		for _, tool := range listResult.Tools {
+			if tool != nil {
+				kept = append(kept, tool)
+			}
+		}
+		listResult.Tools = kept
+		return listResult, nil
+	}
+}
+
 func listAllTools(ctx context.Context, session *mcp.ClientSession) (tools map[string]*mcp.Tool, err error) {
-	// go-sdk v1.7.0's ListTools panics (nil dereference in filterValidTools) when a
-	// server's tools/list result contains a JSON null tool entry, so a misbehaving
-	// remote MCP server could crash the whole plugin process. Recover the panic and
-	// surface it as an error instead. Upstream report:
-	// https://github.com/modelcontextprotocol/go-sdk/issues/1119
+	// The known nil-tool panic is prevented by the dropNilTools middleware on
+	// clients built via NewSDKClient; keep the recover as defense-in-depth so
+	// no future SDK panic can crash the whole plugin process.
 	defer func() {
 		if r := recover(); r != nil {
 			tools = nil
@@ -189,7 +225,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	}
 
 	// Create MCP client
-	mcpClient := mcp.NewClient(
+	mcpClient := NewSDKClient(
 		&mcp.Implementation{
 			Name:    "mattermost-agents-embedded",
 			Version: "1.0",
@@ -356,7 +392,7 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 		httpClient: httpClient,
 	}
 
-	mcpClient := mcp.NewClient(
+	mcpClient := NewSDKClient(
 		&mcp.Implementation{
 			Name:    "mattermost-agents-plugin-bridge",
 			Version: "1.0",
@@ -424,7 +460,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// TODO: Load and check cached authentication information
 
 	// We have no information about this server, so try to connect various ways.
-	client := mcp.NewClient(
+	client := NewSDKClient(
 		&mcp.Implementation{
 			Name:    "mattermost-agents",
 			Version: "1.0",
