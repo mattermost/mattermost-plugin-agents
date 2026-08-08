@@ -454,6 +454,34 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "Valid OpenCode Go service with API key",
+			service: ServiceConfig{
+				ID:     "service-12",
+				Type:   ServiceTypeOpenCodeGo,
+				APIKey: "opencodego-key",
+			},
+			want: true,
+		},
+		{
+			name: "OpenCode Go service missing API key",
+			service: ServiceConfig{
+				ID:     "service-12",
+				Type:   ServiceTypeOpenCodeGo,
+				APIKey: "", // bad - only the API key is required; base URL is auto-defaulted
+			},
+			want: false,
+		},
+		{
+			name: "OpenCode Go service with explicit API URL is still valid",
+			service: ServiceConfig{
+				ID:     "service-12",
+				Type:   ServiceTypeOpenCodeGo,
+				APIKey: "opencodego-key",
+				APIURL: "https://opencode.ai/zen/go/v1", // operator override is allowed
+			},
+			want: true,
+		},
+		{
 			name: "Valid Scale service with API key and API URL",
 			service: ServiceConfig{
 				ID:     "service-9",

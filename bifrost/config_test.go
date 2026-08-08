@@ -27,6 +27,7 @@ func TestSupportsNativeTools(t *testing.T) {
 		{llm.ServiceTypeCohere, false},
 		{llm.ServiceTypeMistral, false},
 		{llm.ServiceTypeScale, false},
+		{llm.ServiceTypeOpenCodeGo, false},
 		{"unknown", false},
 	}
 	for _, tt := range tests {
@@ -53,6 +54,7 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 		{"Bedrock drops tools", llm.ServiceTypeBedrock, tools, []string{}},
 		{"Cohere drops tools", llm.ServiceTypeCohere, tools, []string{}},
 		{"Mistral drops tools", llm.ServiceTypeMistral, tools, []string{}},
+		{"OpenCode Go drops tools", llm.ServiceTypeOpenCodeGo, tools, []string{}},
 		{"nil tools stay nil", llm.ServiceTypeOpenAI, nil, nil},
 		{"empty tools stay empty", llm.ServiceTypeOpenAI, []string{}, []string{}},
 	}

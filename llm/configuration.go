@@ -317,6 +317,10 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != "" && service.APIURL != ""
 	case ServiceTypeGemini:
 		return service.APIKey != ""
+	case ServiceTypeOpenCodeGo:
+		// OpenCode Go uses an OpenAI-compatible endpoint with standard Bearer
+		// auth; only the API key is required — the base URL is auto-applied.
+		return service.APIKey != ""
 	case ServiceTypeVertex:
 		// Auth credentials optional — empty means ADC / attached IAM role.
 		if service.VertexProjectID == "" || service.Region == "" {

@@ -20,6 +20,11 @@ func TestGetOpenAICompatibleProvider(t *testing.T) {
 			wantFound:   true,
 		},
 		{
+			name:        "opencodego returns provider",
+			serviceType: ServiceTypeOpenCodeGo,
+			wantFound:   true,
+		},
+		{
 			name:        "cohere not in compatible registry",
 			serviceType: ServiceTypeCohere,
 			wantFound:   false,
@@ -81,6 +86,30 @@ func TestScaleProviderConfig(t *testing.T) {
 
 	if p.CreateTransport == nil {
 		t.Fatal("expected CreateTransport to be non-nil for Scale")
+	}
+}
+
+func TestOpenCodeGoProviderConfig(t *testing.T) {
+	p, ok := GetOpenAICompatibleProvider(ServiceTypeOpenCodeGo)
+	if !ok {
+		t.Fatal("OpenCode Go provider not found in registry")
+	}
+
+	if p.DefaultModel != "kimi-k3" {
+		t.Errorf("DefaultModel = %q, want %q", p.DefaultModel, "kimi-k3")
+	}
+
+	// OpenCode Go uses standard Bearer auth, so the default transport is fine.
+	if p.CreateTransport != nil {
+		t.Error("expected CreateTransport to be nil for OpenCode Go (uses default Bearer auth)")
+	}
+
+	if p.DisableStreamOptions {
+		t.Error("expected DisableStreamOptions to be false for OpenCode Go")
+	}
+
+	if p.UseMaxTokens {
+		t.Error("expected UseMaxTokens to be false for OpenCode Go")
 	}
 }
 
