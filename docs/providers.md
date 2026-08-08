@@ -11,6 +11,7 @@ The Mattermost Agents plugin currently supports these LLM providers:
 - Anthropic
 - AWS Bedrock
 - Cohere
+- Cohere North (experimental, see [Cohere North Integration](north_integration.md))
 - Mistral
 - Scale AI
 - Azure OpenAI
@@ -107,6 +108,21 @@ Obtain a [Cohere API key](https://dashboard.cohere.com/api-keys), then select **
 |---------|----------|-------------|
 | **API Key** | Yes | Your Cohere API key |
 | **Default Model** | Yes | The model to use by default (see [Cohere's model documentation](https://docs.cohere.com/docs/models)) |
+
+## Cohere North (Experimental)
+
+[Cohere North](https://cohere.com/north) is Cohere's self-hosted enterprise agents platform. It can be connected in several ways: as an OpenAI-compatible model endpoint (the plugin's agent loop and Mattermost tools keep working, using the **OpenAI Compatible** service type with **Use Responses API** enabled), via the **Cohere North (Experimental)** service type, which fully delegates the agent loop — including tool execution — to an agent hosted on your North instance, or as a **hybrid**: a Cohere North service with Mattermost tools enabled combines the North agent's persona and hosted tools with Mattermost tools in one agent.
+
+### Configuration Options (Cohere North service type)
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **API URL** | Yes | Your North instance API base URL (e.g., `https://your-north-host/api`) |
+| **API Key** | Yes | A North API token |
+| **North agent ID** | No | The North agent that handles delegated conversations; blank uses the instance's default agent |
+| **Streaming Timeout Seconds** | No | Idle timeout between stream events; North agent loops can run long, so 120s is a reasonable floor |
+
+See [Cohere North Integration](north_integration.md) for both integration modes, architecture diagrams, and security notes.
 
 ## Mistral
 

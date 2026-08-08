@@ -652,6 +652,45 @@ func TestIsValidService(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "Valid North service with API URL and key",
+			service: ServiceConfig{
+				ID:     "north-1",
+				Type:   ServiceTypeNorth,
+				APIURL: "https://north.example.com/api",
+				APIKey: "north-token",
+			},
+			want: true,
+		},
+		{
+			name: "Valid North service without agent ID (default agent)",
+			service: ServiceConfig{
+				ID:           "north-2",
+				Type:         ServiceTypeNorth,
+				APIURL:       "https://north.example.com/api",
+				APIKey:       "north-token",
+				DefaultModel: "",
+			},
+			want: true,
+		},
+		{
+			name: "Invalid North service missing API URL",
+			service: ServiceConfig{
+				ID:     "north-3",
+				Type:   ServiceTypeNorth,
+				APIKey: "north-token",
+			},
+			want: false,
+		},
+		{
+			name: "Invalid North service missing API key",
+			service: ServiceConfig{
+				ID:     "north-4",
+				Type:   ServiceTypeNorth,
+				APIURL: "https://north.example.com/api",
+			},
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

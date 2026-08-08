@@ -52,6 +52,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['asage', 'asksage (Experimental)'],
     ['gemini', 'Google Gemini'],
     ['vertex', 'Google Vertex AI'],
+    ['north', 'Cohere North (Experimental)'],
 ]);
 
 function scaleAIToDisplayName(intl: IntlShape): string {
@@ -63,6 +64,26 @@ function serviceTypeToDisplayName(intl: IntlShape, serviceType: string): string 
         return scaleAIToDisplayName(intl);
     }
     return mapServiceTypeToDisplayName.get(serviceType) || serviceType;
+}
+
+function apiURLHelpText(intl: IntlShape, serviceType: string): string | undefined {
+    if (serviceType === 'scale') {
+        return intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'});
+    }
+    if (serviceType === 'north') {
+        return intl.formatMessage({defaultMessage: 'Your North instance API base URL (e.g., https://your-north-host/api)'});
+    }
+    return undefined; // eslint-disable-line no-undefined
+}
+
+function apiKeyHelpText(intl: IntlShape, serviceType: string): string | undefined {
+    if (serviceType === 'bedrock') {
+        return intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'});
+    }
+    if (serviceType === 'north') {
+        return intl.formatMessage({defaultMessage: 'North API token. Production deployments should use a service account or OAuth token with an appropriate lifetime.'});
+    }
+    return undefined; // eslint-disable-line no-undefined
 }
 
 type ModelInfo = {
@@ -87,6 +108,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
     const isScale = type === 'scale';
+    const isNorth = type === 'north';
 
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
@@ -262,13 +284,14 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
                 <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
                 <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
+                <SelectionItemOption value='north'>{'Cohere North (Experimental)'}</SelectionItemOption>
             </SelectionItem>
-            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale') && (
+            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale' || type === 'north') && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'API URL'})}
                     value={props.service.apiURL}
                     onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
-                    helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'}) : undefined} // eslint-disable-line no-undefined
+                    helptext={apiURLHelpText(intl, type)}
                 />
             )}
             {type === 'bedrock' && (
@@ -335,8 +358,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     type='password'
                     value={props.service.apiKey}
                     onChange={(e) => props.onChange({...props.service, apiKey: e.target.value})}
-                    // eslint-disable-next-line no-undefined
-                    helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
+                    helptext={apiKeyHelpText(intl, type)}
                 />
             )}
             {isOpenAIType && (
@@ -370,12 +392,20 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     isClearable={false}
                 />
             )}
-            {!(supportsModelFetching && availableModels.length > 0) && (
+            {!(supportsModelFetching && availableModels.length > 0) && !isNorth && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
                     onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
                     helptext={loadModelsHelpText || (isScale ? intl.formatMessage({defaultMessage: 'Use vendor/model-name format (e.g., openai/gpt-4o). See Scale AI documentation for available models.'}) : '')}
+                />
+            )}
+            {isNorth && (
+                <TextItem
+                    label={intl.formatMessage({defaultMessage: 'North agent ID'})}
+                    value={props.service.defaultModel}
+                    onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
+                    helptext={intl.formatMessage({defaultMessage: 'The North agent that handles delegated conversations. Leave blank to use the instance\'s default agent.'})}
                 />
             )}
             <TextItem
@@ -404,7 +434,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     props.onChange({...props.service, outputTokenLimit});
                 }}
             />
-            {isOpenAIType && (
+            {(isOpenAIType || isNorth) && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Streaming Timeout Seconds'})}
                     type='number'

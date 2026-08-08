@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/north"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -485,6 +486,12 @@ func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotCo
 			)
 		}
 		return loadtest.NewMockLLM(profile), nil
+	}
+
+	if serviceConfig.Type == llm.ServiceTypeNorth {
+		// Cohere North fully delegates the agent loop server-side; it is not
+		// routed through Bifrost.
+		return north.New(serviceConfig, botConfig), nil
 	}
 
 	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, fallbackServices)
