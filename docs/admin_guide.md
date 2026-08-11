@@ -505,6 +505,14 @@ Traces include these semantic attributes for filtering and analysis. Cached toke
 | `agents.post.id` | Post ID | `abc123def456` |
 | `agents.thread.root_post.id` | Root post ID for thread correlation | `abc123def456` |
 
+### Audit logging
+
+The plugin emits a server audit record for every state-changing operation: configuration saves, admin reindex and MCP cache operations, agent and custom prompt CRUD, MCP OAuth credential grant/revocation, per-user MCP preferences, inter-plugin MCP server registration, in-channel tool call approvals, and MCP session grants for external clients.
+
+Records identify the actor (user ID, session, IP), the event, the request path, the outcome (including failures and permission denials, as HTTP status codes), the OpenTelemetry `trace_id` for pivoting into traces, and identifiers of affected objects using the same attribute names as the table above. Records never contain prompt content, conversation or channel content, tool arguments or results, configuration values, or free-form error text — a configuration save records only which top-level sections changed, and failure detail stays in the server log (correlate by timestamp, actor, or `trace_id`).
+
+There is no plugin-side toggle: records are always handed to the server, and persistence is governed entirely by the server's [audit logging configuration](https://docs.mattermost.com/administration-guide/manage/logging.html) (System Console → Compliance, or `ExperimentalAuditSettings`).
+
 ### Backup and restore
 
 The plugin stores agent data across both plugin configuration and plugin database tables. To backup:
@@ -573,6 +581,10 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 ## Integrations
 
 Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
+
+### File creation by agents
+
+The built-in `CreateFile` tool lets an agent create a text file that is attached to its own reply. It executes automatically without an approval prompt — like the dynamic tool loading meta-tools — because its only effect is attaching a file to the agent's own response; users see a resolved (auto-approved) tool card. The embedded and external MCP posting tools (`create_post`, `dm`, `group_message`) also accept an inline `files` parameter and create the attachments as the acting user, subject to those tools' configured approval policies. In channels, availability of all of these follows the existing **Enable Channel Mention Tool Calling** setting.
 
 ## Model Context Protocol (MCP) Integration
 

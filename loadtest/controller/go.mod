@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/mattermost/mattermost-load-test-ng v1.32.0
-	github.com/mattermost/mattermost/server/public v0.4.2
+	github.com/mattermost/mattermost/server/public v0.4.3
 	github.com/stretchr/testify v1.11.1
 )
 

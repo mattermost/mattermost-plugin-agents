@@ -11,9 +11,9 @@ import (
 	"unicode/utf8"
 )
 
-// MaxCustomInstructionsRunes caps BotConfig.CustomInstructions at a length that keeps
-// the system prompt bounded on every conversation turn.
-const MaxCustomInstructionsRunes = 16384
+// MaxCustomInstructionsRunes bounds the per-turn LLM system prompt and agent-save
+// request. Custom instructions are sent only to the LLM, not as Mattermost posts.
+const MaxCustomInstructionsRunes = 100000
 
 // DefaultMaxToolTurns is the default tool-call-execute-recall ceiling per LLM turn.
 // Agents that store 0 (legacy config bots, freshly-migrated rows before the column

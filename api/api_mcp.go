@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -295,7 +296,36 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 		return
 	}
 
+	// Only names of actually-known servers are audited: the stored list is
+	// user-supplied free text (up to 256 × 512-rune entries), which would
+	// otherwise be an arbitrary-content injection channel into the audit
+	// log. The count still covers the full persisted list.
+	audit.AddParam(auditRec(c), "disabled_servers", a.knownMCPServerNames(saved.DisabledServers))
+	audit.AddParam(auditRec(c), "disabled_servers_count", len(saved.DisabledServers))
+
 	c.JSON(http.StatusOK, saved)
+}
+
+// knownMCPServerNames filters names down to servers that actually exist:
+// configured remote servers, the embedded server, and registered plugin
+// servers. Order is preserved; unknown entries are dropped.
+func (a *API) knownMCPServerNames(names []string) []string {
+	known := make(map[string]bool)
+	known[mcp.EmbeddedServerName] = true
+	for _, server := range a.config.MCP().Servers {
+		known[server.Name] = true
+	}
+	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+		known[cfg.Name] = true
+	}
+
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if known[name] {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered
 }
 
 // handleDeleteUserMCPOAuth disconnects the current user from an MCP server
@@ -303,13 +333,16 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 func (a *API) handleDeleteUserMCPOAuth(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	serverName := c.Param("serverName")
+	// Recorded before validation so every fail path carries the target
+	// server; clamped, it is an unvalidated path parameter.
+	audit.AddParam(auditRec(c), audit.KeyMCPServer, audit.TruncateID(serverName))
 
 	if serverName == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("serverName is required"))
 		return
 	}
 
-	if err := a.mcpClientManager.DisconnectUserOAuth(userID, serverName); err != nil {
+	if err := a.mcpClientManager.DisconnectUserOAuth(c.Request.Context(), userID, serverName); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to disconnect: %w", err))
 		return
 	}

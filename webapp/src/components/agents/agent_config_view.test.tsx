@@ -6,7 +6,7 @@ import {fireEvent, render, screen, waitFor, waitForElementToBeRemoved, within} f
 import {IntlProvider} from 'react-intl';
 
 import {createAgent, updateAgent} from '@/client';
-import {EnabledTool, ServiceInfo, UserAgent} from '@/types/agents';
+import {EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, UserAgent} from '@/types/agents';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
 
@@ -24,6 +24,7 @@ jest.mock('react-intl', () => {
                     defaultMessage,
                 );
             },
+            formatNumber: (value: number) => new Intl.NumberFormat('en').format(value),
         }),
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
@@ -85,6 +86,12 @@ jest.mock('./tabs/config_tab', () => ({
                 onChange={(e) => onChange({maxToolTurns: Number(e.target.value)})}
             />
             {errors.maxToolTurns && <div>{errors.maxToolTurns}</div>}
+            <textarea
+                aria-label='Custom instructions'
+                value={draft.customInstructions}
+                onChange={(e) => onChange({customInstructions: e.target.value})}
+            />
+            {errors.customInstructions && <div>{errors.customInstructions}</div>}
             <input
                 aria-label='Dynamic tool loading'
                 type='checkbox'
@@ -692,6 +699,43 @@ describe('AgentConfigView', () => {
         // Unknown existence must be treated conservatively: ask the user.
         await screen.findByRole('dialog', {name: 'Delete access policy?'});
         expect(onSaved).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        ['exactly the ASCII character limit', 'a'.repeat(MaxCustomInstructionsRunes)],
+
+        // Code points under the limit but UTF-16 length over it: catches .length-based counting.
+        ['astral characters below the character limit', '😀'.repeat((MaxCustomInstructionsRunes / 2) + 1)],
+    ])('allows saving with %s', async (_description, customInstructions) => {
+        mockCreateAgent.mockResolvedValue(savedAgent);
+        renderView();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.change(screen.getByLabelText('Custom instructions'), {
+            target: {value: customInstructions},
+        });
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+        expect(screen.queryByText('Custom instructions must be 100,000 characters or fewer')).toBeNull();
+    });
+
+    test.each([
+        ['ASCII characters', 'a'.repeat(MaxCustomInstructionsRunes + 1)],
+        ['astral characters', '😀'.repeat(MaxCustomInstructionsRunes + 1)],
+    ])('blocks saving when custom instructions exceed the character limit using %s', (_description, customInstructions) => {
+        renderView();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.change(screen.getByLabelText('Custom instructions'), {
+            target: {value: customInstructions},
+        });
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(screen.getByText('Custom instructions must be 100,000 characters or fewer')).not.toBeNull();
+        expect(createAgent).not.toHaveBeenCalled();
     });
 
     test('preserves explicit dynamic tool loading false on update', async () => {

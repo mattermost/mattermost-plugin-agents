@@ -5,6 +5,7 @@ package llm
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,6 +46,32 @@ func TestBotConfig_IsValid(t *testing.T) {
 				UserAccessLevel:    UserAccessLevelAll,
 			},
 			want: true,
+		},
+		{
+			name: "Custom instructions at maximum length",
+			fields: fields{
+				ID:                 "xxx",
+				Name:               "xxx",
+				DisplayName:        "xxx",
+				CustomInstructions: strings.Repeat("界", MaxCustomInstructionsRunes),
+				ServiceID:          "service-id",
+				ChannelAccessLevel: ChannelAccessLevelAll,
+				UserAccessLevel:    UserAccessLevelAll,
+			},
+			want: true,
+		},
+		{
+			name: "Custom instructions above maximum length",
+			fields: fields{
+				ID:                 "xxx",
+				Name:               "xxx",
+				DisplayName:        "xxx",
+				CustomInstructions: strings.Repeat("界", MaxCustomInstructionsRunes+1),
+				ServiceID:          "service-id",
+				ChannelAccessLevel: ChannelAccessLevelAll,
+				UserAccessLevel:    UserAccessLevelAll,
+			},
+			want: false,
 		},
 		{
 			name: "Valid OpenAI configuration with ChannelAccessLevelNone",

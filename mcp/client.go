@@ -28,6 +28,8 @@ const (
 	EmbeddedServerName = "Mattermost"
 	EmbeddedClientKey  = "embedded://mattermost"
 
+	listToolsMethod = "tools/list"
+
 	ToolPolicyAsk               = config.MCPToolPolicyAsk
 	ToolPolicyAutoRunInDM       = config.MCPToolPolicyAutoRunInDM
 	ToolPolicyAutoRunEverywhere = config.MCPToolPolicyAutoRunEverywhere
@@ -136,11 +138,57 @@ func NewEmbeddedServerClientWithCache(server EmbeddedMCPServer, log pluginapi.Lo
 	return client
 }
 
-func listAllTools(ctx context.Context, session *mcp.ClientSession) (map[string]*mcp.Tool, error) {
-	tools := make(map[string]*mcp.Tool)
-	for tool, err := range session.Tools(ctx, &mcp.ListToolsParams{}) {
-		if err != nil {
-			return nil, err
+// NewSDKClient builds a go-sdk MCP client hardened against hostile tools/list
+// responses. Use it instead of calling mcp.NewClient directly.
+func NewSDKClient(impl *mcp.Implementation, opts *mcp.ClientOptions) *mcp.Client {
+	client := mcp.NewClient(impl, opts)
+	client.AddSendingMiddleware(dropNilTools)
+	return client
+}
+
+// dropNilTools removes null entries from tools/list responses. go-sdk v1.7.0's
+// ListTools panics (nil dereference in filterValidTools) when a server's
+// tools/list result contains a JSON null tool entry, so a misbehaving remote
+// MCP server could crash the whole plugin process before any of our own nil
+// checks run. Stripping the entries in sending middleware runs before the
+// SDK's validation pass. Upstream report:
+// https://github.com/modelcontextprotocol/go-sdk/issues/1119
+func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if err != nil || method != listToolsMethod {
+			return result, err
+		}
+		listResult, ok := result.(*mcp.ListToolsResult)
+		if !ok || listResult == nil {
+			return result, nil
+		}
+		kept := listResult.Tools[:0]
+		for _, tool := range listResult.Tools {
+			if tool != nil {
+				kept = append(kept, tool)
+			}
+		}
+		listResult.Tools = kept
+		return listResult, nil
+	}
+}
+
+func listAllTools(ctx context.Context, session *mcp.ClientSession) (tools map[string]*mcp.Tool, err error) {
+	// The known nil-tool panic is prevented by the dropNilTools middleware on
+	// clients built via NewSDKClient; keep the recover as defense-in-depth so
+	// no future SDK panic can crash the whole plugin process.
+	defer func() {
+		if r := recover(); r != nil {
+			tools = nil
+			err = fmt.Errorf("panic while listing tools from MCP server: %v", r)
+		}
+	}()
+
+	tools = make(map[string]*mcp.Tool)
+	for tool, iterErr := range session.Tools(ctx, &mcp.ListToolsParams{}) {
+		if iterErr != nil {
+			return nil, iterErr
 		}
 		if tool == nil {
 			continue
@@ -177,7 +225,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	}
 
 	// Create MCP client
-	mcpClient := mcp.NewClient(
+	mcpClient := NewSDKClient(
 		&mcp.Implementation{
 			Name:    "mattermost-agents-embedded",
 			Version: "1.0",
@@ -344,7 +392,7 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 		httpClient: httpClient,
 	}
 
-	mcpClient := mcp.NewClient(
+	mcpClient := NewSDKClient(
 		&mcp.Implementation{
 			Name:    "mattermost-agents-plugin-bridge",
 			Version: "1.0",
@@ -386,42 +434,6 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 	return client, nil
 }
 
-// extractOAuthMetadataURL attempts to extract the OAuth metadata URL from an error message.
-// This is part of a temporary workaround
-// Returns the metadata URL and true if found, empty string and false otherwise.
-func extractOAuthMetadataURL(err error) (string, bool) {
-	if err == nil {
-		return "", false
-	}
-
-	errMsg := err.Error()
-	// Match the pattern from mcpUnauthorized.Error():
-	// "OAuth authentication needed for resource at <URL>"
-	// "OAuth authentication needed for resource at <URL>: Got error: <err>"
-	const prefix = "OAuth authentication needed for resource at "
-
-	idx := strings.Index(errMsg, prefix)
-	if idx == -1 {
-		return "", false
-	}
-
-	// Extract URL starting after the prefix
-	urlStart := idx + len(prefix)
-	remaining := errMsg[urlStart:]
-
-	// Find the end of the URL. The delimiter is ": Got error:" which separates
-	// the URL from the wrapped error. We cannot split on bare ":" because URLs
-	// contain colons (e.g. "https://").
-	urlEnd := len(remaining)
-	const errorSuffix = ": Got error:"
-	if suffixIdx := strings.Index(remaining, errorSuffix); suffixIdx != -1 {
-		urlEnd = suffixIdx
-	}
-
-	metadataURL := strings.TrimSpace(remaining[:urlEnd])
-	return metadataURL, metadataURL != ""
-}
-
 func (c *Client) oauthNeededError(err error) error {
 	if err == nil {
 		return nil
@@ -431,16 +443,7 @@ func (c *Client) oauthNeededError(err error) error {
 	if errors.As(err, &mcpAuthErr) {
 		md := mcpAuthErr.MetadataURL()
 		return &OAuthNeededError{
-			authURL:     c.oauthNeededRedirectURL(md),
-			metadataURL: md,
-		}
-	}
-
-	// Temporary workaround: check for OAuth error by string matching since go-sdk
-	// does not preserve error chains with %w.
-	if md, ok := extractOAuthMetadataURL(err); ok {
-		return &OAuthNeededError{
-			authURL:     c.oauthNeededRedirectURL(md),
+			authURL:     c.oauthNeededRedirectURL(md, mcpAuthErr.Scope()),
 			metadataURL: md,
 		}
 	}
@@ -457,7 +460,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// TODO: Load and check cached authentication information
 
 	// We have no information about this server, so try to connect various ways.
-	client := mcp.NewClient(
+	client := NewSDKClient(
 		&mcp.Implementation{
 			Name:    "mattermost-agents",
 			Version: "1.0",
@@ -465,14 +468,26 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		nil,
 	)
 
-	httpClient := c.httpClientForMCP(headers)
+	httpClient := c.httpClientForMCP(serverConfig.BaseURL, headers)
 
-	// Try new Streamable HTTP transport first (2025-03-26 spec).
-	// This will POST InitializeRequest and detect if the server supports the new transport.
-	session, errStreamable := client.Connect(ctx, &mcp.StreamableClientTransport{
+	// OAuth-capable clients get a per-connection handler; embedded and
+	// plugin-bridge clients (nil oauthManager) do not use OAuth.
+	var oauthHandler *userOAuthHandler
+	if c.oauthManager != nil {
+		oauthHandler = newUserOAuthHandler(c.userID, serverConfig, c.oauthManager)
+	}
+
+	// Try the modern Streamable HTTP transport first. The SDK auto-negotiates the
+	// protocol version (2026-07-28 down to 2025-03-26) via a server/discover request,
+	// falling back to a legacy initialize request when the server does not support it.
+	streamableTransport := &mcp.StreamableClientTransport{
 		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: httpClient,
-	}, nil)
+	}
+	if oauthHandler != nil {
+		streamableTransport.OAuthHandler = oauthHandler
+	}
+	session, errStreamable := client.Connect(ctx, streamableTransport, nil)
 	if errStreamable == nil {
 		// Successfully connected using Streamable HTTP transport
 		return session, nil
@@ -483,10 +498,12 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		return nil, oauthErr
 	}
 
-	// Fallback to old HTTP+SSE transport for backwards compatibility (2024-11-05 spec)
+	// Fall back to the HTTP+SSE transport for legacy servers that only implement
+	// the 2024-11-05 HTTP+SSE transport. SSEClientTransport has no OAuthHandler
+	// field, so OAuth is applied through a RoundTripper adapter instead.
 	session, errSSE := client.Connect(ctx, &mcp.SSEClientTransport{
 		Endpoint:   serverConfig.BaseURL,
-		HTTPClient: httpClient,
+		HTTPClient: c.httpClientForLegacySSE(serverConfig.BaseURL, oauthHandler, headers),
 	}, nil)
 	if errSSE == nil {
 		// Successfully connected using SSE transport
@@ -512,10 +529,11 @@ func (c *Client) oauthStartURL() string {
 
 // oauthNeededRedirectURL returns the plugin MCP OAuth start URL, optionally
 // appending resource_metadata so InitiateOAuthFlow can use the same discovery
-// path as the failed MCP handshake (RFC 9728).
-func (c *Client) oauthNeededRedirectURL(metadataURL string) string {
+// path as the failed MCP handshake (RFC 9728) and the challenge's
+// authoritative scope so re-authorization requests exactly it (RFC 6750 §3).
+func (c *Client) oauthNeededRedirectURL(metadataURL, scope string) string {
 	base := c.oauthStartURL()
-	if metadataURL == "" || base == "" {
+	if base == "" || (metadataURL == "" && scope == "") {
 		return base
 	}
 	u, err := url.Parse(base)
@@ -523,7 +541,12 @@ func (c *Client) oauthNeededRedirectURL(metadataURL string) string {
 		return base
 	}
 	q := u.Query()
-	q.Set("resource_metadata", metadataURL)
+	if metadataURL != "" {
+		q.Set("resource_metadata", metadataURL)
+	}
+	if scope != "" {
+		q.Set("scope", scope)
+	}
 	u.RawQuery = q.Encode()
 	return u.String()
 }

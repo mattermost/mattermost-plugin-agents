@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -91,6 +92,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// server IDs forward before normalizeAdminConfig mints fresh ones, so
 	// clients that drop the id field cannot rotate IDs on every save;
 	// identity conflicts abort the save entirely.
+	var changedKeys []string
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		next := cfg
 		// Reconcile even on the first write (empty previous lists) so
@@ -111,7 +113,9 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 			return config.Config{}, reconcileErr
 		}
 		next.MCP.Servers = reconciled
-		return normalizeAdminConfig(next), nil
+		normalized := normalizeAdminConfig(next)
+		changedKeys = audit.ChangedJSONKeys(prev, normalized)
+		return normalized, nil
 	})
 	switch {
 	case errors.Is(err, config.ErrServiceIDConflict), errors.Is(err, config.ErrMCPServerIDConflict):
@@ -126,6 +130,12 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
 		return
 	}
+
+	// From here on the config HAS changed in the database. If a later step
+	// fails (cluster notify), the audit record's fail status would otherwise
+	// hide a real mutation — mark it explicitly.
+	audit.AddParam(auditRec(c), "changed_keys", changedKeys)
+	audit.AddParam(auditRec(c), "persisted", true)
 
 	// Update in-memory config on this node
 	a.configUpdater.Update(&saved)

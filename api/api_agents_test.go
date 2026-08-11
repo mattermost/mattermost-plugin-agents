@@ -11,9 +11,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -1242,9 +1244,6 @@ func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
 	assert.False(t, updated.StructuredOutputEnabled)
 }
 
-// Suppress unused import warnings for multipart (used for avatar test below)
-var _ = multipart.NewWriter
-
 // TestAgentSaveErrorsAreActionable confirms every failure path on the agent
 // save endpoints writes a JSON {"error": ...} body. The webapp surfaces this
 // message verbatim to the user, so an empty body or status-only response
@@ -1570,4 +1569,491 @@ func TestCanUserAccessAgentCreatorAdminBypass(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
 	require.Empty(t, agents)
+}
+
+// TestAgentConfigChangedJSONKeys pins llm.BotConfig's JSON-tag behavior
+// through the shared audit.ChangedJSONKeys helper (generic cases live in
+// audit/diff_test.go).
+func TestAgentConfigChangedJSONKeys(t *testing.T) {
+	tests := []struct {
+		name     string
+		prev     *llm.BotConfig
+		next     *llm.BotConfig
+		expected []string
+	}{
+		{
+			name:     "identical configs report nothing",
+			prev:     &llm.BotConfig{ID: "agent-1", Name: "a", DisplayName: "A", ServiceID: "svc-1"},
+			next:     &llm.BotConfig{ID: "agent-1", Name: "a", DisplayName: "A", ServiceID: "svc-1"},
+			expected: []string{},
+		},
+		{
+			name: "only differing fields are reported, sorted",
+			prev: &llm.BotConfig{ID: "agent-1", Name: "a", DisplayName: "A", ServiceID: "svc-1"},
+			next: &llm.BotConfig{
+				ID: "agent-1", Name: "a", DisplayName: "B", ServiceID: "svc-1",
+				CustomInstructions: "new prompt", Model: "gpt-5",
+			},
+			expected: []string{"customInstructions", "displayName", "model"},
+		},
+		{
+			name: "clearing an omitempty field is still reported",
+			prev: &llm.BotConfig{
+				ID: "agent-1", Name: "a", DisplayName: "A", ServiceID: "svc-1",
+				AdminUserIDs: []string{"admin-1"},
+			},
+			next:     &llm.BotConfig{ID: "agent-1", Name: "a", DisplayName: "A", ServiceID: "svc-1"},
+			expected: []string{"adminUserIDs"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, audit.ChangedJSONKeys(tt.prev, tt.next))
+		})
+	}
+}
+
+func TestAuditCreateAgent(t *testing.T) {
+	const plantedInstructions = "planted-custom-instructions-that-must-never-leak"
+
+	tests := []struct {
+		name           string
+		setup          func(e *TestEnvironment)
+		body           map[string]any
+		expectedStatus int
+		validateRecord func(t *testing.T, e *TestEnvironment, rec *model.AuditRecord)
+	}{
+		{
+			name: "success records identifiers but never custom instructions",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+				e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+					UserId:      "bot-user-id-created",
+					Username:    "my-agent",
+					DisplayName: "My Agent",
+					Description: "User-created AI agent",
+				}, nil)
+			},
+			body:           createAgentBody(map[string]any{"customInstructions": plantedInstructions}),
+			expectedStatus: http.StatusCreated,
+			validateRecord: func(t *testing.T, e *TestEnvironment, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, "my-agent", rec.EventData.Parameters[audit.KeyAgentName])
+				assert.Equal(t, "svc-1", rec.EventData.Parameters["service_id"])
+				assert.Equal(t, "bot-user-id-created", rec.EventData.Parameters["bot_user_id"])
+
+				// The recorded agent ID must identify the persisted agent.
+				agentID, ok := rec.EventData.Parameters[audit.KeyAgentID].(string)
+				require.True(t, ok, "agent ID parameter must be present")
+				require.NotEmpty(t, agentID)
+				assert.Contains(t, e.agentStore.agents, agentID)
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedInstructions,
+					"audit record must never carry custom instructions")
+			},
+		},
+		{
+			name: "invalid username records a 400 fail carrying the attempted identifiers",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			},
+			body:           createAgentBody(map[string]any{"username": "Not A Valid Username!"}),
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, _ *TestEnvironment, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				// The failed write attempt is the forensically interesting
+				// record: it must identify what was attempted.
+				assert.Equal(t, "Not A Valid Username!", rec.EventData.Parameters[audit.KeyAgentName])
+				assert.Equal(t, "svc-1", rec.EventData.Parameters["service_id"])
+			},
+		},
+		{
+			name: "permission denial records a 403 fail without request details",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
+			},
+			body:           createAgentBody(nil),
+			expectedStatus: http.StatusForbidden,
+			validateRecord: func(t *testing.T, _ *TestEnvironment, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusForbidden, rec.Error.Code)
+				// The deny happens before the body is bound, so no request
+				// details are available to record.
+				assert.NotContains(t, rec.EventData.Parameters, audit.KeyAgentName)
+				assert.NotContains(t, rec.EventData.Parameters, "service_id")
+			},
+		},
+		{
+			name: "free-tier quota denial records a 403 fail without request details",
+			setup: func(e *TestEnvironment) {
+				mockUnlicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+				e.agentStore.agents["existing"] = &llm.BotConfig{
+					ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing",
+				}
+			},
+			body:           createAgentBody(nil),
+			expectedStatus: http.StatusForbidden,
+			validateRecord: func(t *testing.T, _ *TestEnvironment, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusForbidden, rec.Error.Code)
+				assert.NotContains(t, rec.EventData.Parameters, audit.KeyAgentName)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			tt.setup(e)
+			records := e.CaptureAuditRecords()
+
+			recorder := doRequest(e.api, http.MethodPost, "/agents", tt.body, testUserID)
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventCreateAgent, rec.EventName)
+			assert.Equal(t, testUserID, rec.Actor.UserId)
+			tt.validateRecord(t, e, rec)
+		})
+	}
+}
+
+func TestAuditUpdateAgent(t *testing.T) {
+	const plantedInstructions = "planted-updated-instructions-that-must-never-leak"
+
+	storedAgent := func() *llm.BotConfig {
+		return &llm.BotConfig{
+			ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+			DisplayName: "Original", Name: "my-agent", ServiceID: "svc-1",
+		}
+	}
+
+	tests := []struct {
+		name           string
+		setup          func(e *TestEnvironment) (body map[string]any)
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name: "success records exactly the changed field names, never values",
+			setup: func(e *TestEnvironment) map[string]any {
+				mockLicensed(e.mockAPI)
+				stored := storedAgent()
+				e.agentStore.agents["agent-1"] = stored
+				e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+				return updateAgentBodyFromStored(stored, map[string]any{
+					"displayName":        "Renamed",
+					"customInstructions": plantedInstructions,
+				})
+			},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
+				assert.Equal(t, "my-agent", rec.EventData.Parameters[audit.KeyAgentName])
+				assert.Equal(t, []string{"customInstructions", "displayName"},
+					rec.EventData.Parameters["changed_fields"])
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedInstructions,
+					"audit record must never carry custom instructions")
+			},
+		},
+		{
+			name: "slice-field change appears in changed_fields",
+			setup: func(e *TestEnvironment) map[string]any {
+				mockLicensed(e.mockAPI)
+				stored := storedAgent()
+				stored.ChannelAccessLevel = llm.ChannelAccessLevelAllow
+				stored.ChannelIDs = []string{"chan-original-1234567890ab"}
+				e.agentStore.agents["agent-1"] = stored
+				e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+				// Pins the shallow-copy invariant behind the diff: a
+				// slice-typed field replaced by the update request must be
+				// reported, which breaks if the apply ever mutates the
+				// stored slice in place instead of replacing it.
+				return updateAgentBodyFromStored(stored, map[string]any{
+					"channelIDs": []string{"chan-changed-1234567890ab"},
+				})
+			},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, []string{"channelIDs"}, rec.EventData.Parameters["changed_fields"])
+			},
+		},
+		{
+			name: "nonexistent agent records a 404 fail carrying the agent ID",
+			setup: func(e *TestEnvironment) map[string]any {
+				mockLicensed(e.mockAPI)
+				return updateAgentBodyFromStored(storedAgent(), nil)
+			},
+			expectedStatus: http.StatusNotFound,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusNotFound, rec.Error.Code)
+				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
+				assert.NotContains(t, rec.EventData.Parameters, audit.KeyAgentName)
+				assert.NotContains(t, rec.EventData.Parameters, "changed_fields")
+			},
+		},
+		{
+			name: "non-owner records a 403 fail carrying the agent identifiers",
+			setup: func(e *TestEnvironment) map[string]any {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false)
+				stored := storedAgent()
+				stored.CreatorID = "someone-else"
+				e.agentStore.agents["agent-1"] = stored
+				return updateAgentBodyFromStored(stored, map[string]any{"displayName": "Hijack"})
+			},
+			expectedStatus: http.StatusForbidden,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusForbidden, rec.Error.Code)
+				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
+				assert.Equal(t, "my-agent", rec.EventData.Parameters[audit.KeyAgentName])
+				assert.NotContains(t, rec.EventData.Parameters, "changed_fields")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			body := tt.setup(e)
+			records := e.CaptureAuditRecords()
+
+			recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventUpdateAgent, rec.EventName)
+			assert.Equal(t, testUserID, rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+func TestAuditDeleteAgent(t *testing.T) {
+	tests := []struct {
+		name           string
+		setup          func(e *TestEnvironment)
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name: "success records the agent identifiers and bot user ID",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				e.agentStore.agents["agent-1"] = &llm.BotConfig{
+					ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+					DisplayName: "Doomed", Name: "doomed", ServiceID: "svc-1",
+				}
+				e.mockAPI.On("UpdateBotActive", "bot-1", false).Return(&model.Bot{}, nil).Maybe()
+			},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
+				assert.Equal(t, "doomed", rec.EventData.Parameters[audit.KeyAgentName])
+				assert.Equal(t, "bot-1", rec.EventData.Parameters["bot_user_id"])
+			},
+		},
+		{
+			name: "nonexistent agent records a 404 fail carrying the agent ID",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+			},
+			expectedStatus: http.StatusNotFound,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusNotFound, rec.Error.Code)
+				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
+				assert.NotContains(t, rec.EventData.Parameters, audit.KeyAgentName)
+				assert.NotContains(t, rec.EventData.Parameters, "bot_user_id")
+			},
+		},
+		{
+			name: "non-owner records a 403 fail identifying the targeted agent",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false)
+				e.agentStore.agents["agent-1"] = &llm.BotConfig{
+					ID: "agent-1", CreatorID: "someone-else", BotUserID: "bot-1",
+					DisplayName: "Protected", Name: "protected", ServiceID: "svc-1",
+				}
+			},
+			expectedStatus: http.StatusForbidden,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusForbidden, rec.Error.Code)
+				// An attempted unauthorized deletion must identify its target.
+				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
+				assert.Equal(t, "protected", rec.EventData.Parameters[audit.KeyAgentName])
+				assert.Equal(t, "bot-1", rec.EventData.Parameters["bot_user_id"])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			tt.setup(e)
+			records := e.CaptureAuditRecords()
+
+			recorder := doRequest(e.api, http.MethodDelete, "/agents/agent-1", nil, testUserID)
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventDeleteAgent, rec.EventName)
+			assert.Equal(t, testUserID, rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+func TestAuditUploadAgentAvatar(t *testing.T) {
+	const plantedImageBytes = "planted-avatar-image-bytes-that-must-never-leak"
+
+	seedAgent := func(e *TestEnvironment) {
+		e.agentStore.agents["agent-1"] = &llm.BotConfig{
+			ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+			DisplayName: "Agent", Name: "my-agent", ServiceID: "svc-1",
+		}
+	}
+
+	multipartImageBody := func(t *testing.T) (io.Reader, string) {
+		var buf bytes.Buffer
+		w := multipart.NewWriter(&buf)
+		fw, err := w.CreateFormFile("image", "avatar.png")
+		require.NoError(t, err)
+		_, err = fw.Write([]byte(plantedImageBytes))
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+		return &buf, w.FormDataContentType()
+	}
+
+	tests := []struct {
+		name           string
+		setup          func(e *TestEnvironment)
+		makeBody       func(t *testing.T) (io.Reader, string)
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name: "success records the agent identifiers and nothing about the image",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				seedAgent(e)
+				e.mockAPI.On("SetProfileImage", "bot-1", mock.AnythingOfType("[]uint8")).Return(nil)
+			},
+			makeBody:       multipartImageBody,
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
+				assert.Equal(t, "my-agent", rec.EventData.Parameters[audit.KeyAgentName])
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedImageBytes,
+					"audit record must never carry image content")
+			},
+		},
+		{
+			name: "missing image records a 400 fail carrying the agent identifiers",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				seedAgent(e)
+			},
+			makeBody:       nil,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Equal(t, "agent-1", rec.EventData.Parameters[audit.KeyAgentID])
+				assert.Equal(t, "my-agent", rec.EventData.Parameters[audit.KeyAgentName])
+			},
+		},
+		{
+			name: "malformed multipart cannot inject raw header text into the record",
+			setup: func(e *TestEnvironment) {
+				mockLicensed(e.mockAPI)
+				seedAgent(e)
+			},
+			// Go's multipart parser wraps offending input into its error
+			// text (e.g. "malformed MIME header line: <raw line>"). That
+			// error reaches gin's error list; the record must never carry
+			// it — fail records are content-free by construction.
+			makeBody: func(t *testing.T) (io.Reader, string) {
+				body := "--BOUNDARY\r\n" +
+					"PLANTED-INJECTED-HEADER-LINE-not-a-mime-header\r\n" +
+					"\r\npayload\r\n" +
+					"--BOUNDARY--\r\n"
+				return strings.NewReader(body), "multipart/form-data; boundary=BOUNDARY"
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), "PLANTED-INJECTED-HEADER-LINE",
+					"multipart parse errors quoting request bytes must not reach the record")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			tt.setup(e)
+			records := e.CaptureAuditRecords()
+
+			var body io.Reader
+			var contentType string
+			if tt.makeBody != nil {
+				body, contentType = tt.makeBody(t)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/agents/agent-1/avatar", body)
+			if contentType != "" {
+				req.Header.Set("Content-Type", contentType)
+			}
+			req.Header.Set("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventUpdateAgentAvatar, rec.EventName)
+			assert.Equal(t, testUserID, rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
 }

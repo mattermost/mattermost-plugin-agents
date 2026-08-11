@@ -4,7 +4,9 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,6 +52,75 @@ func (c *recordKVSetWithExpiryClient) KVSetWithExpiry(key string, value interfac
 	return c.setErr
 }
 
+type pluginRegistrationKVFixture struct {
+	mu     sync.Mutex
+	data   []byte
+	writes int
+}
+
+func setupPluginRegistrationKV(t *testing.T, pluginTestAPI *plugintest.API, registrations map[string]PluginServerConfig) *pluginRegistrationKVFixture {
+	t.Helper()
+
+	fixture := &pluginRegistrationKVFixture{}
+	if registrations != nil {
+		var err error
+		fixture.data, err = json.Marshal(registrations)
+		require.NoError(t, err)
+	}
+
+	pluginTestAPI.On("KVGet", pluginRegistrationsKVKey).
+		Return(func(string) []byte {
+			fixture.mu.Lock()
+			defer fixture.mu.Unlock()
+			return append([]byte(nil), fixture.data...)
+		}, (*model.AppError)(nil)).
+		Maybe()
+	pluginTestAPI.On(
+		"KVSetWithOptions",
+		pluginRegistrationsKVKey,
+		mock.AnythingOfType("[]uint8"),
+		mock.AnythingOfType("model.PluginKVSetOptions"),
+	).Return(func(_ string, value []byte, options model.PluginKVSetOptions) (bool, *model.AppError) {
+		fixture.mu.Lock()
+		defer fixture.mu.Unlock()
+		if options.Atomic && !bytes.Equal(fixture.data, options.OldValue) {
+			return false, nil
+		}
+		fixture.data = append([]byte(nil), value...)
+		fixture.writes++
+		return true, nil
+	}).Maybe()
+
+	return fixture
+}
+
+func setupClientManagerTestAPI(t *testing.T, pluginTestAPI *plugintest.API) {
+	t.Helper()
+	setupTestLogger(pluginTestAPI)
+	setupPluginRegistrationKV(t, pluginTestAPI, nil)
+	pluginTestAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+}
+
+func (f *pluginRegistrationKVFixture) registrations(t *testing.T) map[string]PluginServerConfig {
+	t.Helper()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if len(f.data) == 0 {
+		return map[string]PluginServerConfig{}
+	}
+	var registrations map[string]PluginServerConfig
+	require.NoError(t, json.Unmarshal(f.data, &registrations))
+	return registrations
+}
+
+func (f *pluginRegistrationKVFixture) writeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.writes
+}
+
 func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 	testCases := []struct {
 		name                string
@@ -93,7 +164,10 @@ func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 }
 
 func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T) {
-	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
+	pluginTestAPI := &plugintest.API{}
+	setupClientManagerTestAPI(t, pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	cfgA := PluginServerConfig{PluginID: "a", Name: "A", Path: "/mcp", Enabled: true}
@@ -154,7 +228,10 @@ func TestClientManager_UpdatePluginServerAdminFields(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
+			pluginTestAPI := &plugintest.API{}
+			setupClientManagerTestAPI(t, pluginTestAPI)
+			client := pluginapi.NewClient(pluginTestAPI, nil)
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 			t.Cleanup(m.Close)
 
 			registered := PluginServerConfig{
@@ -190,8 +267,137 @@ func TestClientManager_UpdatePluginServerAdminFields(t *testing.T) {
 	}
 }
 
+func TestClientManager_PluginRegistrationPersistence(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	fixture := setupPluginRegistrationKV(t, pluginTestAPI, nil)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	first := PluginServerConfig{PluginID: "com.example.first", Name: "First", Path: "/mcp", Enabled: true}
+	second := PluginServerConfig{PluginID: "com.example.second", Name: "Second", Path: "/mcp", Enabled: true}
+	m.RegisterPluginServer(first)
+	m.RegisterPluginServer(second)
+
+	require.Equal(t, map[string]PluginServerConfig{
+		first.PluginID:  first,
+		second.PluginID: second,
+	}, fixture.registrations(t))
+
+	m.UnregisterPluginServer(first.PluginID)
+	require.Equal(t, map[string]PluginServerConfig{
+		second.PluginID: second,
+	}, fixture.registrations(t))
+}
+
+func TestClientManager_HydratesLivePluginRegistrations(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+
+	live := PluginServerConfig{
+		PluginID:       "com.example.live",
+		Name:           "Live Name",
+		Path:           "/live",
+		Enabled:        false,
+		ExposeExternal: true,
+	}
+	disabled := PluginServerConfig{PluginID: "com.example.disabled", Name: "Disabled", Path: "/mcp", Enabled: true}
+	absent := PluginServerConfig{PluginID: "com.example.absent", Name: "Absent", Path: "/mcp", Enabled: true}
+	fixture := setupPluginRegistrationKV(t, pluginTestAPI, map[string]PluginServerConfig{
+		live.PluginID:     live,
+		disabled.PluginID: disabled,
+		absent.PluginID:   absent,
+	})
+	pluginTestAPI.On("GetConfig").Return(&model.Config{
+		PluginSettings: model.PluginSettings{
+			PluginStates: map[string]*model.PluginState{
+				live.PluginID:     {Enable: true},
+				disabled.PluginID: {Enable: false},
+			},
+		},
+	})
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	adminToolConfig := ToolConfig{Name: "echo", Policy: ToolPolicyAsk, Enabled: true}
+	m := NewClientManager(Config{
+		IdleTimeoutMinutes: 30,
+		PluginServers: []PluginServerConfig{{
+			PluginID:       live.PluginID,
+			Name:           "Stale Admin Name",
+			Path:           "/stale",
+			Enabled:        true,
+			ExposeExternal: false,
+			ToolConfigs:    []ToolConfig{adminToolConfig},
+		}},
+	}, client.Log, client, nil, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	got, ok := m.GetPluginServer(live.PluginID)
+	require.True(t, ok)
+	require.True(t, m.IsPluginRegistered(live.PluginID))
+	require.Equal(t, live.Name, got.Name)
+	require.Equal(t, live.Path, got.Path)
+	require.True(t, got.ExposeExternal)
+	require.True(t, got.Enabled)
+	require.Equal(t, []ToolConfig{adminToolConfig}, got.ToolConfigs)
+
+	require.False(t, m.IsPluginRegistered(disabled.PluginID))
+	require.False(t, m.IsPluginRegistered(absent.PluginID))
+	require.Equal(t, map[string]PluginServerConfig{
+		live.PluginID: live,
+	}, fixture.registrations(t))
+}
+
+func TestClientManager_HydrationKeepsRegistrationsWhenServerConfigUnavailable(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+
+	first := PluginServerConfig{PluginID: "com.example.first", Name: "First", Path: "/mcp", Enabled: true}
+	second := PluginServerConfig{PluginID: "com.example.second", Name: "Second", Path: "/mcp", Enabled: true}
+	persisted := map[string]PluginServerConfig{
+		first.PluginID:  first,
+		second.PluginID: second,
+	}
+	fixture := setupPluginRegistrationKV(t, pluginTestAPI, persisted)
+	pluginTestAPI.On("GetConfig").Return((*model.Config)(nil))
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	require.True(t, m.IsPluginRegistered(first.PluginID))
+	require.True(t, m.IsPluginRegistered(second.PluginID))
+	require.Equal(t, persisted, fixture.registrations(t))
+	require.Zero(t, fixture.writeCount())
+}
+
+func TestClientManager_UpdatePluginServerPreservesRegistrationStateAndKV(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	fixture := setupPluginRegistrationKV(t, pluginTestAPI, nil)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	orphan := PluginServerConfig{PluginID: "com.example.orphan", Name: "Orphan", Path: "/mcp", Enabled: true}
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30, PluginServers: []PluginServerConfig{orphan}}, client.Log, client, nil, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	orphan.Enabled = false
+	m.UpdatePluginServer(orphan)
+
+	got, ok := m.GetPluginServer(orphan.PluginID)
+	require.True(t, ok)
+	require.Equal(t, orphan, got)
+	require.False(t, m.IsPluginRegistered(orphan.PluginID))
+	require.Zero(t, fixture.writeCount())
+}
+
 func TestClientManager_GetPluginServer(t *testing.T) {
-	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
+	pluginTestAPI := &plugintest.API{}
+	setupClientManagerTestAPI(t, pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	cfg, ok := m.GetPluginServer("missing")
@@ -221,7 +427,7 @@ func TestClientManager_GetPluginServer(t *testing.T) {
 
 func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	persisted := []PluginServerConfig{
@@ -288,7 +494,7 @@ func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
 // plugin.
 func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
@@ -333,7 +539,7 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 
 func TestClientManager_ReInitInsertsConfigOnlyEntries(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
@@ -364,7 +570,7 @@ func TestClientManager_ReInitInsertsConfigOnlyEntries(t *testing.T) {
 // Live registrations absent from config must survive config broadcasts.
 func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
@@ -397,7 +603,7 @@ func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 
 func TestClientManager_IsPluginRegistered(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	cfg := Config{
@@ -439,7 +645,7 @@ func TestClientManager_IsPluginRegistered(t *testing.T) {
 
 func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	cfg := Config{
@@ -465,7 +671,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	mockAPI := newPluginHTTPForwarder(t, target)
 
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
@@ -495,7 +701,7 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	}).Maybe()
 
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
@@ -546,7 +752,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 			}
 
 			pluginTestAPI := &plugintest.API{}
-			setupTestLogger(pluginTestAPI)
+			setupClientManagerTestAPI(t, pluginTestAPI)
 			client := pluginapi.NewClient(pluginTestAPI, nil)
 
 			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
@@ -575,10 +781,14 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	target := newFakePluginMCPServer(t, 1)
 	t.Cleanup(target.Close)
 
-	var calls atomic.Int32
+	// Fail every request while true so the entire first connect attempt fails;
+	// a single failed request is not enough because the SDK retries with a
+	// legacy-initialize fallback within one connect attempt.
+	var failing atomic.Bool
+	failing.Store(true)
 	mockAPI := &fakePluginHTTPClient{
 		pluginHTTP: func(req *http.Request) *http.Response {
-			if calls.Add(1) == 1 {
+			if failing.Load() {
 				rec := httptest.NewRecorder()
 				rec.WriteHeader(http.StatusInternalServerError)
 				return rec.Result()
@@ -591,7 +801,7 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	}
 
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
@@ -608,6 +818,8 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	require.NotNil(t, mcpErrors)
 	require.NotEmpty(t, mcpErrors.Errors)
 
+	failing.Store(false)
+
 	tools, mcpErrors = m.GetToolsForUser(context.Background(), "alice")
 	require.Nil(t, mcpErrors, "successful plugin reconnect must not return the prior transient error")
 	require.Len(t, tools, 1)
@@ -620,7 +832,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	t.Cleanup(targetB.Close)
 
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	// PluginHTTPRoundTripper rewrites paths to "/<pluginID>/mcp"; route accordingly.
@@ -661,7 +873,10 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 // Run with -race. Concurrent Register/Unregister/List/snapshot must not
 // deadlock or race.
 func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
-	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}, pluginRegistered: map[string]bool{}}
+	pluginTestAPI := &plugintest.API{}
+	setupClientManagerTestAPI(t, pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	const writers = 8
@@ -1104,7 +1319,7 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 func TestClientManagerProcessOAuthCallbackRequiresOAuthManager(t *testing.T) {
 	manager := &ClientManager{}
 
-	session, err := manager.ProcessOAuthCallback(t.Context(), "user-1", "state", "code")
+	session, err := manager.ProcessOAuthCallback(t.Context(), "user-1", "state", "code", "")
 
 	require.Nil(t, session)
 	require.ErrorIs(t, err, ErrOAuthNotConfigured)
@@ -1113,7 +1328,7 @@ func TestClientManagerProcessOAuthCallbackRequiresOAuthManager(t *testing.T) {
 func TestClientManagerDisconnectUserOAuthRequiresOAuthManager(t *testing.T) {
 	manager := &ClientManager{}
 
-	err := manager.DisconnectUserOAuth("user-1", "GitHub")
+	err := manager.DisconnectUserOAuth(context.Background(), "user-1", "GitHub")
 
 	require.ErrorIs(t, err, ErrOAuthNotConfigured)
 }

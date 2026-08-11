@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -45,6 +46,9 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 	if req.ClearIndex != nil {
 		clearIndex = *req.ClearIndex
 	}
+
+	// Audit the effective value before starting so fail paths carry it too.
+	audit.AddParam(auditRec(c), "clear_index", clearIndex)
 
 	jobStatus, err := a.indexerService.StartReindexJob(clearIndex)
 	if err != nil {
@@ -93,6 +97,7 @@ func (a *API) handleCancelJob(c *gin.Context) {
 	}
 
 	if a.indexerService == nil {
+		audit.AddParam(auditRec(c), "job_status", "no_job")
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "no_job",
 		})
@@ -102,6 +107,7 @@ func (a *API) handleCancelJob(c *gin.Context) {
 	jobStatus, err := a.indexerService.CancelJob()
 	if err != nil {
 		if mmapi.IsKVNotFound(err) {
+			audit.AddParam(auditRec(c), "job_status", "no_job")
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "no_job",
 			})
@@ -109,6 +115,7 @@ func (a *API) handleCancelJob(c *gin.Context) {
 		}
 		switch err.Error() {
 		case "not running":
+			audit.AddParam(auditRec(c), "job_status", "not_running")
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "not_running",
 			})
@@ -119,6 +126,7 @@ func (a *API) handleCancelJob(c *gin.Context) {
 		}
 	}
 
+	audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 	c.JSON(http.StatusOK, jobStatus)
 }
 
@@ -138,6 +146,8 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 	if err != nil {
 		switch err.Error() {
 		case "job already running":
+			// The blocking job's status is the useful context on this fail path.
+			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
 		case "no previous index found, run a full reindex first":
@@ -149,6 +159,7 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 		}
 	}
 
+	audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 	c.JSON(http.StatusOK, jobStatus)
 }
 
@@ -408,6 +419,8 @@ func (a *API) handleClearMCPToolsCache(c *gin.Context) {
 		return
 	}
 
+	audit.AddParam(auditRec(c), "cleared_servers", clearedCount)
+
 	c.JSON(http.StatusOK, ClearMCPToolsCacheResponse{
 		ClearedServers: clearedCount,
 		Message:        fmt.Sprintf("Successfully cleared cache for %d servers", clearedCount),
@@ -450,11 +463,17 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
+	// Identify the target plugin as early as possible so fail paths carry it.
+	audit.AddParam(auditRec(c), audit.KeyMCPPluginID, audit.TruncateID(pluginID))
+
 	var req UpdatePluginServerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
+
+	// Whether tool policy was touched — never the configs themselves.
+	audit.AddParam(auditRec(c), "tool_configs_changed", req.ToolConfigs != nil)
 
 	live, foundLive := a.mcpClientManager.GetPluginServer(pluginID)
 	if !foundLive {
@@ -462,10 +481,20 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
+	updated := live
+	if req.Enabled != nil {
+		updated.Enabled = *req.Enabled
+	}
+	if req.ToolConfigs != nil {
+		updated.ToolConfigs = *req.ToolConfigs
+	}
+
+	// Best-effort fallback; overwritten below when persisted state is available.
+	audit.AddParam(auditRec(c), "enabled", updated.Enabled)
+
 	// Apply the request to the freshest persisted entry inside the UpdateConfig
 	// transform; rebasing onto the live snapshot read above would let two
 	// concurrent field updates overwrite each other.
-	var updated mcp.PluginServerConfig
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		if prev == nil {
 			// Replacing a nil persisted config with a zero-value baseline
@@ -503,6 +532,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 			base.ToolConfigs = *req.ToolConfigs
 		}
 		updated = base
+		audit.AddParam(auditRec(c), "enabled", updated.Enabled)
 
 		if mergedIdx >= 0 {
 			merged[mergedIdx] = base
@@ -516,6 +546,10 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save plugin-server config: %w", err))
 		return
 	}
+
+	// The mutation is persisted from here on; a later cluster-notify failure
+	// yields a fail record for a change that actually landed — say so.
+	audit.AddParam(auditRec(c), "persisted", true)
 
 	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to notify cluster of plugin-server config update: %w", err))

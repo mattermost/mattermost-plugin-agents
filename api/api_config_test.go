@@ -22,23 +22,35 @@ import (
 
 // testConfigStore is a simple in-memory implementation of ConfigStore for testing.
 type testConfigStore struct {
-	cfg *config.Config
+	cfg     *config.Config
+	getErr  error
+	saveErr error
+
 	// serviceIDMigrationDone mirrors the store's migration marker driving the
 	// stale legacy UUID rejection in UpdateConfig.
 	serviceIDMigrationDone bool
 }
 
 func (s *testConfigStore) GetConfig() (*config.Config, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	return s.cfg, nil
 }
 
 func (s *testConfigStore) SaveConfig(cfg config.Config) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	clone := cfg
 	s.cfg = &clone
 	return nil
 }
 
 func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	if s.getErr != nil {
+		return config.Config{}, s.getErr
+	}
 	next, err := transform(s.cfg)
 	if err != nil {
 		return config.Config{}, err
@@ -50,8 +62,9 @@ func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (conf
 			}
 		}
 	}
-	clone := next
-	s.cfg = &clone
+	if err := s.SaveConfig(next); err != nil {
+		return next, err
+	}
 	return next, nil
 }
 
