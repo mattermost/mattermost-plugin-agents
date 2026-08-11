@@ -63,6 +63,9 @@ export type AccessControlPropertyField = {
     attrs: Record<string, unknown> | null;
     target_id?: string;
     target_type?: string;
+
+    // 'user' | 'session' — buckets CEL autocomplete (user.attributes.* vs user.session.*).
+    object_type?: string;
     create_at: number;
     update_at: number;
     delete_at: number;

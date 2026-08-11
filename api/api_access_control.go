@@ -395,6 +395,11 @@ func (a *API) handleCELTest(c *gin.Context) {
 		abortPolicyRequest(c, err)
 		return
 	}
+	// Plugin RPC (gob) turns an empty users slice into nil; JSON would then
+	// emit "users": null and crash the host TestResultsModal on spread.
+	if result != nil && result.Users == nil {
+		result.Users = []*model.User{}
+	}
 	c.JSON(http.StatusOK, result)
 }
 

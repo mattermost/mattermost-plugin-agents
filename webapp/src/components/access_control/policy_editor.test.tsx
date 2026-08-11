@@ -61,13 +61,18 @@ const FakeTableEditor = ({value, onChange, onValidate, onParseError}: FakeEditor
     </div>
 );
 
-const FakeCELEditor = ({value, onChange, onValidate}: FakeEditorProps) => (
-    <div data-testid='cel-editor'>
-        <span data-testid='cel-value'>{value}</span>
-        <button onClick={() => onChange('user.attributes.level >= 3')}>{'cel-edit'}</button>
-        <button onClick={() => onValidate(false)}>{'cel-invalidate'}</button>
-    </div>
-);
+let lastCELUserAttributes: unknown;
+
+const FakeCELEditor = ({value, onChange, onValidate, userAttributes}: FakeEditorProps & {userAttributes?: unknown}) => {
+    lastCELUserAttributes = userAttributes;
+    return (
+        <div data-testid='cel-editor'>
+            <span data-testid='cel-value'>{value}</span>
+            <button onClick={() => onChange('user.attributes.level >= 3')}>{'cel-edit'}</button>
+            <button onClick={() => onValidate(false)}>{'cel-invalidate'}</button>
+        </div>
+    );
+};
 
 function setHostEditors() {
     (window as unknown as {Components?: Record<string, unknown>}).Components = {
@@ -120,6 +125,7 @@ beforeEach(() => {
     client.getServiceAccessPolicy.mockResolvedValue(null);
     client.getMCPServerAccessPolicy.mockResolvedValue(null);
     client.getAccessControlFields.mockResolvedValue([]);
+    lastCELUserAttributes = undefined;
     setHostEditors();
 });
 
@@ -166,6 +172,63 @@ describe('PolicyEditor', () => {
 
         fireEvent.click(screen.getByText('Simple'));
         expect(await screen.findByTestId('table-editor')).toBeTruthy();
+    });
+
+    it('maps native and session field flags into CEL editor attributes', async () => {
+        client.getAccessControlFields.mockResolvedValue([
+            {
+                id: 'native_email',
+                group_id: 'g',
+                name: 'email',
+                type: 'text',
+                attrs: {native: true},
+                object_type: 'user',
+                create_at: 0,
+                update_at: 0,
+                delete_at: 0,
+            },
+            {
+                id: 'cpa_dept',
+                group_id: 'g',
+                name: 'department',
+                type: 'text',
+                attrs: {},
+                object_type: 'user',
+                create_at: 0,
+                update_at: 0,
+                delete_at: 0,
+            },
+            {
+                id: 'session_ip',
+                group_id: 'g',
+                name: 'ip_address',
+                type: 'text',
+                attrs: {},
+                object_type: 'session',
+                create_at: 0,
+                update_at: 0,
+                delete_at: 0,
+            },
+            {
+                id: 'bad',
+                group_id: 'g',
+                name: null,
+                type: 'text',
+                attrs: null,
+                object_type: 'user',
+                create_at: 0,
+                update_at: 0,
+                delete_at: 0,
+            },
+        ]);
+
+        renderEditor({allowSimplified: false});
+        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+        expect(lastCELUserAttributes).toEqual([
+            {attribute: 'email', values: [], isNative: true, objectType: 'user'},
+            {attribute: 'department', values: [], isNative: false, objectType: 'user'},
+            {attribute: 'ip_address', values: [], isNative: false, objectType: 'session'},
+        ]);
     });
 
     it('saves the edited expression with the use action and route-resolved identity', async () => {

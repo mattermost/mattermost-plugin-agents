@@ -25,6 +25,7 @@ import type {ActionResult, CELEditorActions, CELEditorAttribute, TableEditorActi
 import {getAccessControlEditors} from '@/utils/access_control';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import LoadingSpinner from '@/components/assets/loading_spinner';
+import EditorErrorBoundary from '@/components/access_control/editor_error_boundary';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 
 export type PolicyEditorProps = {
@@ -162,12 +163,18 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
         };
     }, [client, resourceId, agentIdForAuthz, allowAdvanced, intl]);
 
-    // The CEL editor takes {attribute, values, isNative}[].
-    const celAttributes = useMemo<CELEditorAttribute[]>(() => fields.map((field) => ({
-        attribute: field.name,
-        values: extractFieldValues(field),
-        isNative: false,
-    })), [fields]);
+    // The CEL editor takes {attribute, values, isNative, objectType}[].
+    // Native/session flags must match the host's toCELEditorAttributes mapping
+    // so autocomplete lands under user.* / user.session.* instead of
+    // user.attributes.*.
+    const celAttributes = useMemo<CELEditorAttribute[]>(() => fields.
+        filter((field) => typeof field.name === 'string' && field.name.trim() !== '').
+        map((field) => ({
+            attribute: field.name,
+            values: extractFieldValues(field),
+            isNative: Boolean(field.attrs?.native),
+            objectType: field.object_type,
+        })), [fields]);
 
     const tableActions = useMemo<TableEditorActions>(() => ({
         getVisualAST: wrapAction((expr: string) => getAccessControlVisualAST(resourceType, expr, agentIdForAuthz)),
@@ -304,33 +311,35 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
                     {savedExpression !== '' && <ReadOnlyExpression>{savedExpression}</ReadOnlyExpression>}
                 </>
             ) : (
-                <Suspense
-                    fallback={
-                        <SpinnerContainer>
-                            <LoadingSpinner/>
-                        </SpinnerContainer>
-                    }
-                >
-                    {view === 'simplified' ? (
-                        <TableEditor
-                            value={expression}
-                            onChange={setExpression}
-                            onValidate={setExpressionValid}
-                            userAttributes={fields}
-                            enableUserManagedAttributes={false}
-                            onParseError={handleParseError}
-                            actions={tableActions}
-                        />
-                    ) : (
-                        <CELEditor
-                            value={expression}
-                            onChange={setExpression}
-                            onValidate={setExpressionValid}
-                            userAttributes={celAttributes}
-                            actions={celActions}
-                        />
-                    )}
-                </Suspense>
+                <EditorErrorBoundary>
+                    <Suspense
+                        fallback={
+                            <SpinnerContainer>
+                                <LoadingSpinner/>
+                            </SpinnerContainer>
+                        }
+                    >
+                        {view === 'simplified' ? (
+                            <TableEditor
+                                value={expression}
+                                onChange={setExpression}
+                                onValidate={setExpressionValid}
+                                userAttributes={fields}
+                                enableUserManagedAttributes={false}
+                                onParseError={handleParseError}
+                                actions={tableActions}
+                            />
+                        ) : (
+                            <CELEditor
+                                value={expression}
+                                onChange={setExpression}
+                                onValidate={setExpressionValid}
+                                userAttributes={celAttributes}
+                                actions={celActions}
+                            />
+                        )}
+                    </Suspense>
+                </EditorErrorBoundary>
             )}
 
             {saveError && <ErrorText>{saveError}</ErrorText>}

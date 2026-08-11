@@ -157,7 +157,11 @@ export async function testAccessControlExpression(resourceType: PolicyResourceTy
     }));
 
     if (response.ok) {
-        return response.json();
+        const data: AccessControlTestResult = await response.json();
+
+        // Empty results can arrive as users: null after plugin RPC; keep the
+        // host TestResultsModal's array spread from throwing.
+        return {users: data.users ?? [], total: data.total ?? 0};
     }
 
     throw new ClientError(Client4.url, {

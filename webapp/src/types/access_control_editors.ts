@@ -49,6 +49,7 @@ export type CELEditorAttribute = {
     attribute: string;
     values: string[];
     isNative?: boolean;
+    objectType?: string;
 };
 
 // Mirrors the subset of CELEditorActions this plugin supplies.

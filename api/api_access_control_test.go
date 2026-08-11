@@ -313,6 +313,34 @@ func TestCELCheckRejectsForeignResourceType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 
+// Empty matching sets come back from the PAP with Users == nil after gob RPC.
+// The JSON body must still emit "users": [] so the host TestResultsModal can
+// spread the list without throwing.
+func TestCELTestNormalizesNilUsers(t *testing.T) {
+	userID := model.NewId()
+
+	e := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true).Maybe()
+	e.mockAPI.On("QueryUsersForAccessControlExpression", userID, accesscontrol.ResourceTypeService, mock.AnythingOfType("string"), "", "", 0).
+		Return(&model.AccessControlPolicyTestResponse{Users: nil, Total: 0}, nil).Once()
+
+	body := map[string]any{
+		"resource_type": accesscontrol.ResourceTypeService,
+		"expression":    `user.attributes.is_a_cool_guy == "true"`,
+		"term":          "",
+		"after":         "",
+		"limit":         0,
+	}
+	recorder := doRequest(e.api, http.MethodPost, "/access_control/cel/test", body, userID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&raw))
+	require.Equal(t, json.RawMessage("[]"), raw["users"])
+}
+
 // perIDDecisionClient denies specific resource IDs; everything else is no_policy.
 type perIDDecisionClient struct {
 	denied map[string]bool

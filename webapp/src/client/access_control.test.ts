@@ -89,3 +89,18 @@ describe('CEL clients send colon-keyed plugin-owned resource types', () => {
         expect(manifest.id).toBe('mattermost-ai');
     });
 });
+
+describe('testAccessControlExpression', () => {
+    test('normalizes null users to an empty array', async () => {
+        mockFetch.mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({users: null, total: 0}),
+        } as unknown as Response);
+
+        await expect(testAccessControlExpression('service', 'true', '', '', 10)).resolves.toEqual({
+            users: [],
+            total: 0,
+        });
+    });
+});
