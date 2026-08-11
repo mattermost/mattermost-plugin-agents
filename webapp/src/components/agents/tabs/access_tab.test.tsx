@@ -6,8 +6,9 @@ import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {UserAccessLevel} from '@/components/system_console/bot';
+import {DefaultMaxToolTurns} from '@/types/agents';
 
-import {AgentDraft, DefaultMaxToolTurns} from '../agent_config_view';
+import {AgentDraft} from '../agent_config_view';
 
 import AccessTab from './access_tab';
 
