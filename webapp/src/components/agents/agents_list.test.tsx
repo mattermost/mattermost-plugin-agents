@@ -133,8 +133,10 @@ describe('AgentsList create-button gating', () => {
 
         renderList();
 
-        const button = await screen.findByRole('button', {name: 'Create agent'});
-        expect((button as HTMLButtonElement).disabled).toBe(false);
+        const button = await screen.findByRole('button', {name: 'Create agent'}) as HTMLButtonElement;
+
+        // The button renders disabled while agents load, so wait for the quota fetch to settle.
+        await waitFor(() => expect(button.disabled).toBe(false));
         await waitFor(() => expect(screen.queryByText(tooltipText)).toBeNull());
     });
 

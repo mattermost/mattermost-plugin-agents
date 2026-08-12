@@ -7,26 +7,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
-
-	"golang.org/x/oauth2"
 )
 
-// authenticationTransport handles 401 responses for MCP
-type authenticationTransport struct {
-	userID       string
-	serverName   string
-	serverURL    string
-	serverOrigin *url.URL // parsed serverURL origin; nil disables token injection
-	manager      *OAuthManager
-	staticCreds  *StaticOAuthCredentials
-	base         http.RoundTripper
-}
-
+// mcpUnauthorized is the internal error produced when an MCP server rejects a
+// request with 401 (or a token refresh fails permanently). Client code
+// converts it into the public *OAuthNeededError via errors.As.
 type mcpUnauthorized struct {
 	metadataURL string
-	err         error
+	// scope is the authoritative scope from the WWW-Authenticate challenge,
+	// if any (space-separated, RFC 6750 §3).
+	scope string
+	err   error
 }
 
 func drainAndCloseResponseBody(resp *http.Response) {
@@ -44,6 +35,13 @@ func (e *mcpUnauthorized) Error() string {
 	}
 	return fmt.Sprintf("OAuth authentication needed for resource at %s", e.metadataURL)
 }
+
+// Scope returns the authoritative scope from the WWW-Authenticate challenge,
+// if any.
+func (e *mcpUnauthorized) Scope() string {
+	return e.scope
+}
+
 func (e *mcpUnauthorized) MetadataURL() string {
 	return e.metadataURL
 }
@@ -51,8 +49,25 @@ func (e *mcpUnauthorized) Unwrap() error {
 	return e.err
 }
 
-// RoundTrip implements http.RoundTripper interface with 401 handling for OAuth
-func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+// oauthRoundTripper adapts a userOAuthHandler for the legacy HTTP+SSE
+// transport, which (unlike mcp.StreamableClientTransport) has no OAuthHandler
+// field. It contains no OAuth logic of its own: it asks the handler for a
+// token source before the request and delegates 401 responses to
+// handler.Authorize, returning its error.
+type oauthRoundTripper struct {
+	handler *userOAuthHandler
+	base    http.RoundTripper
+	// expectedOrigin pins the origin the bearer token may be sent to. Go
+	// strips Authorization on cross-host redirects only for headers set on the
+	// original request; because we (re)attach the token inside RoundTrip, it
+	// would otherwise be re-added on every redirect hop and leak to a
+	// third-party host. Attaching only for the pinned origin closes that gap
+	// (defense in depth alongside the client's CheckRedirect).
+	expectedOrigin string
+}
+
+// RoundTrip implements http.RoundTripper.
+func (t *oauthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	reqBodyClosed := false
 	if req.Body != nil {
 		defer func() {
@@ -62,71 +77,40 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		}()
 	}
 
-	token, err := t.manager.loadToken(t.userID, t.serverName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load token: %w", err)
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
 	}
 
-	transport := t.base
+	// Only attach the bearer token when the request is still bound for the
+	// pinned server origin; never on a redirect to another host.
+	sameOrigin := t.expectedOrigin == "" || canonicalOrigin(req.URL) == t.expectedOrigin
 
-	// Include the token only for the configured server origin (skip on cross-origin redirects).
-	if token != nil && sameOrigin(t.serverOrigin, req.URL) {
-		oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "", t.staticCreds)
-		if configErr != nil {
-			return nil, fmt.Errorf("failed to create OAuth config: %w", configErr)
+	tokenSource, err := t.handler.TokenSource(req.Context())
+	if err != nil {
+		return nil, err
+	}
+	if tokenSource != nil && sameOrigin {
+		token, tokenErr := tokenSource.Token()
+		if tokenErr != nil {
+			return nil, tokenErr
 		}
-
-		transport = &oauth2.Transport{
-			Source: oauthConfig.TokenSource(req.Context(), token),
-			Base:   transport,
-		}
+		req = req.Clone(req.Context())
+		token.SetAuthHeader(req)
 	}
 
 	reqBodyClosed = true
-	resp, err := transport.RoundTrip(req)
+	resp, err := base.RoundTrip(req)
 	if err != nil {
-		// Check if this is an OAuth token refresh failure (invalid_grant)
-		// This happens when client credentials changed (e.g., v1 -> v2 migration)
-		// and the old token was issued for different credentials
-		if strings.Contains(err.Error(), "invalid_grant") {
-			// Clear the stale token - it's no longer valid with current credentials
-			if delErr := t.manager.deleteToken(t.userID, t.serverName); delErr != nil {
-				t.manager.pluginAPI.LogWarn("Failed to delete stale token", "error", delErr)
-			}
-			// Return error that will trigger re-authentication
-			return nil, &mcpUnauthorized{
-				metadataURL: "",
-				err:         fmt.Errorf("token refresh failed (credentials may have changed), re-authentication required: %w", err),
-			}
-		}
-		return nil, fmt.Errorf("authenticationTransport round trip failed: %w", err)
+		return nil, fmt.Errorf("oauthRoundTripper round trip failed: %w", err)
 	}
 
-	// If we get a 401, force an actual error so we can handle it. Include the header info in the error
-	if resp.StatusCode == http.StatusUnauthorized {
-		// Parse WWW-Authenticate header for resource metadata URL
-		wwwAuthHeader := resp.Header.Get("WWW-Authenticate")
-		if wwwAuthHeader != "" {
-			metadataURL, parseErr := parseWWWAuthenticateHeader(wwwAuthHeader)
-			if parseErr != nil {
-				drainAndCloseResponseBody(resp)
-				return nil, &mcpUnauthorized{
-					metadataURL: "",
-					err:         fmt.Errorf("failed to parse WWW-Authenticate header: %w", parseErr),
-				}
-			}
-
-			drainAndCloseResponseBody(resp)
-			return nil, &mcpUnauthorized{
-				metadataURL: metadataURL,
-			}
-		}
-		drainAndCloseResponseBody(resp)
-		return nil, &mcpUnauthorized{
-			metadataURL: "",
-			err:         fmt.Errorf("received 401 response without WWW-Authenticate header"),
-		}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		// Match the auth.OAuthHandler contract (and the streamable transport):
+		// both 401 and 403 are delegated to Authorize, which drains and closes
+		// the response body and always returns a non-nil *mcpUnauthorized.
+		return nil, t.handler.Authorize(req.Context(), req, resp)
 	}
 
-	return resp, err
+	return resp, nil
 }

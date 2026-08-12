@@ -6,9 +6,8 @@ import {act, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 import {useSelector} from 'react-redux';
 
-import {WebSocketMessage} from '@mattermost/client';
-
 import {useConversation} from '@/hooks/use_conversation';
+import {PluginWebSocketMessage} from '@/types';
 
 import {MAX_SEARCH_SOURCES} from '../search_sources';
 
@@ -69,7 +68,7 @@ jest.mock('../post_preview', () => ({
 const mockUseSelector = useSelector as unknown as jest.Mock;
 const mockUseConversation = useConversation as jest.Mock;
 
-type PostUpdateHandler = (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => void;
+type PostUpdateHandler = (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => void;
 
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
@@ -113,8 +112,8 @@ function renderPost(
     );
 }
 
-function postUpdateMessage(data: PostUpdateWebsocketMessage): WebSocketMessage<PostUpdateWebsocketMessage> {
-    return {data} as WebSocketMessage<PostUpdateWebsocketMessage>;
+function postUpdateMessage(data: PostUpdateWebsocketMessage): PluginWebSocketMessage<PostUpdateWebsocketMessage> {
+    return {data} as PluginWebSocketMessage<PostUpdateWebsocketMessage>;
 }
 
 beforeEach(() => {

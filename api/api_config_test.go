@@ -20,14 +20,22 @@ import (
 
 // testConfigStore is a simple in-memory implementation of ConfigStore for testing.
 type testConfigStore struct {
-	cfg *config.Config
+	cfg     *config.Config
+	getErr  error
+	saveErr error
 }
 
 func (s *testConfigStore) GetConfig() (*config.Config, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	return s.cfg, nil
 }
 
 func (s *testConfigStore) SaveConfig(cfg config.Config) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	clone := cfg
 	s.cfg = &clone
 	return nil

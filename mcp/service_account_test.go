@@ -163,7 +163,7 @@ func TestServiceAccountUsesSharedCacheDespiteStaticOAuthCreds(t *testing.T) {
 	server := newStaticToolListMCPServer(0, "sa_tool")
 	server.AddReceivingMiddleware(func(next gomcp.MethodHandler) gomcp.MethodHandler {
 		return func(ctx context.Context, method string, req gomcp.Request) (gomcp.Result, error) {
-			if method == testListToolsMethod {
+			if method == listToolsMethod {
 				listCalls.Add(1)
 			}
 			return next(ctx, method, req)
@@ -265,7 +265,7 @@ func TestClientManagerServiceAccountPluginServerGetsBotUserIDHeader(t *testing.T
 	}
 
 	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
+	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)

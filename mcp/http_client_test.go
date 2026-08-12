@@ -4,107 +4,169 @@
 package mcp
 
 import (
-	"bytes"
-	"errors"
-	"io"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
 
-// captureRoundTripper records client-side requests leaving a transport chain.
-// Each test owns its instance and sends requests sequentially, so no locking.
-type captureRoundTripper struct {
-	requests []*http.Request
-}
-
-func (c *captureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	c.requests = append(c.requests, req.Clone(req.Context()))
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(bytes.NewReader(nil)),
-		Header:     make(http.Header),
-		Request:    req,
-	}, nil
-}
-
-func (c *captureRoundTripper) last() *http.Request {
-	if len(c.requests) == 0 {
-		return nil
-	}
-	return c.requests[len(c.requests)-1]
-}
-
-func TestHeaderTransportOriginGating(t *testing.T) {
-	t.Parallel()
-
-	origin, err := url.Parse("https://mcp.example.com/v1")
-	require.NoError(t, err)
-	originKey := originComparableKey(origin)
-
+func TestCanonicalOrigin(t *testing.T) {
 	tests := []struct {
-		name         string
-		originKey    string
-		requestURL   string
-		wantInjected bool
+		name string
+		in   string
+		want string
 	}{
-		{
-			name:         "same origin injects when origin set",
-			originKey:    originKey,
-			requestURL:   "https://mcp.example.com/tools",
-			wantInjected: true,
-		},
-		{
-			name:         "cross origin skips injection when origin set",
-			originKey:    originKey,
-			requestURL:   "https://evil.example.com/tools",
-			wantInjected: false,
-		},
-		{
-			name:         "empty origin key always injects (plugin transports)",
-			originKey:    "",
-			requestURL:   "https://evil.example.com/tools",
-			wantInjected: true,
-		},
+		{name: "https default port", in: "https://example.com/mcp", want: "https://example.com:443"},
+		{name: "https explicit 443", in: "https://example.com:443/mcp", want: "https://example.com:443"},
+		{name: "https custom port", in: "https://example.com:8443/mcp", want: "https://example.com:8443"},
+		{name: "http default port", in: "http://localhost/mcp", want: "http://localhost:80"},
+		{name: "http explicit port", in: "http://127.0.0.1:8065/x", want: "http://127.0.0.1:8065"},
+		{name: "different host differs", in: "https://evil.com/mcp", want: "https://evil.com:443"},
+		{name: "no scheme", in: "example.com/mcp", want: ""},
+		{name: "unknown scheme", in: "ftp://example.com", want: ""},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			base := &captureRoundTripper{}
-			transport := &headerTransport{
-				base:      base,
-				headers:   map[string]string{"X-Secret": "cred"},
-				originKey: tt.originKey,
-			}
-
-			req, err := http.NewRequest(http.MethodGet, tt.requestURL, nil)
-			require.NoError(t, err)
-
-			resp, err := transport.RoundTrip(req)
-			require.NoError(t, err)
-			require.NotNil(t, resp)
-			_ = resp.Body.Close()
-
-			captured := base.last()
-			require.NotNil(t, captured)
-			if tt.wantInjected {
-				require.Equal(t, "cred", captured.Header.Get("X-Secret"))
-			} else {
-				require.Empty(t, captured.Header.Get("X-Secret"))
-			}
+			require.Equal(t, tt.want, canonicalOriginFromString(tt.in))
 		})
 	}
 }
 
-func TestHTTPClientForMCPRedirectPolicy(t *testing.T) {
+func TestBlockCrossOriginRedirect(t *testing.T) {
+	pinned := "https://server.example.com:443"
+	check := blockCrossOriginRedirect(pinned)
+
+	sameOrigin, err := url.Parse("https://server.example.com/other")
+	require.NoError(t, err)
+	require.NoError(t, check(&http.Request{URL: sameOrigin}, nil), "same-origin redirect must be allowed")
+
+	crossOrigin, err := url.Parse("https://evil.example.com/steal")
+	require.NoError(t, err)
+	require.Error(t, check(&http.Request{URL: crossOrigin}, nil), "cross-origin redirect must be refused")
+
+	schemeDowngrade, err := url.Parse("http://server.example.com/other")
+	require.NoError(t, err)
+	require.Error(t, check(&http.Request{URL: schemeDowngrade}, nil), "scheme downgrade is a different origin and must be refused")
+}
+
+// TestHeaderTransportOriginPinning verifies custom headers are attached only
+// for the pinned origin and never replayed to a different host.
+func TestHeaderTransportOriginPinning(t *testing.T) {
+	var gotOnPinned, gotOnOther atomic.Value
+	gotOnPinned.Store("")
+	gotOnOther.Store("")
+
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotOnOther.Store(r.Header.Get("X-Api-Key"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer other.Close()
+
+	pinned := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotOnPinned.Store(r.Header.Get("X-Api-Key"))
+		http.Redirect(w, r, other.URL, http.StatusFound)
+	}))
+	defer pinned.Close()
+
+	c := &Client{httpClient: pinned.Client()}
+	client := c.httpClientForMCP(pinned.URL, map[string]string{"X-Api-Key": "secret-key"})
+
+	_, err := client.Get(pinned.URL)
+	// The cross-origin redirect is refused, surfacing as an error.
+	require.Error(t, err)
+	require.Equal(t, "secret-key", gotOnPinned.Load(), "header must be sent to the pinned origin")
+	require.Equal(t, "", gotOnOther.Load(), "custom header must not be replayed to another host")
+}
+
+// TestOAuthRoundTripperDoesNotLeakTokenOnCrossHostRedirect is the regression
+// test for the reviewer's finding: the legacy SSE OAuth adapter must not send
+// the user's bearer token to a host the MCP server redirects to.
+func TestOAuthRoundTripperDoesNotLeakTokenOnCrossHostRedirect(t *testing.T) {
+	const (
+		userID   = "user-1"
+		serverID = "redirector"
+	)
+
+	var gotOnOther atomic.Value
+	gotOnOther.Store("")
+
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotOnOther.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer other.Close()
+
+	var gotOnPinned atomic.Value
+	gotOnPinned.Store("")
+	pinned := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotOnPinned.Store(r.Header.Get("Authorization"))
+		http.Redirect(w, r, other.URL, http.StatusFound)
+	}))
+	defer pinned.Close()
+
+	manager, kv := newStatefulKVManager(t, nil, pinned.Client())
+	kv.putEnvelope(t, userID, serverID, boundTestEnvelope(pinned.URL, &oauth2.Token{
+		AccessToken:  "super-secret-access",
+		RefreshToken: "refresh",
+	}))
+	handler := newUserOAuthHandler(userID, ServerConfig{Name: serverID, BaseURL: pinned.URL}, manager)
+
+	c := &Client{httpClient: pinned.Client()}
+	client := c.httpClientForLegacySSE(pinned.URL, handler, nil)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, pinned.URL, nil)
+	require.NoError(t, err)
+
+	_, err = client.Do(req)
+	require.Error(t, err, "cross-origin redirect must be refused")
+	require.Equal(t, "Bearer super-secret-access", gotOnPinned.Load(), "token must be sent to the pinned server")
+	require.Equal(t, "", gotOnOther.Load(), "bearer token must never reach the redirect target host")
+}
+
+// TestOAuthRoundTripperOriginPinSkipsTokenForOtherHost is a direct unit check
+// that the adapter does not attach the token when the request URL is not the
+// pinned origin (defense in depth behind CheckRedirect).
+func TestOAuthRoundTripperOriginPinSkipsTokenForOtherHost(t *testing.T) {
+	const (
+		userID   = "user-1"
+		serverID = "srv"
+	)
+
+	var gotAuth atomic.Value
+	gotAuth.Store("")
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer other.Close()
+
+	manager, kv := newStatefulKVManager(t, nil, other.Client())
+	kv.putEnvelope(t, userID, serverID, boundTestEnvelope("https://pinned.example.com", &oauth2.Token{AccessToken: "secret"}))
+	handler := newUserOAuthHandler(userID, ServerConfig{Name: serverID, BaseURL: "https://pinned.example.com"}, manager)
+
+	rt := &oauthRoundTripper{
+		handler:        handler,
+		base:           other.Client().Transport,
+		expectedOrigin: canonicalOriginFromString("https://pinned.example.com"),
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, other.URL, nil)
+	require.NoError(t, err)
+
+	resp, err := rt.RoundTrip(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, "", gotAuth.Load(), "token must not be attached for a non-pinned origin")
+}
+
+// TestHTTPClientForMCPServiceAccountRedirectPolicy ensures service-account
+// credential headers survive same-origin redirects and never reach a
+// cross-origin redirect target (CheckRedirect fails closed first).
+func TestHTTPClientForMCPServiceAccountRedirectPolicy(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -113,13 +175,12 @@ func TestHTTPClientForMCPRedirectPolicy(t *testing.T) {
 		wantErrContains string
 	}{
 		{
-			name:        "same-origin redirect is followed and keeps credential headers",
-			crossOrigin: false,
+			name: "same-origin redirect is followed and keeps credential headers",
 		},
 		{
 			name:            "cross-origin redirect is rejected before any request reaches the target",
 			crossOrigin:     true,
-			wantErrContains: "different origin",
+			wantErrContains: "refusing cross-origin redirect",
 		},
 	}
 
@@ -150,18 +211,14 @@ func TestHTTPClientForMCPRedirectPolicy(t *testing.T) {
 			server := httptest.NewServer(mux)
 			t.Cleanup(server.Close)
 
-			client := &Client{
-				config:     ServerConfig{Name: "redirect-server", BaseURL: server.URL},
-				httpClient: &http.Client{},
-			}
-			httpClient := client.httpClientForMCP(testServiceAccountHeaders())
+			client := &Client{httpClient: &http.Client{}}
+			httpClient := client.httpClientForMCP(server.URL, testServiceAccountHeaders())
 
 			req, err := http.NewRequest(http.MethodGet, server.URL+"/start", nil)
 			require.NoError(t, err)
 
 			resp, err := httpClient.Do(req)
 			if tt.wantErrContains != "" {
-				// On a CheckRedirect error, Do returns the prior response with its body already closed.
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.wantErrContains)
 				require.Empty(t, otherRecorder.snapshot(), "cross-origin redirect target must not receive the follow-up request")
@@ -177,99 +234,4 @@ func TestHTTPClientForMCPRedirectPolicy(t *testing.T) {
 			require.Equal(t, testSAHeaderValue, finals[0].Get(testSAHeaderName))
 		})
 	}
-}
-
-func TestAuthenticationTransportOriginGating(t *testing.T) {
-	t.Parallel()
-
-	serverOrigin, err := url.Parse("https://mcp.example.com/mcp")
-	require.NoError(t, err)
-
-	failDiscovery := &http.Client{
-		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-			return nil, errors.New("discovery disabled in test")
-		}),
-	}
-
-	tests := []struct {
-		name         string
-		serverOrigin *url.URL
-		requestURL   string
-		wantAuthHdr  bool
-	}{
-		{
-			name:         "same origin injects bearer token",
-			serverOrigin: serverOrigin,
-			requestURL:   "https://mcp.example.com/tools/list",
-			wantAuthHdr:  true,
-		},
-		{
-			name:         "cross origin skips bearer token",
-			serverOrigin: serverOrigin,
-			requestURL:   "https://evil.example.com/tools/list",
-			wantAuthHdr:  false,
-		},
-		{
-			name:         "nil server origin never injects (fail closed)",
-			serverOrigin: nil,
-			requestURL:   "https://mcp.example.com/tools/list",
-			wantAuthHdr:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			manager, mockClient := setupTestOAuthManagerFull(t, nil, failDiscovery)
-			mockClient.On("KVGet", buildTokenKey("user-1", "oauth-server"), mock.AnythingOfType("*oauth2.Token")).
-				Run(func(args mock.Arguments) {
-					tok := args.Get(1).(*oauth2.Token)
-					*tok = oauth2.Token{
-						AccessToken: "leak-me-token",
-						TokenType:   "Bearer",
-						Expiry:      time.Now().Add(time.Hour),
-					}
-				}).
-				Return(nil).
-				Once()
-
-			base := &captureRoundTripper{}
-			transport := &authenticationTransport{
-				userID:       "user-1",
-				serverName:   "oauth-server",
-				serverURL:    "https://mcp.example.com/mcp",
-				serverOrigin: tt.serverOrigin,
-				manager:      manager,
-				staticCreds: &StaticOAuthCredentials{
-					ClientID:     "test-client",
-					ClientSecret: "test-secret",
-				},
-				base: base,
-			}
-
-			req, err := http.NewRequest(http.MethodGet, tt.requestURL, nil)
-			require.NoError(t, err)
-
-			resp, err := transport.RoundTrip(req)
-			require.NoError(t, err)
-			require.NotNil(t, resp)
-			_ = resp.Body.Close()
-
-			captured := base.last()
-			require.NotNil(t, captured)
-			auth := captured.Header.Get("Authorization")
-			if tt.wantAuthHdr {
-				require.Equal(t, "Bearer leak-me-token", auth)
-			} else {
-				require.Empty(t, auth)
-			}
-		})
-	}
-}
-
-type roundTripperFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
 }
