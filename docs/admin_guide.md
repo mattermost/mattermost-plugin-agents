@@ -326,7 +326,48 @@ Notes on deferred reindex:
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
 
+Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
+
 Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current setting. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Turning auto-reply off never requires a license, so an existing setting stays clearable after a license downgrade. The channel settings tab UI requires Mattermost v11.10 or later, while the plugin's minimum server version remains 11.9.0 — on v11.9 the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
+
+### Attribute-based access control (ABAC)
+
+Attribute-based access control lets you restrict who can use agents, LLM services, and MCP servers with policies written against user attributes (for example `user.attributes.department == "engineering"`), instead of maintaining explicit user or team lists.
+
+**Prerequisites:**
+
+- A Mattermost server (v11.10.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On older servers the plugin still runs without ABAC: legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted — but **agents in attribute-based mode are unusable** (every user is denied, since the plugin cannot check whether a policy restricts them) until the server is upgraded or the agent is switched to a legacy access mode.
+- User attributes (custom profile attributes) configured on the server, since policies are written against them.
+
+**Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
+
+- **Agents** — set the agent's user access to **Attribute-based (access policy)** in the agent's Access tab, then author the policy there. In this mode the agent's allow/block user and team lists are ignored; the policy is the only user-access gate. Anyone who can manage the agent — its creator, its agent admins, and users with the manage-others'-agents permission — can author with the simplified (table) editor; system admins additionally get the advanced (CEL) editor.
+- **LLM services** — authored by system admins in **System Console > Plugins > Agents** on the service panel (advanced editor). A service policy restricts every agent backed by that service, on top of any per-agent restrictions. It also drives list/picker visibility for non–system-admins (see [Visibility (services and agents)](#visibility-services-and-agents)).
+- **MCP servers** — authored by system admins on the MCP **Configuration** tab (advanced editor). Policies apply to remote servers, the built-in (embedded) Mattermost MCP server, and plugin-registered MCP servers. Users denied by an MCP server policy silently lose that server's tools; there is no notification in chat, the tools simply don't appear. Denying the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users.
+
+**Allow and deny semantics.** For each request the plugin evaluates the applicable policies and applies these rules:
+
+- No policy exists for a resource → the legacy checks apply unchanged (user/team lists for agents in the legacy access modes; nothing for services/MCP servers), while agents in attribute-based mode allow every user. Installing or upgrading the plugin changes nothing until you author a policy.
+- A policy exists → the policy decides: matching users are allowed, non-matching users are denied.
+- The ABAC engine is unavailable (for example, the license lapsed) → the server still resolves whether a policy exists per resource. Resources **with** a policy **fail closed**: users are denied rather than falling back to unrestricted access. Resources with **no** policy behave as if ABAC were never involved — including attribute-based agents, which **fail open** by design (they ignore user/team lists and have no other gate without a policy).
+
+**Visibility (services and agents).** List and picker visibility follows who can *use* the resource, with one exception for system admins:
+
+- **System admins** may see AI services — and agents backed by those services — even when a service ABAC policy would deny them personally. That lets them audit bindings and repair access.
+- **Everyone else** (including the agent creator and delegated agent admins) only sees services and agents they can actually use. For an agent, that means both agent access and the agent's AI service access. Denied services and agents are omitted from lists and pickers — there are no ghost agents, and ABAC deny is not surfaced as a "Service unavailable" state for non–system-admins.
+
+Tradeoff: if a non–system-admin agent admin loses access to the agent's service under ABAC, they stop seeing that agent and cannot rebind or fix it themselves. A system admin must restore their service access or change the agent's service binding.
+
+**Resource lifecycle note.** Deleting an agent removes its policy best-effort; deleting a service or MCP server from the configuration does not delete its policy. The same applies when a plugin unregisters its MCP server: the policy is left in place and re-attaches if that plugin registers again under the same identity. If you recreate a resource with the same ID, the old policy applies again. Remove the policy first (via the resource's policy editor) if that is not what you want.
+
+**Authoring permissions:**
+
+| Route | Who |
+|-------|-----|
+| Agent policy (read/write/delete) | Agent creator, agent admins, and users with the manage-others'-agents permission |
+| Service policy (read/write/delete) | System admins only |
+| MCP server policy (read/write/delete) | System admins only |
+| CEL helper endpoints (validation, autocomplete, test) | Anyone who can manage some agent (their own or as agent admin); system admins |
 
 ## Management tasks
 
@@ -534,12 +575,12 @@ This separation allows multiple agents to share the same LLM service configurati
   "config": {
     "services": [
       {
-        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "id": "k3g8sdb1ntbibnyt8u5jmqhc7w",
         "name": "OpenAI Service",
         "type": "openai",
         "apiKey": "sk-...",
         "defaultModel": "gpt-4o",
-        "fallbackServiceID": "550e8400-e29b-41d4-a716-446655440001"
+        "fallbackServiceID": "z9d4meq7jtrx5nch1u8kwsoa3e"
       }
     ],
     "defaultBotName": "ai"
@@ -596,11 +637,12 @@ Remote and external MCP servers require a license (see [license requirements](#l
    - **Enable Mattermost MCP Server (HTTP)**: Optional HTTP endpoint for external MCP clients. See [Mattermost MCP Server](#mattermost-mcp-server).
    - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
    - Remote MCP servers, including URL, custom headers, OAuth client settings, service account headers, and per-server enablement.
+   - **Built-in & plugin servers**: Read-only cards for the embedded Mattermost MCP server and any currently registered plugin MCP servers. Use each card's **Access policy** section to restrict which users can use that server's tools (see [Attribute-based access control (ABAC)](#attribute-based-access-control-abac)). Denying the built-in server removes nearly all in-product Mattermost tools for matching users. Plugin enablement and per-tool approval remain on the **Tools** tab.
 
 3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy. Expand a tool row to add an optional **Retrieval description override** for dynamic tool loading search; this helps the agent find the tool but does not change the tool schema sent after loading. Plugin-registered MCP servers appear as separate plugin rows in this tab.
 4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools, and whether MCP tool schemas are loaded dynamically or exposed up front.
 
-Agent MCP access is filtered by admin tool policy, the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request. For agents using [service account authentication](#service-account-authentication), user-disabled provider preferences don't apply.
+Agent MCP access is filtered by admin tool policy, MCP server access policies (when configured), the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request. For agents using [service account authentication](#service-account-authentication), user-disabled provider preferences don't apply.
 
 The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
 
@@ -623,7 +665,9 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 
 Compatible Mattermost plugins can register MCP servers with Agents. In the **Tools** tab, each registered plugin server appears as its own plugin row, where admins can enable or disable the entire plugin server and configure per-tool approval policies. Plugin tool names are shown in a friendlier form instead of the raw wire-format names.
 
-These admin-owned settings persist across plugin re-registration and restart.
+Access policies for plugin servers are authored on the **Configuration** tab under **Built-in & plugin servers**. Policy identity is keyed by the source plugin ID, so a policy survives unregister/re-register and path changes. Policies are not deleted automatically when a plugin unregisters; the dormant policy re-attaches if the same plugin registers again.
+
+These admin-owned settings (enablement, per-tool approval, and access policy) persist across plugin re-registration and restart.
 
 The source plugin controls the plugin server's name, path, and whether it is eligible for external exposure. Admins do not configure the external exposure flag in the Agents UI.
 
