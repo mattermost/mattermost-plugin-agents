@@ -33,6 +33,13 @@ func (a *API) handleRunSearch(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
+	// Search triggers a full LLM completion, so the agent+service usage gate
+	// applies (user-level only: search requests are not channel-scoped here).
+	if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {
+		c.AbortWithError(http.StatusForbidden, err)
+		return
+	}
+
 	if !a.searchService.Enabled() {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
 		return
@@ -77,6 +84,12 @@ func (a *API) handleRunSearch(c *gin.Context) {
 func (a *API) handleSearchQuery(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
+
+	// Same completion gate as handleRunSearch.
+	if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {
+		c.AbortWithError(http.StatusForbidden, err)
+		return
+	}
 
 	if !a.searchService.Enabled() {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))

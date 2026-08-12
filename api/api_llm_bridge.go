@@ -310,7 +310,7 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusNotFound, err
 	}
 
-	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
+	err = a.checkBridgePermissions(ctx, req.UserID, req.ChannelID, bot)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
 	}
@@ -505,7 +505,7 @@ func (a *API) getBotByService(service string) (*bots.Bot, error) {
 //   - Both UserID and ChannelID empty: no checks performed (backward compatibility)
 //   - UserID only: checks user-level permissions
 //   - Both provided: checks both user and channel-level permissions
-func (a *API) checkBridgePermissions(userID, channelID string, bot *bots.Bot) error {
+func (a *API) checkBridgePermissions(ctx stdcontext.Context, userID, channelID string, bot *bots.Bot) error {
 	// If no user ID provided, skip permission checks
 	if userID == "" {
 		return nil
@@ -513,7 +513,7 @@ func (a *API) checkBridgePermissions(userID, channelID string, bot *bots.Bot) er
 
 	// If only user ID provided, check user permissions
 	if channelID == "" {
-		return a.bots.CheckUsageRestrictionsForUser(bot, userID)
+		return a.bots.CheckUsageRestrictionsForUser(ctx, bot, userID)
 	}
 
 	// Both user ID and channel ID provided, check full permissions
@@ -522,7 +522,7 @@ func (a *API) checkBridgePermissions(userID, channelID string, bot *bots.Bot) er
 		return fmt.Errorf("failed to get channel: %w", err)
 	}
 
-	return a.bots.CheckUsageRestrictions(userID, bot, channel)
+	return a.bots.CheckUsageRestrictions(ctx, userID, bot, channel)
 }
 
 func drainToolRunnerStream(stream *llm.TextStreamResult) error {
@@ -651,7 +651,7 @@ func (a *API) handleGetAgents(c *gin.Context) {
 	for _, bot := range allBots {
 		// If user_id is provided, filter by permissions
 		if userID != "" {
-			if err := a.bots.CheckUsageRestrictionsForUser(bot, userID); err != nil {
+			if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {
 				continue
 			}
 		}
@@ -695,7 +695,7 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 	}
 
 	if userID != "" {
-		err = a.bots.CheckUsageRestrictionsForUser(bot, userID)
+		err = a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID)
 		if err != nil {
 			c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
 				Error: fmt.Sprintf("permission denied: %v", err),
@@ -755,7 +755,7 @@ func (a *API) handleGetServices(c *gin.Context) {
 	for _, bot := range allBots {
 		// If user_id is provided, filter by permissions
 		if userID != "" {
-			if err := a.bots.CheckUsageRestrictionsForUser(bot, userID); err != nil {
+			if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {
 				continue
 			}
 		}
@@ -899,7 +899,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	// Check permissions if UserID/ChannelID provided
-	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
+	err = a.checkBridgePermissions(c.Request.Context(), req.UserID, req.ChannelID, bot)
 	if err != nil {
 		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("permission denied: %v", err),
@@ -978,7 +978,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	// Check permissions if UserID/ChannelID provided
-	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
+	err = a.checkBridgePermissions(c.Request.Context(), req.UserID, req.ChannelID, bot)
 	if err != nil {
 		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("permission denied: %v", err),

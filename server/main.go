@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -68,6 +69,8 @@ type Plugin struct {
 	store                *store.Store
 	autoreplyService     channelAutoReplyRefresher
 	configMigrated       bool
+
+	accessChecker *accesscontrol.Checker
 }
 
 type pluginLogger struct {
@@ -203,7 +206,7 @@ func (p *Plugin) OnActivate() error {
 	p.configMigrated = true
 
 	// ABAC ID migrations must run after the config.json->DB migration and
-	// before bots are ensured, so EnsureBots persists agents that already use
+	// before the legacy config bot migration, so migrated bots copy
 	// already-remapped service IDs into Agents_UserAgents.
 	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store, &p.configuration)
 	if err != nil {
@@ -218,7 +221,27 @@ func (p *Plugin) OnActivate() error {
 		}
 	}
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
+	// ABAC checker, built before bots.New so the composite usage gate always
+	// has one. Capability selection is version-based, never probe-based:
+	// pre-11.10 servers lack the ABAC plugin APIs and get legacy-only mode
+	// (attribute-based agents deny, ABAC UI hides), while a transient probe
+	// failure on a new server must never fail open into legacy-only.
+	mcpServerIDsByOrigin := func() map[string]string {
+		mcpConfig := p.configuration.MCP()
+		return mcpConfig.ServerIDByOrigin()
+	}
+	serverVersion := p.API.GetServerVersion()
+	var accessChecker *accesscontrol.Checker
+	if accesscontrol.ServerSupportsABAC(serverVersion) {
+		accessChecker = accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, mcpServerIDsByOrigin, &pluginAPI.Log)
+	} else {
+		pluginAPI.Log.Warn("Attribute-based access control requires Mattermost server "+accesscontrol.MinServerVersionForABAC+" or later; running with legacy access checks only, and denying agents saved in attribute-based mode",
+			"server_version", serverVersion)
+		accessChecker = accesscontrol.NewLegacyOnly(mcpServerIDsByOrigin, &pluginAPI.Log)
+	}
+	p.accessChecker = accessChecker
+
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, accessChecker, llmUpstreamHTTPClient, metricsService)
 
 	// migrateAndRefresh runs the one-time legacy bot migration, then forces
 	// a bot refresh only if the migration actually created new agents.
@@ -410,7 +433,7 @@ func (p *Plugin) OnActivate() error {
 		}
 		return mcp.ServerConfig{}, false
 	}
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient, nil)
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient, accessChecker)
 	p.configuration.RegisterUpdateListener(func() {
 		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
 		if embeddedErr != nil {
@@ -513,6 +536,7 @@ func (p *Plugin) OnActivate() error {
 		getSearchInitError,
 		customPromptsStore,
 		autoreplyService,
+		accessChecker,
 	)
 
 	apiService.SetConversationService(convService)

@@ -3,6 +3,7 @@ module github.com/mattermost/mattermost-plugin-agents/v2
 go 1.26.5
 
 require (
+	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/asticode/go-astisub v0.42.0
 	github.com/gin-gonic/gin v1.12.0
@@ -48,7 +49,6 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 // indirect
-	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
@@ -235,5 +235,15 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.44.0 // indirect
 )
+
+// DEV-ONLY: branch pin for the in-flight ABAC plugin API (EvaluateAccessControl returning
+// model.AccessDecision + PAP/CEL methods + plugin-owned "<pluginID>:<resourceType>" policy
+// keying). Currently the pseudo-version of the mattermost branch
+// cursor/agents-abac-platform-229e head (180df00618). proxy.golang.org does not serve this
+// commit yet, so go.sum carries hashes resolved straight from the repository; builds work
+// because the go command trusts go.sum and only consults the checksum database for entries
+// missing from it. Before merge: repoint to a MASTER pseudo-version of server/public
+// containing the merged API — never merge a branch pin, and never merge a local-path replace.
+replace github.com/mattermost/mattermost/server/public => github.com/mattermost/mattermost/server/public v0.4.4-0.20260730201402-180df006186a
 
 replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.8

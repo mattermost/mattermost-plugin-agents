@@ -98,6 +98,9 @@ const (
 	UserAccessLevelAllow
 	UserAccessLevelBlock
 	UserAccessLevelNone
+	// UserAccessLevelAttributeBased makes the ABAC resource policy the sole
+	// user-access gate; UserIDs/TeamIDs are ignored in this mode.
+	UserAccessLevelAttributeBased
 )
 
 // EnabledMCPTool identifies a single MCP tool on a specific server (config bots and persisted agents).
@@ -217,7 +220,7 @@ func (c *BotConfig) Validate() error {
 	if c.ChannelAccessLevel < ChannelAccessLevelAll || c.ChannelAccessLevel > ChannelAccessLevelNone {
 		return errors.New("channelAccessLevel is out of range")
 	}
-	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelNone {
+	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelAttributeBased {
 		return errors.New("userAccessLevel is out of range")
 	}
 	if utf8.RuneCountInString(c.CustomInstructions) > MaxCustomInstructionsRunes {
