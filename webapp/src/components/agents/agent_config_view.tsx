@@ -206,7 +206,7 @@ const AgentConfigView = (props: Props) => {
     const {mode, agent, services, onBack, onSaved} = props;
     const intl = useIntl();
 
-    // Same manage_system gate as the MCPs tab / server canSaveServiceAccountAuth check.
+    // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
     const canEditServiceAccountAuth = useCurrentUserHasSystemPermission('manage_system');
 
     const [activeTab, setActiveTab] = useState<Tab>('config');

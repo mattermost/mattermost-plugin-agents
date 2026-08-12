@@ -85,6 +85,7 @@ function formRowForLabel(label: string): HTMLElement {
     if (!row) {
         throw new Error(`No form row for label: ${label}`);
     }
+
     // ItemLabel is a <label>; climb to the FormRow grid that also holds the control.
     if (labelEl.tagName === 'LABEL' && labelEl.parentElement) {
         return labelEl.parentElement;
