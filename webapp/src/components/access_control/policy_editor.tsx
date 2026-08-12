@@ -41,6 +41,10 @@ export type PolicyEditorProps = {
 
     // Forwarded as ?agent_id= on CEL calls (per-agent-admin authz lane).
     agentIdForAuthz?: string;
+
+    // When set, render nothing unless a policy already exists. Used so a
+    // retained policy stays visible after switching to a legacy access mode.
+    hideWhenEmpty?: boolean;
 };
 
 // EditorMode is the user-selectable editor; 'unsupported' is the read-only
@@ -99,7 +103,7 @@ function policyClientFor(resourceType: PolicyResourceType) {
 const DELETE_POLICY_TITLE_ID = 'delete-access-policy-title';
 
 const PolicyEditorContent = (props: PolicyEditorProps) => {
-    const {resourceType, resourceId, resourceDisplayName, allowSimplified, allowAdvanced, agentIdForAuthz} = props;
+    const {resourceType, resourceId, resourceDisplayName, allowSimplified, allowAdvanced, agentIdForAuthz, hideWhenEmpty} = props;
     const intl = useIntl();
     const editors = getAccessControlEditors();
     const client = useMemo(() => policyClientFor(resourceType), [resourceType]);
@@ -256,6 +260,9 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
     }
 
     if (loading) {
+        if (hideWhenEmpty) {
+            return null;
+        }
         return (
             <SpinnerContainer>
                 <LoadingSpinner/>
@@ -271,6 +278,10 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
         );
     }
 
+    if (hideWhenEmpty && !policy) {
+        return null;
+    }
+
     const view = deriveView(mode, advancedLocked, allowSimplified, allowAdvanced);
 
     const showToggle = allowSimplified && allowAdvanced && !advancedLocked;
@@ -282,6 +293,11 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
 
     return (
         <EditorContainer>
+            {hideWhenEmpty && (
+                <HelperText>
+                    <FormattedMessage defaultMessage='This access policy still restricts who can use this agent, in addition to the setting above. Remove it here if it is no longer needed.'/>
+                </HelperText>
+            )}
             {showToggle && (
                 <ModeToggleRow>
                     <ModeButton

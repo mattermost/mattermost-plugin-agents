@@ -49,12 +49,13 @@ jest.mock('@/components/select', () => ({
 
 jest.mock('@/components/access_control/policy_editor', () => ({
     __esModule: true,
-    default: (props: {resourceId: string; allowSimplified: boolean; allowAdvanced: boolean}) => (
+    default: (props: {resourceId: string; allowSimplified: boolean; allowAdvanced: boolean; hideWhenEmpty?: boolean}) => (
         <div
             data-testid='policy-editor'
             data-resource-id={props.resourceId}
             data-allow-simplified={String(props.allowSimplified)}
             data-allow-advanced={String(props.allowAdvanced)}
+            data-hide-when-empty={String(Boolean(props.hideWhenEmpty))}
         >
             <button type='button'>{'Edit policy'}</button>
         </div>
@@ -98,9 +99,8 @@ type RenderOptions = {
     isSystemAdmin?: boolean;
 };
 
-function renderTab(options: RenderOptions = {}) {
-    const onChange = jest.fn();
-    const result = render(
+function tabElement(options: RenderOptions, onChange: jest.Mock) {
+    return (
         <IntlProvider locale='en'>
             <AccessTab
                 draft={makeDraft(options.draft)}
@@ -110,8 +110,13 @@ function renderTab(options: RenderOptions = {}) {
                 abacSupported={options.abacSupported ?? true}
                 isSystemAdmin={options.isSystemAdmin ?? false}
             />
-        </IntlProvider>,
+        </IntlProvider>
     );
+}
+
+function renderTab(options: RenderOptions = {}) {
+    const onChange = jest.fn();
+    const result = render(tabElement(options, onChange));
     return {...result, onChange};
 }
 
@@ -233,6 +238,7 @@ describe('AccessTab', () => {
         expect(editor.getAttribute('data-resource-id')).toBe('agentid');
         expect(editor.getAttribute('data-allow-simplified')).toBe('true');
         expect(editor.getAttribute('data-allow-advanced')).toBe('false');
+        expect(editor.getAttribute('data-hide-when-empty')).toBe('false');
         expect((screen.getByRole('button', {name: 'Edit policy'}) as HTMLButtonElement).disabled).toBe(false);
     });
 
@@ -257,5 +263,47 @@ describe('AccessTab', () => {
         });
 
         expect(screen.getByTestId('policy-editor').getAttribute('data-allow-advanced')).toBe('true');
+    });
+
+    it('keeps a retained policy editor visible in legacy access modes', () => {
+        renderTab({
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.Allow},
+        });
+
+        const editor = screen.getByTestId('policy-editor');
+        expect(editor.getAttribute('data-hide-when-empty')).toBe('true');
+        expect(screen.getByText('Allow list')).toBeTruthy();
+    });
+
+    it('does not remount the policy editor when access mode or privileges change', () => {
+        const onChange = jest.fn();
+        const result = render(tabElement({
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        }, onChange));
+        const editor = screen.getByTestId('policy-editor');
+
+        result.rerender(tabElement({
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.Allow},
+        }, onChange));
+        expect(screen.getByTestId('policy-editor')).toBe(editor);
+        expect(editor.getAttribute('data-hide-when-empty')).toBe('true');
+
+        result.rerender(tabElement({
+            agentId: 'agentid',
+            isSystemAdmin: true,
+            draft: {userAccessLevel: UserAccessLevel.Allow},
+        }, onChange));
+        expect(screen.getByTestId('policy-editor')).toBe(editor);
+        expect(editor.getAttribute('data-allow-advanced')).toBe('true');
+    });
+
+    it('does not mount a retained-policy editor while creating', () => {
+        renderTab({
+            draft: {userAccessLevel: UserAccessLevel.All},
+        });
+        expect(screen.queryByTestId('policy-editor')).toBeNull();
     });
 });
