@@ -41,7 +41,6 @@ func setupAgentTestEnvironment(t *testing.T) *TestEnvironment {
 		cfg: &config.Config{
 			Services: []llm.ServiceConfig{
 				{ID: "svc-1", Name: "Test Service", Type: "openai"},
-				{ID: "svc-2", Name: "Other Service", Type: "openai"},
 			},
 		},
 	}
@@ -866,6 +865,23 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tc.systemAdmin).Maybe()
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			// Cases that retarget serviceID need that service present in config validation.
+			if sid, ok := tc.extraOverrides["serviceID"].(string); ok && sid != "" {
+				store := e.api.configStore.(*mockConfigStore)
+				found := false
+				for _, svc := range store.cfg.Services {
+					if svc.ID == sid {
+						found = true
+						break
+					}
+				}
+				if !found {
+					store.cfg.Services = append(store.cfg.Services, llm.ServiceConfig{
+						ID: sid, Name: "Other Service", Type: "openai",
+					})
+				}
+			}
 
 			if tc.create {
 				e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
