@@ -15,42 +15,14 @@ import manifest from '@/manifest';
 
 import {useIsBasicsLicensed} from '@/license';
 
+
 import {CopyableTextItem} from './copyable_text_item';
-import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
+import MCPToolsViewer from './mcp_tools_viewer';
+import {MCPConfig, MCPServerConfig, MCPToolsResponse} from './mcp_types';
 
 import EnterpriseChip from './enterprise_chip';
 
 import {BooleanItem, ItemList, TextItem} from './item';
-
-export type MCPToolConfig = {
-    name: string;
-    policy: 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
-    enabled: boolean;
-    retrieval_description_override?: string;
-};
-
-export type MCPServerConfig = {
-    name: string;
-    enabled: boolean;
-    baseURL: string;
-    headers: {[key: string]: string};
-    tool_configs?: MCPToolConfig[];
-    clientID?: string;
-    clientSecret?: string;
-};
-
-export type MCPEmbeddedServerConfig = {
-    enabled: boolean;
-    tool_configs?: MCPToolConfig[];
-};
-
-export type MCPConfig = {
-    enabled: boolean;
-    enablePluginServer: boolean;
-    servers: MCPServerConfig[] | null; // server sends nil Go slice as JSON null
-    embeddedServer: MCPEmbeddedServerConfig;
-    idleTimeoutMinutes?: number;
-};
 
 type Props = {
     mcpConfig: MCPConfig;
@@ -92,8 +64,11 @@ const MCPServer = ({
     const [serverName, setServerName] = useState(serverConfig.name);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
 
-    // Ensure server config has all required properties
+    // Ensure server config has all required properties.
+    // id must be carried through: dropping it here would rotate the server's
+    // stable ID on every edit (the server backstop mints a new one per save).
     const config = {
+        id: serverConfig.id,
         name: serverConfig.name || '',
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
@@ -424,7 +399,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // MCP client and embedded server are always enabled; users can still
     // disable individual tools but cannot turn off MCP entirely.
+    // Spread mcpConfig so fields like plugin_servers and embeddedServer.id
+    // survive rebuilds that only override a subset of keys.
     const config: MCPConfig = {
+        ...mcpConfig,
         enabled: true,
         enablePluginServer: mcpConfig?.enablePluginServer ?? false,
         servers: normalizedServers,
@@ -450,7 +428,9 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         return `${prefix}${counter}`;
     };
 
-    // Add a new server
+    // Add a new server. No id is assigned client-side: the server treats
+    // ID-less entries with no identity match as new and mints the stable ID
+    // on save (client-invented IDs are rejected as fabricated).
     const addServer = () => {
         // Use the auto-generated name
         const serverName = generateServerName();

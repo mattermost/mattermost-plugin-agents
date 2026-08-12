@@ -129,17 +129,22 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 			},
 		},
 		{
-			name:           "prior-config read failure still saves and audits, omitting changed_keys",
+			// Atomic UpdateConfig must read the prior config to reconcile
+			// stable service/MCP server IDs. A blind save would risk rotating
+			// identities and detaching ABAC policies, so fail closed.
+			name:           "prior-config read failure records a 500 fail, omitting changed_keys",
 			userID:         "userid",
 			isAdmin:        true,
 			body:           requestBody,
 			getErr:         errors.New("kv read exploded"),
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusInternalServerError,
 			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
-				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
 				assert.NotContains(t, rec.EventData.Parameters, "changed_keys",
-					"best-effort diff must be omitted, not fabricated, when the prior config is unreadable")
-				assert.Equal(t, true, rec.EventData.Parameters["persisted"])
+					"diff must be omitted when the prior config is unreadable")
+				assert.NotContains(t, rec.EventData.Parameters, "persisted",
+					"a save that never landed must not claim persistence")
 			},
 		},
 		{

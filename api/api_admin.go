@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -284,6 +285,8 @@ type MCPServerInfo struct {
 	Enabled    bool   `json:"enabled"`
 	// ToolConfigs is populated for plugin rows only.
 	ToolConfigs []mcp.ToolConfig `json:"toolConfigs,omitempty"`
+	// ID is the stable ABAC policy identity when present.
+	ID string `json:"id,omitempty"`
 }
 
 // MCPToolsResponse represents the response structure for MCP tools endpoint
@@ -315,6 +318,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			Error:      nil,
 			ServerType: "embedded",
 			Enabled:    true,
+			ID:         mcpConfig.EmbeddedServer.ID,
 		}
 
 		// Embedded MCP is always available after PR #617, even if older configs still
@@ -342,6 +346,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			Error:      nil,
 			ServerType: "remote",
 			Enabled:    serverConfig.Enabled,
+			ID:         serverConfig.ID,
 		}
 
 		// Try to connect to the server and discover tools
@@ -363,14 +368,9 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	}
 
 	// Render disabled plugin entries (with an empty tool list) so the admin UI
-	// can re-enable them. Skip orphans hydrated from persisted config without
-	// a live source-plugin registration; surfacing them as "session not found"
-	// rows is misleading, and their persisted policy is preserved on disk
-	// regardless of whether they appear here.
+	// can re-enable them. ListPluginServers already excludes config-only
+	// orphans (no live source-plugin registration).
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
-		if !a.mcpClientManager.IsPluginRegistered(cfg.PluginID) {
-			continue
-		}
 		serverInfo := MCPServerInfo{
 			Name:        cfg.Name,
 			URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
@@ -379,6 +379,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			ServerType:  "plugin",
 			Enabled:     cfg.Enabled,
 			ToolConfigs: cfg.ToolConfigs,
+			ID:          cfg.ID,
 		}
 
 		if cfg.Enabled {
@@ -533,40 +534,57 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		updated.ToolConfigs = *req.ToolConfigs
 	}
 
-	// Effective final value after partial-update merge, not the raw request.
+	// Best-effort fallback; overwritten below when persisted state is available.
 	audit.AddParam(auditRec(c), "enabled", updated.Enabled)
 
-	existing, getErr := a.configStore.GetConfig()
-	if getErr != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load config for plugin-server save: %w", getErr))
-		return
-	}
-	if existing == nil {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
-		return
-	}
-	// Clone to avoid mutating the store's cached pointer.
-	cfg := existing.Clone()
-
-	// Merge by PluginID against the persisted list rather than overwriting
-	// with the in-memory snapshot, which would silently drop entries for
-	// plugins that are persisted but currently inactive in memory.
-	merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
-	mergedIdx := -1
-	for i := range merged {
-		if merged[i].PluginID == updated.PluginID {
-			mergedIdx = i
-			break
+	// Apply the request to the freshest persisted entry inside the UpdateConfig
+	// transform; rebasing onto the live snapshot read above would let two
+	// concurrent field updates overwrite each other.
+	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		if prev == nil {
+			// Replacing a nil persisted config with a zero-value baseline
+			// would clobber unrelated settings on the next save.
+			return config.Config{}, errors.New("no plugin configuration available")
 		}
-	}
-	if mergedIdx >= 0 {
-		merged[mergedIdx] = updated
-	} else {
-		merged = append(merged, updated)
-	}
-	cfg.MCP.PluginServers = merged
+		// Clone to avoid mutating the store's cached pointer.
+		cfg := prev.Clone()
 
-	if err := a.configStore.SaveConfig(*cfg); err != nil {
+		// Merge by PluginID against the persisted list rather than overwriting
+		// with the in-memory snapshot, which would silently drop entries for
+		// plugins that are persisted but currently inactive in memory.
+		merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
+		mergedIdx := -1
+		for i := range merged {
+			if merged[i].PluginID == pluginID {
+				mergedIdx = i
+				break
+			}
+		}
+
+		// Live entry owns Name/Path/ExposeExternal; persisted admin fields
+		// (Enabled, ToolConfigs, ID) overlay via the shared merge helper.
+		base := live
+		if mergedIdx >= 0 {
+			base = mcp.ApplyPersistedPluginServerFields(base, merged[mergedIdx])
+		}
+		if req.Enabled != nil {
+			base.Enabled = *req.Enabled
+		}
+		if req.ToolConfigs != nil {
+			base.ToolConfigs = *req.ToolConfigs
+		}
+		updated = base
+		audit.AddParam(auditRec(c), "enabled", updated.Enabled)
+
+		if mergedIdx >= 0 {
+			merged[mergedIdx] = base
+		} else {
+			merged = append(merged, base)
+		}
+		cfg.MCP.PluginServers = merged
+		return *cfg, nil
+	})
+	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save plugin-server config: %w", err))
 		return
 	}
@@ -580,8 +598,13 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	a.mcpClientManager.UpdatePluginServer(updated)
-	a.configUpdater.Update(cfg)
+	// Patch admin fields rather than replace the whole object, so plugin-owned
+	// fields survive a concurrent re-registration. A missing entry means the
+	// plugin unregistered; it is hydrated again on its next registration.
+	if patched, ok := a.mcpClientManager.UpdatePluginServerAdminFields(pluginID, updated.Enabled, updated.ToolConfigs); ok {
+		updated = patched
+	}
+	a.configUpdater.Update(&saved)
 
 	// Rebuild when either old or new state was external so removed tools
 	// disappear from the aggregate server.

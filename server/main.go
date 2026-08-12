@@ -202,6 +202,22 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
+	// ABAC ID migrations must run after the config.json->DB migration and
+	// before bots are ensured, so EnsureBots persists agents that already use
+	// already-remapped service IDs into Agents_UserAgents.
+	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store, &p.configuration)
+	if err != nil {
+		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
+	}
+	if idsMigrated {
+		if pubErr := p.PublishConfigUpdate(); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish config update after ID migration", "error", pubErr.Error())
+		}
+		if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish agent update after ID migration", "error", pubErr.Error())
+		}
+	}
+
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
 
 	// migrateAndRefresh runs the one-time legacy bot migration, then forces
@@ -394,7 +410,7 @@ func (p *Plugin) OnActivate() error {
 		}
 		return mcp.ServerConfig{}, false
 	}
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient)
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient, nil)
 	p.configuration.RegisterUpdateListener(func() {
 		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
 		if embeddedErr != nil {

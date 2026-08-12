@@ -4,6 +4,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -12,6 +13,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 func normalizeAdminConfig(cfg config.Config) config.Config {
@@ -21,6 +24,38 @@ func normalizeAdminConfig(cfg config.Config) config.Config {
 	for i := range cfg.Services {
 		if cfg.Services[i].Type == llm.ServiceTypeOpenAI {
 			cfg.Services[i].UseResponsesAPI = true
+		}
+	}
+
+	// Backstop for direct API automation and stale webapp bundles: every
+	// persisted service and MCP server (external, embedded, plugin) must
+	// have a stable ID. Minting avoids IDs already occupied across kinds.
+	for i := range cfg.Services {
+		if cfg.Services[i].ID == "" {
+			cfg.Services[i].ID = model.NewId()
+		}
+	}
+	occupied := config.OccupiedMCPServerIDs(cfg.MCP)
+	mintMCPID := func() string {
+		for {
+			id := model.NewId()
+			if _, taken := occupied[id]; !taken {
+				occupied[id] = struct{}{}
+				return id
+			}
+		}
+	}
+	for i := range cfg.MCP.Servers {
+		if cfg.MCP.Servers[i].ID == "" {
+			cfg.MCP.Servers[i].ID = mintMCPID()
+		}
+	}
+	if cfg.MCP.EmbeddedServer.ID == "" {
+		cfg.MCP.EmbeddedServer.ID = mintMCPID()
+	}
+	for i := range cfg.MCP.PluginServers {
+		if cfg.MCP.PluginServers[i].ID == "" {
+			cfg.MCP.PluginServers[i].ID = mintMCPID()
 		}
 	}
 
@@ -61,6 +96,8 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 // handleSaveConfig saves a new plugin configuration to the database,
 // updates the in-memory configuration, and notifies other cluster nodes.
+// It responds with the normalized saved config so clients can adopt
+// server-minted service/MCP server IDs without a refetch.
 // PUT /admin/config
 func (a *API) handleSaveConfig(c *gin.Context) {
 	var cfg config.Config
@@ -69,19 +106,46 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	cfg = normalizeAdminConfig(cfg)
-
-	// Audit which top-level config sections change — never their values,
-	// since services/webSearch/mcp carry credentials. Best effort: a failed
-	// read of the prior config must not block the save, so the record then
-	// simply omits changed_keys.
-	if rec := auditRec(c); rec != nil {
-		if prev, err := a.configStore.GetConfig(); err == nil {
-			audit.AddParam(rec, "changed_keys", audit.ChangedJSONKeys(prev, cfg))
+	// Read-previous → reconcile → normalize → save runs atomically under the
+	// config advisory lock. Reconciliation carries stable service and MCP
+	// server IDs forward before normalizeAdminConfig mints fresh ones, so
+	// clients that drop the id field cannot rotate IDs on every save;
+	// identity conflicts abort the save entirely.
+	var changedKeys []string
+	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		next := cfg
+		// Reconcile even on the first write (empty previous lists) so
+		// fabricated or duplicate incoming IDs cannot slip in unvalidated.
+		var prevServices []llm.ServiceConfig
+		var prevMCP config.MCPConfig
+		if prev != nil {
+			prevServices = prev.Services
+			prevMCP = prev.MCP
 		}
-	}
-
-	if err := a.configStore.SaveConfig(cfg); err != nil {
+		reconciledServices, reconcileErr := config.ReconcileServiceIDs(next.Services, prevServices)
+		if reconcileErr != nil {
+			return config.Config{}, reconcileErr
+		}
+		next.Services = reconciledServices
+		reconciledMCP, reconcileErr := config.ReconcileMCPConfigIDs(next.MCP, prevMCP)
+		if reconcileErr != nil {
+			return config.Config{}, reconcileErr
+		}
+		next.MCP = reconciledMCP
+		normalized := normalizeAdminConfig(next)
+		changedKeys = audit.ChangedJSONKeys(prev, normalized)
+		return normalized, nil
+	})
+	switch {
+	case errors.Is(err, config.ErrServiceIDConflict), errors.Is(err, config.ErrMCPServerIDConflict):
+		// Minting fresh IDs here would silently detach existing policies.
+		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload conflicts with the stored service or MCP server identities; reload the System Console and retry: %w", err))
+		return
+	case errors.Is(err, store.ErrStaleLegacyServiceIDs):
+		// A pre-upgrade client echoing UUID service IDs would undo the migration.
+		c.AbortWithError(http.StatusConflict, fmt.Errorf("stale configuration payload; reload the System Console and retry: %w", err))
+		return
+	case err != nil:
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
 		return
 	}
@@ -89,10 +153,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// From here on the config HAS changed in the database. If a later step
 	// fails (cluster notify), the audit record's fail status would otherwise
 	// hide a real mutation — mark it explicitly.
+	audit.AddParam(auditRec(c), "changed_keys", changedKeys)
 	audit.AddParam(auditRec(c), "persisted", true)
 
 	// Update in-memory config on this node
-	a.configUpdater.Update(&cfg)
+	a.configUpdater.Update(&saved)
 
 	// Notify other cluster nodes to reload config from DB
 	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {
@@ -100,5 +165,5 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	c.Status(http.StatusOK)
+	c.JSON(http.StatusOK, saved)
 }

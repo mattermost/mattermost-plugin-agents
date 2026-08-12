@@ -49,59 +49,60 @@ const Services = (props: Props) => {
     const [showErrorDialog, setShowErrorDialog] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
 
+    // No id is assigned client-side: the backend mints the stable ID on save
+    // (normalizeAdminConfig); policy authoring needs a persisted id.
     const addNewService = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
-        const id = crypto.randomUUID();
         if (props.services.length === 0) {
-            props.onChange([{
-                ...firstNewService,
-                id,
-            }]);
+            props.onChange([{...firstNewService}]);
         } else {
-            props.onChange([...props.services, {
-                ...defaultNewService,
-                id,
-            }]);
+            props.onChange([...props.services, {...defaultNewService}]);
         }
     };
 
-    const onChange = (newService: LLMService) => {
-        props.onChange(props.services.map((b) => (b.id === newService.id ? newService : b)));
+    // Entries added this session have no id yet, so services are addressed by
+    // index rather than by id.
+    const onChange = (index: number, newService: LLMService) => {
+        props.onChange(props.services.map((s, i) => (i === index ? newService : s)));
     };
 
-    const onDelete = (id: string) => {
-        // Check if any bot is using this service
-        const botsUsingService = props.bots.filter((bot) => bot.serviceID === id);
+    const onDelete = (index: number) => {
+        const id = props.services[index].id;
 
-        if (botsUsingService.length > 0) {
-            const botNames = botsUsingService.map((bot) => bot.displayName).join(', ');
-            const message = intl.formatMessage(
-                {defaultMessage: 'Cannot delete this service because it is being used by the following bot(s): {botNames}'},
-                {botNames},
-            );
-            setErrorMessage(message);
-            setShowErrorDialog(true);
-            return;
+        // Only persisted services can be referenced by bots or as fallbacks.
+        if (id) {
+            const botsUsingService = props.bots.filter((bot) => bot.serviceID === id);
+
+            if (botsUsingService.length > 0) {
+                const botNames = botsUsingService.map((bot) => bot.displayName).join(', ');
+                const message = intl.formatMessage(
+                    {defaultMessage: 'Cannot delete this service because it is being used by the following bot(s): {botNames}'},
+                    {botNames},
+                );
+                setErrorMessage(message);
+                setShowErrorDialog(true);
+                return;
+            }
         }
 
         // Drop the service and clear any remaining service's fallback link to it,
         // so deletion never leaves a dangling fallbackServiceID behind.
         const remaining = props.services.
-            filter((b) => b.id !== id).
-            map((b) => (b.fallbackServiceID === id ? {...b, fallbackServiceID: ''} : b));
+            filter((_, i) => i !== index).
+            map((s) => (id && s.fallbackServiceID === id ? {...s, fallbackServiceID: ''} : s));
         props.onChange(remaining);
     };
 
     return (
         <>
             <ServicesList>
-                {props.services.map((service) => (
+                {props.services.map((service, index) => (
                     <Service
-                        key={service.id}
+                        key={service.id || `unsaved-${index}`}
                         service={service}
                         services={props.services}
-                        onChange={onChange}
-                        onDelete={() => onDelete(service.id)}
+                        onChange={(updated) => onChange(index, updated)}
+                        onDelete={() => onDelete(index)}
                     />
                 ))}
             </ServicesList>

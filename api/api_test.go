@@ -129,7 +129,7 @@ type mockMCPClientManager struct {
 	ensureSessionCreated bool
 
 	registerCalls   []mcp.PluginServerConfig
-	updateCalls     []mcp.PluginServerConfig
+	adminPatchCalls []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig
 	// orphanPluginIDs simulates entries present in pluginServers but with
@@ -139,6 +139,8 @@ type mockMCPClientManager struct {
 	discoverPluginToolsResponse  []mcp.ToolInfo
 	discoverPluginToolsErr       error
 	discoverPluginToolsCallCount int
+
+	httpClient *http.Client
 }
 
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
@@ -190,7 +192,7 @@ func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, bool, 
 }
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
-	return nil
+	return m.httpClient
 }
 
 func (m *mockMCPClientManager) GetToolsForUser(ctx context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
@@ -210,12 +212,9 @@ func (m *mockMCPClientManager) GetConfig() mcp.Config {
 
 func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) {
 	m.registerCalls = append(m.registerCalls, cfg)
-	delete(m.orphanPluginIDs, cfg.PluginID)
-	m.storePluginServer(cfg)
-}
-
-func (m *mockMCPClientManager) UpdatePluginServer(cfg mcp.PluginServerConfig) {
-	m.updateCalls = append(m.updateCalls, cfg)
+	if m.orphanPluginIDs != nil {
+		delete(m.orphanPluginIDs, cfg.PluginID)
+	}
 	m.storePluginServer(cfg)
 }
 
@@ -229,6 +228,20 @@ func (m *mockMCPClientManager) storePluginServer(cfg mcp.PluginServerConfig) {
 	m.pluginServers = append(m.pluginServers, cfg)
 }
 
+func (m *mockMCPClientManager) UpdatePluginServerAdminFields(pluginID string, enabled bool, toolConfigs []mcp.ToolConfig) (mcp.PluginServerConfig, bool) {
+	// Mirror real ClientManager: patch only admin-owned fields on the live entry.
+	for i, existing := range m.pluginServers {
+		if existing.PluginID == pluginID {
+			existing.Enabled = enabled
+			existing.ToolConfigs = toolConfigs
+			m.pluginServers[i] = existing
+			m.adminPatchCalls = append(m.adminPatchCalls, existing)
+			return existing, true
+		}
+	}
+	return mcp.PluginServerConfig{}, false
+}
+
 func (m *mockMCPClientManager) UnregisterPluginServer(pluginID string) {
 	m.unregisterCalls = append(m.unregisterCalls, pluginID)
 	for i, existing := range m.pluginServers {
@@ -240,8 +253,13 @@ func (m *mockMCPClientManager) UnregisterPluginServer(pluginID string) {
 }
 
 func (m *mockMCPClientManager) ListPluginServers() []mcp.PluginServerConfig {
-	out := make([]mcp.PluginServerConfig, len(m.pluginServers))
-	copy(out, m.pluginServers)
+	out := make([]mcp.PluginServerConfig, 0, len(m.pluginServers))
+	for _, cfg := range m.pluginServers {
+		if m.orphanPluginIDs != nil && m.orphanPluginIDs[cfg.PluginID] {
+			continue
+		}
+		out = append(out, cfg)
+	}
 	return out
 }
 
@@ -252,18 +270,6 @@ func (m *mockMCPClientManager) GetPluginServer(pluginID string) (mcp.PluginServe
 		}
 	}
 	return mcp.PluginServerConfig{}, false
-}
-
-func (m *mockMCPClientManager) IsPluginRegistered(pluginID string) bool {
-	if m.orphanPluginIDs[pluginID] {
-		return false
-	}
-	for _, existing := range m.pluginServers {
-		if existing.PluginID == pluginID {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {

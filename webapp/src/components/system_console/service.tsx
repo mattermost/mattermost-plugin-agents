@@ -13,6 +13,7 @@ import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
 
+
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
 
 export type LLMService = {
@@ -426,7 +427,10 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     {intl.formatMessage({defaultMessage: 'No fallback'})}
                 </SelectionItemOption>
                 {(props.services ?? []).
-                    filter((s) => s.id !== props.service.id).
+
+                    // ID-less entries were added this session and aren't
+                    // addressable as fallbacks until the config is saved.
+                    filter((s) => s.id && s.id !== props.service.id).
                     map((s) => (
                         <SelectionItemOption
                             key={s.id}
@@ -488,6 +492,7 @@ const Service = (props: Props) => {
                             onChange={props.onChange}
                         />
                     </ItemList>
+                        entry is persisted and policy authoring is safe. */}
                 </ItemListContainer>
             )}
         </ServiceContainer>

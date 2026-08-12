@@ -65,6 +65,21 @@ func (m *mockConfigStore) SaveConfig(cfg config.Config) error {
 	return nil
 }
 
+func (m *mockConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	var prev *config.Config
+	if m.cfg != nil {
+		prev = m.cfg
+	}
+	next, err := transform(prev)
+	if err != nil {
+		return next, err
+	}
+	if err := m.SaveConfig(next); err != nil {
+		return next, err
+	}
+	return next, nil
+}
+
 // overrideLicenseMocks replaces any GetConfig/GetLicense expectations already
 // registered (e.g. by SetupTestEnvironment). Testify matches the first
 // registered expectation, so simply adding new ones would not take effect.

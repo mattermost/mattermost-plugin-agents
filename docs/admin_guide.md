@@ -545,6 +545,8 @@ This separation allows multiple agents to share the same LLM service configurati
 }
 ```
 
+Service IDs are Mattermost-style 26-character IDs. Configurations created before this format was adopted used UUIDs; those are rewritten once on upgrade, so external automation that hard-coded UUID service IDs must re-read `GET /plugins/mattermost-ai/admin/config` to pick up the new IDs.
+
 **Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
 
 **Legacy format:** Older configurations that stored bots in `config.bots`, or embedded service objects within bots, are migrated on plugin startup. After legacy bot migration completes, stored `config.bots` entries are removed to avoid duplicate bot registration.
