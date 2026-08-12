@@ -70,11 +70,10 @@ type MCPClientManager interface {
 	GetConfig() mcp.Config
 
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
-	UpdatePluginServer(cfg mcp.PluginServerConfig)
+	UpdatePluginServerAdminFields(pluginID string, enabled bool, toolConfigs []mcp.ToolConfig) (mcp.PluginServerConfig, bool)
 	UnregisterPluginServer(pluginID string)
 	ListPluginServers() []mcp.PluginServerConfig
 	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
-	IsPluginRegistered(pluginID string) bool
 
 	DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
 }
@@ -83,6 +82,10 @@ type MCPClientManager interface {
 type ConfigStore interface {
 	GetConfig() (*config.Config, error)
 	SaveConfig(cfg config.Config) error
+	// UpdateConfig atomically reads the active config, applies transform, and
+	// persists the result under the config advisory lock. A transform error
+	// aborts the update and is returned as-is.
+	UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error)
 }
 
 // AgentStore provides CRUD access to user-created agents in the database.

@@ -102,7 +102,10 @@ func TestHandleMCPRegister(t *testing.T) {
 			wantStatus: http.StatusOK,
 			assertMock: func(t *testing.T, m *mockMCPClientManager) {
 				require.Len(t, m.registerCalls, 1)
-				require.Equal(t, validCfg, m.registerCalls[0])
+				got := m.registerCalls[0]
+				require.True(t, model.IsValidId(got.ID), "register must mint a stable Mattermost ID")
+				got.ID = ""
+				require.Equal(t, validCfg, got)
 				require.Empty(t, m.unregisterCalls)
 			},
 		},
@@ -841,7 +844,99 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 		saved := e.mcp.registerCalls[0]
 		require.Equal(t, true, saved.Enabled, "nil configStore: plugin payload preserved")
 		require.Equal(t, false, saved.ExposeExternal, "nil configStore: plugin payload preserved")
+		require.True(t, model.IsValidId(saved.ID), "nil configStore: in-memory registration still receives a minted ID")
 	})
+}
+
+func TestHandleMCPRegister_MintsStableIDAcrossReregister(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	store := &testConfigStore{cfg: &config.Config{}}
+	e.api.configStore = store
+	e.api.configUpdater = &testConfigUpdater{}
+	e.api.clusterNotifier = &testClusterNotifier{}
+
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	body := mcp.PluginServerConfig{
+		PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+		Enabled: true, ExposeExternal: false,
+	}
+	req := mcpRegisterRequest(t, body)
+	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	resp := serveAndReturn(e, req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 1)
+	firstID := e.mcp.registerCalls[0].ID
+	require.True(t, model.IsValidId(firstID))
+	require.Len(t, store.cfg.MCP.PluginServers, 1)
+	require.Equal(t, firstID, store.cfg.MCP.PluginServers[0].ID)
+
+	// Unregister clears the in-memory registry but must leave the persisted ID.
+	unreg := mcpUnregisterRequest(t, struct{}{})
+	unreg.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	require.Equal(t, http.StatusOK, serveAndReturn(e, unreg).StatusCode)
+	require.Equal(t, firstID, store.cfg.MCP.PluginServers[0].ID, "unregister must not remove the persisted ID")
+
+	// Re-register with a different path: ID must be stable.
+	body.Path = "/mcp/v2"
+	req2 := mcpRegisterRequest(t, body)
+	req2.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	resp2 := serveAndReturn(e, req2)
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 2)
+	require.Equal(t, firstID, e.mcp.registerCalls[1].ID, "re-register must reuse the persisted ID")
+	require.Equal(t, firstID, store.cfg.MCP.PluginServers[0].ID)
+	require.Len(t, store.cfg.MCP.PluginServers, 1, "re-register must not create a duplicate config entry")
+}
+
+// Live registry ID must win when the persisted PluginServers row is missing,
+// and that ID must be written into config (not rotated).
+func TestHandleMCPRegister_PreservesLiveIDWhenPersistedRowAbsent(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	const liveID = "abcdefghijklmnopqrstuvwx0l"
+	store := &testConfigStore{cfg: &config.Config{}}
+	e.api.configStore = store
+	e.api.configUpdater = &testConfigUpdater{}
+	e.api.clusterNotifier = &testClusterNotifier{}
+
+	e.mcp.pluginServers = []mcp.PluginServerConfig{{
+		ID: liveID, PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+		Enabled: true, ExposeExternal: false,
+	}}
+
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	body := mcp.PluginServerConfig{
+		PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp/v2",
+		Enabled: false, ExposeExternal: true,
+	}
+	req := mcpRegisterRequest(t, body)
+	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	resp := serveAndReturn(e, req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 1)
+
+	saved := e.mcp.registerCalls[0]
+	require.Equal(t, liveID, saved.ID, "live registry ID must not be rotated")
+	require.True(t, saved.Enabled, "Enabled preserved from live entry")
+	require.True(t, saved.ExposeExternal, "ExposeExternal comes from plugin payload")
+	require.Equal(t, "/mcp/v2", saved.Path)
+
+	require.Len(t, store.cfg.MCP.PluginServers, 1)
+	require.Equal(t, liveID, store.cfg.MCP.PluginServers[0].ID, "live ID must be persisted")
+	require.Equal(t, testCallerPluginID, store.cfg.MCP.PluginServers[0].PluginID)
 }
 
 func TestAuditMCPRegister(t *testing.T) {

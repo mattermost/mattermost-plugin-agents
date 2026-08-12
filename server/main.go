@@ -191,7 +191,15 @@ func (p *Plugin) OnActivate() error {
 	}
 	mtx2.Unlock()
 
-	// Load config from DB into memory and set migrated flag
+	// ABAC ID migrations must run after the config.json->DB migration and
+	// before runtime config is loaded, so no subsystem can observe legacy
+	// service IDs or ID-less MCP servers.
+	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store, &p.configuration)
+	if err != nil {
+		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
+	}
+
+	// Load the fully migrated config from DB into memory and set migrated flag.
 	dbConfig, err := p.store.GetConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config from database: %w", err)
@@ -200,6 +208,15 @@ func (p *Plugin) OnActivate() error {
 		p.configuration.Update(dbConfig)
 	}
 	p.configMigrated = true
+
+	if idsMigrated {
+		if pubErr := p.PublishConfigUpdate(); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish config update after ID migration", "error", pubErr.Error())
+		}
+		if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish agent update after ID migration", "error", pubErr.Error())
+		}
+	}
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
 
