@@ -13,7 +13,6 @@ import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
 
-
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
 
 export type LLMService = {
@@ -492,7 +491,6 @@ const Service = (props: Props) => {
                             onChange={props.onChange}
                         />
                     </ItemList>
-                        entry is persisted and policy authoring is safe. */}
                 </ItemListContainer>
             )}
         </ServiceContainer>

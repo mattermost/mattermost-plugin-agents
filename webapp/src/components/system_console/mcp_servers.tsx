@@ -19,6 +19,7 @@ import {CopyableTextItem} from './copyable_text_item';
 import MCPToolsViewer from './mcp_tools_viewer';
 import type {
     MCPConfig as BaseMCPConfig,
+    MCPEmbeddedServerConfig as BaseMCPEmbeddedServerConfig,
     MCPServerConfig as BaseMCPServerConfig,
     MCPToolConfig as BaseMCPToolConfig,
     MCPToolsResponse,
@@ -29,6 +30,7 @@ import EnterpriseChip from './enterprise_chip';
 import {BooleanItem, ItemList, TextItem} from './item';
 
 export type MCPToolConfig = BaseMCPToolConfig;
+export type MCPEmbeddedServerConfig = BaseMCPEmbeddedServerConfig;
 
 export type MCPServerConfig = BaseMCPServerConfig & {
     // Optional: the backend tag has omitempty, so pre-feature servers omit the key entirely.
