@@ -61,7 +61,7 @@ const FakeTableEditor = ({value, onChange, onValidate, onParseError}: FakeEditor
     </div>
 );
 
-let lastCELUserAttributes: unknown;
+let lastCELUserAttributes: unknown = null;
 
 const FakeCELEditor = ({value, onChange, onValidate, userAttributes}: FakeEditorProps & {userAttributes?: unknown}) => {
     lastCELUserAttributes = userAttributes;
@@ -125,7 +125,7 @@ beforeEach(() => {
     client.getServiceAccessPolicy.mockResolvedValue(null);
     client.getMCPServerAccessPolicy.mockResolvedValue(null);
     client.getAccessControlFields.mockResolvedValue([]);
-    lastCELUserAttributes = undefined;
+    lastCELUserAttributes = null;
     setHostEditors();
 });
 

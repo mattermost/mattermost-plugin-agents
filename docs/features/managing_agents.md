@@ -36,9 +36,9 @@ The **System Console > AI Bots** page no longer hosts the agent editor. Instead,
 The Agents page itself shows:
 
 - A header with the page title and a **Create agent** button (visible only to users who can create agents — see [Permissions and license](#permissions-and-license)).
-- Two tabs: **All agents** (every agent the user can see) and **Your agents** (agents the current user created).
+- Two tabs: **All agents** (every agent the user can see) and **Your agents** (agents the current user created that they can still see).
 - A search box that filters by display name or username.
-- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and a **Service unavailable** warning badge if the agent's configured AI service is missing.
+- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and a **Service unavailable** warning badge when the agent's configured AI service is missing or orphaned *and* the viewer can still see the agent (primarily system admins; see [Who can see which agents](#who-can-see-which-agents)).
 - A row-level overflow menu (`⋯`) with **Edit** and **Delete** actions for users who can manage that agent. Selecting the row itself also opens the editor for users who can manage the agent.
 
 ## Permissions and license
@@ -64,6 +64,15 @@ The Agents page applies these rules consistently between the UI and the API:
 - The same checks gate the underlying `POST /agents`, `PUT /agents/:id`, and `DELETE /agents/:id` API routes, so direct API calls cannot bypass the UI rules.
 
 By default, regular users do not have `manage_own_agent`. Grant it through your existing Mattermost role/permission model to delegate agent creation — typically under **System Console > User Management > Permissions** (exact path varies by Mattermost server version).
+
+### Who can see which agents
+
+Manage permission alone does not decide list visibility. Agents (and the AI services shown when binding an agent) are filtered by what the signed-in user can use:
+
+- **System administrators** can see agents even when a service ABAC policy would deny them personally, so they can rebind services or restore access.
+- **All other users** — including creators and delegated agent admins — only see agents they can use under both agent access and the agent's AI service access. Agents whose service they cannot use are hidden, not shown with a deny badge.
+
+If a non–system-admin agent admin loses access to an agent's service under ABAC, that agent disappears from their Agents page until a system admin restores service access or changes the binding. See [Attribute-based access control (ABAC)](../admin_guide.md#attribute-based-access-control-abac) in the Admin Guide.
 
 ### License
 
@@ -119,7 +128,8 @@ The Access tab controls who can interact with the agent and who can administer i
   - **All users** (default): anyone in the workspace.
   - **Allow only**: only listed users, or members of listed teams.
   - **Block**: everyone except listed users or members of listed teams.
-- **Agent admins** is a list of users who can edit and delete this agent in addition to the creator. The agent creator is always an admin and is not shown in the editable list.
+  - **Attribute-based (access policy)**: an ABAC policy is the only user-access gate (allow/block lists are ignored). See [Attribute-based access control (ABAC)](../admin_guide.md#attribute-based-access-control-abac).
+- **Agent admins** is a list of users who can edit and delete this agent in addition to the creator. The agent creator is always an admin and is not shown in the editable list. Agent admins still only *see* the agent when they can use its AI service (system admins are the exception — see [Who can see which agents](#who-can-see-which-agents)).
 
 These rules are enforced both for `@mentions` in channels and for direct conversations with the agent. They are enforced in the server in `bots/permissions.go`, so they apply uniformly to UI flows, slash commands, and tool-driven access.
 
@@ -267,7 +277,9 @@ The signed-in user is not the agent's creator, not in **Agent admins**, and does
 
 ### Agent shows "Service unavailable" badge
 
-The agent's `serviceID` no longer matches any service in **System Console > Plugins > Agents**. Edit the agent and pick a current service from the dropdown, or restore the missing service in System Console.
+The agent's configured AI service is missing or orphaned (for example its `serviceID` no longer matches any service in **System Console > Plugins > Agents**). Edit the agent and pick a current service from the dropdown, or restore the missing service in System Console.
+
+This badge is **not** used to mean "you are denied by service ABAC." Non–system-admins who cannot use an agent's service simply do not see that agent. System admins (and rare edge cases where the viewer can still see the agent) may still see **Service unavailable** for a truly missing service.
 
 ### Saving an agent returns "This username is already taken"
 

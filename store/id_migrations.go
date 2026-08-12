@@ -17,14 +17,27 @@ import (
 
 // Agents_System markers for the one-time ABAC ID migrations (value "1").
 const (
-	serviceIDMigrationKey   = "abac_service_id_migration_done"
-	mcpServerIDMigrationKey = "abac_mcp_server_id_migration_done"
+	serviceIDMigrationKey              = "abac_service_id_migration_done"
+	mcpServerIDMigrationKey            = "abac_mcp_server_id_migration_done"
+	embeddedPluginServerIDMigrationKey = "abac_embedded_plugin_server_id_migration_done"
 )
 
 // isLegacyUUID reports whether s is a canonical dashed UUID, the legacy
 // service-ID format that predates model.NewId()-style IDs.
 func isLegacyUUID(s string) bool {
 	return len(s) == 36 && uuid.Validate(s) == nil
+}
+
+// mintUniqueMCPServerID returns a fresh model.NewId not present in occupied
+// and records it so subsequent mints in the same pass stay unique across kinds.
+func mintUniqueMCPServerID(occupied map[string]struct{}) string {
+	for {
+		id := model.NewId()
+		if _, taken := occupied[id]; !taken {
+			occupied[id] = struct{}{}
+			return id
+		}
+	}
 }
 
 // ABACIDMigrationReport summarizes what MigrateABACIDs did so the caller
@@ -34,21 +47,24 @@ type ABACIDMigrationReport struct {
 	Migrated bool
 	// ServicesRemapped counts service entries whose ID was rewritten,
 	// including each occurrence of a duplicated legacy ID.
-	ServicesRemapped     int
-	AgentRowsUpdated     int64
-	MCPServerIDsAssigned int
-	DanglingServiceRefs  []string
+	ServicesRemapped                int
+	AgentRowsUpdated                int64
+	MCPServerIDsAssigned            int
+	EmbeddedPluginServerIDsAssigned int
+	DanglingServiceRefs             []string
 }
 
-// MigrateABACIDs runs both one-time ABAC ID migrations in a single
-// transaction that writes at most one new active config row and sets both
-// Agents_System markers atomically:
+// MigrateABACIDs runs the one-time ABAC ID migrations in a single transaction
+// that writes at most one new active config row and sets Agents_System markers
+// atomically:
 //
 //   - service IDs: legacy UUID service IDs in the active config and in
 //     Agents_UserAgents.ServiceID are rewritten to model.NewId() values.
 //     Dangling UUID references are left unchanged and reported.
 //   - MCP server IDs: every external MCP server entry with no ID gets a
 //     stable model.NewId().
+//   - embedded/plugin MCP server IDs: EmbeddedServer.ID and every
+//     PluginServers entry with no ID get a stable model.NewId().
 //
 // Idempotent: markers short-circuit re-runs, and the rewrite is content-based
 // (only UUID service IDs / empty MCP IDs are touched), so a crash between the
@@ -65,7 +81,11 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 	if err != nil {
 		return report, err
 	}
-	if serviceDone == "1" && mcpDone == "1" {
+	embeddedPluginDone, err := s.GetSystemValue(embeddedPluginServerIDMigrationKey)
+	if err != nil {
+		return report, err
+	}
+	if serviceDone == "1" && mcpDone == "1" && embeddedPluginDone == "1" {
 		return report, nil
 	}
 
@@ -93,7 +113,11 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 	if err != nil {
 		return report, err
 	}
-	if serviceDone == "1" && mcpDone == "1" {
+	embeddedPluginDone, err = getSystemValueTx(tx, embeddedPluginServerIDMigrationKey)
+	if err != nil {
+		return report, err
+	}
+	if serviceDone == "1" && mcpDone == "1" && embeddedPluginDone == "1" {
 		// Another node finished between the fast path and the lock.
 		_ = tx.Rollback()
 		return report, nil
@@ -112,13 +136,28 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 		configChanged = configChanged || report.ServicesRemapped > 0
 	}
 	if found && mcpDone != "1" {
+		occupied := config.OccupiedMCPServerIDs(cfg.MCP)
 		for i := range cfg.MCP.Servers {
 			if cfg.MCP.Servers[i].ID == "" {
-				cfg.MCP.Servers[i].ID = model.NewId()
+				cfg.MCP.Servers[i].ID = mintUniqueMCPServerID(occupied)
 				report.MCPServerIDsAssigned++
 			}
 		}
 		configChanged = configChanged || report.MCPServerIDsAssigned > 0
+	}
+	if found && embeddedPluginDone != "1" {
+		occupied := config.OccupiedMCPServerIDs(cfg.MCP)
+		if cfg.MCP.EmbeddedServer.ID == "" {
+			cfg.MCP.EmbeddedServer.ID = mintUniqueMCPServerID(occupied)
+			report.EmbeddedPluginServerIDsAssigned++
+		}
+		for i := range cfg.MCP.PluginServers {
+			if cfg.MCP.PluginServers[i].ID == "" {
+				cfg.MCP.PluginServers[i].ID = mintUniqueMCPServerID(occupied)
+				report.EmbeddedPluginServerIDsAssigned++
+			}
+		}
+		configChanged = configChanged || report.EmbeddedPluginServerIDsAssigned > 0
 	}
 
 	if configChanged {
@@ -133,6 +172,11 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 	}
 	if mcpDone != "1" {
 		if err = setSystemValueTx(tx, mcpServerIDMigrationKey, "1"); err != nil {
+			return report, err
+		}
+	}
+	if embeddedPluginDone != "1" {
+		if err = setSystemValueTx(tx, embeddedPluginServerIDMigrationKey, "1"); err != nil {
 			return report, err
 		}
 	}

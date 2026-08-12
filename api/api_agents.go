@@ -804,20 +804,33 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	c.JSON(http.StatusOK, models)
 }
 
-// canUserAccessAgent reports whether userID may view or use the agent.
-// Deliberately agent-policy-only — no service check — so per-agent admins
-// still see agents whose service is currently denied to them; the runtime
-// composite gate remains authoritative for actual use.
+// canUserAccessAgent reports whether userID may see the agent on list/get.
+// System admins may see agents even when CanUseService would deny them (they
+// author policies). Everyone else — including creators and per-agent admins —
+// must pass the agent gate and CanUseService, matching the runtime composite
+// in bots.CheckUsageRestrictionsForUserConfig. Hiding denied-service agents
+// prevents existence leaks via ghost rows / "Service unavailable".
 func (a *API) canUserAccessAgent(ctx context.Context, cfg *llm.BotConfig, userID string) bool {
 	if cfg == nil || a.pluginAPI == nil {
 		return false
 	}
+
+	agentOK := false
 	if cfg.IsAdmin(userID) {
+		agentOK = true
+	} else {
+		// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
+		legacy := func() error { return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) }
+		agentOK = a.accessChecker.CanUseAgent(ctx, userID, cfg, legacy) == nil
+	}
+	if !agentOK {
+		return false
+	}
+
+	if a.canBypassServicePolicies(userID) {
 		return true
 	}
-	// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
-	legacy := func() error { return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) }
-	return a.accessChecker.CanUseAgent(ctx, userID, cfg, legacy) == nil
+	return a.accessChecker.CanUseService(ctx, userID, cfg.ServiceID) == nil
 }
 
 // sanitizeAgentForUser returns cfg unchanged for users who can manage the agent

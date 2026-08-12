@@ -18,42 +18,13 @@ import {useIsBasicsLicensed} from '@/license';
 import ConsolePolicySection from '../access_control/console_policy_section';
 
 import {CopyableTextItem} from './copyable_text_item';
-import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
+import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
+import MCPToolsViewer from './mcp_tools_viewer';
+import {MCPConfig, MCPServerConfig, MCPToolsResponse} from './mcp_types';
 
 import EnterpriseChip from './enterprise_chip';
 
 import {BooleanItem, ItemList, TextItem} from './item';
-
-export type MCPToolConfig = {
-    name: string;
-    policy: 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
-    enabled: boolean;
-    retrieval_description_override?: string;
-};
-
-export type MCPServerConfig = {
-    id?: string; // stable ABAC policy identity; may be absent until the server-side ID migration runs
-    name: string;
-    enabled: boolean;
-    baseURL: string;
-    headers: {[key: string]: string};
-    tool_configs?: MCPToolConfig[];
-    clientID?: string;
-    clientSecret?: string;
-};
-
-export type MCPEmbeddedServerConfig = {
-    enabled: boolean;
-    tool_configs?: MCPToolConfig[];
-};
-
-export type MCPConfig = {
-    enabled: boolean;
-    enablePluginServer: boolean;
-    servers: MCPServerConfig[] | null; // server sends nil Go slice as JSON null
-    embeddedServer: MCPEmbeddedServerConfig;
-    idleTimeoutMinutes?: number;
-};
 
 type Props = {
     mcpConfig: MCPConfig;
@@ -440,7 +411,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // MCP client and embedded server are always enabled; users can still
     // disable individual tools but cannot turn off MCP entirely.
+    // Spread mcpConfig so fields like plugin_servers and embeddedServer.id
+    // survive rebuilds that only override a subset of keys.
     const config: MCPConfig = {
+        ...mcpConfig,
         enabled: true,
         enablePluginServer: mcpConfig?.enablePluginServer ?? false,
         servers: normalizedServers,
@@ -450,6 +424,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         },
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
     };
+
+    const pluginServers = (preloadedToolsData?.servers ?? []).filter(
+        (server) => server.serverType === 'plugin',
+    );
 
     // Generate a server name
     const generateServerName = () => {
@@ -579,6 +557,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 />
                             )}
                         </ItemList>
+                        <BuiltInPluginServersSection
+                            embeddedServerId={config.embeddedServer.id}
+                            pluginServers={pluginServers}
+                        />
                         {isBasicsLicensed ? (
                             <>
                                 <ServersList>

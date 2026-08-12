@@ -4,7 +4,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -44,9 +44,9 @@ type UserMCPToolInfo struct {
 // handleGetUserMCPTools returns the user-visible MCP tools grouped by server.
 func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(c.Request.Context(), userID)
+	access := a.mcpClientManager.GetUserToolsAccess(c.Request.Context(), userID)
 
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(c.Request.Context(), userID, tools, mcpErrors))
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, access))
 }
 
 // handleRefreshUserMCPTools forces rediscovery of the current user's MCP tools.
@@ -57,34 +57,34 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 	}
 
 	userID := c.GetHeader("Mattermost-User-Id")
-	tools, mcpErrors, err := a.mcpClientManager.RefreshToolsForUser(c.Request.Context(), userID)
+	access, err := a.mcpClientManager.RefreshUserToolsAccess(c.Request.Context(), userID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to refresh MCP tools: %w", err))
 		return
 	}
 
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(c.Request.Context(), userID, tools, mcpErrors))
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, access))
 }
 
-func (a *API) buildUserMCPToolsResponse(ctx context.Context, userID string, tools []llm.Tool, mcpErrors *mcp.Errors) UserMCPToolsResponse {
+func (a *API) buildUserMCPToolsResponse(userID string, access mcp.UserToolsAccess) UserMCPToolsResponse {
 	mcpCfg := a.config.MCP()
-	idByOrigin := mcpCfg.ServerIDByOrigin()
 
 	// Group tools by ServerOrigin
-	toolsByOrigin := make(map[string][]llm.Tool, len(tools))
-	for _, t := range tools {
+	toolsByOrigin := make(map[string][]llm.Tool, len(access.Tools))
+	for _, t := range access.Tools {
 		toolsByOrigin[t.ServerOrigin] = append(toolsByOrigin[t.ServerOrigin], t)
 	}
 
 	authErrorsByOrigin := make(map[string]llm.ToolAuthError)
-	if mcpErrors != nil {
-		for _, authErr := range mcpErrors.ToolAuthErrors {
+	if access.Errors != nil {
+		for _, authErr := range access.Errors.ToolAuthErrors {
 			authErrorsByOrigin[authErr.ServerOrigin] = authErr
 		}
 	}
 
 	oauthManager := a.mcpClientManager.GetOAuthManager()
 	servers := make([]UserMCPServerInfo, 0, len(mcpCfg.Servers)+1)
+	denied := access.DeniedOrigins
 
 	for i := range mcpCfg.Servers {
 		serverConfig := &mcpCfg.Servers[i]
@@ -92,13 +92,10 @@ func (a *API) buildUserMCPToolsResponse(ctx context.Context, userID string, tool
 			continue
 		}
 
-		// Silently skip server rows the user fails the ABAC check for —
-		// tool lists are filtered inside GetToolsForUser, but connection/
-		// OAuth status rows are emitted even for tool-less servers.
-		if serverID, gated := idByOrigin[serverConfig.BaseURL]; gated && a.accessChecker != nil {
-			if a.accessChecker.CanUseMCPServer(ctx, userID, serverID) != nil {
-				continue
-			}
+		// Reuse the manager's denial snapshot — tools were already filtered
+		// with the same set; do not re-call the PDP per server row.
+		if denied[serverConfig.BaseURL] {
+			continue
 		}
 
 		servers = append(servers, buildUserMCPServerInfo(
@@ -111,7 +108,7 @@ func (a *API) buildUserMCPToolsResponse(ctx context.Context, userID string, tool
 		))
 	}
 
-	if a.mcpClientManager.GetEmbeddedServer() != nil {
+	if a.mcpClientManager.GetEmbeddedServer() != nil && !denied[mcp.EmbeddedClientKey] {
 		toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
 		if len(toolConfigs) == 0 {
 			toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
@@ -134,13 +131,18 @@ func (a *API) buildUserMCPToolsResponse(ctx context.Context, userID string, tool
 		))
 	}
 
-	// Plugin rows use the same synthetic origin key as filterToolsByConfig.
-	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+	// Plugin rows reuse the request-scoped snapshot from UserToolsAccess —
+	// the same list ABAC and tool collection used — not a live re-sample.
+	for _, cfg := range access.PluginServers {
 		if !cfg.Enabled {
 			continue
 		}
 
-		origin := "plugin://" + cfg.PluginID
+		origin := config.PluginServerOrigin(cfg.PluginID)
+		if denied[origin] {
+			continue
+		}
+
 		pluginConfig := &mcp.ServerConfig{
 			Name:        cfg.Name,
 			Enabled:     true,

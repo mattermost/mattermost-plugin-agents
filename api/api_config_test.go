@@ -413,11 +413,16 @@ func TestNormalizeAdminConfigAssignsStableIDs(t *testing.T) {
 					Servers: []config.MCPServerConfig{
 						{Name: "srv-no-id", BaseURL: "https://one.example.com"},
 					},
+					PluginServers: []config.PluginServerConfig{
+						{PluginID: "com.example.a", Name: "A", Path: "/mcp"},
+					},
 				},
 			},
 			validate: func(t *testing.T, result config.Config) {
 				assert.True(t, model.IsValidId(result.Services[0].ID))
 				assert.True(t, model.IsValidId(result.MCP.Servers[0].ID))
+				assert.True(t, model.IsValidId(result.MCP.EmbeddedServer.ID))
+				assert.True(t, model.IsValidId(result.MCP.PluginServers[0].ID))
 			},
 		},
 		{
@@ -430,11 +435,17 @@ func TestNormalizeAdminConfigAssignsStableIDs(t *testing.T) {
 					Servers: []config.MCPServerConfig{
 						{ID: "mcp-existing", Name: "srv-has-id", BaseURL: "https://one.example.com"},
 					},
+					EmbeddedServer: config.MCPEmbeddedServerConfig{ID: "embedded-existing", Enabled: true},
+					PluginServers: []config.PluginServerConfig{
+						{ID: "plugin-existing", PluginID: "com.example.a", Name: "A", Path: "/mcp"},
+					},
 				},
 			},
 			validate: func(t *testing.T, result config.Config) {
 				assert.Equal(t, "svc-existing", result.Services[0].ID)
 				assert.Equal(t, "mcp-existing", result.MCP.Servers[0].ID)
+				assert.Equal(t, "embedded-existing", result.MCP.EmbeddedServer.ID)
+				assert.Equal(t, "plugin-existing", result.MCP.PluginServers[0].ID)
 			},
 		},
 	}
@@ -460,6 +471,10 @@ func TestHandleSaveConfigCarriesForwardMCPServerIDs(t *testing.T) {
 					Servers: []config.MCPServerConfig{
 						{ID: "stable-id", Name: "Jira", BaseURL: "https://jira.example.com"},
 					},
+					EmbeddedServer: config.MCPEmbeddedServerConfig{ID: "embedded-stable", Enabled: true},
+					PluginServers: []config.PluginServerConfig{
+						{ID: "plugin-stable", PluginID: "com.example.a", Name: "A", Path: "/mcp"},
+					},
 				},
 			},
 			payloadCfg: config.Config{
@@ -467,11 +482,18 @@ func TestHandleSaveConfigCarriesForwardMCPServerIDs(t *testing.T) {
 					Servers: []config.MCPServerConfig{
 						{Name: "Jira", BaseURL: "https://jira.example.com"},
 					},
+					EmbeddedServer: config.MCPEmbeddedServerConfig{Enabled: true},
+					PluginServers: []config.PluginServerConfig{
+						{PluginID: "com.example.a", Name: "A", Path: "/mcp/v2"},
+					},
 				},
 			},
 			validate: func(t *testing.T, store *testConfigStore) {
 				require.Len(t, store.cfg.MCP.Servers, 1)
 				assert.Equal(t, "stable-id", store.cfg.MCP.Servers[0].ID)
+				assert.Equal(t, "embedded-stable", store.cfg.MCP.EmbeddedServer.ID)
+				require.Len(t, store.cfg.MCP.PluginServers, 1)
+				assert.Equal(t, "plugin-stable", store.cfg.MCP.PluginServers[0].ID)
 			},
 		},
 		{
@@ -553,6 +575,119 @@ func TestHandleSaveConfigCarriesForwardMCPServerIDs(t *testing.T) {
 			tt.validate(t, store)
 		})
 	}
+}
+
+// TestHandleSaveConfigPreservesOmittedPluginServers: full config save never
+// accepts client-provided plugin_servers — omitted and stale non-empty lists
+// both leave persisted plugin rows (and their IDs) untouched.
+func TestHandleSaveConfigPreservesOmittedPluginServers(t *testing.T) {
+	pluginA := "abcdefghijklmnopqrstuvwx0a"
+	pluginB := "abcdefghijklmnopqrstuvwx0b"
+	embeddedID := "abcdefghijklmnopqrstuvwx0e"
+	remoteID := "abcdefghijklmnopqrstuvwx0r"
+
+	storedPlugins := []config.PluginServerConfig{
+		{ID: pluginA, PluginID: "com.example.a", Name: "A", Path: "/mcp", Enabled: true},
+		{ID: pluginB, PluginID: "com.example.b", Name: "B", Path: "/other", Enabled: false},
+	}
+
+	tests := []struct {
+		name    string
+		mcp     map[string]any
+		wantIDs []string
+	}{
+		{
+			name: "omitted plugin_servers preserves prev",
+			mcp: map[string]any{
+				"enabled": true,
+				"servers": []map[string]any{
+					{"name": "Remote", "baseURL": "https://mcp.example.com", "enabled": true},
+				},
+				"embeddedServer": map[string]any{"enabled": true},
+			},
+			wantIDs: []string{pluginA, pluginB},
+		},
+		{
+			name: "stale non-empty plugin_servers ignored",
+			mcp: map[string]any{
+				"enabled": true,
+				"servers": []map[string]any{
+					{"name": "Remote", "baseURL": "https://mcp.example.com", "enabled": true},
+				},
+				"embeddedServer": map[string]any{"enabled": true},
+				"plugin_servers": []map[string]any{
+					{
+						"id": "attackeridattackeridattack", "plugin_id": "com.example.a",
+						"name": "Hacked", "path": "/evil", "enabled": false,
+					},
+				},
+			},
+			wantIDs: []string{pluginA, pluginB},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{cfg: &config.Config{
+				MCP: config.MCPConfig{
+					Enabled: true,
+					Servers: []config.MCPServerConfig{
+						{ID: remoteID, Name: "Remote", BaseURL: "https://mcp.example.com", Enabled: true},
+					},
+					EmbeddedServer: config.MCPEmbeddedServerConfig{ID: embeddedID, Enabled: true},
+					PluginServers:  append([]config.PluginServerConfig(nil), storedPlugins...),
+				},
+			}}
+			router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+			body, err := json.Marshal(map[string]any{"mcp": tt.mcp})
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			require.Len(t, store.cfg.MCP.PluginServers, len(tt.wantIDs))
+			for i, id := range tt.wantIDs {
+				assert.Equal(t, id, store.cfg.MCP.PluginServers[i].ID)
+				assert.Equal(t, storedPlugins[i].PluginID, store.cfg.MCP.PluginServers[i].PluginID)
+				assert.Equal(t, storedPlugins[i].Name, store.cfg.MCP.PluginServers[i].Name)
+				assert.Equal(t, storedPlugins[i].Path, store.cfg.MCP.PluginServers[i].Path)
+				assert.Equal(t, storedPlugins[i].Enabled, store.cfg.MCP.PluginServers[i].Enabled)
+			}
+			assert.Equal(t, remoteID, store.cfg.MCP.Servers[0].ID)
+			assert.Equal(t, embeddedID, store.cfg.MCP.EmbeddedServer.ID)
+		})
+	}
+}
+
+func TestHandleSaveConfigRejectsCrossKindMCPIDConflict(t *testing.T) {
+	sharedID := "abcdefghijklmnopqrstuvwxzz"
+	store := &testConfigStore{cfg: &config.Config{
+		MCP: config.MCPConfig{
+			EmbeddedServer: config.MCPEmbeddedServerConfig{ID: sharedID, Enabled: true},
+		},
+	}}
+	router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+	payload := config.Config{
+		MCP: config.MCPConfig{
+			Servers: []config.MCPServerConfig{
+				{ID: sharedID, Name: "Remote", BaseURL: "https://mcp.example.com", Enabled: true},
+			},
+			EmbeddedServer: config.MCPEmbeddedServerConfig{ID: sharedID, Enabled: true},
+		},
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusConflict, w.Code)
 }
 
 // TestHandleSaveConfigCarriesForwardServiceIDs mirrors the MCP server ID

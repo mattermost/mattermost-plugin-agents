@@ -29,6 +29,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -571,6 +572,92 @@ func TestHandleGetMCPTools_OmitsOrphanPluginServers(t *testing.T) {
 		"orphan plugin must not be probed; probing would surface a misleading session-not-found error")
 }
 
+type stubAdminEmbeddedServer struct{}
+
+func (s *stubAdminEmbeddedServer) CreateClientTransport(string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+	return nil, errors.New("stub: discovery not needed for ID assertions")
+}
+
+func TestHandleGetMCPTools_ReturnsStableIDs(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+	mockAPI.On("LogDebug", mock.Anything).Return().Maybe()
+
+	const (
+		embeddedID = "abcdefghijklmnopqrstuvwx01"
+		remoteID   = "abcdefghijklmnopqrstuvwx02"
+		pluginID   = "abcdefghijklmnopqrstuvwx03"
+	)
+
+	cfg := api.config.(*testConfigImpl)
+	cfg.mcpConfig = mcp.Config{
+		Enabled: true,
+		EmbeddedServer: mcp.EmbeddedServerConfig{
+			ID:      embeddedID,
+			Enabled: true,
+		},
+		Servers: []mcp.ServerConfig{{
+			ID:      remoteID,
+			Name:    "Remote",
+			Enabled: true,
+			BaseURL: "https://mcp.example.com",
+		}},
+		PluginServers: []mcp.PluginServerConfig{{
+			ID:       pluginID,
+			PluginID: "com.mattermost.demo",
+			Name:     "Demo",
+			Path:     "/mcp",
+			Enabled:  true,
+		}},
+	}
+
+	mgr := api.mcpClientManager.(*mockMCPClientManager)
+	mgr.embeddedServer = &stubAdminEmbeddedServer{}
+	// Non-nil client so remote discovery fails cleanly instead of panicking.
+	mgr.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("stub: discovery not needed for ID assertions")
+	})}
+	// Live registry carries the effective ID after config sync.
+	mgr.pluginServers = []mcp.PluginServerConfig{{
+		ID:       pluginID,
+		PluginID: "com.mattermost.demo",
+		Name:     "Demo",
+		Path:     "/mcp",
+		Enabled:  true,
+	}}
+	mgr.discoverPluginToolsResponse = []mcp.ToolInfo{{Name: "echo"}}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/mcp/tools", nil)
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body MCPToolsResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	byType := map[string]MCPServerInfo{}
+	for _, s := range body.Servers {
+		byType[s.ServerType] = s
+	}
+
+	require.Equal(t, embeddedID, byType["embedded"].ID)
+	require.Equal(t, remoteID, byType["remote"].ID)
+	require.Equal(t, pluginID, byType["plugin"].ID)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
 func TestHandleUpdatePluginServer(t *testing.T) {
 	tests := []struct {
 		name                   string
@@ -775,7 +862,6 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			require.Equal(t, tt.expectStatus, resp.StatusCode)
 
 			require.Empty(t, mgr.registerCalls)
-			require.Empty(t, mgr.updateCalls)
 			require.Len(t, mgr.adminPatchCalls, tt.expectPatchCalls)
 			if tt.expectStatus == http.StatusOK {
 				require.Equal(t, tt.expectEnabledAfter, mgr.adminPatchCalls[0].Enabled)
@@ -787,7 +873,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 					require.Equal(t, tt.expectToolConfigsAfter, mgr.adminPatchCalls[0].ToolConfigs, "ToolConfigs assertion")
 				}
 				if tt.orphanPluginIDs[tt.pluginID] {
-					require.False(t, mgr.IsPluginRegistered(tt.pluginID))
+					require.True(t, mgr.orphanPluginIDs[tt.pluginID], "admin update must not mark a config-only orphan as registered")
 				}
 			}
 			require.Equal(t, tt.expectRebuildCalls, spy.callCount)
@@ -1007,7 +1093,6 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			require.Equal(t, tt.expectPublishCalls, stores.clusterNotifier.callCount)
 
 			require.Empty(t, mgr.registerCalls)
-			require.Empty(t, mgr.updateCalls)
 			require.Len(t, mgr.adminPatchCalls, tt.expectPatchCalls, "live plugin registry must not be mutated on failure paths")
 			require.Len(t, mgr.unregisterCalls, tt.expectUnregisterCalls, "live plugin registry must not be mutated on failure paths")
 

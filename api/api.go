@@ -65,17 +65,15 @@ type MCPClientManager interface {
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
-	GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors)
-	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
+	GetUserToolsAccess(ctx context.Context, userID string) mcp.UserToolsAccess
+	RefreshUserToolsAccess(ctx context.Context, userID string) (mcp.UserToolsAccess, error)
 	GetConfig() mcp.Config
 
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
-	UpdatePluginServer(cfg mcp.PluginServerConfig)
 	UpdatePluginServerAdminFields(pluginID string, enabled bool, toolConfigs []mcp.ToolConfig) (mcp.PluginServerConfig, bool)
 	UnregisterPluginServer(pluginID string)
 	ListPluginServers() []mcp.PluginServerConfig
 	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
-	IsPluginRegistered(pluginID string) bool
 
 	DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
 }

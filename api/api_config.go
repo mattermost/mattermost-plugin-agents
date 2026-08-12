@@ -28,15 +28,34 @@ func normalizeAdminConfig(cfg config.Config) config.Config {
 	}
 
 	// Backstop for direct API automation and stale webapp bundles: every
-	// persisted service and external MCP server must have a stable ID.
+	// persisted service and MCP server (external, embedded, plugin) must
+	// have a stable ID. Minting avoids IDs already occupied across kinds.
 	for i := range cfg.Services {
 		if cfg.Services[i].ID == "" {
 			cfg.Services[i].ID = model.NewId()
 		}
 	}
+	occupied := config.OccupiedMCPServerIDs(cfg.MCP)
+	mintMCPID := func() string {
+		for {
+			id := model.NewId()
+			if _, taken := occupied[id]; !taken {
+				occupied[id] = struct{}{}
+				return id
+			}
+		}
+	}
 	for i := range cfg.MCP.Servers {
 		if cfg.MCP.Servers[i].ID == "" {
-			cfg.MCP.Servers[i].ID = model.NewId()
+			cfg.MCP.Servers[i].ID = mintMCPID()
+		}
+	}
+	if cfg.MCP.EmbeddedServer.ID == "" {
+		cfg.MCP.EmbeddedServer.ID = mintMCPID()
+	}
+	for i := range cfg.MCP.PluginServers {
+		if cfg.MCP.PluginServers[i].ID == "" {
+			cfg.MCP.PluginServers[i].ID = mintMCPID()
 		}
 	}
 
@@ -98,21 +117,21 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		// Reconcile even on the first write (empty previous lists) so
 		// fabricated or duplicate incoming IDs cannot slip in unvalidated.
 		var prevServices []llm.ServiceConfig
-		var prevServers []config.MCPServerConfig
+		var prevMCP config.MCPConfig
 		if prev != nil {
 			prevServices = prev.Services
-			prevServers = prev.MCP.Servers
+			prevMCP = prev.MCP
 		}
 		reconciledServices, reconcileErr := config.ReconcileServiceIDs(next.Services, prevServices)
 		if reconcileErr != nil {
 			return config.Config{}, reconcileErr
 		}
 		next.Services = reconciledServices
-		reconciled, reconcileErr := config.ReconcileMCPServerIDs(next.MCP.Servers, prevServers)
+		reconciledMCP, reconcileErr := config.ReconcileMCPConfigIDs(next.MCP, prevMCP)
 		if reconcileErr != nil {
 			return config.Config{}, reconcileErr
 		}
-		next.MCP.Servers = reconciled
+		next.MCP = reconciledMCP
 		normalized := normalizeAdminConfig(next)
 		changedKeys = audit.ChangedJSONKeys(prev, normalized)
 		return normalized, nil

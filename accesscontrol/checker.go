@@ -40,8 +40,8 @@ type Checker struct {
 	// cannot be resolved, so the no_policy fail-open is unsafe.
 	legacyOnly bool
 
-	// mcpIDsByOrigin resolves external MCP server origins to stable IDs for
-	// ValidateAgentWrite.
+	// mcpIDsByOrigin resolves MCP server origins (remote, embedded, plugin) to
+	// stable IDs for ValidateAgentWrite.
 	mcpIDsByOrigin func() map[string]string
 
 	availabilityMu      sync.Mutex
@@ -314,7 +314,7 @@ func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, c
 	for _, origin := range newOrigins {
 		serverID, ok := idsByOrigin[origin]
 		if !ok {
-			// Embedded/plugin/unknown origins have no stable ID and are not policy-addressable.
+			// Origins without a stable ID are not policy-addressable.
 			continue
 		}
 		if err := c.CanUseMCPServer(ctx, actingUserID, serverID); err != nil {

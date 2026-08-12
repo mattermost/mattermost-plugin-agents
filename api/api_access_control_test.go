@@ -199,6 +199,116 @@ func TestServiceAndMCPPolicyRouteAuthMatrix(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAndPluginMCPPolicyRoutes(t *testing.T) {
+	adminID := model.NewId()
+	embeddedID := model.NewId()
+	pluginID := model.NewId()
+	unknownID := model.NewId()
+	const pluginServerPluginID = "com.example.mcp"
+
+	policyBody := map[string]any{
+		"rules": []map[string]any{{"actions": []string{"use"}, "expression": `user.attributes.department == "eng"`}},
+	}
+
+	seedConfig := func(e *TestEnvironment) {
+		e.api.configStore = &mockConfigStore{
+			cfg: &config.Config{
+				MCP: config.MCPConfig{
+					EmbeddedServer: config.MCPEmbeddedServerConfig{ID: embeddedID, Enabled: true},
+					PluginServers: []config.PluginServerConfig{{
+						ID: pluginID, PluginID: pluginServerPluginID, Name: "Plugin MCP", Enabled: true, Path: "/mcp",
+					}},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		method     string
+		serverID   string
+		body       any
+		wantStatus int
+		wantName   string // non-empty: assert SaveAccessControlPolicy received this Name
+	}{
+		{name: "GET embedded policy", method: http.MethodGet, serverID: embeddedID, wantStatus: http.StatusOK},
+		{name: "PUT embedded policy", method: http.MethodPut, serverID: embeddedID, body: policyBody, wantStatus: http.StatusOK, wantName: "Mattermost"},
+		{name: "DELETE embedded policy", method: http.MethodDelete, serverID: embeddedID, wantStatus: http.StatusOK},
+		{name: "GET plugin policy", method: http.MethodGet, serverID: pluginID, wantStatus: http.StatusOK},
+		{name: "PUT plugin policy", method: http.MethodPut, serverID: pluginID, body: policyBody, wantStatus: http.StatusOK, wantName: "Plugin MCP"},
+		{name: "DELETE plugin policy", method: http.MethodDelete, serverID: pluginID, wantStatus: http.StatusOK},
+		{name: "unknown MCP server is not found", method: http.MethodGet, serverID: unknownID, wantStatus: http.StatusNotFound},
+		{name: "PUT unknown MCP server is not found", method: http.MethodPut, serverID: unknownID, body: policyBody, wantStatus: http.StatusNotFound},
+		{name: "DELETE unknown MCP server is not found", method: http.MethodDelete, serverID: unknownID, wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+			seedConfig(e)
+
+			e.mockAPI.On("HasPermissionTo", adminID, model.PermissionManageSystem).Return(true).Maybe()
+			e.mockAPI.On("GetAccessControlPolicy", mock.AnythingOfType("string")).
+				Return(&model.AccessControlPolicy{ID: tt.serverID}, nil).Maybe()
+			e.mockAPI.On("DeleteAccessControlPolicy", adminID, accesscontrol.ResourceTypeMCP, tt.serverID).
+				Return(nil).Maybe()
+
+			var savedPolicy *model.AccessControlPolicy
+			e.mockAPI.On("SaveAccessControlPolicy", adminID, mock.AnythingOfType("*model.AccessControlPolicy")).
+				Run(func(args mock.Arguments) {
+					savedPolicy = args.Get(1).(*model.AccessControlPolicy)
+				}).
+				Return(&model.AccessControlPolicy{ID: tt.serverID}, nil).Maybe()
+
+			path := "/admin/mcp/" + tt.serverID + "/access_policy"
+			recorder := doRequest(e.api, tt.method, path, tt.body, adminID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+
+			if tt.wantName != "" {
+				require.NotNil(t, savedPolicy)
+				assert.Equal(t, tt.wantName, savedPolicy.Name)
+				assert.Equal(t, tt.serverID, savedPolicy.ID)
+				assert.Equal(t, accesscontrol.ResourceTypeMCP, savedPolicy.Type)
+			}
+		})
+	}
+}
+
+func TestPluginMCPPolicyPutFallsBackNameToPluginID(t *testing.T) {
+	adminID := model.NewId()
+	pluginServerID := model.NewId()
+	const pluginServerPluginID = "com.example.unnamed"
+
+	e := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+	e.api.configStore = &mockConfigStore{
+		cfg: &config.Config{
+			MCP: config.MCPConfig{
+				PluginServers: []config.PluginServerConfig{{
+					ID: pluginServerID, PluginID: pluginServerPluginID, Enabled: true, Path: "/mcp",
+				}},
+			},
+		},
+	}
+
+	e.mockAPI.On("HasPermissionTo", adminID, model.PermissionManageSystem).Return(true).Maybe()
+	var savedPolicy *model.AccessControlPolicy
+	e.mockAPI.On("SaveAccessControlPolicy", adminID, mock.AnythingOfType("*model.AccessControlPolicy")).
+		Run(func(args mock.Arguments) {
+			savedPolicy = args.Get(1).(*model.AccessControlPolicy)
+		}).
+		Return(&model.AccessControlPolicy{ID: pluginServerID}, nil).Once()
+
+	body := map[string]any{
+		"rules": []map[string]any{{"actions": []string{"use"}, "expression": "true"}},
+	}
+	recorder := doRequest(e.api, http.MethodPut, "/admin/mcp/"+pluginServerID+"/access_policy", body, adminID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	require.NotNil(t, savedPolicy)
+	assert.Equal(t, pluginServerPluginID, savedPolicy.Name)
+}
+
 // TestLegacyIDPolicyRoutes: resources whose stored ID is a hand-crafted
 // legacy string (set via a raw config PUT before server-side minting) can
 // never carry a policy — the PDP short-circuits them to no_policy. GET must
@@ -409,6 +519,10 @@ func TestCreateAgentAttributeBasedWhileUnavailableReturns400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 
+// TestUpdateAgentUnchangedDeniedServiceSucceeds covers the write-path
+// exception in ValidateAgentWrite: an unchanged pre-existing service
+// assignment is not re-checked. List/get still hide the agent from
+// non-sysadmins when CanUseService denies (see TestListAgentsAppliesServicePolicies).
 func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
 	serviceID := model.NewId()
 	userID := model.NewId()
@@ -417,8 +531,6 @@ func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
 	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 	seedServiceConfig(e, serviceID)
-	// The service is denied to the editor, but it is a pre-existing
-	// assignment: unrelated edits must not be blocked.
 	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 
 	mockLicensed(e.mockAPI)
@@ -436,25 +548,103 @@ func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 }
 
-func TestListAgentsFiltersPolicyDeniedAgents(t *testing.T) {
+// GET /agents hides agents the caller cannot use. Non-sysadmins need both
+// agent access and CanUseService; system admins keep seeing agents whose
+// service policy would deny them.
+func TestListAgentsAppliesServicePolicies(t *testing.T) {
+	deniedServiceID := model.NewId()
+	allowedServiceID := model.NewId()
+	agentOnDeniedSvc := model.NewId()
+	agentOnAllowedSvc := model.NewId()
+	agentPolicyDenied := model.NewId()
+	creatorID := model.NewId()
+
+	tests := []struct {
+		name      string
+		isAdmin   bool
+		deniedIDs map[string]bool
+		wantIDs   []string
+	}{
+		{
+			name:      "non-sysadmin loses agent whose service is denied",
+			deniedIDs: map[string]bool{deniedServiceID: true, agentPolicyDenied: true},
+			wantIDs:   []string{agentOnAllowedSvc},
+		},
+		{
+			name:      "system admin keeps agent whose service is denied",
+			isAdmin:   true,
+			deniedIDs: map[string]bool{deniedServiceID: true, agentPolicyDenied: true},
+			wantIDs:   []string{agentOnDeniedSvc, agentOnAllowedSvc},
+		},
+		{
+			// agentPolicyDenied stays in deniedIDs so wantIDs also assert that
+			// an agent-policy deny is filtered even when its service is allowed.
+			name:      "non-sysadmin keeps agent when service is allowed",
+			deniedIDs: map[string]bool{agentPolicyDenied: true},
+			wantIDs:   []string{agentOnDeniedSvc, agentOnAllowedSvc},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := model.NewId()
+			e := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+			seedTwoServiceConfig(e, allowedServiceID, deniedServiceID)
+			e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: tt.deniedIDs}, nil, accesscontrol.NoMCPServerIDs, nil)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			e.agentStore.agents[agentOnDeniedSvc] = &llm.BotConfig{
+				ID: agentOnDeniedSvc, Name: "denied-svc", DisplayName: "Denied Service Agent",
+				ServiceID: deniedServiceID, CreatorID: creatorID, UserAccessLevel: llm.UserAccessLevelAll,
+			}
+			e.agentStore.agents[agentOnAllowedSvc] = &llm.BotConfig{
+				ID: agentOnAllowedSvc, Name: "allowed-svc", DisplayName: "Allowed Service Agent",
+				ServiceID: allowedServiceID, CreatorID: creatorID, UserAccessLevel: llm.UserAccessLevelAll,
+			}
+			e.agentStore.agents[agentPolicyDenied] = &llm.BotConfig{
+				ID: agentPolicyDenied, Name: "policy-denied", DisplayName: "Policy Denied Agent",
+				ServiceID: allowedServiceID, CreatorID: creatorID, UserAccessLevel: llm.UserAccessLevelAll,
+			}
+
+			recorder := doRequest(e.api, http.MethodGet, "/agents", nil, userID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+			var agents []llm.BotConfig
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agents))
+			gotIDs := make([]string, 0, len(agents))
+			for _, agent := range agents {
+				gotIDs = append(gotIDs, agent.ID)
+			}
+			assert.ElementsMatch(t, tt.wantIDs, gotIDs)
+		})
+	}
+}
+
+// Per-agent admins (and creators) do not bypass service ABAC on list/get —
+// only PermissionManageSystem does.
+func TestListAgentsHidesDeniedServiceFromAgentAdmin(t *testing.T) {
+	serviceID := model.NewId()
+	agentID := model.NewId()
 	userID := model.NewId()
-	deniedAgentID := model.NewId()
-	allowedAgentID := model.NewId()
 
 	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
-	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{deniedAgentID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
+	seedServiceConfig(e, serviceID)
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	creatorID := model.NewId() // not the requesting user: no admin bypass
-	e.agentStore.agents[deniedAgentID] = &llm.BotConfig{
-		ID: deniedAgentID, Name: "denied", DisplayName: "Denied", ServiceID: "svc-1", CreatorID: creatorID,
-	}
-	e.agentStore.agents[allowedAgentID] = &llm.BotConfig{
-		ID: allowedAgentID, Name: "allowed", DisplayName: "Allowed", ServiceID: "svc-1", CreatorID: creatorID,
+	e.agentStore.agents[agentID] = &llm.BotConfig{
+		ID: agentID, Name: "mine", DisplayName: "Mine",
+		ServiceID: serviceID, CreatorID: userID, UserAccessLevel: llm.UserAccessLevelNone,
 	}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, userID)
@@ -462,8 +652,7 @@ func TestListAgentsFiltersPolicyDeniedAgents(t *testing.T) {
 
 	var agents []llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agents))
-	require.Len(t, agents, 1)
-	assert.Equal(t, allowedAgentID, agents[0].ID)
+	assert.Empty(t, agents)
 }
 
 // TestABACStatusRoute drives the status endpoint through the availability probe,

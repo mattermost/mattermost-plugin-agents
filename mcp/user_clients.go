@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -445,7 +446,7 @@ func shortSlugHash(value string) string {
 // pluginServerOriginKey returns the synthetic origin string for plugin-server
 // tools. Must match the key used by filterToolsByConfig.
 func pluginServerOriginKey(pluginID string) string {
-	return "plugin://" + pluginID
+	return config.PluginServerOrigin(pluginID)
 }
 
 // ConnectToPluginServer establishes a cached MCP session with a source plugin

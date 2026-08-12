@@ -570,18 +570,19 @@ func TestListAgentsFiltersByAccess(t *testing.T) {
 	mockLicensed(e.mockAPI)
 	// sanitizeAgentForUser → canManageAgent checks PermissionManageOthersAgent for each accessible agent.
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Seed agents: one accessible (UserAccessLevelAll, with sensitive customInstructions),
 	// one blocked (UserAccessLevelNone)
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "other-user", DisplayName: "Public Agent",
-		UserAccessLevel:    llm.UserAccessLevelAll,
+		ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelAll,
 		CustomInstructions: "internal procedures",
 	}
 	e.agentStore.agents["agent-2"] = &llm.BotConfig{
 		ID: "agent-2", CreatorID: "other-user", DisplayName: "Private Agent",
-		UserAccessLevel: llm.UserAccessLevelNone,
+		ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelNone,
 	}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
@@ -1089,6 +1090,7 @@ func TestGetAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
@@ -1115,12 +1117,14 @@ func TestListAgentsMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID:                    "agent-1",
 		CreatorID:             "other-user",
 		DisplayName:           "Dynamic On",
+		ServiceID:             "svc-1",
 		UserAccessLevel:       llm.UserAccessLevelAll,
 		MCPDynamicToolLoading: true,
 	}
@@ -1128,6 +1132,7 @@ func TestListAgentsMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 		ID:                    "agent-2",
 		CreatorID:             "other-user",
 		DisplayName:           "Dynamic Off",
+		ServiceID:             "svc-1",
 		UserAccessLevel:       llm.UserAccessLevelAll,
 		MCPDynamicToolLoading: false,
 	}
@@ -1541,31 +1546,40 @@ func TestCanUserAccessAgentCreatorAdminBypass(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 	mockLicensed(e.mockAPI)
+
+	creatorID := model.NewId()
+	adminID := model.NewId()
+	randomID := model.NewId()
+
+	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Agent that normally blocks every user, but grants access to creator + admin.
+	// ServiceID is non-policy-addressable ("svc-1"), so CanUseService fails open.
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID:              "agent-1",
-		CreatorID:       "creator-user",
-		AdminUserIDs:    []string{"admin-user"},
+		CreatorID:       creatorID,
+		AdminUserIDs:    []string{adminID},
+		ServiceID:       "svc-1",
 		UserAccessLevel: llm.UserAccessLevelNone,
 	}
 
 	// Creator can see it via GET /agents.
-	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, "creator-user")
+	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, creatorID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	var agents []*llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
 	require.Len(t, agents, 1)
 
 	// Admin can see it.
-	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, "admin-user")
+	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, adminID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
 	require.Len(t, agents, 1)
 
 	// Random user cannot — UserAccessLevelNone blocks them.
-	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, "random-user")
+	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, randomID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
 	require.Empty(t, agents)

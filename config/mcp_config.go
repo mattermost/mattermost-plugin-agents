@@ -12,7 +12,17 @@ const (
 	MCPToolPolicyAsk               = "ask"
 	MCPToolPolicyAutoRunInDM       = "auto_run_in_dm"
 	MCPToolPolicyAutoRunEverywhere = "auto_run_everywhere"
+
+	// MCPEmbeddedServerOrigin is the runtime ServerOrigin for the embedded
+	// Mattermost MCP server (matches mcp.EmbeddedClientKey).
+	MCPEmbeddedServerOrigin = "embedded://mattermost"
 )
+
+// PluginServerOrigin returns the runtime ServerOrigin for a plugin-registered
+// MCP server. Identity is keyed by PluginID only — Path is not part of the origin.
+func PluginServerOrigin(pluginID string) string {
+	return "plugin://" + pluginID
+}
 
 // MCPToolConfig represents per-tool configuration for an MCP server.
 type MCPToolConfig struct {
@@ -37,6 +47,10 @@ func IsToolPolicyAutoRunEverywhere(policy string) bool {
 
 // MCPEmbeddedServerConfig contains configuration for the embedded MCP server
 type MCPEmbeddedServerConfig struct {
+	// ID is the immutable plugin-assigned ABAC policy identity. It survives
+	// enablement/tool-config edits and is never reused. Runtime tool origin
+	// is MCPEmbeddedServerOrigin.
+	ID          string          `json:"id,omitempty"`
 	Enabled     bool            `json:"enabled"`
 	ToolConfigs []MCPToolConfig `json:"tool_configs,omitempty"`
 }
@@ -110,37 +124,139 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	return IsToolPolicyAutoRunInDM(policy) && enabled
 }
 
-// ServerIDByOrigin maps a runtime ServerOrigin (BaseURL for external servers)
-// to the stable server ID. ID-less servers are omitted; on duplicate BaseURLs
-// the last entry wins (matching filterToolsByConfig); disabled servers are
-// included because policy CRUD needs the mapping regardless of enablement.
+// ServerIDByOrigin maps a runtime ServerOrigin to the stable server ID.
+// Origins are BaseURL (external), MCPEmbeddedServerOrigin (embedded), or
+// PluginServerOrigin(PluginID) (plugin). ID-less servers are omitted; on
+// duplicate origins the last entry wins (matching filterToolsByConfig);
+// disabled servers are included because policy CRUD needs the mapping
+// regardless of enablement.
 func (c *MCPConfig) ServerIDByOrigin() map[string]string {
-	out := make(map[string]string, len(c.Servers))
+	out := make(map[string]string, len(c.Servers)+len(c.PluginServers)+1)
 	for i := range c.Servers {
 		if c.Servers[i].ID == "" {
 			continue
 		}
 		out[c.Servers[i].BaseURL] = c.Servers[i].ID
 	}
+	if c.EmbeddedServer.ID != "" {
+		out[MCPEmbeddedServerOrigin] = c.EmbeddedServer.ID
+	}
+	for i := range c.PluginServers {
+		if c.PluginServers[i].ID == "" || c.PluginServers[i].PluginID == "" {
+			continue
+		}
+		out[PluginServerOrigin(c.PluginServers[i].PluginID)] = c.PluginServers[i].ID
+	}
 	return out
 }
 
-// OriginByServerID is the inverse of ServerIDByOrigin: stable ID -> current BaseURL.
+// OriginByServerID is the inverse of ServerIDByOrigin: stable ID -> current origin.
 func (c *MCPConfig) OriginByServerID() map[string]string {
-	out := make(map[string]string, len(c.Servers))
+	out := make(map[string]string, len(c.Servers)+len(c.PluginServers)+1)
 	for i := range c.Servers {
 		if c.Servers[i].ID == "" {
 			continue
 		}
 		out[c.Servers[i].ID] = c.Servers[i].BaseURL
 	}
+	if c.EmbeddedServer.ID != "" {
+		out[c.EmbeddedServer.ID] = MCPEmbeddedServerOrigin
+	}
+	for i := range c.PluginServers {
+		if c.PluginServers[i].ID == "" || c.PluginServers[i].PluginID == "" {
+			continue
+		}
+		out[c.PluginServers[i].ID] = PluginServerOrigin(c.PluginServers[i].PluginID)
+	}
 	return out
 }
 
 // ErrMCPServerIDConflict is the base error for every identity problem
-// ReconcileMCPServerIDs can detect; callers map it to a client error (stale
-// or corrupt admin console payload).
+// ReconcileMCPConfigIDs / kind-specific reconcilers can detect; callers map
+// it to a client error (stale or corrupt admin console payload).
 var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
+
+// ReconcileMCPConfigIDs is the single entry point for MCP identity on config
+// save. It:
+//
+//  1. Treats PluginServers as server-owned: prev is carried forward
+//     unconditionally. Full config save never accepts client-provided plugin
+//     rows (bridge register/unregister and PUT /admin/mcp/plugin-servers/:id
+//     are the only writers).
+//  2. Runs kind-specific ID carry-forward for remote and embedded servers.
+//  3. Rejects any ID shared by two MCP resources of any kind.
+func ReconcileMCPConfigIDs(next, prev MCPConfig) (MCPConfig, error) {
+	next.PluginServers = append([]PluginServerConfig(nil), prev.PluginServers...)
+
+	servers, err := ReconcileMCPServerIDs(next.Servers, prev.Servers)
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	next.Servers = servers
+
+	embedded, err := ReconcileEmbeddedMCPServerID(next.EmbeddedServer, prev.EmbeddedServer)
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	next.EmbeddedServer = embedded
+
+	if err := ValidateMCPServerIDUniqueness(next); err != nil {
+		return MCPConfig{}, err
+	}
+	return next, nil
+}
+
+// OccupiedMCPServerIDs returns every non-empty MCP resource ID across remote,
+// embedded, and plugin entries. Used by mint paths to avoid cross-kind collisions.
+func OccupiedMCPServerIDs(cfg MCPConfig) map[string]struct{} {
+	out := make(map[string]struct{}, len(cfg.Servers)+len(cfg.PluginServers)+1)
+	for i := range cfg.Servers {
+		if id := cfg.Servers[i].ID; id != "" {
+			out[id] = struct{}{}
+		}
+	}
+	if id := cfg.EmbeddedServer.ID; id != "" {
+		out[id] = struct{}{}
+	}
+	for i := range cfg.PluginServers {
+		if id := cfg.PluginServers[i].ID; id != "" {
+			out[id] = struct{}{}
+		}
+	}
+	return out
+}
+
+// ValidateMCPServerIDUniqueness returns ErrMCPServerIDConflict when any two
+// MCP resources (remote, embedded, or plugin) share the same non-empty ID.
+func ValidateMCPServerIDUniqueness(cfg MCPConfig) error {
+	seen := make(map[string]string, len(cfg.Servers)+len(cfg.PluginServers)+1)
+	claim := func(id, label string) error {
+		if id == "" {
+			return nil
+		}
+		if other, ok := seen[id]; ok {
+			return fmt.Errorf("%w: %s and %s share ID %q", ErrMCPServerIDConflict, other, label, id)
+		}
+		seen[id] = label
+		return nil
+	}
+	for i := range cfg.Servers {
+		label := fmt.Sprintf("remote server %q", cfg.Servers[i].Name)
+		if err := claim(cfg.Servers[i].ID, label); err != nil {
+			return err
+		}
+	}
+	if err := claim(cfg.EmbeddedServer.ID, "embedded server"); err != nil {
+		return err
+	}
+	for i := range cfg.PluginServers {
+		label := fmt.Sprintf("plugin server %q", cfg.PluginServers[i].PluginID)
+		if err := claim(cfg.PluginServers[i].ID, label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // ReconcileMCPServerIDs carries stable IDs forward from prev onto ID-less
 // entries in next (e.g. from webapp bundles predating the ID field). Server
@@ -290,8 +406,28 @@ func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MC
 	return next, nil
 }
 
+// ReconcileEmbeddedMCPServerID carries the embedded server's stable ID forward
+// from prev onto an ID-less next. A non-empty next ID that differs from a
+// non-empty prev ID is a conflict (same ErrMCPServerIDConflict contract as
+// remote servers). Caller-chosen IDs on a previously ID-less embedded server
+// are kept; both empty leaves next ID-less for the caller to mint.
+func ReconcileEmbeddedMCPServerID(next, prev MCPEmbeddedServerConfig) (MCPEmbeddedServerConfig, error) {
+	if next.ID == "" {
+		next.ID = prev.ID
+		return next, nil
+	}
+	if prev.ID != "" && next.ID != prev.ID {
+		return MCPEmbeddedServerConfig{}, fmt.Errorf("%w: embedded server carries ID %q that differs from the stored ID %q", ErrMCPServerIDConflict, next.ID, prev.ID)
+	}
+	return next, nil
+}
+
 // PluginServerConfig describes an MCP server registered by another plugin.
 type PluginServerConfig struct {
+	// ID is the immutable plugin-assigned ABAC policy identity. Identity is
+	// keyed by PluginID: it survives re-registration and Path changes and is
+	// never reused. Runtime tool origin is PluginServerOrigin(PluginID).
+	ID             string          `json:"id,omitempty"`
 	PluginID       string          `json:"plugin_id"`
 	Name           string          `json:"name"`
 	Path           string          `json:"path"`

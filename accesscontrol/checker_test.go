@@ -459,9 +459,11 @@ func TestValidateAgentWrite(t *testing.T) {
 	otherMCPServerID := model.NewId()
 
 	const (
-		allowedOrigin = "https://mcp-allowed.example.com"
-		deniedOrigin  = "https://mcp-denied.example.com"
-		unknownOrigin = "embedded://mattermost"
+		allowedOrigin  = "https://mcp-allowed.example.com"
+		deniedOrigin   = "https://mcp-denied.example.com"
+		embeddedOrigin = "embedded://mattermost"
+		pluginOrigin   = "plugin://com.example.mcp"
+		unknownOrigin  = "https://mcp-unknown-no-id.example.com"
 	)
 
 	// Availability-probe variants for the attribute-based rows: the probe is the
@@ -474,10 +476,15 @@ func TestValidateAgentWrite(t *testing.T) {
 		probeUnavailable
 	)
 
+	embeddedMCPServerID := model.NewId()
+	pluginMCPServerID := model.NewId()
+
 	resolver := func() map[string]string {
 		return map[string]string{
-			allowedOrigin: otherMCPServerID,
-			deniedOrigin:  mcpServerID,
+			allowedOrigin:  otherMCPServerID,
+			deniedOrigin:   mcpServerID,
+			embeddedOrigin: embeddedMCPServerID,
+			pluginOrigin:   pluginMCPServerID,
 		}
 	}
 
@@ -602,6 +609,28 @@ func TestValidateAgentWrite(t *testing.T) {
 				EnabledMCPTools: tools(unknownOrigin),
 			},
 			wantTypes: []string{ResourceTypeService},
+		},
+		{
+			name:    "embedded origin is policy-addressable when resolved",
+			perType: map[string]*model.AccessDecision{ResourceTypeService: allowDecision(), ResourceTypeMCP: denyDecision()},
+			cfg: &llm.BotConfig{
+				ID: model.NewId(), ServiceID: serviceID,
+				EnabledMCPTools: tools(embeddedOrigin),
+			},
+			wantErr:     ErrAccessDenied,
+			wantErrText: embeddedOrigin,
+			wantTypes:   []string{ResourceTypeService, ResourceTypeMCP},
+		},
+		{
+			name:    "plugin origin is policy-addressable when resolved",
+			perType: map[string]*model.AccessDecision{ResourceTypeService: allowDecision(), ResourceTypeMCP: denyDecision()},
+			cfg: &llm.BotConfig{
+				ID: model.NewId(), ServiceID: serviceID,
+				EnabledMCPTools: tools(pluginOrigin),
+			},
+			wantErr:     ErrAccessDenied,
+			wantErrText: pluginOrigin,
+			wantTypes:   []string{ResourceTypeService, ResourceTypeMCP},
 		},
 	}
 

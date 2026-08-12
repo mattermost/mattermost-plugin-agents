@@ -21,11 +21,15 @@ import (
 // stubServerAccessChecker denies the listed server IDs and records calls.
 type stubServerAccessChecker struct {
 	denied map[string]bool
-	calls  []string // serverIDs, in call order
+	calls  []string              // serverIDs, in call order
+	hook   func(serverID string) // optional; runs after each recorded call
 }
 
 func (s *stubServerAccessChecker) CanUseMCPServer(_ context.Context, _, serverID string) error {
 	s.calls = append(s.calls, serverID)
+	if s.hook != nil {
+		s.hook(serverID)
+	}
 	if s.denied[serverID] {
 		return fmt.Errorf("server %s: denied", serverID)
 	}
@@ -36,9 +40,13 @@ const (
 	accessAllowedOrigin = "https://mcp-allowed.example.com"
 	accessDeniedOrigin  = "https://mcp-denied.example.com"
 	accessNoIDOrigin    = "https://mcp-legacy-no-id.example.com"
+	accessPluginID      = "com.example.mcp"
+	accessPluginOrigin  = "plugin://" + accessPluginID
 
-	accessAllowedID = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
-	accessDeniedID  = "dddddddddddddddddddddddddd"
+	accessAllowedID   = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	accessDeniedID    = "dddddddddddddddddddddddddd"
+	accessEmbeddedID  = "eeeeeeeeeeeeeeeeeeeeeeeeee"
+	accessPluginSrvID = "pppppppppppppppppppppppppp"
 )
 
 func accessTestConfig() Config {
@@ -49,6 +57,10 @@ func accessTestConfig() Config {
 			{Name: "Legacy", Enabled: true, BaseURL: accessNoIDOrigin}, // no stable ID: not policy-addressable
 			{ID: "cccccccccccccccccccccccccc", Name: "Disabled", Enabled: false, BaseURL: "https://mcp-disabled.example.com"},
 		},
+		EmbeddedServer: EmbeddedServerConfig{ID: accessEmbeddedID, Enabled: true},
+		PluginServers: []PluginServerConfig{{
+			ID: accessPluginSrvID, PluginID: accessPluginID, Name: "Plugin MCP", Enabled: true,
+		}},
 	}
 }
 
@@ -59,9 +71,16 @@ func newAccessTestManager(t *testing.T, checker ServerAccessChecker) *ClientMana
 	client := pluginapi.NewClient(mockAPI, nil)
 
 	m := &ClientManager{
-		log:    client.Log,
-		config: accessTestConfig(),
+		log:              client.Log,
+		config:           accessTestConfig(),
+		embeddedClient:   &EmbeddedServerClient{},
+		pluginServers:    make(map[string]PluginServerConfig),
+		pluginRegistered: make(map[string]bool),
 	}
+	m.pluginServers[accessPluginID] = PluginServerConfig{
+		ID: accessPluginSrvID, PluginID: accessPluginID, Name: "Plugin MCP", Enabled: true, Path: "/mcp",
+	}
+	m.pluginRegistered[accessPluginID] = true
 	if checker != nil {
 		m.accessChecker = checker
 	}
@@ -75,8 +94,11 @@ func TestDeniedExternalOriginsAndToolFiltering(t *testing.T) {
 		{Name: "denied_tool_b", ServerOrigin: accessDeniedOrigin},
 		{Name: "legacy_tool", ServerOrigin: accessNoIDOrigin},
 		{Name: "embedded_tool", ServerOrigin: EmbeddedClientKey},
-		{Name: "plugin_tool", ServerOrigin: "plugin://com.example.mcp"},
+		{Name: "plugin_tool", ServerOrigin: accessPluginOrigin},
 	}
+
+	allNames := []string{"allowed_tool", "denied_tool_a", "denied_tool_b", "legacy_tool", "embedded_tool", "plugin_tool"}
+	allGatedIDs := []string{accessAllowedID, accessDeniedID, accessEmbeddedID, accessPluginSrvID}
 
 	tests := []struct {
 		name       string
@@ -87,25 +109,42 @@ func TestDeniedExternalOriginsAndToolFiltering(t *testing.T) {
 		wantCalls  []string
 	}{
 		{
-			name:       "denied server tools dropped silently, others untouched",
+			name:       "denied remote server tools dropped silently, others untouched",
 			checker:    &stubServerAccessChecker{denied: map[string]bool{accessDeniedID: true}},
 			wantDenied: map[string]bool{accessDeniedOrigin: true},
 			wantNames: []string{
 				"allowed_tool", "legacy_tool", "embedded_tool", "plugin_tool",
 			},
-			// One decision call per enabled gated server, not per tool.
-			wantCalls: []string{accessAllowedID, accessDeniedID},
+			wantCalls: allGatedIDs,
+		},
+		{
+			name:       "denied embedded origin drops embedded tools",
+			checker:    &stubServerAccessChecker{denied: map[string]bool{accessEmbeddedID: true}},
+			wantDenied: map[string]bool{EmbeddedClientKey: true},
+			wantNames: []string{
+				"allowed_tool", "denied_tool_a", "denied_tool_b", "legacy_tool", "plugin_tool",
+			},
+			wantCalls: allGatedIDs,
+		},
+		{
+			name:       "denied plugin origin drops plugin tools",
+			checker:    &stubServerAccessChecker{denied: map[string]bool{accessPluginSrvID: true}},
+			wantDenied: map[string]bool{accessPluginOrigin: true},
+			wantNames: []string{
+				"allowed_tool", "denied_tool_a", "denied_tool_b", "legacy_tool", "embedded_tool",
+			},
+			wantCalls: allGatedIDs,
 		},
 		{
 			name:      "all allowed keeps everything",
 			checker:   &stubServerAccessChecker{},
-			wantNames: []string{"allowed_tool", "denied_tool_a", "denied_tool_b", "legacy_tool", "embedded_tool", "plugin_tool"},
-			wantCalls: []string{accessAllowedID, accessDeniedID},
+			wantNames: allNames,
+			wantCalls: allGatedIDs,
 		},
 		{
 			name:       "nil checker disables filtering",
 			nilChecker: true,
-			wantNames:  []string{"allowed_tool", "denied_tool_a", "denied_tool_b", "legacy_tool", "embedded_tool", "plugin_tool"},
+			wantNames:  allNames,
 		},
 	}
 
@@ -117,7 +156,7 @@ func TestDeniedExternalOriginsAndToolFiltering(t *testing.T) {
 			}
 			m := newAccessTestManager(t, checker)
 
-			denied := m.deniedExternalOrigins(context.Background(), "userid")
+			denied := m.deniedExternalOrigins(context.Background(), "userid", m.ListPluginServers())
 			if tt.wantDenied == nil {
 				assert.Empty(t, denied)
 			} else {
@@ -135,6 +174,88 @@ func TestDeniedExternalOriginsAndToolFiltering(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeniedExternalOriginsSkipsConfigOnlyPluginServers(t *testing.T) {
+	checker := &stubServerAccessChecker{denied: map[string]bool{accessPluginSrvID: true}}
+	m := newAccessTestManager(t, checker)
+
+	// Config carries an orphan identity that never registered.
+	const orphanID = "oooooooooooooooooooooooooo"
+	m.config.PluginServers = append(m.config.PluginServers, PluginServerConfig{
+		ID: orphanID, PluginID: "com.example.orphan", Name: "Orphan", Enabled: true,
+	})
+
+	denied := m.deniedExternalOrigins(context.Background(), "userid", m.ListPluginServers())
+	assert.Equal(t, map[string]bool{accessPluginOrigin: true}, denied)
+	assert.NotContains(t, checker.calls, orphanID, "config-only orphans must not be PDP-evaluated")
+	assert.Contains(t, checker.calls, accessPluginSrvID)
+}
+
+// Mid-request registration must not enter the request-scoped snapshot used for
+// ABAC, connect, filter, and response rendering.
+func TestBuildUserToolsAccessPinsPluginSnapshotAcrossABAC(t *testing.T) {
+	const (
+		latePluginID = "com.example.late"
+		lateServerID = "llllllllllllllllllllllllll"
+		lateOrigin   = "plugin://" + latePluginID
+	)
+
+	checker := &stubServerAccessChecker{}
+	m := newAccessTestManager(t, checker)
+	m.clients = make(map[string]*UserClients)
+	m.activity = make(map[string]time.Time)
+	// Avoid remote/embedded connect side effects; plugin stays gated by ID.
+	m.config.Servers = nil
+	m.embeddedClient = nil
+	ps := m.pluginServers[accessPluginID]
+	ps.Enabled = false
+	m.pluginServers[accessPluginID] = ps
+
+	checker.hook = func(serverID string) {
+		if serverID != accessPluginSrvID {
+			return
+		}
+		// Simulate a registration that lands after the request snapshot.
+		m.pluginServersMu.Lock()
+		m.pluginServers[latePluginID] = PluginServerConfig{
+			ID: lateServerID, PluginID: latePluginID, Name: "Late", Path: "/mcp", Enabled: true,
+		}
+		m.pluginRegistered[latePluginID] = true
+		m.pluginServersMu.Unlock()
+	}
+
+	access := m.GetUserToolsAccess(context.Background(), "userid")
+
+	require.Len(t, access.PluginServers, 1)
+	assert.Equal(t, accessPluginID, access.PluginServers[0].PluginID)
+	assert.NotContains(t, checker.calls, lateServerID, "late registration must not be PDP-evaluated")
+	assert.False(t, access.DeniedOrigins[lateOrigin])
+	for _, tool := range access.Tools {
+		assert.NotEqual(t, lateOrigin, tool.ServerOrigin)
+	}
+	// Live registry did mutate; the response snapshot did not.
+	_, ok := m.GetPluginServer(latePluginID)
+	require.True(t, ok)
+}
+
+func TestRefreshUserToolsAccessEvaluatesABACOnce(t *testing.T) {
+	checker := &stubServerAccessChecker{}
+	m := newAccessTestManager(t, checker)
+	m.clients = make(map[string]*UserClients)
+	m.activity = make(map[string]time.Time)
+	// Avoid remote/embedded/plugin connect side effects; plugin stays gated by ID.
+	m.config.Servers = nil
+	m.embeddedClient = nil
+	ps := m.pluginServers[accessPluginID]
+	ps.Enabled = false
+	m.pluginServers[accessPluginID] = ps
+
+	_, err := m.RefreshUserToolsAccess(context.Background(), "userid")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{accessPluginSrvID}, checker.calls,
+		"refresh must evaluate ABAC once per gated server, not twice")
 }
 
 // A denied OAuth server with zero tools must not surface its ToolAuthError

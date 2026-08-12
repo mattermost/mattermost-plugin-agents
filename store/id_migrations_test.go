@@ -285,12 +285,17 @@ func TestMigrateABACIDs(t *testing.T) {
 			seed: func(t *testing.T, s *Store) {
 				// Services already carry modern IDs, so the rewrite is a
 				// no-op — dangling UUID references must still be diagnosed.
+				// Pre-seed embedded/plugin IDs so those migrations are also
+				// content no-ops and do not write a config row.
 				seedConfigRow(t, s, config.Config{
 					Services: []llm.ServiceConfig{
 						{ID: "modern26charidmodern26char", Name: "A", FallbackServiceID: testUUIDDangling},
 					},
 					Bots: []llm.BotConfig{
 						{ID: "bot1", Name: "ai", ServiceID: testUUIDDangling},
+					},
+					MCP: config.MCPConfig{
+						EmbeddedServer: config.MCPEmbeddedServerConfig{ID: "embedded26charidembedded26", Enabled: true},
 					},
 				}, true)
 				seedAgentRow(t, s, "dangling-agent", testUUIDDangling, 100, 0)
@@ -299,6 +304,7 @@ func TestMigrateABACIDs(t *testing.T) {
 				assert.False(t, report.Migrated, "no config rewrite happened")
 				assert.Equal(t, 0, report.ServicesRemapped)
 				assert.Equal(t, int64(0), report.AgentRowsUpdated)
+				assert.Zero(t, report.EmbeddedPluginServerIDsAssigned)
 				assert.Len(t, report.DanglingServiceRefs, 3)
 
 				cfg, err := s.GetConfig()
@@ -342,6 +348,7 @@ func TestMigrateABACIDs(t *testing.T) {
 			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
 				assert.True(t, report.Migrated)
 				assert.Equal(t, 1, report.MCPServerIDsAssigned)
+				assert.Equal(t, 2, report.EmbeddedPluginServerIDsAssigned)
 
 				cfg, err := s.GetConfig()
 				require.NoError(t, err)
@@ -361,7 +368,78 @@ func TestMigrateABACIDs(t *testing.T) {
 
 				require.Len(t, cfg.MCP.PluginServers, 1)
 				assert.Equal(t, "com.example.plugin", cfg.MCP.PluginServers[0].PluginID)
+				assert.True(t, model.IsValidId(cfg.MCP.PluginServers[0].ID))
 				assert.True(t, cfg.MCP.EmbeddedServer.Enabled)
+				assert.True(t, model.IsValidId(cfg.MCP.EmbeddedServer.ID))
+				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
+			},
+		},
+		{
+			name: "embedded and plugin IDs minted once; existing IDs untouched",
+			seed: func(t *testing.T, s *Store) {
+				require.NoError(t, s.SetSystemValue(serviceIDMigrationKey, "1"))
+				require.NoError(t, s.SetSystemValue(mcpServerIDMigrationKey, "1"))
+				seedConfigRow(t, s, config.Config{
+					MCP: config.MCPConfig{
+						Servers: []config.MCPServerConfig{
+							{ID: "remote26charidremote26chari", Name: "remote", BaseURL: "https://one.example.com"},
+						},
+						EmbeddedServer: config.MCPEmbeddedServerConfig{Enabled: true},
+						PluginServers: []config.PluginServerConfig{
+							{PluginID: "com.example.a", Name: "A", Path: "/mcp", Enabled: true},
+							{
+								ID:       "plugin26charidplugin26char",
+								PluginID: "com.example.b",
+								Name:     "B",
+								Path:     "/mcp",
+								Enabled:  false,
+							},
+						},
+					},
+				}, true)
+			},
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.True(t, report.Migrated)
+				assert.Zero(t, report.MCPServerIDsAssigned)
+				assert.Equal(t, 2, report.EmbeddedPluginServerIDsAssigned)
+
+				cfg, err := s.GetConfig()
+				require.NoError(t, err)
+				assert.Equal(t, "remote26charidremote26chari", cfg.MCP.Servers[0].ID)
+				assert.True(t, model.IsValidId(cfg.MCP.EmbeddedServer.ID))
+				require.Len(t, cfg.MCP.PluginServers, 2)
+				assert.True(t, model.IsValidId(cfg.MCP.PluginServers[0].ID))
+				assert.Equal(t, "plugin26charidplugin26char", cfg.MCP.PluginServers[1].ID)
+				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
+			},
+		},
+		{
+			name: "embedded/plugin marker prevents re-run",
+			seed: func(t *testing.T, s *Store) {
+				require.NoError(t, s.SetSystemValue(serviceIDMigrationKey, "1"))
+				require.NoError(t, s.SetSystemValue(mcpServerIDMigrationKey, "1"))
+				seedConfigRow(t, s, config.Config{
+					MCP: config.MCPConfig{
+						EmbeddedServer: config.MCPEmbeddedServerConfig{Enabled: true},
+						PluginServers: []config.PluginServerConfig{
+							{PluginID: "com.example.a", Name: "A", Path: "/mcp"},
+						},
+					},
+				}, true)
+				report, err := s.MigrateABACIDs()
+				require.NoError(t, err)
+				require.True(t, report.Migrated)
+				require.Equal(t, 2, report.EmbeddedPluginServerIDsAssigned)
+			},
+			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
+				assert.False(t, report.Migrated)
+				assert.Zero(t, report.EmbeddedPluginServerIDsAssigned)
+				assert.Equal(t, 2, configHistoryCount(t, s), "second run must not write another config row")
+
+				cfg, err := s.GetConfig()
+				require.NoError(t, err)
+				assert.True(t, model.IsValidId(cfg.MCP.EmbeddedServer.ID))
+				assert.True(t, model.IsValidId(cfg.MCP.PluginServers[0].ID))
 			},
 		},
 		{
@@ -382,15 +460,18 @@ func TestMigrateABACIDs(t *testing.T) {
 				assert.True(t, report.Migrated)
 				assert.Equal(t, 1, report.ServicesRemapped)
 				assert.Equal(t, 1, report.MCPServerIDsAssigned)
+				assert.Equal(t, 1, report.EmbeddedPluginServerIDsAssigned, "empty EmbeddedServer.ID is minted")
 				assert.Equal(t, 2, configHistoryCount(t, s),
-					"both migrations must write exactly one new config row together")
+					"all migrations must write exactly one new config row together")
 
 				cfg, err := s.GetConfig()
 				require.NoError(t, err)
 				assert.True(t, model.IsValidId(cfg.Services[0].ID))
 				assert.True(t, model.IsValidId(cfg.MCP.Servers[0].ID))
+				assert.True(t, model.IsValidId(cfg.MCP.EmbeddedServer.ID))
 				requireMarker(t, s, serviceIDMigrationKey)
 				requireMarker(t, s, mcpServerIDMigrationKey)
+				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
 			},
 		},
 		{
@@ -404,6 +485,7 @@ func TestMigrateABACIDs(t *testing.T) {
 						Servers: []config.MCPServerConfig{
 							{Name: "srv", BaseURL: "https://one.example.com"},
 						},
+						EmbeddedServer: config.MCPEmbeddedServerConfig{ID: model.NewId(), Enabled: true},
 					},
 				}, true)
 				report, err := s.MigrateABACIDs()
@@ -414,6 +496,7 @@ func TestMigrateABACIDs(t *testing.T) {
 				assert.False(t, report.Migrated)
 				assert.Zero(t, report.ServicesRemapped)
 				assert.Zero(t, report.MCPServerIDsAssigned)
+				assert.Zero(t, report.EmbeddedPluginServerIDsAssigned)
 				assert.Equal(t, 2, configHistoryCount(t, s), "second run must not write another config row")
 			},
 		},
@@ -432,6 +515,7 @@ func TestMigrateABACIDs(t *testing.T) {
 						Servers: []config.MCPServerConfig{
 							{Name: "srv", BaseURL: "https://one.example.com"},
 						},
+						EmbeddedServer: config.MCPEmbeddedServerConfig{ID: "embedded26charidembedded26", Enabled: true},
 					},
 				}, true)
 			},
@@ -439,12 +523,15 @@ func TestMigrateABACIDs(t *testing.T) {
 				assert.True(t, report.Migrated)
 				assert.Zero(t, report.ServicesRemapped, "service migration already marked done")
 				assert.Equal(t, 1, report.MCPServerIDsAssigned)
+				assert.Zero(t, report.EmbeddedPluginServerIDsAssigned, "embedded already had an ID")
 
 				cfg, err := s.GetConfig()
 				require.NoError(t, err)
 				assert.Equal(t, "migrated26charidmigrated26", cfg.Services[0].ID, "service IDs untouched when marker already set")
 				assert.True(t, model.IsValidId(cfg.MCP.Servers[0].ID))
+				assert.Equal(t, "embedded26charidembedded26", cfg.MCP.EmbeddedServer.ID)
 				requireMarker(t, s, mcpServerIDMigrationKey)
+				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
 			},
 		},
 		{
@@ -458,6 +545,10 @@ func TestMigrateABACIDs(t *testing.T) {
 						Servers: []config.MCPServerConfig{
 							{ID: model.NewId(), Name: "srv", BaseURL: "https://one.example.com"},
 						},
+						EmbeddedServer: config.MCPEmbeddedServerConfig{ID: model.NewId(), Enabled: true},
+						PluginServers: []config.PluginServerConfig{
+							{ID: model.NewId(), PluginID: "com.example.a", Name: "A", Path: "/mcp"},
+						},
 					},
 				}, true)
 			},
@@ -466,6 +557,7 @@ func TestMigrateABACIDs(t *testing.T) {
 				assert.Equal(t, 1, configHistoryCount(t, s))
 				requireMarker(t, s, serviceIDMigrationKey)
 				requireMarker(t, s, mcpServerIDMigrationKey)
+				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
 			},
 		},
 		{
@@ -476,6 +568,7 @@ func TestMigrateABACIDs(t *testing.T) {
 				assert.Zero(t, configHistoryCount(t, s))
 				requireMarker(t, s, serviceIDMigrationKey)
 				requireMarker(t, s, mcpServerIDMigrationKey)
+				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
 			},
 		},
 		{
@@ -561,7 +654,7 @@ func TestMigrateABACIDsAtomicRollback(t *testing.T) {
 			_, err := s.MigrateABACIDs()
 			require.Error(t, err)
 
-			for _, key := range []string{serviceIDMigrationKey, mcpServerIDMigrationKey} {
+			for _, key := range []string{serviceIDMigrationKey, mcpServerIDMigrationKey, embeddedPluginServerIDMigrationKey} {
 				marker, markerErr := s.GetSystemValue(key)
 				require.NoError(t, markerErr)
 				assert.Empty(t, marker, "marker %q must not be set on failure", key)
@@ -620,6 +713,7 @@ func TestMigrateABACIDsConcurrentIdempotent(t *testing.T) {
 
 	requireMarker(t, s, serviceIDMigrationKey)
 	requireMarker(t, s, mcpServerIDMigrationKey)
+	requireMarker(t, s, embeddedPluginServerIDMigrationKey)
 }
 
 // TestUpdateConfigRejectsStaleLegacyServiceIDs is the interleaving regression

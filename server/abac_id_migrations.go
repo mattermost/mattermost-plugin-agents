@@ -14,9 +14,10 @@ import (
 )
 
 // runABACIDMigrations runs the one-time ABAC identity migrations: legacy UUID
-// service IDs are rewritten to model.NewId() values, and external MCP servers
-// get stable IDs assigned. Both run in a single idempotent store transaction,
-// guarded by one cluster mutex. Returns whether the migration wrote to the DB.
+// service IDs are rewritten to model.NewId() values, and MCP servers (external,
+// embedded, and plugin-registered) get stable IDs assigned. All run in a
+// single idempotent store transaction, guarded by one cluster mutex. Returns
+// whether the migration wrote to the DB.
 func runABACIDMigrations(api plugin.API, pluginAPI *pluginapi.Client, st *store.Store, cfg *config.Container) (bool, error) {
 	mtx, err := cluster.NewMutex(api, "ai_abac_id_migration")
 	if err != nil {
@@ -44,6 +45,7 @@ func runABACIDMigrations(api plugin.API, pluginAPI *pluginapi.Client, st *store.
 			"services_remapped", report.ServicesRemapped,
 			"agent_rows_updated", report.AgentRowsUpdated,
 			"mcp_ids_assigned", report.MCPServerIDsAssigned,
+			"embedded_plugin_mcp_ids_assigned", report.EmbeddedPluginServerIDsAssigned,
 		)
 	}
 	for _, ref := range report.DanglingServiceRefs {

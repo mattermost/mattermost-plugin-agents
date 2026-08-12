@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -246,8 +247,9 @@ func (a *API) handleDeleteServicePolicy(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// resolveMCPServerForPolicy resolves :serverid to a configured external MCP
-// server (external only). Returns nil after aborting.
+// resolveMCPServerForPolicy resolves :serverid to a configured MCP server
+// (remote, embedded, or plugin). Returns a synthetic MCPServerConfig for
+// embedded/plugin entries so handlers can reuse ID/Name. Returns nil after aborting.
 func (a *API) resolveMCPServerForPolicy(c *gin.Context) *config.MCPServerConfig {
 	serverID := c.Param("serverid")
 	cfg, ok := a.loadPluginConfigForAgents(c)
@@ -257,6 +259,26 @@ func (a *API) resolveMCPServerForPolicy(c *gin.Context) *config.MCPServerConfig 
 	for i := range cfg.MCP.Servers {
 		if cfg.MCP.Servers[i].ID == serverID {
 			return &cfg.MCP.Servers[i]
+		}
+	}
+	if cfg.MCP.EmbeddedServer.ID != "" && cfg.MCP.EmbeddedServer.ID == serverID {
+		return &config.MCPServerConfig{
+			ID:   cfg.MCP.EmbeddedServer.ID,
+			Name: mcp.EmbeddedServerName,
+		}
+	}
+	for i := range cfg.MCP.PluginServers {
+		ps := &cfg.MCP.PluginServers[i]
+		if ps.ID != serverID {
+			continue
+		}
+		name := ps.Name
+		if name == "" {
+			name = ps.PluginID
+		}
+		return &config.MCPServerConfig{
+			ID:   ps.ID,
+			Name: name,
 		}
 	}
 	c.AbortWithStatus(http.StatusNotFound)

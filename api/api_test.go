@@ -113,6 +113,7 @@ type mockMCPClientManager struct {
 	oauthManager         *mcp.OAuthManager
 	tools                []llm.Tool
 	mcpErrors            *mcp.Errors
+	deniedOrigins        map[string]bool
 	config               mcp.Config
 	embeddedServer       mcp.EmbeddedMCPServer
 	processOAuthSession  *mcp.OAuthSession
@@ -128,10 +129,13 @@ type mockMCPClientManager struct {
 	ensureSessionCreated bool
 
 	registerCalls   []mcp.PluginServerConfig
-	updateCalls     []mcp.PluginServerConfig
 	adminPatchCalls []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig
+	// accessPluginServers, when non-nil, is returned on UserToolsAccess instead
+	// of ListPluginServers — used to assert response rendering ignores a live
+	// re-sample of the registry.
+	accessPluginServers []mcp.PluginServerConfig
 	// orphanPluginIDs simulates entries present in pluginServers but with
 	// no live source-plugin registration (hydrated from persisted config).
 	orphanPluginIDs map[string]bool
@@ -139,6 +143,8 @@ type mockMCPClientManager struct {
 	discoverPluginToolsResponse  []mcp.ToolInfo
 	discoverPluginToolsErr       error
 	discoverPluginToolsCallCount int
+
+	httpClient *http.Client
 }
 
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
@@ -190,18 +196,34 @@ func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, bool, 
 }
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
-	return nil
+	return m.httpClient
 }
 
-func (m *mockMCPClientManager) GetToolsForUser(ctx context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) userToolsAccess() mcp.UserToolsAccess {
+	pluginSnap := m.accessPluginServers
+	if pluginSnap == nil {
+		pluginSnap = m.ListPluginServers()
+	}
+	return mcp.UserToolsAccess{
+		Tools:         m.tools,
+		Errors:        m.mcpErrors,
+		DeniedOrigins: m.deniedOrigins,
+		PluginServers: pluginSnap,
+	}
+}
+
+func (m *mockMCPClientManager) GetUserToolsAccess(ctx context.Context, _ string) mcp.UserToolsAccess {
 	m.getContexts = append(m.getContexts, ctx)
-	return m.tools, m.mcpErrors
+	return m.userToolsAccess()
 }
 
-func (m *mockMCPClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error) {
+func (m *mockMCPClientManager) RefreshUserToolsAccess(ctx context.Context, userID string) (mcp.UserToolsAccess, error) {
 	m.refreshCalls = append(m.refreshCalls, userID)
 	m.refreshContexts = append(m.refreshContexts, ctx)
-	return m.tools, m.mcpErrors, m.refreshErr
+	if m.refreshErr != nil {
+		return mcp.UserToolsAccess{}, m.refreshErr
+	}
+	return m.userToolsAccess(), nil
 }
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
@@ -211,11 +233,6 @@ func (m *mockMCPClientManager) GetConfig() mcp.Config {
 func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) {
 	m.registerCalls = append(m.registerCalls, cfg)
 	delete(m.orphanPluginIDs, cfg.PluginID)
-	m.storePluginServer(cfg)
-}
-
-func (m *mockMCPClientManager) UpdatePluginServer(cfg mcp.PluginServerConfig) {
-	m.updateCalls = append(m.updateCalls, cfg)
 	m.storePluginServer(cfg)
 }
 
@@ -254,8 +271,13 @@ func (m *mockMCPClientManager) UnregisterPluginServer(pluginID string) {
 }
 
 func (m *mockMCPClientManager) ListPluginServers() []mcp.PluginServerConfig {
-	out := make([]mcp.PluginServerConfig, len(m.pluginServers))
-	copy(out, m.pluginServers)
+	out := make([]mcp.PluginServerConfig, 0, len(m.pluginServers))
+	for _, cfg := range m.pluginServers {
+		if m.orphanPluginIDs[cfg.PluginID] {
+			continue
+		}
+		out = append(out, cfg)
+	}
 	return out
 }
 
@@ -266,18 +288,6 @@ func (m *mockMCPClientManager) GetPluginServer(pluginID string) (mcp.PluginServe
 		}
 	}
 	return mcp.PluginServerConfig{}, false
-}
-
-func (m *mockMCPClientManager) IsPluginRegistered(pluginID string) bool {
-	if m.orphanPluginIDs[pluginID] {
-		return false
-	}
-	for _, existing := range m.pluginServers {
-		if existing.PluginID == pluginID {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {

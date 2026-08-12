@@ -240,6 +240,8 @@ type MCPServerInfo struct {
 	Enabled    bool   `json:"enabled"`
 	// ToolConfigs is populated for plugin rows only.
 	ToolConfigs []mcp.ToolConfig `json:"toolConfigs,omitempty"`
+	// ID is the stable ABAC policy identity when present.
+	ID string `json:"id,omitempty"`
 }
 
 // MCPToolsResponse represents the response structure for MCP tools endpoint
@@ -271,6 +273,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			Error:      nil,
 			ServerType: "embedded",
 			Enabled:    true,
+			ID:         mcpConfig.EmbeddedServer.ID,
 		}
 
 		// Embedded MCP is always available after PR #617, even if older configs still
@@ -298,6 +301,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			Error:      nil,
 			ServerType: "remote",
 			Enabled:    serverConfig.Enabled,
+			ID:         serverConfig.ID,
 		}
 
 		// Try to connect to the server and discover tools
@@ -319,14 +323,9 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	}
 
 	// Render disabled plugin entries (with an empty tool list) so the admin UI
-	// can re-enable them. Skip orphans hydrated from persisted config without
-	// a live source-plugin registration; surfacing them as "session not found"
-	// rows is misleading, and their persisted policy is preserved on disk
-	// regardless of whether they appear here.
+	// can re-enable them. ListPluginServers already excludes config-only
+	// orphans (no live source-plugin registration).
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
-		if !a.mcpClientManager.IsPluginRegistered(cfg.PluginID) {
-			continue
-		}
 		serverInfo := MCPServerInfo{
 			Name:        cfg.Name,
 			URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
@@ -335,6 +334,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			ServerType:  "plugin",
 			Enabled:     cfg.Enabled,
 			ToolConfigs: cfg.ToolConfigs,
+			ID:          cfg.ID,
 		}
 
 		if cfg.Enabled {
@@ -516,14 +516,11 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 			}
 		}
 
-		// The live registry entry is authoritative for the plugin-owned
-		// fields (Name, Path, ExposeExternal); only the admin-owned fields
-		// (Enabled, ToolConfigs) come from the freshest persisted entry,
-		// with the request patch applied on top.
+		// Live entry owns Name/Path/ExposeExternal; persisted admin fields
+		// (Enabled, ToolConfigs, ID) overlay via the shared merge helper.
 		base := live
 		if mergedIdx >= 0 {
-			base.Enabled = merged[mergedIdx].Enabled
-			base.ToolConfigs = merged[mergedIdx].ToolConfigs
+			base = mcp.ApplyPersistedPluginServerFields(base, merged[mergedIdx])
 		}
 		if req.Enabled != nil {
 			base.Enabled = *req.Enabled
