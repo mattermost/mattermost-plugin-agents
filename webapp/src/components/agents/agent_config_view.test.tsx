@@ -67,7 +67,6 @@ jest.mock('./tabs/config_tab', () => ({
         draft: AgentDraft;
         onChange: (updates: Partial<AgentDraft>) => void;
         errors?: Record<string, string>;
-        serviceAccountFieldsLocked: boolean;
     }) => (
         <>
             <input
@@ -224,7 +223,7 @@ function renderView(onBack = jest.fn()) {
     };
 }
 
-const serviceAccountFieldsBanner = /Access, tool grants, and AI service settings require a system administrator/;
+const serviceAccountFieldsBanner = /Access and MCP tool grants require a system administrator/;
 
 describe('AgentConfigView', () => {
     beforeEach(() => {

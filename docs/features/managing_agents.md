@@ -156,8 +156,8 @@ While **Use service accounts for authentication** is off, anyone who can manage 
 
 While **Use service accounts for authentication** is enabled:
 
-- **Editable by anyone who can manage the agent:** display name, avatar, model, max tool turns, custom instructions, vision, reasoning, and structured output.
-- **System-admin-only (sensitive):** AI service / provider routing; Enable Tools; native tools; dynamic tool loading (`mcpDynamicToolLoading`); channel access, user access, and agent admins; MCP tool grants and **Automatically enable all MCP tools**; and enabling service account authentication itself.
+- **Editable by anyone who can manage the agent:** display name, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, reasoning, and structured output.
+- **System-admin-only (sensitive):** channel access, user access, and agent admins; MCP tool grants and **Automatically enable all MCP tools**; and enabling service account authentication itself.
 - Anyone who can manage the agent may still turn service account authentication **off** or delete the agent.
 
 - **Agent username is permanent.** Once the agent is created, the username field is disabled in the editor. The Mattermost bot account is keyed off this username, and changing it would orphan existing `@mentions` and conversation history. To use a different username, create a new agent.

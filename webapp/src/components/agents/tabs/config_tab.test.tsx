@@ -93,53 +93,20 @@ function formRowForLabel(label: string): HTMLElement {
     return row;
 }
 
-function renderConfigTab(serviceAccountFieldsLocked: boolean) {
-    const onChange = jest.fn();
-    return {
-        ...render(
+describe('ConfigTab', () => {
+    // AI service, tools, dynamic loading, and native tools stay manager-editable
+    // even while service account auth is on (Access / MCP grants stay locked elsewhere).
+    test('keeps AI service, tools, dynamic tool loading, and native tools editable', async () => {
+        render(
             <IntlProvider locale='en'>
                 <ConfigTab
                     draft={makeDraft()}
-                    onChange={onChange}
+                    onChange={jest.fn()}
                     onAvatarChange={jest.fn()}
                     services={[openaiService]}
-                    serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                 />
             </IntlProvider>,
-        ),
-        onChange,
-    };
-}
-
-describe('ConfigTab', () => {
-    // Soft-lock must disable the real SA-sensitive controls (not mock stand-ins).
-    // OpenAI + Responses API is used so native tools render under Advanced configuration.
-    test('disables AI service, tools, dynamic tool loading, and native tools when locked', async () => {
-        renderConfigTab(true);
-
-        // Flush the models fetch so ConfigTab's useEffect does not warn under act().
-        await waitFor(() => expect(screen.getByText('AI Service')).not.toBeNull());
-
-        const aiServiceSelect = within(formRowForLabel('AI Service')).getByRole('combobox');
-        expect((aiServiceSelect as HTMLSelectElement).disabled).toBe(true);
-
-        fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
-
-        const enableToolsRadios = within(formRowForLabel('Enable Tools')).getAllByRole('radio');
-        expect(enableToolsRadios.length).toBeGreaterThan(0);
-        for (const radio of enableToolsRadios) {
-            expect((radio as HTMLInputElement).disabled).toBe(true);
-        }
-
-        const dynamicLoading = screen.getByLabelText('Dynamic tool loading');
-        expect((dynamicLoading as HTMLInputElement).disabled).toBe(true);
-
-        const nativeTool = within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox');
-        expect((nativeTool as HTMLInputElement).disabled).toBe(true);
-    });
-
-    test('leaves AI service, tools, dynamic tool loading, and native tools enabled when unlocked', async () => {
-        renderConfigTab(false);
+        );
 
         await waitFor(() => expect(screen.getByText('AI Service')).not.toBeNull());
 
@@ -149,6 +116,7 @@ describe('ConfigTab', () => {
         fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
 
         const enableToolsRadios = within(formRowForLabel('Enable Tools')).getAllByRole('radio');
+        expect(enableToolsRadios.length).toBeGreaterThan(0);
         for (const radio of enableToolsRadios) {
             expect((radio as HTMLInputElement).disabled).toBe(false);
         }

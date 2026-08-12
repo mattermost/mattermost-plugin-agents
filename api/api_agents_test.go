@@ -41,6 +41,7 @@ func setupAgentTestEnvironment(t *testing.T) *TestEnvironment {
 		cfg: &config.Config{
 			Services: []llm.ServiceConfig{
 				{ID: "svc-1", Name: "Test Service", Type: "openai"},
+				{ID: "svc-2", Name: "Other Service", Type: "openai"},
 			},
 		},
 	}
@@ -788,13 +789,33 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 			expectStored:   true,
 		},
 		{
-			name:         "non-admin cannot keep service account auth and change serviceID",
+			name:         "non-admin can keep service account auth and change serviceID",
 			storedValue:  true,
 			requestValue: true,
 			extraOverrides: map[string]any{
 				"serviceID": "svc-2",
 			},
-			expectedStatus: http.StatusForbidden,
+			expectedStatus: http.StatusOK,
+			expectStored:   true,
+		},
+		{
+			name:         "non-admin can keep service account auth and change disableTools",
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"disableTools": true,
+			},
+			expectedStatus: http.StatusOK,
+			expectStored:   true,
+		},
+		{
+			name:         "non-admin can keep service account auth and change mcpDynamicToolLoading",
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"mcpDynamicToolLoading": false,
+			},
+			expectedStatus: http.StatusOK,
 			expectStored:   true,
 		},
 		{

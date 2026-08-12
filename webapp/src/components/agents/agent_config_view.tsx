@@ -438,7 +438,7 @@ const AgentConfigView = (props: Props) => {
                     {errors.general && <ErrorBanner>{errors.general}</ErrorBanner>}
                     {serviceAccountFieldsLocked && (
                         <WarningBanner>
-                            <FormattedMessage defaultMessage='This agent uses service account authentication. Access, tool grants, and AI service settings require a system administrator while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>
+                            <FormattedMessage defaultMessage='This agent uses service account authentication. Access and MCP tool grants require a system administrator while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>
                         </WarningBanner>
                     )}
 
@@ -451,7 +451,6 @@ const AgentConfigView = (props: Props) => {
                             services={services}
                             errors={errors}
                             usernameLocked={mode === 'edit'}
-                            serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                         />
                     )}
                     {activeTab === 'access' && (

@@ -63,7 +63,11 @@ func clearManagerEditableFields(cfg *llm.BotConfig) {
 	cfg.DisplayName = ""
 	cfg.CustomInstructions = ""
 	cfg.Model = ""
+	cfg.ServiceID = ""
 	cfg.EnableVision = false
+	cfg.DisableTools = false
+	cfg.EnabledNativeTools = nil
+	cfg.MCPDynamicToolLoading = false
 	cfg.ReasoningEnabled = false
 	cfg.ReasoningEffort = ""
 	cfg.ThinkingBudget = 0
@@ -71,12 +75,11 @@ func clearManagerEditableFields(cfg *llm.BotConfig) {
 	cfg.MaxToolTurns = 0
 	cfg.UseServiceAccountAuth = false
 
-	// ID collections are sets on the wire; order and nil-vs-empty are not changes.
+	// Access/MCP-grant ID collections are sets on the wire; order and nil-vs-empty are not changes.
 	cfg.ChannelIDs = sortedOrNil(cfg.ChannelIDs)
 	cfg.UserIDs = sortedOrNil(cfg.UserIDs)
 	cfg.TeamIDs = sortedOrNil(cfg.TeamIDs)
 	cfg.AdminUserIDs = sortedOrNil(cfg.AdminUserIDs)
-	cfg.EnabledNativeTools = sortedOrNil(cfg.EnabledNativeTools)
 	cfg.EnabledMCPTools = sortedToolsOrNil(cfg.EnabledMCPTools)
 }
 
@@ -104,9 +107,9 @@ func sortedToolsOrNil(s []llm.EnabledMCPTool) []llm.EnabledMCPTool {
 }
 
 // serviceAccountChangeNeedsAdmin reports whether moving stored to proposed requires
-// manage_system: enabling service account auth, or changing an access/tool-reach/
-// provider field while it stays on. Turning it off is always allowed. Agent managers
-// may still change the fields cleared by clearManagerEditableFields while SA stays on.
+// manage_system: enabling service account auth, or changing Access / MCP grants
+// while it stays on. Turning it off is always allowed. Agent managers may still
+// change the fields cleared by clearManagerEditableFields while SA stays on.
 func serviceAccountChangeNeedsAdmin(stored, proposed llm.BotConfig) bool {
 	if !proposed.UseServiceAccountAuth {
 		return false

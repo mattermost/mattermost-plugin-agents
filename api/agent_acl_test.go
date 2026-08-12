@@ -19,7 +19,11 @@ var managerEditableBotConfigFields = map[string]bool{
 	"DisplayName":             true,
 	"CustomInstructions":      true,
 	"Model":                   true,
+	"ServiceID":               true,
 	"EnableVision":            true,
+	"DisableTools":            true,
+	"EnabledNativeTools":      true,
+	"MCPDynamicToolLoading":   true,
 	"ReasoningEnabled":        true,
 	"ReasoningEffort":         true,
 	"ThinkingBudget":          true,
@@ -50,14 +54,20 @@ func TestServiceAccountChangeNeedsAdmin(t *testing.T) {
 		{
 			name:     "manager-editable change while SA on does not need admin",
 			stored:   llm.BotConfig{UseServiceAccountAuth: true, DisplayName: "A", ServiceID: "svc-1"},
-			proposed: llm.BotConfig{UseServiceAccountAuth: true, DisplayName: "B", ServiceID: "svc-1"},
+			proposed: llm.BotConfig{UseServiceAccountAuth: true, DisplayName: "B", ServiceID: "svc-2"},
 			want:     false,
 		},
 		{
-			name:     "sensitive change while SA on needs admin",
-			stored:   llm.BotConfig{UseServiceAccountAuth: true, ServiceID: "svc-1"},
-			proposed: llm.BotConfig{UseServiceAccountAuth: true, ServiceID: "svc-2"},
-			want:     true,
+			name: "sensitive access change while SA on needs admin",
+			stored: llm.BotConfig{
+				UseServiceAccountAuth: true,
+				UserAccessLevel:       llm.UserAccessLevelNone,
+			},
+			proposed: llm.BotConfig{
+				UseServiceAccountAuth: true,
+				UserAccessLevel:       llm.UserAccessLevelAll,
+			},
+			want: true,
 		},
 		{
 			name: "reordered channel IDs while SA on do not need admin",
