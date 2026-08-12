@@ -49,6 +49,9 @@ type Props = {
 
     /** When true (e.g. edit mode), username cannot be changed; matches API behavior. */
     usernameLocked?: boolean;
+
+    /** Soft-lock AI service + tools controls while SA is on for non-admins. */
+    serviceAccountFieldsLocked?: boolean;
 }
 
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
@@ -57,7 +60,15 @@ const openAIStructuredOutputServiceTypes = ['openai', 'openaicompatible', 'azure
 const CUSTOM_INSTRUCTIONS_LENGTH_WARNING_THRESHOLD = MaxCustomInstructionsRunes * 0.9;
 
 const ConfigTab = (props: Props) => {
-    const {draft, onChange, onAvatarChange, services, errors = {}, usernameLocked = false} = props;
+    const {
+        draft,
+        onChange,
+        onAvatarChange,
+        services,
+        errors = {},
+        usernameLocked = false,
+        serviceAccountFieldsLocked = false,
+    } = props;
     const intl = useIntl();
     const [advancedExpanded, setAdvancedExpanded] = useState(false);
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
@@ -289,6 +300,7 @@ const ConfigTab = (props: Props) => {
                     value={draft.serviceId}
                     onChange={(e) => onChange({serviceId: e.target.value})}
                     error={errors.serviceId}
+                    disabled={serviceAccountFieldsLocked}
                     helptext={intl.formatMessage({
                         defaultMessage:
                             'Select an AI service to load model suggestions and configure vision, tools, native provider tools, reasoning, and structured output.',
@@ -381,6 +393,7 @@ const ConfigTab = (props: Props) => {
                                             inputAriaLabel={intl.formatMessage({defaultMessage: 'Dynamic tool loading'})}
                                             label={intl.formatMessage({defaultMessage: 'Enable'})}
                                             checked={draft.mcpDynamicToolLoading}
+                                            disabled={serviceAccountFieldsLocked}
                                             onChange={(checked) => onChange({mcpDynamicToolLoading: checked})}
                                         />
                                     </FieldControlRow>
@@ -417,6 +430,7 @@ const ConfigTab = (props: Props) => {
                                     <BooleanItem
                                         label={intl.formatMessage({defaultMessage: 'Enable Tools'})}
                                         value={!draft.disableTools}
+                                        disabled={serviceAccountFieldsLocked}
                                         onChange={(to: boolean) => onChange({disableTools: !to})}
                                         helpText={intl.formatMessage({defaultMessage: 'By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools.'})}
                                     />
@@ -425,6 +439,7 @@ const ConfigTab = (props: Props) => {
                                             enabledTools={draft.enabledNativeTools}
                                             onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
                                             provider='anthropic'
+                                            disabled={serviceAccountFieldsLocked}
                                         />
                                     )}
                                     {isGoogle && (
@@ -432,6 +447,7 @@ const ConfigTab = (props: Props) => {
                                             enabledTools={draft.enabledNativeTools}
                                             onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
                                             provider='google'
+                                            disabled={serviceAccountFieldsLocked}
                                         />
                                     )}
                                     {isOpenAIWithResponses && (
@@ -439,6 +455,7 @@ const ConfigTab = (props: Props) => {
                                             enabledTools={draft.enabledNativeTools}
                                             onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
                                             provider='openai'
+                                            disabled={serviceAccountFieldsLocked}
                                         />
                                     )}
                                     {selectedServiceAsLLM && (

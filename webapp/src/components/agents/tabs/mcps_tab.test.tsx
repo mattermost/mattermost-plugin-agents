@@ -196,6 +196,36 @@ describe('McpsTab', () => {
         expect(on.onChange).toHaveBeenCalledWith({useServiceAccountAuth: false});
     });
 
+    // Soft-lock mirrors the server sensitive-field ACL: auto-enable and tool
+    // grants are disabled while fields-locked, but the SA off-switch stays usable.
+    test('disables auto-enable and tool grants while service account fields are locked', async () => {
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);
+        mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
+
+        const onChange = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <McpsTab
+                    enabledTools={[]}
+                    autoEnableNewMCPTools={false}
+                    useServiceAccountAuth={true}
+                    serviceAccountFieldsLocked={true}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+        await screen.findByText('Mattermost');
+
+        const autoEnable = screen.getByRole('checkbox', {name: /^Automatically enable all MCP tools/});
+        expect((autoEnable as HTMLInputElement).disabled).toBe(true);
+
+        const saToggle = screen.getByRole('checkbox', {name: serviceAccountToggleName});
+        expect((saToggle as HTMLInputElement).disabled).toBe(false);
+
+        const serverToggle = screen.getByRole('button', {name: /Enable all tools for \{serverName\}|Disable all tools for \{serverName\}/});
+        expect((serverToggle as HTMLButtonElement).disabled).toBe(true);
+    });
+
     // The setting must stay reachable even when the catalog renders no servers.
     test('shows the service account toggle when no MCP servers are available', async () => {
         mockedGetUserMCPTools.mockResolvedValue({servers: []});

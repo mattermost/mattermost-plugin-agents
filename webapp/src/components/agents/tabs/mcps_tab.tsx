@@ -21,6 +21,9 @@ type Props = {
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     useServiceAccountAuth: boolean;
+
+    /** Soft-lock auto-enable + tool grants while SA is on for non-admins; SA checkbox stays reachable. */
+    serviceAccountFieldsLocked?: boolean;
     onChange: (updates: {
         enabledTools?: EnabledTool[];
         autoEnableNewMCPTools?: boolean;
@@ -39,7 +42,14 @@ function serverToolsPanelId(serverOrigin: string): string {
 }
 
 const McpsTab = (props: Props) => {
-    const {enabledTools, autoEnableNewMCPTools, useServiceAccountAuth, onChange, onReconcileEnabledTools} = props;
+    const {
+        enabledTools,
+        autoEnableNewMCPTools,
+        useServiceAccountAuth,
+        serviceAccountFieldsLocked = false,
+        onChange,
+        onReconcileEnabledTools,
+    } = props;
     const intl = useIntl();
 
     // Mirrors the server-side PermissionManageSystem check: only system admins may
@@ -227,6 +237,9 @@ const McpsTab = (props: Props) => {
         </ServiceAccountSection>
     );
 
+    // Tool-grant UI is also locked while auto-enable is on (existing behavior).
+    const toolGrantsDisabled = serviceAccountFieldsLocked || autoEnableNewMCPTools;
+
     if (loading) {
         return (
             <Container>
@@ -266,9 +279,13 @@ const McpsTab = (props: Props) => {
                     type='checkbox'
                     id='mcp-auto-enable'
                     checked={autoEnableNewMCPTools}
+                    disabled={serviceAccountFieldsLocked}
                     onChange={(e) => onChange({autoEnableNewMCPTools: e.target.checked})}
                 />
-                <CheckboxLabel htmlFor='mcp-auto-enable'>
+                <CheckboxLabel
+                    htmlFor='mcp-auto-enable'
+                    $disabled={serviceAccountFieldsLocked}
+                >
                     <CheckboxTitle>
                         <FormattedMessage defaultMessage='Automatically enable all MCP tools'/>
                     </CheckboxTitle>
@@ -283,7 +300,7 @@ const McpsTab = (props: Props) => {
                 placeholder={intl.formatMessage({defaultMessage: 'Search servers and tools...'})}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                disabled={autoEnableNewMCPTools}
+                disabled={toolGrantsDisabled}
             />
 
             {autoEnableNewMCPTools && (
@@ -389,8 +406,8 @@ const McpsTab = (props: Props) => {
                                     type='button'
                                     aria-label={serverToggleLabel}
                                     aria-checked={allOn}
-                                    onClick={() => !autoEnableNewMCPTools && toggleAllServerTools(server)}
-                                    disabled={autoEnableNewMCPTools}
+                                    onClick={() => !toolGrantsDisabled && toggleAllServerTools(server)}
+                                    disabled={toolGrantsDisabled}
                                     $enabled={allOn}
                                 >
                                     <ToggleKnob $enabled={allOn}/>
@@ -417,7 +434,7 @@ const McpsTab = (props: Props) => {
                                         // Strip the pluginmcp "<pluginID>__" prefix for display
                                         // only; wire tool.name remains the enable/disable identity.
                                         const pluginID = pluginIDFromServerOrigin(server.serverOrigin);
-                                        const toolsDisabled = autoEnableNewMCPTools || wildcardOn;
+                                        const toolsDisabled = toolGrantsDisabled || wildcardOn;
                                         return adminEnabledTools.map((tool) => {
                                             const toolOn = isToolEnabled(server.serverOrigin, tool.name);
                                             const displayName = pluginID ? stripPluginPrefix(tool.name, pluginID) : tool.name;
@@ -483,14 +500,19 @@ const CheckboxRow = styled.div`
 const CheckboxInput = styled.input`
     margin-top: 2px;
     cursor: pointer;
+
+    &:disabled {
+        cursor: not-allowed;
+    }
 `;
 
-const CheckboxLabel = styled.label`
+const CheckboxLabel = styled.label<{$disabled?: boolean}>`
     display: flex;
     flex-direction: column;
     gap: 2px;
-    cursor: pointer;
+    cursor: ${(p) => (p.$disabled ? 'not-allowed' : 'pointer')};
     user-select: none;
+    opacity: ${(p) => (p.$disabled ? 0.6 : 1)};
 `;
 
 const CheckboxTitle = styled.span`
@@ -525,6 +547,11 @@ const SearchInput = styled.input`
     &:focus {
         border-color: var(--button-bg);
         outline: none;
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
     }
 
     &::placeholder {

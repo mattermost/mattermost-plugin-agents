@@ -229,12 +229,12 @@ const AgentConfigView = (props: Props) => {
     const showDiscardDialogRef = useRef(false);
     showDiscardDialogRef.current = showDiscardDialog;
 
-    // Non-admins may not save while service account auth stays enabled; turning
-    // the draft flag off re-enables Save (mirrors the server-side admin gate).
-    const serviceAccountSaveLocked = !canEditServiceAccountAuth && draft.useServiceAccountAuth;
+    // Soft-lock Access / MCP grants / provider+tools while SA stays on for non-admins.
+    // Save stays enabled so managers can still edit non-sensitive day-to-day config.
+    const serviceAccountFieldsLocked = !canEditServiceAccountAuth && draft.useServiceAccountAuth;
 
-    // The MCPs tab stays reachable while save-locked so the off switch is available.
-    const mcpsTabDisabled = draft.disableTools && !serviceAccountSaveLocked;
+    // The MCPs tab stays reachable while fields-locked so the off switch is available.
+    const mcpsTabDisabled = draft.disableTools && !serviceAccountFieldsLocked;
 
     // Leave MCPs tab if tools are disabled
     useEffect(() => {
@@ -436,9 +436,9 @@ const AgentConfigView = (props: Props) => {
 
                 <ViewBody>
                     {errors.general && <ErrorBanner>{errors.general}</ErrorBanner>}
-                    {serviceAccountSaveLocked && (
+                    {serviceAccountFieldsLocked && (
                         <WarningBanner>
-                            <FormattedMessage defaultMessage='This agent uses service account authentication. Only system administrators can modify it while that setting is enabled. Turn the setting off on the MCPs tab to re-enable saving.'/>
+                            <FormattedMessage defaultMessage='This agent uses service account authentication. Access, tool grants, and AI service settings require a system administrator while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>
                         </WarningBanner>
                     )}
 
@@ -451,12 +451,14 @@ const AgentConfigView = (props: Props) => {
                             services={services}
                             errors={errors}
                             usernameLocked={mode === 'edit'}
+                            serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                         />
                     )}
                     {activeTab === 'access' && (
                         <AccessTab
                             draft={draft}
                             onChange={updateDraft}
+                            serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                         />
                     )}
                     {activeTab === 'mcps' && (
@@ -464,6 +466,7 @@ const AgentConfigView = (props: Props) => {
                             enabledTools={draft.enabledTools}
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
                             useServiceAccountAuth={draft.useServiceAccountAuth}
+                            serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                             onChange={(updates) => updateDraft(updates)}
                             onReconcileEnabledTools={reconcileEnabledTools}
                         />
@@ -480,7 +483,7 @@ const AgentConfigView = (props: Props) => {
                     </CancelButton>
                     <SaveButton
                         onClick={handleSave}
-                        disabled={saving || serviceAccountSaveLocked}
+                        disabled={saving}
                     >
                         {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
                         }

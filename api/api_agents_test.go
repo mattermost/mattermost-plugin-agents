@@ -734,12 +734,73 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 			expectStored:   false,
 		},
 		{
-			name:         "non-admin cannot keep service account auth while changing other fields",
+			name:         "non-admin can keep service account auth and change customInstructions",
 			storedValue:  true,
 			requestValue: true,
 			extraOverrides: map[string]any{
-				"userAccessLevel":    int(llm.UserAccessLevelAll),
-				"customInstructions": "widened",
+				"customInstructions": "day-to-day update",
+			},
+			expectedStatus: http.StatusOK,
+			expectStored:   true,
+		},
+		{
+			name:         "non-admin can keep service account auth and change displayName",
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"displayName": "Manager Renamed",
+			},
+			expectedStatus: http.StatusOK,
+			expectStored:   true,
+		},
+		{
+			name:         "non-admin can keep service account auth and change model",
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"model": "gpt-4.1",
+			},
+			expectedStatus: http.StatusOK,
+			expectStored:   true,
+		},
+		{
+			name:         "non-admin cannot keep service account auth and change userAccessLevel",
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"userAccessLevel": int(llm.UserAccessLevelAll),
+			},
+			expectedStatus: http.StatusForbidden,
+			expectStored:   true,
+		},
+		{
+			name:         "non-admin cannot keep service account auth and change enabledMCPTools",
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"enabledMCPTools": []llm.EnabledMCPTool{
+					{ServerOrigin: "https://mcp.example.com", ToolName: "search"},
+				},
+			},
+			expectedStatus: http.StatusForbidden,
+			expectStored:   true,
+		},
+		{
+			name:         "non-admin cannot keep service account auth and change serviceID",
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"serviceID": "svc-2",
+			},
+			expectedStatus: http.StatusForbidden,
+			expectStored:   true,
+		},
+		{
+			name:         "non-admin cannot keep service account auth and change adminUserIDs",
+			storedValue:  true,
+			requestValue: true,
+			extraOverrides: map[string]any{
+				"adminUserIDs": []string{"admin-user-2"},
 			},
 			expectedStatus: http.StatusForbidden,
 			expectStored:   true,
@@ -833,12 +894,19 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 			}
 			assert.Equal(t, tc.expectStored, e.agentStore.agents["agent-1"].UseServiceAccountAuth)
 			if tc.expectedStatus == http.StatusOK {
-				assert.Equal(t, "Updated", e.agentStore.agents["agent-1"].DisplayName)
+				wantDisplayName := "Updated"
+				if name, ok := tc.extraOverrides["displayName"]; ok {
+					wantDisplayName = name.(string)
+				}
+				assert.Equal(t, wantDisplayName, e.agentStore.agents["agent-1"].DisplayName)
 				if level, ok := tc.extraOverrides["userAccessLevel"]; ok {
 					assert.Equal(t, llm.UserAccessLevel(level.(int)), e.agentStore.agents["agent-1"].UserAccessLevel)
 				}
 				if instructions, ok := tc.extraOverrides["customInstructions"]; ok {
 					assert.Equal(t, instructions, e.agentStore.agents["agent-1"].CustomInstructions)
+				}
+				if modelName, ok := tc.extraOverrides["model"]; ok {
+					assert.Equal(t, modelName, e.agentStore.agents["agent-1"].Model)
 				}
 			}
 		})
