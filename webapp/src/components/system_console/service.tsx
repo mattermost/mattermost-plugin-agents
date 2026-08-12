@@ -13,6 +13,8 @@ import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
 
+import ConsolePolicySection from '../access_control/console_policy_section';
+
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
 
 export type LLMService = {
@@ -491,6 +493,15 @@ const Service = (props: Props) => {
                             onChange={props.onChange}
                         />
                     </ItemList>
+                    {/* IDs are minted server-side on save, so any id-bearing
+                        entry is persisted and policy authoring is safe. */}
+                    {props.service.id && (
+                        <ConsolePolicySection
+                            resourceType='service'
+                            resourceId={props.service.id}
+                            resourceDisplayName={props.service.name || serviceTypeToDisplayName(intl, props.service.type)}
+                        />
+                    )}
                 </ItemListContainer>
             )}
         </ServiceContainer>

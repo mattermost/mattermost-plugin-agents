@@ -8,8 +8,7 @@ import {useIntl} from 'react-intl';
 
 import {ToggleSwitch} from '../toggle_switch';
 
-import {MCPToolConfig} from './mcp_servers';
-import {MCPToolInfo} from './mcp_tools_viewer';
+import {MCPToolConfig, MCPToolInfo} from './mcp_types';
 
 type MCPToolConfigRowProps = {
     tool: MCPToolInfo;

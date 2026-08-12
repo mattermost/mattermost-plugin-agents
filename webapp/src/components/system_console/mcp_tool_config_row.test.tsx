@@ -4,9 +4,8 @@
 import React from 'react';
 import {fireEvent, render, screen} from '@testing-library/react';
 
-import {MCPToolConfig} from './mcp_servers';
 import MCPToolConfigRow from './mcp_tool_config_row';
-import {MCPToolInfo} from './mcp_tools_viewer';
+import {MCPToolConfig, MCPToolInfo} from './mcp_types';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
