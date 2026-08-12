@@ -6,6 +6,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -893,6 +894,35 @@ func TestHandleMCPRegister_MintsStableIDAcrossReregister(t *testing.T) {
 	require.Equal(t, firstID, e.mcp.registerCalls[1].ID, "re-register must reuse the persisted ID")
 	require.Equal(t, firstID, store.cfg.MCP.PluginServers[0].ID)
 	require.Len(t, store.cfg.MCP.PluginServers, 1, "re-register must not create a duplicate config entry")
+}
+
+func TestHandleMCPRegister_ClusterNotifyFailureStillRegisters(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	store := &testConfigStore{cfg: &config.Config{}}
+	updater := &testConfigUpdater{}
+	notifier := &testClusterNotifier{err: errors.New("cluster down")}
+	e.api.configStore = store
+	e.api.configUpdater = updater
+	e.api.clusterNotifier = notifier
+
+	body := mcp.PluginServerConfig{
+		PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+		Enabled: true, ExposeExternal: false,
+	}
+	req := mcpRegisterRequest(t, body)
+	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	resp := serveAndReturn(e, req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 1, "registration must complete even when cluster notify fails")
+	require.True(t, model.IsValidId(e.mcp.registerCalls[0].ID))
+	require.Len(t, store.cfg.MCP.PluginServers, 1)
+	require.Equal(t, 1, notifier.callCount)
+	require.Equal(t, 1, updater.callCount, "in-memory config must still be updated")
 }
 
 // Live registry ID must win when the persisted PluginServers row is missing,
