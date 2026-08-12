@@ -466,6 +466,27 @@ describe('PolicyEditor', () => {
         expect(screen.queryByTestId('table-editor')).toBeNull();
     });
 
+    it('does not reload the policy when allowAdvanced changes', async () => {
+        const {rerender} = renderEditor();
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+        fireEvent.click(screen.getByText('table-edit'));
+        expect(screen.getByTestId('table-value').textContent).toBe('user.attributes.team == "eng"');
+        expect(client.getAgentAccessPolicy).toHaveBeenCalledTimes(1);
+
+        rerender(
+            <IntlProvider locale='en'>
+                <PolicyEditor
+                    {...defaultProps}
+                    allowAdvanced={false}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByTestId('table-value').textContent).toBe('user.attributes.team == "eng"');
+        expect(client.getAgentAccessPolicy).toHaveBeenCalledTimes(1);
+        expect(client.getAccessControlFields).toHaveBeenCalledTimes(1);
+    });
+
     it('surfaces a save error and stays editable', async () => {
         client.putAgentAccessPolicy.mockRejectedValue(new Error('save exploded'));
         renderEditor();
