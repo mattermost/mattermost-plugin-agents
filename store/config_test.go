@@ -380,6 +380,107 @@ func TestSaveConfigConcurrent(t *testing.T) {
 	assert.Equal(t, workerCount, totalCount)
 }
 
+// TestSaveConfigRejectsLegacyUUIDsAfterMigration proves the post-migration
+// legacy UUID guard lives inside the shared write primitive: even a direct
+// SaveConfig (not just UpdateConfig) cannot reintroduce pre-migration UUID
+// service IDs once the migration marker is set.
+func TestSaveConfigRejectsLegacyUUIDsAfterMigration(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	require.NoError(t, s.SaveConfig(config.Config{
+		Services: []llm.ServiceConfig{{ID: testUUIDA, Name: "A"}},
+	}))
+	report, err := s.MigrateABACIDs()
+	require.NoError(t, err)
+	require.True(t, report.Migrated)
+	migrated, err := s.GetConfig()
+	require.NoError(t, err)
+
+	rowsBefore := configHistoryCount(t, s)
+	err = s.SaveConfig(config.Config{
+		Services: []llm.ServiceConfig{{ID: testUUIDA, Name: "A"}},
+	})
+	require.ErrorIs(t, err, ErrStaleLegacyServiceIDs)
+	assert.Equal(t, rowsBefore, configHistoryCount(t, s), "rejected save must not write a config row")
+
+	current, err := s.GetConfig()
+	require.NoError(t, err)
+	assert.Equal(t, migrated.Services[0].ID, current.Services[0].ID, "migrated ID must survive the rejected save")
+
+	// A payload without UUIDs still saves normally.
+	require.NoError(t, s.SaveConfig(*migrated))
+}
+
+// TestUpdateConfigConcurrentWritersNoLostUpdate is the read-modify-write race
+// regression: two concurrent writers that each modify a different part of the
+// config must both land — the advisory lock serializes them and each
+// transform sees the other's committed write, so no update (including the
+// migrated service IDs the base config carries) can be lost.
+func TestUpdateConfigConcurrentWritersNoLostUpdate(t *testing.T) {
+	baseStore := setupTestStore(t)
+	require.NoError(t, baseStore.RunMigrations())
+
+	var schemaName string
+	require.NoError(t, baseStore.db.Get(&schemaName, "SELECT current_schema()"))
+
+	// Base config as the ID migration left it: migrated 26-char service ID.
+	require.NoError(t, baseStore.SaveConfig(config.Config{
+		Services: []llm.ServiceConfig{{ID: testUUIDA, Name: "A"}},
+	}))
+	report, err := baseStore.MigrateABACIDs()
+	require.NoError(t, err)
+	require.True(t, report.Migrated)
+	migrated, err := baseStore.GetConfig()
+	require.NoError(t, err)
+	migratedID := migrated.Services[0].ID
+
+	writerA := setupSchemaBoundStore(t, schemaName)
+	writerB := setupSchemaBoundStore(t, schemaName)
+
+	start := make(chan struct{})
+	errCh := make(chan error, 2)
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		_, updateErr := writerA.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+			next := *prev
+			next.DefaultBotName = "writer-a"
+			return next, nil
+		})
+		errCh <- updateErr
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		_, updateErr := writerB.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+			next := *prev
+			next.MCP.Servers = append(append([]config.MCPServerConfig(nil), prev.MCP.Servers...),
+				config.MCPServerConfig{ID: "writerbserverwriterbserver", Name: "B", BaseURL: "https://b.example.com"})
+			return next, nil
+		})
+		errCh <- updateErr
+	}()
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for updateErr := range errCh {
+		require.NoError(t, updateErr)
+	}
+
+	final, err := baseStore.GetConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "writer-a", final.DefaultBotName, "writer A's change must survive")
+	require.Len(t, final.MCP.Servers, 1, "writer B's change must survive")
+	assert.Equal(t, "writerbserverwriterbserver", final.MCP.Servers[0].ID)
+	require.Len(t, final.Services, 1)
+	assert.Equal(t, migratedID, final.Services[0].ID, "migrated service ID must not be lost")
+}
+
 func TestSaveConfigWaitsForConfigLock(t *testing.T) {
 	baseStore := setupTestStore(t)
 

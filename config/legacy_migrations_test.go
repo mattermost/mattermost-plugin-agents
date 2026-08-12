@@ -9,9 +9,16 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGenerateServiceID(t *testing.T) {
+	id := generateServiceID()
+	assert.True(t, model.IsValidId(id), "generated service ID %q must be a valid Mattermost ID", id)
+	assert.NotEqual(t, id, generateServiceID(), "IDs must be unique")
+}
 
 func TestMigrateSeparateServicesFromBots(t *testing.T) {
 	tests := []struct {
@@ -116,6 +123,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 				assert.Equal(t, llm.ServiceTypeOpenAI, result.Services[0].Type)
 				assert.Equal(t, "key1", result.Services[0].APIKey)
 				assert.Equal(t, "gpt-4", result.Services[0].DefaultModel)
+				assert.True(t, model.IsValidId(result.Services[0].ID), "extracted service ID must be a valid Mattermost ID")
 
 				require.Len(t, result.Bots, 1)
 				assert.Equal(t, result.Services[0].ID, result.Bots[0].ServiceID)
@@ -922,7 +930,7 @@ func TestMigrateServicesToBots(t *testing.T) {
 				assert.Equal(t, "org-123", result.Services[0].OrgID)
 				assert.Equal(t, "sk-test-key", result.Services[0].APIKey)
 				assert.Equal(t, 4000, result.Services[0].InputTokenLimit)
-				assert.NotEmpty(t, result.Services[0].ID)
+				assert.True(t, model.IsValidId(result.Services[0].ID), "migrated service ID must be a valid Mattermost ID")
 
 				require.Len(t, result.Bots, 1)
 				assert.Equal(t, "ai1", result.Bots[0].Name)

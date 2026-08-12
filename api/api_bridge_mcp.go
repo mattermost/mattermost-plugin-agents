@@ -4,13 +4,16 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // externalServerRebuilder rebuilds the external MCP aggregate after plugin changes.
@@ -98,15 +101,29 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	// Snapshot effective external exposure so we rebuild when it turns on or off.
 	prevEffectiveExternal := a.pluginServerExternallyExposed(trustedPluginID)
 
-	// Preserve Enabled and ToolConfigs across re-registration, even after unregister.
-	// A first-time registration with no explicit enabled flag defaults to enabled.
-	persisted, hasPersisted := a.findPersistedPluginServer(trustedPluginID)
+	// Overlay admin-owned fields (Enabled, ToolConfigs, ID). Live entry first,
+	// then persisted config — so a re-register after unregister recovers from
+	// config, while a live-only ID is not rotated when the config row is absent.
 	if existing, found := a.mcpClientManager.GetPluginServer(trustedPluginID); found {
-		cfg.Enabled = existing.Enabled
-		cfg.ToolConfigs = existing.ToolConfigs
-	} else if hasPersisted {
-		cfg.Enabled = persisted.Enabled
-		cfg.ToolConfigs = persisted.ToolConfigs
+		cfg = mcp.ApplyPersistedPluginServerFields(cfg, existing)
+	}
+	persisted, hasPersisted := a.findPersistedPluginServer(trustedPluginID)
+	if hasPersisted {
+		cfg = mcp.ApplyPersistedPluginServerFields(cfg, persisted)
+	}
+
+	// Mint only when neither live nor persisted carried an ID. Persist when the
+	// config row is missing or ID-less so a live-only identity is written.
+	if cfg.ID == "" {
+		cfg.ID = model.NewId()
+	}
+	if !hasPersisted || persisted.ID == "" {
+		if err := a.persistPluginServerID(trustedPluginID, &cfg); err != nil {
+			c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
+				Error: fmt.Sprintf("failed to persist plugin server ID: %v", err),
+			})
+			return
+		}
 	}
 
 	// Effective final value after the preserve-on-reregister merge, not the
@@ -123,6 +140,61 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// persistPluginServerID ensures cfg.MCP.PluginServers holds a stable ID for
+// pluginID. Only mints when the entry is missing or ID-less; concurrent
+// writers that already assigned an ID win (their ID is adopted onto
+// registration).
+func (a *API) persistPluginServerID(pluginID string, registration *mcp.PluginServerConfig) error {
+	if a.configStore == nil || registration == nil {
+		return nil
+	}
+	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		if prev == nil {
+			return config.Config{}, errors.New("no plugin configuration available")
+		}
+		cfg := prev.Clone()
+		for i := range cfg.MCP.PluginServers {
+			if cfg.MCP.PluginServers[i].PluginID != pluginID {
+				continue
+			}
+			if cfg.MCP.PluginServers[i].ID == "" {
+				cfg.MCP.PluginServers[i].ID = uniquePluginServerID(cfg.MCP, registration.ID)
+			}
+			return *cfg, nil
+		}
+		id := uniquePluginServerID(cfg.MCP, registration.ID)
+		cfg.MCP.PluginServers = append(cfg.MCP.PluginServers, config.PluginServerConfig{
+			ID:             id,
+			PluginID:       registration.PluginID,
+			Name:           registration.Name,
+			Path:           registration.Path,
+			Enabled:        registration.Enabled,
+			ExposeExternal: registration.ExposeExternal,
+			ToolConfigs:    registration.ToolConfigs,
+		})
+		return *cfg, nil
+	})
+	if err != nil {
+		return err
+	}
+	// Adopt the persisted ID in case another writer raced and minted first.
+	for i := range saved.MCP.PluginServers {
+		if saved.MCP.PluginServers[i].PluginID == pluginID && saved.MCP.PluginServers[i].ID != "" {
+			registration.ID = saved.MCP.PluginServers[i].ID
+			break
+		}
+	}
+	if a.clusterNotifier != nil {
+		if notifyErr := a.clusterNotifier.PublishConfigUpdate(); notifyErr != nil {
+			return fmt.Errorf("failed to notify cluster of plugin-server ID: %w", notifyErr)
+		}
+	}
+	if a.configUpdater != nil {
+		a.configUpdater.Update(&saved)
+	}
+	return nil
 }
 
 // pluginServerExternallyExposed reports whether the plugin should appear on the
@@ -161,6 +233,22 @@ func (a *API) handleMCPUnregister(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// uniquePluginServerID keeps candidate when free across all MCP kinds; otherwise mints.
+func uniquePluginServerID(mcpCfg config.MCPConfig, candidate string) string {
+	occupied := config.OccupiedMCPServerIDs(mcpCfg)
+	if candidate != "" {
+		if _, taken := occupied[candidate]; !taken {
+			return candidate
+		}
+	}
+	for {
+		id := model.NewId()
+		if _, taken := occupied[id]; !taken {
+			return id
+		}
+	}
 }
 
 func (a *API) findPersistedPluginServer(pluginID string) (mcp.PluginServerConfig, bool) {

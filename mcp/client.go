@@ -26,7 +26,7 @@ import (
 const (
 	MMUserIDHeader     = "X-Mattermost-UserID"
 	EmbeddedServerName = "Mattermost"
-	EmbeddedClientKey  = "embedded://mattermost"
+	EmbeddedClientKey  = config.MCPEmbeddedServerOrigin
 
 	listToolsMethod = "tools/list"
 
