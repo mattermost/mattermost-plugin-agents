@@ -496,6 +496,7 @@
   "jzWcmkpY": "Let the agent run code in OpenAI's managed sandbox. See OpenAI's code interpreter documentation for details and pricing.",
   "k6zkLu2k": "Resume from checkpoint",
   "kAEQyVFW": "OK",
+  "kD3LCYhF": "This access policy still restricts who can use this agent, in addition to the setting above. Remove it here if it is no longer needed.",
   "kJPTVoyd": "Failed to resume reindexing. Please try again.",
   "kSDNX67w": "true",
   "kdoffvJs": "Add Header",

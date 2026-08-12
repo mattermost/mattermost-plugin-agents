@@ -33,22 +33,21 @@ const AccessTab = (props: Props) => {
 
     const attributeBasedSelected = draft.userAccessLevel === UserAccessLevel.AttributeBased;
 
+    const policyEditor = agentId && abacSupported ? (
+        <PolicyEditor
+            resourceType='agent'
+            resourceId={agentId}
+            resourceDisplayName={draft.displayName}
+            allowSimplified={true}
+            allowAdvanced={isSystemAdmin}
+            agentIdForAuthz={agentId}
+            hideWhenEmpty={!attributeBasedSelected}
+        />
+    ) : null;
+
     let attributeBasedContent: React.ReactNode = null;
-    if (attributeBasedSelected) {
-        if (abacSupported && agentId) {
-            attributeBasedContent = (
-                <PolicyEditorWrapper disabled={serviceAccountFieldsLocked}>
-                    <PolicyEditor
-                        resourceType='agent'
-                        resourceId={agentId}
-                        resourceDisplayName={draft.displayName}
-                        allowSimplified={true}
-                        allowAdvanced={isSystemAdmin}
-                        agentIdForAuthz={agentId}
-                    />
-                </PolicyEditorWrapper>
-            );
-        } else if (abacSupported) {
+    if (attributeBasedSelected && !policyEditor) {
+        if (abacSupported) {
             attributeBasedContent = (
                 <PolicyNote>
                     <FormattedMessage defaultMessage='Save the agent first, then define who can use it. Until a policy is defined, all users can use this agent.'/>
@@ -103,6 +102,12 @@ const AccessTab = (props: Props) => {
                     </HelpTextInSecondColumn>
                 </FormRow>
             </ItemList>
+
+            {policyEditor && (
+                <PolicyEditorWrapper disabled={serviceAccountFieldsLocked}>
+                    {policyEditor}
+                </PolicyEditorWrapper>
+            )}
 
             {/* Admin Access Section */}
             <ItemList>
