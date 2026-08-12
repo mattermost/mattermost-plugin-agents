@@ -141,13 +141,10 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
             setSavedExpression(expr);
 
             // Multi-rule policies can't round-trip through the simple editor;
-            // admins edit rule 0 in advanced mode (other rules preserved on
-            // save), everyone else gets the read-only unsupported view.
+            // deriveView shows advanced or unsupported from allowAdvanced on
+            // each render, so a later privilege change must not reload.
             if ((loaded?.rules?.length ?? 0) > 1) {
                 setAdvancedLocked(true);
-                if (allowAdvanced) {
-                    setMode('advanced');
-                }
             }
         }).catch(() => {
             if (!cancelled) {
@@ -161,7 +158,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
         return () => {
             cancelled = true;
         };
-    }, [client, resourceId, agentIdForAuthz, allowAdvanced, intl]);
+    }, [client, resourceId, agentIdForAuthz, intl]);
 
     // The CEL editor takes {attribute, values, isNative, objectType}[].
     // Native/session flags must match the host's toCELEditorAttributes mapping
