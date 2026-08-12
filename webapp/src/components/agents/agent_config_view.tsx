@@ -229,8 +229,9 @@ const AgentConfigView = (props: Props) => {
     const showDiscardDialogRef = useRef(false);
     showDiscardDialogRef.current = showDiscardDialog;
 
-    // Soft-lock Access / MCP grants / provider+tools while SA stays on for non-admins.
-    // Save stays enabled so managers can still edit non-sensitive day-to-day config.
+    // Soft-lock Access / MCP grants while SA stays on for non-admins.
+    // Save stays enabled so managers can still edit day-to-day config (including
+    // AI service, tools, and dynamic tool loading).
     const serviceAccountFieldsLocked = !canEditServiceAccountAuth && draft.useServiceAccountAuth;
 
     // The MCPs tab stays reachable while fields-locked so the off switch is available.
