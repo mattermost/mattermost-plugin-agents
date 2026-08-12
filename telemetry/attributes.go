@@ -77,6 +77,13 @@ var (
 	ThreadRootPostID = attribute.Key("agents.thread.root_post.id")
 )
 
+// Attribute keys for attribute-based access control (ABAC) decisions
+var (
+	ABACResourceType = attribute.Key("agents.abac.resource_type")
+	ABACResourceID   = attribute.Key("agents.abac.resource_id")
+	ABACOutcome      = attribute.Key("agents.abac.outcome")
+)
+
 // WithLLMAttributes returns a SpanStartOption with standard LLM attributes.
 func WithLLMAttributes(provider, model, operation string, streaming bool) trace.SpanStartOption {
 	return trace.WithAttributes(

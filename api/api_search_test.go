@@ -155,7 +155,7 @@ func TestHandleRunSearch(t *testing.T) {
 
 			// Create request
 			request := httptest.NewRequest(http.MethodPost, "/search/run?botUsername=test-bot", bytes.NewReader(bodyBytes))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -365,7 +365,7 @@ func TestHandleSearchQuery(t *testing.T) {
 
 			// Create request
 			request := httptest.NewRequest(http.MethodPost, "/search?botUsername=test-bot", bytes.NewReader(bodyBytes))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -425,7 +425,7 @@ func TestHandleSearchQueryMalformedJSON(t *testing.T) {
 
 			// Create request with malformed JSON body
 			request := httptest.NewRequest(http.MethodPost, "/search?botUsername=test-bot", strings.NewReader(test.requestBody))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -523,7 +523,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 
 			// Create request
 			request := httptest.NewRequest(http.MethodPost, "/search?botUsername=test-bot", bytes.NewReader(bodyBytes))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -561,7 +561,7 @@ func TestHandleSearchQueryMissingUserHeader(t *testing.T) {
 		{
 			name: "valid Mattermost-User-Id header",
 			headers: map[string]string{
-				"Mattermost-User-Id": "userid",
+				"Mattermost-User-Id": testUserID,
 			},
 			expectedStatus: http.StatusOK,
 		},
@@ -728,7 +728,7 @@ func TestHandleRunSearchMalformedJSON(t *testing.T) {
 
 			// Create request with malformed JSON body
 			request := httptest.NewRequest(http.MethodPost, "/search/run?botUsername=test-bot", strings.NewReader(test.requestBody))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -738,6 +738,44 @@ func TestHandleRunSearchMalformedJSON(t *testing.T) {
 			// Verify status code
 			resp := recorder.Result()
 			require.Equal(t, test.expectedStatus, resp.StatusCode, "Expected status %d for %s", test.expectedStatus, test.name)
+		})
+	}
+}
+
+// TestSearchHandlersEnforceUsageRestrictions pins the previously-missing
+// usage-restriction gate on the search entry points: a user blocked from the
+// bot gets 403 before any search work happens.
+func TestSearchHandlersEnforceUsageRestrictions(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	for _, url := range []string{"/search", "/search/run"} {
+		t.Run(url, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+
+			e.setupTestBot(llm.BotConfig{
+				Name:            "restricted-bot",
+				DisplayName:     "Restricted Bot",
+				UserAccessLevel: llm.UserAccessLevelBlock,
+				UserIDs:         []string{testUserID},
+			})
+
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			bodyBytes, err := json.Marshal(SearchRequest{Query: "test query"})
+			require.NoError(t, err)
+
+			request := httptest.NewRequest(http.MethodPost, url+"?botUsername=restricted-bot", bytes.NewReader(bodyBytes))
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			request.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
 		})
 	}
 }
