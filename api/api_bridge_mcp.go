@@ -186,13 +186,15 @@ func (a *API) persistPluginServerID(pluginID string, registration *mcp.PluginSer
 			break
 		}
 	}
-	if a.clusterNotifier != nil {
-		if notifyErr := a.clusterNotifier.PublishConfigUpdate(); notifyErr != nil {
-			return fmt.Errorf("failed to notify cluster of plugin-server ID: %w", notifyErr)
-		}
-	}
 	if a.configUpdater != nil {
 		a.configUpdater.Update(&saved)
+	}
+	// Propagation is best-effort; the ID is already persisted, so a failed
+	// notification must not abort this registration.
+	if a.clusterNotifier != nil {
+		if notifyErr := a.clusterNotifier.PublishConfigUpdate(); notifyErr != nil {
+			a.pluginAPI.Log.Warn("Failed to notify cluster of plugin-server ID", "error", notifyErr)
+		}
 	}
 	return nil
 }
