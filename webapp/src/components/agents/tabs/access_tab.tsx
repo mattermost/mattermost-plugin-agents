@@ -17,11 +17,11 @@ type Props = {
     onChange: (updates: Partial<AgentDraft>) => void;
 
     /** Soft-lock Access controls while service account auth is on for non-admins. */
-    serviceAccountFieldsLocked?: boolean;
+    serviceAccountFieldsLocked: boolean;
 }
 
 const AccessTab = (props: Props) => {
-    const {draft, onChange, serviceAccountFieldsLocked = false} = props;
+    const {draft, onChange, serviceAccountFieldsLocked} = props;
     const intl = useIntl();
 
     return (

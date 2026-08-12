@@ -6,7 +6,6 @@ import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {getUserMCPTools} from '@/client';
-import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
 import McpsTab from './mcps_tab';
 
@@ -28,16 +27,11 @@ jest.mock('@/client', () => ({
     getUserMCPTools: jest.fn(),
 }));
 
-jest.mock('@/utils/permissions', () => ({
-    useCurrentUserHasSystemPermission: jest.fn(),
-}));
-
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
 
 const mockedGetUserMCPTools = getUserMCPTools as unknown as jest.Mock;
-const mockedUseCurrentUserHasSystemPermission = useCurrentUserHasSystemPermission as unknown as jest.Mock;
 
 const serviceAccountToggleName = /^Use service accounts for authentication/;
 const serviceAccountWarning = /^Anyone who can use this agent acts with its shared service account access/;
@@ -54,7 +48,17 @@ const mattermostServer = {
     ],
 };
 
-function renderTab(useServiceAccountAuth = false) {
+type RenderOpts = {
+    useServiceAccountAuth?: boolean;
+    serviceAccountFieldsLocked?: boolean;
+    canEditServiceAccountAuth?: boolean;
+};
+
+function renderTab({
+    useServiceAccountAuth = false,
+    serviceAccountFieldsLocked = false,
+    canEditServiceAccountAuth = true,
+}: RenderOpts = {}) {
     const onChange = jest.fn();
     return {
         ...render(
@@ -63,6 +67,8 @@ function renderTab(useServiceAccountAuth = false) {
                     enabledTools={[]}
                     autoEnableNewMCPTools={true}
                     useServiceAccountAuth={useServiceAccountAuth}
+                    serviceAccountFieldsLocked={serviceAccountFieldsLocked}
+                    canEditServiceAccountAuth={canEditServiceAccountAuth}
                     onChange={onChange}
                 />
             </IntlProvider>,
@@ -85,6 +91,8 @@ function renderWithOrphanedTool(useServiceAccountAuth: boolean) {
                     ]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={useServiceAccountAuth}
+                    serviceAccountFieldsLocked={false}
+                    canEditServiceAccountAuth={true}
                     onChange={onChange}
                     onReconcileEnabledTools={onReconcileEnabledTools}
                 />
@@ -98,7 +106,6 @@ function renderWithOrphanedTool(useServiceAccountAuth: boolean) {
 describe('McpsTab', () => {
     beforeEach(() => {
         mockedGetUserMCPTools.mockReset();
-        mockedUseCurrentUserHasSystemPermission.mockReturnValue(true);
     });
 
     // MM-69185 regression: when the live MCP catalog drops entries that were
@@ -121,6 +128,8 @@ describe('McpsTab', () => {
                     ]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={false}
+                    serviceAccountFieldsLocked={false}
+                    canEditServiceAccountAuth={true}
                     onChange={onChange}
                     onReconcileEnabledTools={onReconcileEnabledTools}
                 />
@@ -159,7 +168,7 @@ describe('McpsTab', () => {
     test('service account toggle reflects the draft, updates it, and warns while enabled', async () => {
         mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
 
-        const off = renderTab(false);
+        const off = renderTab({useServiceAccountAuth: false});
         await screen.findByText('Mattermost');
         const toggle = screen.getByRole('checkbox', {name: serviceAccountToggleName});
         expect((toggle as HTMLInputElement).checked).toBe(false);
@@ -169,7 +178,7 @@ describe('McpsTab', () => {
         expect(off.onChange).toHaveBeenCalledWith({useServiceAccountAuth: true});
         off.unmount();
 
-        renderTab(true);
+        renderTab({useServiceAccountAuth: true});
         await screen.findByText('Mattermost');
         expect((screen.getByRole('checkbox', {name: serviceAccountToggleName}) as HTMLInputElement).checked).toBe(true);
         expect(screen.getByText(serviceAccountWarning)).not.toBeNull();
@@ -177,16 +186,21 @@ describe('McpsTab', () => {
 
     // Non-admins cannot enable the setting, but can turn it off when it is already on.
     test('lets users without manage_system turn service account auth off', async () => {
-        mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);
         mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
 
-        const off = renderTab(false);
+        const off = renderTab({
+            useServiceAccountAuth: false,
+            canEditServiceAccountAuth: false,
+        });
         await screen.findByText('Mattermost');
         expect(screen.queryByRole('checkbox', {name: serviceAccountToggleName})).toBeNull();
         expect(screen.queryByText(serviceAccountWarning)).toBeNull();
         off.unmount();
 
-        const on = renderTab(true);
+        const on = renderTab({
+            useServiceAccountAuth: true,
+            canEditServiceAccountAuth: false,
+        });
         await screen.findByText('Mattermost');
         const toggle = screen.getByRole('checkbox', {name: serviceAccountToggleName});
         expect((toggle as HTMLInputElement).checked).toBe(true);
@@ -199,7 +213,6 @@ describe('McpsTab', () => {
     // Soft-lock mirrors the server sensitive-field ACL: auto-enable and tool
     // grants are disabled while fields-locked, but the SA off-switch stays usable.
     test('disables auto-enable and tool grants while service account fields are locked', async () => {
-        mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);
         mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
 
         const onChange = jest.fn();
@@ -210,6 +223,7 @@ describe('McpsTab', () => {
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={true}
                     serviceAccountFieldsLocked={true}
+                    canEditServiceAccountAuth={false}
                     onChange={onChange}
                 />
             </IntlProvider>,

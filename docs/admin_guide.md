@@ -614,7 +614,7 @@ By default, MCP tool calls run with the credentials of the user who triggered th
 To set it up:
 
 1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**, open the remote MCP server on the **Configuration** tab, and add the static headers the server should receive from service account agents in the **Service Account Authentication** section — for example, an `Authorization` header carrying a personal access token. Rows with a blank name or value are ignored, so a server whose entries are all blank counts as having no service account credentials. Select **Save**.
-2. On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**. Only system administrators can turn this setting on. While it is enabled, managers may still edit non-sensitive config; Access, MCP grants, provider routing, and tools / native tools settings remain system-admin-only. Anyone who can manage the agent can still turn the setting off or delete the agent.
+2. On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**. Only system administrators can turn this setting on. While it is enabled, managers may still edit non-sensitive config; sensitive fields (Access, MCP grants including auto-enable, AI service / provider routing, Enable Tools / native tools, and dynamic tool loading) remain system-admin-only — see [What's editable vs locked](features/managing_agents.md#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent.
 
 The agent setting is all-or-nothing:
 

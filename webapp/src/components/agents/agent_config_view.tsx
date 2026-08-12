@@ -467,6 +467,7 @@ const AgentConfigView = (props: Props) => {
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
                             useServiceAccountAuth={draft.useServiceAccountAuth}
                             serviceAccountFieldsLocked={serviceAccountFieldsLocked}
+                            canEditServiceAccountAuth={canEditServiceAccountAuth}
                             onChange={(updates) => updateDraft(updates)}
                             onReconcileEnabledTools={reconcileEnabledTools}
                         />

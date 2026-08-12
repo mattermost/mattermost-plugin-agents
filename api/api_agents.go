@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"slices"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -175,139 +174,6 @@ func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
 	return true
 }
 
-// canManageAgent reports whether userID may update or delete cfg: agent admin, PermissionManageOthersAgent,
-// or (agent with empty CreatorID) PermissionManageSystem for migrated legacy bots.
-func canManageAgent(client *pluginapi.Client, cfg *llm.BotConfig, userID string) bool {
-	if cfg == nil {
-		return false
-	}
-	if cfg.IsAdmin(userID) {
-		return true
-	}
-	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
-		return true
-	}
-	if cfg.CreatorID == "" && client.User.HasPermissionTo(userID, model.PermissionManageSystem) {
-		return true
-	}
-	return false
-}
-
-// canCreateAgent returns true if the user may create new agents via POST /agents.
-func canCreateAgent(client *pluginapi.Client, userID string) bool {
-	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
-		return true
-	}
-	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
-}
-
-// canSaveServiceAccountAuth reports whether userID may enable service account
-// auth on an agent, or change sensitive fields while service account auth stays
-// on. The flag grants admin-provisioned MCP credentials, so enablement and
-// access/tool-reach/provider changes are restricted to system admins even when
-// the caller can manage the agent.
-func canSaveServiceAccountAuth(client *pluginapi.Client, userID string) bool {
-	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
-}
-
-// stringSliceSetEqual reports whether a and b contain the same values as a set
-// (order-insensitive). Nil and empty slices are equal.
-func stringSliceSetEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	ac := slices.Clone(a)
-	bc := slices.Clone(b)
-	slices.Sort(ac)
-	slices.Sort(bc)
-	return slices.Equal(ac, bc)
-}
-
-// enabledMCPToolsSetEqual reports whether a and b grant the same MCP tools
-// (server origin + tool name), order-insensitive. Nil and empty are equal.
-func enabledMCPToolsSetEqual(a, b []llm.EnabledMCPTool) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	type toolKey struct {
-		origin string
-		name   string
-	}
-	counts := make(map[toolKey]int, len(a))
-	for _, t := range a {
-		counts[toolKey{t.ServerOrigin, t.ToolName}]++
-	}
-	for _, t := range b {
-		k := toolKey{t.ServerOrigin, t.ToolName}
-		n := counts[k]
-		if n == 0 {
-			return false
-		}
-		counts[k] = n - 1
-	}
-	return true
-}
-
-// serviceAccountSensitiveFieldsChanged reports whether req changes any field that
-// remains system-admin-only while the resulting agent keeps service account auth
-// enabled. Comparison is strict equality (any change needs admin), not widening-only.
-func serviceAccountSensitiveFieldsChanged(stored *llm.BotConfig, req UpdateAgentRequest) bool {
-	if stored.ChannelAccessLevel != llm.ChannelAccessLevel(req.ChannelAccessLevel) {
-		return true
-	}
-	if !stringSliceSetEqual(stored.ChannelIDs, req.ChannelIDs) {
-		return true
-	}
-	if stored.UserAccessLevel != llm.UserAccessLevel(req.UserAccessLevel) {
-		return true
-	}
-	if !stringSliceSetEqual(stored.UserIDs, req.UserIDs) {
-		return true
-	}
-	if !stringSliceSetEqual(stored.TeamIDs, req.TeamIDs) {
-		return true
-	}
-	if !stringSliceSetEqual(stored.AdminUserIDs, req.AdminUserIDs) {
-		return true
-	}
-	if stored.AutoEnableNewMCPTools != req.AutoEnableNewMCPTools {
-		return true
-	}
-	if !enabledMCPToolsSetEqual(stored.EnabledMCPTools, req.EnabledMCPTools) {
-		return true
-	}
-	if stored.DisableTools != req.DisableTools {
-		return true
-	}
-	if !stringSliceSetEqual(stored.EnabledNativeTools, req.EnabledNativeTools) {
-		return true
-	}
-	if stored.MCPDynamicToolLoading != req.MCPDynamicToolLoading {
-		return true
-	}
-	if stored.ServiceID != req.ServiceID {
-		return true
-	}
-	return false
-}
-
-// canConfigureAgentServices reports whether userID may list services or fetch models (ManageOwnAgent, ManageOthersAgent, or ManageSystem).
-func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
-	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
-		return true
-	}
-	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
-		return true
-	}
-	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
-}
-
 // loadPluginConfigForAgents loads plugin config; on failure it aborts with 500.
 func (a *API) loadPluginConfigForAgents(c *gin.Context) (*config.Config, bool) {
 	cfg, err := a.configStore.GetConfig()
@@ -452,7 +318,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	if req.UseServiceAccountAuth && !canSaveServiceAccountAuth(a.pluginAPI, userID) {
+	if req.UseServiceAccountAuth && !isSystemAdmin(a.pluginAPI, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
@@ -590,15 +456,13 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// Keeping service account auth on is allowed for non-admins only when no
-	// sensitive fields change. Enabling SA, or changing access/tool-reach/
-	// provider while SA stays on, requires manage_system. Anyone who can manage
-	// the agent may still turn SA off.
-	if req.UseServiceAccountAuth && !canSaveServiceAccountAuth(a.pluginAPI, userID) {
-		if !cfg.UseServiceAccountAuth || serviceAccountSensitiveFieldsChanged(cfg, req) {
-			abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
-			return
-		}
+	// Shallow copy is safe: applyAgentUpdateRequest replaces slice headers rather than mutating elements.
+	proposed := *cfg
+	displayNameChanged := applyAgentUpdateRequest(&proposed, req)
+
+	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !isSystemAdmin(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
+		return
 	}
 
 	if req.usernameProvided && req.Username != cfg.Name {
@@ -608,7 +472,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
 		return
 	}
-	displayNameChanged := applyAgentUpdateRequest(cfg, req)
+	cfg = &proposed
 
 	if err := cfg.Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))

@@ -9,7 +9,6 @@ import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/compo
 import {getUserMCPTools, type UserMCPServerInfo} from '@/client';
 import {EnabledTool} from '@/types/agents';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
-import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
 
 import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
@@ -23,7 +22,10 @@ type Props = {
     useServiceAccountAuth: boolean;
 
     /** Soft-lock auto-enable + tool grants while SA is on for non-admins; SA checkbox stays reachable. */
-    serviceAccountFieldsLocked?: boolean;
+    serviceAccountFieldsLocked: boolean;
+
+    /** From parent: whether the current user may enable service account auth (manage_system). */
+    canEditServiceAccountAuth: boolean;
     onChange: (updates: {
         enabledTools?: EnabledTool[];
         autoEnableNewMCPTools?: boolean;
@@ -46,15 +48,12 @@ const McpsTab = (props: Props) => {
         enabledTools,
         autoEnableNewMCPTools,
         useServiceAccountAuth,
-        serviceAccountFieldsLocked = false,
+        serviceAccountFieldsLocked,
+        canEditServiceAccountAuth,
         onChange,
         onReconcileEnabledTools,
     } = props;
     const intl = useIntl();
-
-    // Mirrors the server-side PermissionManageSystem check: only system admins may
-    // enable or keep service account auth; non-admins may still turn it off.
-    const canEditServiceAccountAuth = useCurrentUserHasSystemPermission('manage_system');
 
     const [servers, setServers] = useState<UserMCPServerInfo[]>([]);
     const [loading, setLoading] = useState(true);

@@ -51,7 +51,7 @@ type Props = {
     usernameLocked?: boolean;
 
     /** Soft-lock AI service + tools controls while SA is on for non-admins. */
-    serviceAccountFieldsLocked?: boolean;
+    serviceAccountFieldsLocked: boolean;
 }
 
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
@@ -67,7 +67,7 @@ const ConfigTab = (props: Props) => {
         services,
         errors = {},
         usernameLocked = false,
-        serviceAccountFieldsLocked = false,
+        serviceAccountFieldsLocked,
     } = props;
     const intl = useIntl();
     const [advancedExpanded, setAdvancedExpanded] = useState(false);

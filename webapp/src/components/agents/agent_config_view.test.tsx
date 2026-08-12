@@ -63,12 +63,11 @@ jest.mock('./tabs/config_tab', () => ({
         draft,
         onChange,
         errors = {},
-        serviceAccountFieldsLocked = false,
     }: {
         draft: AgentDraft;
         onChange: (updates: Partial<AgentDraft>) => void;
         errors?: Record<string, string>;
-        serviceAccountFieldsLocked?: boolean;
+        serviceAccountFieldsLocked: boolean;
     }) => (
         <>
             <input
@@ -97,13 +96,11 @@ jest.mock('./tabs/config_tab', () => ({
                 aria-label='Dynamic tool loading'
                 type='checkbox'
                 checked={draft.mcpDynamicToolLoading}
-                disabled={serviceAccountFieldsLocked}
                 onChange={(e) => onChange({mcpDynamicToolLoading: e.target.checked})}
             />
             <select
                 aria-label='AI Service'
                 value={draft.serviceId}
-                disabled={serviceAccountFieldsLocked}
                 onChange={(e) => onChange({serviceId: e.target.value})}
             >
                 <option value='svc_1'>{'Mock Service'}</option>
@@ -113,7 +110,6 @@ jest.mock('./tabs/config_tab', () => ({
                 aria-label='Enable Tools'
                 type='checkbox'
                 checked={!draft.disableTools}
-                disabled={serviceAccountFieldsLocked}
                 onChange={(e) => onChange({disableTools: !e.target.checked})}
             />
             <button
@@ -128,11 +124,10 @@ jest.mock('./tabs/config_tab', () => ({
 
 jest.mock('./tabs/access_tab', () => ({
     __esModule: true,
-    default: ({serviceAccountFieldsLocked = false}: {serviceAccountFieldsLocked?: boolean}) => (
+    default: () => (
         <input
             aria-label='Channel access'
             type='checkbox'
-            disabled={serviceAccountFieldsLocked}
         />
     ),
 }));
@@ -141,12 +136,12 @@ jest.mock('./tabs/mcps_tab', () => ({
     __esModule: true,
     default: ({
         useServiceAccountAuth,
-        serviceAccountFieldsLocked = false,
         onChange,
         onReconcileEnabledTools,
     }: {
         useServiceAccountAuth: boolean;
-        serviceAccountFieldsLocked?: boolean;
+        serviceAccountFieldsLocked: boolean;
+        canEditServiceAccountAuth: boolean;
         onChange: (updates: {useServiceAccountAuth?: boolean}) => void;
         onReconcileEnabledTools?: (cleaned: EnabledTool[]) => void;
     }) => (
@@ -160,7 +155,6 @@ jest.mock('./tabs/mcps_tab', () => ({
             <input
                 aria-label='Automatically enable all MCP tools'
                 type='checkbox'
-                disabled={serviceAccountFieldsLocked}
             />
             <button
                 type='button'
@@ -604,10 +598,10 @@ describe('AgentConfigView', () => {
         }));
     });
 
-    // Non-admins keep Save enabled for non-sensitive edits while SA stays on;
-    // Access / MCP grants / provider+tools controls are soft-locked. Turning
-    // SA off clears the lock (and banner).
-    test('soft-locks sensitive controls for non-admins while service account auth stays enabled', async () => {
+    // Parent-level soft-lock: Save stays enabled, banner explains the policy, and
+    // turning SA off clears the lock. Per-control disabled state is covered by
+    // config_tab / access_tab / mcps_tab real-component tests.
+    test('shows service-account soft-lock banner and keeps Save enabled for non-admins', () => {
         mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);
         const agent = {
             ...savedAgent,
@@ -632,26 +626,15 @@ describe('AgentConfigView', () => {
         const saveButton = screen.getByRole('button', {name: 'Save'});
         expect((saveButton as HTMLButtonElement).disabled).toBe(false);
         expect(screen.getByText(serviceAccountFieldsBanner)).not.toBeNull();
-        expect((screen.getByLabelText('AI Service') as HTMLSelectElement).disabled).toBe(true);
-        expect((screen.getByLabelText('Enable Tools') as HTMLInputElement).disabled).toBe(true);
-        expect((screen.getByLabelText('Dynamic tool loading') as HTMLInputElement).disabled).toBe(true);
 
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'SA Agent Updated'}});
         expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false);
 
-        fireEvent.click(screen.getByRole('button', {name: 'Access'}));
-        expect((screen.getByLabelText('Channel access') as HTMLInputElement).disabled).toBe(true);
-
         fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
-        expect((screen.getByLabelText('Automatically enable all MCP tools') as HTMLInputElement).disabled).toBe(true);
         expect((screen.getByLabelText('Use service accounts') as HTMLInputElement).disabled).toBe(false);
 
         fireEvent.click(screen.getByLabelText('Use service accounts'));
         expect(screen.queryByText(serviceAccountFieldsBanner)).toBeNull();
         expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false);
-
-        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
-        expect((screen.getByLabelText('AI Service') as HTMLSelectElement).disabled).toBe(false);
-        expect((screen.getByLabelText('Enable Tools') as HTMLInputElement).disabled).toBe(false);
     });
 });

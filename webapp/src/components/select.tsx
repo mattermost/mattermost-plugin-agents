@@ -43,7 +43,7 @@ type SelectProps<T extends Option> = {
     loadOptions: (inputValue: string) => Promise<T[]>;
     formatOptionLabel: (option: T) => React.ReactNode;
     placeholder: string;
-    isDisabled?: boolean;
+    disabled?: boolean;
 };
 
 const LabelContainer = styled.div`
@@ -176,7 +176,7 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
         <AsyncSelect<T, true>
             isMulti={true}
             isClearable={false}
-            isDisabled={props.isDisabled}
+            isDisabled={props.disabled}
             value={props.value}
             onChange={props.onChange}
             loadOptions={loadOptions}
@@ -310,7 +310,7 @@ export const SelectUser = (props: SelectUserProps) => {
             loadOptions={loadOptions}
             formatOptionLabel={formatOptionLabel}
             placeholder='Search for people or teams'
-            isDisabled={props.disabled}
+            disabled={props.disabled}
         />
     );
 };
@@ -371,7 +371,7 @@ export const SelectChannel = (props: SelectChannelProps) => {
             loadOptions={loadOptions}
             formatOptionLabel={formatOptionLabel}
             placeholder='Search for channels'
-            isDisabled={props.disabled}
+            disabled={props.disabled}
         />
     );
 };
