@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -148,6 +149,181 @@ func TestAgentPolicyDelete(t *testing.T) {
 
 	recorder := doRequest(e.api, http.MethodDelete, "/agents/"+agentID+"/access_policy", nil, creatorID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+}
+
+func TestAuditAccessPolicyMutations(t *testing.T) {
+	const plantedCEL = `user.attributes.department == "planted-secret-cel-expr"`
+
+	creatorID := model.NewId()
+	adminID := model.NewId()
+	agentID := model.NewId()
+	serviceID := model.NewId()
+	serverID := model.NewId()
+
+	policyBody := map[string]any{
+		"rules": []map[string]any{{"actions": []string{"use"}, "expression": plantedCEL}},
+	}
+
+	tests := []struct {
+		name           string
+		method         string
+		path           string
+		body           any
+		userID         string
+		event          string
+		resourceType   string
+		resourceID     string
+		expectedStatus int
+	}{
+		{
+			name:           "agent PUT records identifiers and never policy content",
+			method:         http.MethodPut,
+			path:           "/agents/" + agentID + "/access_policy",
+			body:           policyBody,
+			userID:         creatorID,
+			event:          AuditEventPutAgentPolicy,
+			resourceType:   accesscontrol.ResourceTypeAgent,
+			resourceID:     agentID,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "agent DELETE records identifiers",
+			method:         http.MethodDelete,
+			path:           "/agents/" + agentID + "/access_policy",
+			userID:         creatorID,
+			event:          AuditEventDeleteAgentPolicy,
+			resourceType:   accesscontrol.ResourceTypeAgent,
+			resourceID:     agentID,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "service PUT records identifiers and never policy content",
+			method:         http.MethodPut,
+			path:           "/admin/services/" + serviceID + "/access_policy",
+			body:           policyBody,
+			userID:         adminID,
+			event:          AuditEventPutServicePolicy,
+			resourceType:   accesscontrol.ResourceTypeService,
+			resourceID:     serviceID,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "service DELETE records identifiers",
+			method:         http.MethodDelete,
+			path:           "/admin/services/" + serviceID + "/access_policy",
+			userID:         adminID,
+			event:          AuditEventDeleteServicePolicy,
+			resourceType:   accesscontrol.ResourceTypeService,
+			resourceID:     serviceID,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "mcp PUT records identifiers and never policy content",
+			method:         http.MethodPut,
+			path:           "/admin/mcp/" + serverID + "/access_policy",
+			body:           policyBody,
+			userID:         adminID,
+			event:          AuditEventPutMCPPolicy,
+			resourceType:   accesscontrol.ResourceTypeMCP,
+			resourceID:     serverID,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "mcp DELETE records identifiers",
+			method:         http.MethodDelete,
+			path:           "/admin/mcp/" + serverID + "/access_policy",
+			userID:         adminID,
+			event:          AuditEventDeleteMCPPolicy,
+			resourceType:   accesscontrol.ResourceTypeMCP,
+			resourceID:     serverID,
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.agentStore.agents[agentID] = &llm.BotConfig{
+				ID: agentID, Name: "policyagent", DisplayName: "Policy Agent",
+				ServiceID: serviceID, CreatorID: creatorID,
+			}
+			e.api.configStore = &mockConfigStore{
+				cfg: &config.Config{
+					Services: []llm.ServiceConfig{{ID: serviceID, Name: "Svc", Type: "openai"}},
+					MCP: config.MCPConfig{
+						Servers: []config.MCPServerConfig{{ID: serverID, Name: "Ext", Enabled: true, BaseURL: "https://mcp.example.com"}},
+					},
+				},
+			}
+
+			e.mockAPI.On("HasPermissionTo", adminID, model.PermissionManageSystem).Return(true).Maybe()
+			e.mockAPI.On("SaveAccessControlPolicy", mock.Anything, mock.AnythingOfType("*model.AccessControlPolicy")).
+				Return(&model.AccessControlPolicy{ID: tt.resourceID}, nil).Maybe()
+			e.mockAPI.On("DeleteAccessControlPolicy", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+			records := e.CaptureAuditRecords()
+			recorder := doRequest(e.api, tt.method, tt.path, tt.body, tt.userID)
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1)
+			rec := (*records)[0]
+			assert.Equal(t, tt.event, rec.EventName)
+			assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+			assert.Equal(t, tt.resourceType, rec.EventData.Parameters[audit.KeyABACResourceType])
+			assert.Equal(t, tt.resourceID, rec.EventData.Parameters[audit.KeyABACResourceID])
+
+			raw, err := json.Marshal(rec)
+			require.NoError(t, err)
+			assert.NotContains(t, string(raw), plantedCEL, "audit record must never carry policy expression content")
+		})
+	}
+}
+
+func TestAuditAccessPolicyGetsEmitNothing(t *testing.T) {
+	creatorID := model.NewId()
+	adminID := model.NewId()
+	agentID := model.NewId()
+	serviceID := model.NewId()
+	serverID := model.NewId()
+
+	tests := []struct {
+		name   string
+		userID string
+		path   string
+	}{
+		{name: "agent GET", userID: creatorID, path: "/agents/" + agentID + "/access_policy"},
+		{name: "service GET", userID: adminID, path: "/admin/services/" + serviceID + "/access_policy"},
+		{name: "mcp GET", userID: adminID, path: "/admin/mcp/" + serverID + "/access_policy"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.agentStore.agents[agentID] = &llm.BotConfig{
+				ID: agentID, Name: "policyagent", DisplayName: "Policy Agent",
+				ServiceID: serviceID, CreatorID: creatorID,
+			}
+			e.api.configStore = &mockConfigStore{
+				cfg: &config.Config{
+					Services: []llm.ServiceConfig{{ID: serviceID, Name: "Svc", Type: "openai"}},
+					MCP: config.MCPConfig{
+						Servers: []config.MCPServerConfig{{ID: serverID, Name: "Ext", Enabled: true, BaseURL: "https://mcp.example.com"}},
+					},
+				},
+			}
+			e.mockAPI.On("HasPermissionTo", adminID, model.PermissionManageSystem).Return(true).Maybe()
+			e.mockAPI.On("GetAccessControlPolicy", mock.AnythingOfType("string")).
+				Return(&model.AccessControlPolicy{ID: agentID}, nil).Maybe()
+
+			records := e.CaptureAuditRecords()
+			recorder := doRequest(e.api, http.MethodGet, tt.path, nil, tt.userID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+			assert.Empty(t, *records, "read-only policy GET must not emit an audit record")
+		})
+	}
 }
 
 func TestServiceAndMCPPolicyRouteAuthMatrix(t *testing.T) {

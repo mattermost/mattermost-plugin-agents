@@ -256,6 +256,12 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUnregisterMCPPluginServer, method: http.MethodPost, path: "/bridge/v1/mcp/unregister", bridge: true},
 		{event: AuditEventToolCallApproval, method: http.MethodPost, path: "/post/postid/tool_call"},
 		{event: AuditEventToolResultApproval, method: http.MethodPost, path: "/post/postid/tool_result"},
+		{event: AuditEventPutAgentPolicy, method: http.MethodPut, path: "/agents/agentid/access_policy"},
+		{event: AuditEventDeleteAgentPolicy, method: http.MethodDelete, path: "/agents/agentid/access_policy"},
+		{event: AuditEventPutServicePolicy, method: http.MethodPut, path: "/admin/services/serviceid/access_policy"},
+		{event: AuditEventDeleteServicePolicy, method: http.MethodDelete, path: "/admin/services/serviceid/access_policy"},
+		{event: AuditEventPutMCPPolicy, method: http.MethodPut, path: "/admin/mcp/serverid/access_policy"},
+		{event: AuditEventDeleteMCPPolicy, method: http.MethodDelete, path: "/admin/mcp/serverid/access_policy"},
 	}
 
 	// One case per registry row, no more and no fewer (the session grant is

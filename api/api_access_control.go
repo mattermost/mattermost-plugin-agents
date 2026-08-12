@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -123,6 +124,11 @@ func (a *API) loadManagedAgent(c *gin.Context) *llm.BotConfig {
 	return cfg
 }
 
+func auditPolicyMutation(c *gin.Context, resourceType, resourceID string) {
+	audit.AddParam(auditRec(c), audit.KeyABACResourceType, resourceType)
+	audit.AddParam(auditRec(c), audit.KeyABACResourceID, audit.TruncateID(resourceID))
+}
+
 func (a *API) handleGetAgentPolicy(c *gin.Context) {
 	cfg := a.loadManagedAgent(c)
 	if cfg == nil {
@@ -145,6 +151,7 @@ func (a *API) handlePutAgentPolicy(c *gin.Context) {
 	if cfg == nil {
 		return
 	}
+	auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
 	if !policyWritableID(c, cfg.ID) {
 		return
 	}
@@ -166,6 +173,7 @@ func (a *API) handleDeleteAgentPolicy(c *gin.Context) {
 	if cfg == nil {
 		return
 	}
+	auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
 	if !policyWritableID(c, cfg.ID) {
 		return
 	}
@@ -216,6 +224,7 @@ func (a *API) handlePutServicePolicy(c *gin.Context) {
 	if svc == nil {
 		return
 	}
+	auditPolicyMutation(c, accesscontrol.ResourceTypeService, svc.ID)
 	if !policyWritableID(c, svc.ID) {
 		return
 	}
@@ -237,6 +246,7 @@ func (a *API) handleDeleteServicePolicy(c *gin.Context) {
 	if svc == nil {
 		return
 	}
+	auditPolicyMutation(c, accesscontrol.ResourceTypeService, svc.ID)
 	if !policyWritableID(c, svc.ID) {
 		return
 	}
@@ -307,6 +317,7 @@ func (a *API) handlePutMCPPolicy(c *gin.Context) {
 	if server == nil {
 		return
 	}
+	auditPolicyMutation(c, accesscontrol.ResourceTypeMCP, server.ID)
 	if !policyWritableID(c, server.ID) {
 		return
 	}
@@ -328,6 +339,7 @@ func (a *API) handleDeleteMCPPolicy(c *gin.Context) {
 	if server == nil {
 		return
 	}
+	auditPolicyMutation(c, accesscontrol.ResourceTypeMCP, server.ID)
 	if !policyWritableID(c, server.ID) {
 		return
 	}
