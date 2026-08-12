@@ -5,6 +5,7 @@ package api
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -60,7 +62,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	}
 
 	tools, mcpErrors := a.mcpClientManager.GetTools(c.Request.Context(), req)
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, req.ServiceAccount))
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(c.Request.Context(), userID, tools, mcpErrors, req.ServiceAccount))
 }
 
 // resolveMCPToolsCatalog decides whose tools to list. ok is false when the
@@ -124,11 +126,13 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, false))
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(c.Request.Context(), userID, tools, mcpErrors, false))
 }
 
-func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErrors *mcp.Errors, serviceAccount bool) UserMCPToolsResponse {
+func (a *API) buildUserMCPToolsResponse(ctx context.Context, userID string, tools []llm.Tool, mcpErrors *mcp.Errors, serviceAccount bool) UserMCPToolsResponse {
 	mcpCfg := a.config.MCP()
+	pluginServers := a.mcpClientManager.ListPluginServers()
+	denied := a.deniedMCPOriginsForUser(ctx, userID, mcpCfg, pluginServers)
 
 	// Group tools by ServerOrigin
 	toolsByOrigin := make(map[string][]llm.Tool, len(tools))
@@ -151,6 +155,9 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
 			continue
 		}
+		if denied[llm.NormalizeMCPServerOrigin(serverConfig.BaseURL)] {
+			continue
+		}
 
 		servers = append(servers, a.buildUserMCPServerInfo(
 			userID,
@@ -162,7 +169,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 		))
 	}
 
-	if a.mcpClientManager.GetEmbeddedServer() != nil {
+	if a.mcpClientManager.GetEmbeddedServer() != nil && !denied[mcp.EmbeddedClientKey] {
 		toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
 		if len(toolConfigs) == 0 {
 			toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
@@ -186,12 +193,16 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 	}
 
 	// Plugin rows use the same synthetic origin key as filterToolsByConfig.
-	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+	for _, cfg := range pluginServers {
 		if !cfg.Enabled {
 			continue
 		}
 
-		origin := "plugin://" + cfg.PluginID
+		origin := config.PluginServerOrigin(cfg.PluginID)
+		if denied[origin] {
+			continue
+		}
+
 		pluginConfig := &mcp.ServerConfig{
 			Name:        cfg.Name,
 			Enabled:     true,
@@ -210,6 +221,27 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 	}
 
 	return UserMCPToolsResponse{Servers: servers}
+}
+
+// deniedMCPOriginsForUser applies the visibility side of the MCP policy gate.
+// Tool collection independently enforces the same policies before connection
+// or execution; this pass prevents denied server metadata from leaking into
+// the catalog response. Any checker error is a denial.
+func (a *API) deniedMCPOriginsForUser(ctx context.Context, userID string, cfg mcp.Config, pluginServers []mcp.PluginServerConfig) map[string]bool {
+	serverIDs := cfg.ServerIDByOrigin()
+	for _, server := range pluginServers {
+		if server.ID != "" {
+			serverIDs[config.PluginServerOrigin(server.PluginID)] = server.ID
+		}
+	}
+
+	denied := make(map[string]bool)
+	for origin, serverID := range serverIDs {
+		if a.accessChecker == nil || a.accessChecker.CanUseMCPServer(ctx, userID, serverID) != nil {
+			denied[llm.NormalizeMCPServerOrigin(origin)] = true
+		}
+	}
+	return denied
 }
 
 func (a *API) buildUserMCPServerInfo(
