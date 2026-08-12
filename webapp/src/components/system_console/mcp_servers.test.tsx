@@ -174,43 +174,8 @@ describe('MCPServers stable ID handling', () => {
         expect(servers[1].id).toBeUndefined();
         expect(servers[0].id).toBe(STABLE_ID);
     });
-});
 
-describe('MCPServers license gating', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-        mockGetMCPTools.mockResolvedValue({servers: []});
-    });
-
-    test('built-in section is read-only: no delete or URL inputs', async () => {
-        mockGetMCPTools.mockResolvedValue({
-            servers: [{
-                name: 'Demo Plugin',
-                url: 'plugin://com.mattermost.demo/mcp',
-                tools: [],
-                needsOAuth: false,
-                error: null,
-                serverType: 'plugin',
-                enabled: true,
-                id: 'abcdefghijklmnopqrstuvwxpl',
-            }],
-        });
-
-        // Unlicensed so remote editable cards are hidden.
-        mockUseIsBasicsLicensed.mockReturnValue(false);
-        renderServers(makeMCPConfig());
-
-        await waitFor(() => {
-            expect(screen.getByText('Demo Plugin')).not.toBeNull();
-        });
-
-        const section = screen.getByTestId('built-in-plugin-servers-section');
-        expect(section.querySelector('input')).toBeNull();
-        expect(screen.queryByText('Delete Server')).toBeNull();
-        expect(screen.queryByPlaceholderText('https://mcp.example.com')).toBeNull();
-    });
-
-    test('preserves embeddedServer.id through enablePluginServer toggle', () => {
+    it('preserves embeddedServer.id through enablePluginServer toggle', () => {
         const {onChange} = renderServers(makeMCPConfig([], STABLE_ID));
 
         // BooleanItem exposes true/false radios under the enablePluginServer row.
@@ -223,7 +188,7 @@ describe('MCPServers license gating', () => {
         expect(config.embeddedServer.enabled).toBe(true);
     });
 
-    test('preserves plugin_servers through enablePluginServer toggle', () => {
+    it('preserves plugin_servers through enablePluginServer toggle', () => {
         const pluginServers: PluginServerConfig[] = [{
             id: 'pluginstableidabcdefghijklm',
             plugin_id: 'com.example.demo',
@@ -245,5 +210,51 @@ describe('MCPServers license gating', () => {
         const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
         expect(config.plugin_servers).toEqual(pluginServers);
         expect(config.enablePluginServer).toBe(true);
+    });
+});
+
+describe('MCPServers license gating', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockGetMCPTools.mockResolvedValue({servers: []});
+    });
+
+    test('unlicensed: remote server UI is hidden and the enterprise chip is shown', async () => {
+        mockUseIsBasicsLicensed.mockReturnValue(false);
+
+        renderServers(makeMCPConfig());
+
+        expect(screen.queryByRole('button', {name: /Add Remote MCP Server/})).toBeNull();
+        expect(screen.queryByText(/No remote MCP servers configured/)).toBeNull();
+        expect(screen.queryByText('MCP OAuth Callback URL')).toBeNull();
+        await waitFor(() => {
+            expect(screen.getByText('Use remote MCP servers on qualifying Mattermost plans')).not.toBeNull();
+        });
+    });
+
+    test('unlicensed with configured servers: server rows are hidden too', async () => {
+        mockUseIsBasicsLicensed.mockReturnValue(false);
+
+        renderServers(makeMCPConfig([makeRemoteServer()]));
+
+        expect(screen.queryByText('Jira')).toBeNull();
+        expect(screen.queryByRole('button', {name: /Add Remote MCP Server/})).toBeNull();
+        await waitFor(() => {
+            expect(screen.getByText('Use remote MCP servers on qualifying Mattermost plans')).not.toBeNull();
+        });
+    });
+
+    test('licensed: remote server UI is shown and no license UI appears', async () => {
+        mockUseIsBasicsLicensed.mockReturnValue(true);
+
+        renderServers(makeMCPConfig([makeRemoteServer()]));
+
+        const addButton = screen.getByRole('button', {name: /Add Remote MCP Server/});
+        expect((addButton as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.getByText('Jira')).not.toBeNull();
+        expect(screen.getByText('MCP OAuth Callback URL')).not.toBeNull();
+        await waitFor(() => {
+            expect(screen.queryByText('Use remote MCP servers on qualifying Mattermost plans')).toBeNull();
+        });
     });
 });

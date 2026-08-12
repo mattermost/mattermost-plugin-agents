@@ -15,14 +15,27 @@ import manifest from '@/manifest';
 
 import {useIsBasicsLicensed} from '@/license';
 
-
 import {CopyableTextItem} from './copyable_text_item';
 import MCPToolsViewer from './mcp_tools_viewer';
-import {MCPConfig, MCPServerConfig, MCPToolsResponse} from './mcp_types';
+import type {
+    MCPConfig,
+    MCPEmbeddedServerConfig,
+    MCPServerConfig,
+    MCPToolConfig,
+    MCPToolsResponse,
+} from './mcp_types';
 
 import EnterpriseChip from './enterprise_chip';
 
 import {BooleanItem, ItemList, TextItem} from './item';
+
+// Re-export types previously defined in this module so existing imports keep working.
+export type {
+    MCPConfig,
+    MCPEmbeddedServerConfig,
+    MCPServerConfig,
+    MCPToolConfig,
+};
 
 type Props = {
     mcpConfig: MCPConfig;
