@@ -48,7 +48,8 @@ jobs:
             group: e2e-shard-4
     name: e2e-${{ matrix.shard.name }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermostdevelopment/mattermost-enterprise-edition:release-11.10' }}
+      # release-11.10 does not implement plugin EvaluateAccessControl (mattermost#37509 landed on master / 11.11).
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermostdevelopment/mattermost-enterprise-edition:master' }}
     defaults:
       run:
         working-directory: ./e2e

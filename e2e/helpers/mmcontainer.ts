@@ -17,7 +17,8 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:release-11.10";
+// release-11.10 does not implement plugin EvaluateAccessControl (mattermost#37509 landed on master / 11.11).
+const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:master";
 
 type PluginConfig = Record<string, unknown>;
 type PluginConfigInput = PluginConfig | {config: PluginConfig};
