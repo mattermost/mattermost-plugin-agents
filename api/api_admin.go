@@ -51,8 +51,11 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 
 	jobStatus, err := a.indexerService.StartReindexJob(clearIndex)
 	if err != nil {
-		switch err.Error() {
-		case "job already running":
+		switch {
+		case errors.Is(err, indexer.ErrCatchUpIncompatible):
+			c.AbortWithError(http.StatusBadRequest, err)
+			return
+		case err.Error() == "job already running":
 			c.JSON(http.StatusConflict, jobStatus)
 			return
 		default:

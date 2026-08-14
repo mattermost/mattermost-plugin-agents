@@ -490,8 +490,8 @@ func TestExecuteSearchAppliesRetentionFloor(t *testing.T) {
 				return
 			}
 			cfg := embeddings.EmbeddingSearchConfig{IndexRetentionDays: tt.days}
-			minExclusive := cfg.IndexRetentionFloor(after) - 1
-			maxExclusive := cfg.IndexRetentionFloor(before) - 1
+			minExclusive := cfg.IndexRetentionFloor(before) - 1
+			maxExclusive := cfg.IndexRetentionFloor(after) - 1
 			if minExclusive < 1 {
 				minExclusive = 1
 			}

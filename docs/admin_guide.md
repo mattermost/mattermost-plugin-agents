@@ -380,7 +380,7 @@ Post indexing occurs automatically during initial setup. Changing the embedding 
 **Index posts from the last N days** controls how far back indexing looks. `0` (the default) indexes all posts. A positive N is the historical cut for the first Full Reindex on a large corpus.
 
 - **Increase N** (365 → 730, or 365 → 0/all posts): search stays available. Run **Catch Up** to embed posts now in-window that are not already in the index. Catch Up does not re-embed rows that already exist. Do not Full Reindex just to widen the window. Catch Up after a large increase can take a long time and maintains HNSW as it inserts; jumping from a one-year window to all posts on a huge corpus may still prefer a deferred Full Reindex (re-embeds everything; search is down).
-- **Decrease N**: live indexing and later reindexes use the tighter floor. Rows already in the index are **not** deleted. Search hides out-of-window posts. RAM does not drop until a later Full Reindex. Catch Up is a no-op (`NOT EXISTS`).
+- **Decrease N**: live indexing and later reindexes use the tighter floor. Rows already in the index are **not** deleted. Search hides out-of-window posts. RAM does not drop until a later Full Reindex. Catch Up still indexes in-window posts that have no embedding row (`NOT EXISTS`); after a complete index that is usually no extra work.
 - Saving N does **not** start Catch Up or Full Reindex automatically. Use the banner and the Catch Up button.
 - Changing N while a job is running does not change that job's window; abort and start a new job if you want the new bounds.
 

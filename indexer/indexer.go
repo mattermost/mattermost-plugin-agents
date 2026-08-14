@@ -170,6 +170,9 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		newJobStatus.IndexRetentionDays = sess.existing.IndexRetentionDays
 		if sess.existing.isCatchUp() {
 			newJobStatus.Operation = JobOperationCatchUp
+			if identErr := s.errIfCatchUpIncompatible(s.getModelInfoFromConfig()); identErr != nil {
+				return JobStatus{}, identErr
+			}
 		}
 	} else {
 		snap := s.snapshotRetention(cutoffTimestamp)
@@ -339,11 +342,8 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 
 	cutoffTimestamp := time.Now().UnixMilli()
 	snap := s.snapshotRetention(cutoffTimestamp)
-	if snap.model != nil {
-		compat := s.CheckModelCompatibility(*snap.model)
-		if !compat.Compatible {
-			return JobStatus{}, fmt.Errorf("%w: %s", ErrCatchUpIncompatible, compat.Reason)
-		}
+	if identErr := s.errIfCatchUpIncompatible(snap.model); identErr != nil {
+		return JobStatus{}, identErr
 	}
 
 	count, err := s.countIndexablePosts(cutoffTimestamp, snap.floor, true)
@@ -675,4 +675,15 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 // getModelInfoFromConfig builds ModelInfo from a single config read.
 func (s *Indexer) getModelInfoFromConfig() *ModelInfo {
 	return s.snapshotRetention(time.Now().UnixMilli()).model
+}
+
+func (s *Indexer) errIfCatchUpIncompatible(current *ModelInfo) error {
+	if current == nil {
+		return nil
+	}
+	compat := s.CheckModelCompatibility(*current)
+	if !compat.Compatible {
+		return fmt.Errorf("%w: %s", ErrCatchUpIncompatible, compat.Reason)
+	}
+	return nil
 }

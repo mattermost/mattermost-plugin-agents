@@ -421,7 +421,7 @@ func TestCheckIndexHealthWidenedEmptyGapThenCatchUp(t *testing.T) {
 			Parameters: []byte(`{"embeddingModel":"text-embedding-3-small"}`),
 		},
 	}
-	idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, func() embeddings.EmbeddingSearchConfig { return cfg }, mockClient, nil, db, mockMutexAPI)
+	idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, func() embeddings.EmbeddingSearchConfig { return cfg }, mockClient, &bots.MMBots{}, db, mockMutexAPI)
 
 	health, err := idx.CheckIndexHealth(context.Background())
 	require.NoError(t, err)
@@ -857,4 +857,41 @@ func TestStartCatchUpJobRejectsIncompatibleIdentity(t *testing.T) {
 			assert.ErrorIs(t, err, ErrCatchUpIncompatible)
 		})
 	}
+}
+
+func TestStartReindexJobRejectsCatchUpResumeIncompatibleIdentity(t *testing.T) {
+	mockClient := mocks.NewMockClient(t)
+	mockMutexAPI := &plugintest.API{}
+	mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+	running := JobStatus{
+		JobID:     "catch-1",
+		Status:    JobStatusFailed,
+		Operation: JobOperationCatchUp,
+		Resumable: true,
+	}
+	mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+		Run(func(args mock.Arguments) {
+			*args.Get(1).(*JobStatus) = running
+		}).
+		Return(nil)
+	mockClient.On("KVGet", IndexerModelKey, mock.AnythingOfType("*indexer.ModelInfo")).
+		Run(func(args mock.Arguments) {
+			*args.Get(1).(*ModelInfo) = ModelInfo{
+				ProviderType: "openai",
+				ModelName:    "text-embedding-3-small",
+				Dimensions:   768,
+			}
+		}).
+		Return(nil)
+	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+	idx := New(
+		func() embeddings.EmbeddingSearch { return mockSearch },
+		func() embeddings.EmbeddingSearchConfig { return modelCfg("openai", "text-embedding-3-small", 1536) },
+		mockClient, nil, nil, mockMutexAPI,
+	)
+	_, err := idx.StartReindexJob(false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrCatchUpIncompatible)
 }
