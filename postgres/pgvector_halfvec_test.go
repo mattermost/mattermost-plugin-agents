@@ -5,9 +5,11 @@ package postgres
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -217,6 +219,8 @@ func TestNewPGVectorTypeMismatchDoesNotSilentlyWrite(t *testing.T) {
 	})
 	require.NoError(t, err, "construction must succeed so Full Reindex Clear() can run")
 
+	require.Error(t, halfStore.CheckSchema(ctx))
+
 	elementType, dims, err := halfStore.embeddingColumnTypmod(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, embeddings.VectorElementTypeVector, elementType)
@@ -246,4 +250,95 @@ func TestNewPGVectorTypeMismatchDoesNotSilentlyWrite(t *testing.T) {
 			AND a.attname = 'embedding'
 			AND NOT a.attisdropped`))
 	assert.Equal(t, "vector(3)", typeName)
+}
+
+type countingEmbeddingProvider struct {
+	inner  embeddings.EmbeddingProvider
+	create int
+	batch  int
+}
+
+func (p *countingEmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([]float32, error) {
+	p.create++
+	return p.inner.CreateEmbedding(ctx, text)
+}
+
+func (p *countingEmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
+	p.batch++
+	return p.inner.BatchCreateEmbeddings(ctx, texts)
+}
+
+func (p *countingEmbeddingProvider) Dimensions() int {
+	return p.inner.Dimensions()
+}
+
+func TestCompositeSearchSkipsProviderOnTypeMismatch(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	ctx := context.Background()
+	_, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	halfStore, err := NewPGVector(db, PGVectorConfig{
+		Dimensions:        3,
+		VectorElementType: embeddings.VectorElementTypeHalfvec,
+	})
+	require.NoError(t, err)
+
+	provider := &countingEmbeddingProvider{inner: embeddings.NewMockEmbeddingProvider(3)}
+	search := embeddings.NewCompositeSearch(halfStore, provider, chunking.DefaultOptions(), embeddings.RecencyBiasSettings{})
+
+	err = search.Store(ctx, []embeddings.PostDocument{{
+		PostID: "post1", Content: "would be billed if embeddings ran",
+	}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Full Reindex")
+	assert.Equal(t, 0, provider.batch, "schema mismatch must not call the embedding provider")
+
+	_, err = search.Search(ctx, "query", embeddings.SearchOptions{UserID: "user1"})
+	require.Error(t, err)
+	assert.Equal(t, 0, provider.create, "schema mismatch must not embed a search query")
+
+	require.NoError(t, search.Clear(ctx))
+	require.NoError(t, halfStore.CheckSchema(ctx))
+}
+
+func TestSchemaMismatchConcurrentWithClear(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	ctx := context.Background()
+	_, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	halfStore, err := NewPGVector(db, PGVectorConfig{
+		Dimensions:        3,
+		VectorElementType: embeddings.VectorElementTypeHalfvec,
+	})
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	addTestPosts(t, db, []string{"post1"}, []int64{now})
+	doc := []embeddings.PostDocument{{
+		PostID: "post1", CreateAt: now, TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: "race",
+	}}
+	vec := [][]float32{{0.1, 0.2, 0.3}}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 40; j++ {
+				_ = halfStore.CheckSchema(ctx)
+				_ = halfStore.Store(ctx, doc, vec)
+				_, _ = halfStore.Search(ctx, vec[0], embeddings.SearchOptions{UserID: "user1"})
+			}
+		}()
+	}
+
+	require.NoError(t, halfStore.Clear(ctx))
+	wg.Wait()
+	require.NoError(t, halfStore.CheckSchema(ctx))
 }

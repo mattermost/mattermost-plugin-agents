@@ -6,12 +6,14 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
@@ -60,11 +62,13 @@ type PGVector struct {
 	// differ from this instance. NewPGVector skips CREATE TABLE IF NOT EXISTS
 	// so it does not assume the catalog matches; Store/Search refuse to bind
 	// the wrong type. Clear() (Full Reindex) drops and recreates the table.
-	schemaMismatch bool
+	// atomic: live Store/Search can race Full Reindex Clear().
+	schemaMismatch atomic.Bool
 }
 
 // Compile-time check that PGVector supports deferred bulk indexing.
 var _ embeddings.BulkIndexer = (*PGVector)(nil)
+var _ embeddings.SchemaChecker = (*PGVector)(nil)
 
 type PGVectorConfig struct {
 	Dimensions int `json:"dimensions"`
@@ -90,10 +94,6 @@ func clampHNSWM(m int) int {
 	return min(m, embeddings.MaxHNSWM)
 }
 
-func clampVectorElementType(elementType string) string {
-	return embeddings.NormalizeVectorElementType(elementType)
-}
-
 func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 	if config.Dimensions <= 0 {
 		return nil, fmt.Errorf("pgvector dimensions must be greater than 0, got %d", config.Dimensions)
@@ -108,7 +108,7 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 		db:              db,
 		dimensions:      config.Dimensions,
 		hnswM:           clampHNSWM(config.HNSWM),
-		elementType:     clampVectorElementType(config.VectorElementType),
+		elementType:     embeddings.NormalizeVectorElementType(config.VectorElementType),
 		skipVectorIndex: config.SkipVectorIndex,
 	}
 
@@ -122,7 +122,7 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 		// the configured type/width were applied. Schema changes go through
 		// Clear() on Full Reindex. Construction still succeeds so Clear() can
 		// run; Store/Search refuse to write the wrong type.
-		pv.schemaMismatch = true
+		pv.schemaMismatch.Store(true)
 		return pv, nil
 	}
 
@@ -142,7 +142,7 @@ func createEmbeddingsTableQuery(dimensions int, elementType string) string {
 			channel_id TEXT NOT NULL,
 			user_id TEXT NOT NULL,
 			content TEXT NOT NULL,
-			embedding ` + clampVectorElementType(elementType) + `(` + strconv.Itoa(dimensions) + `),
+			embedding ` + embeddings.NormalizeVectorElementType(elementType) + `(` + strconv.Itoa(dimensions) + `),
 			created_at BIGINT NOT NULL,
 			is_chunk BOOLEAN NOT NULL DEFAULT FALSE,
 			chunk_index INTEGER,              -- NULL for non-chunks
@@ -219,15 +219,18 @@ func parseVectorTypmod(typeName string) (string, int, error) {
 	return elementType, dims, nil
 }
 
-func (pv *PGVector) bindEmbedding(vec []float32) any {
+func (pv *PGVector) bindEmbedding(vec []float32) driver.Valuer {
 	if pv.elementType == embeddings.VectorElementTypeHalfvec {
 		return pgvector.NewHalfVector(vec)
 	}
 	return pgvector.NewVector(vec)
 }
 
-func (pv *PGVector) errIfSchemaMismatch() error {
-	if !pv.schemaMismatch {
+func (pv *PGVector) CheckSchema(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !pv.schemaMismatch.Load() {
 		return nil
 	}
 	return fmt.Errorf("embedding column type or dimensions do not match configuration; run Full Reindex to recreate the table")
@@ -251,7 +254,7 @@ func (pv *PGVector) vectorIndexExists(ctx context.Context) (bool, error) {
 }
 
 func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, embeddings [][]float32) error {
-	if err := pv.errIfSchemaMismatch(); err != nil {
+	if err := pv.CheckSchema(ctx); err != nil {
 		return err
 	}
 
@@ -345,7 +348,7 @@ func sqlNullInt(condition bool, val int) interface{} {
 }
 
 func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
-	if err := pv.errIfSchemaMismatch(); err != nil {
+	if err := pv.CheckSchema(ctx); err != nil {
 		return nil, err
 	}
 
@@ -524,7 +527,7 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 		if schemaErr := pv.ensureSchema(ctx, !pv.skipVectorIndex, pv.db); schemaErr != nil {
 			return schemaErr
 		}
-		pv.schemaMismatch = false
+		pv.schemaMismatch.Store(false)
 		return nil
 	}
 
@@ -537,7 +540,7 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 		if _, truncErr := pv.db.ExecContext(ctx, "TRUNCATE TABLE llm_posts_embeddings"); truncErr != nil {
 			return fmt.Errorf("failed to clear vectors: %w", truncErr)
 		}
-		pv.schemaMismatch = false
+		pv.schemaMismatch.Store(false)
 		return pv.replaceMismatchedVectorIndex(ctx)
 	}
 
@@ -565,7 +568,7 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit embedding schema change: %w", err)
 	}
-	pv.schemaMismatch = false
+	pv.schemaMismatch.Store(false)
 	return nil
 }
 
