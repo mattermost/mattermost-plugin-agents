@@ -14,9 +14,7 @@
 // trustworthy, because the server resolves policy existence even when ABAC is
 // down: legacy-mode agents run their legacy allow/block checks, services and
 // MCP servers are unrestricted, and attribute-based agents fail open by
-// design. On servers below MinServerVersionForABAC (NewLegacyOnly,
-// version-gated) policy existence cannot be resolved, so attribute-based
-// agents deny.
+// design.
 //
 // Enforcement call sites: bots/ (agent+service gate), mcp/ (per-user server
 // filtering), llmcontext/ (meta-tool omission), api/ (authoring, list filters).
