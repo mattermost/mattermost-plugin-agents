@@ -95,11 +95,12 @@ type Cursor struct {
 
 // ModelInfo stores the model configuration used when indexing
 type ModelInfo struct {
-	ProviderType string `json:"provider_type"`
-	ModelName    string `json:"model_name"`
-	Dimensions   int    `json:"dimensions"`
-	HNSWM        int    `json:"hnsw_m,omitempty"`
-	IndexedAt    int64  `json:"indexed_at"`
+	ProviderType      string `json:"provider_type"`
+	ModelName         string `json:"model_name"`
+	Dimensions        int    `json:"dimensions"`
+	HNSWM             int    `json:"hnsw_m,omitempty"`
+	VectorElementType string `json:"vector_element_type,omitempty"`
+	IndexedAt         int64  `json:"indexed_at"`
 }
 
 // HealthCheckResult represents the result of an index health check
@@ -112,13 +113,14 @@ type HealthCheckResult struct {
 	Error            string    `json:"error,omitempty"`
 
 	// Model compatibility fields
-	ModelCompatible    bool   `json:"model_compatible"`
-	ModelNeedsReindex  bool   `json:"model_needs_reindex"`
-	ModelCompatReason  string `json:"model_compat_reason,omitempty"`
-	StoredProviderType string `json:"stored_provider_type,omitempty"`
-	StoredDimensions   int    `json:"stored_dimensions,omitempty"`
-	StoredModelName    string `json:"stored_model_name,omitempty"`
-	StoredHNSWM        int    `json:"stored_hnsw_m,omitempty"`
+	ModelCompatible         bool   `json:"model_compatible"`
+	ModelNeedsReindex       bool   `json:"model_needs_reindex"`
+	ModelCompatReason       string `json:"model_compat_reason,omitempty"`
+	StoredProviderType      string `json:"stored_provider_type,omitempty"`
+	StoredDimensions        int    `json:"stored_dimensions,omitempty"`
+	StoredModelName         string `json:"stored_model_name,omitempty"`
+	StoredHNSWM             int    `json:"stored_hnsw_m,omitempty"`
+	StoredVectorElementType string `json:"stored_vector_element_type,omitempty"`
 
 	// Present while a deferred reindex owns the ANN index lifecycle.
 	VectorIndexState *VectorIndexState `json:"vector_index_state,omitempty"`
@@ -126,13 +128,14 @@ type HealthCheckResult struct {
 
 // ModelCompatibility represents the result of checking model compatibility
 type ModelCompatibility struct {
-	Compatible         bool   `json:"compatible"`
-	NeedsReindex       bool   `json:"needs_reindex"`
-	Reason             string `json:"reason,omitempty"`
-	StoredProviderType string `json:"stored_provider_type,omitempty"`
-	StoredDimensions   int    `json:"stored_dimensions,omitempty"`
-	StoredModelName    string `json:"stored_model_name,omitempty"`
-	StoredHNSWM        int    `json:"stored_hnsw_m,omitempty"`
+	Compatible              bool   `json:"compatible"`
+	NeedsReindex            bool   `json:"needs_reindex"`
+	Reason                  string `json:"reason,omitempty"`
+	StoredProviderType      string `json:"stored_provider_type,omitempty"`
+	StoredDimensions        int    `json:"stored_dimensions,omitempty"`
+	StoredModelName         string `json:"stored_model_name,omitempty"`
+	StoredHNSWM             int    `json:"stored_hnsw_m,omitempty"`
+	StoredVectorElementType string `json:"stored_vector_element_type,omitempty"`
 }
 
 // Keyset pagination of indexable posts, bounded above by a cutoff timestamp

@@ -37,6 +37,21 @@ export const HNSW_DEFAULTS = {
     max: 100,
 } as const;
 
+// Mirror embeddings.VectorElementType* / GetVectorElementType.
+export const VECTOR_ELEMENT_TYPE = {
+    vector: 'vector',
+    halfvec: 'halfvec',
+} as const;
+
+export type VectorElementType = typeof VECTOR_ELEMENT_TYPE[keyof typeof VECTOR_ELEMENT_TYPE];
+
+export const normalizeVectorElementType = (value: string | undefined): VectorElementType => {
+    if (value === VECTOR_ELEMENT_TYPE.halfvec) {
+        return VECTOR_ELEMENT_TYPE.halfvec;
+    }
+    return VECTOR_ELEMENT_TYPE.vector;
+};
+
 export type ReindexIndexStrategy = typeof REINDEX_INDEX_STRATEGY[keyof typeof REINDEX_INDEX_STRATEGY];
 
 export interface ChunkingOptions {
@@ -52,6 +67,7 @@ export interface EmbeddingSearchConfig {
     parameters: Record<string, unknown> | null; // server sends nil json.RawMessage as JSON null
     dimensions: number;
     hnswM?: number;
+    vectorElementType?: VectorElementType;
     chunkingOptions?: ChunkingOptions;
     reindexWorkers?: number;
     reindexBatchSize?: number;
@@ -109,6 +125,7 @@ export interface HealthCheckResultType {
     stored_dimensions?: number;
     stored_model_name?: string;
     stored_hnsw_m?: number;
+    stored_vector_element_type?: string;
 
     // Deferred reindex owns the ANN lifecycle; search gated for dropped/building.
     vector_index_state?: {
