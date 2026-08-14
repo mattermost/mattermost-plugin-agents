@@ -103,6 +103,13 @@ type VectorStore interface {
 	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
 }
 
+// SchemaChecker is an optional VectorStore preflight. CompositeSearch calls it
+// before generating embeddings so a column-type mismatch does not bill the
+// provider. Clear must still succeed so Full Reindex can repair the schema.
+type SchemaChecker interface {
+	CheckSchema(ctx context.Context) error
+}
+
 // BulkIndexer drops/rebuilds the ANN index around bulk loads.
 type BulkIndexer interface {
 	PrepareBulkIndex(ctx context.Context) error
