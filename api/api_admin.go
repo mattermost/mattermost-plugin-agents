@@ -143,13 +143,16 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 
 	jobStatus, err := a.indexerService.StartCatchUpJob()
 	if err != nil {
-		switch err.Error() {
-		case "job already running":
+		switch {
+		case errors.Is(err, indexer.ErrCatchUpIncompatible):
+			c.AbortWithError(http.StatusBadRequest, err)
+			return
+		case err.Error() == "job already running":
 			// The blocking job's status is the useful context on this fail path.
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
-		case "no previous index found, run a full reindex first":
+		case err.Error() == "no previous index found, run a full reindex first":
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		default:

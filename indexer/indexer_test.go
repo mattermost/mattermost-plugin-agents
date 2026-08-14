@@ -991,7 +991,7 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 
 		idx := New(
 			func() embeddings.EmbeddingSearch { return mockSearch },
-			func() embeddings.EmbeddingSearchConfig { return modelCfg("openai", "model-a", 1536) },
+			func() embeddings.EmbeddingSearchConfig { return modelCfg("openai", "old-model", 768) },
 			mockClient, &bots.MMBots{}, db, mockMutexAPI,
 		)
 

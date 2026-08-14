@@ -66,6 +66,7 @@
   "4f3EON2K": "Back to prompts",
   "4f8V1W0M": "Enable Embedding Search",
   "4wQOb/5v": "Optional: Override the service's default model for this agent. Select from the list or type a custom model name.",
+  "4wzS5QCo": "Save the configuration before running Catch Up. Catch Up uses the saved retention window, not this unsaved value.",
   "5+vsd4fd": "Use Responses API",
   "5EVl/vXb": "{serverName}, {detail}. Press to expand or collapse tools.",
   "5VFXOyIS": "Refresh tool providers",

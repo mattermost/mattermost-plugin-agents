@@ -777,3 +777,84 @@ func TestJobStartUsesSingleConfigSnapshot(t *testing.T) {
 		})
 	}
 }
+
+func TestStartCatchUpJobRejectsIncompatibleIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored ModelInfo
+		cfg    embeddings.EmbeddingSearchConfig
+	}{
+		{
+			name: "dimension mismatch",
+			stored: ModelInfo{
+				ProviderType: "openai",
+				ModelName:    "text-embedding-3-small",
+				Dimensions:   768,
+			},
+			cfg: modelCfg("openai", "text-embedding-3-small", 1536),
+		},
+		{
+			name: "model name mismatch",
+			stored: ModelInfo{
+				ProviderType: "openai",
+				ModelName:    "text-embedding-ada-002",
+				Dimensions:   1536,
+			},
+			cfg: modelCfg("openai", "text-embedding-3-small", 1536),
+		},
+		{
+			name: "provider mismatch",
+			stored: ModelInfo{
+				ProviderType: "openai",
+				ModelName:    "text-embedding-3-small",
+				Dimensions:   1536,
+			},
+			cfg: modelCfg("anthropic", "text-embedding-3-small", 1536),
+		},
+		{
+			name: "vector element type mismatch",
+			stored: ModelInfo{
+				ProviderType:      "openai",
+				ModelName:         "text-embedding-3-small",
+				Dimensions:        1536,
+				VectorElementType: embeddings.VectorElementTypeVector,
+			},
+			cfg: func() embeddings.EmbeddingSearchConfig {
+				cfg := modelCfg("openai", "text-embedding-3-small", 1536)
+				cfg.VectorElementType = embeddings.VectorElementTypeHalfvec
+				return cfg
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := mocks.NewMockClient(t)
+			mockMutexAPI := &plugintest.API{}
+			mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+			mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
+				Run(func(args mock.Arguments) {
+					*args.Get(1).(*int64) = time.Now().UnixMilli()
+				}).
+				Return(nil)
+			mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+				Return(mmapi.ErrKVNotFound)
+			mockClient.On("KVGet", IndexerModelKey, mock.AnythingOfType("*indexer.ModelInfo")).
+				Run(func(args mock.Arguments) {
+					*args.Get(1).(*ModelInfo) = tt.stored
+				}).
+				Return(nil)
+			mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+			mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+			idx := New(
+				func() embeddings.EmbeddingSearch { return mockSearch },
+				func() embeddings.EmbeddingSearchConfig { return tt.cfg },
+				mockClient, nil, nil, mockMutexAPI,
+			)
+			_, err := idx.StartCatchUpJob()
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrCatchUpIncompatible)
+		})
+	}
+}

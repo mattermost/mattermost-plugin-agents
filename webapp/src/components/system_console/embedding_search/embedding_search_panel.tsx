@@ -119,8 +119,10 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
     const hasLocalHNSWMismatch = storedHNSWM !== 0 && storedHNSWM !== currentHNSWM;
     const currentRetentionDays = value.indexRetentionDays ?? 0;
     const storedRetentionDays = modelCompatibility?.stored_index_retention_days;
-    const hasLocalRetentionWiden = Boolean(modelCompatibility?.needs_catch_up) ||
-        retentionWindowWidened(currentRetentionDays, storedRetentionDays);
+    const savedRetentionWiden = Boolean(modelCompatibility?.needs_catch_up);
+    const formRetentionWidened = retentionWindowWidened(currentRetentionDays, storedRetentionDays);
+    const hasUnsavedRetentionWiden = formRetentionWidened && !savedRetentionWiden;
+    const hasLocalRetentionWiden = savedRetentionWiden || formRetentionWidened;
     const hasLocalRetentionTighten = retentionWindowTightened(currentRetentionDays, storedRetentionDays) &&
         !hasLocalRetentionWiden;
 
@@ -424,6 +426,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                         localMismatchReason={localMismatchReason}
                         hasLocalHNSWMismatch={hasLocalHNSWMismatch}
                         hasLocalRetentionWiden={hasLocalRetentionWiden}
+                        hasUnsavedRetentionWiden={hasUnsavedRetentionWiden}
                         hasLocalRetentionTighten={hasLocalRetentionTighten}
                         isJobStale={isJobStale}
                         onReindexClick={handleReindexClick}

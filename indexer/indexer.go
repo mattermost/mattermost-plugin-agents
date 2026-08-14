@@ -337,6 +337,13 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	}
 	defer sess.Unlock()
 
+	if current := s.getModelInfoFromConfig(); current != nil {
+		compat := s.CheckModelCompatibility(*current)
+		if !compat.Compatible {
+			return JobStatus{}, fmt.Errorf("%w: %s", ErrCatchUpIncompatible, compat.Reason)
+		}
+	}
+
 	cutoffTimestamp := time.Now().UnixMilli()
 	snap := s.snapshotRetention(cutoffTimestamp)
 
