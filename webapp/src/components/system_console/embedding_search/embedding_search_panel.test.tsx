@@ -168,4 +168,70 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
         expect(screen.getByText('Embedding Model Changed')).toBeTruthy();
         expect(screen.getByText(/Search functionality is disabled until you run a full reindex/)).toBeTruthy();
     });
+
+    it('shows Catch Up banner when index retention is widened', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            healthCheckResult: {
+                ...idleJobStatus.healthCheckResult,
+                indexed_post_count: 10,
+                needs_catch_up: true,
+                stored_index_retention_days: 365,
+            },
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_index_retention_days: 365,
+                needs_catch_up: true,
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('openai'), indexRetentionDays: 730}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('Index retention increased')).toBeTruthy();
+        expect(screen.getByText(/Run Catch Up to embed older posts/)).toBeTruthy();
+        expect(screen.queryByText('Embedding Model Changed')).toBeNull();
+    });
+
+    it('shows a soft note when index retention is tightened', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_index_retention_days: 730,
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('openai'), indexRetentionDays: 365}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText(/Lowering this does not remove already-indexed posts/)).toBeTruthy();
+        expect(screen.queryByText('Embedding Model Changed')).toBeNull();
+        expect(screen.queryByText('Index retention increased')).toBeNull();
+    });
+
+    it('renders the index retention control', () => {
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={enabledConfig('openai')}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('Index posts from the last N days')).toBeTruthy();
+    });
 });

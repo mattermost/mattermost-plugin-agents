@@ -578,6 +578,7 @@ func TestCheckModelCompatibility(t *testing.T) {
 			assert.Equal(t, tt.expectedReason, result.Reason)
 			assert.Equal(t, tt.expectedStoredM, result.StoredHNSWM)
 			assert.Equal(t, tt.expectedStoredType, result.StoredVectorElementType)
+			assert.False(t, result.NeedsCatchUp)
 		})
 	}
 }
@@ -1366,7 +1367,7 @@ func TestCountIndexedPosts(t *testing.T) {
 		require.NoError(t, err)
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
-		count, err := indexer.countIndexedPosts(context.Background())
+		count, err := indexer.countIndexedPosts(context.Background(), 0)
 
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), count) // Should count unique post_ids, not total rows
@@ -1403,6 +1404,8 @@ func TestConfigGetter(t *testing.T) {
 		assert.Equal(t, 1536, result.Dimensions)
 		assert.Equal(t, embeddings.DefaultHNSWM, result.HNSWM)
 		assert.Equal(t, embeddings.VectorElementTypeVector, result.VectorElementType)
+		require.NotNil(t, result.IndexRetentionDays)
+		assert.Equal(t, 0, *result.IndexRetentionDays)
 	})
 }
 
@@ -2027,7 +2030,7 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		// Save cursor
 		mockClient.On("KVSet", IndexerCursorKey, mock.MatchedBy(func(v interface{}) bool {
 			cursor := v.(Cursor)
-			return cursor.LastCreateAt == lastIndexed && cursor.LastID == ""
+			return cursor.LastCreateAt == 0 && cursor.LastID == ""
 		})).Return(nil).Once()
 
 		// Background job operations
@@ -2157,7 +2160,7 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	})
 
-	t.Run("catches up only posts created after last indexed timestamp", func(t *testing.T) {
+	t.Run("starts cursor at retention floor not lastIndexed wall clock", func(t *testing.T) {
 		db := testDB(t)
 		defer cleanupDB(t, db)
 
@@ -2169,24 +2172,32 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
-		// Create test channel
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name, TeamId) VALUES ('channel1', 'O', 'town-square', 'team1')")
 		require.NoError(t, err)
 
-		// Timeline setup: lastIndexedTime is the cutoff point
 		now := model.GetMillis()
-		lastIndexedTime := now - 10000 // 10 seconds ago
+		lastIndexedTime := now - 10000
 
-		// Posts BEFORE lastIndexedTime (should NOT be caught up - simulate already indexed)
 		oldPostIDs := []string{"old-post-1", "old-post-2", "old-post-3"}
 		for i, postID := range oldPostIDs {
 			_, err = db.Exec(
 				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'channel1', 'user1')",
 				postID, lastIndexedTime-1000-int64(i)*100, fmt.Sprintf("Old message %d", i))
 			require.NoError(t, err)
+			_, err = db.Exec(
+				"INSERT INTO llm_posts_embeddings (id, post_id, content, embedding, created_at) VALUES ($1, $1, $2, '[0.1, 0.2, 0.3]', $3)",
+				postID, fmt.Sprintf("Old message %d", i), lastIndexedTime-1000-int64(i)*100)
+			require.NoError(t, err)
 		}
 
-		// Posts AFTER lastIndexedTime (SHOULD be caught up)
+		gapPostIDs := []string{"gap-post-1", "gap-post-2"}
+		for i, postID := range gapPostIDs {
+			_, err = db.Exec(
+				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'channel1', 'user1')",
+				postID, lastIndexedTime-500-int64(i)*10, fmt.Sprintf("Gap message %d", i))
+			require.NoError(t, err)
+		}
+
 		newPostIDs := []string{"new-post-1", "new-post-2", "new-post-3"}
 		for i, postID := range newPostIDs {
 			_, err = db.Exec(
@@ -2195,7 +2206,6 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		// Mock: return lastIndexedTime when asked
 		mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
 			Run(func(args mock.Arguments) {
 				ts := args.Get(1).(*int64)
@@ -2203,24 +2213,19 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 			}).
 			Return(nil)
 
-		// Check if job is running - return not found
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(mmapi.ErrKVNotFound)
 
-		// Cursor operations - the catch-up job sets cursor to start from lastIndexedTime
-		// When the background job loads it, return the cursor that was set
 		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
 			Run(func(args mock.Arguments) {
 				cursor := args.Get(1).(*Cursor)
-				cursor.LastCreateAt = lastIndexedTime
+				cursor.LastCreateAt = 0
 				cursor.LastID = ""
 			}).
 			Return(nil).Maybe()
 
-		// Other KVGet calls (like model info)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 
-		// Track which documents are stored
 		var storedPostIDs []string
 		var storedMu sync.Mutex
 		mockSearch.On("Store", mock.Anything, mock.Anything).
@@ -2234,33 +2239,27 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 			}).
 			Return(nil).Maybe()
 
-		// Other KV operations
 		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
 		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
 
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, mockMutexAPI)
-		status, err := indexer.StartCatchUpJob()
+		idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, mockMutexAPI)
+		status, err := idx.StartCatchUpJob()
 
 		require.NoError(t, err)
 		assert.Equal(t, JobStatusRunning, status.Status)
+		assert.Equal(t, int64(0), status.RetentionFloor)
 
-		// Wait for background job to complete
 		time.Sleep(300 * time.Millisecond)
 
-		// VERIFY: Only posts after lastIndexedTime were stored
 		storedMu.Lock()
 		defer storedMu.Unlock()
 
-		assert.ElementsMatch(t, newPostIDs, storedPostIDs,
-			"Only posts after lastIndexedTime should be indexed; got: %v, expected: %v", storedPostIDs, newPostIDs)
-
-		// VERIFY: Posts before lastIndexedTime were NOT stored
+		assert.ElementsMatch(t, append(append([]string{}, gapPostIDs...), newPostIDs...), storedPostIDs)
 		for _, oldPostID := range oldPostIDs {
-			assert.NotContains(t, storedPostIDs, oldPostID,
-				"Posts before lastIndexedTime should not be re-indexed: %s", oldPostID)
+			assert.NotContains(t, storedPostIDs, oldPostID)
 		}
 	})
 }
@@ -3703,6 +3702,8 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				assert.Equal(t, tc.expected.Dimensions, result.Dimensions)
 				assert.Equal(t, tc.expected.HNSWM, result.HNSWM)
 				assert.Equal(t, tc.expected.VectorElementType, result.VectorElementType)
+				require.NotNil(t, result.IndexRetentionDays)
+				assert.Equal(t, 0, *result.IndexRetentionDays)
 			}
 		})
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -74,6 +75,7 @@ type Search struct {
 	streamingService    streaming.Service
 	licenseChecker      *enterprise.LicenseChecker
 	conversationService *conversation.Service
+	configGetter        func() embeddings.EmbeddingSearchConfig
 }
 
 func New(
@@ -98,6 +100,12 @@ func New(
 // break circular initialisation order in the plugin wiring.
 func (s *Search) SetConversationService(svc *conversation.Service) {
 	s.conversationService = svc
+}
+
+// SetConfigGetter supplies embedding search config for query-time filters
+// such as the index retention floor.
+func (s *Search) SetConfigGetter(getter func() embeddings.EmbeddingSearchConfig) {
+	s.configGetter = getter
 }
 
 // Enabled returns true if the search service is enabled and functional
@@ -204,13 +212,30 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 		limit = 5
 	}
 
-	searchResults, err := search.Search(ctx, query, embeddings.SearchOptions{
+	searchOpts := embeddings.SearchOptions{
 		Limit:     limit,
 		Offset:    opts.Offset,
 		TeamID:    opts.TeamID,
 		ChannelID: opts.ChannelID,
 		UserID:    opts.UserID,
-	})
+	}
+	if s.configGetter != nil {
+		cfg := s.configGetter()
+		floor := cfg.IndexRetentionFloor(time.Now().UnixMilli())
+		if floor > 0 {
+			// CreatedAfter is exclusive (created_at > N). Use floor-1 so the
+			// bound is equivalent to CreateAt >= floor.
+			exclusiveAfter := floor - 1
+			if exclusiveAfter < 1 {
+				exclusiveAfter = 1
+			}
+			if searchOpts.CreatedAfter < exclusiveAfter {
+				searchOpts.CreatedAfter = exclusiveAfter
+			}
+		}
+	}
+
+	searchResults, err := search.Search(ctx, query, searchOpts)
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
 	}

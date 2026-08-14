@@ -98,6 +98,22 @@ const WarningText = styled.div`
     font-size: 14px;
 `;
 
+const NoteBanner = styled.div`
+    background-color: rgba(var(--center-channel-color-rgb), 0.04);
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+`;
+
+const NoteText = styled.div`
+    color: rgba(var(--center-channel-color-rgb), 0.88);
+    font-size: 14px;
+`;
+
 const HealthCheckCard = styled.div`
     background-color: rgba(var(--center-channel-color-rgb), 0.04);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
@@ -233,6 +249,8 @@ interface ReindexSectionProps {
     hasLocalModelMismatch: boolean;
     localMismatchReason: string;
     hasLocalHNSWMismatch: boolean;
+    hasLocalRetentionWiden: boolean;
+    hasLocalRetentionTighten: boolean;
     isJobStale: boolean;
     onReindexClick: () => void;
     onCancelJob: () => void;
@@ -250,6 +268,8 @@ export const ReindexSection = ({
     hasLocalModelMismatch,
     localMismatchReason,
     hasLocalHNSWMismatch,
+    hasLocalRetentionWiden,
+    hasLocalRetentionTighten,
     isJobStale,
     onReindexClick,
     onCancelJob,
@@ -272,11 +292,13 @@ export const ReindexSection = ({
         (jobStatus?.processed_rows ?? 0) > 0;
 
     // Check if catch-up is relevant (only show when there's an existing index that needs updating)
-    const showCatchUp = healthCheckResult &&
+    const showCatchUp = Boolean(healthCheckResult &&
         healthCheckResult.indexed_post_count > 0 &&
         (healthCheckResult.missing_posts > 0 ||
          healthCheckResult.status === 'mismatch' ||
-         healthCheckResult.status === 'needs_reindex');
+         healthCheckResult.status === 'needs_reindex' ||
+         healthCheckResult.needs_catch_up ||
+         hasLocalRetentionWiden));
 
     const formatTimestamp = (timestamp: string | undefined) => {
         if (!timestamp) {
@@ -360,6 +382,25 @@ export const ReindexSection = ({
                         <FormattedMessage defaultMessage='HNSW M has changed. Use Rebuild vector index to apply it — not Full Reindex. Search keeps working until you rebuild; the new M takes effect after the rebuild.'/>
                     </WarningText>
                 </WarningBanner>
+            )}
+
+            {hasLocalRetentionWiden && !hasLocalModelMismatch && (
+                <WarningBanner>
+                    <WarningIcon>{'⚠️'}</WarningIcon>
+                    <WarningText>
+                        <strong><FormattedMessage defaultMessage='Index retention increased'/></strong>
+                        <br/>
+                        <FormattedMessage defaultMessage='The index now looks further back. Run Catch Up to embed older posts that are not already in the index. Search stays available — do not Full Reindex unless you also changed the embedding model or vector precision.'/>
+                    </WarningText>
+                </WarningBanner>
+            )}
+
+            {hasLocalRetentionTighten && !hasLocalModelMismatch && !hasLocalRetentionWiden && (
+                <NoteBanner>
+                    <NoteText>
+                        <FormattedMessage defaultMessage='Lowering this does not remove already-indexed posts. Search can hide older rows. Full Reindex if you want the index smaller.'/>
+                    </NoteText>
+                </NoteBanner>
             )}
 
             {/* Reindex Section */}
@@ -491,7 +532,7 @@ export const ReindexSection = ({
                     )}
 
                     <HelpText>
-                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up indexes only posts created since the last successful index. Rebuild vector index rebuilds the HNSW graph without re-embedding posts.'/>
+                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up fills holes in the current retention window (posts not already in the index) without disabling search. Rebuild vector index rebuilds the HNSW graph without re-embedding posts. Changing the retention window while a job is running uses the new floor; abort and start fresh if you need the previous bounds.'/>
                     </HelpText>
                 </div>
             </ActionContainer>

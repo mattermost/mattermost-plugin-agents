@@ -75,6 +75,7 @@ export interface EmbeddingSearchConfig {
     recencyBiasEnabled?: boolean;
     recencyHalfLifeDays?: number;
     recencyFloor?: number;
+    indexRetentionDays?: number;
 }
 
 // Match the server's JobStatus struct field names
@@ -126,6 +127,8 @@ export interface HealthCheckResultType {
     stored_model_name?: string;
     stored_hnsw_m?: number;
     stored_vector_element_type?: string;
+    stored_index_retention_days?: number;
+    needs_catch_up?: boolean;
 
     // Deferred reindex owns the ANN lifecycle; search gated for dropped/building.
     vector_index_state?: {

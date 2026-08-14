@@ -209,12 +209,14 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 
 	// Include model compatibility in the health check result
 	cfg := a.config.EmbeddingSearchConfig()
+	days := cfg.GetIndexRetentionDays()
 	compat := a.indexerService.CheckModelCompatibility(indexer.ModelInfo{
-		ProviderType:      cfg.GetProviderType(),
-		Dimensions:        cfg.Dimensions,
-		ModelName:         cfg.GetModelName(),
-		HNSWM:             cfg.GetHNSWM(),
-		VectorElementType: cfg.GetVectorElementType(),
+		ProviderType:       cfg.GetProviderType(),
+		Dimensions:         cfg.Dimensions,
+		ModelName:          cfg.GetModelName(),
+		HNSWM:              cfg.GetHNSWM(),
+		VectorElementType:  cfg.GetVectorElementType(),
+		IndexRetentionDays: &days,
 	})
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex
@@ -224,6 +226,8 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 	result.StoredModelName = compat.StoredModelName
 	result.StoredHNSWM = compat.StoredHNSWM
 	result.StoredVectorElementType = compat.StoredVectorElementType
+	result.StoredIndexRetentionDays = compat.StoredIndexRetentionDays
+	result.NeedsCatchUp = compat.NeedsCatchUp
 
 	c.JSON(http.StatusOK, result)
 }

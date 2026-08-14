@@ -431,6 +431,50 @@ func TestExecuteSearch(t *testing.T) {
 	}
 }
 
+func TestExecuteSearchAppliesRetentionFloor(t *testing.T) {
+	tests := []struct {
+		name         string
+		days         int
+		wantAfterSet bool
+	}{
+		{name: "N=0 does not set CreatedAfter", days: 0, wantAfterSet: false},
+		{name: "positive N sets exclusive CreatedAfter below the floor", days: 365, wantAfterSet: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+			mockClient := mmapimocks.NewMockClient(t)
+			allowVectorIndexStateRead(mockClient)
+
+			var gotOpts embeddings.SearchOptions
+			mockEmbedding.On("Search", mock.Anything, "test query", mock.Anything).
+				Run(func(args mock.Arguments) {
+					gotOpts = args.Get(2).(embeddings.SearchOptions)
+				}).
+				Return([]embeddings.SearchResult{}, nil)
+
+			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
+			s.SetConfigGetter(func() embeddings.EmbeddingSearchConfig {
+				return embeddings.EmbeddingSearchConfig{IndexRetentionDays: tt.days}
+			})
+
+			_, err := s.executeSearch(context.Background(), "test query", Options{Limit: 5})
+			require.NoError(t, err)
+
+			if !tt.wantAfterSet {
+				require.Zero(t, gotOpts.CreatedAfter)
+				return
+			}
+			cfg := embeddings.EmbeddingSearchConfig{IndexRetentionDays: tt.days}
+			floor := cfg.IndexRetentionFloor(time.Now().UnixMilli())
+			require.Greater(t, gotOpts.CreatedAfter, int64(0))
+			require.Less(t, gotOpts.CreatedAfter, floor)
+			require.GreaterOrEqual(t, gotOpts.CreatedAfter, floor-2)
+		})
+	}
+}
+
 func TestBuildPrompt(t *testing.T) {
 	// Load real prompts for tests
 	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)

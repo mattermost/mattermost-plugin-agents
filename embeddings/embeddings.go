@@ -190,6 +190,7 @@ type EmbeddingSearchConfig struct {
 	RecencyBiasEnabled   bool             `json:"recencyBiasEnabled,omitempty"`
 	RecencyHalfLifeDays  float64          `json:"recencyHalfLifeDays,omitempty"`
 	RecencyFloor         float64          `json:"recencyFloor,omitempty"`
+	IndexRetentionDays   int              `json:"indexRetentionDays,omitempty"`
 }
 
 // GetReindexWorkers returns the configured reindex worker count, clamped to
@@ -225,6 +226,33 @@ func NormalizeVectorElementType(elementType string) string {
 // GetVectorElementType returns the configured embedding column type.
 func (c *EmbeddingSearchConfig) GetVectorElementType() string {
 	return NormalizeVectorElementType(c.VectorElementType)
+}
+
+// MillisPerDay is the Unix-millis length of a 24-hour day.
+const MillisPerDay int64 = 24 * 60 * 60 * 1000
+
+// GetIndexRetentionDays returns the configured retention window in days.
+// Negative values are treated as 0 (index all posts).
+func (c *EmbeddingSearchConfig) GetIndexRetentionDays() int {
+	if c.IndexRetentionDays < 0 {
+		return 0
+	}
+	return c.IndexRetentionDays
+}
+
+// IndexRetentionFloor is the inclusive CreateAt lower bound for indexing and
+// search. 0 days (all posts) returns 0, meaning no lower bound. The result is
+// never negative.
+func (c *EmbeddingSearchConfig) IndexRetentionFloor(nowMillis int64) int64 {
+	days := c.GetIndexRetentionDays()
+	if days == 0 {
+		return 0
+	}
+	floor := nowMillis - int64(days)*MillisPerDay
+	if floor < 0 {
+		return 0
+	}
+	return floor
 }
 
 // GetReindexBatchSize returns the configured reindex batch size, clamped to

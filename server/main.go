@@ -283,12 +283,14 @@ func (p *Plugin) OnActivate() error {
 	// compatible with the existing index.
 	searchAvailability.SetQueryAllowedFunc(func() bool {
 		cfg := p.configuration.EmbeddingSearchConfig()
+		days := cfg.GetIndexRetentionDays()
 		return indexerService.CheckModelCompatibility(indexer.ModelInfo{
-			ProviderType:      cfg.GetProviderType(),
-			Dimensions:        cfg.Dimensions,
-			ModelName:         cfg.GetModelName(),
-			HNSWM:             cfg.GetHNSWM(),
-			VectorElementType: cfg.GetVectorElementType(),
+			ProviderType:       cfg.GetProviderType(),
+			Dimensions:         cfg.Dimensions,
+			ModelName:          cfg.GetModelName(),
+			HNSWM:              cfg.GetHNSWM(),
+			VectorElementType:  cfg.GetVectorElementType(),
+			IndexRetentionDays: &days,
 		}).Compatible
 	})
 
@@ -321,6 +323,7 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 		nil, // conversation service wired in a later step
 	)
+	searchService.SetConfigGetter(configGetter)
 
 	// Register update listener for embedding search config changes
 	p.configuration.RegisterUpdateListener(func() {
