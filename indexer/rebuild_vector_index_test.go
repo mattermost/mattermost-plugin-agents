@@ -165,6 +165,19 @@ func TestStartRebuildVectorIndexRejectsIncompatibleIdentity(t *testing.T) {
 				return cfg
 			}(),
 		},
+		{
+			name: "legacy empty vector element type vs halfvec",
+			stored: ModelInfo{
+				ProviderType: "openai",
+				ModelName:    "text-embedding-3-small",
+				Dimensions:   1536,
+			},
+			cfg: func() embeddings.EmbeddingSearchConfig {
+				cfg := modelCfg("openai", "text-embedding-3-small", 1536)
+				cfg.VectorElementType = embeddings.VectorElementTypeHalfvec
+				return cfg
+			}(),
+		},
 	}
 
 	for _, tt := range tests {

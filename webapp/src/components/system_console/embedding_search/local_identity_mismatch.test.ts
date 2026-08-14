@@ -44,6 +44,26 @@ describe('embeddingIdentityMismatchKind', () => {
             want: 'vectorElementType' as const,
         },
         {
+            name: 'legacy empty stored type vs halfvec is a mismatch',
+            stored: {
+                stored_provider_type: 'openai',
+                stored_dimensions: 1536,
+                stored_model_name: 'text-embedding-3-small',
+            },
+            current: {...current, vectorElementType: 'halfvec'},
+            want: 'vectorElementType' as const,
+        },
+        {
+            name: 'legacy empty stored type vs vector is not a mismatch',
+            stored: {
+                stored_provider_type: 'openai',
+                stored_dimensions: 1536,
+                stored_model_name: 'text-embedding-3-small',
+            },
+            current,
+            want: null,
+        },
+        {
             name: 'model name change',
             stored: {
                 stored_provider_type: 'openai',
@@ -68,6 +88,12 @@ describe('embeddingIdentityMismatchKind', () => {
             name: 'missing stored fields are not a mismatch',
             stored: {},
             current,
+            want: null,
+        },
+        {
+            name: 'missing stored fields vs halfvec are not a mismatch',
+            stored: {},
+            current: {...current, vectorElementType: 'halfvec'},
             want: null,
         },
         {

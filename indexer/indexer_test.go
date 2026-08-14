@@ -482,7 +482,7 @@ func TestCheckModelCompatibility(t *testing.T) {
 			expectedStoredM: 16,
 		},
 		{
-			name: "stored missing vector element type is compatible",
+			name: "stored missing vector element type vs vector is compatible",
 			storedInfo: ModelInfo{
 				ProviderType: "openai",
 				Dimensions:   1536,
@@ -497,6 +497,24 @@ func TestCheckModelCompatibility(t *testing.T) {
 			},
 			expectedCompat:  true,
 			expectedReindex: false,
+		},
+		{
+			name: "stored missing vector element type vs halfvec is search incompatible and needs full reindex",
+			storedInfo: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+			},
+			current: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeHalfvec,
+			},
+			expectedCompat:  false,
+			expectedReindex: true,
+			expectedReason:  "vector element type changed: stored=vector, current=halfvec",
 		},
 		{
 			name: "vector vs halfvec is search incompatible and needs full reindex",

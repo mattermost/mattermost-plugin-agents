@@ -146,7 +146,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
     case 'vectorElementType':
         localMismatchReason = intl.formatMessage(
             {defaultMessage: 'vector element type changed: stored={stored}, current={current}'},
-            {stored: modelCompatibility?.stored_vector_element_type ?? '', current: normalizeVectorElementType(value.vectorElementType)},
+            {stored: normalizeVectorElementType(modelCompatibility?.stored_vector_element_type), current: normalizeVectorElementType(value.vectorElementType)},
         );
         break;
     case null:

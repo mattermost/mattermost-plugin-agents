@@ -168,4 +168,28 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
         expect(screen.getByText('Embedding Model Changed')).toBeTruthy();
         expect(screen.getByText(/Search functionality is disabled until you run a full reindex/)).toBeTruthy();
     });
+
+    it('disables Rebuild vector index when legacy empty stored type vs halfvec', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_vector_element_type: '',
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('openai'), vectorElementType: 'halfvec'}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        const rebuild = screen.getByRole('button', {name: 'Rebuild vector index'}) as HTMLButtonElement;
+        expect(rebuild.disabled).toBe(true);
+        expect(screen.getByText('Embedding Model Changed')).toBeTruthy();
+        expect(screen.getByText(/Search functionality is disabled until you run a full reindex/)).toBeTruthy();
+    });
 });

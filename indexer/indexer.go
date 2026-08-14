@@ -467,12 +467,15 @@ func (s *Indexer) GetModelInfo() (ModelInfo, error) {
 }
 
 // CheckModelCompatibility checks if current config matches the indexed model.
-// Missing stored fields (including hnsw_m == 0 and empty vector element type)
-// are treated as compatible so upgrades do not nag. An HNSW m change needs an
-// index rebuild but search stays compatible — it is an index-shape change, not
-// a vector-width or column-type change. A stored vector element type that
-// differs from current is the same class as a dimension mismatch: search is
-// incompatible and a Full Reindex is required.
+// Missing stored fields (including hnsw_m == 0) are treated as compatible so
+// upgrades do not nag. An empty stored vector element type is treated as
+// "vector": pre-halfvec indexes used a vector column, so staying on vector
+// does not nag, but switching to halfvec is a schema mismatch that requires a
+// Full Reindex. An HNSW m change needs an index rebuild but search stays
+// compatible — it is an index-shape change, not a vector-width or column-type
+// change. A stored vector element type that differs from current is the same
+// class as a dimension mismatch: search is incompatible and a Full Reindex is
+// required.
 func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility {
 	storedInfo, err := s.GetModelInfo()
 	if err != nil || (storedInfo.Dimensions == 0 && storedInfo.ModelName == "") {
@@ -506,11 +509,12 @@ func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility 
 		return result
 	}
 
+	storedElementType := embeddings.NormalizeVectorElementType(storedInfo.VectorElementType)
 	currentElementType := embeddings.NormalizeVectorElementType(current.VectorElementType)
-	if storedInfo.VectorElementType != "" && storedInfo.VectorElementType != currentElementType {
+	if storedElementType != currentElementType {
 		result.Compatible = false
 		result.NeedsReindex = true
-		result.Reason = fmt.Sprintf("vector element type changed: stored=%s, current=%s", storedInfo.VectorElementType, currentElementType)
+		result.Reason = fmt.Sprintf("vector element type changed: stored=%s, current=%s", storedElementType, currentElementType)
 		return result
 	}
 
