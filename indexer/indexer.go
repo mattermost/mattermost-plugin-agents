@@ -337,15 +337,14 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	}
 	defer sess.Unlock()
 
-	if current := s.getModelInfoFromConfig(); current != nil {
-		compat := s.CheckModelCompatibility(*current)
+	cutoffTimestamp := time.Now().UnixMilli()
+	snap := s.snapshotRetention(cutoffTimestamp)
+	if snap.model != nil {
+		compat := s.CheckModelCompatibility(*snap.model)
 		if !compat.Compatible {
 			return JobStatus{}, fmt.Errorf("%w: %s", ErrCatchUpIncompatible, compat.Reason)
 		}
 	}
-
-	cutoffTimestamp := time.Now().UnixMilli()
-	snap := s.snapshotRetention(cutoffTimestamp)
 
 	count, err := s.countIndexablePosts(cutoffTimestamp, snap.floor, true)
 	if err != nil {

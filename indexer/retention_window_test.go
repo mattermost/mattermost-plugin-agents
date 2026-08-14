@@ -635,10 +635,10 @@ func TestCatchUpIgnoresMidJobRetentionWiden(t *testing.T) {
 	idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, func() embeddings.EmbeddingSearchConfig {
 		return embeddings.EmbeddingSearchConfig{
 			IndexRetentionDays: int(days.Load()),
-			Dimensions:         1536,
+			Dimensions:         768,
 			EmbeddingProvider: embeddings.UpstreamConfig{
 				Type:       "openai",
-				Parameters: []byte(`{"embeddingModel":"text-embedding-3-small"}`),
+				Parameters: []byte(`{"embeddingModel":"old-model"}`),
 			},
 		}
 	}, mockClient, &bots.MMBots{}, db, mockMutexAPI)
