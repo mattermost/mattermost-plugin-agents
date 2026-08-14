@@ -629,6 +629,9 @@ func TestCatchUpIgnoresMidJobRetentionWiden(t *testing.T) {
 		}).
 		Return(nil).Maybe()
 
+	reachedPersist := make(chan struct{})
+	releasePersist := make(chan struct{})
+
 	idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, func() embeddings.EmbeddingSearchConfig {
 		return embeddings.EmbeddingSearchConfig{
 			IndexRetentionDays: int(days.Load()),
@@ -639,12 +642,24 @@ func TestCatchUpIgnoresMidJobRetentionWiden(t *testing.T) {
 			},
 		}
 	}, mockClient, &bots.MMBots{}, db, mockMutexAPI)
+	idx.beforePersistModelInfo = func() {
+		close(reachedPersist)
+		<-releasePersist
+	}
 
 	status, err := idx.StartCatchUpJob()
 	require.NoError(t, err)
 	assert.Equal(t, 730, status.IndexRetentionDays)
+
+	select {
+	case <-reachedPersist:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not reach model-info persist")
+	}
 	days.Store(0)
-	waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+	close(releasePersist)
+
+	waitForStoredRetentionDays(t, store, 730, 5*time.Second)
 
 	storedMu.Lock()
 	defer storedMu.Unlock()
@@ -652,9 +667,113 @@ func TestCatchUpIgnoresMidJobRetentionWiden(t *testing.T) {
 	assert.NotContains(t, stored, "too-old")
 
 	store.mu.Lock()
-	require.NotNil(t, store.model.IndexRetentionDays)
-	assert.Equal(t, 730, *store.model.IndexRetentionDays)
 	assert.Equal(t, "old-model", store.model.ModelName)
 	assert.Equal(t, 768, store.model.Dimensions)
 	store.mu.Unlock()
+}
+
+func TestJobStartUsesSingleConfigSnapshot(t *testing.T) {
+	tests := []struct {
+		name      string
+		startJob  func(idx *Indexer) (JobStatus, error)
+		wantStore []string
+	}{
+		{
+			name: "catch-up",
+			startJob: func(idx *Indexer) (JobStatus, error) {
+				return idx.StartCatchUpJob()
+			},
+			wantStore: []string{"in-window"},
+		},
+		{
+			name: "full reindex",
+			startJob: func(idx *Indexer) (JobStatus, error) {
+				return idx.StartReindexJob(true)
+			},
+			wantStore: []string{"in-window"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := testDB(t)
+			defer cleanupDB(t, db)
+
+			_, err := db.Exec("INSERT INTO Channels (Id, Type, Name, TeamId) VALUES ('channel1', 'O', 'town-square', 'team1')")
+			require.NoError(t, err)
+
+			now := model.GetMillis()
+			floor365 := now - (365 * embeddings.MillisPerDay)
+			_, err = db.Exec(
+				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ('in-window', $1, 0, 'in', '', 'channel1', 'user1')",
+				floor365+embeddings.MillisPerDay)
+			require.NoError(t, err)
+			_, err = db.Exec(
+				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ('older-year', $1, 0, 'old', '', 'channel1', 'user1')",
+				floor365-(100*embeddings.MillisPerDay))
+			require.NoError(t, err)
+
+			var reads atomic.Int32
+			store := &jobKVStore{}
+			ts := now - 1000
+			store.lastIdx = &ts
+			store.model = &ModelInfo{
+				ProviderType:       "openai",
+				ModelName:          "text-embedding-3-small",
+				Dimensions:         1536,
+				HNSWM:              embeddings.DefaultHNSWM,
+				IndexRetentionDays: retentionDaysPtr(180),
+			}
+
+			mockClient := mocks.NewMockClient(t)
+			mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+			mockMutexAPI := &plugintest.API{}
+			mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+			mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+			store.wire(mockClient)
+			mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+			mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+			mockSearch.On("Clear", mock.Anything).Return(nil).Maybe()
+
+			var stored []string
+			var storedMu sync.Mutex
+			mockSearch.On("Store", mock.Anything, mock.Anything).
+				Run(func(args mock.Arguments) {
+					docs := args.Get(1).([]embeddings.PostDocument)
+					storedMu.Lock()
+					for _, doc := range docs {
+						stored = append(stored, doc.PostID)
+					}
+					storedMu.Unlock()
+				}).
+				Return(nil).Maybe()
+
+			idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, func() embeddings.EmbeddingSearchConfig {
+				days := 730
+				if reads.Add(1) == 1 {
+					days = 365
+				}
+				return embeddings.EmbeddingSearchConfig{
+					IndexRetentionDays: days,
+					Dimensions:         1536,
+					EmbeddingProvider: embeddings.UpstreamConfig{
+						Type:       "openai",
+						Parameters: []byte(`{"embeddingModel":"text-embedding-3-small"}`),
+					},
+				}
+			}, mockClient, &bots.MMBots{}, db, mockMutexAPI)
+
+			status, err := tt.startJob(idx)
+			require.NoError(t, err)
+			assert.Equal(t, 365, status.IndexRetentionDays)
+			assert.InDelta(t, float64(floor365), float64(status.RetentionFloor), 5000)
+
+			waitForStoredRetentionDays(t, store, 365, 5*time.Second)
+
+			storedMu.Lock()
+			defer storedMu.Unlock()
+			assert.ElementsMatch(t, tt.wantStore, stored)
+			assert.NotContains(t, stored, "older-year")
+		})
+	}
 }

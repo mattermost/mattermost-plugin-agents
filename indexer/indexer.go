@@ -32,6 +32,11 @@ type Indexer struct {
 	storeRetryAttempts  int
 	storeRetryBaseDelay time.Duration
 	heartbeatInterval   time.Duration
+
+	// beforePersistModelInfo, if set, runs after the job is marked complete
+	// and before model metadata is written. Tests use it to change live
+	// config while the worker is still in persist.
+	beforePersistModelInfo func()
 }
 
 func New(
@@ -146,24 +151,14 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	}
 
 	cutoffTimestamp := time.Now().UnixMilli()
-	floor := s.retentionFloorAt(cutoffTimestamp)
-	days := s.retentionDaysNow()
-
-	count, dbErr := s.countIndexablePosts(cutoffTimestamp, floor, false)
-	if dbErr != nil {
-		s.pluginAPI.LogWarn("Failed to get post count for progress tracking", "error", dbErr)
-		count = 0
-	}
 
 	newJobStatus := JobStatus{
-		JobID:              model.NewId(),
-		Status:             JobStatusRunning,
-		StartedAt:          time.Now(),
-		Resumable:          !clearIndex,
-		NodeID:             s.getNodeID(),
-		Operation:          JobOperationReindex,
-		RetentionFloor:     floor,
-		IndexRetentionDays: days,
+		JobID:     model.NewId(),
+		Status:    JobStatusRunning,
+		StartedAt: time.Now(),
+		Resumable: !clearIndex,
+		NodeID:    s.getNodeID(),
+		Operation: JobOperationReindex,
 	}
 
 	if !clearIndex && sess.hasExisting {
@@ -177,9 +172,17 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 			newJobStatus.Operation = JobOperationCatchUp
 		}
 	} else {
+		snap := s.snapshotRetention(cutoffTimestamp)
+		count, dbErr := s.countIndexablePosts(cutoffTimestamp, snap.floor, false)
+		if dbErr != nil {
+			s.pluginAPI.LogWarn("Failed to get post count for progress tracking", "error", dbErr)
+			count = 0
+		}
 		newJobStatus.TotalRows = count
 		newJobStatus.CutoffAt = cutoffTimestamp
-		newJobStatus.ModelInfo = s.getModelInfoFromConfig()
+		newJobStatus.ModelInfo = snap.model
+		newJobStatus.RetentionFloor = snap.floor
+		newJobStatus.IndexRetentionDays = snap.days
 	}
 
 	if err := sess.commit(s, newJobStatus); err != nil {
@@ -335,9 +338,9 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	defer sess.Unlock()
 
 	cutoffTimestamp := time.Now().UnixMilli()
-	floor := s.retentionFloorAt(cutoffTimestamp)
+	snap := s.snapshotRetention(cutoffTimestamp)
 
-	count, err := s.countIndexablePosts(cutoffTimestamp, floor, true)
+	count, err := s.countIndexablePosts(cutoffTimestamp, snap.floor, true)
 	if err != nil {
 		s.pluginAPI.LogWarn("Failed to get catch-up post count", "error", err)
 	}
@@ -351,15 +354,15 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 		NodeID:             s.getNodeID(),
 		CutoffAt:           cutoffTimestamp,
 		Operation:          JobOperationCatchUp,
-		RetentionFloor:     floor,
-		IndexRetentionDays: s.retentionDaysNow(),
+		RetentionFloor:     snap.floor,
+		IndexRetentionDays: snap.days,
 	}
 
 	if err := sess.commit(s, newJobStatus); err != nil {
 		return s.exclusiveJobConflict(err)
 	}
 
-	s.saveCursor(Cursor{LastCreateAt: floor, LastID: ""})
+	s.saveCursor(Cursor{LastCreateAt: snap.floor, LastID: ""})
 
 	returnStatus := newJobStatus
 	go s.runCatchUpJob(&newJobStatus)
@@ -663,20 +666,7 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	return nil
 }
 
-// getModelInfoFromConfig builds ModelInfo from the current configuration
+// getModelInfoFromConfig builds ModelInfo from a single config read.
 func (s *Indexer) getModelInfoFromConfig() *ModelInfo {
-	if s.configGetter == nil {
-		return nil
-	}
-
-	cfg := s.configGetter()
-	days := cfg.GetIndexRetentionDays()
-	return &ModelInfo{
-		ProviderType:       cfg.GetProviderType(),
-		ModelName:          cfg.GetModelName(),
-		Dimensions:         cfg.Dimensions,
-		HNSWM:              cfg.GetHNSWM(),
-		VectorElementType:  cfg.GetVectorElementType(),
-		IndexRetentionDays: &days,
-	}
+	return s.snapshotRetention(time.Now().UnixMilli()).model
 }

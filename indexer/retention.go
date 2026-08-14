@@ -6,6 +6,8 @@ package indexer
 import (
 	"fmt"
 	"time"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 )
 
 func retentionDaysPtr(days int) *int {
@@ -19,12 +21,37 @@ func retentionDaysValue(days *int) int {
 	return *days
 }
 
-func (s *Indexer) retentionDaysNow() int {
+type retentionSnapshot struct {
+	days  int
+	floor int64
+	model *ModelInfo
+}
+
+// snapshotRetention reads plugin config once and derives the retention
+// window and model metadata from that same value.
+func (s *Indexer) snapshotRetention(nowMillis int64) retentionSnapshot {
 	if s.configGetter == nil {
-		return 0
+		return retentionSnapshot{}
 	}
 	cfg := s.configGetter()
-	return cfg.GetIndexRetentionDays()
+	days := cfg.GetIndexRetentionDays()
+	return retentionSnapshot{
+		days:  days,
+		floor: cfg.IndexRetentionFloor(nowMillis),
+		model: modelInfoFromConfig(cfg),
+	}
+}
+
+func modelInfoFromConfig(cfg embeddings.EmbeddingSearchConfig) *ModelInfo {
+	days := cfg.GetIndexRetentionDays()
+	return &ModelInfo{
+		ProviderType:       cfg.GetProviderType(),
+		ModelName:          cfg.GetModelName(),
+		Dimensions:         cfg.Dimensions,
+		HNSWM:              cfg.GetHNSWM(),
+		VectorElementType:  cfg.GetVectorElementType(),
+		IndexRetentionDays: &days,
+	}
 }
 
 func (s *Indexer) retentionFloorNow() int64 {

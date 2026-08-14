@@ -472,6 +472,9 @@ func (s *Indexer) runIndexJob(ctx context.Context, jobStatus *JobStatus, deferRu
 	if spec.saveLastIndexed {
 		s.saveLastIndexedTimestamp(time.Now().UnixMilli())
 	}
+	if s.beforePersistModelInfo != nil {
+		s.beforePersistModelInfo()
+	}
 	s.persistModelInfoAfterJob(jobStatus, spec)
 
 	s.pluginAPI.LogWarn(spec.completeLog, "processed_posts", jobStatus.ProcessedRows)

@@ -837,6 +837,25 @@ func waitForJobStatus(t *testing.T, store *jobKVStore, want string, timeout time
 	return status
 }
 
+func waitForStoredRetentionDays(t *testing.T, store *jobKVStore, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		got := store.model
+		store.mu.Unlock()
+		if got != nil && got.IndexRetentionDays != nil && *got.IndexRetentionDays == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.NotNil(t, store.model, "timed out waiting for stored retention days=%d", want)
+	require.NotNil(t, store.model.IndexRetentionDays, "timed out waiting for stored retention days=%d", want)
+	require.Equal(t, want, *store.model.IndexRetentionDays, "timed out waiting for stored retention days")
+}
+
 // TestResumeRefreshesModelInfo covers start-time ModelInfo snapshotting:
 // fail mid-pass → resume completes → IndexerModelKey gets the original
 // snapshot (not live config). Catch-up updates retention days only.
