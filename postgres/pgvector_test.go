@@ -1389,6 +1389,61 @@ func TestClear(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, exists, "deferred Clear must leave HNSW dropped for FinalizeBulkIndex")
 	})
+
+	t.Run("same-dimension maintain Clear replaces catalog m=16 with configured m=8", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		ctx := context.Background()
+		_, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: 16})
+		require.NoError(t, err)
+
+		var oldDef string
+		require.NoError(t, db.Get(&oldDef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName))
+		oldM, ok := parseHNSWMFromIndexDef(oldDef)
+		require.True(t, ok)
+		assert.Equal(t, 16, oldM)
+
+		newStore, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: embeddings.DefaultHNSWM})
+		require.NoError(t, err)
+
+		exists, err := newStore.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, exists, "wrong-m leftover must not count as the ANN index")
+
+		require.NoError(t, newStore.Clear(ctx))
+
+		exists, err = newStore.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.True(t, exists, "maintain-mode Clear must replace wrong m while the table is empty")
+
+		var newDef string
+		require.NoError(t, db.Get(&newDef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName))
+		newM, ok := parseHNSWMFromIndexDef(newDef)
+		require.True(t, ok, "replaced index def must include m: %s", newDef)
+		assert.Equal(t, embeddings.DefaultHNSWM, newM)
+	})
+
+	t.Run("same-dimension deferred Clear leaves a dropped index dropped", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		ctx := context.Background()
+		store, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: embeddings.DefaultHNSWM})
+		require.NoError(t, err)
+		require.NoError(t, store.PrepareBulkIndex(ctx))
+
+		exists, err := store.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, exists)
+
+		require.NoError(t, store.Clear(ctx))
+
+		exists, err = store.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, exists, "deferred Clear must not recreate HNSW before FinalizeBulkIndex")
+		assert.NotContains(t, embeddingsTableIndexes(t, db), vectorIndexName)
+	})
 }
 
 func TestParseVectorTypmod(t *testing.T) {

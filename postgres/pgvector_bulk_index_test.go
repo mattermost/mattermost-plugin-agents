@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -287,6 +288,36 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		m, ok := parseHNSWMFromIndexDef(indexdef)
 		require.True(t, ok, "rebuilt index def must include m: %s", indexdef)
 		assert.Equal(t, embeddings.DefaultHNSWM, m)
+
+		indexExists, err = pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.True(t, indexExists)
+	})
+
+	t.Run("rejects a same-named partial HNSW index", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: embeddings.DefaultHNSWM})
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		require.NoError(t, pgVector.PrepareBulkIndex(ctx))
+
+		_, err = db.Exec("CREATE INDEX " + vectorIndexName + " ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops) WITH (m = 8) WHERE (NOT is_chunk)")
+		require.NoError(t, err)
+
+		indexExists, err := pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, indexExists, "a partial HNSW index must not count as the ANN index")
+
+		require.NoError(t, pgVector.FinalizeBulkIndex(ctx))
+
+		var indexdef string
+		err = db.Get(&indexdef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName)
+		require.NoError(t, err)
+		assert.NotContains(t, strings.ToUpper(indexdef), " WHERE ")
+		assert.Contains(t, indexdef, "vector_l2_ops")
 
 		indexExists, err = pgVector.VectorIndexExists(ctx)
 		require.NoError(t, err)

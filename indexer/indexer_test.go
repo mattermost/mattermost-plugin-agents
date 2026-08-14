@@ -3022,6 +3022,42 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 		assert.False(t, savedStatus.CompletedAt.IsZero())
 	})
 
+	t.Run("rebuild jobs stay non-resumable after orphan reclaim", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.JobID = "rebuild-job"
+				status.Status = JobStatusRunning
+				status.Operation = JobOperationRebuildVectorIndex
+				status.Resumable = false
+				status.ProcessedRows = 10
+				status.StartedAt = time.Now().Add(-1 * time.Hour)
+			}).
+			Return(nil)
+
+		var savedStatus *JobStatus
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
+			status, ok := v.(JobStatus)
+			if !ok {
+				return false
+			}
+			savedStatus = &status
+			return status.Status == JobStatusFailed
+		})).Return(true, nil)
+
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		require.NotNil(t, savedStatus)
+		assert.False(t, savedStatus.Resumable, "rebuild orphans must not become Resume Reindex")
+		assert.Equal(t, JobOperationRebuildVectorIndex, savedStatus.Operation)
+	})
+
 	t.Run("marks stale running job on a different node as failed", func(t *testing.T) {
 		// Hostname-bound recovery is the wedge: in containerized deploys the
 		// hostname changes on restart, and in clusters the original node may

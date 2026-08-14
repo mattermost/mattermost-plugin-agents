@@ -5,17 +5,13 @@ package indexer
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 )
 
-var errVectorStoreNoBulkIndex = errors.New("vector store does not support rebuilding the index")
+var errVectorStoreNoBulkIndex = fmt.Errorf("vector store does not support rebuilding the index")
 
 // StartRebuildVectorIndex drops and rebuilds the HNSW index with the current
 // m without clearing or re-embedding posts. Search is gated while the index
@@ -25,36 +21,21 @@ func (s *Indexer) StartRebuildVectorIndex(ctx context.Context) (JobStatus, error
 		return JobStatus{}, fmt.Errorf("search functionality is not configured")
 	}
 
-	var jobStatus JobStatus
-	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && !mmapi.IsKVNotFound(err) {
-		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
-	}
-	if isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
-		return jobStatus, fmt.Errorf("job already running")
-	}
-
-	mtx, err := cluster.NewMutex(s.clusterMutex, "ai_reindex_job")
+	sess, err := s.beginExclusiveJob()
 	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to create mutex: %w", err)
+		return s.exclusiveJobConflict(err)
 	}
-	mtx.Lock()
-	defer mtx.Unlock()
-
-	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && !mmapi.IsKVNotFound(err) {
-		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
-	}
-	hasExisting := err == nil
-	if !hasExisting {
-		jobStatus = JobStatus{}
-	}
-	if hasExisting && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
-		return jobStatus, fmt.Errorf("job already running")
-	}
+	defer sess.Unlock()
 
 	if bulkIndexerFor(s.getSearch()) == nil {
 		return JobStatus{}, errVectorStoreNoBulkIndex
+	}
+
+	if current := s.getModelInfoFromConfig(); current != nil {
+		compat := s.CheckModelCompatibility(*current)
+		if !compat.Compatible {
+			return JobStatus{}, fmt.Errorf("%w: %s", ErrRebuildIncompatible, compat.Reason)
+		}
 	}
 
 	newJobStatus := JobStatus{
@@ -64,19 +45,12 @@ func (s *Indexer) StartRebuildVectorIndex(ctx context.Context) (JobStatus, error
 		Resumable: false,
 		NodeID:    s.getNodeID(),
 		CutoffAt:  time.Now().UnixMilli(),
+		Operation: JobOperationRebuildVectorIndex,
 		ModelInfo: s.getModelInfoFromConfig(),
 	}
 
-	var oldValue interface{}
-	if hasExisting {
-		oldValue = jobStatus
-	}
-	ok, err := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newJobStatus)
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
-	}
-	if !ok {
-		return JobStatus{}, fmt.Errorf("job already running")
+	if err := sess.commit(s, newJobStatus); err != nil {
+		return s.exclusiveJobConflict(err)
 	}
 
 	deferRun, deferErr := s.claimRebuildVectorIndex(newJobStatus.JobID)
@@ -96,6 +70,18 @@ func (s *Indexer) StartRebuildVectorIndex(ctx context.Context) (JobStatus, error
 	go s.runRebuildVectorIndexJob(jobCtx, &newJobStatus, deferRun)
 
 	return returnStatus, nil
+}
+
+func (s *Indexer) runRebuildVectorIndexJob(ctx context.Context, jobStatus *JobStatus, deferRun *deferredRun) {
+	s.runIndexJob(ctx, jobStatus, deferRun, indexJobSpec{
+		panicLog:              "Vector index rebuild panicked",
+		completeLog:           "Vector index rebuild completed",
+		clearIndex:            false,
+		runMainPass:           false,
+		saveLastIndexed:       false,
+		deleteCursorOnSuccess: false,
+		persistHNSWMOnly:      true,
+	})
 }
 
 // claimRebuildVectorIndex takes ownership of the vector-index phase key so
@@ -136,136 +122,4 @@ func (s *Indexer) claimRebuildVectorIndex(jobID string) (*deferredRun, error) {
 		run.convertedFrom = state
 	}
 	return run, nil
-}
-
-// runRebuildVectorIndexJob drops the HNSW index, rebuilds it with the current
-// m, then repairs gated-window edits and catch-up for posts skipped during
-// building. It never Clear()s the embeddings table.
-func (s *Indexer) runRebuildVectorIndexJob(ctx context.Context, jobStatus *JobStatus, deferRun *deferredRun) {
-	var bulk embeddings.BulkIndexer
-	var ownedState VectorIndexState
-	deferPending := false
-	repairPending := false
-
-	defer func() {
-		if r := recover(); r != nil {
-			s.pluginAPI.LogError("Vector index rebuild panicked", "panic", r)
-			errMsg := fmt.Sprintf("Job panicked: %v", r)
-			if deferPending {
-				errMsg = appendDroppedIndexNote(errMsg)
-			} else if repairPending {
-				errMsg = appendPendingRepairNote(errMsg)
-			}
-			jobStatus.Status = JobStatusFailed
-			jobStatus.Error = errMsg
-			jobStatus.CompletedAt = time.Now()
-			s.saveJobStatus(jobStatus)
-		}
-	}()
-
-	var search embeddings.EmbeddingSearch
-	if s.getSearch != nil {
-		search = s.getSearch()
-	}
-	if search == nil {
-		errMsg := "Search not configured"
-		if deferRun != nil {
-			if abandonErr := s.abandonUndroppedClaim(deferRun); abandonErr != nil {
-				s.pluginAPI.LogError("Failed to release vector index claim on early exit", "error", abandonErr)
-				errMsg = fmt.Sprintf("%s; additionally failed to release the vector index claim: %s", errMsg, abandonErr)
-			}
-		}
-		jobStatus.Status = JobStatusFailed
-		jobStatus.Error = errMsg
-		jobStatus.CompletedAt = time.Now()
-		s.saveJobStatus(jobStatus)
-		return
-	}
-
-	ownedState = deferRun.state
-	bulk = bulkIndexerFor(search)
-	if bulk == nil {
-		errMsg := errVectorStoreNoBulkIndex.Error()
-		if abandonErr := s.abandonUndroppedClaim(deferRun); abandonErr != nil {
-			s.pluginAPI.LogError("Failed to release vector index claim", "error", abandonErr)
-			errMsg = fmt.Sprintf("%s (additionally failed to release the vector index claim: %s)", errMsg, abandonErr)
-		}
-		jobStatus.Status = JobStatusFailed
-		jobStatus.Error = errMsg
-		jobStatus.CompletedAt = time.Now()
-		s.saveJobStatus(jobStatus)
-		return
-	}
-
-	if ok, casErr := s.casVectorIndexState(&ownedState, &ownedState); casErr != nil || !ok {
-		s.pluginAPI.LogError("Vector index rebuild claim is no longer current; aborting before DROP",
-			"job_id", jobStatus.JobID, "error", casErr)
-		jobStatus.Status = JobStatusFailed
-		jobStatus.Error = "Vector index claim lost before rebuild began"
-		jobStatus.CompletedAt = time.Now()
-		s.saveJobStatus(jobStatus)
-		return
-	}
-
-	deferPending = true
-	if err := bulk.PrepareBulkIndex(ctx); err != nil {
-		jobStatus.Status = JobStatusFailed
-		jobStatus.Error = appendDroppedIndexNote(fmt.Sprintf("Failed to drop vector index: %s", err))
-		jobStatus.CompletedAt = time.Now()
-		s.saveJobStatus(jobStatus)
-		return
-	}
-
-	newState, buildErr := s.finalizeDeferredIndex(ctx, jobStatus, bulk, ownedState)
-	ownedState = newState
-	if buildErr != nil {
-		deferPending = false
-		s.handleJobError(jobStatus, appendDroppedIndexNote(fmt.Sprintf("Failed to rebuild vector index: %s", buildErr)), 0, "")
-		return
-	}
-	deferPending = false
-	repairPending = true
-
-	if canceled, cancelErr := s.isCancelRequested(jobStatus.JobID); cancelErr == nil && canceled {
-		jobStatus.Error = appendPendingRepairNote(jobStatus.Error)
-		s.acknowledgeCancel(jobStatus)
-		return
-	}
-
-	if repairErr := s.reindexEditedPosts(ctx, jobStatus, search, ownedState.BuildStartedAt); repairErr != nil {
-		if errors.Is(repairErr, errCancelRequested) {
-			jobStatus.Error = appendPendingRepairNote(jobStatus.Error)
-			s.acknowledgeCancel(jobStatus)
-			return
-		}
-		s.handleJobError(jobStatus, fmt.Sprintf("Failed to re-index posts edited during the index build: %s", repairErr), 0, "")
-		return
-	}
-	if clearErr := s.clearVectorIndexState(ownedState); clearErr != nil {
-		s.handleJobError(jobStatus, fmt.Sprintf("Repair completed but the vector index state could not be cleared: %s", clearErr), 0, "")
-		return
-	}
-	repairPending = false
-
-	_, catchUpCursor, catchUpErr := s.runCatchUpPass(ctx, jobStatus, search)
-	if errors.Is(catchUpErr, errCancelRequested) {
-		s.acknowledgeCancel(jobStatus)
-		return
-	}
-	if catchUpErr != nil {
-		s.handleJobError(jobStatus, fmt.Sprintf("Catch-up pass failed: %s", catchUpErr), catchUpCursor.LastCreateAt, catchUpCursor.LastID)
-		return
-	}
-
-	if !s.finishJob(jobStatus) {
-		return
-	}
-
-	if jobStatus.ModelInfo != nil {
-		if err := s.SaveModelInfo(*jobStatus.ModelInfo); err != nil {
-			s.pluginAPI.LogError("Failed to save model info after vector index rebuild", "error", err)
-		}
-	}
-
-	s.pluginAPI.LogWarn("Vector index rebuild completed", "job_id", jobStatus.JobID)
 }

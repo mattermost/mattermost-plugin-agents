@@ -54,7 +54,6 @@ type PGVector struct {
 	db              *sqlx.DB
 	dimensions      int
 	hnswM           int
-	opclass         string
 	skipVectorIndex bool
 }
 
@@ -67,10 +66,6 @@ type PGVectorConfig struct {
 	// HNSWM is applied after unmarshalling vectorStore.parameters so a stale
 	// parameters blob cannot override the top-level config field.
 	HNSWM int `json:"-"`
-
-	// OpClass selects the HNSW operator class. Empty defaults to vector_l2_ops.
-	// Phase 2 can pass halfvec_l2_ops; do not set this for Phase 1.
-	OpClass string `json:"-"`
 
 	// SkipVectorIndex: skip constructor CREATE while a deferred reindex owns
 	// the lifecycle (avoids sync rebuild of an intentionally dropped index).
@@ -97,16 +92,10 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 		return nil, fmt.Errorf("failed to create vector extension: %w", err)
 	}
 
-	opclass := config.OpClass
-	if opclass == "" {
-		opclass = defaultVectorOpClass
-	}
-
 	pv := &PGVector{
 		db:              db,
 		dimensions:      config.Dimensions,
 		hnswM:           clampHNSWM(config.HNSWM),
-		opclass:         opclass,
 		skipVectorIndex: config.SkipVectorIndex,
 	}
 	if err := pv.ensureSchema(context.Background(), !config.SkipVectorIndex, pv.db); err != nil {
@@ -481,20 +470,24 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 		return pv.ensureSchema(ctx, !pv.skipVectorIndex, pv.db)
 	}
 
-	// Same dimensions: truncate keeps typmod and any existing ANN index.
+	// Same dimensions: truncate keeps typmod. Replace a leftover wrong-shape
+	// HNSW index while the table is empty so ModelInfo after a maintain-mode
+	// full reindex matches the catalog. Leave a missing index dropped —
+	// deferred reindex Prepare already dropped it for FinalizeBulkIndex.
 	if tableDims == pv.dimensions {
 		if _, truncErr := pv.db.ExecContext(ctx, "TRUNCATE TABLE llm_posts_embeddings"); truncErr != nil {
 			return fmt.Errorf("failed to clear vectors: %w", truncErr)
 		}
-		return nil
+		return pv.replaceMismatchedVectorIndex(ctx)
 	}
 
-	// Dimension change: DROP + recreate. Preserve HNSW only if it was present
-	// (deferred reindex drops it via PrepareBulkIndex before Clear).
-	hadVectorIndex, err := pv.vectorIndexExists(ctx)
+	// Dimension change: DROP + recreate. Recreate HNSW if any same-named
+	// index existed (including wrong m); deferred reindex drops it first.
+	status, err := pv.vectorIndexStatus(ctx, pv.db)
 	if err != nil {
 		return err
 	}
+	hadVectorIndex := status.exists
 
 	tx, err := pv.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -510,6 +503,30 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit dimension change: %w", err)
+	}
+	return nil
+}
+
+// replaceMismatchedVectorIndex drops and recreates HNSW when a leftover
+// index exists but does not match the configured m. A missing index is left
+// dropped so deferred bulk load is not undone. skipVectorIndex defers
+// recreation to FinalizeBulkIndex.
+func (pv *PGVector) replaceMismatchedVectorIndex(ctx context.Context) error {
+	status, err := pv.vectorIndexStatus(ctx, pv.db)
+	if err != nil {
+		return err
+	}
+	if !status.exists || (status.valid && status.definitionOK) {
+		return nil
+	}
+	if pv.skipVectorIndex {
+		return nil
+	}
+	if _, err := pv.db.ExecContext(ctx, "DROP INDEX IF EXISTS "+vectorIndexName); err != nil {
+		return fmt.Errorf("failed to drop mismatched vector index: %w", err)
+	}
+	if _, err := pv.db.ExecContext(ctx, pv.createVectorIndexSQL()); err != nil {
+		return fmt.Errorf("failed to rebuild vector index after clear: %w", err)
 	}
 	return nil
 }
@@ -580,7 +597,7 @@ func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
 type indexStatus struct {
 	exists bool
 	valid  bool
-	// definitionOK: expected HNSW opclass and m (see vectorIndexDefinitionOK).
+	// definitionOK: full-table HNSW on embedding with vector_l2_ops and m.
 	definitionOK bool
 }
 
@@ -609,7 +626,7 @@ func (pv *PGVector) vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext
 	return indexStatus{
 		exists:       true,
 		valid:        rows[0].Valid,
-		definitionOK: vectorIndexDefinitionOK(rows[0].IndexDef, pv.hnswM, pv.opclass),
+		definitionOK: vectorIndexDefinitionOK(rows[0].IndexDef, pv.hnswM),
 	}, nil
 }
 

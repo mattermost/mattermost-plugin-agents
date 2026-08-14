@@ -117,3 +117,171 @@ func TestRunRebuildVectorIndexJobPrepareFinalizeNoClear(t *testing.T) {
 	assert.True(t, rec.firstIndex("prepare") < rec.firstIndex("finalize"))
 	assert.True(t, tracker.wasDeleted(), "vector index state must be cleared after a successful rebuild")
 }
+
+func TestStartRebuildVectorIndexRejectsIncompatibleIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored ModelInfo
+		cfg    embeddings.EmbeddingSearchConfig
+	}{
+		{
+			name: "dimension mismatch",
+			stored: ModelInfo{
+				ProviderType: "openai",
+				ModelName:    "text-embedding-3-small",
+				Dimensions:   768,
+			},
+			cfg: modelCfg("openai", "text-embedding-3-small", 1536),
+		},
+		{
+			name: "model name mismatch",
+			stored: ModelInfo{
+				ProviderType: "openai",
+				ModelName:    "text-embedding-ada-002",
+				Dimensions:   1536,
+			},
+			cfg: modelCfg("openai", "text-embedding-3-small", 1536),
+		},
+		{
+			name: "provider mismatch",
+			stored: ModelInfo{
+				ProviderType: "openai",
+				ModelName:    "text-embedding-3-small",
+				Dimensions:   1536,
+			},
+			cfg: modelCfg("anthropic", "text-embedding-3-small", 1536),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := mocks.NewMockClient(t)
+			mockMutexAPI := &plugintest.API{}
+			search := &fakeDeferSearch{rec: &callRecorder{}, bulk: &fakeBulkIndexer{rec: &callRecorder{}}}
+			mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+				Return(mmapi.ErrKVNotFound)
+			mockClient.On("KVGet", IndexerModelKey, mock.AnythingOfType("*indexer.ModelInfo")).
+				Run(func(args mock.Arguments) {
+					*args.Get(1).(*ModelInfo) = tt.stored
+				}).
+				Return(nil)
+			mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+			mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+			idx := New(
+				func() embeddings.EmbeddingSearch { return search },
+				func() embeddings.EmbeddingSearchConfig { return tt.cfg },
+				mockClient, nil, nil, mockMutexAPI,
+			)
+			_, err := idx.StartRebuildVectorIndex(context.Background())
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrRebuildIncompatible)
+		})
+	}
+}
+
+func TestRebuildPersistsOnlyHNSWM(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	rec := &callRecorder{}
+	bulk := &fakeBulkIndexer{rec: rec}
+	search := &fakeDeferSearch{rec: rec, bulk: bulk}
+
+	tracker := &vectorStateTracker{}
+	state := VectorIndexState{JobID: "rebuild-job", Phase: VectorIndexPhaseDropped}
+	tracker.seed(state)
+	deferRun := &deferredRun{state: state, adopted: false}
+
+	stored := ModelInfo{
+		ProviderType: "openai",
+		ModelName:    "text-embedding-3-small",
+		Dimensions:   1536,
+		HNSWM:        16,
+	}
+
+	store := &jobKVStore{model: &stored}
+	mockClient := mocks.NewMockClient(t)
+	mockVectorStateOps(mockClient, tracker)
+	store.wire(mockClient)
+	mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+	mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+	mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+	mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+	mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+	cfg := modelCfg("openai", "text-embedding-3-small", 1536)
+	cfg.HNSWM = embeddings.DefaultHNSWM
+	idx := New(
+		func() embeddings.EmbeddingSearch { return search },
+		func() embeddings.EmbeddingSearchConfig { return cfg },
+		mockClient, &bots.MMBots{}, db, nil,
+	)
+
+	jobStatus := &JobStatus{
+		JobID:     "rebuild-job",
+		Status:    JobStatusRunning,
+		StartedAt: time.Now(),
+		CutoffAt:  time.Now().UnixMilli(),
+		Operation: JobOperationRebuildVectorIndex,
+		ModelInfo: &ModelInfo{
+			ProviderType: "openai",
+			ModelName:    "text-embedding-3-small",
+			Dimensions:   1536,
+			HNSWM:        embeddings.DefaultHNSWM,
+		},
+	}
+	idx.runRebuildVectorIndexJob(context.Background(), jobStatus, deferRun)
+
+	require.Equal(t, JobStatusCompleted, jobStatus.Status, "job error: %s", jobStatus.Error)
+	require.NotNil(t, store.model)
+	assert.Equal(t, "openai", store.model.ProviderType)
+	assert.Equal(t, "text-embedding-3-small", store.model.ModelName)
+	assert.Equal(t, 1536, store.model.Dimensions)
+	assert.Equal(t, embeddings.DefaultHNSWM, store.model.HNSWM)
+	assert.NotContains(t, rec.snapshot(), "clear")
+}
+
+func TestHandleJobErrorSkipsCursorForRebuild(t *testing.T) {
+	mockClient := mocks.NewMockClient(t)
+	cursorWrites := 0
+	mockClient.On("KVSet", IndexerCursorKey, mock.Anything).
+		Run(func(mock.Arguments) { cursorWrites++ }).
+		Return(nil).Maybe()
+	mockClient.On("KVSet", ReindexJobKey, mock.Anything).Return(nil)
+	mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+	idx := New(nil, nil, mockClient, nil, nil, nil)
+	idx.handleJobError(&JobStatus{
+		Operation: JobOperationRebuildVectorIndex,
+		Status:    JobStatusRunning,
+	}, "catch-up failed", 99, "post-id")
+
+	assert.Zero(t, cursorWrites, "rebuild failures must not write IndexerCursorKey")
+}
+
+func TestStartReindexJobRejectsResumeOfRebuild(t *testing.T) {
+	mockClient := mocks.NewMockClient(t)
+	mockMutexAPI := &plugintest.API{}
+	search := &fakeDeferSearch{rec: &callRecorder{}, bulk: &fakeBulkIndexer{rec: &callRecorder{}}}
+	failedRebuild := JobStatus{
+		JobID:         "rebuild-job",
+		Status:        JobStatusFailed,
+		Operation:     JobOperationRebuildVectorIndex,
+		ProcessedRows: 50,
+		Resumable:     false,
+	}
+	mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+		Run(func(args mock.Arguments) {
+			*args.Get(1).(*JobStatus) = failedRebuild
+		}).
+		Return(nil)
+	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+	idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, nil, nil, mockMutexAPI)
+	_, err := idx.StartReindexJob(false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrCannotResumeRebuild)
+}
