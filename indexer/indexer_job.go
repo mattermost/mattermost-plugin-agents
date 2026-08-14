@@ -33,9 +33,11 @@ const (
 	IndexerLastIndexedKey = "indexer_last_indexed_ts"
 
 	// JobOperationReindex embeds posts. JobOperationRebuildVectorIndex
-	// drops and recreates HNSW without re-embedding.
+	// drops and recreates HNSW without re-embedding. JobOperationCatchUp
+	// fills holes (NOT EXISTS) without re-embedding rows already stored.
 	JobOperationReindex            = "reindex"
 	JobOperationRebuildVectorIndex = "rebuild_vector_index"
+	JobOperationCatchUp            = "catch_up"
 )
 
 // PostRecord represents a post record from the database
@@ -75,15 +77,20 @@ type JobStatus struct {
 	IsStale       bool      `json:"is_stale"`
 	// Phase is a short-lived UI hint (e.g. JobPhaseBuildingIndex); empty otherwise.
 	Phase string `json:"phase,omitempty"`
-	// Operation is JobOperationReindex or JobOperationRebuildVectorIndex.
+	// Operation is JobOperationReindex, JobOperationRebuildVectorIndex, or JobOperationCatchUp.
 	Operation string `json:"operation,omitempty"`
 	// ModelInfo is captured at job start and written to IndexerModelKey on
 	// successful completion so a resumed run unlocks compatibility for the
 	// model it actually indexed with (not whatever is configured at finish).
 	ModelInfo *ModelInfo `json:"model_info,omitempty"`
 	// RetentionFloor is the inclusive CreateAt lower bound snapshotted at
-	// job start so a run that crosses midnight does not change page bounds.
+	// job start. Mid-job config changes do not alter this run; abort and
+	// start a new job if the window should change.
 	RetentionFloor int64 `json:"retention_floor,omitempty"`
+	// IndexRetentionDays is the retention window this job actually covered.
+	// Catch-up success writes this value onto stored ModelInfo without
+	// rewriting provider, model, or dimensions.
+	IndexRetentionDays int `json:"index_retention_days,omitempty"`
 }
 
 func (js *JobStatus) isRebuild() bool {
@@ -100,6 +107,10 @@ func (js *JobStatus) isUnfinishedFullReindex() bool {
 		return false
 	}
 	return js.Status == JobStatusFailed || js.Status == JobStatusCanceled
+}
+
+func (js *JobStatus) isCatchUp() bool {
+	return js != nil && js.Operation == JobOperationCatchUp
 }
 
 // Cursor stores the cursor position for resumable indexing
@@ -535,18 +546,18 @@ func (s *Indexer) persistModelInfoAfterJob(jobStatus *JobStatus, spec indexJobSp
 		s.saveHNSWMAfterRebuild(jobStatus)
 		return
 	}
+	if jobStatus.isCatchUp() {
+		s.persistProvenIndexRetentionDays(jobStatus.IndexRetentionDays)
+		return
+	}
 	if jobStatus.ModelInfo != nil {
 		if err := s.SaveModelInfo(*jobStatus.ModelInfo); err != nil {
 			s.pluginAPI.LogError("Failed to save model info after reindex", "error", err)
 		}
-		return
-	}
-	if spec.skipExisting {
-		s.persistIndexRetentionDaysFromConfig()
 	}
 }
 
-func (s *Indexer) persistIndexRetentionDaysFromConfig() {
+func (s *Indexer) persistProvenIndexRetentionDays(days int) {
 	stored, err := s.GetModelInfo()
 	if err != nil && !mmapi.IsKVNotFound(err) {
 		s.pluginAPI.LogError("Failed to read model info after catch-up", "error", err)
@@ -554,11 +565,6 @@ func (s *Indexer) persistIndexRetentionDaysFromConfig() {
 	}
 	if err != nil {
 		stored = ModelInfo{}
-	}
-	days := 0
-	if s.configGetter != nil {
-		cfg := s.configGetter()
-		days = cfg.GetIndexRetentionDays()
 	}
 	stored.IndexRetentionDays = retentionDaysPtr(days)
 	if saveErr := s.SaveModelInfo(stored); saveErr != nil {

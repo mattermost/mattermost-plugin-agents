@@ -5,8 +5,10 @@ package indexer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -281,7 +283,10 @@ func TestCatchUpAfterWideningIndexesOnlyTheGap(t *testing.T) {
 
 	status, err := idx.StartCatchUpJob()
 	require.NoError(t, err)
+	assert.Equal(t, JobOperationCatchUp, status.Operation)
+	assert.Equal(t, 730, status.IndexRetentionDays)
 	assert.InDelta(t, float64(floor730), float64(status.RetentionFloor), 5000)
+	assert.Less(t, seeds[1].createAt, lastIndexed, "gap is historically before the last job wall clock")
 	waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
 
 	storedMu.Lock()
@@ -295,19 +300,6 @@ func TestCatchUpAfterWideningIndexesOnlyTheGap(t *testing.T) {
 	assert.Equal(t, 730, *store.model.IndexRetentionDays)
 	assert.Equal(t, "text-embedding-3-small", store.model.ModelName)
 	store.mu.Unlock()
-}
-
-func TestCatchUpStartingAtLastIndexedWouldMissTheGap(t *testing.T) {
-	now := model.GetMillis()
-	lastIndexed := now - 1000
-	floor := now - (730 * embeddings.MillisPerDay)
-	gapCreateAt := now - (500 * embeddings.MillisPerDay)
-
-	assert.Less(t, gapCreateAt, lastIndexed, "gap is historically before the last job's wall clock")
-	assert.GreaterOrEqual(t, gapCreateAt, floor)
-
-	assert.Greater(t, lastIndexed, gapCreateAt, "a lastIndexed cursor would skip the gap")
-	assert.Less(t, floor, gapCreateAt, "the retention-floor cursor includes the gap")
 }
 
 func TestCheckIndexHealthUsesInWindowCounts(t *testing.T) {
@@ -384,4 +376,285 @@ func TestFilterAndCreateDocsWithFloor(t *testing.T) {
 	docs := idx.filterAndCreateDocsWithFloor(posts, 100)
 	require.Len(t, docs, 1)
 	assert.Equal(t, "in", docs[0].PostID)
+}
+
+func TestCheckIndexHealthWidenedEmptyGapThenCatchUp(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	now := model.GetMillis()
+	inWindow := now - (30 * embeddings.MillisPerDay)
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("in-%d", i)
+		_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')", id, inWindow+int64(i), "in")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding, created_at) VALUES ($1, $1, $2, '[0.1, 0.2, 0.3]', $3)", id, "in", inWindow+int64(i))
+		require.NoError(t, err)
+	}
+
+	store := &jobKVStore{}
+	ts := now - 1000
+	store.lastIdx = &ts
+	store.model = &ModelInfo{
+		ProviderType:       "openai",
+		ModelName:          "text-embedding-3-small",
+		Dimensions:         1536,
+		HNSWM:              embeddings.DefaultHNSWM,
+		IndexRetentionDays: retentionDaysPtr(365),
+	}
+
+	mockClient := mocks.NewMockClient(t)
+	mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+	mockMutexAPI := &plugintest.API{}
+	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+	store.wire(mockClient)
+	mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+	mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+	mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	cfg := embeddings.EmbeddingSearchConfig{
+		IndexRetentionDays: 730,
+		Dimensions:         1536,
+		EmbeddingProvider: embeddings.UpstreamConfig{
+			Type:       "openai",
+			Parameters: []byte(`{"embeddingModel":"text-embedding-3-small"}`),
+		},
+	}
+	idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, func() embeddings.EmbeddingSearchConfig { return cfg }, mockClient, nil, db, mockMutexAPI)
+
+	health, err := idx.CheckIndexHealth(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), health.DBPostCount)
+	assert.Equal(t, int64(3), health.IndexedPostCount)
+	assert.Equal(t, int64(0), health.MissingPosts)
+	assert.Equal(t, "healthy", health.Status)
+
+	compat := idx.CheckModelCompatibility(ModelInfo{
+		ProviderType:       "openai",
+		ModelName:          "text-embedding-3-small",
+		Dimensions:         1536,
+		HNSWM:              embeddings.DefaultHNSWM,
+		IndexRetentionDays: retentionDaysPtr(730),
+	})
+	assert.True(t, compat.Compatible)
+	assert.False(t, compat.NeedsReindex)
+	assert.True(t, compat.NeedsCatchUp)
+
+	_, err = idx.StartCatchUpJob()
+	require.NoError(t, err)
+	waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+
+	health, err = idx.CheckIndexHealth(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "healthy", health.Status)
+	assert.Equal(t, int64(0), health.MissingPosts)
+
+	compat = idx.CheckModelCompatibility(ModelInfo{
+		ProviderType:       "openai",
+		ModelName:          "text-embedding-3-small",
+		Dimensions:         1536,
+		HNSWM:              embeddings.DefaultHNSWM,
+		IndexRetentionDays: retentionDaysPtr(730),
+	})
+	assert.True(t, compat.Compatible)
+	assert.False(t, compat.NeedsCatchUp)
+	store.mu.Lock()
+	require.NotNil(t, store.model.IndexRetentionDays)
+	assert.Equal(t, 730, *store.model.IndexRetentionDays)
+	assert.Equal(t, "text-embedding-3-small", store.model.ModelName)
+	store.mu.Unlock()
+}
+
+func TestCatchUpResumeKeepsSkipExistingAndSnapshottedWindow(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	_, err := db.Exec("INSERT INTO Channels (Id, Type, Name, TeamId) VALUES ('channel1', 'O', 'town-square', 'team1')")
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	floor730 := now - (730 * embeddings.MillisPerDay)
+	floor365 := now - (365 * embeddings.MillisPerDay)
+	seeds := []struct {
+		id       string
+		createAt int64
+		indexed  bool
+	}{
+		{"too-old", floor730 - embeddings.MillisPerDay, false},
+		{"gap", floor365 - (100 * embeddings.MillisPerDay), false},
+		{"already", floor365 + embeddings.MillisPerDay, true},
+	}
+	for _, p := range seeds {
+		_, err = db.Exec(
+			"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'channel1', 'user1')",
+			p.id, p.createAt, "msg "+p.id)
+		require.NoError(t, err)
+		if p.indexed {
+			_, err = db.Exec(
+				"INSERT INTO llm_posts_embeddings (id, post_id, content, embedding, created_at) VALUES ($1, $1, $2, '[0.1, 0.2, 0.3]', $3)",
+				p.id, "msg "+p.id, p.createAt)
+			require.NoError(t, err)
+		}
+	}
+
+	store := &jobKVStore{}
+	raw, err := json.Marshal(JobStatus{
+		JobID:              "catch-1",
+		Status:             JobStatusFailed,
+		Operation:          JobOperationCatchUp,
+		Resumable:          true,
+		ProcessedRows:      1,
+		TotalRows:          2,
+		RetentionFloor:     floor730,
+		IndexRetentionDays: 730,
+		CutoffAt:           now,
+		StartedAt:          time.Now().Add(-time.Minute),
+	})
+	require.NoError(t, err)
+	store.jobJSON = raw
+	store.cursor = &Cursor{LastCreateAt: floor730, LastID: ""}
+	store.model = &ModelInfo{
+		ProviderType:       "openai",
+		ModelName:          "text-embedding-3-small",
+		Dimensions:         1536,
+		HNSWM:              embeddings.DefaultHNSWM,
+		IndexRetentionDays: retentionDaysPtr(365),
+	}
+
+	mockClient := mocks.NewMockClient(t)
+	mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+	mockMutexAPI := &plugintest.API{}
+	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+	store.wire(mockClient)
+	mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+	mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+	var stored []string
+	var storedMu sync.Mutex
+	mockSearch.On("Store", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			docs := args.Get(1).([]embeddings.PostDocument)
+			storedMu.Lock()
+			for _, doc := range docs {
+				stored = append(stored, doc.PostID)
+			}
+			storedMu.Unlock()
+		}).
+		Return(nil).Maybe()
+
+	cfg := embeddings.EmbeddingSearchConfig{
+		IndexRetentionDays: 3650,
+		Dimensions:         1536,
+		EmbeddingProvider: embeddings.UpstreamConfig{
+			Type:       "openai",
+			Parameters: []byte(`{"embeddingModel":"text-embedding-3-small"}`),
+		},
+	}
+	idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, func() embeddings.EmbeddingSearchConfig { return cfg }, mockClient, &bots.MMBots{}, db, mockMutexAPI)
+
+	status, err := idx.StartReindexJob(false)
+	require.NoError(t, err)
+	assert.Equal(t, JobOperationCatchUp, status.Operation)
+	assert.Equal(t, 730, status.IndexRetentionDays)
+	assert.Equal(t, floor730, status.RetentionFloor)
+	waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+
+	storedMu.Lock()
+	defer storedMu.Unlock()
+	assert.Equal(t, []string{"gap"}, stored)
+	assert.NotContains(t, stored, "already")
+	assert.NotContains(t, stored, "too-old")
+
+	store.mu.Lock()
+	require.NotNil(t, store.model.IndexRetentionDays)
+	assert.Equal(t, 730, *store.model.IndexRetentionDays)
+	assert.Equal(t, "text-embedding-3-small", store.model.ModelName)
+	assert.Equal(t, 1536, store.model.Dimensions)
+	store.mu.Unlock()
+}
+
+func TestCatchUpIgnoresMidJobRetentionWiden(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	_, err := db.Exec("INSERT INTO Channels (Id, Type, Name, TeamId) VALUES ('channel1', 'O', 'town-square', 'team1')")
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	floor730 := now - (730 * embeddings.MillisPerDay)
+	_, err = db.Exec(
+		"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ('too-old', $1, 0, 'old', '', 'channel1', 'user1')",
+		floor730-embeddings.MillisPerDay)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ('gap', $1, 0, 'gap', '', 'channel1', 'user1')",
+		now-(400*embeddings.MillisPerDay))
+	require.NoError(t, err)
+
+	var days atomic.Int64
+	days.Store(730)
+
+	store := &jobKVStore{}
+	ts := now - 1000
+	store.lastIdx = &ts
+	store.model = &ModelInfo{
+		ProviderType:       "openai",
+		ModelName:          "old-model",
+		Dimensions:         768,
+		HNSWM:              embeddings.DefaultHNSWM,
+		IndexRetentionDays: retentionDaysPtr(365),
+	}
+
+	mockClient := mocks.NewMockClient(t)
+	mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+	mockMutexAPI := &plugintest.API{}
+	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+	store.wire(mockClient)
+	mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+	mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+	var stored []string
+	var storedMu sync.Mutex
+	mockSearch.On("Store", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			docs := args.Get(1).([]embeddings.PostDocument)
+			storedMu.Lock()
+			for _, doc := range docs {
+				stored = append(stored, doc.PostID)
+			}
+			storedMu.Unlock()
+		}).
+		Return(nil).Maybe()
+
+	idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, func() embeddings.EmbeddingSearchConfig {
+		return embeddings.EmbeddingSearchConfig{
+			IndexRetentionDays: int(days.Load()),
+			Dimensions:         1536,
+			EmbeddingProvider: embeddings.UpstreamConfig{
+				Type:       "openai",
+				Parameters: []byte(`{"embeddingModel":"text-embedding-3-small"}`),
+			},
+		}
+	}, mockClient, &bots.MMBots{}, db, mockMutexAPI)
+
+	status, err := idx.StartCatchUpJob()
+	require.NoError(t, err)
+	assert.Equal(t, 730, status.IndexRetentionDays)
+	days.Store(0)
+	waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+
+	storedMu.Lock()
+	defer storedMu.Unlock()
+	assert.Equal(t, []string{"gap"}, stored)
+	assert.NotContains(t, stored, "too-old")
+
+	store.mu.Lock()
+	require.NotNil(t, store.model.IndexRetentionDays)
+	assert.Equal(t, 730, *store.model.IndexRetentionDays)
+	assert.Equal(t, "old-model", store.model.ModelName)
+	assert.Equal(t, 768, store.model.Dimensions)
+	store.mu.Unlock()
 }

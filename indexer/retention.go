@@ -19,6 +19,14 @@ func retentionDaysValue(days *int) int {
 	return *days
 }
 
+func (s *Indexer) retentionDaysNow() int {
+	if s.configGetter == nil {
+		return 0
+	}
+	cfg := s.configGetter()
+	return cfg.GetIndexRetentionDays()
+}
+
 func (s *Indexer) retentionFloorNow() int64 {
 	return s.retentionFloorAt(time.Now().UnixMilli())
 }

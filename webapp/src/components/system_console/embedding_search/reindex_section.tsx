@@ -291,14 +291,13 @@ export const ReindexSection = ({
         (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
         (jobStatus?.processed_rows ?? 0) > 0;
 
-    // Check if catch-up is relevant (only show when there's an existing index that needs updating)
-    const showCatchUp = Boolean(healthCheckResult &&
+    const retentionCatchUpNeeded = hasLocalRetentionWiden || Boolean(healthCheckResult?.needs_catch_up);
+    const indexHoles = Boolean(healthCheckResult &&
         healthCheckResult.indexed_post_count > 0 &&
         (healthCheckResult.missing_posts > 0 ||
          healthCheckResult.status === 'mismatch' ||
-         healthCheckResult.status === 'needs_reindex' ||
-         healthCheckResult.needs_catch_up ||
-         hasLocalRetentionWiden));
+         healthCheckResult.status === 'needs_reindex'));
+    const showCatchUp = retentionCatchUpNeeded || indexHoles;
 
     const formatTimestamp = (timestamp: string | undefined) => {
         if (!timestamp) {
@@ -532,7 +531,7 @@ export const ReindexSection = ({
                     )}
 
                     <HelpText>
-                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up fills holes in the current retention window (posts not already in the index) without disabling search. Rebuild vector index rebuilds the HNSW graph without re-embedding posts. Changing the retention window while a job is running uses the new floor; abort and start fresh if you need the previous bounds.'/>
+                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up fills holes in the current retention window (posts not already in the index) without disabling search. Rebuild vector index rebuilds the HNSW graph without re-embedding posts. Changing the retention window while a job is running does not change the running job window; abort and start a new job if you want the new bounds.'/>
                     </HelpText>
                 </div>
             </ActionContainer>

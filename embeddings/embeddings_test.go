@@ -5,6 +5,7 @@ package embeddings
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -213,6 +214,7 @@ func TestEmbeddingSearchConfig_IndexRetentionFloor(t *testing.T) {
 		{name: "negative days has no floor", days: -5, now: now, want: 0},
 		{name: "365 days subtracts one year of millis", days: 365, now: now, want: now - 365*MillisPerDay},
 		{name: "floor does not go negative", days: 365, now: 1000, want: 0},
+		{name: "maximum-sized days does not overflow to a future floor", days: math.MaxInt, now: now, want: 0},
 	}
 
 	for _, tt := range tests {

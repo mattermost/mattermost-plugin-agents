@@ -839,7 +839,7 @@ func waitForJobStatus(t *testing.T, store *jobKVStore, want string, timeout time
 
 // TestResumeRefreshesModelInfo covers start-time ModelInfo snapshotting:
 // fail mid-pass → resume completes → IndexerModelKey gets the original
-// snapshot (not live config). Also covers catch-up writing nothing.
+// snapshot (not live config). Catch-up updates retention days only.
 func TestResumeRefreshesModelInfo(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -945,7 +945,7 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		})
 	}
 
-	t.Run("catch-up does not write model info", func(t *testing.T) {
+	t.Run("catch-up updates retention days without rewriting model identity", func(t *testing.T) {
 		db := testDB(t)
 		defer cleanupDB(t, db)
 
@@ -958,7 +958,7 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		store := &jobKVStore{}
 		lastIndexed := now - 5000
 		store.lastIdx = &lastIndexed
-		store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768}
+		store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768, IndexRetentionDays: retentionDaysPtr(365)}
 
 		mockClient := mocks.NewMockClient(t)
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
@@ -980,10 +980,14 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		require.NoError(t, err)
 		completed := waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
 		assert.Nil(t, completed.ModelInfo, "catch-up must not set a model snapshot")
+		assert.Equal(t, JobOperationCatchUp, completed.Operation)
 
 		store.mu.Lock()
 		require.NotNil(t, store.model)
-		assert.Equal(t, "old-model", store.model.ModelName, "catch-up must not rewrite IndexerModelKey")
+		assert.Equal(t, "old-model", store.model.ModelName, "catch-up must not rewrite model identity")
+		assert.Equal(t, 768, store.model.Dimensions)
+		require.NotNil(t, store.model.IndexRetentionDays)
+		assert.Equal(t, 0, *store.model.IndexRetentionDays)
 		store.mu.Unlock()
 	})
 }

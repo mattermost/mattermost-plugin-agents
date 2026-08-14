@@ -6,6 +6,7 @@ package embeddings
 import (
 	"context"
 	"encoding/json"
+	"math"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 )
@@ -248,11 +249,14 @@ func (c *EmbeddingSearchConfig) IndexRetentionFloor(nowMillis int64) int64 {
 	if days == 0 {
 		return 0
 	}
-	floor := nowMillis - int64(days)*MillisPerDay
-	if floor < 0 {
+	if int64(days) > math.MaxInt64/MillisPerDay {
 		return 0
 	}
-	return floor
+	window := int64(days) * MillisPerDay
+	if nowMillis < window {
+		return 0
+	}
+	return nowMillis - window
 }
 
 // GetReindexBatchSize returns the configured reindex batch size, clamped to

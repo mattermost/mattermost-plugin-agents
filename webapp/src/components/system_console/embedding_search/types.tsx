@@ -96,7 +96,7 @@ export interface JobStatusType {
     // Known values: 'building_index' (HNSW CREATE INDEX after bulk load).
     phase?: string;
 
-    // Server JobStatus.operation: 'reindex' | 'rebuild_vector_index'
+    // Server JobStatus.operation: 'reindex' | 'rebuild_vector_index' | 'catch_up'
     operation?: string;
 }
 

@@ -196,7 +196,40 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
 
         expect(screen.getByText('Index retention increased')).toBeTruthy();
         expect(screen.getByText(/Run Catch Up to embed older posts/)).toBeTruthy();
+        expect(screen.getByRole('button', {name: 'Catch Up'})).toBeTruthy();
         expect(screen.queryByText('Embedding Model Changed')).toBeNull();
+    });
+
+    it('shows Catch Up when needs_catch_up even if indexed count is zero', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            healthCheckResult: {
+                ...idleJobStatus.healthCheckResult,
+                db_post_count: 0,
+                indexed_post_count: 0,
+                missing_posts: 0,
+                status: 'healthy',
+                needs_catch_up: true,
+                stored_index_retention_days: 365,
+            },
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_index_retention_days: 365,
+                needs_catch_up: true,
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('openai'), indexRetentionDays: 730}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByRole('button', {name: 'Catch Up'})).toBeTruthy();
+        expect(screen.getByText('Index retention increased')).toBeTruthy();
     });
 
     it('shows a soft note when index retention is tightened', () => {

@@ -147,6 +147,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 
 	cutoffTimestamp := time.Now().UnixMilli()
 	floor := s.retentionFloorAt(cutoffTimestamp)
+	days := s.retentionDaysNow()
 
 	count, dbErr := s.countIndexablePosts(cutoffTimestamp, floor, false)
 	if dbErr != nil {
@@ -155,13 +156,14 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	}
 
 	newJobStatus := JobStatus{
-		JobID:          model.NewId(),
-		Status:         JobStatusRunning,
-		StartedAt:      time.Now(),
-		Resumable:      !clearIndex,
-		NodeID:         s.getNodeID(),
-		Operation:      JobOperationReindex,
-		RetentionFloor: floor,
+		JobID:              model.NewId(),
+		Status:             JobStatusRunning,
+		StartedAt:          time.Now(),
+		Resumable:          !clearIndex,
+		NodeID:             s.getNodeID(),
+		Operation:          JobOperationReindex,
+		RetentionFloor:     floor,
+		IndexRetentionDays: days,
 	}
 
 	if !clearIndex && sess.hasExisting {
@@ -169,11 +171,10 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		newJobStatus.CutoffAt = sess.existing.CutoffAt
 		newJobStatus.ProcessedRows = sess.existing.ProcessedRows
 		newJobStatus.ModelInfo = sess.existing.ModelInfo
-		if sess.existing.RetentionFloor != 0 {
-			newJobStatus.RetentionFloor = sess.existing.RetentionFloor
-		}
-		if floor > newJobStatus.RetentionFloor {
-			newJobStatus.RetentionFloor = floor
+		newJobStatus.RetentionFloor = sess.existing.RetentionFloor
+		newJobStatus.IndexRetentionDays = sess.existing.IndexRetentionDays
+		if sess.existing.isCatchUp() {
+			newJobStatus.Operation = JobOperationCatchUp
 		}
 	} else {
 		newJobStatus.TotalRows = count
@@ -189,6 +190,12 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		if err := s.pluginAPI.KVDelete(IndexerCursorKey); err != nil {
 			return JobStatus{}, fmt.Errorf("failed to clear reindex cursor: %w", err)
 		}
+	}
+
+	if newJobStatus.isCatchUp() {
+		returnStatus := newJobStatus
+		go s.runCatchUpJob(&newJobStatus)
+		return returnStatus, nil
 	}
 
 	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
@@ -336,15 +343,16 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	}
 
 	newJobStatus := JobStatus{
-		JobID:          model.NewId(),
-		Status:         JobStatusRunning,
-		StartedAt:      time.Now(),
-		TotalRows:      count,
-		Resumable:      true,
-		NodeID:         s.getNodeID(),
-		CutoffAt:       cutoffTimestamp,
-		Operation:      JobOperationReindex,
-		RetentionFloor: floor,
+		JobID:              model.NewId(),
+		Status:             JobStatusRunning,
+		StartedAt:          time.Now(),
+		TotalRows:          count,
+		Resumable:          true,
+		NodeID:             s.getNodeID(),
+		CutoffAt:           cutoffTimestamp,
+		Operation:          JobOperationCatchUp,
+		RetentionFloor:     floor,
+		IndexRetentionDays: s.retentionDaysNow(),
 	}
 
 	if err := sess.commit(s, newJobStatus); err != nil {

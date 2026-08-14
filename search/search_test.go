@@ -431,6 +431,27 @@ func TestExecuteSearch(t *testing.T) {
 	}
 }
 
+type createdAfterSearch struct {
+	docs []embeddings.PostDocument
+}
+
+func (s *createdAfterSearch) Store(context.Context, []embeddings.PostDocument) error { return nil }
+func (s *createdAfterSearch) Delete(context.Context, []string) error                 { return nil }
+func (s *createdAfterSearch) Clear(context.Context) error                            { return nil }
+func (s *createdAfterSearch) DeleteOrphaned(context.Context, int64, int64) (int64, error) {
+	return 0, nil
+}
+func (s *createdAfterSearch) Search(_ context.Context, _ string, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
+	var out []embeddings.SearchResult
+	for _, d := range s.docs {
+		if opts.CreatedAfter > 0 && d.CreateAt <= opts.CreatedAfter {
+			continue
+		}
+		out = append(out, embeddings.SearchResult{Document: d, Score: 1})
+	}
+	return out, nil
+}
+
 func TestExecuteSearchAppliesRetentionFloor(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -448,6 +469,7 @@ func TestExecuteSearchAppliesRetentionFloor(t *testing.T) {
 			allowVectorIndexStateRead(mockClient)
 
 			var gotOpts embeddings.SearchOptions
+			before := time.Now().UnixMilli()
 			mockEmbedding.On("Search", mock.Anything, "test query", mock.Anything).
 				Run(func(args mock.Arguments) {
 					gotOpts = args.Get(2).(embeddings.SearchOptions)
@@ -461,18 +483,66 @@ func TestExecuteSearchAppliesRetentionFloor(t *testing.T) {
 
 			_, err := s.executeSearch(context.Background(), "test query", Options{Limit: 5})
 			require.NoError(t, err)
+			after := time.Now().UnixMilli()
 
 			if !tt.wantAfterSet {
 				require.Zero(t, gotOpts.CreatedAfter)
 				return
 			}
 			cfg := embeddings.EmbeddingSearchConfig{IndexRetentionDays: tt.days}
-			floor := cfg.IndexRetentionFloor(time.Now().UnixMilli())
-			require.Greater(t, gotOpts.CreatedAfter, int64(0))
-			require.Less(t, gotOpts.CreatedAfter, floor)
-			require.GreaterOrEqual(t, gotOpts.CreatedAfter, floor-2)
+			minExclusive := cfg.IndexRetentionFloor(after) - 1
+			maxExclusive := cfg.IndexRetentionFloor(before) - 1
+			if minExclusive < 1 {
+				minExclusive = 1
+			}
+			if maxExclusive < 1 {
+				maxExclusive = 1
+			}
+			require.GreaterOrEqual(t, gotOpts.CreatedAfter, minExclusive)
+			require.LessOrEqual(t, gotOpts.CreatedAfter, maxExclusive)
 		})
 	}
+}
+
+func TestExecuteSearchExcludesStaleOutOfWindowRows(t *testing.T) {
+	now := time.Now().UnixMilli()
+	cfg := embeddings.EmbeddingSearchConfig{IndexRetentionDays: 365}
+	floor := cfg.IndexRetentionFloor(now)
+	stale := embeddings.PostDocument{
+		PostID:    "stale",
+		CreateAt:  floor - embeddings.MillisPerDay,
+		ChannelID: "channel1",
+		UserID:    "user1",
+		Content:   "old",
+	}
+	fresh := embeddings.PostDocument{
+		PostID:    "fresh",
+		CreateAt:  floor + embeddings.MillisPerDay,
+		ChannelID: "channel1",
+		UserID:    "user1",
+		Content:   "new",
+	}
+
+	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
+	mockClient.On("GetChannel", "channel1").Return(&model.Channel{
+		Id:          "channel1",
+		DisplayName: "General",
+		Type:        model.ChannelTypeOpen,
+	}, nil).Maybe()
+	mockClient.On("GetUser", "user1").Return(&model.User{
+		Id:       "user1",
+		Username: "testuser",
+	}, nil).Maybe()
+
+	store := &createdAfterSearch{docs: []embeddings.PostDocument{stale, fresh}}
+	s := New(func() embeddings.EmbeddingSearch { return store }, mockClient, nil, nil, nil, nil)
+	s.SetConfigGetter(func() embeddings.EmbeddingSearchConfig { return cfg })
+
+	results, err := s.executeSearch(context.Background(), "test query", Options{Limit: 5})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "fresh", results[0].PostID)
 }
 
 func TestBuildPrompt(t *testing.T) {
