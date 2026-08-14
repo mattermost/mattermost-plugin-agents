@@ -283,7 +283,12 @@ func (p *Plugin) OnActivate() error {
 	// compatible with the existing index.
 	searchAvailability.SetQueryAllowedFunc(func() bool {
 		cfg := p.configuration.EmbeddingSearchConfig()
-		return indexerService.CheckModelCompatibility(cfg.GetProviderType(), cfg.Dimensions, cfg.GetModelName()).Compatible
+		return indexerService.CheckModelCompatibility(indexer.ModelInfo{
+			ProviderType: cfg.GetProviderType(),
+			Dimensions:   cfg.Dimensions,
+			ModelName:    cfg.GetModelName(),
+			HNSWM:        cfg.GetHNSWM(),
+		}).Compatible
 	})
 
 	// Mark any orphaned reindex jobs as failed (any node, staleness-based).

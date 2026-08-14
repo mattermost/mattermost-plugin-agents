@@ -537,8 +537,11 @@ func (s *Indexer) GetModelInfo() (ModelInfo, error) {
 	return info, err
 }
 
-// CheckModelCompatibility checks if current config matches the indexed model
-func (s *Indexer) CheckModelCompatibility(currentProviderType string, currentDimensions int, currentModelName string) ModelCompatibility {
+// CheckModelCompatibility checks if current config matches the indexed model.
+// Missing stored fields (including hnsw_m == 0) are treated as compatible so
+// upgrades do not nag. An HNSW m change needs an index rebuild but search
+// stays compatible — it is an index-shape change, not a vector-width change.
+func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility {
 	storedInfo, err := s.GetModelInfo()
 	if err != nil || (storedInfo.Dimensions == 0 && storedInfo.ModelName == "") {
 		// No stored info means this is a fresh install or no previous index
@@ -553,31 +556,36 @@ func (s *Indexer) CheckModelCompatibility(currentProviderType string, currentDim
 		StoredProviderType: storedInfo.ProviderType,
 		StoredDimensions:   storedInfo.Dimensions,
 		StoredModelName:    storedInfo.ModelName,
+		StoredHNSWM:        storedInfo.HNSWM,
 	}
 
-	if storedInfo.ProviderType != "" && currentProviderType != "" && storedInfo.ProviderType != currentProviderType {
+	if storedInfo.ProviderType != "" && current.ProviderType != "" && storedInfo.ProviderType != current.ProviderType {
 		result.Compatible = false
 		result.NeedsReindex = true
-		result.Reason = fmt.Sprintf("provider changed: stored=%s, current=%s", storedInfo.ProviderType, currentProviderType)
+		result.Reason = fmt.Sprintf("provider changed: stored=%s, current=%s", storedInfo.ProviderType, current.ProviderType)
 		return result
 	}
 
-	if storedInfo.Dimensions != currentDimensions {
+	if storedInfo.Dimensions != current.Dimensions {
 		result.Compatible = false
 		result.NeedsReindex = true
-		result.Reason = fmt.Sprintf("dimension mismatch: stored=%d, current=%d", storedInfo.Dimensions, currentDimensions)
+		result.Reason = fmt.Sprintf("dimension mismatch: stored=%d, current=%d", storedInfo.Dimensions, current.Dimensions)
 		return result
 	}
 
-	if storedInfo.ModelName != currentModelName && currentModelName != "" {
+	if storedInfo.ModelName != current.ModelName && current.ModelName != "" {
 		result.Compatible = false
 		result.NeedsReindex = true
-		result.Reason = fmt.Sprintf("model changed: stored=%s, current=%s", storedInfo.ModelName, currentModelName)
+		result.Reason = fmt.Sprintf("model changed: stored=%s, current=%s", storedInfo.ModelName, current.ModelName)
 		return result
 	}
 
 	result.Compatible = true
 	result.NeedsReindex = false
+	if storedInfo.HNSWM != 0 && storedInfo.HNSWM != current.HNSWM {
+		result.NeedsReindex = true
+		result.Reason = fmt.Sprintf("hnsw m changed: stored=%d, current=%d", storedInfo.HNSWM, current.HNSWM)
+	}
 	return result
 }
 
@@ -655,5 +663,6 @@ func (s *Indexer) getModelInfoFromConfig() *ModelInfo {
 		ProviderType: cfg.GetProviderType(),
 		ModelName:    cfg.GetModelName(),
 		Dimensions:   cfg.Dimensions,
+		HNSWM:        cfg.GetHNSWM(),
 	}
 }

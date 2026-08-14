@@ -161,7 +161,7 @@ func TestNewVectorStore(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := newVectorStore(nil, tc.config, tc.dimensions, false)
+			store, err := newVectorStore(nil, tc.config, tc.dimensions, embeddings.DefaultHNSWM, false)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -405,7 +405,7 @@ func TestVectorStoreConfigUnmarshalEdgeCases(t *testing.T) {
 				Parameters: tc.parameters,
 			}
 
-			store, err := newVectorStore(nil, config, 1536, false)
+			store, err := newVectorStore(nil, config, 1536, embeddings.DefaultHNSWM, false)
 
 			if tc.expectError {
 				require.Error(t, err)

@@ -87,6 +87,7 @@ type ModelInfo struct {
 	ProviderType string `json:"provider_type"`
 	ModelName    string `json:"model_name"`
 	Dimensions   int    `json:"dimensions"`
+	HNSWM        int    `json:"hnsw_m,omitempty"`
 	IndexedAt    int64  `json:"indexed_at"`
 }
 
@@ -106,6 +107,7 @@ type HealthCheckResult struct {
 	StoredProviderType string `json:"stored_provider_type,omitempty"`
 	StoredDimensions   int    `json:"stored_dimensions,omitempty"`
 	StoredModelName    string `json:"stored_model_name,omitempty"`
+	StoredHNSWM        int    `json:"stored_hnsw_m,omitempty"`
 
 	// Present while a deferred reindex owns the ANN index lifecycle.
 	VectorIndexState *VectorIndexState `json:"vector_index_state,omitempty"`
@@ -119,6 +121,7 @@ type ModelCompatibility struct {
 	StoredProviderType string `json:"stored_provider_type,omitempty"`
 	StoredDimensions   int    `json:"stored_dimensions,omitempty"`
 	StoredModelName    string `json:"stored_model_name,omitempty"`
+	StoredHNSWM        int    `json:"stored_hnsw_m,omitempty"`
 }
 
 // Keyset pagination of indexable posts, bounded above by a cutoff timestamp

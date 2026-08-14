@@ -50,17 +50,11 @@ func uniqueSortedPostIDs(docs []embeddings.PostDocument) []string {
 // vectorIndexName is the HNSW ANN index; dropped/rebuilt around deferred bulk loads.
 const vectorIndexName = "llm_posts_embeddings_embedding_idx"
 
-// Shared by constructor and FinalizeBulkIndex so both build the same index.
-const createVectorIndexQuery = "CREATE INDEX IF NOT EXISTS " + vectorIndexName +
-	" ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops)"
-
-// Canonical pg_get_indexdef suffix for the expected HNSW L2 index. Same-named
-// B-tree/cosine/partial/expression indexes would silently break <-> queries.
-const expectedVectorIndexDefSuffix = "USING hnsw (embedding vector_l2_ops)"
-
 type PGVector struct {
 	db              *sqlx.DB
 	dimensions      int
+	hnswM           int
+	opclass         string
 	skipVectorIndex bool
 }
 
@@ -70,9 +64,27 @@ var _ embeddings.BulkIndexer = (*PGVector)(nil)
 type PGVectorConfig struct {
 	Dimensions int `json:"dimensions"`
 
+	// HNSWM is applied after unmarshalling vectorStore.parameters so a stale
+	// parameters blob cannot override the top-level config field.
+	HNSWM int `json:"-"`
+
+	// OpClass selects the HNSW operator class. Empty defaults to vector_l2_ops.
+	// Phase 2 can pass halfvec_l2_ops; do not set this for Phase 1.
+	OpClass string `json:"-"`
+
 	// SkipVectorIndex: skip constructor CREATE while a deferred reindex owns
 	// the lifecycle (avoids sync rebuild of an intentionally dropped index).
 	SkipVectorIndex bool `json:"-"`
+}
+
+func clampHNSWM(m int) int {
+	if m <= 0 {
+		return embeddings.DefaultHNSWM
+	}
+	if m < embeddings.MinHNSWM {
+		return embeddings.MinHNSWM
+	}
+	return min(m, embeddings.MaxHNSWM)
 }
 
 func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
@@ -85,9 +97,16 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 		return nil, fmt.Errorf("failed to create vector extension: %w", err)
 	}
 
+	opclass := config.OpClass
+	if opclass == "" {
+		opclass = defaultVectorOpClass
+	}
+
 	pv := &PGVector{
 		db:              db,
 		dimensions:      config.Dimensions,
+		hnswM:           clampHNSWM(config.HNSWM),
+		opclass:         opclass,
 		skipVectorIndex: config.SkipVectorIndex,
 	}
 	if err := pv.ensureSchema(context.Background(), !config.SkipVectorIndex, pv.db); err != nil {
@@ -129,7 +148,7 @@ func (pv *PGVector) ensureSchema(ctx context.Context, withVectorIndex bool, ex e
 		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_is_chunk_idx ON llm_posts_embeddings(is_chunk)",
 	}
 	if withVectorIndex {
-		queries = append(queries, createVectorIndexQuery)
+		queries = append(queries, pv.createVectorIndexSQL())
 	}
 
 	for _, query := range queries {
@@ -525,7 +544,7 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 		_, _ = conn.ExecContext(resetCtx, "RESET statement_timeout")
 	}()
 
-	status, err := vectorIndexStatus(ctx, conn)
+	status, err := pv.vectorIndexStatus(ctx, conn)
 	if err != nil {
 		return fmt.Errorf("failed to check vector index state: %w", err)
 	}
@@ -535,11 +554,11 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 		}
 	}
 
-	if _, buildErr := conn.ExecContext(ctx, createVectorIndexQuery); buildErr != nil {
+	if _, buildErr := conn.ExecContext(ctx, pv.createVectorIndexSQL()); buildErr != nil {
 		return fmt.Errorf("failed to build vector index: %w", buildErr)
 	}
 
-	status, err = vectorIndexStatus(ctx, conn)
+	status, err = pv.vectorIndexStatus(ctx, conn)
 	if err != nil {
 		return fmt.Errorf("failed to verify vector index after build: %w", err)
 	}
@@ -551,7 +570,7 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 
 // VectorIndexExists is true only for a valid index with the expected definition.
 func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
-	status, err := vectorIndexStatus(ctx, pv.db)
+	status, err := pv.vectorIndexStatus(ctx, pv.db)
 	if err != nil {
 		return false, err
 	}
@@ -561,13 +580,13 @@ func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
 type indexStatus struct {
 	exists bool
 	valid  bool
-	// definitionOK: exact match for expected HNSW L2 def (see suffix const).
+	// definitionOK: expected HNSW opclass and m (see vectorIndexDefinitionOK).
 	definitionOK bool
 }
 
 // vectorIndexStatus looks up the ANN index on llm_posts_embeddings in the
 // current schema. Same-named wrong defs do not count. q may be a pinned conn.
-func vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext) (indexStatus, error) {
+func (pv *PGVector) vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext) (indexStatus, error) {
 	rows := []struct {
 		Valid    bool   `db:"indisvalid"`
 		IndexDef string `db:"indexdef"`
@@ -590,7 +609,7 @@ func vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext) (indexStatus,
 	return indexStatus{
 		exists:       true,
 		valid:        rows[0].Valid,
-		definitionOK: strings.HasSuffix(rows[0].IndexDef, expectedVectorIndexDefSuffix),
+		definitionOK: vectorIndexDefinitionOK(rows[0].IndexDef, pv.hnswM, pv.opclass),
 	}, nil
 }
 
