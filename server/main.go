@@ -284,10 +284,11 @@ func (p *Plugin) OnActivate() error {
 	searchAvailability.SetQueryAllowedFunc(func() bool {
 		cfg := p.configuration.EmbeddingSearchConfig()
 		return indexerService.CheckModelCompatibility(indexer.ModelInfo{
-			ProviderType: cfg.GetProviderType(),
-			Dimensions:   cfg.Dimensions,
-			ModelName:    cfg.GetModelName(),
-			HNSWM:        cfg.GetHNSWM(),
+			ProviderType:      cfg.GetProviderType(),
+			Dimensions:        cfg.Dimensions,
+			ModelName:         cfg.GetModelName(),
+			HNSWM:             cfg.GetHNSWM(),
+			VectorElementType: cfg.GetVectorElementType(),
 		}).Compatible
 	})
 

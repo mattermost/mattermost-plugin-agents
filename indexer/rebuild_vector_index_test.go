@@ -256,6 +256,20 @@ func TestStartRebuildVectorIndexRejectsIncompatibleIdentity(t *testing.T) {
 			},
 			cfg: modelCfg("anthropic", "text-embedding-3-small", 1536),
 		},
+		{
+			name: "vector element type mismatch",
+			stored: ModelInfo{
+				ProviderType:      "openai",
+				ModelName:         "text-embedding-3-small",
+				Dimensions:        1536,
+				VectorElementType: embeddings.VectorElementTypeVector,
+			},
+			cfg: func() embeddings.EmbeddingSearchConfig {
+				cfg := modelCfg("openai", "text-embedding-3-small", 1536)
+				cfg.VectorElementType = embeddings.VectorElementTypeHalfvec
+				return cfg
+			}(),
+		},
 	}
 
 	for _, tt := range tests {

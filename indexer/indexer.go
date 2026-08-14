@@ -467,9 +467,12 @@ func (s *Indexer) GetModelInfo() (ModelInfo, error) {
 }
 
 // CheckModelCompatibility checks if current config matches the indexed model.
-// Missing stored fields (including hnsw_m == 0) are treated as compatible so
-// upgrades do not nag. An HNSW m change needs an index rebuild but search
-// stays compatible — it is an index-shape change, not a vector-width change.
+// Missing stored fields (including hnsw_m == 0 and empty vector element type)
+// are treated as compatible so upgrades do not nag. An HNSW m change needs an
+// index rebuild but search stays compatible — it is an index-shape change, not
+// a vector-width or column-type change. A stored vector element type that
+// differs from current is the same class as a dimension mismatch: search is
+// incompatible and a Full Reindex is required.
 func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility {
 	storedInfo, err := s.GetModelInfo()
 	if err != nil || (storedInfo.Dimensions == 0 && storedInfo.ModelName == "") {
@@ -482,10 +485,11 @@ func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility 
 
 	// Always include stored values so frontend can do client-side comparison
 	result := ModelCompatibility{
-		StoredProviderType: storedInfo.ProviderType,
-		StoredDimensions:   storedInfo.Dimensions,
-		StoredModelName:    storedInfo.ModelName,
-		StoredHNSWM:        storedInfo.HNSWM,
+		StoredProviderType:      storedInfo.ProviderType,
+		StoredDimensions:        storedInfo.Dimensions,
+		StoredModelName:         storedInfo.ModelName,
+		StoredHNSWM:             storedInfo.HNSWM,
+		StoredVectorElementType: storedInfo.VectorElementType,
 	}
 
 	if storedInfo.ProviderType != "" && current.ProviderType != "" && storedInfo.ProviderType != current.ProviderType {
@@ -499,6 +503,14 @@ func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility 
 		result.Compatible = false
 		result.NeedsReindex = true
 		result.Reason = fmt.Sprintf("dimension mismatch: stored=%d, current=%d", storedInfo.Dimensions, current.Dimensions)
+		return result
+	}
+
+	currentElementType := embeddings.NormalizeVectorElementType(current.VectorElementType)
+	if storedInfo.VectorElementType != "" && storedInfo.VectorElementType != currentElementType {
+		result.Compatible = false
+		result.NeedsReindex = true
+		result.Reason = fmt.Sprintf("vector element type changed: stored=%s, current=%s", storedInfo.VectorElementType, currentElementType)
 		return result
 	}
 
@@ -589,9 +601,10 @@ func (s *Indexer) getModelInfoFromConfig() *ModelInfo {
 
 	cfg := s.configGetter()
 	return &ModelInfo{
-		ProviderType: cfg.GetProviderType(),
-		ModelName:    cfg.GetModelName(),
-		Dimensions:   cfg.Dimensions,
-		HNSWM:        cfg.GetHNSWM(),
+		ProviderType:      cfg.GetProviderType(),
+		ModelName:         cfg.GetModelName(),
+		Dimensions:        cfg.Dimensions,
+		HNSWM:             cfg.GetHNSWM(),
+		VectorElementType: cfg.GetVectorElementType(),
 	}
 }
