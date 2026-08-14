@@ -19,6 +19,7 @@ import {ChunkingOptionsConfig} from './chunking_options';
 import {ReindexSection} from './reindex_section';
 import {ReindexConfirmation, RebuildVectorIndexConfirmation} from './reindex_confirmation';
 import {useJobStatus} from './use_job_status';
+import {embeddingIdentityMismatchKind} from './local_identity_mismatch';
 
 const Horizontal = styled.div`
     display: flex;
@@ -111,27 +112,42 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
 
     // Check if current form values differ from stored (indexed) values
     // This enables showing a warning immediately when editing, before save
-    const currentModelName = value.embeddingProvider.parameters?.embeddingModel as string | null;
-    const storedDimensions = modelCompatibility?.stored_dimensions ?? 0;
-    const storedModelName = modelCompatibility?.stored_model_name ?? '';
+    const currentModelName = (value.embeddingProvider.parameters?.embeddingModel as string | null) || '';
     const storedHNSWM = modelCompatibility?.stored_hnsw_m ?? 0;
     const currentHNSWM = normalizeHNSWM(value.hnswM);
     const hasLocalHNSWMismatch = storedHNSWM !== 0 && storedHNSWM !== currentHNSWM;
 
-    // Compute local mismatch and reason
+    const mismatchKind = embeddingIdentityMismatchKind(modelCompatibility, {
+        providerType: value.embeddingProvider.type,
+        dimensions: value.dimensions,
+        modelName: currentModelName,
+    });
     let localMismatchReason = '';
-    if (modelCompatibility && storedDimensions > 0) {
-        if (value.dimensions !== storedDimensions) {
-            localMismatchReason = intl.formatMessage(
-                {defaultMessage: 'dimension mismatch: stored={stored}, current={current}'},
-                {stored: storedDimensions, current: value.dimensions},
-            );
-        } else if (currentModelName && currentModelName !== storedModelName) {
-            localMismatchReason = intl.formatMessage(
-                {defaultMessage: 'model changed: stored={stored}, current={current}'},
-                {stored: storedModelName, current: currentModelName},
-            );
-        }
+    switch (mismatchKind) {
+    case 'provider':
+        localMismatchReason = intl.formatMessage(
+            {defaultMessage: 'provider changed: stored={stored}, current={current}'},
+            {stored: modelCompatibility?.stored_provider_type ?? '', current: value.embeddingProvider.type},
+        );
+        break;
+    case 'dimensions':
+        localMismatchReason = intl.formatMessage(
+            {defaultMessage: 'dimension mismatch: stored={stored}, current={current}'},
+            {stored: modelCompatibility?.stored_dimensions ?? 0, current: value.dimensions},
+        );
+        break;
+    case 'model':
+        localMismatchReason = intl.formatMessage(
+            {defaultMessage: 'model changed: stored={stored}, current={current}'},
+            {stored: modelCompatibility?.stored_model_name ?? '', current: currentModelName},
+        );
+        break;
+    case null:
+        break;
+    default: {
+        const exhaustive: never = mismatchKind;
+        throw new Error(`unhandled embedding identity mismatch: ${exhaustive}`);
+    }
     }
     const hasLocalModelMismatch = localMismatchReason !== '';
 

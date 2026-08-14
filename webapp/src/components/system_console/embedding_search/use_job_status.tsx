@@ -230,6 +230,7 @@ export const useJobStatus = () => {
             compatible: healthCheckResult.model_compatible,
             needs_reindex: healthCheckResult.model_needs_reindex,
             reason: healthCheckResult.model_compat_reason,
+            stored_provider_type: healthCheckResult.stored_provider_type,
             stored_dimensions: healthCheckResult.stored_dimensions,
             stored_model_name: healthCheckResult.stored_model_name,
             stored_hnsw_m: healthCheckResult.stored_hnsw_m,

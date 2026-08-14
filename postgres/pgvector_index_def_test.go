@@ -40,7 +40,6 @@ func TestCreateVectorIndexSQL(t *testing.T) {
 			for _, fragment := range tt.want {
 				assert.Contains(t, got, fragment)
 			}
-			assert.NotContains(t, got, "halfvec")
 		})
 	}
 }

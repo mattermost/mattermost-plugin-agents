@@ -105,6 +105,7 @@ export interface HealthCheckResultType {
     model_compatible: boolean;
     model_needs_reindex: boolean;
     model_compat_reason?: string;
+    stored_provider_type?: string;
     stored_dimensions?: number;
     stored_model_name?: string;
     stored_hnsw_m?: number;
