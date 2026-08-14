@@ -35,11 +35,6 @@ type Checker struct {
 	papi   plugin.API // PAP calls (pap.go); nil in decision-only tests
 	log    Logger
 
-	// legacyOnly marks pre-11.10 wiring (NewLegacyOnly): no decision or PAP
-	// call is ever made, and attribute-based agents deny — policy existence
-	// cannot be resolved, so the no_policy fail-open is unsafe.
-	legacyOnly bool
-
 	// mcpIDsByOrigin resolves MCP server origins (remote, embedded, plugin) to
 	// stable IDs for ValidateAgentWrite.
 	mcpIDsByOrigin func() map[string]string
@@ -65,17 +60,6 @@ func New(client DecisionClient, papi plugin.API, mcpIDsByOrigin func() map[strin
 		mcpIDsByOrigin: mcpIDsByOrigin,
 		log:            log,
 	}
-}
-
-// NewLegacyOnly builds the checker for servers below MinServerVersionForABAC,
-// which lack the ABAC plugin APIs. Legacy access modes run their legacy checks
-// unchanged; services and MCP servers are unrestricted; attribute-based agents
-// fail closed (a policy may gate them and the plugin cannot find out); and
-// IsAvailable reports false, hiding ABAC UI and rejecting attribute-based saves.
-func NewLegacyOnly(mcpIDsByOrigin func() map[string]string, log Logger) *Checker {
-	c := New(PassthroughClient{}, nil, mcpIDsByOrigin, log)
-	c.legacyOnly = true
-	return c
 }
 
 // errNoDecision reports a DecisionClient that returned neither a decision nor
@@ -143,15 +127,6 @@ func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotCo
 	}
 	attributeBased := cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased
 
-	if c.legacyOnly {
-		if attributeBased {
-			// Policy existence cannot be resolved on this server: fail closed.
-			logDebug(c.log, "attribute-based agent denied: server lacks ABAC support", "agent_id", cfg.ID)
-			return deny()
-		}
-		return runLegacy()
-	}
-
 	decision, err := c.evaluate(ctx, userID, ResourceTypeAgent, cfg.ID)
 	if err != nil {
 		logError(c.log, "ABAC agent evaluation failed", "agent_id", cfg.ID, "error", err.Error())
@@ -189,11 +164,6 @@ func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resource
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "access denied")
 		return err
-	}
-
-	// Legacy-only mode: services and MCP servers are unrestricted (pre-ABAC behavior).
-	if c.legacyOnly {
-		return nil
 	}
 
 	decision, err := c.evaluate(ctx, userID, resourceType, resourceID)
@@ -250,11 +220,6 @@ const availabilityProbeExpression = "true"
 func (c *Checker) IsAvailable(ctx context.Context, actingUserID string) bool {
 	_, span := telemetry.Tracer().Start(ctx, "abac is_available")
 	defer span.End()
-
-	// Legacy-only mode has no PAP to probe; unavailable by construction.
-	if c.legacyOnly {
-		return false
-	}
 
 	c.availabilityMu.Lock()
 	defer c.availabilityMu.Unlock()

@@ -10,10 +10,10 @@ import (
 )
 
 // PassthroughClient is a decision client that reports no_policy for every
-// resource. NOT safe as a stand-in on servers without ABAC support: no_policy
-// lets attribute-based agents fail open, which is only sound when the server
-// really resolved policy existence. Pre-11.10 wiring must use NewLegacyOnly;
-// this client remains for tests.
+// resource. Tests use it to exercise legacy allow/block behavior and the
+// vacuous-allow path. It is not a production stand-in: no_policy lets
+// attribute-based agents fail open, which is only sound when the server
+// really resolved policy existence.
 type PassthroughClient struct{}
 
 // EvaluateAccessRequest always reports no_policy.
