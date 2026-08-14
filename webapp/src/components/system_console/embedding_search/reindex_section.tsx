@@ -263,10 +263,14 @@ export const ReindexSection = ({
     const isReindexing = jobStatus?.status === 'running' || jobStatus?.status === 'cancel_requested';
 
     const hasProgress = (jobStatus?.processed_rows ?? 0) > 0;
+    const isRebuildJob = jobStatus?.operation === 'rebuild_vector_index';
+    const embeddingIdentityMismatch = hasLocalModelMismatch || healthCheckResult?.model_compatible === false;
 
-    // Check if job can be resumed (failed or canceled with progress)
-    const canResume = (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
-        jobStatus?.processed_rows > 0;
+    // Resume is only for embed reindex jobs that marked themselves resumable.
+    const canResume = Boolean(jobStatus?.resumable) &&
+        !isRebuildJob &&
+        (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
+        (jobStatus?.processed_rows ?? 0) > 0;
 
     // Check if catch-up is relevant (only show when there's an existing index that needs updating)
     const showCatchUp = healthCheckResult &&
@@ -312,9 +316,17 @@ export const ReindexSection = ({
                             values={{nodeId: jobStatus?.node_id || 'unknown'}}
                         />
                         <StaleActions>
-                            {hasProgress && (
+                            {jobStatus?.resumable && hasProgress && (
                                 <SecondaryButton onClick={onResumeClick}>
                                     <FormattedMessage defaultMessage='Resume from checkpoint'/>
+                                </SecondaryButton>
+                            )}
+                            {isRebuildJob && (
+                                <SecondaryButton
+                                    onClick={onRebuildVectorIndexClick}
+                                    disabled={embeddingIdentityMismatch}
+                                >
+                                    <FormattedMessage defaultMessage='Rebuild vector index'/>
                                 </SecondaryButton>
                             )}
                             <SecondaryButton onClick={onReindexClick}>
@@ -458,7 +470,10 @@ export const ReindexSection = ({
                                     <FormattedMessage defaultMessage='Catch Up'/>
                                 </TertiaryButton>
                             )}
-                            <TertiaryButton onClick={onRebuildVectorIndexClick}>
+                            <TertiaryButton
+                                onClick={onRebuildVectorIndexClick}
+                                disabled={embeddingIdentityMismatch}
+                            >
                                 <FormattedMessage defaultMessage='Rebuild vector index'/>
                             </TertiaryButton>
                         </ButtonGroup>

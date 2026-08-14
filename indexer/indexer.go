@@ -131,53 +131,27 @@ func (s *Indexer) RunDataRetention(ctx context.Context, nowTime, batchSize int64
 // If clearIndex is true, the existing index will be cleared before reindexing.
 // If clearIndex is false, the job will resume from where it left off (if applicable).
 func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
-	// Check if search is initialized
 	if s.getSearch == nil || s.getSearch() == nil {
 		return JobStatus{}, fmt.Errorf("search functionality is not configured")
 	}
 
-	// Optimistic check before acquiring mutex
-	var jobStatus JobStatus
-	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && !mmapi.IsKVNotFound(err) {
-		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
-	}
-	if isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
-		return jobStatus, fmt.Errorf("job already running")
-	}
-
-	// Acquire cluster mutex for job start
-	mtx, err := cluster.NewMutex(s.clusterMutex, "ai_reindex_job")
+	sess, err := s.beginExclusiveJob()
 	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to create mutex: %w", err)
+		return s.exclusiveJobConflict(err)
 	}
-	mtx.Lock()
-	defer mtx.Unlock()
+	defer sess.Unlock()
 
-	// Re-read under the mutex. Reset on not-found so the optimistic-read
-	// snapshot can't leak into the resume carry-over.
-	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && !mmapi.IsKVNotFound(err) {
-		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
-	}
-	hasExisting := err == nil
-	if !hasExisting {
-		jobStatus = JobStatus{}
-	}
-	if hasExisting && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
-		return jobStatus, fmt.Errorf("job already running")
+	if !clearIndex && sess.hasExisting && sess.existing.isRebuild() {
+		return JobStatus{}, ErrCannotResumeRebuild
 	}
 
-	// Capture cutoff timestamp BEFORE counting posts to prevent race gap
-	// Posts created after this point will be caught by the catch-up pass
 	cutoffTimestamp := time.Now().UnixMilli()
 
-	// Get an estimate of total posts for progress tracking
 	var count int64
 	dbErr := s.db.Get(&count, `SELECT COUNT(*) FROM Posts WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = '' AND CreateAt <= $1`, cutoffTimestamp)
 	if dbErr != nil {
 		s.pluginAPI.LogWarn("Failed to get post count for progress tracking", "error", dbErr)
-		count = 0 // Continue with zero estimate
+		count = 0
 	}
 
 	newJobStatus := JobStatus{
@@ -186,45 +160,30 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		StartedAt: time.Now(),
 		Resumable: !clearIndex,
 		NodeID:    s.getNodeID(),
+		Operation: JobOperationReindex,
 	}
 
-	// When resuming, preserve CutoffAt, TotalRows, ProcessedRows, and the
-	// start-time model snapshot from the previous job so the UI shows
-	// accurate progress and completion unlocks the model actually indexed.
-	if !clearIndex && hasExisting {
-		newJobStatus.TotalRows = jobStatus.TotalRows
-		newJobStatus.CutoffAt = jobStatus.CutoffAt
-		newJobStatus.ProcessedRows = jobStatus.ProcessedRows
-		newJobStatus.ModelInfo = jobStatus.ModelInfo
+	if !clearIndex && sess.hasExisting {
+		newJobStatus.TotalRows = sess.existing.TotalRows
+		newJobStatus.CutoffAt = sess.existing.CutoffAt
+		newJobStatus.ProcessedRows = sess.existing.ProcessedRows
+		newJobStatus.ModelInfo = sess.existing.ModelInfo
 	} else {
-		// Fresh start - calculate new values and snapshot current model.
 		newJobStatus.TotalRows = count
 		newJobStatus.CutoffAt = cutoffTimestamp
 		newJobStatus.ModelInfo = s.getModelInfoFromConfig()
 	}
 
-	// CAS routes through master; the predicate rejects the write if the row
-	// changed since our read, even when that read came from a stale replica.
-	var oldValue interface{}
-	if hasExisting {
-		oldValue = jobStatus
-	}
-	ok, err := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newJobStatus)
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
-	}
-	if !ok {
-		return JobStatus{}, fmt.Errorf("job already running")
+	if err := sess.commit(s, newJobStatus); err != nil {
+		return s.exclusiveJobConflict(err)
 	}
 
-	// Clear cursor if doing a fresh reindex
 	if clearIndex {
 		if err := s.pluginAPI.KVDelete(IndexerCursorKey); err != nil {
 			return JobStatus{}, fmt.Errorf("failed to clear reindex cursor: %w", err)
 		}
 	}
 
-	// Claim deferred-index ownership before start; fail if lifecycle unknown.
 	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
 	if deferErr != nil {
 		failedStatus := newJobStatus
@@ -237,9 +196,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		return JobStatus{}, deferErr
 	}
 
-	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
-	// Start the reindexing job in background
 	go s.runReindexJob(&newJobStatus, clearIndex, deferRun)
 
 	return returnStatus, nil
@@ -344,37 +301,19 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 		return JobStatus{}, fmt.Errorf("search functionality is not configured")
 	}
 
-	// Get last indexed timestamp
 	lastIndexed := s.getLastIndexedTimestamp()
 	if lastIndexed == 0 {
 		return JobStatus{}, fmt.Errorf("no previous index found, run a full reindex first")
 	}
 
-	// Acquire cluster mutex
-	mtx, err := cluster.NewMutex(s.clusterMutex, "ai_reindex_job")
+	sess, err := s.beginExclusiveJob()
 	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to create mutex: %w", err)
+		return s.exclusiveJobConflict(err)
 	}
-	mtx.Lock()
-	defer mtx.Unlock()
+	defer sess.Unlock()
 
-	var jobStatus JobStatus
-	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && !mmapi.IsKVNotFound(err) {
-		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
-	}
-	hasExisting := err == nil
-	if !hasExisting {
-		jobStatus = JobStatus{}
-	}
-	if hasExisting && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
-		return jobStatus, fmt.Errorf("job already running")
-	}
-
-	// Capture cutoff timestamp for catch-up
 	cutoffTimestamp := time.Now().UnixMilli()
 
-	// Count posts to catch up
 	var count int64
 	err = s.db.Get(&count, `
 		SELECT COUNT(*) FROM Posts
@@ -392,26 +331,16 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 		Resumable: true,
 		NodeID:    s.getNodeID(),
 		CutoffAt:  cutoffTimestamp,
+		Operation: JobOperationReindex,
 	}
 
-	var oldValue interface{}
-	if hasExisting {
-		oldValue = jobStatus
-	}
-	ok, err := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newJobStatus)
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
-	}
-	if !ok {
-		return JobStatus{}, fmt.Errorf("job already running")
+	if err := sess.commit(s, newJobStatus); err != nil {
+		return s.exclusiveJobConflict(err)
 	}
 
-	// Set cursor to start from last indexed timestamp
 	s.saveCursor(Cursor{LastCreateAt: lastIndexed, LastID: ""})
 
-	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
-	// Catch-up never defers the index (small tail only); ModelInfo stays nil.
 	go s.runReindexJob(&newJobStatus, false, nil)
 
 	return returnStatus, nil
@@ -631,7 +560,7 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 
 	newStatus := jobStatus
 	newStatus.Status = JobStatusFailed
-	newStatus.Resumable = true
+	newStatus.Resumable = !jobStatus.isRebuild()
 	newStatus.Error = fmt.Sprintf("Job orphaned: heartbeat older than %s on node %q",
 		StaleJobThreshold, jobStatus.NodeID)
 	newStatus.CompletedAt = time.Now()

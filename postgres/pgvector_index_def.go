@@ -10,27 +10,26 @@ import (
 	"strings"
 )
 
-// defaultVectorOpClass is the pgvector opclass used for L2 <-> queries.
-// Phase 2 can pass halfvec_l2_ops without changing matching.
-const defaultVectorOpClass = "vector_l2_ops"
+// expectedVectorIndexUsing is the exact HNSW clause we create. Partial
+// (WHERE) and expression indexes must not match.
+const expectedVectorIndexUsing = "USING hnsw (embedding vector_l2_ops)"
 
 // hnswMOptionRE finds m in a WITH clause. Tolerates quoted values (m='8').
 var hnswMOptionRE = regexp.MustCompile(`(?i)(?:^|[,(]\s*)m\s*=\s*'?(\d+)'?`)
 
+var vectorIndexWhereRE = regexp.MustCompile(`(?i)\sWHERE\s`)
+
 // createVectorIndexSQL builds CREATE INDEX for the HNSW ANN index.
 // Always emits WITH (m = N) so the catalog definition is explicit.
-func createVectorIndexSQL(m int, opclass string) string {
-	if opclass == "" {
-		opclass = defaultVectorOpClass
-	}
+func createVectorIndexSQL(m int) string {
 	return fmt.Sprintf(
-		"CREATE INDEX IF NOT EXISTS %s ON llm_posts_embeddings USING hnsw (embedding %s) WITH (m = %d)",
-		vectorIndexName, opclass, m,
+		"CREATE INDEX IF NOT EXISTS %s ON llm_posts_embeddings %s WITH (m = %d)",
+		vectorIndexName, expectedVectorIndexUsing, m,
 	)
 }
 
 func (pv *PGVector) createVectorIndexSQL() string {
-	return createVectorIndexSQL(pv.hnswM, pv.opclass)
+	return createVectorIndexSQL(pv.hnswM)
 }
 
 // parseHNSWMFromIndexDef extracts HNSW m from pg_get_indexdef output.
@@ -46,15 +45,21 @@ func parseHNSWMFromIndexDef(indexDef string) (int, bool) {
 	return m, true
 }
 
-// vectorIndexDefinitionOK is true when the catalog def uses the expected
-// HNSW opclass and m. Suffix matching is not enough: WITH (m = N) follows
-// the USING clause, so a wrong m would still match a suffix check.
-func vectorIndexDefinitionOK(indexDef string, wantM int, opclass string) bool {
-	if opclass == "" {
-		opclass = defaultVectorOpClass
+// vectorIndexDefinitionOK is true when the catalog def is a full-table HNSW
+// index on embedding with vector_l2_ops and the expected m. Partial indexes
+// and expression indexes cannot serve all searches.
+func vectorIndexDefinitionOK(indexDef string, wantM int) bool {
+	if !strings.Contains(indexDef, "llm_posts_embeddings") {
+		return false
 	}
-	using := "USING hnsw (embedding " + opclass + ")"
-	if !strings.Contains(indexDef, using) {
+	if strings.Contains(indexDef, "USING hnsw ((") {
+		return false
+	}
+	usingIdx := strings.Index(indexDef, expectedVectorIndexUsing)
+	if usingIdx < 0 {
+		return false
+	}
+	if vectorIndexWhereRE.MatchString(indexDef[usingIdx:]) {
 		return false
 	}
 	m, ok := parseHNSWMFromIndexDef(indexDef)

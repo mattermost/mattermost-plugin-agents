@@ -14,15 +14,13 @@ import (
 
 func TestCreateVectorIndexSQL(t *testing.T) {
 	tests := []struct {
-		name    string
-		m       int
-		opclass string
-		want    []string
+		name string
+		m    int
+		want []string
 	}{
 		{
-			name:    "default m and opclass",
-			m:       embeddings.DefaultHNSWM,
-			opclass: "",
+			name: "default m is emitted explicitly",
+			m:    embeddings.DefaultHNSWM,
 			want: []string{
 				"CREATE INDEX IF NOT EXISTS " + vectorIndexName,
 				"USING hnsw (embedding vector_l2_ops)",
@@ -30,25 +28,19 @@ func TestCreateVectorIndexSQL(t *testing.T) {
 			},
 		},
 		{
-			name:    "configured m is emitted explicitly",
-			m:       16,
-			opclass: defaultVectorOpClass,
-			want:    []string{"WITH (m = 16)", "vector_l2_ops"},
-		},
-		{
-			name:    "opclass is substituted for Phase 2",
-			m:       8,
-			opclass: "halfvec_l2_ops",
-			want:    []string{"USING hnsw (embedding halfvec_l2_ops)", "WITH (m = 8)"},
+			name: "configured m is emitted explicitly",
+			m:    16,
+			want: []string{"WITH (m = 16)", "vector_l2_ops"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := createVectorIndexSQL(tt.m, tt.opclass)
+			got := createVectorIndexSQL(tt.m)
 			for _, fragment := range tt.want {
 				assert.Contains(t, got, fragment)
 			}
+			assert.NotContains(t, got, "halfvec")
 		})
 	}
 }
@@ -102,28 +94,30 @@ func TestParseHNSWMFromIndexDef(t *testing.T) {
 }
 
 func TestVectorIndexDefinitionOK(t *testing.T) {
-	l2m8 := "CREATE INDEX idx ON t USING hnsw (embedding vector_l2_ops) WITH (m='8', ef_construction='64')"
-	l2m16 := "CREATE INDEX idx ON t USING hnsw (embedding vector_l2_ops) WITH (m='16', ef_construction='64')"
-	cosine := "CREATE INDEX idx ON t USING hnsw (embedding vector_cosine_ops) WITH (m='8')"
-	btree := "CREATE INDEX idx ON t USING btree (post_id)"
+	l2m8 := "CREATE INDEX llm_posts_embeddings_embedding_idx ON public.llm_posts_embeddings USING hnsw (embedding vector_l2_ops) WITH (m='8', ef_construction='64')"
+	l2m16 := "CREATE INDEX llm_posts_embeddings_embedding_idx ON public.llm_posts_embeddings USING hnsw (embedding vector_l2_ops) WITH (m='16', ef_construction='64')"
+	cosine := "CREATE INDEX llm_posts_embeddings_embedding_idx ON llm_posts_embeddings USING hnsw (embedding vector_cosine_ops) WITH (m='8')"
+	btree := "CREATE INDEX llm_posts_embeddings_embedding_idx ON llm_posts_embeddings USING btree (post_id)"
+	partial := "CREATE INDEX llm_posts_embeddings_embedding_idx ON public.llm_posts_embeddings USING hnsw (embedding vector_l2_ops) WITH (m='8', ef_construction='64') WHERE (NOT is_chunk)"
+	expr := "CREATE INDEX llm_posts_embeddings_embedding_idx ON llm_posts_embeddings USING hnsw ((embedding) vector_l2_ops) WITH (m='8')"
 
 	tests := []struct {
-		name    string
-		def     string
-		wantM   int
-		opclass string
-		want    bool
+		name  string
+		def   string
+		wantM int
+		want  bool
 	}{
-		{name: "matching opclass and m", def: l2m8, wantM: 8, opclass: defaultVectorOpClass, want: true},
-		{name: "quoted m=16 vs configured 8", def: l2m16, wantM: 8, opclass: defaultVectorOpClass, want: false},
-		{name: "wrong opclass", def: cosine, wantM: 8, opclass: defaultVectorOpClass, want: false},
-		{name: "btree occupying the name", def: btree, wantM: 8, opclass: defaultVectorOpClass, want: false},
-		{name: "empty opclass defaults to L2", def: l2m8, wantM: 8, opclass: "", want: true},
+		{name: "matching full-table L2 index", def: l2m8, wantM: 8, want: true},
+		{name: "quoted m=16 vs configured 8", def: l2m16, wantM: 8, want: false},
+		{name: "wrong opclass", def: cosine, wantM: 8, want: false},
+		{name: "btree occupying the name", def: btree, wantM: 8, want: false},
+		{name: "partial index with matching m is rejected", def: partial, wantM: 8, want: false},
+		{name: "expression index is rejected", def: expr, wantM: 8, want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, vectorIndexDefinitionOK(tt.def, tt.wantM, tt.opclass))
+			assert.Equal(t, tt.want, vectorIndexDefinitionOK(tt.def, tt.wantM))
 		})
 	}
 }

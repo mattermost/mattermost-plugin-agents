@@ -78,6 +78,9 @@ export interface JobStatusType {
 
     // Known values: 'building_index' (HNSW CREATE INDEX after bulk load).
     phase?: string;
+
+    // Server JobStatus.operation: 'reindex' | 'rebuild_vector_index'
+    operation?: string;
 }
 
 // Mirror the server's vector index phases
