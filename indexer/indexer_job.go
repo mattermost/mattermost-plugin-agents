@@ -509,21 +509,17 @@ func (s *Indexer) saveHNSWMAfterRebuild(jobStatus *JobStatus) {
 		s.pluginAPI.LogError("Failed to read model info after vector index rebuild", "error", err)
 		return
 	}
+	if err != nil {
+		stored = ModelInfo{}
+	}
 
 	currentM := 0
 	if jobStatus.ModelInfo != nil {
 		currentM = jobStatus.ModelInfo.HNSWM
 	}
 
-	if err != nil || (stored.Dimensions == 0 && stored.ModelName == "") {
-		if jobStatus.ModelInfo != nil {
-			if saveErr := s.SaveModelInfo(*jobStatus.ModelInfo); saveErr != nil {
-				s.pluginAPI.LogError("Failed to save model info after vector index rebuild", "error", saveErr)
-			}
-		}
-		return
-	}
-
+	// Never copy the job's provider/model/dimensions onto stored metadata.
+	// Missing or blank identity stays blank; rebuild is not a re-embed.
 	stored.HNSWM = currentM
 	if saveErr := s.SaveModelInfo(stored); saveErr != nil {
 		s.pluginAPI.LogError("Failed to save HNSW m after vector index rebuild", "error", saveErr)

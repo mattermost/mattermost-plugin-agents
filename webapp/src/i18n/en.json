@@ -293,6 +293,7 @@
   "Z17cukDt": "Chat history",
   "Z2YuYbbS": "When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.",
   "Z5TY2Cw6": "Thinking budget cannot exceed max tokens ({maxTokens}).",
+  "Z5c5mxa6": "provider changed: stored={stored}, current={current}",
   "ZEmQ62N+": "Tool limits, vision, reasoning, and other model-specific options",
   "ZRzcqz+6": "Loading agents...",
   "ZTCxtN6q": "Processing: {processed} of {total} posts ({percent}%)",
