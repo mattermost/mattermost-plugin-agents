@@ -222,23 +222,12 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	// ABAC checker, built before bots.New so the composite usage gate always
-	// has one. Capability selection is version-based, never probe-based:
-	// pre-11.10 servers lack the ABAC plugin APIs and get legacy-only mode
-	// (attribute-based agents deny, ABAC UI hides), while a transient probe
-	// failure on a new server must never fail open into legacy-only.
+	// has one. License/enablement is probed later via IsAvailable.
 	mcpServerIDsByOrigin := func() map[string]string {
 		mcpConfig := p.configuration.MCP()
 		return mcpConfig.ServerIDByOrigin()
 	}
-	serverVersion := p.API.GetServerVersion()
-	var accessChecker *accesscontrol.Checker
-	if accesscontrol.ServerSupportsABAC(serverVersion) {
-		accessChecker = accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, mcpServerIDsByOrigin, &pluginAPI.Log)
-	} else {
-		pluginAPI.Log.Warn("Attribute-based access control requires Mattermost server "+accesscontrol.MinServerVersionForABAC+" or later; running with legacy access checks only, and denying agents saved in attribute-based mode",
-			"server_version", serverVersion)
-		accessChecker = accesscontrol.NewLegacyOnly(mcpServerIDsByOrigin, &pluginAPI.Log)
-	}
+	accessChecker := accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, mcpServerIDsByOrigin, &pluginAPI.Log)
 	p.accessChecker = accessChecker
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, accessChecker, llmUpstreamHTTPClient, metricsService)
