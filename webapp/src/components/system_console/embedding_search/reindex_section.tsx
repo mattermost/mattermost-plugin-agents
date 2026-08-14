@@ -232,10 +232,12 @@ interface ReindexSectionProps {
     healthCheckLoading: boolean;
     hasLocalModelMismatch: boolean;
     localMismatchReason: string;
+    hasLocalHNSWMismatch: boolean;
     isJobStale: boolean;
     onReindexClick: () => void;
     onCancelJob: () => void;
     onCatchUpClick: () => void;
+    onRebuildVectorIndexClick: () => void;
     onHealthCheck: () => void;
     onResumeClick: () => void;
 }
@@ -247,10 +249,12 @@ export const ReindexSection = ({
     healthCheckLoading,
     hasLocalModelMismatch,
     localMismatchReason,
+    hasLocalHNSWMismatch,
     isJobStale,
     onReindexClick,
     onCancelJob,
     onCatchUpClick,
+    onRebuildVectorIndexClick,
     onHealthCheck,
     onResumeClick,
 }: ReindexSectionProps) => {
@@ -332,6 +336,17 @@ export const ReindexSection = ({
                             defaultMessage='The embedding model configuration has changed ({reason}). Search functionality is disabled until you run a full reindex.'
                             values={{reason: localMismatchReason}}
                         />
+                    </WarningText>
+                </WarningBanner>
+            )}
+
+            {hasLocalHNSWMismatch && !hasLocalModelMismatch && (
+                <WarningBanner>
+                    <WarningIcon>{'⚠️'}</WarningIcon>
+                    <WarningText>
+                        <strong><FormattedMessage defaultMessage='HNSW M Changed'/></strong>
+                        <br/>
+                        <FormattedMessage defaultMessage='HNSW M has changed. Use Rebuild vector index to apply it — not Full Reindex. Search keeps working until you rebuild; the new M takes effect after the rebuild.'/>
                     </WarningText>
                 </WarningBanner>
             )}
@@ -443,6 +458,9 @@ export const ReindexSection = ({
                                     <FormattedMessage defaultMessage='Catch Up'/>
                                 </TertiaryButton>
                             )}
+                            <TertiaryButton onClick={onRebuildVectorIndexClick}>
+                                <FormattedMessage defaultMessage='Rebuild vector index'/>
+                            </TertiaryButton>
                         </ButtonGroup>
                     )}
 
@@ -459,7 +477,7 @@ export const ReindexSection = ({
                     )}
 
                     <HelpText>
-                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up indexes only posts created since the last successful index.'/>
+                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up indexes only posts created since the last successful index. Rebuild vector index rebuilds the HNSW graph without re-embedding posts.'/>
                     </HelpText>
                 </div>
             </ActionContainer>

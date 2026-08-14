@@ -13,6 +13,7 @@ jest.mock('../../../client', () => ({
     doReindexPosts: jest.fn(),
     cancelReindex: jest.fn(),
     catchUpIndex: jest.fn(),
+    rebuildVectorIndex: jest.fn(),
 }));
 
 const {
