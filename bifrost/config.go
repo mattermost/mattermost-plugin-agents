@@ -5,6 +5,7 @@ package bifrost
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,17 +65,47 @@ func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
 	}
 }
 
+// SupportedNativeToolsForServiceType returns the native (provider-executed)
+// tool ids the given service type supports through Bifrost — the single source
+// of truth for request-time filtering, mirrored by the webapp's
+// NativeToolsItem checklist.
+//
+// file_search is intentionally withheld from the OpenAI family: OpenAI
+// requires vector_store_ids on the tool definition and the plugin has no
+// vector-store configuration surface yet, so sending the bare tool would 400
+// every completion.
+//
+// Only the primary provider needs gating here; Bifrost strips unsupported
+// native tools per attempted fallback provider (pinned by
+// TestAnthropicOnlyWebFetchDroppedForOpenAI).
+func SupportedNativeToolsForServiceType(serviceType string) []string {
+	switch serviceType {
+	case llm.ServiceTypeAnthropic:
+		return []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch, llm.NativeToolCodeInterpreter}
+	case llm.ServiceTypeOpenAI, llm.ServiceTypeOpenAICompatible, llm.ServiceTypeAzure:
+		return []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter}
+	case llm.ServiceTypeGemini, llm.ServiceTypeVertex:
+		return []string{llm.NativeToolWebSearch}
+	default:
+		return nil
+	}
+}
+
+// filterNativeToolsForServiceType keeps only the native tool ids the service
+// type supports, so a stale or hand-edited bot config can't send a tool the
+// provider path would reject or silently drop.
 func filterNativeToolsForServiceType(serviceType string, tools []string) []string {
 	if len(tools) == 0 {
 		return tools
 	}
 
+	supported := SupportedNativeToolsForServiceType(serviceType)
 	filtered := make([]string, 0, len(tools))
-	if !supportsNativeTools(serviceType) {
-		return filtered
+	for _, tool := range tools {
+		if slices.Contains(supported, tool) {
+			filtered = append(filtered, tool)
+		}
 	}
-
-	filtered = append(filtered, tools...)
 	return filtered
 }
 

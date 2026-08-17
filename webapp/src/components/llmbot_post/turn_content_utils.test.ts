@@ -24,6 +24,7 @@ function makeRound(id: string, text: string): Round {
         toolCalls: [],
         reasoning: {summary: '', signature: ''},
         annotations: [],
+        serverTools: [],
     };
 }
 
@@ -674,6 +675,47 @@ describe('computeRenderedRounds', () => {
 });
 
 describe('buildRoundsFromTurns', () => {
+    test('extracts server_tool_use blocks into the round serverTools', () => {
+        const turn = makeTurn({
+            id: 'r1',
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {
+                    type: 'server_tool_use',
+                    server_tool: {
+                        id: 'srv1',
+                        tool: 'code_interpreter',
+                        status: 'success',
+                        sub_tool: 'bash',
+                        command: 'ls',
+                        output: 'file.txt\n',
+                    },
+                },
+                {
+                    type: 'server_tool_use',
+                    server_tool: {
+                        id: 'srv2',
+                        tool: 'web_search',
+                        status: 'success',
+                        query: 'release notes',
+                    },
+                },
+                {type: 'text', text: 'Done.'},
+            ],
+        });
+        const conv = makeConversation([turn]);
+
+        const rounds = buildRoundsFromTurns(conv, 'post_1');
+        expect(rounds).toHaveLength(1);
+        expect(rounds[0].text).toBe('Done.');
+        expect(rounds[0].serverTools).toHaveLength(2);
+        expect(rounds[0].serverTools[0].id).toBe('srv1');
+        expect(rounds[0].serverTools[0].command).toBe('ls');
+        expect(rounds[0].serverTools[1].tool).toBe('web_search');
+        expect(rounds[0].serverTools[1].query).toBe('release notes');
+    });
+
     test('returns one round per assistant turn in the response, preserving sequence', () => {
         const userTurn = makeTurn({id: 'u1', role: 'user', sequence: 1, post_id: 'user_post', content: []});
         const round1 = makeTurn({

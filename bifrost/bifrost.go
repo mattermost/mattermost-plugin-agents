@@ -1803,6 +1803,34 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 	return parts
 }
 
+// anthropicDirectToolCaller is the allowed_callers value that restricts a
+// server tool to direct model invocation. See webToolResponsesTool.
+const anthropicDirectToolCaller = "direct"
+
+// sandboxEnabled reports whether the agent explicitly enabled the provider code
+// sandbox (the code_interpreter native tool — Anthropic's code_execution).
+func (b *LLM) sandboxEnabled() bool {
+	return b.isNativeToolEnabled(llm.NativeToolCodeInterpreter)
+}
+
+// webToolResponsesTool builds a native web_search / web_fetch tool definition.
+//
+// Unless the agent explicitly enabled the code sandbox (code_interpreter),
+// AllowedCallers is pinned to "direct" — Anthropic's documented opt-out from
+// dynamic filtering, which would otherwise auto-provision the code-execution
+// sandbox on newer Claude models:
+// https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering
+// Bifrost strips the field for providers that don't accept it; pinned by
+// TestWebSearchAllowedCallersStrippedForOpenAI and
+// TestAnthropicOnlyWebFetchDroppedForOpenAI.
+func (b *LLM) webToolResponsesTool(toolType schemas.ResponsesToolType) schemas.ResponsesTool {
+	tool := schemas.ResponsesTool{Type: toolType}
+	if !b.sandboxEnabled() {
+		tool.AllowedCallers = []string{anthropicDirectToolCaller}
+	}
+	return tool
+}
+
 // convertToResponsesTools creates Responses API tools including native tools and function tools.
 func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ResponsesTool {
 	var result []schemas.ResponsesTool
@@ -1810,15 +1838,18 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 	// Add native tools (always add when configured, regardless of ToolsDisabled)
 	for _, nativeTool := range b.enabledNativeTools {
 		switch nativeTool {
-		case "web_search":
-			result = append(result, schemas.ResponsesTool{
-				Type: schemas.ResponsesToolTypeWebSearch,
-			})
-		case "file_search":
+		case llm.NativeToolWebSearch:
+			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
+		case llm.NativeToolWebFetch:
+			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebFetch))
+		case llm.NativeToolFileSearch:
+			// Currently unreachable: SupportedNativeToolsForServiceType
+			// withholds file_search until the plugin can configure the
+			// vector_store_ids OpenAI requires on the tool definition.
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeFileSearch,
 			})
-		case "code_interpreter":
+		case llm.NativeToolCodeInterpreter:
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeCodeInterpreter,
 			})
@@ -1827,10 +1858,8 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 
 	// When NativeWebSearchAllowed is true but web_search is not in enabledNativeTools,
 	// add it dynamically
-	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled("web_search") {
-		result = append(result, schemas.ResponsesTool{
-			Type: schemas.ResponsesToolTypeWebSearch,
-		})
+	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled(llm.NativeToolWebSearch) {
+		result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
 	}
 
 	// Keep function tools defined when the history has tool_use blocks; the
@@ -2021,6 +2050,17 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// bifrost does not surface as OutputItemAdded events) do not bleed into
 	// an unrelated function call's argument buffer.
 	outputIndexToFuncCallID := make(map[int]string)
+
+	// serverTools accumulates provider-executed tool activity (web search /
+	// web fetch / code execution). Every state change re-emits the cumulative
+	// snapshot so receivers can replace prior state.
+	serverTools := newServerToolTracker()
+	emitServerTools := func() {
+		output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeServerToolUse,
+			Value: serverTools.snapshot(),
+		}
+	}
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -2230,7 +2270,19 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 					}
 				}
 
+			case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
+				// Sandbox code/command finalized before execution starts —
+				// surface it so the activity card can show what is running.
+				if resp.ItemID != nil && resp.Code != nil && serverTools.setCommand(*resp.ItemID, *resp.Code) {
+					emitServerTools()
+				}
+
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
+				// Server tool started (web_search_call / web_fetch_call /
+				// code_interpreter_call) — track and surface the activity.
+				if serverTools.observeItem(resp.Item) {
+					emitServerTools()
+				}
 				// New output item added - register function calls so their
 				// argument deltas can be routed back to the right buffer by
 				// OutputIndex.
@@ -2260,6 +2312,11 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 			case schemas.ResponsesStreamResponseTypeOutputItemDone:
 				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
+				// Server tool finished — fold the final payload (query,
+				// resolved URL/title, stdout/stderr, error) into the activity.
+				if serverTools.observeItem(resp.Item) {
+					emitServerTools()
+				}
 				// Output item completed - finalize function call if any
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
