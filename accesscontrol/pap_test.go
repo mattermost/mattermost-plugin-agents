@@ -110,3 +110,50 @@ func TestGetAndDeletePolicyNotFound(t *testing.T) {
 	err = c.DeletePolicy(context.Background(), actingUserID, ResourceTypeMCP, resourceID)
 	assert.ErrorIs(t, err, ErrPolicyNotFound)
 }
+
+func TestPAPWithoutPluginAPI(t *testing.T) {
+	c := New(PassthroughClient{}, nil, NoMCPServerIDs, nil)
+	ctx := context.Background()
+	userID := model.NewId()
+	resourceID := model.NewId()
+
+	tests := []struct {
+		name    string
+		call    func() error
+		wantErr error
+	}{
+		{name: "GetPolicy reports not found", wantErr: ErrPolicyNotFound, call: func() error {
+			_, err := c.GetPolicy(ctx, resourceID)
+			return err
+		}},
+		{name: "DeletePolicy reports not found", wantErr: ErrPolicyNotFound, call: func() error {
+			return c.DeletePolicy(ctx, userID, ResourceTypeAgent, resourceID)
+		}},
+		{name: "SavePolicy reports no plugin API", wantErr: errNoPluginAPI, call: func() error {
+			_, err := c.SavePolicy(ctx, userID, ResourceTypeAgent, resourceID, "policy", &model.AccessControlPolicy{})
+			return err
+		}},
+		{name: "CheckExpression reports no plugin API", wantErr: errNoPluginAPI, call: func() error {
+			_, err := c.CheckExpression(ctx, userID, ResourceTypeAgent, "true")
+			return err
+		}},
+		{name: "TestExpression reports no plugin API", wantErr: errNoPluginAPI, call: func() error {
+			_, err := c.TestExpression(ctx, userID, ResourceTypeAgent, "true", "", "", 10)
+			return err
+		}},
+		{name: "FieldsAutocomplete reports no plugin API", wantErr: errNoPluginAPI, call: func() error {
+			_, err := c.FieldsAutocomplete(ctx, userID, "", 10)
+			return err
+		}},
+		{name: "VisualAST reports no plugin API", wantErr: errNoPluginAPI, call: func() error {
+			_, err := c.VisualAST(ctx, userID, ResourceTypeAgent, "true")
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.ErrorIs(t, tt.call(), tt.wantErr)
+		})
+	}
+}
