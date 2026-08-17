@@ -48,7 +48,7 @@ jest.mock('@/client/access_control', () => ({
 }));
 
 jest.mock('@/utils/access_control', () => ({
-    useABACSupport: () => ({supported: false, checking: false}),
+    useABACSupport: () => ({supported: false, loading: false}),
 }));
 
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
@@ -251,6 +251,8 @@ const serviceAccountFieldsBanner = /Access and MCP tool grants require a system 
 describe('AgentConfigView', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        accessControlClient.getAgentAccessPolicy.mockReset();
+        accessControlClient.deleteAgentAccessPolicy.mockReset();
         mockedUseCurrentUserHasSystemPermission.mockReturnValue(true);
     });
 
