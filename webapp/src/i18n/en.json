@@ -355,6 +355,7 @@
   "aA+e4NGW": "Loading models...",
   "aCdAsIsV": "Copy to clipboard",
   "aKeIoYkm": "Use service default",
+  "aM6s8+hH": "Server {number}",
   "agents.agent_mention_reminder_body": "To respond to an agent you must @mention them. <link>Click here to loop in @{botDisplayName}</link>",
   "agents.agent_mention_reminder_done": "Looped in @{botDisplayName}.",
   "agents.agent_mention_reminder_error": "Failed to loop in @{botDisplayName}. Please try again.",

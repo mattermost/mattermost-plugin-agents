@@ -351,7 +351,9 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 - A policy exists → the policy decides: matching users are allowed, non-matching users are denied.
 - The ABAC engine is unavailable (for example, the license lapsed) → the server still resolves whether a policy exists per resource. Resources **with** a policy **fail closed**: users are denied rather than falling back to unrestricted access. Resources with **no** policy behave as if ABAC were never involved — including attribute-based agents, which **fail open** by design (they ignore user/team lists and have no other gate without a policy).
 
-**Visibility (services and agents).** List and picker visibility follows who can *use* the resource, with one exception for system admins:
+#### Visibility (services and agents)
+
+List and picker visibility follows who can *use* the resource, with one exception for system admins:
 
 - **System admins** may see AI services — and agents backed by those services — even when a service ABAC policy would deny them personally. That lets them audit bindings and repair access.
 - **Everyone else** (including the agent creator and delegated agent admins) only sees services and agents they can actually use. For an agent, that means both agent access and the agent's AI service access. Denied services and agents are omitted from lists and pickers — there are no ghost agents, and ABAC deny is not surfaced as a "Service unavailable" state for non–system-admins.
