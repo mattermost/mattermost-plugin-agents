@@ -222,19 +222,24 @@ func (c *Checker) IsAvailable(ctx context.Context, actingUserID string) bool {
 	defer span.End()
 
 	c.availabilityMu.Lock()
-	defer c.availabilityMu.Unlock()
-
 	if !c.availabilityChecked.IsZero() && time.Since(c.availabilityChecked) < availabilityCacheTTL {
-		return c.availabilityValue
+		cached := c.availabilityValue
+		c.availabilityMu.Unlock()
+		return cached
 	}
+	c.availabilityMu.Unlock()
 
+	// Probe without the lock so a slow plugin RPC does not convoy other callers.
 	available := false
 	if c.papi != nil {
 		ast, appErr := c.papi.GetAccessControlVisualAST(actingUserID, ResourceTypeAgent, availabilityProbeExpression)
 		available = appErr == nil && ast != nil
 	}
+
+	c.availabilityMu.Lock()
 	c.availabilityValue = available
 	c.availabilityChecked = time.Now()
+	c.availabilityMu.Unlock()
 	return available
 }
 
