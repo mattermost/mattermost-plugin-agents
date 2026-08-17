@@ -195,6 +195,13 @@ export function parseCompilerOptions(tsconfigPath) {
             throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
         },
     });
+    if (!parsed) {
+        throw new Error(`failed to parse TypeScript config ${tsconfigPath}`);
+    }
+    if (parsed.errors.length > 0) {
+        const messages = parsed.errors.map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n')).join('\n');
+        throw new Error(`failed to parse TypeScript config ${tsconfigPath}:\n${messages}`);
+    }
     return {...parsed.options, noEmit: true, skipLibCheck: true};
 }
 
