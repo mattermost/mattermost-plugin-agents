@@ -218,7 +218,7 @@ jobs:
       - uses: mattermost/actions/plugin-ci/lint@main
 
   verify-no-drift:
-    name: Verify webapp i18n + package-lock are in sync
+    name: Verify webapp i18n, package-lock, and editor contract are in sync
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

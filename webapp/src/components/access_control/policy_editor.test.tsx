@@ -11,8 +11,6 @@ import PolicyEditor, {PolicyEditorProps} from './policy_editor';
 
 // Source strings use defaultMessage without ids (ids are injected at build
 // time); render defaultMessage directly, matching the other component tests.
-// The intl object must be referentially stable: the editor's load effect
-// depends on it.
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
     const intl = {
@@ -303,6 +301,23 @@ describe('PolicyEditor', () => {
         expect(await screen.findByTestId('cel-editor')).toBeTruthy();
         expect(screen.queryByText('Simple')).toBeNull();
         expect(screen.getByText("This policy uses expressions the simple editor can't display.")).toBeTruthy();
+        expect(screen.queryByText('Save policy')).toBeNull();
+    });
+
+    it('does not submit a multi-rule policy from the single-expression editor', async () => {
+        client.getAgentAccessPolicy.mockResolvedValue({
+            ...existingPolicy,
+            rules: [
+                {actions: ['use'], expression: 'user.attributes.team == "sales"'},
+                {actions: ['use'], expression: 'user.attributes.level >= 2'},
+            ],
+        });
+        renderEditor();
+
+        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+        fireEvent.click(screen.getByText('cel-edit'));
+        expect(screen.queryByText('Save policy')).toBeNull();
+        expect(client.putAgentAccessPolicy).not.toHaveBeenCalled();
     });
 
     it('shows a read-only unsupported state for multi-rule policies when advanced is not allowed', async () => {

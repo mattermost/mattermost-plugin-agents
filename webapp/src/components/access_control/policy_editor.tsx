@@ -105,7 +105,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
     const client = useMemo(() => policyClientFor(resourceType), [resourceType]);
 
     const [loading, setLoading] = useState(true);
-    const [loadError, setLoadError] = useState('');
+    const [loadFailed, setLoadFailed] = useState(false);
     const [policy, setPolicy] = useState<AccessControlPolicy | null>(null);
     const [expression, setExpression] = useState('');
     const [savedExpression, setSavedExpression] = useState('');
@@ -122,7 +122,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
-        setLoadError('');
+        setLoadFailed(false);
 
         // A failed attribute-catalogue fetch fails the whole load: silently
         // rendering an empty catalogue would present an outage as "no
@@ -148,7 +148,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
             }
         }).catch(() => {
             if (!cancelled) {
-                setLoadError(intl.formatMessage({defaultMessage: 'Failed to load the access policy. Please try again.'}));
+                setLoadFailed(true);
             }
         }).finally(() => {
             if (!cancelled) {
@@ -158,7 +158,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
         return () => {
             cancelled = true;
         };
-    }, [client, resourceId, agentIdForAuthz, intl]);
+    }, [client, resourceId, agentIdForAuthz]);
 
     // The CEL editor takes {attribute, values, isNative, objectType}[].
     // Native/session flags must match the host's toCELEditorAttributes mapping
@@ -192,6 +192,12 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
     }, [allowAdvanced]);
 
     const handleSave = useCallback(async () => {
+        // The editor is a single-expression UI. Multi-rule policies keep
+        // rules[1..n] invisible; refusing to save avoids persisting hidden
+        // restrictions the author never reviewed.
+        if ((policy?.rules?.length ?? 0) > 1) {
+            return;
+        }
         setSaving(true);
         setSaveError('');
         try {
@@ -208,12 +214,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
                 rules: [],
                 props: {},
             };
-            const rules = [...(base.rules ?? [])];
-            if (rules.length === 0) {
-                rules.push({actions: ['use'], expression});
-            } else {
-                rules[0] = {...rules[0], actions: ['use'], expression};
-            }
+            const rules = [{actions: ['use'], expression}];
             const saved = await client.put(resourceId, {...base, name: base.name || resourceDisplayName, rules});
             setPolicy(saved);
             setSavedExpression(expression);
@@ -262,15 +263,20 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
         );
     }
 
-    if (loadError) {
-        return <ErrorText>{loadError}</ErrorText>;
+    if (loadFailed) {
+        return (
+            <ErrorText>
+                <FormattedMessage defaultMessage='Failed to load the access policy. Please try again.'/>
+            </ErrorText>
+        );
     }
 
     const view = deriveView(mode, advancedLocked, allowSimplified, allowAdvanced);
 
     const showToggle = allowSimplified && allowAdvanced && !advancedLocked;
     const dirty = expression !== savedExpression;
-    const canSave = view !== 'unsupported' && dirty && expressionValid && expression.trim() !== '' && !saving;
+    const multiRule = (policy?.rules?.length ?? 0) > 1;
+    const canSave = view !== 'unsupported' && !multiRule && dirty && expressionValid && expression.trim() !== '' && !saving;
 
     const {TableEditor, CELEditor} = editors;
 
@@ -351,7 +357,7 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
                         <FormattedMessage defaultMessage='Remove policy'/>
                     </RemoveButton>
                 )}
-                {view !== 'unsupported' && (
+                {view !== 'unsupported' && !multiRule && (
                     <SavePolicyButton
                         type='button'
                         onClick={handleSave}

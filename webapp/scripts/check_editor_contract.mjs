@@ -164,6 +164,15 @@ console.log(`check-editor-contract: probing against ${host}`);
 const tsconfig = hostTsconfig(host);
 
 const live = runProbe(tsconfig, 'live host');
+
+// Config-level tsc failures have no (line,col) position, so they never land
+// in probeDiagnostics. A non-zero status with no positioned diagnostics means
+// the program could not be built at all (bad extends, unresolved paths).
+if (live.status !== 0 && !(/\(\d+,\d+\): error TS\d+/).test(live.output)) {
+    console.error(live.output.trimEnd());
+    console.error('check-editor-contract: FAILED — could not type-check the live-host probe; check the host checkout.');
+    process.exit(1);
+}
 if (live.probeDiagnostics.length > 0) {
     console.error(live.probeDiagnostics.join('\n'));
     console.error('check-editor-contract: FAILED — the plugin\'s editor prop mirrors have drifted from the mattermost webapp\'s exported types.');
@@ -190,7 +199,7 @@ if (updateSnapshot) {
     process.exit(0);
 }
 
-const committed = fs.readFileSync(snapshotPath, 'utf8');
+const committed = fs.readFileSync(snapshotPath, 'utf8').replace(/\r\n/g, '\n');
 if (committed !== generated) {
     console.error('check-editor-contract: FAILED — the committed host contract snapshot no longer matches the host checkout.');
     console.error('The host editor types moved; regenerate and commit the snapshot: npm run update-editor-contract-snapshot');
