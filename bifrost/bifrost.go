@@ -1815,26 +1815,14 @@ func (b *LLM) sandboxEnabled() bool {
 
 // webToolResponsesTool builds a native web_search / web_fetch tool definition.
 //
-// Unless the agent explicitly enabled the code sandbox, AllowedCallers is
-// pinned to "direct": Bifrost auto-selects Anthropic's *_20260209 web tool
-// versions for newer Claude models (4.6+, Opus 4.7+, Sonnet 5+), and those
-// versions default allowed_callers to code_execution — the Anthropic API then
-// auto-provisions its code-execution (bash) sandbox for "dynamic filtering".
-// "direct" is Anthropic's documented opt-out, accepted by every web tool
-// version:
+// Unless the agent explicitly enabled the code sandbox (code_interpreter),
+// AllowedCallers is pinned to "direct" — Anthropic's documented opt-out from
+// dynamic filtering, which would otherwise auto-provision the code-execution
+// sandbox on newer Claude models:
 // https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering
-// The plugin has no other lever — Bifrost picks the tool version from the model
-// name and the neutral schema carries no web tool version field.
-//
-// When the agent has the code_interpreter native tool enabled, the sandbox is
-// sanctioned by the admin: the pin is omitted so Anthropic's documented default
-// (dynamic filtering in the shared execution container) applies.
-//
-// The field is safe to set regardless of provider: Bifrost strips
-// allowed_callers for providers that don't accept it (OpenAI serializers drop
-// Anthropic-only tool flags; Gemini converts to typed GoogleSearch; the
-// Anthropic-family builder strips it on Bedrock/Vertex via
-// StripUnsupportedAnthropicFields).
+// Bifrost strips the field for providers that don't accept it; pinned by
+// TestWebSearchAllowedCallersStrippedForOpenAI and
+// TestAnthropicOnlyWebFetchDroppedForOpenAI.
 func (b *LLM) webToolResponsesTool(toolType schemas.ResponsesToolType) schemas.ResponsesTool {
 	tool := schemas.ResponsesTool{Type: toolType}
 	if !b.sandboxEnabled() {

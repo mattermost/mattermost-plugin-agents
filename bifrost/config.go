@@ -66,27 +66,18 @@ func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
 }
 
 // SupportedNativeToolsForServiceType returns the native (provider-executed)
-// tool ids the given service type supports through Bifrost. This is the single
-// source of truth for request-time filtering; the webapp's NativeToolsItem
-// checklist mirrors it per provider.
+// tool ids the given service type supports through Bifrost — the single source
+// of truth for request-time filtering, mirrored by the webapp's
+// NativeToolsItem checklist.
 //
-//   - Anthropic supports the three GA server tools (web search, web fetch,
-//     code execution — the latter under the shared "code_interpreter" id).
-//   - OpenAI-family providers support OpenAI's Responses API native tools.
-//     file_search is intentionally withheld: OpenAI requires vector_store_ids
-//     on the tool definition and the plugin has no vector-store configuration
-//     surface yet, so sending the bare tool would 400 every completion.
-//   - Gemini / Vertex support only web search: Bifrost converts it to Google
-//     Search grounding, and silently drops every other native tool type
-//     (Gemini's converter maps nothing else; Vertex's Anthropic surface
-//     rejects web_fetch and code_execution outright).
+// file_search is intentionally withheld from the OpenAI family: OpenAI
+// requires vector_store_ids on the tool definition and the plugin has no
+// vector-store configuration surface yet, so sending the bare tool would 400
+// every completion.
 //
-// This matrix gates what the PRIMARY provider sends. Heterogeneous fallback
-// chains need no filtering here: Bifrost strips or drops native tools the
-// attempted provider doesn't support inside its per-provider serializers
-// (e.g. the OpenAI serializer drops web_fetch outright; the Anthropic-family
-// builder silently strips file_search), pinned by
-// TestAnthropicOnlyWebFetchDroppedForOpenAI.
+// Only the primary provider needs gating here; Bifrost strips unsupported
+// native tools per attempted fallback provider (pinned by
+// TestAnthropicOnlyWebFetchDroppedForOpenAI).
 func SupportedNativeToolsForServiceType(serviceType string) []string {
 	switch serviceType {
 	case llm.ServiceTypeAnthropic:

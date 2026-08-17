@@ -12,7 +12,7 @@ import (
 )
 
 // Display caps for server-tool activity payloads. Sandbox code and output can
-// be arbitrarily large; everything past these limits is elided before the
+// be arbitrarily large; everything past these limits is truncated before the
 // event leaves the bifrost layer so websocket broadcasts and persisted turns
 // stay bounded.
 const (
@@ -247,7 +247,7 @@ func mapServerToolStatus(status *string) string {
 	}
 }
 
-// truncateForDisplay elides s past limit runes, marking the cut. Rune-safe so
+// truncateForDisplay cuts s down to limit runes, marking the cut. Rune-safe so
 // multi-byte content isn't split mid-character.
 func truncateForDisplay(s string, limit int) string {
 	if len(s) <= limit {
