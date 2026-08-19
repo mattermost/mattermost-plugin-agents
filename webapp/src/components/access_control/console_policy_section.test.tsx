@@ -98,6 +98,33 @@ afterEach(() => {
 });
 
 describe('ConsolePolicySection', () => {
+    test('the editor mounts on first expand and stays mounted when collapsed', async () => {
+        renderSection('serviceidaaaaaaaaaaaaaaaaa');
+
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+        expect(client.getServiceAccessPolicy).not.toHaveBeenCalled();
+        expect(client.getAccessControlFields).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByText('Access policy'));
+        const editor = await screen.findByTestId('table-editor');
+        expect(editor.closest('[inert]')).toBeNull();
+        expect(client.getServiceAccessPolicy).toHaveBeenCalledTimes(1);
+        expect(client.getAccessControlFields).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByText('Advanced'));
+        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+
+        fireEvent.click(screen.getByText('Access policy'));
+        const collapsedEditor = screen.getByTestId('cel-editor');
+        expect(collapsedEditor.closest('[inert]')).toBeTruthy();
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+
+        fireEvent.click(screen.getByText('Access policy'));
+        expect(screen.getByTestId('cel-editor').closest('[inert]')).toBeNull();
+        expect(client.getServiceAccessPolicy).toHaveBeenCalledTimes(1);
+        expect(client.getAccessControlFields).toHaveBeenCalledTimes(1);
+    });
+
     test('a resource swap while the delete dialog is open discards the dialog and fires no delete', async () => {
         // PolicyEditor is keyed by resource identity, so changing resourceId
         // remounts it: the old resource's dialog is gone and its delete can
