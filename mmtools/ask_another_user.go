@@ -23,7 +23,8 @@ const (
 		"LAST RESORT: only use this after search and channel-history tools cannot answer the question, and only when one specific person clearly can. " +
 		"The question is delivered as a direct message card from the agent to that user; the conversation waits until they answer or decline. " +
 		"Ask only specific, self-contained questions answerable without extra context. The user may decline; if they do, proceed sensibly without the answer. " +
-		"The result contains the answer (selected options and/or free-form text) or a decline marker. Ask one user one question at a time."
+		"The result contains the answer (selected options and/or free-form text), a decline marker, or a canceled marker. " +
+		"A canceled result means the requester stopped waiting: no answer was received and the target did not decline. Ask one user one question at a time."
 
 	// Result status values in the C7 tool-result JSON. The enum is
 	// answered | declined | canceled (V2-C5).
@@ -209,7 +210,8 @@ func ValidateAskAnotherUserArgs(args AskAnotherUserArgs) error {
 
 // ResolveAskAnotherUserCancel returns the C7-family tool-result JSON for an
 // initiator-canceled question (V2-C4):
-// {"status":"canceled","target_username":"<username>"}. The username is
+// {"status":"canceled","target_username":"<username>",
+// "answer_received":false,"canceled_by":"requester"}. The username is
 // parsed best-effort from the original tool input; an unparseable input
 // yields an empty username but still a valid payload — the cancel result
 // must always be writable.
@@ -223,7 +225,14 @@ func ResolveAskAnotherUserCancel(input json.RawMessage) (string, error) {
 	result, err := json.Marshal(struct {
 		Status         string `json:"status"`
 		TargetUsername string `json:"target_username"`
-	}{Status: askAnotherUserStatusCanceled, TargetUsername: targetUsername})
+		AnswerReceived bool   `json:"answer_received"`
+		CanceledBy     string `json:"canceled_by"`
+	}{
+		Status:         askAnotherUserStatusCanceled,
+		TargetUsername: targetUsername,
+		AnswerReceived: false,
+		CanceledBy:     "requester",
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal cancel result: %w", err)
 	}

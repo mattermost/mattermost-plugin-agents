@@ -494,17 +494,17 @@ func TestResolveAskAnotherUserCancel(t *testing.T) {
 		{
 			name:  "valid input yields the canceled result",
 			input: `{"username":"bob","question":"Which environment?"}`,
-			want:  `{"status":"canceled","target_username":"bob"}`,
+			want:  `{"status":"canceled","target_username":"bob","answer_received":false,"canceled_by":"requester"}`,
 		},
 		{
 			name:  "at-prefixed username is canonicalized",
 			input: `{"username":"  @bob ","question":"Which environment?"}`,
-			want:  `{"status":"canceled","target_username":"bob"}`,
+			want:  `{"status":"canceled","target_username":"bob","answer_received":false,"canceled_by":"requester"}`,
 		},
 		{
 			name:  "unparseable input still yields a valid payload",
 			input: `{not json`,
-			want:  `{"status":"canceled","target_username":""}`,
+			want:  `{"status":"canceled","target_username":"","answer_received":false,"canceled_by":"requester"}`,
 		},
 	}
 

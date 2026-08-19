@@ -827,7 +827,7 @@ func TestHandleAskUserCancelHTTP(t *testing.T) {
 				var resultBlocks []conversation.ContentBlock
 				require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
 				require.Len(t, resultBlocks, 1)
-				assert.JSONEq(t, `{"status":"canceled","target_username":"target"}`, resultBlocks[0].Content)
+				assert.JSONEq(t, `{"status":"canceled","target_username":"target","answer_received":false,"canceled_by":"requester"}`, resultBlocks[0].Content)
 			} else if test.blockStatus != "" {
 				require.Len(t, turns, 1, "rejected requests must not write result turns")
 			}

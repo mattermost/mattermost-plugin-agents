@@ -1908,7 +1908,7 @@ func TestHandleAskUserCancel(t *testing.T) {
 			require.NotNil(t, resultBlocks[0].Shared)
 			assert.True(t, *resultBlocks[0].Shared)
 			assert.NotNil(t, resultBlocks[0].DecidedAt)
-			assert.JSONEq(t, `{"status":"canceled","target_username":"bob"}`, resultBlocks[0].Content)
+			assert.JSONEq(t, `{"status":"canceled","target_username":"bob","answer_received":false,"canceled_by":"requester"}`, resultBlocks[0].Content)
 
 			if tc.pointerMissing {
 				assert.Nil(t, patchedPost, "a lost pointer degrades to an unpatched card, not an error")
@@ -1944,7 +1944,7 @@ func TestCancelAnswerRace(t *testing.T) {
 		{
 			name:        "cancel wins and a late answer is a graceful no-op",
 			cancelFirst: true,
-			wantResult:  `{"status":"canceled","target_username":"bob"}`,
+			wantResult:  `{"status":"canceled","target_username":"bob","answer_received":false,"canceled_by":"requester"}`,
 		},
 		{
 			name:        "answer wins and a late cancel is a graceful no-op",
