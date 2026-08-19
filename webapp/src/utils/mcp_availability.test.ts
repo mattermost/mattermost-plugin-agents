@@ -12,8 +12,15 @@ function server(overrides: Partial<MCPAvailabilityServer> & Pick<MCPAvailability
     };
 }
 
+type StatusCase = {
+    name: string;
+    server: MCPAvailabilityServer;
+    useServiceAccountAuth: boolean;
+    expected: MCPServerStatus;
+};
+
 describe('mcpServerStatus', () => {
-    test.each([
+    test.each<StatusCase>([
         {
             name: 'authenticated is connected in user mode',
             server: server({authenticated: true, serviceAccountConfigured: true}),
@@ -90,15 +97,7 @@ describe('mcpServerStatus', () => {
             useServiceAccountAuth: false,
             expected: 'none',
         },
-    ])('$name', ({
-        server: mcpServer,
-        useServiceAccountAuth,
-        expected,
-    }: {
-        server: MCPAvailabilityServer;
-        useServiceAccountAuth: boolean;
-        expected: MCPServerStatus;
-    }) => {
+    ])('$name', ({server: mcpServer, useServiceAccountAuth, expected}) => {
         expect(mcpServerStatus(mcpServer, useServiceAccountAuth)).toBe(expected);
     });
 });

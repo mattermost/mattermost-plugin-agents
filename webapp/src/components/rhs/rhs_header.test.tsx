@@ -15,6 +15,12 @@ jest.mock('@/client', () => ({
     updateUserToolPreferences: jest.fn(),
 }));
 
+// OverlayTrigger is provided by the host Mattermost webapp, not this package.
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
