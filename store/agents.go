@@ -217,7 +217,7 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 		cfg.ReasoningEnabled,
 		cfg.ReasoningEffort,
 		cfg.ThinkingBudget,
-		cfg.StructuredOutputEnabled,
+		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.CreateAt,
 		cfg.UpdateAt,
@@ -367,7 +367,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 		cfg.ReasoningEnabled,
 		cfg.ReasoningEffort,
 		cfg.ThinkingBudget,
-		cfg.StructuredOutputEnabled,
+		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.UpdateAt,
 		cfg.ID,
