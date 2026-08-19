@@ -34,7 +34,7 @@ export type UserMCPServerInfo = {
     needsOAuth: boolean;
     authEmail?: string;
     authURL?: string;
-    serviceAccountConfigured?: boolean;
+    serviceAccountConfigured: boolean;
     tools: UserMCPToolInfo[];
 };
 export type UserMCPToolsResponse = {

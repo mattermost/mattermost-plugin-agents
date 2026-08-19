@@ -7,8 +7,10 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
 import {getUserMCPTools, type UserMCPServerInfo} from '@/client';
+import MCPUnavailableBadge from '@/components/mcp_unavailable_badge';
 import {EnabledTool} from '@/types/agents';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
+import {mcpServerStatus, type MCPServerStatus} from '@/utils/mcp_availability';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
 
 import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
@@ -42,6 +44,88 @@ type Props = {
 
 function serverToolsPanelId(serverOrigin: string): string {
     return `mcp-tools-${serverOrigin.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
+function serverStatusBadge(status: MCPServerStatus): React.ReactNode {
+    switch (status) {
+    case 'connected':
+        return (
+            <AuthBadge>
+                <FormattedMessage defaultMessage='Connected'/>
+            </AuthBadge>
+        );
+    case 'no-sa-credentials':
+        return (
+            <NotConnectedBadge>
+                <FormattedMessage defaultMessage='No service account credentials'/>
+            </NotConnectedBadge>
+        );
+    case 'sa-connect-failed':
+        return (
+            <NotConnectedBadge>
+                <FormattedMessage defaultMessage="Couldn't connect"/>
+            </NotConnectedBadge>
+        );
+    case 'sa-only-unavailable':
+        return <MCPUnavailableBadge/>;
+    case 'not-connected':
+        return (
+            <NotConnectedBadge>
+                <FormattedMessage defaultMessage='Not connected'/>
+            </NotConnectedBadge>
+        );
+    case 'none':
+        return null;
+    default: {
+        const exhaustive: never = status;
+        return exhaustive;
+    }
+    }
+}
+
+function emptyToolsNotice(
+    status: MCPServerStatus,
+    opts: {wildcardOn: boolean; useServiceAccountAuth: boolean; canConnect: boolean},
+): React.ReactNode {
+    if (opts.wildcardOn) {
+        return (
+            <EmptyToolsNotice>
+                {opts.useServiceAccountAuth ? (
+                    <FormattedMessage defaultMessage='This server has no tools available right now. When it connects with the service account, every tool it exposes will be enabled.'/>
+                ) : (
+                    <FormattedMessage defaultMessage='This server has no tools available right now. When a user of this agent authenticates, every tool this server exposes will be enabled.'/>
+                )}
+            </EmptyToolsNotice>
+        );
+    }
+    switch (status) {
+    case 'no-sa-credentials':
+        return (
+            <EmptyToolsNotice>
+                <FormattedMessage defaultMessage='This agent cannot use this server until service account credentials are added in System Console MCP settings.'/>
+            </EmptyToolsNotice>
+        );
+    case 'sa-connect-failed':
+        return (
+            <EmptyToolsNotice>
+                <FormattedMessage defaultMessage="Couldn't connect with the configured service account credentials. Check the header values and server logs."/>
+            </EmptyToolsNotice>
+        );
+    case 'none':
+        return opts.canConnect ? (
+            <EmptyToolsNotice>
+                <FormattedMessage defaultMessage='Connect this server to see and pick individual tools, or toggle it on to give the agent access to every tool the server exposes once a user connects.'/>
+            </EmptyToolsNotice>
+        ) : null;
+    case 'connected':
+    case 'sa-only-unavailable':
+    case 'not-connected':
+        return null;
+    default: {
+        const exhaustive: never = status;
+        return exhaustive;
+    }
+    }
 }
 
 const McpsTab = (props: Props) => {
@@ -178,9 +262,15 @@ const McpsTab = (props: Props) => {
             if (et.tool_name === MCPServerToolWildcard) {
                 return true;
             }
+
+            // Keep saved grants for SA-only servers the current user cannot
+            // use; Unavailable is display-only and must not strip enabledTools.
+            if (mcpServerStatus(s, useServiceAccountAuth) === 'sa-only-unavailable') {
+                return true;
+            }
             return s.tools.some((t) => t.name === et.tool_name);
         });
-    }, [servers]);
+    }, [servers, useServiceAccountAuth]);
 
     // Service account agents run against the admin-provisioned catalog. That
     // catalog is what this tab loads when the flag is on, but a failed SA
@@ -330,6 +420,8 @@ const McpsTab = (props: Props) => {
 
             <ServerList>
                 {filteredServers.map((server) => {
+                    const status = mcpServerStatus(server, useServiceAccountAuth);
+                    const unavailable = status === 'sa-only-unavailable';
                     const isExpanded = expandedServers.has(server.serverOrigin);
                     const wildcardOn = hasServerWildcard(server.serverOrigin);
                     const adminEnabledTools = server.tools.filter((t) => t.enabled);
@@ -342,14 +434,15 @@ const McpsTab = (props: Props) => {
 
                     const allKnownOn = totalCount > 0 && enabledCount === totalCount;
                     const allOn = autoEnableNewMCPTools || wildcardOn || allKnownOn;
-                    const serverToggleLabel = allOn ? intl.formatMessage(
+                    const serverEnabled = !unavailable && allOn;
+                    const serverToggleLabel = serverEnabled ? intl.formatMessage(
                         {defaultMessage: 'Disable all tools for {serverName}'},
                         {serverName: server.name},
                     ) : intl.formatMessage(
                         {defaultMessage: 'Enable all tools for {serverName}'},
                         {serverName: server.name},
                     );
-                    const canConnect = !useServiceAccountAuth && !server.authenticated && Boolean(server.authURL);
+                    const canConnect = status === 'none' && Boolean(server.authURL);
                     const metaDetail = (() => {
                         if (wildcardOn && totalCount === 0) {
                             return intl.formatMessage({defaultMessage: 'All tools enabled'});
@@ -370,7 +463,10 @@ const McpsTab = (props: Props) => {
                     })();
 
                     return (
-                        <ServerBlock key={server.serverOrigin}>
+                        <ServerBlock
+                            key={server.serverOrigin}
+                            $unavailable={unavailable}
+                        >
                             <ServerTopRow>
                                 <ServerHeaderButton
                                     type='button'
@@ -389,26 +485,7 @@ const McpsTab = (props: Props) => {
                                         <ServerName>{server.name}</ServerName>
                                         <ServerMeta>
                                             {metaDetail}
-                                            {server.authenticated && (
-                                                <AuthBadge>
-                                                    <FormattedMessage defaultMessage='Connected'/>
-                                                </AuthBadge>
-                                            )}
-                                            {useServiceAccountAuth && !server.authenticated && !server.serviceAccountConfigured && (
-                                                <NotConnectedBadge>
-                                                    <FormattedMessage defaultMessage='No service account credentials'/>
-                                                </NotConnectedBadge>
-                                            )}
-                                            {useServiceAccountAuth && !server.authenticated && Boolean(server.serviceAccountConfigured) && (
-                                                <NotConnectedBadge>
-                                                    <FormattedMessage defaultMessage="Couldn't connect"/>
-                                                </NotConnectedBadge>
-                                            )}
-                                            {!useServiceAccountAuth && !server.authenticated && !server.authEmail && server.tools.length === 0 && (
-                                                <NotConnectedBadge>
-                                                    <FormattedMessage defaultMessage='Not connected'/>
-                                                </NotConnectedBadge>
-                                            )}
+                                            {serverStatusBadge(status)}
                                         </ServerMeta>
                                     </ServerInfo>
                                 </ServerHeaderButton>
@@ -425,12 +502,12 @@ const McpsTab = (props: Props) => {
                                 <ServerToggle
                                     type='button'
                                     aria-label={serverToggleLabel}
-                                    aria-checked={allOn}
+                                    aria-checked={serverEnabled}
                                     onClick={() => !toolGrantsDisabled && toggleAllServerTools(server)}
-                                    disabled={toolGrantsDisabled}
-                                    $enabled={allOn}
+                                    disabled={toolGrantsDisabled || unavailable}
+                                    $enabled={serverEnabled}
                                 >
-                                    <ToggleKnob $enabled={allOn}/>
+                                    <ToggleKnob $enabled={serverEnabled}/>
                                 </ServerToggle>
                             </ServerTopRow>
 
@@ -440,37 +517,18 @@ const McpsTab = (props: Props) => {
                                     role='region'
                                     aria-label={server.name}
                                 >
-                                    {adminEnabledTools.length === 0 && wildcardOn && (
-                                        <EmptyToolsNotice>
-                                            {useServiceAccountAuth ? (
-                                                <FormattedMessage defaultMessage='This server has no tools available right now. When it connects with the service account, every tool it exposes will be enabled.'/>
-                                            ) : (
-                                                <FormattedMessage defaultMessage='This server has no tools available right now. When a user of this agent authenticates, every tool this server exposes will be enabled.'/>
-                                            )}
-                                        </EmptyToolsNotice>
-                                    )}
-                                    {adminEnabledTools.length === 0 && !wildcardOn && useServiceAccountAuth && !server.serviceAccountConfigured && (
-                                        <EmptyToolsNotice>
-                                            <FormattedMessage defaultMessage='This agent cannot use this server until service account credentials are added in System Console MCP settings.'/>
-                                        </EmptyToolsNotice>
-                                    )}
-                                    {adminEnabledTools.length === 0 && !wildcardOn && useServiceAccountAuth && Boolean(server.serviceAccountConfigured) && (
-                                        <EmptyToolsNotice>
-                                            <FormattedMessage defaultMessage="Couldn't connect with the configured service account credentials. Check the header values and server logs."/>
-                                        </EmptyToolsNotice>
-                                    )}
-                                    {adminEnabledTools.length === 0 && !wildcardOn && canConnect && (
-                                        <EmptyToolsNotice>
-                                            <FormattedMessage defaultMessage='Connect this server to see and pick individual tools, or toggle it on to give the agent access to every tool the server exposes once a user connects.'/>
-                                        </EmptyToolsNotice>
-                                    )}
+                                    {adminEnabledTools.length === 0 && emptyToolsNotice(status, {
+                                        wildcardOn,
+                                        useServiceAccountAuth,
+                                        canConnect,
+                                    })}
                                     {(() => {
                                         // Strip the pluginmcp "<pluginID>__" prefix for display
                                         // only; wire tool.name remains the enable/disable identity.
                                         const pluginID = pluginIDFromServerOrigin(server.serverOrigin);
-                                        const toolsDisabled = toolGrantsDisabled || wildcardOn;
+                                        const toolsDisabled = toolGrantsDisabled || wildcardOn || unavailable;
                                         return adminEnabledTools.map((tool) => {
-                                            const toolOn = isToolEnabled(server.serverOrigin, tool.name);
+                                            const toolOn = !unavailable && isToolEnabled(server.serverOrigin, tool.name);
                                             const displayName = pluginID ? stripPluginPrefix(tool.name, pluginID) : tool.name;
                                             return (
                                                 <ToolRow key={tool.name}>
@@ -489,6 +547,7 @@ const McpsTab = (props: Props) => {
                                                             {defaultMessage: 'Enable tool {toolName} on {serverName}'},
                                                             {toolName: displayName, serverName: server.name},
                                                         )}
+                                                        aria-checked={toolOn}
                                                         onClick={() => !toolsDisabled && toggleTool(server.serverOrigin, tool.name)}
                                                         disabled={toolsDisabled}
                                                         $enabled={toolOn}
@@ -599,10 +658,11 @@ const ServerList = styled.div`
     gap: 8px;
 `;
 
-const ServerBlock = styled.div`
+const ServerBlock = styled.div<{$unavailable?: boolean}>`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     border-radius: 4px;
     overflow: hidden;
+    opacity: ${(p) => (p.$unavailable ? 0.64 : 1)};
 `;
 
 const ServerTopRow = styled.div`

@@ -732,6 +732,25 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.True(t, response.Servers[0].Authenticated)
 	})
 
+	t.Run("empty BotUserID returns 500 and does not fetch SA tools", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.agentStore.agents["agent-1"] = &llm.BotConfig{
+			ID:                    "agent-1",
+			CreatorID:             testUserID,
+			BotUserID:             "",
+			UseServiceAccountAuth: true,
+		}
+		mcpMock := &mockMCPClientManager{}
+		e.api.mcpClientManager = mcpMock
+
+		_, status := requestUserMCPTools(t, e.api, "catalog=service_account&agent_id=agent-1")
+		require.Equal(t, http.StatusInternalServerError, status)
+		require.Empty(t, mcpMock.getServiceAccountCalls)
+		require.Empty(t, mcpMock.getContexts)
+	})
+
 	t.Run("rejects unknown catalog values", func(t *testing.T) {
 		e := SetupTestEnvironment(t)
 		defer e.Cleanup(t)

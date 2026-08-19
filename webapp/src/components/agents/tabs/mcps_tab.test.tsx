@@ -31,11 +31,20 @@ jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
 
+// OverlayTrigger renders the overlay alongside children so tests can assert the tooltip text.
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 const mockedGetUserMCPTools = getUserMCPTools as unknown as jest.Mock;
 
 const serviceAccountToggleName = /^Use service accounts for authentication/;
 const serviceAccountWarning = /^Anyone who can use this agent acts with its shared service account access/;
 const orphanWarning = /from servers that are no longer available/;
+const unavailableTooltip = /not available to this agent/;
+const serverToggleName = /Enable all tools for \{serverName\}|Disable all tools for \{serverName\}/;
+const toolToggleName = /Enable tool \{toolName\} on \{serverName\}|Disable tool \{toolName\} on \{serverName\}/;
 
 const mattermostServer = {
     name: 'Mattermost',
@@ -43,12 +52,16 @@ const mattermostServer = {
     authenticated: true,
     needsOAuth: false,
     authEmail: '',
+    serviceAccountConfigured: true,
     tools: [
         {name: 'read_post', description: '', enabled: true, policy: 'auto_run'},
     ],
 };
 
 type RenderOpts = {
+    agentId?: string;
+    enabledTools?: Array<{server_origin: string; tool_name: string}>;
+    autoEnableNewMCPTools?: boolean;
     useServiceAccountAuth?: boolean;
     serviceAccountFieldsLocked?: boolean;
     canEditServiceAccountAuth?: boolean;
@@ -56,26 +69,31 @@ type RenderOpts = {
 
 function renderTab({
     agentId,
+    enabledTools = [],
+    autoEnableNewMCPTools = true,
     useServiceAccountAuth = false,
     serviceAccountFieldsLocked = false,
     canEditServiceAccountAuth = true,
-}: RenderOpts & {agentId?: string} = {}) {
+}: RenderOpts = {}) {
     const onChange = jest.fn();
+    const onReconcileEnabledTools = jest.fn();
     return {
         ...render(
             <IntlProvider locale='en'>
                 <McpsTab
                     agentId={agentId}
-                    enabledTools={[]}
-                    autoEnableNewMCPTools={true}
+                    enabledTools={enabledTools}
+                    autoEnableNewMCPTools={autoEnableNewMCPTools}
                     useServiceAccountAuth={useServiceAccountAuth}
                     serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                     canEditServiceAccountAuth={canEditServiceAccountAuth}
                     onChange={onChange}
+                    onReconcileEnabledTools={onReconcileEnabledTools}
                 />
             </IntlProvider>,
         ),
         onChange,
+        onReconcileEnabledTools,
     };
 }
 
@@ -238,7 +256,7 @@ describe('McpsTab', () => {
         const saToggle = screen.getByRole('checkbox', {name: serviceAccountToggleName});
         expect((saToggle as HTMLInputElement).disabled).toBe(false);
 
-        const serverToggle = screen.getByRole('button', {name: /Enable all tools for \{serverName\}|Disable all tools for \{serverName\}/});
+        const serverToggle = screen.getByRole('button', {name: serverToggleName});
         expect((serverToggle as HTMLButtonElement).disabled).toBe(true);
     });
 
@@ -294,6 +312,160 @@ describe('McpsTab', () => {
         await screen.findByText('OAuth Only');
         expect(screen.getByText('No service account credentials')).not.toBeNull();
         expect(screen.queryByText('Not connected')).toBeNull();
+        expect(screen.queryByText('Unavailable')).toBeNull();
         expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
+    });
+
+    test('shows Couldn\'t connect for failed SA credentials while SA auth is on', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'n8n',
+                serverOrigin: 'https://n8n.example.com/mcp',
+                authenticated: false,
+                needsOAuth: false,
+                serviceAccountConfigured: true,
+                tools: [],
+            }],
+        });
+
+        renderTab({useServiceAccountAuth: true});
+
+        await screen.findByText('n8n');
+        expect(screen.getByText("Couldn't connect")).not.toBeNull();
+        expect(screen.queryByText('Unavailable')).toBeNull();
+        expect(screen.queryByText('Not connected')).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
+    });
+
+    test('shows Unavailable for an SA-only server in user mode without persisting off', async () => {
+        const server = {
+            name: 'n8n',
+            serverOrigin: 'https://n8n.example.com/mcp',
+            authenticated: false,
+            needsOAuth: false,
+            serviceAccountConfigured: true,
+            tools: [{name: 'workflow_list', description: '', enabled: true, policy: 'ask'}],
+        };
+        mockedGetUserMCPTools.mockResolvedValue({servers: [server]});
+
+        const {onChange, onReconcileEnabledTools} = renderTab({
+            useServiceAccountAuth: false,
+            autoEnableNewMCPTools: false,
+            enabledTools: [{server_origin: server.serverOrigin, tool_name: 'workflow_list'}],
+        });
+
+        await screen.findByText('n8n');
+        expect(screen.getByText('Unavailable')).not.toBeNull();
+        expect(screen.getByText(unavailableTooltip)).not.toBeNull();
+        expect(screen.queryByText('Not connected')).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
+
+        const serverToggle = screen.getByRole('button', {name: serverToggleName});
+        expect((serverToggle as HTMLButtonElement).disabled).toBe(true);
+        expect(serverToggle.getAttribute('aria-checked')).toBe('false');
+
+        fireEvent.click(serverToggle);
+        expect(onChange).not.toHaveBeenCalled();
+        expect(onReconcileEnabledTools).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', {name: /Press to expand or collapse tools/}));
+        const toolToggle = await screen.findByRole('button', {name: toolToggleName});
+        expect((toolToggle as HTMLButtonElement).disabled).toBe(true);
+        expect(toolToggle.getAttribute('aria-checked')).toBe('false');
+
+        fireEvent.click(toolToggle);
+        expect(onChange).not.toHaveBeenCalled();
+    });
+
+    test('does not strip saved grants when an unavailable server lists no tools', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'n8n',
+                serverOrigin: 'https://n8n.example.com/mcp',
+                authenticated: false,
+                needsOAuth: false,
+                serviceAccountConfigured: true,
+                tools: [],
+            }],
+        });
+
+        const {onChange, onReconcileEnabledTools} = renderTab({
+            useServiceAccountAuth: false,
+            autoEnableNewMCPTools: false,
+            enabledTools: [{server_origin: 'https://n8n.example.com/mcp', tool_name: 'workflow_list'}],
+        });
+
+        await screen.findByText('n8n');
+        expect(screen.getByText('Unavailable')).not.toBeNull();
+        await waitFor(() => {
+            expect(onChange).not.toHaveBeenCalled();
+            expect(onReconcileEnabledTools).not.toHaveBeenCalled();
+        });
+    });
+
+    test('still shows Connect for an unauthenticated OAuth server in user mode', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'OAuth Server',
+                serverOrigin: 'https://oauth.example.com/mcp',
+                authenticated: false,
+                needsOAuth: true,
+                authURL: 'http://localhost/oauth/start',
+                serviceAccountConfigured: false,
+                tools: [],
+            }],
+        });
+
+        renderTab({useServiceAccountAuth: false});
+
+        await screen.findByText('OAuth Server');
+        expect(screen.getByRole('button', {name: 'Connect'})).not.toBeNull();
+        expect(screen.queryByText('Unavailable')).toBeNull();
+    });
+
+    test('does not mark an authenticated SA-configured server as unavailable in user mode', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'n8n',
+                serverOrigin: 'https://n8n.example.com/mcp',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: true,
+                tools: [{name: 'workflow_list', description: '', enabled: true, policy: 'ask'}],
+            }],
+        });
+
+        renderTab({
+            useServiceAccountAuth: false,
+            autoEnableNewMCPTools: false,
+            enabledTools: [{server_origin: 'https://n8n.example.com/mcp', tool_name: 'workflow_list'}],
+        });
+
+        await screen.findByText('n8n');
+        expect(screen.getByText('Connected')).not.toBeNull();
+        expect(screen.queryByText('Unavailable')).toBeNull();
+
+        const serverToggle = screen.getByRole('button', {name: serverToggleName});
+        expect(serverToggle.getAttribute('aria-checked')).toBe('true');
+        expect((serverToggle as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    test('keeps Not connected for an unauthenticated user-mode server without SA headers', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Headers Only',
+                serverOrigin: 'https://headers.example.com/mcp',
+                authenticated: false,
+                needsOAuth: false,
+                serviceAccountConfigured: false,
+                tools: [],
+            }],
+        });
+
+        renderTab({useServiceAccountAuth: false});
+
+        await screen.findByText('Headers Only');
+        expect(screen.getByText('Not connected')).not.toBeNull();
+        expect(screen.queryByText('Unavailable')).toBeNull();
     });
 });

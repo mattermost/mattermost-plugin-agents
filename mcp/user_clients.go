@@ -89,7 +89,7 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 
 		// Fail closed: no service account credential means the server is excluded,
 		// never a fallback to user OAuth.
-		if c.serviceAccount && !serverConfig.HasServiceAccountAuth() {
+		if c.serviceAccount && !ServerAvailableForServiceAccount(serverConfig) {
 			c.log.Debug("Skipping MCP server without service account headers in service account mode",
 				"userID", c.userID, "serverID", serverConfig.Name)
 			continue

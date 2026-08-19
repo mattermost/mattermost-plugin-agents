@@ -76,7 +76,7 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (actingID st
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("catalog must be empty or %s", mcpToolsCatalogServiceAccount))
 		return "", false, false
 	}
-	if catalog != mcpToolsCatalogServiceAccount || !a.remoteMCPLicensed() {
+	if catalog != mcpToolsCatalogServiceAccount || !a.licenseChecker.IsBasicsLicensed() {
 		return userID, false, true
 	}
 
@@ -86,11 +86,6 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (actingID st
 			return "", false, false
 		}
 		return userID, true, true
-	}
-
-	if a.agentStore == nil {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("agent store is unavailable"))
-		return "", false, false
 	}
 
 	cfg, err := a.agentStore.GetAgent(agentID)
@@ -111,15 +106,11 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (actingID st
 		return "", false, false
 	}
 
-	actingID = cfg.BotUserID
-	if actingID == "" {
-		actingID = userID
+	if cfg.BotUserID == "" {
+		c.AbortWithError(http.StatusInternalServerError, errors.New("agent has no bot user"))
+		return "", false, false
 	}
-	return actingID, true, true
-}
-
-func (a *API) remoteMCPLicensed() bool {
-	return a.licenseChecker == nil || a.licenseChecker.IsBasicsLicensed()
+	return cfg.BotUserID, true, true
 }
 
 // handleRefreshUserMCPTools forces rediscovery of the current user's MCP tools.
@@ -261,7 +252,7 @@ func buildUserMCPServerInfo(
 
 	if serviceAccount {
 		// SA mode never uses per-user OAuth; a Connect URL would be misleading.
-		info.Authenticated = isUserMCPServerAuthenticated(serverConfig, len(originTools) > 0, false, false, false)
+		info.Authenticated = serverConfig.BaseURL == mcp.EmbeddedClientKey || len(originTools) > 0
 		return info
 	}
 

@@ -651,7 +651,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		llmPrompts,
 		nil,
 		nil,
-		nil,
+		enterprise.NewLicenseChecker(client),
 		nil,
 		nil,
 		mcpMgr,
