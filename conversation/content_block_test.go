@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 func TestContentBlockMarshalUnmarshal(t *testing.T) {
@@ -109,6 +111,21 @@ func TestContentBlockMarshalUnmarshal(t *testing.T) {
 				Shared: BoolPtr(false),
 			},
 			expected: `{"type":"tool_use","id":"tc_02","name":"read_file","input":{"path":"/etc/passwd"},"status":"pending","shared":false}`,
+		},
+		{
+			name: "server_tool_use block",
+			block: ContentBlock{
+				Type: BlockTypeServerToolUse,
+				ServerTool: &llm.ServerToolUse{
+					ID:      "srvtoolu_01",
+					Tool:    llm.NativeToolCodeInterpreter,
+					Status:  llm.ServerToolStatusSuccess,
+					SubTool: "bash",
+					Command: "ls",
+					Output:  "file.txt\n",
+				},
+			},
+			expected: `{"type":"server_tool_use","server_tool":{"id":"srvtoolu_01","tool":"code_interpreter","status":"success","sub_tool":"bash","command":"ls","output":"file.txt\n"}}`,
 		},
 	}
 
@@ -280,6 +297,21 @@ func TestFilterForNonRequester(t *testing.T) {
 			},
 		},
 		{
+			// Server tools run provider-side with no approval flow; their
+			// activity shares the post text's visibility and is never redacted.
+			name: "leaves server_tool_use untouched",
+			blocks: []ContentBlock{
+				{Type: BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{
+					ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess, Query: "release notes",
+				}},
+			},
+			expected: []ContentBlock{
+				{Type: BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{
+					ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess, Query: "release notes",
+				}},
+			},
+		},
+		{
 			name: "mixed blocks only private tool blocks are redacted",
 			blocks: []ContentBlock{
 				{Type: BlockTypeText, Text: "response"},
@@ -314,6 +346,33 @@ func TestFilterForNonRequester(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// TestSanitizeForDisplayServerTool verifies server-tool activity strings are
+// escaped against Unicode bidi/spoofing attacks (web content and sandbox
+// output are attacker-influenced) and that the original blocks are not mutated.
+func TestSanitizeForDisplayServerTool(t *testing.T) {
+	bidi := "safe\u202Eevil"
+	blocks := []ContentBlock{{
+		Type: BlockTypeServerToolUse,
+		ServerTool: &llm.ServerToolUse{
+			ID:      "srv1",
+			Tool:    llm.NativeToolCodeInterpreter,
+			Status:  llm.ServerToolStatusSuccess,
+			Command: bidi,
+			Output:  bidi,
+		},
+	}}
+
+	result := SanitizeForDisplay(blocks)
+
+	require.Len(t, result, 1)
+	require.NotNil(t, result[0].ServerTool)
+	assert.NotContains(t, result[0].ServerTool.Command, "\u202E")
+	assert.NotContains(t, result[0].ServerTool.Output, "\u202E")
+	assert.Contains(t, result[0].ServerTool.Command, "safe")
+	assert.Equal(t, bidi, blocks[0].ServerTool.Command, "original block must not be mutated")
+	assert.Equal(t, bidi, blocks[0].ServerTool.Output, "original block must not be mutated")
 }
 
 func TestFilterForNonRequesterDoesNotMutateOriginal(t *testing.T) {

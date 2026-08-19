@@ -587,6 +587,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 	assistantBlocks := toolUseBlocks(
 		tt.AssistantMessage,
 		tt.AssistantReasoning,
+		tt.AssistantServerTools,
 		tt.AssistantToolCalls,
 		shared,
 	)

@@ -68,7 +68,7 @@ export type NativeToolsItemProps = {
 const nativeToolsWebSearchHelpText = (provider: 'openai' | 'anthropic' | 'google', intl: ReturnType<typeof useIntl>): string => {
     switch (provider) {
     case 'anthropic':
-        return intl.formatMessage({defaultMessage: 'Enable Claude\'s built-in web search capability'});
+        return intl.formatMessage({defaultMessage: 'Enable Claude\'s built-in web search capability. See Anthropic\'s web search tool documentation for capabilities and pricing.'});
     case 'google':
         return intl.formatMessage({defaultMessage: 'Enable Google Search grounding via the Gemini / Vertex AI provider'});
     default:
@@ -87,18 +87,62 @@ const nativeToolsTitle = (provider: 'openai' | 'anthropic' | 'google', intl: Ret
     }
 };
 
+type NativeToolOption = {
+    id: string;
+    label: string;
+    helpText: string;
+};
+
+// Per-provider native tool checklists. Must stay in sync with the server-side
+// support matrix (bifrost.SupportedNativeToolsForServiceType); the server
+// filters unsupported ids at request time regardless of what is persisted.
+// Help text describes what each toggle does in Mattermost and defers to the
+// provider's own documentation for capabilities, pricing and data handling —
+// those specifics change with provider tool versions.
+const nativeToolOptions = (provider: 'openai' | 'anthropic' | 'google', intl: ReturnType<typeof useIntl>): NativeToolOption[] => {
+    const webSearch: NativeToolOption = {
+        id: 'web_search',
+        label: intl.formatMessage({defaultMessage: 'Web Search'}),
+        helpText: nativeToolsWebSearchHelpText(provider, intl),
+    };
+
+    switch (provider) {
+    case 'anthropic':
+        return [
+            webSearch,
+            {
+                id: 'web_fetch',
+                label: intl.formatMessage({defaultMessage: 'Web Fetch'}),
+                helpText: intl.formatMessage({defaultMessage: 'Let the agent retrieve the full content of specific web pages and PDFs. See Anthropic\'s web fetch tool documentation for capabilities and pricing.'}),
+            },
+            {
+                id: 'code_interpreter',
+                label: intl.formatMessage({defaultMessage: 'Code Execution'}),
+                helpText: intl.formatMessage({defaultMessage: 'Let the agent run code in Anthropic\'s managed sandbox. Enabling this also lets web search and web fetch filter results in the sandbox. Conversation content may be processed and retained in the sandbox; see Anthropic\'s code execution tool documentation for details and pricing.'}),
+            },
+        ];
+    case 'google':
+        return [webSearch];
+    default:
+        // file_search is intentionally absent: OpenAI requires vector_store_ids
+        // on the tool and the plugin has no vector-store configuration yet, so
+        // enabling it would break every completion for the agent.
+        return [
+            webSearch,
+            {
+                id: 'code_interpreter',
+                label: intl.formatMessage({defaultMessage: 'Code Interpreter'}),
+                helpText: intl.formatMessage({defaultMessage: 'Let the agent run code in OpenAI\'s managed sandbox. See OpenAI\'s code interpreter documentation for details and pricing.'}),
+            },
+        ];
+    }
+};
+
 export const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
     const provider = props.provider || 'openai';
 
-    const availableNativeTools = [
-        {
-            id: 'web_search',
-            label: intl.formatMessage({defaultMessage: 'Web Search'}),
-            helpText: nativeToolsWebSearchHelpText(provider, intl),
-        },
-
-    ];
+    const availableNativeTools = nativeToolOptions(provider, intl);
 
     const setToolEnabled = (toolId: string, enabled: boolean) => {
         const currentTools = props.enabledTools || [];
