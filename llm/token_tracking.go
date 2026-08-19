@@ -22,21 +22,40 @@ type TokenUsagePluginLogger interface {
 	Info(message string, keyValuePairs ...any)
 }
 
+// TokenUsageIdentity describes who is spending the tokens a wrapped model
+// reports. Agent LLMs carry a BotUsername plus the service backing the agent;
+// service LLMs (LLM Bridge calls that address a service directly) leave
+// BotUsername empty and carry only service fields.
+type TokenUsageIdentity struct {
+	BotUsername  string
+	ServiceID    string
+	ServiceName  string
+	DefaultModel string
+	ServiceType  string
+}
+
+// isServiceOnly reports whether this identity has no agent behind it, in which
+// case the agent dimensions are logged blank rather than "unknown": the call
+// genuinely has no agent, as opposed to an agent we failed to identify.
+func (i TokenUsageIdentity) isServiceOnly() bool {
+	return i.BotUsername == "" && i.ServiceID != ""
+}
+
 // TokenUsageLoggingWrapper wraps a LanguageModel to log token usage
 type TokenUsageLoggingWrapper struct {
-	wrapped     LanguageModel
-	botUsername string
-	sinks       *TokenUsageSinks
-	metrics     MetricsObserver
+	wrapped  LanguageModel
+	identity TokenUsageIdentity
+	sinks    *TokenUsageSinks
+	metrics  MetricsObserver
 }
 
 // NewTokenUsageLoggingWrapper creates a wrapper using a shared sink controller.
-func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, sinks *TokenUsageSinks, metrics MetricsObserver) *TokenUsageLoggingWrapper {
+func NewTokenUsageLoggingWrapper(wrapped LanguageModel, identity TokenUsageIdentity, sinks *TokenUsageSinks, metrics MetricsObserver) *TokenUsageLoggingWrapper {
 	return &TokenUsageLoggingWrapper{
-		wrapped:     wrapped,
-		botUsername: botUsername,
-		sinks:       sinks,
-		metrics:     metrics,
+		wrapped:  wrapped,
+		identity: identity,
+		sinks:    sinks,
+		metrics:  metrics,
 	}
 }
 
@@ -89,7 +108,7 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 
 	interceptedStream := make(chan TextStreamEvent)
 	effectiveModel := extractRequestedModel(opts...)
-	dimensions := extractTokenUsageDimensions(request, w.botUsername, effectiveModel)
+	dimensions := extractTokenUsageDimensions(request, w.identity, effectiveModel)
 
 	go func() {
 		defer close(interceptedStream)
@@ -135,6 +154,8 @@ type tokenUsageDimensions struct {
 	botUserID        string
 	model            string
 	serviceType      string
+	serviceID        string
+	serviceName      string
 	operation        string
 	operationSubType string
 }
@@ -177,6 +198,8 @@ func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage Toke
 		"agent_user_id", dimensions.botUserID,
 		"model", dimensions.model,
 		"service_type", dimensions.serviceType,
+		"service_id", dimensions.serviceID,
+		"service_name", dimensions.serviceName,
 		"operation", dimensions.operation,
 		"operation_subtype", dimensions.operationSubType,
 		"input_tokens", usage.InputTokens,
@@ -201,23 +224,49 @@ func tokenUsageKeyValuePairsToMlogFields(keyValuePairs []any) []mlog.Field {
 	return fields
 }
 
-func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername, optionModel string) tokenUsageDimensions {
+func extractTokenUsageDimensions(request CompletionRequest, identity TokenUsageIdentity, optionModel string) tokenUsageDimensions {
+	// A service-only call has no agent, so its agent dimensions are blank
+	// rather than "unknown" — blank says "not applicable", "unknown" says
+	// "should have been there and wasn't".
+	missingAgent := TokenUsageUnknown
+	if identity.isServiceOnly() {
+		missingAgent = ""
+	}
+
 	dimensions := tokenUsageDimensions{
 		userID:           TokenUsageUnknown,
 		teamID:           TokenUsageUnknown,
 		channelID:        TokenUsageUnknown,
 		channelType:      TokenUsageUnknown,
-		botName:          TokenUsageUnknown,
-		botUsername:      fallbackBotUsername,
-		botUserID:        TokenUsageUnknown,
+		botName:          missingAgent,
+		botUsername:      identity.BotUsername,
+		botUserID:        missingAgent,
 		model:            TokenUsageUnknown,
 		serviceType:      TokenUsageUnknown,
 		operation:        request.Operation,
 		operationSubType: request.OperationSubType,
 	}
 
+	// Service identity comes from the wrapper only: the request context
+	// describes the agent, not the service the model was built from. A missing
+	// identity normalizes both fields to "unknown"; a known service with a
+	// blank name keeps the blank so it stays distinguishable.
+	dimensions.serviceID = TokenUsageUnknown
+	dimensions.serviceName = TokenUsageUnknown
+	if identity.ServiceID != "" {
+		dimensions.serviceID = identity.ServiceID
+		dimensions.serviceName = identity.ServiceName
+	}
+
+	if identity.DefaultModel != "" {
+		dimensions.model = identity.DefaultModel
+	}
+	if identity.ServiceType != "" {
+		dimensions.serviceType = identity.ServiceType
+	}
+
 	if dimensions.botUsername == "" {
-		dimensions.botUsername = TokenUsageUnknown
+		dimensions.botUsername = missingAgent
 	}
 	if dimensions.operation == "" {
 		dimensions.operation = TokenUsageUnknown
@@ -268,7 +317,7 @@ func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername,
 	if optionModel != "" {
 		dimensions.model = optionModel
 	}
-	if dimensions.botName == TokenUsageUnknown {
+	if dimensions.botName == missingAgent {
 		dimensions.botName = dimensions.botUsername
 	}
 

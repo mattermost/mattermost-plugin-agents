@@ -24,6 +24,36 @@ const DefaultMaxToolTurns = 30
 // even if a misconfigured agent requests an unreasonably high value.
 const MaxAllowedMaxToolTurns = 250
 
+// StructuredOutputPolicy declares how a service handles a requested
+// JSONOutputFormat schema. It is stored per service because the capability
+// belongs to the provider/model, not to the agent asking for JSON.
+type StructuredOutputPolicy string
+
+const (
+	// StructuredOutputPolicyAuto lets the plugin decide from the service type,
+	// API path, and model (see bifrost.ResolveStructuredOutputCapability).
+	// Anything not positively known to support native schemas uses the prompt
+	// fallback. This is the value an empty/unset policy maps to.
+	StructuredOutputPolicyAuto StructuredOutputPolicy = "auto"
+	// StructuredOutputPolicyNative asserts that the provider/model accepts a
+	// native JSON schema. The admin takes responsibility for the assertion.
+	StructuredOutputPolicyNative StructuredOutputPolicy = "native"
+	// StructuredOutputPolicyPromptFallback always converts the schema into a
+	// prompt instruction and never sends it to the provider.
+	StructuredOutputPolicyPromptFallback StructuredOutputPolicy = "prompt_fallback"
+)
+
+// isValidStructuredOutputPolicy reports whether the stored value is one the
+// runtime understands. The empty value is valid and means "auto".
+func isValidStructuredOutputPolicy(policy StructuredOutputPolicy) bool {
+	switch policy {
+	case "", StructuredOutputPolicyAuto, StructuredOutputPolicyNative, StructuredOutputPolicyPromptFallback:
+		return true
+	default:
+		return false
+	}
+}
+
 type ServiceConfig struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -65,6 +95,20 @@ type ServiceConfig struct {
 	// LoadTestMockConfig is raw JSON merged by loadtest.ParseProfile for ServiceTypeLoadTestMock.
 	// Nil, empty, or whitespace-only means the default read/search-heavy profile.
 	LoadTestMockConfig json.RawMessage `json:"loadTestMockConfig,omitempty"`
+
+	// StructuredOutputPolicy controls how a requested JSON schema reaches this
+	// service. An empty value means StructuredOutputPolicyAuto, so services
+	// stored before this field existed need no migration.
+	StructuredOutputPolicy StructuredOutputPolicy `json:"structuredOutputPolicy,omitempty"`
+}
+
+// EffectiveStructuredOutputPolicy returns the configured policy, mapping the
+// empty value to auto.
+func (c ServiceConfig) EffectiveStructuredOutputPolicy() StructuredOutputPolicy {
+	if c.StructuredOutputPolicy == "" {
+		return StructuredOutputPolicyAuto
+	}
+	return c.StructuredOutputPolicy
 }
 
 // ServiceUsesResponsesAPI reports whether the Responses API path is used for this service.
@@ -168,10 +212,13 @@ type BotConfig struct {
 	//   takes priority over ReasoningEffort.
 	ThinkingBudget int `json:"thinkingBudget"`
 
-	// StructuredOutputEnabled controls how a requested JSONOutputFormat schema is handled.
-	// When enabled, the schema is sent natively to the provider to constrain the model's
-	// output. When disabled, the schema is converted into prompt instructions and stripped
-	// from the provider request, for models/APIs without native structured output support.
+	// StructuredOutputEnabled is deprecated and ignored at runtime. Structured
+	// output is decided per service by ServiceConfig.StructuredOutputPolicy
+	// (see EffectiveStructuredOutputPolicy), because the capability belongs to
+	// the provider/model rather than the agent. The field is kept so stored
+	// agents and API payloads keep round-tripping unchanged.
+	//
+	// Deprecated: use ServiceConfig.StructuredOutputPolicy.
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 
 	// MaxToolTurns is the maximum number of LLM-call → tool-execute iterations
@@ -289,6 +336,12 @@ func ResolveFallbackChain(primaryServiceID string, getServiceByID func(id string
 func IsValidService(service ServiceConfig) bool {
 	// Basic validation
 	if service.ID == "" || service.Type == "" {
+		return false
+	}
+
+	// An unrecognized structured-output policy is a configuration error: the
+	// runtime would have to guess whether a schema may be sent natively.
+	if !isValidStructuredOutputPolicy(service.StructuredOutputPolicy) {
 		return false
 	}
 

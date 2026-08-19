@@ -724,6 +724,129 @@ func TestServiceConfig_JSONRoundTrip_FallbackServiceID_Omitted(t *testing.T) {
 	assert.NotContains(t, string(data), "fallbackServiceID")
 }
 
+func TestServiceConfig_EffectiveStructuredOutputPolicy(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored StructuredOutputPolicy
+		want   StructuredOutputPolicy
+	}{
+		{
+			name:   "empty defaults to auto",
+			stored: "",
+			want:   StructuredOutputPolicyAuto,
+		},
+		{
+			name:   "auto is preserved",
+			stored: StructuredOutputPolicyAuto,
+			want:   StructuredOutputPolicyAuto,
+		},
+		{
+			name:   "native is preserved",
+			stored: StructuredOutputPolicyNative,
+			want:   StructuredOutputPolicyNative,
+		},
+		{
+			name:   "prompt fallback is preserved",
+			stored: StructuredOutputPolicyPromptFallback,
+			want:   StructuredOutputPolicyPromptFallback,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := ServiceConfig{StructuredOutputPolicy: tt.stored}
+			assert.Equal(t, tt.want, cfg.EffectiveStructuredOutputPolicy())
+		})
+	}
+}
+
+func TestServiceConfig_JSONRoundTrip_StructuredOutputPolicy(t *testing.T) {
+	tests := []struct {
+		name        string
+		policy      StructuredOutputPolicy
+		wantInJSON  bool
+		wantDecoded StructuredOutputPolicy
+	}{
+		{
+			name:        "auto round-trips",
+			policy:      StructuredOutputPolicyAuto,
+			wantInJSON:  true,
+			wantDecoded: StructuredOutputPolicyAuto,
+		},
+		{
+			name:        "native round-trips",
+			policy:      StructuredOutputPolicyNative,
+			wantInJSON:  true,
+			wantDecoded: StructuredOutputPolicyNative,
+		},
+		{
+			name:        "prompt fallback round-trips",
+			policy:      StructuredOutputPolicyPromptFallback,
+			wantInJSON:  true,
+			wantDecoded: StructuredOutputPolicyPromptFallback,
+		},
+		{
+			name:        "unset is omitted and decodes as auto",
+			policy:      "",
+			wantInJSON:  false,
+			wantDecoded: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := ServiceConfig{
+				ID:                     "s1",
+				Type:                   ServiceTypeOpenAI,
+				APIKey:                 "key",
+				StructuredOutputPolicy: tt.policy,
+			}
+			data, err := json.Marshal(cfg)
+			require.NoError(t, err)
+
+			if tt.wantInJSON {
+				assert.Contains(t, string(data), `"structuredOutputPolicy":"`+string(tt.policy)+`"`)
+			} else {
+				assert.NotContains(t, string(data), "structuredOutputPolicy")
+			}
+
+			var decoded ServiceConfig
+			require.NoError(t, json.Unmarshal(data, &decoded))
+			assert.Equal(t, tt.wantDecoded, decoded.StructuredOutputPolicy)
+			if !tt.wantInJSON {
+				assert.Equal(t, StructuredOutputPolicyAuto, decoded.EffectiveStructuredOutputPolicy())
+			}
+		})
+	}
+}
+
+func TestIsValidService_StructuredOutputPolicy(t *testing.T) {
+	tests := []struct {
+		name   string
+		policy StructuredOutputPolicy
+		want   bool
+	}{
+		{name: "unset is valid", policy: "", want: true},
+		{name: "auto is valid", policy: StructuredOutputPolicyAuto, want: true},
+		{name: "native is valid", policy: StructuredOutputPolicyNative, want: true},
+		{name: "prompt fallback is valid", policy: StructuredOutputPolicyPromptFallback, want: true},
+		{name: "unknown value is invalid", policy: StructuredOutputPolicy("sometimes"), want: false},
+		{name: "wrong case is invalid", policy: StructuredOutputPolicy("Native"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := ServiceConfig{
+				ID:                     "s1",
+				Type:                   ServiceTypeOpenAI,
+				APIKey:                 "key",
+				StructuredOutputPolicy: tt.policy,
+			}
+			assert.Equal(t, tt.want, IsValidService(svc))
+		})
+	}
+}
+
 func TestResolveFallbackChain(t *testing.T) {
 	openAISvc := ServiceConfig{
 		ID:                "openai-1",

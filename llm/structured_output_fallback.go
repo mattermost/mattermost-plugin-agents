@@ -11,22 +11,42 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// StructuredOutputFallbackWrapper wraps a LanguageModel and encapsulates the
-// structured output capability decision. When structured output is enabled,
-// requests pass through untouched and any JSON schema is sent natively to the
-// provider. When disabled and a JSON schema is requested, the schema is
-// stripped from the provider request and converted into a prompt-level system
-// instruction, and markdown code fencing is stripped from non-streaming
-// responses.
-type StructuredOutputFallbackWrapper struct {
-	wrapped                 LanguageModel
-	structuredOutputEnabled bool
+// StructuredOutputTarget is one provider attempt the wrapped model may make:
+// the primary service or one entry of its fallback chain, paired with the
+// model that attempt would use.
+type StructuredOutputTarget struct {
+	Service ServiceConfig
+	Model   string // effective model when this target is attempted
 }
 
-func NewStructuredOutputFallbackWrapper(llm LanguageModel, structuredOutputEnabled bool) *StructuredOutputFallbackWrapper {
+// StructuredOutputFallbackWrapper wraps a LanguageModel and encapsulates the
+// structured output capability decision. Requests without a JSON schema pass
+// through untouched. When a schema is requested, the wrapper resolves a single
+// mode for the whole request before calling the provider: either the schema is
+// sent natively, or it is stripped from the provider request and converted
+// into a prompt-level system instruction (with markdown code fencing stripped
+// from non-streaming responses).
+//
+// The decision covers the primary target and every fallback target, because
+// the prompt/schema transformation happens here, before Bifrost picks which
+// provider actually serves the request. A chain is only eligible for native
+// output when every attempt in it is capable.
+type StructuredOutputFallbackWrapper struct {
+	wrapped   LanguageModel
+	primary   StructuredOutputTarget
+	fallbacks []StructuredOutputTarget
+	resolver  StructuredOutputCapabilityResolver
+}
+
+// NewStructuredOutputFallbackWrapper wraps llm with the structured-output
+// decision for the given provider chain. resolver answers the auto policy; a
+// nil resolver makes every auto target fall back to prompt instructions.
+func NewStructuredOutputFallbackWrapper(wrapped LanguageModel, primary StructuredOutputTarget, fallbacks []StructuredOutputTarget, resolver StructuredOutputCapabilityResolver) *StructuredOutputFallbackWrapper {
 	return &StructuredOutputFallbackWrapper{
-		wrapped:                 llm,
-		structuredOutputEnabled: structuredOutputEnabled,
+		wrapped:   wrapped,
+		primary:   primary,
+		fallbacks: fallbacks,
+		resolver:  resolver,
 	}
 }
 
@@ -64,16 +84,16 @@ func (w *StructuredOutputFallbackWrapper) OutputTokenLimit() int {
 }
 
 // applyFallback strips the JSON output schema from the downstream request and
-// injects an equivalent prompt-level instruction when structured output is
-// disabled but a schema is requested. The caller's request and opts are never
+// injects an equivalent prompt-level instruction when the resolved chain
+// cannot take a native schema. The caller's request and opts are never
 // mutated. Returns whether the fallback was applied.
 func (w *StructuredOutputFallbackWrapper) applyFallback(request CompletionRequest, opts []LanguageModelOption) (CompletionRequest, []LanguageModelOption, bool) {
-	if w.structuredOutputEnabled {
+	schema := resolveJSONOutputSchema(opts)
+	if schema == nil {
 		return request, opts, false
 	}
 
-	schema := resolveJSONOutputSchema(opts)
-	if schema == nil {
+	if w.chainSupportsNativeOutput(opts) {
 		return request, opts, false
 	}
 
@@ -98,6 +118,49 @@ func (w *StructuredOutputFallbackWrapper) applyFallback(request CompletionReques
 	})
 
 	return request, newOpts, true
+}
+
+// chainSupportsNativeOutput reports whether every provider attempt Bifrost may
+// make for this request can take the schema natively. One incapable attempt
+// puts the whole request on the prompt fallback, because the transformation
+// has to be decided before the provider is chosen.
+func (w *StructuredOutputFallbackWrapper) chainSupportsNativeOutput(opts []LanguageModelOption) bool {
+	primary := w.primary
+	// A per-call WithModel overrides the target's configured model, and only
+	// for the primary: Bifrost fallbacks always run their own default model.
+	if requested := extractRequestedModel(opts...); requested != "" {
+		primary.Model = requested
+	}
+
+	if !w.targetSupportsNativeOutput(primary) {
+		return false
+	}
+	for _, fallback := range w.fallbacks {
+		if !w.targetSupportsNativeOutput(fallback) {
+			return false
+		}
+	}
+	return true
+}
+
+func (w *StructuredOutputFallbackWrapper) targetSupportsNativeOutput(target StructuredOutputTarget) bool {
+	switch target.Service.EffectiveStructuredOutputPolicy() {
+	case StructuredOutputPolicyNative:
+		// Administratively asserted capable.
+		return true
+	case StructuredOutputPolicyPromptFallback:
+		return false
+	case StructuredOutputPolicyAuto:
+		if w.resolver == nil {
+			return false
+		}
+		// Only positive knowledge earns a native schema; unknown and
+		// unsupported both take the prompt fallback.
+		return w.resolver(target.Service, target.Model) == StructuredOutputCapabilitySupported
+	default:
+		// An unrecognized stored value must never send a native schema.
+		return false
+	}
 }
 
 func firstSystemPostIndex(posts []Post) int {

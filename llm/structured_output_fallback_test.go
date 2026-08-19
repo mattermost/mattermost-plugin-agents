@@ -42,6 +42,31 @@ func (f *fakeLLMForFallback) CountTokens(_ context.Context, _ CompletionRequest,
 func (f *fakeLLMForFallback) InputTokenLimit() int  { return 4096 }
 func (f *fakeLLMForFallback) OutputTokenLimit() int { return 4096 }
 
+// fallbackTargetWithPolicy builds a single-service target carrying the policy.
+func fallbackTargetWithPolicy(id string, policy StructuredOutputPolicy, model string) StructuredOutputTarget {
+	return StructuredOutputTarget{
+		Service: ServiceConfig{
+			ID:                     id,
+			Type:                   ServiceTypeOpenAI,
+			APIKey:                 "key",
+			DefaultModel:           model,
+			StructuredOutputPolicy: policy,
+		},
+		Model: model,
+	}
+}
+
+// resolverReturning answers every auto lookup with the given capability and
+// records what it was asked about.
+func resolverReturning(capability StructuredOutputCapability, seen *[]StructuredOutputTarget) StructuredOutputCapabilityResolver {
+	return func(svc ServiceConfig, model string) StructuredOutputCapability {
+		if seen != nil {
+			*seen = append(*seen, StructuredOutputTarget{Service: svc, Model: model})
+		}
+		return capability
+	}
+}
+
 func TestStructuredOutputFallbackWrapperFenceStripping(t *testing.T) {
 	jsonSchema := NewJSONSchemaFromStruct[struct {
 		Name string `json:"name"`
@@ -51,46 +76,46 @@ func TestStructuredOutputFallbackWrapperFenceStripping(t *testing.T) {
 	}
 
 	tests := []struct {
-		name                    string
-		response                string
-		structuredOutputEnabled bool
-		opts                    []LanguageModelOption
-		expected                string
+		name     string
+		response string
+		policy   StructuredOutputPolicy
+		opts     []LanguageModelOption
+		expected string
 	}{
 		{
-			name:                    "schema requested, structured output disabled: strips fencing",
-			response:                "```json\n{\"name\": \"test\"}\n```",
-			structuredOutputEnabled: false,
-			opts:                    []LanguageModelOption{withSchema},
-			expected:                `{"name": "test"}`,
+			name:     "schema requested, prompt fallback: strips fencing",
+			response: "```json\n{\"name\": \"test\"}\n```",
+			policy:   StructuredOutputPolicyPromptFallback,
+			opts:     []LanguageModelOption{withSchema},
+			expected: `{"name": "test"}`,
 		},
 		{
-			name:                    "schema requested, structured output enabled: untouched",
-			response:                "```json\n{\"name\": \"test\"}\n```",
-			structuredOutputEnabled: true,
-			opts:                    []LanguageModelOption{withSchema},
-			expected:                "```json\n{\"name\": \"test\"}\n```",
+			name:     "schema requested, native policy: untouched",
+			response: "```json\n{\"name\": \"test\"}\n```",
+			policy:   StructuredOutputPolicyNative,
+			opts:     []LanguageModelOption{withSchema},
+			expected: "```json\n{\"name\": \"test\"}\n```",
 		},
 		{
-			name:                    "no schema, structured output disabled: untouched",
-			response:                "```json\n{\"name\": \"test\"}\n```",
-			structuredOutputEnabled: false,
-			opts:                    nil,
-			expected:                "```json\n{\"name\": \"test\"}\n```",
+			name:     "no schema, prompt fallback: untouched",
+			response: "```json\n{\"name\": \"test\"}\n```",
+			policy:   StructuredOutputPolicyPromptFallback,
+			opts:     nil,
+			expected: "```json\n{\"name\": \"test\"}\n```",
 		},
 		{
-			name:                    "no schema, structured output enabled: untouched",
-			response:                "```json\n{\"name\": \"test\"}\n```",
-			structuredOutputEnabled: true,
-			opts:                    nil,
-			expected:                "```json\n{\"name\": \"test\"}\n```",
+			name:     "no schema, native policy: untouched",
+			response: "```json\n{\"name\": \"test\"}\n```",
+			policy:   StructuredOutputPolicyNative,
+			opts:     nil,
+			expected: "```json\n{\"name\": \"test\"}\n```",
 		},
 		{
-			name:                    "no fencing, schema requested, structured output disabled: untouched",
-			response:                `{"name": "test"}`,
-			structuredOutputEnabled: false,
-			opts:                    []LanguageModelOption{withSchema},
-			expected:                `{"name": "test"}`,
+			name:     "no fencing, schema requested, prompt fallback: untouched",
+			response: `{"name": "test"}`,
+			policy:   StructuredOutputPolicyPromptFallback,
+			opts:     []LanguageModelOption{withSchema},
+			expected: `{"name": "test"}`,
 		},
 	}
 
@@ -98,7 +123,9 @@ func TestStructuredOutputFallbackWrapperFenceStripping(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			wrapper := NewStructuredOutputFallbackWrapper(
 				&fakeLLMForFallback{response: tt.response},
-				tt.structuredOutputEnabled,
+				fallbackTargetWithPolicy("primary", tt.policy, "gpt-4o"),
+				nil,
+				nil,
 			)
 			result, err := wrapper.ChatCompletionNoStream(context.Background(), CompletionRequest{}, tt.opts...)
 			require.NoError(t, err)
@@ -119,54 +146,122 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 	userPost := Post{Role: PostRoleUser, Message: "Summarize the channel."}
 
 	type gatingCase struct {
-		name                    string
-		structuredOutputEnabled bool
-		opts                    []LanguageModelOption
-		posts                   []Post
-		wantSchemaDownstream    bool
-		wantInstruction         bool
+		name                 string
+		primary              StructuredOutputTarget
+		fallbacks            []StructuredOutputTarget
+		resolver             StructuredOutputCapabilityResolver
+		opts                 []LanguageModelOption
+		posts                []Post
+		wantSchemaDownstream bool
+		wantInstruction      bool
 	}
 
 	tests := []gatingCase{
 		{
-			name:                    "enabled with schema: schema forwarded, posts untouched",
-			structuredOutputEnabled: true,
-			opts:                    []LanguageModelOption{withSchema},
-			posts:                   []Post{systemPost, userPost},
-			wantSchemaDownstream:    true,
-			wantInstruction:         false,
+			name:                 "native policy with schema: schema forwarded, posts untouched",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: true,
+			wantInstruction:      false,
 		},
 		{
-			name:                    "disabled with schema, first post system: schema stripped, instruction appended",
-			structuredOutputEnabled: false,
-			opts:                    []LanguageModelOption{withSchema},
-			posts:                   []Post{systemPost, userPost},
-			wantSchemaDownstream:    false,
-			wantInstruction:         true,
+			name:                 "prompt fallback with schema, first post system: schema stripped, instruction appended",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"),
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: false,
+			wantInstruction:      true,
 		},
 		{
-			name:                    "disabled with schema, no system post: schema stripped, system post prepended",
-			structuredOutputEnabled: false,
-			opts:                    []LanguageModelOption{withSchema},
-			posts:                   []Post{userPost},
-			wantSchemaDownstream:    false,
-			wantInstruction:         true,
+			name:                 "prompt fallback with schema, no system post: schema stripped, system post prepended",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"),
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{userPost},
+			wantSchemaDownstream: false,
+			wantInstruction:      true,
 		},
 		{
-			name:                    "disabled without schema: pass-through",
-			structuredOutputEnabled: false,
-			opts:                    nil,
-			posts:                   []Post{systemPost, userPost},
-			wantSchemaDownstream:    false,
-			wantInstruction:         false,
+			name:                 "prompt fallback without schema: pass-through",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"),
+			opts:                 nil,
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: false,
+			wantInstruction:      false,
 		},
 		{
-			name:                    "enabled without schema: pass-through",
-			structuredOutputEnabled: true,
-			opts:                    nil,
-			posts:                   []Post{systemPost, userPost},
-			wantSchemaDownstream:    false,
-			wantInstruction:         false,
+			name:                 "native policy without schema: pass-through",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
+			opts:                 nil,
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: false,
+			wantInstruction:      false,
+		},
+		{
+			name:                 "auto policy resolved supported: schema forwarded",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "gpt-4o"),
+			resolver:             resolverReturning(StructuredOutputCapabilitySupported, nil),
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: true,
+			wantInstruction:      false,
+		},
+		{
+			name:                 "auto policy resolved unknown: prompt fallback",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "mystery-model"),
+			resolver:             resolverReturning(StructuredOutputCapabilityUnknown, nil),
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: false,
+			wantInstruction:      true,
+		},
+		{
+			name:                 "auto policy resolved unsupported: prompt fallback",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "scaled-model"),
+			resolver:             resolverReturning(StructuredOutputCapabilityUnsupported, nil),
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: false,
+			wantInstruction:      true,
+		},
+		{
+			name:                 "auto policy without resolver: prompt fallback",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "gpt-4o"),
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: false,
+			wantInstruction:      true,
+		},
+		{
+			name:                 "invalid stored policy: prompt fallback",
+			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicy("sometimes"), "gpt-4o"),
+			resolver:             resolverReturning(StructuredOutputCapabilitySupported, nil),
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: false,
+			wantInstruction:      true,
+		},
+		{
+			name:    "native primary with prompt-fallback fallback: whole chain uses prompt fallback",
+			primary: fallbackTargetWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
+			fallbacks: []StructuredOutputTarget{
+				fallbackTargetWithPolicy("backup", StructuredOutputPolicyPromptFallback, "local-model"),
+			},
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: false,
+			wantInstruction:      true,
+		},
+		{
+			name:    "native primary with native fallbacks: schema forwarded",
+			primary: fallbackTargetWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
+			fallbacks: []StructuredOutputTarget{
+				fallbackTargetWithPolicy("backup", StructuredOutputPolicyNative, "gpt-4.1"),
+			},
+			opts:                 []LanguageModelOption{withSchema},
+			posts:                []Post{systemPost, userPost},
+			wantSchemaDownstream: true,
+			wantInstruction:      false,
 		},
 	}
 
@@ -202,7 +297,7 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 	for _, tt := range tests {
 		t.Run("no stream: "+tt.name, func(t *testing.T) {
 			fake := &fakeLLMForFallback{response: `{"name": "test"}`}
-			wrapper := NewStructuredOutputFallbackWrapper(fake, tt.structuredOutputEnabled)
+			wrapper := NewStructuredOutputFallbackWrapper(fake, tt.primary, tt.fallbacks, tt.resolver)
 
 			callerPosts := make([]Post, len(tt.posts))
 			copy(callerPosts, tt.posts)
@@ -215,7 +310,7 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 
 		t.Run("streaming: "+tt.name, func(t *testing.T) {
 			fake := &fakeLLMForFallback{}
-			wrapper := NewStructuredOutputFallbackWrapper(fake, tt.structuredOutputEnabled)
+			wrapper := NewStructuredOutputFallbackWrapper(fake, tt.primary, tt.fallbacks, tt.resolver)
 
 			callerPosts := make([]Post, len(tt.posts))
 			copy(callerPosts, tt.posts)
@@ -228,12 +323,112 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 	}
 }
 
-func TestStructuredOutputFallbackWrapperDisabledStripsFenceAndSchemaTogether(t *testing.T) {
+func TestStructuredOutputFallbackWrapperResolvesEveryTarget(t *testing.T) {
+	jsonSchema := NewJSONSchemaFromStruct[struct {
+		Name string `json:"name"`
+	}]()
+
+	primary := fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "primary-model")
+	fallbacks := []StructuredOutputTarget{
+		fallbackTargetWithPolicy("backup-1", StructuredOutputPolicyAuto, "backup-1-model"),
+		fallbackTargetWithPolicy("backup-2", StructuredOutputPolicyAuto, "backup-2-model"),
+	}
+
+	tests := []struct {
+		name             string
+		opts             []LanguageModelOption
+		wantPrimaryModel string
+	}{
+		{
+			name:             "uses the target model when no per-call override",
+			wantPrimaryModel: "primary-model",
+		},
+		{
+			name:             "per-call model override wins for the primary",
+			opts:             []LanguageModelOption{WithModel("override-model")},
+			wantPrimaryModel: "override-model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var seen []StructuredOutputTarget
+			fake := &fakeLLMForFallback{response: `{"name": "test"}`}
+			wrapper := NewStructuredOutputFallbackWrapper(fake, primary, fallbacks,
+				resolverReturning(StructuredOutputCapabilitySupported, &seen))
+
+			opts := append([]LanguageModelOption{func(cfg *LanguageModelConfig) {
+				cfg.JSONOutputFormat = jsonSchema
+			}}, tt.opts...)
+
+			_, err := wrapper.ChatCompletionNoStream(context.Background(), CompletionRequest{}, opts...)
+			require.NoError(t, err)
+
+			require.Len(t, seen, 3, "every possible provider attempt must be resolved")
+			assert.Equal(t, "primary", seen[0].Service.ID)
+			assert.Equal(t, tt.wantPrimaryModel, seen[0].Model)
+			assert.Equal(t, "backup-1", seen[1].Service.ID)
+			assert.Equal(t, "backup-1-model", seen[1].Model, "a fallback always runs its own model")
+			assert.Equal(t, "backup-2", seen[2].Service.ID)
+			assert.Equal(t, "backup-2-model", seen[2].Model)
+		})
+	}
+}
+
+func TestStructuredOutputFallbackWrapperMixedChain(t *testing.T) {
+	jsonSchema := NewJSONSchemaFromStruct[struct {
+		Name string `json:"name"`
+	}]()
+
+	capabilities := map[string]StructuredOutputCapability{
+		"primary": StructuredOutputCapabilitySupported,
+		"backup":  StructuredOutputCapabilityUnknown,
+	}
+	resolver := func(svc ServiceConfig, _ string) StructuredOutputCapability {
+		return capabilities[svc.ID]
+	}
+
+	fake := &fakeLLMForFallback{response: `{"name": "test"}`}
+	wrapper := NewStructuredOutputFallbackWrapper(fake,
+		fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "gpt-4o"),
+		[]StructuredOutputTarget{fallbackTargetWithPolicy("backup", StructuredOutputPolicyAuto, "mystery")},
+		resolver,
+	)
+
+	_, err := wrapper.ChatCompletionNoStream(context.Background(), CompletionRequest{}, func(cfg *LanguageModelConfig) {
+		cfg.JSONOutputFormat = jsonSchema
+	})
+	require.NoError(t, err)
+	assert.Nil(t, fake.capturedConfig.JSONOutputFormat, "an incapable fallback must keep the whole chain on prompt fallback")
+}
+
+func TestStructuredOutputFallbackWrapperCountTokensAppliesTransformation(t *testing.T) {
+	jsonSchema := NewJSONSchemaFromStruct[struct {
+		Name string `json:"name"`
+	}]()
+
+	fake := &fakeLLMForFallback{}
+	wrapper := NewStructuredOutputFallbackWrapper(fake,
+		fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"), nil, nil)
+
+	_, err := wrapper.CountTokens(context.Background(), CompletionRequest{
+		Posts: []Post{{Role: PostRoleUser, Message: "Summarize the channel."}},
+	}, func(cfg *LanguageModelConfig) {
+		cfg.JSONOutputFormat = jsonSchema
+	})
+	require.ErrorIs(t, err, ErrUnsupportedTokenCount)
+
+	assert.Equal(t, 4096, wrapper.InputTokenLimit())
+	assert.Equal(t, 4096, wrapper.OutputTokenLimit())
+}
+
+func TestStructuredOutputFallbackWrapperPromptFallbackStripsFenceAndSchemaTogether(t *testing.T) {
 	jsonSchema := NewJSONSchemaFromStruct[struct {
 		Name string `json:"name"`
 	}]()
 	fake := &fakeLLMForFallback{response: "```json\n{\"name\": \"test\"}\n```"}
-	wrapper := NewStructuredOutputFallbackWrapper(fake, false)
+	wrapper := NewStructuredOutputFallbackWrapper(fake,
+		fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"), nil, nil)
 
 	request := CompletionRequest{Posts: []Post{
 		{Role: PostRoleSystem, Message: "You are a helpful assistant."},

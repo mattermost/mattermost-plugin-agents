@@ -222,6 +222,10 @@ func (p *Plugin) OnActivate() error {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
 		}
+		// Drop cached service-backed LLMs whose configuration changed. Local
+		// saves and HA updates both flow through config.Container.Update, so
+		// this listener covers every node.
+		bots.ReconcileServiceLLMs(p.configuration.GetServices())
 		migrateAndRefresh("config_update")
 	})
 
@@ -508,6 +512,12 @@ func (p *Plugin) OnDeactivate() error {
 		p.telemetryShutdown = nil
 	}
 	p.telemetryMu.Unlock()
+
+	// Release Bifrost worker pools held by service-backed LLMs. OnActivate can
+	// fail before bots is assigned, so guard against a nil registry.
+	if p.bots != nil {
+		p.bots.ShutdownServiceLLMs()
+	}
 
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()

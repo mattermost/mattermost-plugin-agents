@@ -6,6 +6,8 @@ package config
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 func TestEnableTokenUsageSinks(t *testing.T) {
@@ -252,6 +254,78 @@ func TestTokenUsageSinkConfigMarshal(t *testing.T) {
 				t.Fatalf("file sink field present = %t, want %t", hasFileField, tt.expectFileField)
 			}
 		})
+	}
+}
+
+func TestContainerGetServices(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *Config
+		wantIDs     []string
+		wantNilCopy bool
+	}{
+		{
+			name:        "nil configuration returns nil",
+			cfg:         nil,
+			wantNilCopy: true,
+		},
+		{
+			name:    "no services returns an empty snapshot",
+			cfg:     &Config{},
+			wantIDs: []string{},
+		},
+		{
+			name: "returns every configured service in order",
+			cfg: &Config{Services: []llm.ServiceConfig{
+				{ID: "s1", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
+				{ID: "s2", Type: llm.ServiceTypeAnthropic, APIKey: "key"},
+			}},
+			wantIDs: []string{"s1", "s2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &Container{}
+			container.Update(tt.cfg)
+
+			services := container.GetServices()
+			if tt.wantNilCopy {
+				if services != nil {
+					t.Fatalf("GetServices() = %v, want nil", services)
+				}
+				return
+			}
+
+			if len(services) != len(tt.wantIDs) {
+				t.Fatalf("GetServices() returned %d services, want %d", len(services), len(tt.wantIDs))
+			}
+			for i, wantID := range tt.wantIDs {
+				if services[i].ID != wantID {
+					t.Fatalf("service %d = %q, want %q", i, services[i].ID, wantID)
+				}
+			}
+		})
+	}
+}
+
+func TestContainerGetServicesReturnsIndependentSlice(t *testing.T) {
+	container := &Container{}
+	container.Update(&Config{Services: []llm.ServiceConfig{
+		{ID: "s1", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
+	}})
+
+	services := container.GetServices()
+	services[0].ID = "mutated"
+	services = append(services, llm.ServiceConfig{ID: "extra"})
+	_ = services
+
+	fresh := container.GetServices()
+	if len(fresh) != 1 {
+		t.Fatalf("GetServices() returned %d services after caller mutation, want 1", len(fresh))
+	}
+	if fresh[0].ID != "s1" {
+		t.Fatalf("stored service ID = %q, want %q", fresh[0].ID, "s1")
 	}
 }
 
