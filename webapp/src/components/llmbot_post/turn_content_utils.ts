@@ -7,6 +7,7 @@ import {
     BlockTypeToolResult,
     BlockTypeAnnotations,
     BlockTypeText,
+    BlockTypeServerToolUse,
     StatusPending,
     StatusAccepted,
     StatusRejected,
@@ -16,6 +17,7 @@ import {
     StatusWaiting,
     type ConversationResponse,
     type ContentBlock,
+    type ServerToolUse,
     type Turn,
     type ToolCallStatus as ConvToolCallStatus,
 } from '@/types/conversation';
@@ -244,6 +246,22 @@ export interface Round {
     toolCalls: ToolCall[];
     reasoning: {summary: string; signature: string};
     annotations: Annotation[];
+
+    // Provider-executed (server) tool activity for the round: web searches,
+    // page fetches, sandbox code runs. Rendered before the text since the
+    // activity precedes the final answer.
+    serverTools: ServerToolUse[];
+}
+
+/** Extract ServerToolUse[] from server_tool_use content blocks. */
+export function extractServerToolsFromTurn(turn: Turn): ServerToolUse[] {
+    const serverTools: ServerToolUse[] = [];
+    for (const block of turn.content) {
+        if (block.type === BlockTypeServerToolUse && block.server_tool) {
+            serverTools.push(block.server_tool);
+        }
+    }
+    return serverTools;
 }
 
 /**
@@ -313,6 +331,7 @@ export function buildRoundsFromTurns(
             toolCalls,
             reasoning: extractReasoningFromTurn(turn),
             annotations: extractAnnotationsFromTurn(turn),
+            serverTools: extractServerToolsFromTurn(turn),
         });
     }
     return rounds;

@@ -100,6 +100,7 @@ type turnAccumulator struct {
 	reasoningData llm.ReasoningData
 	annotations   []llm.Annotation
 	toolCalls     []llm.ToolCall
+	serverTools   []llm.ServerToolUse
 
 	// Token usage
 	tokensIn  int64
@@ -128,7 +129,18 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 		})
 	}
 
-	// 2. Text block
+	// 2. Server tool activity blocks (provider-executed tools such as
+	// Anthropic web search / web fetch / code execution). They precede the
+	// text block because the activity happens before the final answer.
+	for i := range a.serverTools {
+		serverTool := a.serverTools[i]
+		blocks = append(blocks, conversation.ContentBlock{
+			Type:       conversation.BlockTypeServerToolUse,
+			ServerTool: &serverTool,
+		})
+	}
+
+	// 3. Text block
 	if a.text.Len() > 0 {
 		blocks = append(blocks, conversation.ContentBlock{
 			Type: conversation.BlockTypeText,
@@ -136,7 +148,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 		})
 	}
 
-	// 3. Annotations block (web search context)
+	// 4. Annotations block (web search context)
 	if len(a.annotations) > 0 {
 		resultsJSON, err := json.Marshal(a.annotations)
 		if err == nil {
@@ -150,7 +162,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 		}
 	}
 
-	// 4. Tool call blocks
+	// 5. Tool call blocks
 	for _, tc := range a.toolCalls {
 		blocks = append(blocks, conversation.ContentBlock{
 			Type:             conversation.BlockTypeToolUse,
@@ -300,6 +312,18 @@ func (p *MMPostStreamService) sendPostStreamingAnnotationsEventWithBroadcast(pos
 		"post_id":     post.Id,
 		"control":     "annotations",
 		"annotations": annotations,
+	}, broadcast)
+}
+
+// sendPostStreamingServerToolEventWithBroadcast streams the cumulative
+// provider-executed tool activity for the current round. Like annotations,
+// server tool activity shares the post text's visibility, so it goes to the
+// whole channel unredacted.
+func (p *MMPostStreamService) sendPostStreamingServerToolEventWithBroadcast(post *model.Post, serverTools string, broadcast *model.WebsocketBroadcast) {
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+		"post_id":     post.Id,
+		"control":     "server_tool",
+		"server_tool": serverTools,
 	}, broadcast)
 }
 
@@ -691,6 +715,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 							acc.reasoningData = llm.ReasoningData{}
 							acc.annotations = nil
 							acc.toolCalls = nil
+							acc.serverTools = nil
 							messageBuilder.Reset()
 							post.Message = ""
 						} else {
@@ -745,6 +770,24 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					if acc != nil {
 						acc.tokensIn += usage.InputTokens
 						acc.tokensOut += usage.OutputTokens
+					}
+				}
+			case llm.EventTypeServerToolUse:
+				// Provider-executed tool activity (web search / web fetch /
+				// code execution). The event carries the cumulative snapshot
+				// for the round; sanitize, persist, and broadcast it.
+				if serverTools, ok := event.Value.([]llm.ServerToolUse); ok {
+					for i := range serverTools {
+						serverTools[i].Sanitize()
+					}
+					if acc != nil {
+						acc.serverTools = serverTools
+					}
+					serverToolsJSON, err := json.Marshal(serverTools)
+					if err != nil {
+						p.mmClient.LogError("Failed to marshal server tool activity", "error", err)
+					} else {
+						p.sendPostStreamingServerToolEventWithBroadcast(post, string(serverToolsJSON), broadcast)
 					}
 				}
 			}

@@ -388,13 +388,14 @@ func (m *ClientManager) InvalidateUserClients(userID string) {
 	delete(m.activity, userID)
 }
 
-// ProcessOAuthCallback processes the OAuth callback for a user
-func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code string) (*OAuthSession, error) {
+// ProcessOAuthCallback processes the OAuth callback for a user. iss is the
+// RFC 9207 issuer identifier from the authorization response, if any.
+func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code, iss string) (*OAuthSession, error) {
 	if m.oauthManager == nil {
 		return nil, ErrOAuthNotConfigured
 	}
 
-	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code)
+	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code, iss)
 	if err != nil {
 		return nil, err
 	}
@@ -407,13 +408,14 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 
 // DisconnectUserOAuth removes the stored OAuth token for a user and server,
 // and invalidates the cached MCP client so a fresh connection is established
-// on the next request.
-func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
+// on the next request. The stored grant is also best-effort revoked at the
+// authorization server (RFC 7009) before deletion.
+func (m *ClientManager) DisconnectUserOAuth(ctx context.Context, userID, serverName string) error {
 	if m.oauthManager == nil {
 		return ErrOAuthNotConfigured
 	}
 
-	if err := m.oauthManager.DeleteUserToken(userID, serverName); err != nil {
+	if err := m.oauthManager.DeleteUserToken(ctx, userID, serverName); err != nil {
 		return err
 	}
 

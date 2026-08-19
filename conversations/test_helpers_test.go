@@ -114,6 +114,10 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue interface{
 	return true, nil
 }
 
+func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, _ time.Duration) (bool, error) {
+	return c.KVCompareAndSet(key, oldValue, newValue)
+}
+
 func (c *fakeMMClient) KVDelete(key string) error {
 	delete(c.kv, key)
 	c.kvDeletes = append(c.kvDeletes, key)
