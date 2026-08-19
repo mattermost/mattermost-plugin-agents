@@ -81,52 +81,57 @@ func (b *MMBots) AcquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.Servic
 	// Only publish the entry when it still matches the live configuration. The
 	// request may have carried a snapshot that was already stale when the build
 	// started, and a generation counter sampled at build start cannot see a
-	// change that lands mid-build. Reading the live configuration after the
-	// build is sufficient because the configuration is stored before update
-	// listeners run: either this read sees the new value and refuses to
-	// publish, or it precedes the store and the listener's reconciliation
-	// happens after the entry is published.
-	if b.serviceLLMMatchesCurrentConfig(svc, fallbacks) {
-		var supersededEntry *serviceLLMEntry
+	// change that lands mid-build.
+	//
+	// The check must run inside the registry lock so it is ordered against
+	// ReconcileServiceLLMs, which scans under the same lock after the new
+	// configuration is stored: either this publish happens first and the
+	// reconciliation retires the just-published entry, or the reconciliation
+	// scan happens first, in which case the store already happened and this
+	// check reads the new configuration and refuses to publish. Checked
+	// outside the lock, a store plus a full reconciliation could slip between
+	// the check and the publish, caching a stale entry reconciliation never
+	// saw. The config read itself is an atomic pointer load, so no other lock
+	// is taken while holding the registry lock.
+	var supersededEntry *serviceLLMEntry
 
-		b.serviceLLMMu.Lock()
-		if existing, ok := b.serviceLLMs[svc.ID]; ok {
-			if reflect.DeepEqual(existing.svc, svc) && serviceConfigSlicesEqual(existing.fallbacks, fallbacks) {
-				// Lost a race against another writer for the same
-				// configuration; keep the published entry and discard ours.
-				existing.leases++
-				b.serviceLLMMu.Unlock()
-				entry.shutdownNow()
-				return existing.model, b.releaseFunc(existing), nil
-			}
-			// The cached entry was built from a configuration that is no longer
-			// current, so it must not stay in the cache.
-			existing.retired = true
-			if existing.leases > 0 {
-				b.retiredServiceLLMs = append(b.retiredServiceLLMs, existing)
-			} else {
-				supersededEntry = existing
-			}
-		}
-		if b.serviceLLMs == nil {
-			b.serviceLLMs = make(map[string]*serviceLLMEntry)
-		}
-		b.serviceLLMs[svc.ID] = entry
+	b.serviceLLMMu.Lock()
+	if !b.serviceLLMMatchesCurrentConfig(svc, fallbacks) {
+		// Stale snapshot: serve this request from the uncached model and shut
+		// it down when the lease is released.
+		entry.retired = true
+		b.retiredServiceLLMs = append(b.retiredServiceLLMs, entry)
 		b.serviceLLMMu.Unlock()
-
-		if supersededEntry != nil {
-			supersededEntry.shutdownNow()
-		}
 		return entry.model, b.releaseFunc(entry), nil
 	}
 
-	// Stale snapshot: serve this request from the uncached model and shut it
-	// down when the lease is released.
-	entry.retired = true
-	b.serviceLLMMu.Lock()
-	b.retiredServiceLLMs = append(b.retiredServiceLLMs, entry)
+	if existing, ok := b.serviceLLMs[svc.ID]; ok {
+		if reflect.DeepEqual(existing.svc, svc) && serviceConfigSlicesEqual(existing.fallbacks, fallbacks) {
+			// Lost a race against another writer for the same
+			// configuration; keep the published entry and discard ours.
+			existing.leases++
+			b.serviceLLMMu.Unlock()
+			entry.shutdownNow()
+			return existing.model, b.releaseFunc(existing), nil
+		}
+		// The cached entry was built from a configuration that is no longer
+		// current, so it must not stay in the cache.
+		existing.retired = true
+		if existing.leases > 0 {
+			b.retiredServiceLLMs = append(b.retiredServiceLLMs, existing)
+		} else {
+			supersededEntry = existing
+		}
+	}
+	if b.serviceLLMs == nil {
+		b.serviceLLMs = make(map[string]*serviceLLMEntry)
+	}
+	b.serviceLLMs[svc.ID] = entry
 	b.serviceLLMMu.Unlock()
 
+	if supersededEntry != nil {
+		supersededEntry.shutdownNow()
+	}
 	return entry.model, b.releaseFunc(entry), nil
 }
 
