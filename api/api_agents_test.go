@@ -157,7 +157,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"reasoningEnabled":        cfg.ReasoningEnabled,
 		"reasoningEffort":         cfg.ReasoningEffort,
 		"thinkingBudget":          cfg.ThinkingBudget,
-		"structuredOutputEnabled": cfg.StructuredOutputEnabled,
+		"structuredOutputEnabled": cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated but still accepted on the wire
 		"maxToolTurns":            cfg.MaxToolTurns,
 	}
 	for k, v := range overrides {
@@ -197,7 +197,7 @@ func TestCreateAgentWithPermission(t *testing.T) {
 	assert.NotEmpty(t, agent.ID)
 	assert.True(t, agent.MCPDynamicToolLoading)
 	assert.True(t, agent.ReasoningEnabled)
-	assert.False(t, agent.StructuredOutputEnabled)
+	assert.False(t, agent.StructuredOutputEnabled) //nolint:staticcheck // deprecated but still persisted verbatim
 }
 
 func TestCreateAgentPersistsExplicitRequestValues(t *testing.T) {
@@ -234,7 +234,7 @@ func TestCreateAgentPersistsExplicitRequestValues(t *testing.T) {
 	assert.True(t, agent.DisableTools)
 	assert.False(t, agent.ReasoningEnabled)
 	assert.Equal(t, "high", agent.ReasoningEffort)
-	assert.False(t, agent.StructuredOutputEnabled)
+	assert.False(t, agent.StructuredOutputEnabled) //nolint:staticcheck // deprecated but still persisted verbatim
 	assert.Empty(t, agent.EnabledNativeTools)
 }
 
@@ -1221,7 +1221,7 @@ func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
 	assert.False(t, updated.ReasoningEnabled)
 	assert.Empty(t, updated.ReasoningEffort)
 	assert.Zero(t, updated.ThinkingBudget)
-	assert.False(t, updated.StructuredOutputEnabled)
+	assert.False(t, updated.StructuredOutputEnabled) //nolint:staticcheck // deprecated but still persisted verbatim
 }
 
 // TestAgentSaveErrorsAreActionable confirms every failure path on the agent

@@ -299,7 +299,9 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.ReasoningEnabled = req.ReasoningEnabled
 	cfg.ReasoningEffort = req.ReasoningEffort
 	cfg.ThinkingBudget = req.ThinkingBudget
-	cfg.StructuredOutputEnabled = req.StructuredOutputEnabled
+	// Persisted verbatim so existing callers keep round-tripping; the runtime
+	// reads ServiceConfig.StructuredOutputPolicy instead.
+	cfg.StructuredOutputEnabled = req.StructuredOutputEnabled //nolint:staticcheck
 	cfg.MaxToolTurns = req.MaxToolTurns
 	return displayNameChanged
 }
