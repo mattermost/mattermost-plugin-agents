@@ -433,15 +433,12 @@ func (a *API) handleAskUserResponse(c *gin.Context) {
 
 	// Detach: the answer resumes the conversation with an async LLM follow-up
 	// stream that must outlive this request (see telemetry.DetachContext).
-	if err := a.conversationsService.HandleAskUserResponse(telemetry.DetachContext(c.Request.Context()), userID, post, channel, data); err != nil {
+	status, err := a.conversationsService.HandleAskUserResponse(telemetry.DetachContext(c.Request.Context()), userID, post, channel, data)
+	if err != nil {
 		c.AbortWithError(askUserResponseHTTPStatus(err), err)
 		return
 	}
 
-	status := conversations.AskUserStatusAnswered
-	if data.Action == conversations.AskUserActionDecline {
-		status = conversations.AskUserStatusDeclined
-	}
 	c.JSON(http.StatusOK, map[string]string{"status": status})
 }
 

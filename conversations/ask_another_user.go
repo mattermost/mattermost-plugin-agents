@@ -487,61 +487,66 @@ func (c *Conversations) publishConversationUpdated(convID, channelID string) {
 // target, resolves the answer into the C7 tool-result JSON, flips the waiting
 // tool_use block, writes the tool_result turn, patches the card post, and —
 // when no unresolved tool calls remain on the anchor turn — streams the
-// follow-up LLM response in the original conversation.
+// follow-up LLM response in the original conversation. It returns the
+// terminal card status; when a durable cancel result already won, it returns
+// canceled without writing, patching, or streaming again.
 //
 // The card's DM channel (loaded by the HTTP middleware) is unused: target
 // authorization runs against the card's ask_user_target_id prop instead.
-func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string, cardPost *model.Post, _ *model.Channel, req AskUserResponse) error {
+func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string, cardPost *model.Post, _ *model.Channel, req AskUserResponse) (string, error) {
 	if req.Action != AskUserActionAnswer && req.Action != AskUserActionDecline {
-		return fmt.Errorf("%w: unknown action %q", ErrInvalidAskAnswer, req.Action)
+		return "", fmt.Errorf("%w: unknown action %q", ErrInvalidAskAnswer, req.Action)
 	}
 	if cardPost.Type != AskUserPostType {
-		return fmt.Errorf("%w: post is not an ask-user card", ErrInvalidAskAnswer)
+		return "", fmt.Errorf("%w: post is not an ask-user card", ErrInvalidAskAnswer)
 	}
 
 	targetID, _ := cardPost.GetProp(AskUserTargetIDProp).(string)
 	if targetID == "" || targetID != userID {
-		return ErrNotAskTarget
+		return "", ErrNotAskTarget
 	}
 
 	bot := c.bots.GetBotByID(cardPost.UserId)
 	if bot == nil {
-		return fmt.Errorf("unable to get bot")
+		return "", fmt.Errorf("unable to get bot")
 	}
 
 	convID, _ := cardPost.GetProp(AskUserConversationIDProp).(string)
 	if convID == "" {
-		return fmt.Errorf("%w: card is missing its conversation reference", ErrInvalidAskAnswer)
+		return "", fmt.Errorf("%w: card is missing its conversation reference", ErrInvalidAskAnswer)
 	}
 	toolUseID, _ := cardPost.GetProp(AskUserToolUseIDProp).(string)
 	if toolUseID == "" {
-		return fmt.Errorf("%w: card is missing its tool call reference", ErrInvalidAskAnswer)
+		return "", fmt.Errorf("%w: card is missing its tool call reference", ErrInvalidAskAnswer)
 	}
 
 	conv, err := c.convService.GetConversation(convID)
 	if err != nil {
 		if errors.Is(err, store.ErrConversationNotFound) {
-			return ErrAskConversationGone
+			return "", ErrAskConversationGone
 		}
-		return fmt.Errorf("failed to get conversation: %w", err)
+		return "", fmt.Errorf("failed to get conversation: %w", err)
 	}
 	if conv.DeleteAt != 0 {
-		return ErrAskConversationGone
+		return "", ErrAskConversationGone
 	}
 
 	turns, err := c.convService.GetTurns(convID)
 	if err != nil {
-		return fmt.Errorf("failed to get turns: %w", err)
+		return "", fmt.Errorf("failed to get turns: %w", err)
 	}
 
 	turn, blocks, blockIdx := findToolUseBlock(turns, toolUseID)
 	if turn == nil {
 		// The waiting call vanished — e.g. superseded by a regenerate.
-		return ErrAskConversationGone
+		return "", ErrAskConversationGone
 	}
 	block := &blocks[blockIdx]
 	if block.Status != conversation.StatusWaiting {
-		return ErrAskNotPending
+		if askUserResultWasCanceled(turns, toolUseID) {
+			return AskUserStatusCanceled, nil
+		}
+		return "", ErrAskNotPending
 	}
 
 	// Chain into the originating run's trace when possible (mirrors
@@ -581,7 +586,7 @@ func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string
 	}, declined)
 	if resolveErr != nil {
 		// State untouched: the question stays waiting and answerable.
-		return fmt.Errorf("%w: %s", ErrInvalidAskAnswer, resolveErr.Error())
+		return "", fmt.Errorf("%w: %s", ErrInvalidAskAnswer, resolveErr.Error())
 	}
 
 	// Atomic claim: exactly one submission may resolve this question. The
@@ -592,10 +597,20 @@ func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string
 	// question must stay answerable after a validation error.
 	won, claimErr := c.claimAskToolUse(askClaimStageAnswer, toolUseID)
 	if claimErr != nil {
-		return fmt.Errorf("failed to claim the question: %w", claimErr)
+		return "", fmt.Errorf("failed to claim the question: %w", claimErr)
 	}
 	if !won {
-		return ErrAskNotPending
+		// The shared claim only says another resolution won. Re-read the
+		// durable result to distinguish a cancel (successful no-op for this
+		// stale response) from a duplicate answer/decline (conflict).
+		latestTurns, turnsErr := c.convService.GetTurns(convID)
+		if turnsErr != nil {
+			return "", fmt.Errorf("failed to inspect the resolved question: %w", turnsErr)
+		}
+		if askUserResultWasCanceled(latestTurns, toolUseID) {
+			return AskUserStatusCanceled, nil
+		}
+		return "", ErrAskNotPending
 	}
 
 	// Flip the block BEFORE side effects so a concurrent second submission
@@ -607,11 +622,11 @@ func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string
 	}
 	block.Shared = conversation.BoolPtr(true)
 	if persistErr := c.persistBlocks(turn.ID, blocks); persistErr != nil {
-		return fmt.Errorf("failed to persist answered status: %w", persistErr)
+		return "", fmt.Errorf("failed to persist answered status: %w", persistErr)
 	}
 
 	if writeErr := c.writeAskResultTurn(convID, toolUseID, resultJSON); writeErr != nil {
-		return writeErr
+		return "", writeErr
 	}
 
 	// Everything below is best-effort: the answer is recorded, so failures
@@ -620,7 +635,10 @@ func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string
 
 	c.resumeAfterAskResolution(ctx, bot, conv, turns, blocks, turn)
 
-	return nil
+	if declined {
+		return AskUserStatusDeclined, nil
+	}
+	return AskUserStatusAnswered, nil
 }
 
 // writeAskResultTurn persists the tool_result turn for a resolved
@@ -653,6 +671,33 @@ func (c *Conversations) writeAskResultTurn(convID, toolUseID, resultJSON string)
 		return fmt.Errorf("failed to create tool result turn: %w", createErr)
 	}
 	return nil
+}
+
+// askUserResultWasCanceled checks the persisted tool result for the terminal
+// resolution. A successful tool_use block alone is ambiguous because answers
+// and cancels share that status and the same one-shot claim.
+func askUserResultWasCanceled(turns []store.Turn, toolUseID string) bool {
+	for _, turn := range turns {
+		if turn.Role != "tool_result" {
+			continue
+		}
+		var blocks []conversation.ContentBlock
+		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
+			continue
+		}
+		for _, block := range blocks {
+			if block.Type != conversation.BlockTypeToolResult || block.ToolUseID != toolUseID {
+				continue
+			}
+			var result struct {
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal([]byte(block.Content), &result); err == nil && result.Status == AskUserStatusCanceled {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // resumeAfterAskResolution is the shared tail of the answer and cancel
@@ -728,7 +773,8 @@ func (c *Conversations) resumeAfterAskResolution(ctx context.Context, bot *bots.
 // the askcard_ KV pointer written at dispatch), and resumes the conversation
 // under the same gates as the answer path. Cancel contends for the SAME
 // one-shot claim as answer/decline, so exactly one resolution ever wins; the
-// loser surfaces ErrAskNotPending (409).
+// cancel loser surfaces ErrAskNotPending (409), while a response that loses
+// to a durable cancel result returns a successful canceled no-op.
 //
 // The clicked post is the initiator's anchor post; its channel (loaded by
 // the HTTP middleware) is unused — the resume path re-reads it.
@@ -846,9 +892,9 @@ func (c *Conversations) HandleAskUserCancel(ctx context.Context, userID string, 
 // terminal state ("This question is no longer needed."), located via the
 // dispatch-time KV pointer. Best-effort: failures are logged, never
 // surfaced — the conversation-side resolution has already happened, and a
-// stale card degrades to the target's neutral 409 path. The plain message is
-// rewritten too so pre-v2 webapps and plaintext clients see the terminal
-// state (V2-C2 back-compat rule).
+// stale card still resolves late target responses through the durable
+// canceled tool result. The plain message is rewritten too so pre-v2 webapps
+// and plaintext clients see the terminal state (V2-C2 back-compat rule).
 func (c *Conversations) patchAskUserCardCanceled(toolUseID string) {
 	var cardPostID string
 	if kvErr := c.mmClient.KVGet(askCardKVPrefix+toolUseID, &cardPostID); kvErr != nil || cardPostID == "" {

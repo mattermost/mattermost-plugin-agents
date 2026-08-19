@@ -443,7 +443,7 @@ const ProcessingSpinner = styled(LoadingSpinner)`
 type SubmitState =
     | {phase: 'idle'}
     | {phase: 'submitting'; action: AskUserResponseAction}
-    | {phase: 'resolved'; resolution: 'answered' | 'declined'; preview: string; at: number}
+    | {phase: 'resolved'; resolution: 'answered' | 'declined' | 'canceled'; preview: string; at: number}
     | {phase: 'error'; conflict: boolean};
 
 interface AskUserPostProps {
@@ -530,12 +530,12 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
         }
         setSubmitState({phase: 'submitting', action});
         try {
-            await doAskUserResponse(post.id, botUsername, {action, selected, free_form: freeForm});
+            const result = await doAskUserResponse(post.id, botUsername, {action, selected, free_form: freeForm});
             setSubmitState({
                 phase: 'resolved',
-                resolution: action === 'answer' ? 'answered' : 'declined',
-                preview: buildAnswerPreview(selected, freeForm),
-                at: Date.now(),
+                resolution: result.status,
+                preview: result.status === 'answered' ? buildAnswerPreview(selected, freeForm) : '',
+                at: result.status === 'canceled' ? 0 : Date.now(),
             });
         } catch (err) {
             const conflict = (err as ClientError).status_code === 409;
@@ -693,9 +693,9 @@ export const AskUserPost: React.FC<AskUserPostProps> = ({post}) => {
             )}
             {submitState.phase === 'error' && submitState.conflict && (
 
-                // A 409 means the question was resolved elsewhere (an answer
-                // race or an initiator cancel). Neutral line, not an error;
-                // the patched props settle the final rendering (V2-C4).
+                // A 409 means another answer or decline resolved the question.
+                // Neutral line, not an error; patched props settle the final
+                // rendering (V2-C4).
                 <StatusLine>
                     <FormattedMessage
                         id='ai.ask_user.no_longer_needed'

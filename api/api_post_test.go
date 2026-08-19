@@ -349,6 +349,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 		targetID         string // defaults to testUserID (the caller)
 		seedConv         bool
 		blockStatus      string // seeds an assistant turn when non-empty
+		seedResultJSON   string
 		expectedStatus   int
 		expectedBody     string
 		expectResultTurn bool
@@ -399,7 +400,17 @@ func TestHandleAskUserResponse(t *testing.T) {
 			body:           `{"action":"decline"}`,
 			seedConv:       true,
 			blockStatus:    conversation.StatusSuccess,
+			seedResultJSON: `{"status":"answered","target_username":"target-user","selected":[],"free_form":"done"}`,
 			expectedStatus: http.StatusConflict,
+		},
+		{
+			name:           "late answer after cancel is a successful no-op",
+			body:           `{"action":"answer","free_form":"too late"}`,
+			seedConv:       true,
+			blockStatus:    conversation.StatusSuccess,
+			seedResultJSON: `{"status":"canceled","target_username":"target-user"}`,
+			expectedStatus: http.StatusOK,
+			expectedBody:   `"status":"canceled"`,
 		},
 		{
 			name:             "decline records the refusal",
@@ -486,6 +497,22 @@ func TestHandleAskUserResponse(t *testing.T) {
 					Sequence:       1,
 				}))
 			}
+			if test.seedResultJSON != "" {
+				resultContent, marshalErr := json.Marshal([]conversation.ContentBlock{{
+					Type:      conversation.BlockTypeToolResult,
+					ToolUseID: toolUseID,
+					Content:   test.seedResultJSON,
+					Status:    conversation.StatusSuccess,
+				}})
+				require.NoError(t, marshalErr)
+				require.NoError(t, convStore.CreateTurn(&store.Turn{
+					ID:             "seeded-result-turn",
+					ConversationID: convID,
+					Role:           "tool_result",
+					Content:        resultContent,
+					Sequence:       2,
+				}))
+			}
 
 			e.mockAPI.On("GetPost", cardPostID).Return(cardPost, nil).Maybe()
 			e.mockAPI.On("GetChannel", dmChannelID).Return(&model.Channel{
@@ -516,7 +543,11 @@ func TestHandleAskUserResponse(t *testing.T) {
 				require.Len(t, turns, 2, "an accepted answer must append the tool_result turn")
 				require.Equal(t, "tool_result", turns[1].Role)
 			} else if test.blockStatus != "" {
-				require.Len(t, turns, 1, "rejected requests must not write result turns")
+				expectedTurns := 1
+				if test.seedResultJSON != "" {
+					expectedTurns++
+				}
+				require.Len(t, turns, expectedTurns, "terminal requests must not write another result turn")
 			}
 		})
 	}

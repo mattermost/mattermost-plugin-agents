@@ -1096,7 +1096,7 @@ func TestAskToolUseClaimRaces(t *testing.T) {
 				cardPost.AddProp(AskUserConversationIDProp, conv.ID)
 				cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
 				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
-				err = c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
+				_, err = c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
 					Action:   AskUserActionAnswer,
 					Selected: []string{"Prod"},
 				})
@@ -1426,7 +1426,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 			cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
 			req := AskUserResponse{Action: tc.action, Selected: tc.selected, FreeForm: tc.freeForm}
 
-			err = c.HandleAskUserResponse(context.Background(), caller, cardPost, cardChannel, req)
+			_, err = c.HandleAskUserResponse(context.Background(), caller, cardPost, cardChannel, req)
 
 			if tc.wantErr != nil {
 				require.ErrorIs(t, err, tc.wantErr)
@@ -1483,6 +1483,133 @@ func TestHandleAskUserResponse(t *testing.T) {
 			} else {
 				assert.Empty(t, lm.requests, "follow-up must wait for the remaining unresolved tool calls")
 			}
+		})
+	}
+}
+
+func TestHandleAskUserResponseTerminalOutcomes(t *testing.T) {
+	askInput := json.RawMessage(`{"username":"bob","question":"Which environment?","options":[{"label":"Prod"}]}`)
+
+	cases := []struct {
+		name          string
+		seedStatus    string
+		seedResult    string
+		cancelAtClaim bool
+		wantStatus    string
+		wantErr       error
+	}{
+		{
+			name:       "cancel then late answer is a successful no-op",
+			seedStatus: conversation.StatusSuccess,
+			seedResult: `{"status":"canceled","target_username":"bob"}`,
+			wantStatus: AskUserStatusCanceled,
+		},
+		{
+			name:          "cancel winning after the answer read is a successful no-op",
+			seedStatus:    conversation.StatusWaiting,
+			seedResult:    `{"status":"canceled","target_username":"bob"}`,
+			cancelAtClaim: true,
+			wantStatus:    AskUserStatusCanceled,
+		},
+		{
+			name:       "duplicate answer remains a conflict",
+			seedStatus: conversation.StatusSuccess,
+			seedResult: `{"status":"answered","target_username":"bob","selected":["Prod"],"free_form":""}`,
+			wantErr:    ErrAskNotPending,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+			blocks := []conversation.ContentBlock{{
+				Type:           conversation.BlockTypeToolUse,
+				ID:             "ask-1",
+				Name:           mmtools.AskAnotherUserToolName,
+				Input:          askInput,
+				Status:         tc.seedStatus,
+				DeferredResult: true,
+				Shared:         conversation.BoolPtr(true),
+			}}
+			content, err := json.Marshal(blocks)
+			require.NoError(t, err)
+			require.NoError(t, convStore.CreateTurn(&store.Turn{
+				ID:             "assistant-turn",
+				ConversationID: conv.ID,
+				Role:           "assistant",
+				Content:        content,
+				Sequence:       1,
+			}))
+
+			writeSeedResult := func() {
+				resultContent, marshalErr := json.Marshal([]conversation.ContentBlock{{
+					Type:      conversation.BlockTypeToolResult,
+					ToolUseID: "ask-1",
+					Content:   tc.seedResult,
+					Status:    conversation.StatusSuccess,
+				}})
+				require.NoError(t, marshalErr)
+				require.NoError(t, convStore.CreateTurn(&store.Turn{
+					ID:             "canceled-result-turn",
+					ConversationID: conv.ID,
+					Role:           "tool_result",
+					Content:        resultContent,
+					Sequence:       2,
+				}))
+			}
+			if !tc.cancelAtClaim {
+				writeSeedResult()
+			}
+
+			lm := &loadedStateLLM{}
+			bot := loadedStateBot(lm)
+			mmClient := mocks.NewMockClient(t)
+			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			if tc.cancelAtClaim {
+				mmClient.On("KVCompareAndSet", "askclaim_answer_ask-1", mock.Anything, mock.Anything).
+					Run(func(mock.Arguments) {
+						canceledBlocks := append([]conversation.ContentBlock(nil), blocks...)
+						canceledBlocks[0].Status = conversation.StatusSuccess
+						canceledContent, marshalErr := json.Marshal(canceledBlocks)
+						require.NoError(t, marshalErr)
+						require.NoError(t, convStore.UpdateTurnContent("assistant-turn", canceledContent))
+						writeSeedResult()
+					}).
+					Return(false, nil).
+					Once()
+			}
+
+			c := &Conversations{
+				mmClient:         mmClient,
+				bots:             newAskAnotherUserBotsService(t, bot),
+				convService:      conversation.NewService(convStore, nil, nil, nil),
+				streamingService: &loadedStateStreamingService{},
+			}
+			cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
+			cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+			cardPost.AddProp(AskUserConversationIDProp, conv.ID)
+			cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
+
+			status, responseErr := c.HandleAskUserResponse(
+				context.Background(),
+				"bob-id",
+				cardPost,
+				&model.Channel{Id: "card-dm"},
+				AskUserResponse{Action: AskUserActionAnswer, Selected: []string{"Prod"}},
+			)
+
+			if tc.wantErr != nil {
+				require.ErrorIs(t, responseErr, tc.wantErr)
+			} else {
+				require.NoError(t, responseErr)
+			}
+			require.Equal(t, tc.wantStatus, status)
+
+			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
+			require.NoError(t, turnsErr)
+			require.Len(t, turns, 2, "the stale response must not append another tool_result turn")
+			assert.Empty(t, lm.requests, "the stale response must not stream a second follow-up")
 		})
 	}
 }
@@ -1800,9 +1927,9 @@ func TestHandleAskUserCancel(t *testing.T) {
 }
 
 // TestCancelAnswerRace pins V2-C4's single-resolution guarantee: answer and
-// cancel contend for the same one-shot claim, so whichever lands first wins,
-// exactly one tool_result turn is written, and the loser gets the graceful
-// ErrAskNotPending (409) with zero side effects.
+// cancel contend for the same one-shot claim, so whichever lands first wins
+// and exactly one tool_result turn is written. A late answer after cancel is a
+// successful canceled no-op; a late cancel after answer remains a conflict.
 func TestCancelAnswerRace(t *testing.T) {
 	askInput := `{"username":"bob","question":"Which environment?","options":[{"label":"Prod"},{"label":"Staging"}]}`
 
@@ -1902,7 +2029,7 @@ func TestCancelAnswerRace(t *testing.T) {
 			cancel := func() error {
 				return c.HandleAskUserCancel(context.Background(), "user-id", anchorPost, anchorChannel, "ask-1")
 			}
-			answer := func() error {
+			answer := func() (string, error) {
 				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
 				return c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
 					Action:   AskUserActionAnswer,
@@ -1910,16 +2037,21 @@ func TestCancelAnswerRace(t *testing.T) {
 				})
 			}
 
-			first, second := cancel, answer
-			if !tc.cancelFirst {
-				first, second = answer, cancel
+			if tc.cancelFirst {
+				require.NoError(t, cancel())
+				streamingService.waitForStreaming()
+
+				status, responseErr := answer()
+				require.NoError(t, responseErr)
+				require.Equal(t, AskUserStatusCanceled, status)
+			} else {
+				status, responseErr := answer()
+				require.NoError(t, responseErr)
+				require.Equal(t, AskUserStatusAnswered, status)
+				streamingService.waitForStreaming()
+
+				require.ErrorIs(t, cancel(), ErrAskNotPending)
 			}
-
-			require.NoError(t, first())
-			streamingService.waitForStreaming()
-
-			err = second()
-			require.ErrorIs(t, err, ErrAskNotPending, "the loser must get the graceful 409 path")
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
@@ -2048,10 +2180,11 @@ func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
 			}
 			answer := func() error {
 				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
-				return c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
+				_, responseErr := c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
 					Action:   AskUserActionAnswer,
 					Selected: []string{"Prod"},
 				})
+				return responseErr
 			}
 
 			first, second := answer, share

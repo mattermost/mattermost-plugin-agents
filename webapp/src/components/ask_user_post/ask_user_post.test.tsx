@@ -765,8 +765,8 @@ describe('AskUserPost interaction', () => {
         fireEvent.click(screen.getByText('4.2.0'));
         fireEvent.click(screen.getByText('Answer'));
 
-        // The question was resolved elsewhere (answer race or initiator
-        // cancel) — a neutral line, never the red error copy (V2-C4).
+        // The question was resolved by another answer/decline — a neutral
+        // line, never the red error copy (V2-C4).
         expect(await screen.findByText('This question is no longer needed.')).not.toBeNull();
         expect(screen.queryByText('Failed to submit your response. Please try again.')).toBeNull();
 
@@ -786,8 +786,8 @@ describe('AskUserPost interaction', () => {
         expect(screen.queryByText('This question is no longer needed.')).toBeNull();
     });
 
-    test('a 409 raced by a cancel settles into the canceled terminal state from props', async () => {
-        mockDoAskUserResponse.mockRejectedValue({status_code: 409});
+    test('a canceled success response stays neutral when canceled props arrive', async () => {
+        mockDoAskUserResponse.mockResolvedValue({status: 'canceled'});
         const {rerender} = renderPost({...V2_BASE});
 
         fireEvent.click(screen.getByText('4.2.0'));
@@ -795,8 +795,8 @@ describe('AskUserPost interaction', () => {
 
         expect(await screen.findByText('This question is no longer needed.')).not.toBeNull();
 
-        // The canceled card patch arrives; props win and the terminal
-        // canceled rendering takes over (same copy, no controls).
+        // The canceled card patch arrives; props keep the same terminal
+        // canceled rendering (same copy, no controls).
         rerender(buildPostElement({...V2_BASE, ask_user_status: 'canceled'}));
 
         expect(screen.getByText('This question is no longer needed.')).not.toBeNull();

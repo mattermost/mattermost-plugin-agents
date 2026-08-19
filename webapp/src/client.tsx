@@ -247,6 +247,7 @@ export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?
 }
 
 export type AskUserResponseAction = 'answer' | 'decline';
+export type AskUserResponseStatus = 'answered' | 'declined' | 'canceled';
 
 // Request body for the ask_user_response endpoint. Mirrors
 // conversations.AskUserResponse on the server.
@@ -260,7 +261,7 @@ export interface AskUserResponseBody {
 // endpoint's middleware resolves the bot from this query param — falling back
 // to the DEFAULT bot when absent — and runs usage-restriction checks against
 // that bot. Omitting it would 403 targets who lack access to the default bot.
-export async function doAskUserResponse(postid: string, botUsername: string, body: AskUserResponseBody): Promise<{status: string}> {
+export async function doAskUserResponse(postid: string, botUsername: string, body: AskUserResponseBody): Promise<{status: AskUserResponseStatus}> {
     const url = `${postRoute(postid)}/ask_user_response?botUsername=${encodeURIComponent(botUsername)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
