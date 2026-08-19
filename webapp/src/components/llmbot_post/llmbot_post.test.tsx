@@ -2,17 +2,15 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, render, screen, waitFor} from '@testing-library/react';
+import {render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 import {useSelector} from 'react-redux';
-
-import {WebSocketMessage} from '@mattermost/client';
 
 import {useConversation} from '@/hooks/use_conversation';
 
 import {MAX_SEARCH_SOURCES} from '../search_sources';
 
-import {LLMBotPost, PostUpdateWebsocketMessage} from './llmbot_post';
+import {LLMBotPost} from './llmbot_post';
 
 jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
@@ -69,8 +67,6 @@ jest.mock('../post_preview', () => ({
 const mockUseSelector = useSelector as unknown as jest.Mock;
 const mockUseConversation = useConversation as jest.Mock;
 
-type PostUpdateHandler = (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => void;
-
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
 
@@ -98,23 +94,15 @@ function makeSource(i: number) {
     };
 }
 
-function renderPost(
-    post = makePost(),
-    websocketRegister?: (postID: string, listenerID: string, handler: PostUpdateHandler) => void,
-) {
+function renderPost(post = makePost()) {
     return render(
         <IntlProvider locale='en'>
             <LLMBotPost
                 post={post}
-                websocketRegister={websocketRegister}
                 websocketUnregister={jest.fn()}
             />
         </IntlProvider>,
     );
-}
-
-function postUpdateMessage(data: PostUpdateWebsocketMessage): WebSocketMessage<PostUpdateWebsocketMessage> {
-    return {data} as WebSocketMessage<PostUpdateWebsocketMessage>;
 }
 
 beforeEach(() => {
@@ -138,56 +126,6 @@ beforeEach(() => {
         conversation: null,
         loading: false,
         error: null,
-    });
-});
-
-describe('LLMBotPost streaming fallback rendering', () => {
-    test('keeps streamed error text visible after stream end while refetch is pending', async () => {
-        const errorText = 'Sorry! An error occurred while accessing the LLM.';
-        let listener: PostUpdateHandler | undefined;
-        const websocketRegister = jest.fn((postID, listenerID, handler) => {
-            listener = handler;
-        });
-
-        renderPost(makePost(), websocketRegister);
-
-        expect(screen.getByText('Starting...')).toBeTruthy();
-        expect(listener).toBeDefined();
-
-        act(() => {
-            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
-            listener?.(postUpdateMessage({post_id: 'post_1', next: errorText}));
-        });
-
-        await expect(screen.findByText(errorText)).resolves.toBeTruthy();
-
-        act(() => {
-            listener?.(postUpdateMessage({post_id: 'post_1', control: 'end'}));
-        });
-
-        expect(screen.getByText(errorText)).toBeTruthy();
-        expect(screen.queryByText('Starting...')).toBeNull();
-    });
-
-    test('renders updated post message when the streaming text websocket was missed', async () => {
-        const errorText = 'Sorry! An error occurred while accessing the LLM.';
-        const {rerender} = renderPost(makePost());
-
-        expect(screen.getByText('Starting...')).toBeTruthy();
-
-        rerender(
-            <IntlProvider locale='en'>
-                <LLMBotPost
-                    post={makePost(errorText)}
-                    websocketUnregister={jest.fn()}
-                />
-            </IntlProvider>,
-        );
-
-        await waitFor(() => {
-            expect(screen.getByText(errorText)).toBeTruthy();
-        });
-        expect(screen.queryByText('Starting...')).toBeNull();
     });
 });
 

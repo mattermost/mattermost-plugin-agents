@@ -54,13 +54,13 @@ describe('AgentMentionReminderPost', () => {
 
     test('falls back to the bot username when no display name is set', () => {
         renderPost({bot_username: 'matty'});
-        expect(screen.getByRole('link', {name: 'Click here to loop in @matty'})).not.toBeNull();
+        expect(screen.getByRole('link', {name: 'click here to loop in @matty'})).not.toBeNull();
     });
 
     test('clicking the link loops in the agent and shows a confirmation', async () => {
         renderPost({bot_username: 'matty', bot_display_name: 'Matty', target_post_id: TARGET_POST_ID});
 
-        fireEvent.click(screen.getByRole('link', {name: 'Click here to loop in @Matty'}));
+        fireEvent.click(screen.getByRole('link', {name: 'click here to loop in @Matty'}));
 
         expect(mockedDoLoopInAgent).toHaveBeenCalledWith(TARGET_POST_ID, 'matty');
         expect(await screen.findByText('Looped in @Matty.')).not.toBeNull();
@@ -69,7 +69,7 @@ describe('AgentMentionReminderPost', () => {
     test('falls back to the post id when no target post id is set', async () => {
         renderPost({bot_username: 'matty', bot_display_name: 'Matty'});
 
-        fireEvent.click(screen.getByRole('link', {name: 'Click here to loop in @Matty'}));
+        fireEvent.click(screen.getByRole('link', {name: 'click here to loop in @Matty'}));
 
         expect(mockedDoLoopInAgent).toHaveBeenCalledWith(POST_ID, 'matty');
         expect(await screen.findByText('Looped in @Matty.')).not.toBeNull();
@@ -90,7 +90,7 @@ describe('AgentMentionReminderPost', () => {
     test.each(notWellFormedTargetPostIds)('renders a plain hint when target_post_id is not well-formed: $name', ({targetPostId}) => {
         renderPost({bot_username: 'matty', bot_display_name: 'Matty', target_post_id: targetPostId});
 
-        expect(screen.queryByRole('link', {name: /Click here to loop in/})).toBeNull();
+        expect(screen.queryByRole('link', {name: /click here to loop in/})).toBeNull();
         expect(mockedDoLoopInAgent).not.toHaveBeenCalled();
         expect(screen.getByText(POST_MESSAGE)).not.toBeNull();
     });
@@ -126,7 +126,7 @@ describe('AgentMentionReminderPost', () => {
             {type},
         );
 
-        expect(screen.queryByRole('link', {name: /Click here to loop in/})).toBeNull();
+        expect(screen.queryByRole('link', {name: /click here to loop in/})).toBeNull();
         expect(mockedDoLoopInAgent).not.toHaveBeenCalled();
         expect(screen.getByText(POST_MESSAGE)).not.toBeNull();
     });
