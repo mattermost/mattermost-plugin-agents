@@ -139,7 +139,7 @@ describe('MCPServers service account headers', () => {
 
     // Rows render in DOM order: base Headers first, then Service Account headers.
     const baseHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[0];
-    const serviceAccountHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[1];
+    const serviceAccountHeaderValueInput = () => screen.getByPlaceholderText('Header value (e.g. Bearer token)');
 
     async function renderOneServer(server: MCPServerConfig) {
         const rendered = renderServers(makeMCPConfig([server]));
@@ -187,5 +187,15 @@ describe('MCPServers service account headers', () => {
         fireEvent.change(screen.getAllByPlaceholderText('Header name')[0], {target: {value: 'X-Renamed'}});
 
         expect(Object.keys(savedServer(onChange).headers)).toEqual(['X-Renamed', 'X-Second']);
+    });
+
+    test('service account header editor explains name and value are separate fields', async () => {
+        await renderOneServer(makeRemoteServer({
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        }));
+
+        expect(screen.getByPlaceholderText('Header name (e.g. Authorization)')).not.toBeNull();
+        expect(screen.getByPlaceholderText('Header value (e.g. Bearer token)')).not.toBeNull();
+        expect(screen.getByText(/Do not repeat the header name in the value/)).not.toBeNull();
     });
 });

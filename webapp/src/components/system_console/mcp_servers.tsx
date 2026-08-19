@@ -83,11 +83,17 @@ const defaultServerConfig: MCPServerConfig = {
 const HeaderMapEditor = ({
     headers,
     onChange,
+    namePlaceholder,
+    valuePlaceholder,
 }: {
     headers: {[key: string]: string};
     onChange: (headers: {[key: string]: string}) => void;
+    namePlaceholder?: string;
+    valuePlaceholder?: string;
 }) => {
     const intl = useIntl();
+    const headerNamePlaceholder = namePlaceholder ?? intl.formatMessage({defaultMessage: 'Header name'});
+    const headerValuePlaceholder = valuePlaceholder ?? intl.formatMessage({defaultMessage: 'Value'});
 
     const addHeader = () => {
         onChange({...headers, '': ''});
@@ -118,12 +124,12 @@ const HeaderMapEditor = ({
                 {Object.entries(headers).map(([key, value], index) => (
                     <HeaderRow key={index}>
                         <HeaderInput
-                            placeholder={intl.formatMessage({defaultMessage: 'Header name'})}
+                            placeholder={headerNamePlaceholder}
                             value={key}
                             onChange={(e) => updateHeader(key, e.target.value, value)}
                         />
                         <HeaderInput
-                            placeholder={intl.formatMessage({defaultMessage: 'Value'})}
+                            placeholder={headerValuePlaceholder}
                             value={value}
                             onChange={(e) => updateHeader(key, key, e.target.value)}
                         />
@@ -304,11 +310,13 @@ const MCPServer = ({
                     {intl.formatMessage({defaultMessage: 'Service Account Authentication'})}
                 </HeadersSectionTitle>
                 <SectionHelpText>
-                    {intl.formatMessage({defaultMessage: 'Static headers (for example a personal access token) sent in place of per-user OAuth when an agent has "Use service accounts for authentication" enabled. Agents using service accounts can only access servers with at least one header configured here.'})}
+                    {intl.formatMessage({defaultMessage: 'Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'})}
                 </SectionHelpText>
                 <HeaderMapEditor
                     headers={config.serviceAccountHeaders}
                     onChange={(serviceAccountHeaders) => onChange(serverIndex, {...config, serviceAccountHeaders})}
+                    namePlaceholder={intl.formatMessage({defaultMessage: 'Header name (e.g. Authorization)'})}
+                    valuePlaceholder={intl.formatMessage({defaultMessage: 'Header value (e.g. Bearer token)'})}
                 />
             </HeadersSection>
 

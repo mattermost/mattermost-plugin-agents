@@ -55,15 +55,17 @@ type RenderOpts = {
 };
 
 function renderTab({
+    agentId,
     useServiceAccountAuth = false,
     serviceAccountFieldsLocked = false,
     canEditServiceAccountAuth = true,
-}: RenderOpts = {}) {
+}: RenderOpts & {agentId?: string} = {}) {
     const onChange = jest.fn();
     return {
         ...render(
             <IntlProvider locale='en'>
                 <McpsTab
+                    agentId={agentId}
                     enabledTools={[]}
                     autoEnableNewMCPTools={true}
                     useServiceAccountAuth={useServiceAccountAuth}
@@ -248,5 +250,50 @@ describe('McpsTab', () => {
 
         expect(await screen.findByText(/^No MCP servers are configured/)).not.toBeNull();
         expect(screen.getByRole('checkbox', {name: serviceAccountToggleName})).not.toBeNull();
+    });
+
+    test('loads the service-account catalog and hides Connect while SA auth is on', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'n8n',
+                serverOrigin: 'https://n8n.example.com/mcp',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: true,
+                tools: [{name: 'workflow_list', description: '', enabled: true, policy: 'ask'}],
+            }],
+        });
+
+        renderTab({agentId: 'agent-1', useServiceAccountAuth: true});
+
+        await screen.findByText('n8n');
+        expect(mockedGetUserMCPTools).toHaveBeenCalledWith({
+            agentId: 'agent-1',
+            serviceAccount: true,
+        });
+        expect(screen.getByText('Connected')).not.toBeNull();
+        expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
+        expect(screen.getByText(/service-account catalog, not your personal MCP connections/)).not.toBeNull();
+    });
+
+    test('does not label an SA-only server as not connected', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'OAuth Only',
+                serverOrigin: 'https://oauth.example.com/mcp',
+                authenticated: false,
+                needsOAuth: true,
+                authURL: 'http://localhost/oauth/start',
+                serviceAccountConfigured: false,
+                tools: [],
+            }],
+        });
+
+        renderTab({useServiceAccountAuth: true});
+
+        await screen.findByText('OAuth Only');
+        expect(screen.getByText('No service account credentials')).not.toBeNull();
+        expect(screen.queryByText('Not connected')).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
     });
 });

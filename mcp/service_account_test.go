@@ -284,6 +284,46 @@ func TestClientManagerServiceAccountPluginServerGetsBotUserIDHeader(t *testing.T
 	}
 }
 
+func TestServerAvailableForServiceAccount(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		server ServerConfig
+		want   bool
+	}{
+		{
+			name:   "embedded server does not need SA headers",
+			server: ServerConfig{BaseURL: EmbeddedClientKey},
+			want:   true,
+		},
+		{
+			name:   "plugin server does not need SA headers",
+			server: ServerConfig{BaseURL: "plugin://com.example.mcp"},
+			want:   true,
+		},
+		{
+			name:   "remote server without SA headers is excluded",
+			server: ServerConfig{BaseURL: "https://mcp.example.com", Name: "n8n"},
+			want:   false,
+		},
+		{
+			name: "remote server with SA headers is available",
+			server: ServerConfig{
+				BaseURL:               "https://mcp.example.com",
+				ServiceAccountHeaders: testServiceAccountHeaders(),
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, ServerAvailableForServiceAccount(tt.server))
+		})
+	}
+}
+
 func cachedToolNames(tools map[string]*gomcp.Tool) []string {
 	names := make([]string, 0, len(tools))
 	for name := range tools {

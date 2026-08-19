@@ -65,6 +65,7 @@ type MCPClientManager interface {
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
 	GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors)
+	GetToolsForServiceAccount(ctx context.Context, botUserID string) ([]llm.Tool, *mcp.Errors)
 	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
 	GetConfig() mcp.Config
 

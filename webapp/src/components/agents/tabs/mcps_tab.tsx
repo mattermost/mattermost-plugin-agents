@@ -17,6 +17,7 @@ import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
 const MCPServerToolWildcard = '*';
 
 type Props = {
+    agentId?: string;
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     useServiceAccountAuth: boolean;
@@ -45,6 +46,7 @@ function serverToolsPanelId(serverOrigin: string): string {
 
 const McpsTab = (props: Props) => {
     const {
+        agentId,
         enabledTools,
         autoEnableNewMCPTools,
         useServiceAccountAuth,
@@ -66,7 +68,10 @@ const McpsTab = (props: Props) => {
             if (opts.showLoading) {
                 setLoading(true);
             }
-            const response = await getUserMCPTools();
+            const response = await getUserMCPTools({
+                agentId,
+                serviceAccount: useServiceAccountAuth,
+            });
             setServers(response.servers || []);
             setError(null);
         } catch (err) {
@@ -83,7 +88,7 @@ const McpsTab = (props: Props) => {
                 setLoading(false);
             }
         }
-    }, [intl]);
+    }, [agentId, intl, useServiceAccountAuth]);
 
     useEffect(() => {
         loadServers({showLoading: true});
@@ -177,10 +182,10 @@ const McpsTab = (props: Props) => {
         });
     }, [servers]);
 
-    // Service account agents run against the admin-provisioned catalog, which can
-    // legitimately include tools missing from the editing user's own catalog (e.g. an
-    // OAuth server this user never connected). Reconciling against it would drop valid
-    // grants, so orphan detection is skipped entirely while the flag is on.
+    // Service account agents run against the admin-provisioned catalog. That
+    // catalog is what this tab loads when the flag is on, but a failed SA
+    // connect looks like "no tools" and must not wipe grants. Skip orphan
+    // detection entirely while the flag is on.
     const orphanedTools = useMemo(() => {
         if (useServiceAccountAuth || autoEnableNewMCPTools || servers.length === 0) {
             return [];
@@ -302,6 +307,12 @@ const McpsTab = (props: Props) => {
                 disabled={toolGrantsDisabled}
             />
 
+            {useServiceAccountAuth && (
+                <AutoEnableBanner>
+                    <FormattedMessage defaultMessage="This list is the agent's service-account catalog, not your personal MCP connections. Servers that only have service account credentials show as connected here when those credentials work."/>
+                </AutoEnableBanner>
+            )}
+
             {autoEnableNewMCPTools && (
                 <AutoEnableBanner>
                     <FormattedMessage defaultMessage='Every MCP tool is enabled for this agent. Disable "Automatically enable all MCP tools" above to pick specific tools.'/>
@@ -338,7 +349,7 @@ const McpsTab = (props: Props) => {
                         {defaultMessage: 'Enable all tools for {serverName}'},
                         {serverName: server.name},
                     );
-                    const canConnect = !server.authenticated && Boolean(server.authURL);
+                    const canConnect = !useServiceAccountAuth && !server.authenticated && Boolean(server.authURL);
                     const metaDetail = (() => {
                         if (wildcardOn && totalCount === 0) {
                             return intl.formatMessage({defaultMessage: 'All tools enabled'});
@@ -383,7 +394,17 @@ const McpsTab = (props: Props) => {
                                                     <FormattedMessage defaultMessage='Connected'/>
                                                 </AuthBadge>
                                             )}
-                                            {!server.authenticated && !server.authEmail && server.tools.length === 0 && (
+                                            {useServiceAccountAuth && !server.authenticated && !server.serviceAccountConfigured && (
+                                                <NotConnectedBadge>
+                                                    <FormattedMessage defaultMessage='No service account credentials'/>
+                                                </NotConnectedBadge>
+                                            )}
+                                            {useServiceAccountAuth && !server.authenticated && Boolean(server.serviceAccountConfigured) && (
+                                                <NotConnectedBadge>
+                                                    <FormattedMessage defaultMessage="Couldn't connect"/>
+                                                </NotConnectedBadge>
+                                            )}
+                                            {!useServiceAccountAuth && !server.authenticated && !server.authEmail && server.tools.length === 0 && (
                                                 <NotConnectedBadge>
                                                     <FormattedMessage defaultMessage='Not connected'/>
                                                 </NotConnectedBadge>
@@ -421,7 +442,21 @@ const McpsTab = (props: Props) => {
                                 >
                                     {adminEnabledTools.length === 0 && wildcardOn && (
                                         <EmptyToolsNotice>
-                                            <FormattedMessage defaultMessage='This server has no tools available right now. When a user of this agent authenticates, every tool this server exposes will be enabled.'/>
+                                            {useServiceAccountAuth ? (
+                                                <FormattedMessage defaultMessage='This server has no tools available right now. When it connects with the service account, every tool it exposes will be enabled.'/>
+                                            ) : (
+                                                <FormattedMessage defaultMessage='This server has no tools available right now. When a user of this agent authenticates, every tool this server exposes will be enabled.'/>
+                                            )}
+                                        </EmptyToolsNotice>
+                                    )}
+                                    {adminEnabledTools.length === 0 && !wildcardOn && useServiceAccountAuth && !server.serviceAccountConfigured && (
+                                        <EmptyToolsNotice>
+                                            <FormattedMessage defaultMessage='This agent cannot use this server until service account credentials are added in System Console MCP settings.'/>
+                                        </EmptyToolsNotice>
+                                    )}
+                                    {adminEnabledTools.length === 0 && !wildcardOn && useServiceAccountAuth && Boolean(server.serviceAccountConfigured) && (
+                                        <EmptyToolsNotice>
+                                            <FormattedMessage defaultMessage="Couldn't connect with the configured service account credentials. Check the header values and server logs."/>
                                         </EmptyToolsNotice>
                                     )}
                                     {adminEnabledTools.length === 0 && !wildcardOn && canConnect && (

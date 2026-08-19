@@ -121,6 +121,16 @@ func (c *Client) useSharedToolsCache() bool {
 	return sharedToolsCacheAllowedForServer(c.config)
 }
 
+// ServerAvailableForServiceAccount reports whether a service-account agent can
+// use this server. Embedded and plugin MCP run as the bot and need no SA
+// headers; remote servers are fail-closed without them.
+func ServerAvailableForServiceAccount(s ServerConfig) bool {
+	if s.BaseURL == EmbeddedClientKey || strings.HasPrefix(s.BaseURL, "plugin://") {
+		return true
+	}
+	return s.HasServiceAccountAuth()
+}
+
 // remoteConnectionHeaders builds the static headers for a remote MCP connection.
 // Later layers win on key conflicts: X-Mattermost-UserID < admin Headers < ServiceAccountHeaders.
 func remoteConnectionHeaders(userID string, serverConfig ServerConfig, serviceAccount bool) map[string]string {

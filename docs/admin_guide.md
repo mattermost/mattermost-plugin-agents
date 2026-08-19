@@ -607,7 +607,12 @@ Proxied tool calls to plugin-registered MCP servers carry the authenticated Matt
 
 ### Configure OAuth-backed servers for agents
 
-When you create or edit an agent from the **Agents** page, the **MCPs** tab in the full-page agent editor lists the MCP servers available to that agent. If an OAuth-backed server is not connected for your account yet, the row shows a **Connect** button so you can complete the provider sign-in flow without leaving the editor. The MCPs tab refreshes automatically after you connect or disconnect, so you don't need to reopen it to see updated server status.
+When you create or edit an agent from the **Agents** page, the **MCPs** tab in the full-page agent editor lists the MCP servers available to that agent.
+
+- For agents using per-user authentication, if an OAuth-backed server is not connected for your account yet, the row shows a **Connect** button so you can complete the provider sign-in flow without leaving the editor.
+- For agents with **Use service accounts for authentication** enabled, the tab shows that agent's service-account catalog — not your personal connections. A server that only has service account credentials is **Connected** when those credentials work, and **Connect** is not shown. Servers without service account credentials are labeled **No service account credentials** and are excluded from the agent.
+
+The MCPs tab refreshes automatically after you connect or disconnect, and it reloads when you toggle service account authentication, so you don't need to reopen it to see updated server status.
 
 If a disconnected OAuth-backed server currently exposes no tools, you can still toggle that server on while configuring the agent. Saving the agent in this state grants the agent access to every tool that server exposes after a user connects to that provider.
 
@@ -621,7 +626,7 @@ By default, MCP tool calls run with the credentials of the user who triggered th
 
 To set it up:
 
-1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**, open the remote MCP server on the **Configuration** tab, and add the static headers the server should receive from service account agents in the **Service Account Authentication** section — for example, an `Authorization` header carrying a personal access token. Rows with a blank name or value are ignored, so a server whose entries are all blank counts as having no service account credentials. Select **Save**.
+1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**, open the remote MCP server on the **Configuration** tab, and add the static headers the server should receive from service account agents in the **Service Account Authentication** section. Put the header **name** and **value** in separate fields — for example name `Authorization` and value `Bearer <token>` or `Basic <base64>`, or a custom name such as `X-API-KEY`. Do not repeat the header name in the value. Rows with a blank name or value are ignored, so a server whose entries are all blank counts as having no service account credentials. Select **Save**.
 2. On the agent's **MCPs** tab (Agents page), turn on **Use service accounts for authentication**. Only system administrators can turn this setting on. While it is enabled, managers may still edit non-sensitive config; Access and MCP grants (including auto-enable) remain system-admin-only — see [What's editable vs locked](features/managing_agents.md#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent.
 
 The agent setting is all-or-nothing:

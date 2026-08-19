@@ -463,6 +463,7 @@ const AgentConfigView = (props: Props) => {
                     )}
                     {activeTab === 'mcps' && (
                         <McpsTab
+                            agentId={agent?.id}
                             enabledTools={draft.enabledTools}
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
                             useServiceAccountAuth={draft.useServiceAccountAuth}
