@@ -392,7 +392,7 @@ func (r *ToolRunner) runLoop(
 			// index-aligned with toolCalls here because every call failed.
 			if failedCount == deferredCount && nonDeferredCount == 0 {
 				resolvedToolCalls := buildResolvedToolCalls(toolCalls, failedResults)
-				appendToolTurnAndPost(result, &request, text.String(), reasoningData, resolvedToolCalls, failedResults, usage)
+				appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, failedResults, usage)
 				output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
 				if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
 					request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
