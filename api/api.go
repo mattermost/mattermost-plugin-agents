@@ -53,6 +53,11 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+
+	// GetServices returns a snapshot of the stored service configurations, in
+	// configuration order. The bridge service endpoints operate on this
+	// snapshot directly rather than going through an agent.
+	GetServices() []llm.ServiceConfig
 }
 
 type MCPClientManager interface {
@@ -174,11 +179,22 @@ type API struct {
 	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
 	// is the only supported entry point for tests.
 	externalRebuilderForTest externalServerRebuilder
+
+	// serviceLLMAcquirerForTest must be nil in production; it mirrors
+	// bots.MMBots.AcquireServiceLLM so tests can serve service bridge
+	// completions from a recording model instead of a provider client.
+	// SetServiceLLMAcquirerForTest is the only supported entry point.
+	serviceLLMAcquirerForTest func(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error)
 }
 
 // SetExternalRebuilderForTest installs a test-only externalServerRebuilder.
 func (a *API) SetExternalRebuilderForTest(rb externalServerRebuilder) {
 	a.externalRebuilderForTest = rb
+}
+
+// SetServiceLLMAcquirerForTest installs a test-only service LLM acquirer.
+func (a *API) SetServiceLLMAcquirerForTest(acquirer func(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error)) {
+	a.serviceLLMAcquirerForTest = acquirer
 }
 
 // New creates a new API instance

@@ -96,17 +96,16 @@ func (a *API) convertBridgePostsToInternal(req bridgeclient.CompletionRequest) (
 	return posts, nil
 }
 
-// convertLLMBridgeRequestToInternal converts the API request format to internal llm.CompletionRequest
-func (a *API) convertLLMBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, operation, operationSubType string) (llm.CompletionRequest, error) {
+// convertServiceBridgeRequestToInternal converts a service bridge request to an
+// internal llm.CompletionRequest. The service path has no agent, so the request
+// carries no bot identity.
+func (a *API) convertServiceBridgeRequestToInternal(req bridgeclient.CompletionRequest, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
 		return llm.CompletionRequest{}, err
 	}
 
-	llmContext, err := a.buildLLMBridgeContext(bot, req)
-	if err != nil {
-		return llm.CompletionRequest{}, err
-	}
+	llmContext := a.buildServiceBridgeContext(req)
 
 	resolvedOperation := operation
 	if req.Operation != "" {
@@ -125,24 +124,19 @@ func (a *API) convertLLMBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.
 	}, nil
 }
 
-// buildLLMBridgeContext builds the LLM context for bridge requests (service path).
-func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRequest) (*llm.Context, error) {
+// buildServiceBridgeContext builds the LLM context for a service bridge
+// request. user_id and channel_id are attribution only: they name the principal
+// the calling plugin is acting for, and no bot fields are set because no agent
+// is involved.
+func (a *API) buildServiceBridgeContext(req bridgeclient.CompletionRequest) *llm.Context {
 	var context *llm.Context
 	if a.contextBuilder != nil {
 		context = llm.NewContext(
 			a.contextBuilder.WithLLMContextServerInfo(),
-			a.contextBuilder.WithLLMContextBot(bot),
 			a.contextBuilder.WithLLMContextNoTools(),
 		)
 	} else {
 		context = llm.NewContext()
-		if bot != nil {
-			var botUserID string
-			if mmBot := bot.GetMMBot(); mmBot != nil {
-				botUserID = mmBot.UserId
-			}
-			context.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
-		}
 	}
 
 	if req.UserID != "" {
@@ -161,7 +155,7 @@ func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRe
 		}
 	}
 
-	return context, nil
+	return context
 }
 
 func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, operation, operationSubType string) (llm.CompletionRequest, error) {
@@ -488,15 +482,116 @@ func (a *API) getBotByAgent(agent string) (*bots.Bot, error) {
 	return bot, nil
 }
 
-// getBotByService finds a bot that uses the specified service (by ID or name)
-func (a *API) getBotByService(service string) (*bots.Bot, error) {
-	for _, bot := range a.bots.GetAllBots() {
-		botService := bot.GetService()
-		if botService.ID == service || botService.Name == service {
-			return bot, nil
+// resolveBridgeService resolves a bridge `:service` path value against a
+// snapshot of the stored service configuration.
+//
+// An exact ID match anywhere in the snapshot wins over a name match, so a
+// service can always be addressed unambiguously by ID even when another
+// service's name happens to equal that ID. Within each pass the first entry in
+// configuration order wins, which is how duplicate IDs and duplicate names
+// resolve. A service stored with a blank name is only ever reachable by ID.
+func resolveBridgeService(services []llm.ServiceConfig, value string) (llm.ServiceConfig, bool) {
+	if value == "" {
+		return llm.ServiceConfig{}, false
+	}
+	for _, svc := range services {
+		if svc.ID == value {
+			return svc, true
 		}
 	}
-	return nil, fmt.Errorf("no bot found for service: %s", service)
+	for _, svc := range services {
+		if svc.Name == value {
+			return svc, true
+		}
+	}
+	return llm.ServiceConfig{}, false
+}
+
+// acquireServiceLLM leases a language model for direct calls against svc,
+// honoring the test seam when one is installed.
+func (a *API) acquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+	if a.serviceLLMAcquirerForTest != nil {
+		return a.serviceLLMAcquirerForTest(svc, fallbacks)
+	}
+	return a.bots.AcquireServiceLLM(svc, fallbacks)
+}
+
+// prepareServiceBridgeCompletion validates a service bridge completion request,
+// resolves the requested service from stored configuration, and leases a
+// language model for it. On failure it writes the error response and reports
+// ok=false; on success the caller owns release and must call it exactly once,
+// after the response has been fully produced.
+//
+// There is deliberately no user or channel permission check here: agent ACLs
+// describe who may talk to an agent, and the service endpoints have no agent.
+// Inter-plugin trust (the Mattermost-Plugin-ID header) is the boundary, and
+// user_id / channel_id are attribution only.
+func (a *API) prepareServiceBridgeCompletion(c *gin.Context, operationSubType string) (llm.LanguageModel, llm.CompletionRequest, []llm.LanguageModelOption, func(), bool) {
+	fail := func(statusCode int, message string) (llm.LanguageModel, llm.CompletionRequest, []llm.LanguageModelOption, func(), bool) {
+		c.JSON(statusCode, bridgeclient.ErrorResponse{Error: message})
+		return nil, llm.CompletionRequest{}, nil, nil, false
+	}
+
+	service := c.Param("service")
+	if service == "" {
+		return fail(http.StatusBadRequest, "service parameter is required")
+	}
+
+	var req bridgeclient.CompletionRequest
+	if err := c.BindJSON(&req); err != nil {
+		return fail(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if len(req.Posts) == 0 {
+		return fail(http.StatusBadRequest, "posts array cannot be empty")
+	}
+
+	if req.AllowedTools != nil {
+		return fail(http.StatusBadRequest, "allowed_tools is only supported for agent completion endpoints")
+	}
+
+	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
+		return fail(statusCode, err.Error())
+	}
+
+	// One snapshot serves the whole request so resolution and the fallback
+	// chain cannot disagree about the configuration they were built from.
+	services := a.config.GetServices()
+
+	primary, found := resolveBridgeService(services, service)
+	if !found || !bots.ServiceCanServeCompletions(primary) {
+		return fail(http.StatusNotFound, fmt.Sprintf("service not found: %s", service))
+	}
+
+	// Converting the request before leasing a model keeps a malformed role,
+	// file, or JSON schema a 400 that never allocates a provider client.
+	llmRequest, err := a.convertServiceBridgeRequestToInternal(req, llm.OperationBridgeService, operationSubType)
+	if err != nil {
+		return fail(http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
+	}
+
+	opts, err := a.convertRequestToLLMOptions(req)
+	if err != nil {
+		return fail(http.StatusBadRequest, fmt.Sprintf("invalid options: %v", err))
+	}
+	opts = append(opts, llm.WithToolsDisabled())
+
+	// The primary is configured and eligible, so a broken chain is a server
+	// configuration problem rather than a missing service.
+	fallbacks, err := bots.ResolveBridgeFallbacks(services, primary)
+	if err != nil {
+		return fail(http.StatusInternalServerError, fmt.Sprintf("service %q is not usable: %v", primary.ID, err))
+	}
+
+	model, release, err := a.acquireServiceLLM(primary, fallbacks)
+	if err != nil {
+		return fail(http.StatusInternalServerError, fmt.Sprintf("failed to build a language model for service %q: %v", primary.ID, err))
+	}
+	if release == nil {
+		release = func() {}
+	}
+
+	return model, llmRequest, opts, release, true
 }
 
 // checkBridgePermissions checks usage restrictions based on the provided UserID and ChannelID.
@@ -548,10 +643,11 @@ func drainToolRunnerStream(stream *llm.TextStreamResult) error {
 }
 
 // streamLLMResponse handles streaming LLM responses as Server-Sent Events.
-// When shouldExecute is non-nil, the stream is wrapped in a toolrunner so
-// allowlisted tool calls are auto-executed and their results fed back to the
-// LLM until the model produces a final text response.
-func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, shouldExecute func(llm.ToolCall) bool, opts ...llm.LanguageModelOption) {
+// When shouldExecute is non-nil, the stream is wrapped in a toolrunner bounded
+// by maxToolTurns so allowlisted tool calls are auto-executed and their results
+// fed back to the LLM until the model produces a final text response.
+// maxToolTurns is unused when shouldExecute is nil.
+func (a *API) streamLLMResponse(c *gin.Context, model llm.LanguageModel, maxToolTurns int, llmRequest llm.CompletionRequest, shouldExecute func(llm.ToolCall) bool, opts ...llm.LanguageModelOption) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -561,12 +657,12 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 	var err error
 	if shouldExecute != nil {
 		var runResult *toolrunner.ToolRunResult
-		runResult, err = toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns())).Run(c.Request.Context(), llmRequest, shouldExecute, nil, opts...)
+		runResult, err = toolrunner.New(model, toolrunner.WithMaxRounds(maxToolTurns)).Run(c.Request.Context(), llmRequest, shouldExecute, nil, opts...)
 		if runResult != nil {
 			streamResult = runResult.Stream
 		}
 	} else {
-		streamResult, err = bot.LLM().ChatCompletion(c.Request.Context(), llmRequest, opts...)
+		streamResult, err = model.ChatCompletion(c.Request.Context(), llmRequest, opts...)
 	}
 	if err != nil {
 		// If streaming hasn't started, we can still send a JSON error
@@ -601,13 +697,14 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 	}
 }
 
-// When shouldExecute is non-nil, the call is routed through a toolrunner so
-// allowlisted tool calls are auto-executed; the runner's text stream is
-// drained into a single concatenated string before responding, mirroring
-// what ChatCompletionNoStream would have produced.
-func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, shouldExecute func(llm.ToolCall) bool, opts ...llm.LanguageModelOption) {
+// When shouldExecute is non-nil, the call is routed through a toolrunner
+// bounded by maxToolTurns so allowlisted tool calls are auto-executed; the
+// runner's text stream is drained into a single concatenated string before
+// responding, mirroring what ChatCompletionNoStream would have produced.
+// maxToolTurns is unused when shouldExecute is nil.
+func (a *API) handleNonStreamingLLMResponse(c *gin.Context, model llm.LanguageModel, maxToolTurns int, llmRequest llm.CompletionRequest, shouldExecute func(llm.ToolCall) bool, opts ...llm.LanguageModelOption) {
 	if shouldExecute == nil {
-		response, err := bot.LLM().ChatCompletionNoStream(c.Request.Context(), llmRequest, opts...)
+		response, err := model.ChatCompletionNoStream(c.Request.Context(), llmRequest, opts...)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
 				Error: fmt.Sprintf("failed to complete LLM request: %v", err),
@@ -620,7 +717,7 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 		return
 	}
 
-	runResult, err := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns())).Run(c.Request.Context(), llmRequest, shouldExecute, nil, opts...)
+	runResult, err := toolrunner.New(model, toolrunner.WithMaxRounds(maxToolTurns)).Run(c.Request.Context(), llmRequest, shouldExecute, nil, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("failed to complete LLM request: %v", err),
@@ -744,36 +841,37 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 	})
 }
 
-// handleGetServices returns all available services, optionally filtered by user permissions
+// handleGetServices returns every stored service that can serve a bridge
+// completion. Services are configuration, not agents: the optional user_id
+// query parameter is accepted and syntax-validated by middleware, but the list
+// is not filtered by agent ACLs.
 func (a *API) handleGetServices(c *gin.Context) {
-	userID := c.Query("user_id")
+	snapshot := a.config.GetServices()
 
-	// Get all unique services
-	servicesMap := make(map[string]bridgeclient.BridgeServiceInfo)
-	allBots := a.bots.GetAllBots()
+	seen := make(map[string]struct{}, len(snapshot))
+	services := make([]bridgeclient.BridgeServiceInfo, 0, len(snapshot))
+	for _, svc := range snapshot {
+		// Duplicate IDs resolve to the first configured entry, matching how
+		// completion requests resolve the same ID.
+		if _, exists := seen[svc.ID]; exists {
+			continue
+		}
+		seen[svc.ID] = struct{}{}
 
-	for _, bot := range allBots {
-		// If user_id is provided, filter by permissions
-		if userID != "" {
-			if err := a.bots.CheckUsageRestrictionsForUser(bot, userID); err != nil {
-				continue
-			}
+		if !bots.ServiceCanServeCompletions(svc) {
+			continue
+		}
+		// A service whose fallback chain is broken would fail every call, so
+		// advertising it would only produce confusing errors later.
+		if _, err := bots.ResolveBridgeFallbacks(snapshot, svc); err != nil {
+			continue
 		}
 
-		service := bot.GetService()
-		if _, exists := servicesMap[service.ID]; !exists {
-			servicesMap[service.ID] = bridgeclient.BridgeServiceInfo{
-				ID:   service.ID,
-				Name: service.Name,
-				Type: service.Type,
-			}
-		}
-	}
-
-	// Convert map to slice
-	services := make([]bridgeclient.BridgeServiceInfo, 0, len(servicesMap))
-	for _, service := range servicesMap {
-		services = append(services, service)
+		services = append(services, bridgeclient.BridgeServiceInfo{
+			ID:   svc.ID,
+			Name: svc.Name,
+			Type: svc.Type,
+		})
 	}
 
 	sort.Slice(services, func(i, j int) bool {
@@ -816,7 +914,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	}
 	defer a.cleanupBeforeHookKeys(beforeHookKeys)
 
-	a.streamLLMResponse(c, bot, llmRequest, shouldExecute, opts...)
+	a.streamLLMResponse(c, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), llmRequest, shouldExecute, opts...)
 }
 
 // handleAgentCompletionNoStream handles non-streaming completion requests for a specific agent
@@ -847,163 +945,29 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	}
 	defer a.cleanupBeforeHookKeys(beforeHookKeys)
 
-	a.handleNonStreamingLLMResponse(c, bot, llmRequest, shouldExecute, opts...)
+	a.handleNonStreamingLLMResponse(c, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), llmRequest, shouldExecute, opts...)
 }
 
 // handleServiceCompletionStreaming handles streaming completion requests for a specific service
 func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
-	service := c.Param("service")
-	if service == "" {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "service parameter is required",
-		})
+	model, llmRequest, opts, release, ok := a.prepareServiceBridgeCompletion(c, llm.SubTypeStreaming)
+	if !ok {
 		return
 	}
+	// streamLLMResponse drains the provider stream synchronously, so the lease
+	// covers the whole response.
+	defer release()
 
-	var req bridgeclient.CompletionRequest
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("invalid request body: %v", err),
-		})
-		return
-	}
-
-	if len(req.Posts) == 0 {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "posts array cannot be empty",
-		})
-		return
-	}
-
-	if req.AllowedTools != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "allowed_tools is only supported for agent completion endpoints",
-		})
-		return
-	}
-
-	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
-		c.JSON(statusCode, bridgeclient.ErrorResponse{
-			Error: err.Error(),
-		})
-		return
-	}
-
-	// Find a bot that uses the specified service (by ID or name)
-	bot, err := a.getBotByService(service)
-	if err != nil {
-		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
-			Error: err.Error(),
-		})
-		return
-	}
-
-	// Check permissions if UserID/ChannelID provided
-	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
-	if err != nil {
-		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("permission denied: %v", err),
-		})
-		return
-	}
-
-	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeStreaming)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("invalid request: %v", err),
-		})
-		return
-	}
-
-	// Convert request options
-	opts, err := a.convertRequestToLLMOptions(req)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("invalid options: %v", err),
-		})
-		return
-	}
-	opts = append(opts, llm.WithToolsDisabled())
-
-	a.streamLLMResponse(c, bot, llmRequest, nil, opts...)
+	a.streamLLMResponse(c, model, 0, llmRequest, nil, opts...)
 }
 
 // handleServiceCompletionNoStream handles non-streaming completion requests for a specific service
 func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
-	service := c.Param("service")
-	if service == "" {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "service parameter is required",
-		})
+	model, llmRequest, opts, release, ok := a.prepareServiceBridgeCompletion(c, llm.SubTypeNoStream)
+	if !ok {
 		return
 	}
+	defer release()
 
-	var req bridgeclient.CompletionRequest
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("invalid request body: %v", err),
-		})
-		return
-	}
-
-	if len(req.Posts) == 0 {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "posts array cannot be empty",
-		})
-		return
-	}
-
-	if req.AllowedTools != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "allowed_tools is only supported for agent completion endpoints",
-		})
-		return
-	}
-
-	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
-		c.JSON(statusCode, bridgeclient.ErrorResponse{
-			Error: err.Error(),
-		})
-		return
-	}
-
-	// Find a bot that uses the specified service (by ID or name)
-	bot, err := a.getBotByService(service)
-	if err != nil {
-		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
-			Error: err.Error(),
-		})
-		return
-	}
-
-	// Check permissions if UserID/ChannelID provided
-	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
-	if err != nil {
-		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("permission denied: %v", err),
-		})
-		return
-	}
-
-	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeNoStream)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("invalid request: %v", err),
-		})
-		return
-	}
-
-	// Convert request options
-	opts, err := a.convertRequestToLLMOptions(req)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("invalid options: %v", err),
-		})
-		return
-	}
-	opts = append(opts, llm.WithToolsDisabled())
-
-	a.handleNonStreamingLLMResponse(c, bot, llmRequest, nil, opts...)
+	a.handleNonStreamingLLMResponse(c, model, 0, llmRequest, nil, opts...)
 }
