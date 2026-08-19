@@ -157,6 +157,112 @@ func TestContextObserveMCPDynamicToolEventBotLabelFallbacks(t *testing.T) {
 	}
 }
 
+func TestContextResponseAttachmentBudget(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(c *Context)
+		wantSlots int
+	}{
+		{
+			name:      "unset budget defaults to the full per-post limit",
+			configure: func(*Context) {},
+			wantSlots: MaxPostAttachments,
+		},
+		{
+			name:      "positive budget is returned as-is",
+			configure: func(c *Context) { c.SetResponseAttachmentBudget(3) },
+			wantSlots: 3,
+		},
+		{
+			name:      "zero budget means no slots",
+			configure: func(c *Context) { c.SetResponseAttachmentBudget(0) },
+			wantSlots: 0,
+		},
+		{
+			name:      "negative budget means no slots",
+			configure: func(c *Context) { c.SetResponseAttachmentBudget(-4) },
+			wantSlots: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Context{}
+			tt.configure(c)
+			assert.Equal(t, tt.wantSlots, c.ResponseAttachmentSlots())
+		})
+	}
+
+	t.Run("nil receivers are safe", func(t *testing.T) {
+		var c *Context
+		c.SetResponseAttachmentBudget(5)
+		assert.Equal(t, 0, c.ResponseAttachmentSlots())
+		var tr *ToolRuntimeContext
+		tr.SetResponseAttachmentBudget(5)
+		assert.Equal(t, 0, tr.ResponseAttachmentSlots())
+	})
+}
+
+func TestContextCreatedFiles(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []CreatedFile
+		want  []CreatedFile
+	}{
+		{
+			name:  "no files added",
+			files: nil,
+			want:  nil,
+		},
+		{
+			name:  "single file",
+			files: []CreatedFile{{ID: "file1", Name: "report.md"}},
+			want:  []CreatedFile{{ID: "file1", Name: "report.md"}},
+		},
+		{
+			name: "order preserved",
+			files: []CreatedFile{
+				{ID: "file1", Name: "a.txt"},
+				{ID: "file2", Name: "b.txt"},
+				{ID: "file3", Name: "c.txt"},
+			},
+			want: []CreatedFile{
+				{ID: "file1", Name: "a.txt"},
+				{ID: "file2", Name: "b.txt"},
+				{ID: "file3", Name: "c.txt"},
+			},
+		},
+		{
+			name: "empty ID skipped",
+			files: []CreatedFile{
+				{ID: "", Name: "no-id.txt"},
+				{ID: "file1", Name: "a.txt"},
+			},
+			want: []CreatedFile{{ID: "file1", Name: "a.txt"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Context{}
+			for _, f := range tt.files {
+				c.AddCreatedFile(f)
+			}
+			assert.Equal(t, tt.want, c.CreatedFilesList())
+		})
+	}
+}
+
+func TestContextCreatedFilesNilReceiver(t *testing.T) {
+	var c *Context
+	c.AddCreatedFile(CreatedFile{ID: "file1", Name: "a.txt"})
+	assert.Nil(t, c.CreatedFilesList())
+
+	var rt *ToolRuntimeContext
+	rt.AddCreatedFile(CreatedFile{ID: "file1", Name: "a.txt"})
+	assert.Nil(t, rt.CreatedFilesList())
+}
+
 func TestContextMCPDynamicSearchLoadCallSuccessState(t *testing.T) {
 	c := &Context{}
 

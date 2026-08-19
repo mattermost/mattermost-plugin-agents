@@ -59,7 +59,7 @@ func (b *Bot) HasNativeWebSearchEnabled() bool {
 		}
 	}
 	for _, tool := range b.cfg.EnabledNativeTools {
-		if tool == "web_search" {
+		if tool == llm.NativeToolWebSearch {
 			return true
 		}
 	}

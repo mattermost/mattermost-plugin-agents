@@ -250,6 +250,68 @@ func TestToolRunner_SingleToolRound(t *testing.T) {
 	assert.Equal(t, llm.ToolCallStatusAutoApproved, botPost.ToolUse[0].Status)
 }
 
+// TestToolRunner_ServerToolActivityPersistsInToolTurn pins the fix for
+// server-tool activity being dropped at the round boundary: when a round mixes
+// provider-executed tools (EventTypeServerToolUse) with client tool calls, the
+// final activity snapshot must land on the round's ToolTurn (which is what
+// gets persisted) and the events must still be forwarded downstream.
+func TestToolRunner_ServerToolActivityPersistsInToolTurn(t *testing.T) {
+	inProgress := []llm.ServerToolUse{{
+		ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusInProgress,
+	}}
+	final := []llm.ServerToolUse{{
+		ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess, Query: "weather NYC",
+	}}
+
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeServerToolUse, Value: inProgress},
+				{Type: llm.EventTypeServerToolUse, Value: final},
+				{Type: llm.EventTypeText, Value: "Searched. Now checking the channel."},
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "get_weather", Arguments: json.RawMessage(`{"city":"NYC"}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "All done."},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	store := newTestToolStore(testToolDef{name: "get_weather", result: "72F sunny"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "What's the weather?"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	// Server-tool events must pass through to the downstream stream.
+	forwardedSnapshots := 0
+	for event := range result.Stream.Stream {
+		if event.Type == llm.EventTypeServerToolUse {
+			forwardedSnapshots++
+		}
+	}
+	assert.Equal(t, 2, forwardedSnapshots, "server tool events must be forwarded downstream")
+
+	// The round's ToolTurn must carry the FINAL activity snapshot so the
+	// persisted intermediate round keeps it after the accumulator resets.
+	require.Len(t, result.ToolTurns, 1)
+	turn := result.ToolTurns[0]
+	require.Len(t, turn.AssistantServerTools, 1)
+	assert.Equal(t, final[0], turn.AssistantServerTools[0])
+
+	// The second round had no server tools; nothing to assert there because
+	// it produced no ToolTurn (it was the final text response).
+	assert.Equal(t, 2, inner.callCount)
+}
+
 func TestToolRunner_MultipleToolRounds(t *testing.T) {
 	// Round 1: tool call -> execute -> Round 2: another tool call -> execute -> Round 3: final text.
 	inner := &testLLM{

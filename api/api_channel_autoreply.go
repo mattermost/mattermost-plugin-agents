@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -62,6 +63,7 @@ func (a *API) handleGetChannelAutoReply(c *gin.Context) {
 func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	audit.AddParam(auditRec(c), audit.KeyChannelID, channel.Id)
 
 	var perm *model.Permission
 	switch channel.Type {
@@ -89,6 +91,13 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 		}
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
+	}
+
+	// Body values are recorded before validation so fail records carry them
+	// too; TruncateID clamps them since they are unvalidated request input.
+	audit.AddParam(auditRec(c), "mode", audit.TruncateID(req.Mode))
+	if req.BotID != "" {
+		audit.AddParam(auditRec(c), "bot_user_id", audit.TruncateID(req.BotID))
 	}
 
 	var saved ChannelAutoReply

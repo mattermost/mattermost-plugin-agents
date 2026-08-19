@@ -279,6 +279,9 @@ func (c *Conversations) handleMentionViaConversation(
 	if allowToolsInChannel && !channelToolsAutoRunEverywhereOnly {
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextInteractive())
 	}
+	// Unconditional: disabled-tools contexts are already gated by the
+	// toolsDisabled machinery below.
+	extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextResponseFiles())
 	// Build the context once WITH tools so the system prompt can reference
 	// .Tools and .DisabledToolsInfo.
 	llmContext := c.buildConversationContextWithTools(
@@ -396,6 +399,7 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	stream := decorateStreamWithWebSearchAnnotations(result.Stream, llmContext)
+	stream = c.decorateStreamWithCreatedFiles(stream, responsePost, nil, llmContext)
 
 	if streamErr := c.streamResponseToExistingPost(ctx, stream, responsePost, postingUser, channel); streamErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
@@ -428,7 +432,10 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
 func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
-	extraOpts := []llm.ContextOption{c.contextBuilder.WithLLMContextInteractive()}
+	extraOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextInteractive(),
+		c.contextBuilder.WithLLMContextResponseFiles(),
+	}
 	if webSearchParams := c.extractWebSearchContext(post); len(webSearchParams) > 0 {
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
@@ -479,7 +486,9 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 		return fmt.Errorf("unable to process DM request: %w", err)
 	}
 
-	if streamErr := c.streamResponseToExistingPost(ctx, dmStream.Stream, responsePost, postingUser, channel); streamErr != nil {
+	stream := c.decorateStreamWithCreatedFiles(dmStream.Stream, responsePost, nil, llmContext)
+
+	if streamErr := c.streamResponseToExistingPost(ctx, stream, responsePost, postingUser, channel); streamErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}

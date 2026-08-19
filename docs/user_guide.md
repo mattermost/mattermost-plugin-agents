@@ -120,6 +120,14 @@ Tool availability depends on your user permissions, provider connection status, 
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 
+### Ask agents to create files
+
+You can ask an agent to produce content as a file instead of pasting it into the chat. For example, ask for "the meeting notes as a markdown file" or "a Python script that parses this log, as a file". The agent creates the files and attaches them to its reply, so you can download or share them like any other Mattermost attachment.
+
+File creation supports text-based formats — the file name's extension determines the file type (such as `.md`, `.csv`, `.py`, or `.html`) — and an agent can attach up to 10 files to a single reply, with each file's content limited by the server's maximum file size setting. In direct messages, file creation is always available. In channels, it follows the same admin setting as other channel tool calling (see [Use tools](#use-tools)).
+
+Agents can also attach created files to posts they make on your behalf. When you ask an agent to post a message for you using the create-post tooling, it can include files it generates inline, and those files are attached to the new post.
+
 ## Analyze threads and channels
 
 ### Summarize discussion threads

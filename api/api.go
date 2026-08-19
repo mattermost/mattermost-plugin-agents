@@ -60,16 +60,17 @@ type MCPClientManager interface {
 	GetOAuthManager() *mcp.OAuthManager
 	GetToolsCache() *mcp.ToolsCache
 	GetHTTPClient() *http.Client
-	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
-	DisconnectUserOAuth(userID, serverName string) error
+	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*mcp.OAuthSession, error)
+	DisconnectUserOAuth(ctx context.Context, userID, serverName string) error
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
-	EnsureMCPSessionID(userID string) (string, error)
+	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
 	GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors)
 	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
 	GetConfig() mcp.Config
 
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
+	UpdatePluginServer(cfg mcp.PluginServerConfig)
 	UnregisterPluginServer(pluginID string)
 	ListPluginServers() []mcp.PluginServerConfig
 	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
@@ -176,6 +177,11 @@ type API struct {
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
 	autoReplyStore        ChannelAutoReplyStore
+	mcpRequestLimiter     *mcpRequestLimiter
+
+	// auditEvents maps gin handler names to audit event names for routes
+	// that emit server audit records. Built once in New; read-only after.
+	auditEvents map[string]string
 
 	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
 	// is the only supported entry point for tests.
@@ -219,7 +225,8 @@ func New(
 	customPromptsStore *customprompts.Store,
 	autoReplyStore ChannelAutoReplyStore,
 ) *API {
-	return &API{
+	a := &API{
+		mcpRequestLimiter:     newMCPRequestLimiter(),
 		bots:                  bots,
 		conversationsService:  conversationsService,
 		meetingsService:       meetingsService,
@@ -253,6 +260,8 @@ func New(
 		customPromptsStore:    customPromptsStore,
 		autoReplyStore:        autoReplyStore,
 	}
+	a.auditEvents = buildAuditEventRegistry(a)
+	return a
 }
 
 // SetConversationService sets the conversation entity service for channel analysis.
@@ -266,6 +275,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.Use(otelgin.Middleware("mattermost-ai-agents"))
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
+	router.Use(a.auditMiddleware(c))
 
 	// LLM Bridge API v1 routes - inter-plugin only
 	llmBridgeRoute := router.Group("/bridge/v1")
@@ -292,7 +302,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 		// Store plugin.Context in gin.Context for MCP endpoints
 		mcpServerGroup.Use(func(gc *gin.Context) {
-			gc.Set("pluginContext", c)
+			gc.Set(pluginContextGinKey, c)
 			gc.Next()
 		})
 

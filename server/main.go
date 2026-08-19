@@ -429,7 +429,6 @@ func (p *Plugin) OnActivate() error {
 		bots,
 		i18nBundle,
 		metricsService,
-		dbClient,
 		contextBuilder,
 		conversationsService,
 	)

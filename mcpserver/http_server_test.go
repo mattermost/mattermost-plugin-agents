@@ -4,13 +4,16 @@
 package mcpserver_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -604,6 +607,149 @@ func TestStreamableHTTPServerIntegration(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Contains(t, resp.Header.Get("WWW-Authenticate"), "Bearer resource_metadata=")
+}
+
+// bearerTokenTransport injects the Authorization header so the go-sdk client
+// can pass the server's auth middleware.
+type bearerTokenTransport struct {
+	token string
+}
+
+func (b *bearerTokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+b.token)
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+// TestHTTPServerProtocolVersionNegotiation verifies the MCP protocol version
+// negotiated on the /mcp endpoint: stateful sessions negotiate 2025-11-25,
+// while stateless mode additionally serves the latest 2026-07-28.
+func TestHTTPServerProtocolVersionNegotiation(t *testing.T) {
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+
+	tests := []struct {
+		name            string
+		stateless       bool
+		expectedVersion string
+	}{
+		{
+			name:            "StatefulNegotiates20251125",
+			stateless:       false,
+			expectedVersion: "2025-11-25",
+		},
+		{
+			name:            "StatelessNegotiates20260728",
+			stateless:       true,
+			expectedVersion: "2026-07-28",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := mcpserver.HTTPConfig{
+				BaseConfig: mcpserver.BaseConfig{
+					MMServerURL: suite.serverURL,
+					DevMode:     false,
+				},
+				HTTPPort:     8080,
+				HTTPBindAddr: "127.0.0.1",
+				Stateless:    tt.stateless,
+			}
+
+			server, err := mcpserver.NewHTTPServer(config, suite.logger)
+			require.NoError(t, err)
+
+			testServer := httptest.NewServer(server.GetTestHandler())
+			defer testServer.Close()
+
+			// Bound the subtest so a wedged /mcp endpoint fails fast instead
+			// of hanging until the package test timeout.
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			client := mcp.NewClient(&mcp.Implementation{Name: "protocol-version-test", Version: "1.0"}, nil)
+			session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+				Endpoint: testServer.URL + "/mcp",
+				HTTPClient: &http.Client{
+					Transport: &bearerTokenTransport{token: suite.adminToken},
+				},
+			}, nil)
+			require.NoError(t, err)
+			defer session.Close()
+
+			require.Equal(t, tt.expectedVersion, session.InitializeResult().ProtocolVersion)
+
+			toolsRes, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+			require.NoError(t, err)
+			require.NotEmpty(t, toolsRes.Tools)
+		})
+	}
+}
+
+// TestHTTPServerHostValidation verifies the DNS-rebinding host check that
+// replaces the SDK's SSE-only localhost protection: on loopback connections,
+// loopback Hosts and the configured public hosts (SiteURL / MMServerURL) are
+// accepted, while unknown Hosts are rejected with 403 before authentication.
+func TestHTTPServerHostValidation(t *testing.T) {
+	config := mcpserver.HTTPConfig{
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: "http://mattermost.internal:8065",
+		},
+		HTTPPort:     8080,
+		HTTPBindAddr: "127.0.0.1",
+		SiteURL:      "https://mcp.public.example.com",
+	}
+	server, err := mcpserver.NewHTTPServer(config, nil)
+	require.NoError(t, err)
+
+	testServer := httptest.NewServer(server.GetTestHandler())
+	defer testServer.Close()
+
+	tests := []struct {
+		name       string
+		host       string // empty = keep the default loopback host
+		wantStatus int
+	}{
+		{
+			name:       "loopback host is accepted",
+			wantStatus: http.StatusUnauthorized, // passes host check, fails auth
+		},
+		{
+			name:       "configured site-url host is accepted (reverse proxy)",
+			host:       "mcp.public.example.com",
+			wantStatus: http.StatusUnauthorized, // passes host check, fails auth
+		},
+		{
+			name:       "configured mattermost host is accepted",
+			host:       "mattermost.internal:8065",
+			wantStatus: http.StatusUnauthorized, // passes host check, fails auth
+		},
+		{
+			name:       "unknown host is rejected",
+			host:       "evil.example.com",
+			wantStatus: http.StatusForbidden,
+		},
+	}
+
+	// Both MCP endpoints must behave identically: the SDK's own
+	// loopback-only checks are disabled in favor of the middleware's
+	// allowlist on /sse (SSE handler) and /mcp (streamable handler) alike.
+	for _, endpoint := range []string{"/sse", "/mcp"} {
+		for _, tt := range tests {
+			t.Run(endpoint+" "+tt.name, func(t *testing.T) {
+				req, err := http.NewRequest(http.MethodGet, testServer.URL+endpoint, nil)
+				require.NoError(t, err)
+				if tt.host != "" {
+					req.Host = tt.host
+				}
+				resp, err := http.DefaultClient.Do(req)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = resp.Body.Close() })
+				require.Equal(t, tt.wantStatus, resp.StatusCode)
+			})
+		}
+	}
 }
 
 // TestConfigurationMethods tests configuration getter methods

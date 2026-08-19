@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -564,4 +565,102 @@ func TestPutChannelAutoReplyPersistsAndPublishes(t *testing.T) {
 		require.NotNil(t, events[2].broadcast)
 		require.Equal(t, "channelid", events[2].broadcast.ChannelId)
 	})
+}
+
+// TestChannelAutoReplyAuditRecords pins the audit contract for the auto-reply
+// routes: the PUT is registered in the audit event registry (successes and
+// denials both emit a record, enriched with the channel and requested
+// setting), while the read-only GET stays unaudited per the registry's
+// per-route opt-in philosophy.
+func TestChannelAutoReplyAuditRecords(t *testing.T) {
+	putBody := fmt.Sprintf(`{"bot_id":%q,"mode":"root_posts"}`, testBotUserID)
+
+	tests := []struct {
+		name           string
+		method         string
+		body           string
+		envSetup       func(e *TestEnvironment)
+		expectedStatus int
+		validate       func(t *testing.T, records []*model.AuditRecord)
+	}{
+		{
+			name:   "enabling emits a success record with channel, mode, and bot",
+			method: http.MethodPut,
+			body:   putBody,
+			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, records []*model.AuditRecord) {
+				require.Len(t, records, 1)
+				rec := records[0]
+				require.Equal(t, AuditEventUpdateChannelAutoReply, rec.EventName)
+				require.Equal(t, model.AuditStatusSuccess, rec.Status)
+				require.Equal(t, "userid", rec.Actor.UserId)
+				require.Equal(t, "channelid", rec.EventData.Parameters[audit.KeyChannelID])
+				require.Equal(t, "root_posts", rec.EventData.Parameters["mode"])
+				require.Equal(t, testBotUserID, rec.EventData.Parameters["bot_user_id"])
+			},
+		},
+		{
+			name:   "turning off emits a success record without a bot id",
+			method: http.MethodPut,
+			body:   `{"bot_id":"","mode":"off"}`,
+			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, records []*model.AuditRecord) {
+				require.Len(t, records, 1)
+				rec := records[0]
+				require.Equal(t, model.AuditStatusSuccess, rec.Status)
+				require.Equal(t, "off", rec.EventData.Parameters["mode"])
+				require.NotContains(t, rec.EventData.Parameters, "bot_user_id")
+			},
+		},
+		{
+			name:   "denied write emits a fail record with the status code",
+			method: http.MethodPut,
+			body:   putBody,
+			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(false)
+			},
+			expectedStatus: http.StatusForbidden,
+			validate: func(t *testing.T, records []*model.AuditRecord) {
+				require.Len(t, records, 1)
+				rec := records[0]
+				require.Equal(t, AuditEventUpdateChannelAutoReply, rec.EventName)
+				require.Equal(t, model.AuditStatusFail, rec.Status)
+				require.Equal(t, http.StatusForbidden, rec.Error.Code)
+				require.Equal(t, "channelid", rec.EventData.Parameters[audit.KeyChannelID])
+			},
+		},
+		{
+			name:   "read emits no audit record",
+			method: http.MethodGet,
+			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+			},
+			expectedStatus: http.StatusOK,
+			validate: func(t *testing.T, records []*model.AuditRecord) {
+				require.Empty(t, records, "read-only routes must not emit audit records")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupChannelAutoReplyTest(t, model.ChannelTypeOpen)
+			defer e.Cleanup(t)
+			tc.envSetup(e)
+			records := e.CaptureAuditRecords()
+
+			resp := e.doChannelAutoReplyRequest(t, tc.method, tc.body)
+			require.Equal(t, tc.expectedStatus, resp.StatusCode)
+			tc.validate(t, *records)
+		})
+	}
 }
