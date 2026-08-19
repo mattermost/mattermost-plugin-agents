@@ -65,8 +65,14 @@ export type UserAgent = {
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
-    structuredOutputEnabled: boolean;
     maxToolTurns: number;
+
+    /**
+     * @deprecated Structured output is configured per service
+     * (LLMService.structuredOutputPolicy), not per agent. The backend still
+     * returns this field for older clients; the UI ignores it.
+     */
+    structuredOutputEnabled?: boolean;
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
@@ -110,7 +116,6 @@ export type CreateAgentRequest = {
     reasoningEnabled?: boolean;
     reasoningEffort?: string;
     thinkingBudget?: number;
-    structuredOutputEnabled?: boolean;
     maxToolTurns?: number;
 }
 
@@ -140,7 +145,6 @@ export type UpdateAgentRequest = {
     reasoningEnabled?: boolean;
     reasoningEffort?: string;
     thinkingBudget?: number;
-    structuredOutputEnabled?: boolean;
     maxToolTurns?: number;
 }
 

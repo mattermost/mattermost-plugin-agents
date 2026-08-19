@@ -52,7 +52,6 @@ export type AgentDraft = {
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
-    structuredOutputEnabled: boolean;
     maxToolTurns: number;
 }
 
@@ -77,7 +76,6 @@ const emptyDraft: AgentDraft = {
     reasoningEnabled: true,
     reasoningEffort: 'medium',
     thinkingBudget: 0,
-    structuredOutputEnabled: false,
     maxToolTurns: DefaultMaxToolTurns,
 };
 
@@ -123,7 +121,6 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         reasoningEnabled: draft.reasoningEnabled,
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
-        structuredOutputEnabled: draft.structuredOutputEnabled,
         maxToolTurns: draft.maxToolTurns,
     };
 }
@@ -154,7 +151,6 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         reasoningEnabled: draft.reasoningEnabled,
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
-        structuredOutputEnabled: draft.structuredOutputEnabled,
         maxToolTurns: draft.maxToolTurns,
     };
 }
@@ -181,7 +177,6 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         reasoningEnabled: agent.reasoningEnabled ?? true,
         reasoningEffort: agent.reasoningEffort || 'medium',
         thinkingBudget: agent.thinkingBudget ?? 0,
-        structuredOutputEnabled: agent.structuredOutputEnabled ?? false,
         maxToolTurns: agent.maxToolTurns && agent.maxToolTurns > 0 ? agent.maxToolTurns : DefaultMaxToolTurns,
     };
 }

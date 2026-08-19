@@ -31,6 +31,7 @@ const defaultNewService: LLMService = {
     vertexProjectNumber: '',
     vertexAuthCredentials: '',
     fallbackServiceID: '',
+    structuredOutputPolicy: '',
 };
 
 export const firstNewService = {
