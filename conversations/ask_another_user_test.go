@@ -1567,16 +1567,15 @@ func TestHandleAskUserResponseTerminalOutcomes(t *testing.T) {
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
 			if tc.cancelAtClaim {
-				mmClient.On("KVCompareAndSet", "askclaim_answer_ask-1", mock.Anything, mock.Anything).
-					Run(func(mock.Arguments) {
-						canceledBlocks := append([]conversation.ContentBlock(nil), blocks...)
-						canceledBlocks[0].Status = conversation.StatusSuccess
-						canceledContent, marshalErr := json.Marshal(canceledBlocks)
-						require.NoError(t, marshalErr)
-						require.NoError(t, convStore.UpdateTurnContent("assistant-turn", canceledContent))
-						writeSeedResult()
-					}).
+				mmClient.On("KVCompareAndSet", "askclaim_answer_ask-1", mock.Anything, []byte(AskUserActionAnswer)).
 					Return(false, nil).
+					Once()
+				mmClient.On("KVGet", "askclaim_answer_ask-1", mock.AnythingOfType("*[]uint8")).
+					Run(func(args mock.Arguments) {
+						resolution := args.Get(1).(*[]byte)
+						*resolution = []byte(AskUserStatusCanceled)
+					}).
+					Return(nil).
 					Once()
 			}
 
@@ -1608,7 +1607,11 @@ func TestHandleAskUserResponseTerminalOutcomes(t *testing.T) {
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
-			require.Len(t, turns, 2, "the stale response must not append another tool_result turn")
+			wantTurns := 2
+			if tc.cancelAtClaim {
+				wantTurns = 1
+			}
+			require.Len(t, turns, wantTurns, "the stale response must not append another tool_result turn")
 			assert.Empty(t, lm.requests, "the stale response must not stream a second follow-up")
 		})
 	}
@@ -1820,7 +1823,7 @@ func TestHandleAskUserCancel(t *testing.T) {
 				mmClient.On("LogWarn", logArgs...).Maybe().Return()
 			}
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
-			mmClient.On("KVCompareAndSet", "askclaim_answer_ask-1", mock.Anything, mock.Anything).
+			mmClient.On("KVCompareAndSet", "askclaim_answer_ask-1", mock.Anything, []byte(AskUserStatusCanceled)).
 				Maybe().Return(!tc.claimTaken, nil)
 			mmClient.On("KVGet", askCardKVPrefix+"ask-1", mock.Anything).Maybe().
 				Run(func(args mock.Arguments) {

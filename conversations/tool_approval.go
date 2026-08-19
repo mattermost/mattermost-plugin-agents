@@ -214,7 +214,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// block), and this CAS closes the concurrent window (two tabs,
 			// two HA nodes) in which both requests read the block as pending
 			// — only the claim winner sends the card.
-			won, claimErr := c.claimAskToolUse(askClaimStageDispatch, block.ID)
+			won, claimErr := c.claimAskToolUse(askClaimStageDispatch, block.ID, askClaimStageDispatch)
 			if claimErr != nil {
 				return fmt.Errorf("failed to claim deferred dispatch: %w", claimErr)
 			}

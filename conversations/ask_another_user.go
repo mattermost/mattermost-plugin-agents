@@ -460,8 +460,8 @@ const (
 // nodes) can both pass the status check; exactly one of them wins this claim.
 // A KV error counts as a failed claim: it is logged here and returned so the
 // caller can surface it instead of proceeding to a possible double-write.
-func (c *Conversations) claimAskToolUse(stage, toolUseID string) (bool, error) {
-	won, err := c.mmClient.KVCompareAndSet("askclaim_"+stage+"_"+toolUseID, nil, []byte("1"))
+func (c *Conversations) claimAskToolUse(stage, toolUseID, resolution string) (bool, error) {
+	won, err := c.mmClient.KVCompareAndSet("askclaim_"+stage+"_"+toolUseID, nil, []byte(resolution))
 	if err != nil {
 		c.mmClient.LogError("Failed to claim ask tool_use transition",
 			"stage", stage,
@@ -471,6 +471,18 @@ func (c *Conversations) claimAskToolUse(stage, toolUseID string) (bool, error) {
 		return false, err
 	}
 	return won, nil
+}
+
+// askToolUseClaimResolution returns the resolution that won a one-shot
+// transition claim. Recording the winner in the atomic claim closes the
+// window where a losing answer could observe the claim before the winner's
+// tool_result turn was persisted.
+func (c *Conversations) askToolUseClaimResolution(stage, toolUseID string) (string, error) {
+	var resolution []byte
+	if err := c.mmClient.KVGet("askclaim_"+stage+"_"+toolUseID, &resolution); err != nil {
+		return "", err
+	}
+	return string(resolution), nil
 }
 
 // publishConversationUpdated tells webapp clients to refetch the
@@ -595,19 +607,18 @@ func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string
 	// block as waiting and double-write the result turn. The claim comes
 	// AFTER answer validation so an invalid answer never burns it — the
 	// question must stay answerable after a validation error.
-	won, claimErr := c.claimAskToolUse(askClaimStageAnswer, toolUseID)
+	won, claimErr := c.claimAskToolUse(askClaimStageAnswer, toolUseID, req.Action)
 	if claimErr != nil {
 		return "", fmt.Errorf("failed to claim the question: %w", claimErr)
 	}
 	if !won {
-		// The shared claim only says another resolution won. Re-read the
-		// durable result to distinguish a cancel (successful no-op for this
-		// stale response) from a duplicate answer/decline (conflict).
-		latestTurns, turnsErr := c.convService.GetTurns(convID)
-		if turnsErr != nil {
-			return "", fmt.Errorf("failed to inspect the resolved question: %w", turnsErr)
+		// The claim records which resolution won, so a cancel is a successful
+		// no-op even before its tool_result turn has finished persisting.
+		resolution, resolutionErr := c.askToolUseClaimResolution(askClaimStageAnswer, toolUseID)
+		if resolutionErr != nil {
+			return "", fmt.Errorf("failed to inspect the resolved question: %w", resolutionErr)
 		}
-		if askUserResultWasCanceled(latestTurns, toolUseID) {
+		if resolution == AskUserStatusCanceled {
 			return AskUserStatusCanceled, nil
 		}
 		return "", ErrAskNotPending
@@ -858,7 +869,7 @@ func (c *Conversations) HandleAskUserCancel(ctx context.Context, userID string, 
 	// Atomic claim on the SAME key as answer/decline: exactly one of
 	// {answer, decline, cancel} resolves this question. Losing means the
 	// other resolution already happened.
-	won, claimErr := c.claimAskToolUse(askClaimStageAnswer, toolUseID)
+	won, claimErr := c.claimAskToolUse(askClaimStageAnswer, toolUseID, AskUserStatusCanceled)
 	if claimErr != nil {
 		return fmt.Errorf("failed to claim the question: %w", claimErr)
 	}
