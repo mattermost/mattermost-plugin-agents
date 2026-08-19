@@ -121,13 +121,13 @@ Defaults that ship with v2.0.0 differ from v1.x in the following ways. None of t
 | OpenAI direct: Responses API | Toggle, off-by-default | **Always on (no toggle)** | OpenAI service type only |
 | Native web search (per agent) | Off | **On for new agents** | Capable providers: OpenAI, Azure OpenAI, Anthropic, Google Gemini, Google Vertex AI. Native tools are filtered out at request time for Bedrock, Cohere, Mistral, and Scale-backed services. |
 | Extended reasoning / thinking (per agent) | Off | **On for new and migrated agents** (migration 000006 backfills `ReasoningEnabled=true`) | Capable providers (same scope as native web search) |
-| Structured output (per agent) | Off | **Off** (default `false` in both migration 000006 and the Agents UI's `emptyDraft`, for both new and migrated agents) | Capable providers: OpenAI, OpenAI Compatible, Azure OpenAI, Anthropic |
+| Structured output (per agent) | Off | **Deprecated** — the per-agent toggle has been removed and the stored value (migration 000006 column `StructuredOutputEnabled`, default `false`) is ignored at runtime. Structured output is now a per-service policy; see [Structured output](admin_guide.md#structured-output) in the Admin Guide. | All providers |
 
 > **Migrated agents and native web search.** The migration 000006 backfill leaves `EnabledNativeTools = '[]'` for existing agent rows. Agents that were migrated from `config.bots` therefore do not automatically gain native web search at upgrade time. To enable native web search for a migrated agent, edit the agent on the **Agents** page and turn on **Enable Web Search** under the **Configuration** tab.
 
 > **Reasoning is on by default for migrated agents.** Migration 000006 backfills `ReasoningEnabled = true` for existing rows. If your environment relies on agents *not* using extended thinking — for example, to reduce token spend or to keep latency predictable for a particular agent — explicitly turn off **Reasoning Enabled** on each affected agent after the upgrade.
 
-> **Anthropic structured output and extended thinking.** Both toggles can be enabled on the same agent. Because Anthropic doesn't support extended thinking together with structured output, requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
+> **Anthropic structured output and extended thinking.** Anthropic doesn't support extended thinking together with native structured output on the same request, so requests that send a JSON schema natively skip extended thinking for that request; all other requests keep using it. Whether the schema is sent natively is governed by the service's structured output policy.
 
 ## 7. Step-by-step upgrade procedure
 

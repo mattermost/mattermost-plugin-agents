@@ -100,9 +100,10 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
 | **Native provider tools** | Available when the selected provider exposes native tools (Anthropic, OpenAI on Responses API, Gemini, Vertex AI, and OpenAI Compatible/Azure when **Use Responses API** is on). Pick which native tools (such as web search) the agent may use. |
 | **Reasoning** | Available for Anthropic, OpenAI (Responses API), Gemini, and Vertex AI services. Lets you enable extended thinking and pick a reasoning effort or thinking budget. |
-| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure services. When enabled and a JSON schema is supplied at request time, the model returns valid JSON matching the schema. For Anthropic services, **Structured Output** and extended thinking can both stay enabled; because Anthropic doesn't support both on the same request, requests that ask for structured JSON output skip extended thinking while all other requests keep using it. |
 
-Switching the **AI Service** to a service of a different type clears the model field and resets the native tools, reasoning, thinking budget, and structured output fields back to defaults so you don't carry stale provider-specific values across providers. Switching between two services of the same type (for example two OpenAI Compatible entries) preserves those fields.
+Structured output is not configured on the agent. How a request-time JSON schema is fulfilled (native provider structured output versus a prompt-based fallback) is controlled by the **Structured output** policy on the service, configured in **System Console > Plugins > Agents**; see [Structured output](../admin_guide.md#structured-output) in the Admin Guide. The deprecated per-agent `structuredOutputEnabled` API property and database column are still accepted for compatibility but are ignored at runtime.
+
+Switching the **AI Service** to a service of a different type clears the model field and resets the native tools, reasoning, and thinking budget fields back to defaults so you don't carry stale provider-specific values across providers. Switching between two services of the same type (for example two OpenAI Compatible entries) preserves those fields.
 
 If the form is invalid when you select **Save**, validation errors are shown inline (display name required, username required and must match the allowed pattern, AI Service required) and the editor returns to the Configuration tab.
 
@@ -151,7 +152,7 @@ API clients can set `mcpDynamicToolLoading` on `POST /agents` and `PUT /agents/:
 
 ### What's editable vs locked
 
-- **Display name**, **avatar**, **service**, **model**, **max tool turns**, **custom instructions**, **vision**, **tools**, **native tools**, **reasoning**, **structured output**, **channel access**, **user access**, **agent admins**, and the **MCP tool grants** can all be changed at any time.
+- **Display name**, **avatar**, **service**, **model**, **max tool turns**, **custom instructions**, **vision**, **tools**, **native tools**, **reasoning**, **channel access**, **user access**, **agent admins**, and the **MCP tool grants** can all be changed at any time.
 - **Agent username is permanent.** Once the agent is created, the username field is disabled in the editor. The Mattermost bot account is keyed off this username, and changing it would orphan existing `@mentions` and conversation history. To use a different username, create a new agent.
 
 ### Unsaved-changes warning
