@@ -47,6 +47,10 @@ jest.mock('@/client/access_control', () => ({
 
 const client = jest.requireMock('@/client/access_control') as Record<string, jest.Mock>;
 
+const FakeTableEditor = ({value}: {value: string}) => (
+    <div data-testid='table-editor'>{value}</div>
+);
+
 const FakeCELEditor = ({value}: {value: string}) => (
     <div data-testid='cel-editor'>{value}</div>
 );
@@ -84,7 +88,7 @@ beforeEach(() => {
     client.getServiceAccessPolicy.mockImplementation((id: string) => Promise.resolve(policyFor(id)));
     client.getAccessControlFields.mockResolvedValue([]);
     (window as unknown as {Components?: Record<string, unknown>}).Components = {
-        AccessControlTableEditor: FakeCELEditor,
+        AccessControlTableEditor: FakeTableEditor,
         AccessControlCELEditor: FakeCELEditor,
     };
 });
@@ -101,7 +105,7 @@ describe('ConsolePolicySection', () => {
         const {rerender} = renderSection('serviceidaaaaaaaaaaaaaaaaa');
 
         fireEvent.click(screen.getByText('Access policy'));
-        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
 
         fireEvent.click(screen.getByText('Remove policy'));
         expect(screen.getByText('Remove access policy?')).toBeTruthy();
@@ -118,7 +122,7 @@ describe('ConsolePolicySection', () => {
 
         // Dialog gone; the new resource's editor loads fresh.
         expect(screen.queryByText('Remove access policy?')).toBeNull();
-        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
         expect(client.getServiceAccessPolicy).toHaveBeenCalledWith('serviceidbbbbbbbbbbbbbbbbb');
 
         // Nothing (neither the old dialog's confirm nor anything else) may
@@ -135,6 +139,7 @@ describe('ConsolePolicySection', () => {
         fireEvent.click(screen.getByText('Access policy'));
 
         expect(await screen.findByText("Access policies aren't available for this service because it has a legacy ID.")).toBeTruthy();
+        expect(screen.queryByTestId('table-editor')).toBeNull();
         expect(screen.queryByTestId('cel-editor')).toBeNull();
         expect(client.getServiceAccessPolicy).not.toHaveBeenCalled();
     });
@@ -153,7 +158,23 @@ describe('ConsolePolicySection', () => {
         fireEvent.click(screen.getByText('Access policy'));
 
         expect(await screen.findByText("Access policies aren't available for this MCP server because it has a legacy ID.")).toBeTruthy();
+        expect(screen.queryByTestId('table-editor')).toBeNull();
         expect(screen.queryByTestId('cel-editor')).toBeNull();
         expect(client.getMCPServerAccessPolicy).not.toHaveBeenCalled();
+    });
+
+    test('sysadmins get Simple and Advanced editors, starting in Simple', async () => {
+        renderSection('serviceidaaaaaaaaaaaaaaaaa');
+
+        fireEvent.click(screen.getByText('Access policy'));
+
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+        expect(screen.getByText('Simple')).toBeTruthy();
+        expect(screen.getByText('Advanced')).toBeTruthy();
+        expect(screen.queryByTestId('cel-editor')).toBeNull();
+
+        fireEvent.click(screen.getByText('Advanced'));
+        expect(await screen.findByTestId('cel-editor')).toBeTruthy();
+        expect(screen.queryByTestId('table-editor')).toBeNull();
     });
 });

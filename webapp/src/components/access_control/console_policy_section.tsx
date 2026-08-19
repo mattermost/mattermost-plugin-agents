@@ -35,7 +35,8 @@ function legacyIDNote(resourceType: PolicyResourceType) {
 }
 
 // ConsolePolicySection is the collapsible "Access policy" block on the system
-// console service and MCP server panels; admin-only, CEL editor only.
+// console service and MCP server panels; admin-only, with Simple (table) and
+// Advanced (CEL) editors matching the sysadmin agent Access tab.
 // Callers render it only for entries with a persisted id (minted server-side
 // on save), so policy PUTs can never orphan a policy against an unsaved
 // resource. Persisted legacy IDs get an explanatory note instead.
@@ -74,7 +75,7 @@ const ConsolePolicySection = (props: Props) => {
                             resourceType={resourceType}
                             resourceId={resourceId}
                             resourceDisplayName={resourceDisplayName}
-                            allowSimplified={false}
+                            allowSimplified={true}
                             allowAdvanced={true}
                         />
                     ) : (

@@ -33,10 +33,12 @@ export type PolicyEditorProps = {
     resourceId: string;
     resourceDisplayName: string;
 
-    // Agent tab: simplified (table) editor for creators/agent admins.
+    // Table (Simple) editor. Used on the agent Access tab and the system
+    // console service/MCP panels.
     allowSimplified: boolean;
 
-    // System admins additionally get the advanced (CEL) editor.
+    // CEL (Advanced) editor. System admins only; used for expressions the
+    // table can't display.
     allowAdvanced: boolean;
 
     // Forwarded as ?agent_id= on CEL calls (per-agent-admin authz lane).
