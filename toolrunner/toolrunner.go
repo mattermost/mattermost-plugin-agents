@@ -106,6 +106,12 @@ type ToolTurn struct {
 	// with client tool calls would lose the activity when persisted.
 	AssistantServerTools []llm.ServerToolUse
 
+	// AssistantSegments records the order in which the round's reasoning,
+	// response text and provider-executed activity arrived. Persisting the
+	// round without it renders the pieces grouped by kind, so narration the
+	// model wrote between two code executions collapses above both of them.
+	AssistantSegments []llm.TurnSegment
+
 	// ToolResults holds the executed tool results, one per tool call.
 	// Includes both successful and errored results.
 	ToolResults []ToolResult
@@ -214,6 +220,9 @@ func (r *ToolRunner) runLoop(
 		var serverTools []llm.ServerToolUse
 		var usage llm.TokenUsage
 		var streamErr error
+		// sequence records arrival order so the persisted round renders in the
+		// order it happened, not grouped by kind.
+		var sequence llm.TurnSequence
 
 		for event := range stream.Stream {
 			switch event.Type {
@@ -226,8 +235,9 @@ func (r *ToolRunner) runLoop(
 				// keep the latest so a tool round persists it (see ToolTurn).
 				if uses, ok := event.Value.([]llm.ServerToolUse); ok {
 					serverTools = uses
-					// Register sandbox output files so AttachSandboxFile can
-					// verify requested ids were actually created this request.
+					sequence.RecordServerTools(uses)
+					// Register the sandbox output files the provider captured
+					// so the response flow can attach them to the reply.
 					for _, use := range uses {
 						request.Context.AddSandboxFileIDs(use.FileIDs...)
 					}
@@ -238,16 +248,19 @@ func (r *ToolRunner) runLoop(
 			case llm.EventTypeText:
 				if t, ok := event.Value.(string); ok {
 					text.WriteString(t)
+					sequence.AppendText(t)
 				}
 				output <- event
 			case llm.EventTypeReasoning:
 				if t, ok := event.Value.(string); ok {
 					reasoning.WriteString(t)
+					sequence.AppendReasoning(t)
 				}
 				output <- event
 			case llm.EventTypeReasoningEnd:
 				if data, ok := event.Value.(llm.ReasoningData); ok {
 					reasoningData = data
+					sequence.FinishReasoning(data)
 				}
 				output <- event
 			case llm.EventTypeUsage:
@@ -290,7 +303,7 @@ func (r *ToolRunner) runLoop(
 		if containsUnavailableTools(toolCalls, store) {
 			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-			appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
+			appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, sequence.Segments(), resolvedToolCalls, toolResults, usage)
 
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
 
@@ -341,7 +354,7 @@ func (r *ToolRunner) runLoop(
 		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
 		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-		appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
+		appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, sequence.Segments(), resolvedToolCalls, toolResults, usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
@@ -532,6 +545,7 @@ func appendToolTurnAndPost(
 	text string,
 	reasoningData llm.ReasoningData,
 	serverTools []llm.ServerToolUse,
+	segments []llm.TurnSegment,
 	resolvedToolCalls []llm.ToolCall,
 	toolResults []ToolResult,
 	usage llm.TokenUsage,
@@ -541,18 +555,22 @@ func appendToolTurnAndPost(
 		AssistantToolCalls:   resolvedToolCalls,
 		AssistantReasoning:   reasoningData,
 		AssistantServerTools: serverTools,
+		AssistantSegments:    segments,
 		ToolResults:          toolResults,
 		TokensIn:             usage.InputTokens,
 		TokensOut:            usage.OutputTokens,
 	}
 	result.ToolTurns = append(result.ToolTurns, turn)
 
+	// ServerTools travels with the post so the next round's request still shows
+	// the model the provider-executed work it did in this one.
 	request.Posts = append(request.Posts, llm.Post{
 		Role:               llm.PostRoleBot,
 		Message:            text,
 		ToolUse:            resolvedToolCalls,
 		Reasoning:          reasoningData.Text,
 		ReasoningSignature: reasoningData.Signature,
+		ServerTools:        serverTools,
 	})
 }
 

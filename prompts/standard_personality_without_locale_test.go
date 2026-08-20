@@ -270,6 +270,61 @@ func TestStandardPersonalityDynamicToolWorkflow(t *testing.T) {
 	}
 }
 
+// TestStandardPersonalitySandboxFileGuidance pins that the sandbox-file guidance
+// renders exactly when this turn's sandbox output files will be attached. The
+// model cannot see the file ids the provider reports, so $OUTPUT_DIR is the only
+// lever it has — and guidance shown when nothing is attached would have it
+// promise attachments that never arrive.
+func TestStandardPersonalitySandboxFileGuidance(t *testing.T) {
+	const guidance = "$OUTPUT_DIR"
+
+	tests := []struct {
+		name    string
+		context *llm.Context
+		want    bool
+	}{
+		{
+			name: "attachment active",
+			context: &llm.Context{
+				BotName:     "ai",
+				ToolCatalog: llm.ToolCatalogContext{SandboxFilesAttached: true},
+			},
+			want: true,
+		},
+		{
+			name: "attachment inactive",
+			context: &llm.Context{
+				BotName:     "ai",
+				ToolCatalog: llm.ToolCatalogContext{ResponseFilesSupported: true},
+			},
+			want: false,
+		},
+		{
+			// The sandbox is provider-executed and still runs when Mattermost
+			// tools are disabled, so the guidance must not be gated on tools.
+			name: "attachment active with no tool store",
+			context: &llm.Context{
+				BotName:     "ai",
+				Tools:       nil,
+				ToolCatalog: llm.ToolCatalogContext{SandboxFilesAttached: true},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := renderStandardPersonalityWithoutLocale(t, tt.context)
+			if tt.want {
+				assert.Contains(t, output, guidance)
+				assert.Contains(t, output, "NOT visible to the user")
+			} else {
+				assert.NotContains(t, output, guidance)
+			}
+		})
+	}
+}
+
 func renderStandardPersonalityWithoutLocale(t *testing.T, context *llm.Context) string {
 	t.Helper()
 

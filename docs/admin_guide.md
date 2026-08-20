@@ -152,8 +152,8 @@ Native tool activity (searches performed, pages fetched, code runs) is shown on 
 
 - Very long provider-side tool loops that Anthropic pauses (`pause_turn`) are not resumed; the response ends with what was produced so far.
 - On Claude models older than 4.6 (which have no dynamic filtering), enabling web search or web fetch alongside code execution leaves the sandbox unavailable: the LLM gateway omits the explicit code execution tool whenever web tools are present, to avoid conflicting with the auto-injection newer models perform.
-- Files created in Anthropic's code execution sandbox can be shared by the agent: it chooses which files to attach to its reply (via the built-in AttachSandboxFile tool), and only files created during the current turn can be attached. The server's file-attachment settings, size limits, and the requesting user's upload permission all apply. OpenAI code-interpreter files are not yet retrievable.
-- Native tool activity is display-only context: it is not replayed to the model in later conversation turns.
+- Files created in Anthropic's code execution sandbox can be shared by the agent: it copies the ones worth sharing into the sandbox's output directory, and those are attached to its reply automatically. Files it writes elsewhere in the sandbox stay there. The server's file-attachment settings, size limits, the per-post attachment cap, and the requesting user's upload permission all apply. OpenAI code-interpreter files are not yet retrievable, so this applies to Anthropic agents only.
+- Native tool activity is replayed to the model in later requests as a labeled summary (what ran, its output, how many files were attached), not as the provider's original result blocks. Long commands and output are truncated, and the sandbox container is not reused, so the model sees a record of the work rather than a resumable session.
 
 For Anthropic services, **Structured Output** and extended thinking can both be enabled on the same agent, but Anthropic doesn't support using them on the same request. Requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
 

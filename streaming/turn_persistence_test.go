@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1575,4 +1576,87 @@ func TestRedactToolCallsPreservesUserInteraction(t *testing.T) {
 	require.Empty(t, redacted[0].Result)
 	require.Equal(t, llm.UserInteractionSelect, redacted[0].UserInteraction)
 	require.True(t, redacted[0].WouldAutoExecute)
+}
+
+// TestBuildContentBlocksPreservesArrivalOrder pins the fix for out-of-order
+// rendering: a turn that narrated, ran a sandbox command, narrated again and ran
+// another must persist in that order. Grouping by kind put both narrations above
+// both executions, so the bot read as describing work before doing it.
+func TestBuildContentBlocksPreservesArrivalOrder(t *testing.T) {
+	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
+
+	acc.sequence.AppendText("I'll write the script.")
+	firstSnapshot := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, SubTool: "bash", Command: "cat > f.py"},
+	}
+	acc.serverTools = firstSnapshot
+	acc.sequence.RecordServerTools(firstSnapshot)
+
+	acc.sequence.AppendReasoning("that produced no file")
+	acc.sequence.FinishReasoning(llm.ReasoningData{Text: "No file came back.", Signature: "sig"})
+
+	acc.sequence.AppendText("Let me try again.")
+	secondSnapshot := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, SubTool: "bash", Command: "cat > f.py"},
+		{ID: "srv2", Tool: llm.NativeToolCodeInterpreter, SubTool: "python", Command: "open('f.py')"},
+	}
+	acc.serverTools = secondSnapshot
+	acc.sequence.RecordServerTools(secondSnapshot)
+
+	acc.sequence.AppendText("Done.")
+	acc.toolCalls = []llm.ToolCall{{ID: "tc1", Name: "CreateFile", Status: llm.ToolCallStatusAutoApproved}}
+
+	blocks := acc.buildContentBlocks()
+
+	require.Len(t, blocks, 7)
+	assert.Equal(t, conversation.BlockTypeText, blocks[0].Type)
+	assert.Equal(t, "I'll write the script.", blocks[0].Text)
+
+	assert.Equal(t, conversation.BlockTypeServerToolUse, blocks[1].Type)
+	require.NotNil(t, blocks[1].ServerTool)
+	assert.Equal(t, "srv1", blocks[1].ServerTool.ID)
+
+	assert.Equal(t, conversation.BlockTypeThinking, blocks[2].Type)
+	assert.Equal(t, "No file came back.", blocks[2].Text)
+
+	assert.Equal(t, conversation.BlockTypeText, blocks[3].Type)
+	assert.Equal(t, "Let me try again.", blocks[3].Text)
+
+	assert.Equal(t, conversation.BlockTypeServerToolUse, blocks[4].Type)
+	require.NotNil(t, blocks[4].ServerTool)
+	assert.Equal(t, "srv2", blocks[4].ServerTool.ID, "the second execution keeps its place after the narration")
+
+	assert.Equal(t, conversation.BlockTypeText, blocks[5].Type)
+	assert.Equal(t, "Done.", blocks[5].Text)
+
+	// Tool use ends the turn, so the call comes last.
+	assert.Equal(t, conversation.BlockTypeToolUse, blocks[6].Type)
+}
+
+// TestBuildContentBlocksServerToolPayloadComesFromLatestSnapshot pins that an
+// invocation renders with its finished payload while keeping the position it had
+// when it started — the provider updates entries in place as they progress.
+func TestBuildContentBlocksServerToolPayloadComesFromLatestSnapshot(t *testing.T) {
+	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
+
+	inProgress := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusInProgress},
+	}
+	acc.serverTools = inProgress
+	acc.sequence.RecordServerTools(inProgress)
+	acc.sequence.AppendText("running")
+
+	finished := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusSuccess, Output: "ok"},
+	}
+	acc.serverTools = finished
+	acc.sequence.RecordServerTools(finished)
+
+	blocks := acc.buildContentBlocks()
+
+	require.Len(t, blocks, 2)
+	require.Equal(t, conversation.BlockTypeServerToolUse, blocks[0].Type)
+	assert.Equal(t, llm.ServerToolStatusSuccess, blocks[0].ServerTool.Status)
+	assert.Equal(t, "ok", blocks[0].ServerTool.Output)
+	assert.Equal(t, conversation.BlockTypeText, blocks[1].Type)
 }

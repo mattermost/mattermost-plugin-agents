@@ -4,7 +4,10 @@
 package conversations
 
 import (
+	"context"
 	"encoding/json"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -17,12 +20,16 @@ const maxResponseAttachments = llm.MaxPostAttachments
 
 // decorateStreamWithCreatedFiles wraps stream so that, on a clean end, the
 // files created during the turn (recorded on the given contexts via
-// CreateFile, plus extraFileIDs recovered from persisted turns) are announced
-// with an EventTypeFiles event immediately before EventTypeEnd. The streaming
-// layer merges the IDs into post.FileIds and the server's UpdatePost performs
-// the attach, only touching still-unattached files and stripping the rest —
-// which makes over-collection (e.g. from the turn-scan fallback) safe.
-func (c *Conversations) decorateStreamWithCreatedFiles(stream *llm.TextStreamResult, post *model.Post, extraFileIDs []string, contexts ...*llm.Context) *llm.TextStreamResult {
+// CreateFile, files the provider's code-execution sandbox captured, plus
+// extraFileIDs recovered from persisted turns) are announced with an
+// EventTypeFiles event immediately before EventTypeEnd. The streaming layer
+// merges the IDs into post.FileIds and the server's UpdatePost performs the
+// attach, only touching still-unattached files and stripping the rest — which
+// makes over-collection (e.g. from the turn-scan fallback) safe.
+//
+// bot may be nil for flows with no provider-side file access; sandbox files are
+// then skipped and only tool-created files are attached.
+func (c *Conversations) decorateStreamWithCreatedFiles(ctx context.Context, bot *bots.Bot, stream *llm.TextStreamResult, post *model.Post, extraFileIDs []string, contexts ...*llm.Context) *llm.TextStreamResult {
 	if stream == nil {
 		return nil
 	}
@@ -33,6 +40,7 @@ func (c *Conversations) decorateStreamWithCreatedFiles(stream *llm.TextStreamRes
 			// Errors and a close without End pass through untouched; the
 			// files stay unattached until a later follow-up's turn scan.
 			if event.Type == llm.EventTypeEnd {
+				c.attachSandboxOutputFiles(ctx, bot, contexts)
 				if ids := c.collectAttachableFileIDs(post, extraFileIDs, contexts); len(ids) > 0 {
 					output <- llm.TextStreamEvent{Type: llm.EventTypeFiles, Value: ids}
 				}
@@ -41,6 +49,24 @@ func (c *Conversations) decorateStreamWithCreatedFiles(stream *llm.TextStreamRes
 		}
 	}()
 	return &llm.TextStreamResult{Stream: output}
+}
+
+// attachSandboxOutputFiles uploads the files the provider's code-execution
+// sandbox captured this turn, so collectAttachableFileIDs picks them up with the
+// tool-created ones. Runs at end of turn rather than mid-stream: each file costs
+// a provider download plus a Mattermost upload, and nothing can be attached to
+// the post until the stream finishes anyway.
+func (c *Conversations) attachSandboxOutputFiles(ctx context.Context, bot *bots.Bot, contexts []*llm.Context) {
+	if !bot.SandboxFileAttachmentAvailable() {
+		return
+	}
+	downloader := bot.ProviderServices().FileDownloader
+	for _, llmCtx := range contexts {
+		if llmCtx == nil {
+			continue
+		}
+		mmtools.AttachSandboxOutputFiles(ctx, c.mmClient, downloader, llmCtx)
+	}
 }
 
 // collectAttachableFileIDs merges the created-file registries of the given
@@ -145,10 +171,7 @@ func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 			switch b.Type {
 			case conversation.BlockTypeToolUse:
 				// Empty ServerOrigin excludes MCP tools that share the name.
-				// AttachSandboxFile results share the CreateFileResult shape,
-				// so its uses are collected the same way.
-				isResponseFileTool := b.Name == mmtools.CreateFileToolName || b.Name == mmtools.AttachSandboxFileToolName
-				if turns[i].Role == "assistant" && isResponseFileTool && b.ServerOrigin == "" && b.ID != "" {
+				if turns[i].Role == "assistant" && b.Name == mmtools.CreateFileToolName && b.ServerOrigin == "" && b.ID != "" {
 					createFileUses[b.ID] = true
 				}
 			case conversation.BlockTypeToolResult:

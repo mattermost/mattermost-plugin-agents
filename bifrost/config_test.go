@@ -37,6 +37,34 @@ func TestSupportsNativeTools(t *testing.T) {
 	}
 }
 
+// TestSupportsProviderFileDownload pins which providers can serve file
+// content. Note the deliberate split from code-execution support: OpenAI runs a
+// sandbox but its container files are not retrievable, so it belongs in
+// SupportedNativeToolsForServiceType and not here.
+func TestSupportsProviderFileDownload(t *testing.T) {
+	tests := []struct {
+		serviceType string
+		want        bool
+	}{
+		{llm.ServiceTypeAnthropic, true},
+		{llm.ServiceTypeOpenAI, false},
+		{llm.ServiceTypeOpenAICompatible, false},
+		{llm.ServiceTypeAzure, false},
+		{llm.ServiceTypeGemini, false},
+		{llm.ServiceTypeVertex, false},
+		{llm.ServiceTypeBedrock, false},
+		{llm.ServiceTypeCohere, false},
+		{llm.ServiceTypeMistral, false},
+		{llm.ServiceTypeLoadTestMock, false},
+		{"unknown", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.serviceType, func(t *testing.T) {
+			assert.Equal(t, tt.want, SupportsProviderFileDownload(tt.serviceType))
+		})
+	}
+}
+
 func TestFilterNativeToolsForServiceType(t *testing.T) {
 	allTools := []string{
 		llm.NativeToolWebSearch,

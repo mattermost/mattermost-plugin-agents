@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -39,6 +40,13 @@ const (
 	// output files can be sizeable, but a wedged provider must not hold a
 	// tool resolution open indefinitely).
 	FileDownloadTimeout = 60 * time.Second
+)
+
+const (
+	// anthropicBetaHeader and anthropicFilesAPIBeta mirror Bifrost's internal
+	// (unexported) constants for the Anthropic beta opt-in header.
+	anthropicBetaHeader   = "anthropic-beta"
+	anthropicFilesAPIBeta = "files-api-2025-04-14"
 )
 
 type webSearchFallbackSource struct {
@@ -858,18 +866,75 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 	return resp.InputTokens, nil
 }
 
+// applyCompletionBetaHeaders opts the completion request into provider betas
+// that the plugin's feature set needs but Bifrost does not derive on its own.
+//
+// Anthropic reports the ids of files a code-execution sandbox produced only when
+// the completion request carries the Files API beta; without it every
+// code-execution result arrives with an empty file list, so there is nothing to
+// attach to a reply. Bifrost auto-injects this header only when the request
+// *references* a file id (a document/image "file" source), never because the
+// code execution tool is enabled — so the plugin has to ask for it here.
+func (b *LLM) applyCompletionBetaHeaders(bifrostCtx *schemas.BifrostContext) {
+	if bifrostCtx == nil {
+		return
+	}
+	if b.provider != schemas.Anthropic || !b.isNativeToolEnabled(llm.NativeToolCodeInterpreter) {
+		return
+	}
+
+	headers, _ := bifrostCtx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string)
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+	if slices.Contains(headers[anthropicBetaHeader], anthropicFilesAPIBeta) {
+		return
+	}
+	headers[anthropicBetaHeader] = append(headers[anthropicBetaHeader], anthropicFilesAPIBeta)
+	bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, headers)
+}
+
+// ProviderServices reports the provider-side capabilities this client can
+// perform, for injection into the components that need them. It must be called
+// on the concrete client, before the model is wrapped in decorators — the
+// wrappers deliberately expose only llm.LanguageModel, so a capability not
+// captured here cannot be recovered later. See llm.ProviderServices.
+func (b *LLM) ProviderServices() *llm.ProviderServices {
+	services := &llm.ProviderServices{}
+	if supportsProviderFileDownloadProvider(b.provider) {
+		services.FileDownloader = b
+	}
+	return services
+}
+
 // DownloadProviderFile implements llm.ProviderFileDownloader: it downloads a
-// provider-side file's content (e.g. an Anthropic code-execution output file)
-// through Bifrost's Files API support, using the primary provider's
-// credentials and base URL. Bifrost's Anthropic provider hits
-// GET /v1/files/{id}/content and attaches the files-api beta header itself.
-func (b *LLM) DownloadProviderFile(ctx context.Context, fileID string) ([]byte, string, error) {
+// provider-side file (e.g. an Anthropic code-execution output file) through
+// Bifrost's Files API support, using the primary provider's credentials and
+// base URL. Bifrost's Anthropic provider hits GET /v1/files/{id} and
+// GET /v1/files/{id}/content, attaching the files-api beta header itself.
+// Reached through ProviderServices, not by asserting on a bot's LanguageModel.
+//
+// The name comes from the metadata endpoint because the content response
+// carries none, and callers need the sandbox's own file name.
+func (b *LLM) DownloadProviderFile(ctx context.Context, fileID string) (llm.ProviderFile, error) {
 	if fileID == "" {
-		return nil, "", fmt.Errorf("file id is required")
+		return llm.ProviderFile{}, fmt.Errorf("file id is required")
 	}
 
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, FileDownloadTimeout)
 	defer cancel()
+
+	meta, bifrostErr := b.client.FileRetrieveRequest(bifrostCtx, &schemas.BifrostFileRetrieveRequest{
+		Provider: b.provider,
+		FileID:   fileID,
+	})
+	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file retrieve error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		return llm.ProviderFile{}, err
+	}
+	if meta == nil {
+		return llm.ProviderFile{}, fmt.Errorf("bifrost file retrieve returned nil response")
+	}
 
 	resp, bifrostErr := b.client.FileContentRequest(bifrostCtx, &schemas.BifrostFileContentRequest{
 		Provider: b.provider,
@@ -877,12 +942,17 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, fileID string) ([]byte, 
 	})
 	if bifrostErr != nil {
 		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file content error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
-		return nil, "", err
+		return llm.ProviderFile{}, err
 	}
 	if resp == nil {
-		return nil, "", fmt.Errorf("bifrost file content returned nil response")
+		return llm.ProviderFile{}, fmt.Errorf("bifrost file content returned nil response")
 	}
-	return resp.Content, resp.ContentType, nil
+
+	return llm.ProviderFile{
+		Name:        meta.Filename,
+		ContentType: resp.ContentType,
+		Content:     resp.Content,
+	}, nil
 }
 
 // functionToolsForCount keeps only function (custom) tool definitions, which
@@ -1745,6 +1815,19 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 			}
 
 		case llm.PostRoleBot:
+			// Provider-executed activity precedes the assistant's own text, in
+			// the order it happened. The provider drops these results from
+			// every request after the one that ran them, so replaying the
+			// record is what stops the model redoing work mid-turn.
+			if record := serverToolActivityRecord(post.ServerTools); record != "" {
+				messages = append(messages, schemas.ResponsesMessage{
+					Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+					Content: &schemas.ResponsesMessageContent{
+						ContentStr: Ptr(record),
+					},
+				})
+			}
+
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
 				if post.Message != "" {
@@ -2041,6 +2124,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
+	b.applyCompletionBetaHeaders(bifrostCtx)
 
 	// Convert to Bifrost Responses API request
 	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)

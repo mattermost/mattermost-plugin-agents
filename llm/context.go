@@ -5,6 +5,7 @@ package llm
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -83,6 +84,12 @@ type ToolCatalogContext struct {
 	// file-creating response tools (CreateFile) may be cataloged. Only
 	// conversation entry points that stream a response post set this.
 	ResponseFilesSupported bool
+
+	// SandboxFilesAttached indicates files the provider's code-execution
+	// sandbox captured this turn are attached to the reply automatically. The
+	// model needs to be told, because it cannot see the file ids the provider
+	// reports and would otherwise paste file contents into its response text.
+	SandboxFilesAttached bool
 }
 
 // CreatedFile identifies a file created by a tool during this turn for
@@ -105,12 +112,15 @@ type ToolRuntimeContext struct {
 	// attachment to the response post.
 	CreatedFiles []CreatedFile
 
-	// SandboxFileIDs records the provider-side file ids observed in this
-	// request's server-tool activity (e.g. Anthropic code-execution output
-	// files). The AttachSandboxFile tool only downloads ids recorded here, so
-	// a prompt-injected or hallucinating model cannot pull arbitrary files
-	// reachable with the provider API key into the channel.
-	SandboxFileIDs map[string]bool
+	// SandboxFileIDs records, in observation order, the provider-side ids of
+	// files the code-execution sandbox captured this request (Anthropic
+	// returns an id for every file a command left in $OUTPUT_DIR). The
+	// response flow downloads these and attaches them to the reply, so the
+	// order here is the order the files appear on the post.
+	//
+	// Ids only ever come from observed server-tool activity — never from model
+	// input — so nothing the model says can add one.
+	SandboxFileIDs []string
 
 	// ResponseAttachmentBudget caps how many files response tools may create
 	// this turn. 0 means unset (full MaxPostAttachments budget); -1 means the
@@ -265,7 +275,9 @@ func (t *ToolRuntimeContext) AddCreatedFile(f CreatedFile) {
 }
 
 // AddSandboxFileIDs records provider-side sandbox file ids observed in this
-// request's server-tool activity. Empty ids are skipped.
+// request's server-tool activity, preserving arrival order. Empty and repeated
+// ids are skipped — a server-tool snapshot is cumulative, so the same id is
+// reported on every subsequent event of the turn.
 func (c *Context) AddSandboxFileIDs(ids ...string) {
 	if c == nil {
 		return
@@ -278,30 +290,24 @@ func (t *ToolRuntimeContext) AddSandboxFileIDs(ids ...string) {
 		return
 	}
 	for _, id := range ids {
-		if id == "" {
+		if id == "" || slices.Contains(t.SandboxFileIDs, id) {
 			continue
 		}
-		if t.SandboxFileIDs == nil {
-			t.SandboxFileIDs = make(map[string]bool)
-		}
-		t.SandboxFileIDs[id] = true
+		t.SandboxFileIDs = append(t.SandboxFileIDs, id)
 	}
 }
 
-// IsSandboxFileID reports whether the id was observed in this request's
-// server-tool activity.
-func (c *Context) IsSandboxFileID(id string) bool {
+// ConsumeSandboxFileIDs returns the sandbox file ids observed this request, in
+// observation order, and clears them. Consuming makes the attach path
+// idempotent: a stream that ends twice (continuation, retry) must not attach
+// the same provider file to the post again.
+func (c *Context) ConsumeSandboxFileIDs() []string {
 	if c == nil {
-		return false
+		return nil
 	}
-	return c.ToolRuntime.IsSandboxFileID(id)
-}
-
-func (t *ToolRuntimeContext) IsSandboxFileID(id string) bool {
-	if t == nil {
-		return false
-	}
-	return t.SandboxFileIDs[id]
+	ids := c.ToolRuntime.SandboxFileIDs
+	c.ToolRuntime.SandboxFileIDs = nil
+	return ids
 }
 
 // CreatedFilesList returns the files created by tools during this turn.

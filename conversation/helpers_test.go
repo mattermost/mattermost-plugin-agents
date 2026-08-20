@@ -48,7 +48,7 @@ func TestToolUseBlocksStatuses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blocks := toolUseBlocks("", llm.ReasoningData{}, nil, tt.toolCalls, true)
+			blocks := toolUseBlocks("", llm.ReasoningData{}, nil, nil, tt.toolCalls, true)
 			var got []string
 			for _, b := range blocks {
 				if b.Type == BlockTypeToolUse {
@@ -61,7 +61,7 @@ func TestToolUseBlocksStatuses(t *testing.T) {
 }
 
 func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
-	blocks := toolUseBlocks("", llm.ReasoningData{}, nil, []llm.ToolCall{{
+	blocks := toolUseBlocks("", llm.ReasoningData{}, nil, nil, []llm.ToolCall{{
 		ID:           "tc1",
 		Name:         "jira__get_issue",
 		Description:  "Get a Jira issue",
@@ -88,7 +88,7 @@ func TestToolUseBlocksIncludesServerToolActivity(t *testing.T) {
 		{ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess, Query: "release notes"},
 		{ID: "srv2", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusSuccess, SubTool: "bash", Command: "ls"},
 	}
-	blocks := toolUseBlocks("Checking the channel too.", llm.ReasoningData{}, serverTools, []llm.ToolCall{{
+	blocks := toolUseBlocks("Checking the channel too.", llm.ReasoningData{}, serverTools, nil, []llm.ToolCall{{
 		ID:     "tc1",
 		Name:   "read_channel",
 		Status: llm.ToolCallStatusAutoApproved,
@@ -156,4 +156,51 @@ func TestUnmarshalBlocks(t *testing.T) {
 			assert.Equal(t, tt.expectedBlocks, blocks)
 		})
 	}
+}
+
+// TestToolUseBlocksUsesRecordedOrder pins that a persisted tool round renders in
+// the order the provider streamed it. Tool rounds go through this path rather
+// than the streaming accumulator, so without the recorded order the same
+// grouped-by-kind reordering shows up on every round that called a tool.
+func TestToolUseBlocksUsesRecordedOrder(t *testing.T) {
+	serverTools := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, SubTool: "bash", Command: "ls"},
+		{ID: "srv2", Tool: llm.NativeToolCodeInterpreter, SubTool: "python", Command: "open(f)"},
+	}
+	segments := []llm.TurnSegment{
+		{Kind: llm.TurnSegmentText, Text: "First I'll look."},
+		{Kind: llm.TurnSegmentServerTool, ServerToolID: "srv1"},
+		{Kind: llm.TurnSegmentText, Text: "Now the file."},
+		{Kind: llm.TurnSegmentServerTool, ServerToolID: "srv2"},
+	}
+
+	blocks := toolUseBlocks("First I'll look.Now the file.", llm.ReasoningData{}, serverTools, segments,
+		[]llm.ToolCall{{ID: "tc1", Name: "CreateFile", Status: llm.ToolCallStatusAutoApproved}}, true)
+
+	require.Len(t, blocks, 5)
+	assert.Equal(t, BlockTypeText, blocks[0].Type)
+	assert.Equal(t, "First I'll look.", blocks[0].Text)
+	assert.Equal(t, BlockTypeServerToolUse, blocks[1].Type)
+	assert.Equal(t, "srv1", blocks[1].ServerTool.ID)
+	assert.Equal(t, BlockTypeText, blocks[2].Type)
+	assert.Equal(t, "Now the file.", blocks[2].Text)
+	assert.Equal(t, BlockTypeServerToolUse, blocks[3].Type)
+	assert.Equal(t, "srv2", blocks[3].ServerTool.ID)
+	assert.Equal(t, BlockTypeToolUse, blocks[4].Type)
+}
+
+// TestSequenceBlocksDropsUnknownActivity pins that a segment whose activity is
+// missing from the snapshot is skipped: the webapp has no card to render for an
+// invocation with no payload.
+func TestSequenceBlocksDropsUnknownActivity(t *testing.T) {
+	blocks := SequenceBlocks([]llm.TurnSegment{
+		{Kind: llm.TurnSegmentServerTool, ServerToolID: "gone"},
+		{Kind: llm.TurnSegmentText, Text: "kept"},
+		{Kind: llm.TurnSegmentText, Text: ""},
+		{Kind: llm.TurnSegmentThinking, Text: ""},
+	}, nil)
+
+	require.Len(t, blocks, 1)
+	assert.Equal(t, BlockTypeText, blocks[0].Type)
+	assert.Equal(t, "kept", blocks[0].Text)
 }

@@ -40,6 +40,16 @@ type Post struct {
 	ToolUse            []ToolCall
 	Reasoning          string // Extended thinking/reasoning content from models that support it
 	ReasoningSignature string // Signature for thinking blocks (opaque verification field)
+
+	// ServerTools records provider-executed tool activity that produced this
+	// assistant turn (web search, web fetch, code execution). The provider
+	// puts its own results in the model's context during the request that ran
+	// them, but they are gone from every later request — so without replaying
+	// them the model forgets work it just did and repeats it. Replayed as a
+	// labeled record rather than reconstructed provider blocks: the fields are
+	// display-truncated, and the sandbox container is not carried forward, so
+	// forged result blocks would point at a container that no longer exists.
+	ServerTools []ServerToolUse
 }
 
 type CompletionRequest struct {

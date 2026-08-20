@@ -399,7 +399,7 @@ func (b *MMBots) EnsureBots() error {
 			return fmt.Errorf("failed to resolve fallback chain for bot %s: %w", bot.cfg.Name, err)
 		}
 
-		bot.llm, err = b.getLLM(bot.service, bot.cfg, fallbackServices)
+		bot.llm, bot.providerServices, err = b.getLLM(bot.service, bot.cfg, fallbackServices)
 		if err != nil {
 			return err
 		}
@@ -441,10 +441,15 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 	}
 }
 
-func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, error) {
-	result, err := b.getBaseLLM(serviceConfig, botConfig, fallbackServices)
+// getLLM returns the wrapped language model for a bot along with the
+// provider-side services resolved from the unwrapped client. The services have
+// to be returned separately: every wrapper below exposes only
+// llm.LanguageModel, so any capability of the concrete client that is not
+// captured here is unreachable from the returned model.
+func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
+	result, providerServices, err := b.getBaseLLM(serviceConfig, botConfig, fallbackServices)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Truncation Support
@@ -466,14 +471,16 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	// Structured output fallback
 	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
 
-	return result, nil
+	return result, providerServices, nil
 }
 
-func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, error) {
+// getBaseLLM builds the unwrapped client for a service and reports the
+// provider-side services it can perform.
+func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
 	if serviceConfig.Type == llm.ServiceTypeLoadTestMock {
 		profile, err := loadtest.ParseProfile(serviceConfig.LoadTestMockConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse load-test mock profile for bot %s: %w", botConfig.Name, err)
+			return nil, nil, fmt.Errorf("failed to parse load-test mock profile for bot %s: %w", botConfig.Name, err)
 		}
 		if b.pluginAPI != nil {
 			// Run-audit snapshot of the active mock profile (once per LLM init; not per request).
@@ -484,7 +491,9 @@ func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotCo
 				"profile_summary", profile.Summary(),
 			)
 		}
-		return loadtest.NewMockLLM(profile), nil
+		// The load-test mock talks to no provider, so it has no provider-side
+		// services.
+		return loadtest.NewMockLLM(profile), &llm.ProviderServices{}, nil
 	}
 
 	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, fallbackServices)
@@ -492,9 +501,9 @@ func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotCo
 		if b.pluginAPI != nil {
 			b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
 		}
-		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
+		return nil, nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
 	}
-	return bifrostLLM, nil
+	return bifrostLLM, bifrostLLM.ProviderServices(), nil
 }
 
 // TODO: This really doesn't belong here. Figure out where to put this.

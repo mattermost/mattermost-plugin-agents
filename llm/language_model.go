@@ -88,11 +88,24 @@ func WithReasoningDisabled() LanguageModelOption {
 
 type LanguageModelWrapper func(LanguageModel) LanguageModel
 
-// ProviderFileDownloader is implemented by language models whose provider can
-// serve the content of provider-side files (e.g. Anthropic Files API content
-// for code-execution output files). Tools that bridge provider files into
-// Mattermost assert for this interface on the bot's LanguageModel.
+// ProviderFile is a provider-side file's content and metadata.
+type ProviderFile struct {
+	// Name is the file name the provider recorded. For code-execution output
+	// files this is the name the sandbox command wrote, so treat it as
+	// model-influenced input and sanitize before use.
+	Name        string
+	ContentType string
+	Content     []byte
+}
+
+// ProviderFileDownloader serves provider-side files (e.g. Anthropic Files API
+// content for code-execution output files).
+//
+// Callers reach an implementation through ProviderServices.FileDownloader,
+// which is resolved from the concrete provider client at construction time. Do
+// not type-assert for this interface on a bot's LanguageModel: that value is a
+// decorator chain and the assertion always fails.
 type ProviderFileDownloader interface {
-	// DownloadProviderFile returns the file's raw content and MIME type.
-	DownloadProviderFile(ctx context.Context, fileID string) (content []byte, contentType string, err error)
+	// DownloadProviderFile returns the file's content and metadata.
+	DownloadProviderFile(ctx context.Context, fileID string) (ProviderFile, error)
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -270,23 +271,63 @@ func flatten(groups ...[]string) []string {
 	return out
 }
 
+// TestProviderServices pins which capabilities each provider hands to the
+// tools layer. This is resolved on the concrete client because the bot's
+// LanguageModel is a decorator chain that hides it.
+func TestProviderServices(t *testing.T) {
+	tests := []struct {
+		name             string
+		provider         schemas.ModelProvider
+		wantFileDownload bool
+	}{
+		{name: "anthropic serves file content", provider: schemas.Anthropic, wantFileDownload: true},
+		{name: "openai has no usable file retrieval yet", provider: schemas.OpenAI, wantFileDownload: false},
+		{name: "gemini has no file retrieval", provider: schemas.Gemini, wantFileDownload: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llmClient, err := New(Config{
+				ProviderSettings: ProviderSettings{
+					Provider:         tt.provider,
+					APIKey:           "test-key",
+					DefaultModel:     "test-model",
+					StreamingTimeout: 10 * time.Second,
+				},
+			})
+			require.NoError(t, err)
+			defer llmClient.Shutdown()
+
+			services := llmClient.ProviderServices()
+			require.NotNil(t, services)
+			assert.Equal(t, tt.wantFileDownload, services.CanDownloadFiles())
+			if tt.wantFileDownload {
+				assert.Same(t, llmClient, services.FileDownloader)
+			}
+		})
+	}
+}
+
 // TestDownloadProviderFile drives the real Bifrost client against a mock
 // Anthropic Files API and asserts the content, MIME type, auth header and
-// URL path — the contract AttachSandboxFile depends on. Also pins that the
-// implementation satisfies llm.ProviderFileDownloader, which gates the tool's
-// cataloging via a type assertion on the bot's LanguageModel.
+// URL path — the contract AttachSandboxFile depends on.
 func TestDownloadProviderFile(t *testing.T) {
 	fileBytes := []byte("col1,col2\n1,2\n")
 	var gotPath, gotAPIKey string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
 		gotAPIKey = r.Header.Get("x-api-key")
-		if r.URL.Path != "/v1/files/file_011abc/content" {
+		switch r.URL.Path {
+		case "/v1/files/file_011abc":
+			// Metadata: the only place the sandbox's file name is available.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"file_011abc","type":"file","filename":"results.csv","size_bytes":14,"mime_type":"text/csv","created_at":"2026-01-01T00:00:00Z","downloadable":true}`))
+		case "/v1/files/file_011abc/content":
+			gotPath = r.URL.Path
+			w.Header().Set("Content-Type", "text/csv")
+			_, _ = w.Write(fileBytes)
+		default:
 			http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"file not found"}}`, http.StatusNotFound)
-			return
 		}
-		w.Header().Set("Content-Type", "text/csv")
-		_, _ = w.Write(fileBytes)
 	}))
 	defer backend.Close()
 
@@ -302,19 +343,23 @@ func TestDownloadProviderFile(t *testing.T) {
 	require.NoError(t, err)
 	defer llmClient.Shutdown()
 
-	var downloader llm.ProviderFileDownloader = llmClient // compile-time + runtime contract
+	// Tools reach the downloader through ProviderServices, so exercise it the
+	// same way rather than using the concrete client directly.
+	downloader := llmClient.ProviderServices().FileDownloader
+	require.NotNil(t, downloader, "an Anthropic client must expose file download")
 
-	content, contentType, err := downloader.DownloadProviderFile(context.Background(), "file_011abc")
+	file, err := downloader.DownloadProviderFile(context.Background(), "file_011abc")
 	require.NoError(t, err)
-	assert.Equal(t, fileBytes, content)
-	assert.Equal(t, "text/csv", contentType)
+	assert.Equal(t, fileBytes, file.Content)
+	assert.Equal(t, "text/csv", file.ContentType)
+	assert.Equal(t, "results.csv", file.Name, "the sandbox's own file name must survive to the caller")
 	assert.Equal(t, "/v1/files/file_011abc/content", gotPath)
 	assert.Equal(t, "test-key", gotAPIKey, "download must use the service credentials")
 
-	_, _, err = downloader.DownloadProviderFile(context.Background(), "file_missing")
-	require.Error(t, err, "provider errors must surface to the tool")
+	_, err = downloader.DownloadProviderFile(context.Background(), "file_missing")
+	require.Error(t, err, "provider errors must surface to the caller")
 
-	_, _, err = downloader.DownloadProviderFile(context.Background(), "")
+	_, err = downloader.DownloadProviderFile(context.Background(), "")
 	require.Error(t, err, "empty file id is rejected before any request")
 }
 
@@ -336,6 +381,71 @@ func TestMapServerToolStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, mapServerToolStatus(tt.status))
+		})
+	}
+}
+
+// TestCodeExecutionRequestCarriesFilesAPIBeta pins the header that makes sandbox
+// output files reachable at all: Anthropic reports the file ids a code-execution
+// result produced only when the completion request opts into the Files API beta.
+// Without it the results carry an empty file list, the observed-id allowlist stays
+// empty, and every AttachSandboxFile call is rejected as an unobserved id.
+func TestCodeExecutionRequestCarriesFilesAPIBeta(t *testing.T) {
+	tests := []struct {
+		name        string
+		nativeTools []string
+		wantBeta    bool
+	}{
+		{
+			name:        "code execution enabled",
+			nativeTools: []string{llm.NativeToolCodeInterpreter},
+			wantBeta:    true,
+		},
+		{
+			name:        "code execution not enabled",
+			nativeTools: []string{llm.NativeToolWebSearch},
+			wantBeta:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotBeta atomic.Value // string
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotBeta.Store(r.Header.Get("anthropic-beta"))
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+			}))
+			defer backend.Close()
+
+			service := llm.ServiceConfig{
+				ID:           "anthropic-svc",
+				Type:         llm.ServiceTypeAnthropic,
+				APIKey:       "test-key",
+				APIURL:       backend.URL,
+				DefaultModel: "claude-sonnet-4-6",
+			}
+			botCfg := llm.BotConfig{ID: "bot-1", ServiceID: service.ID, EnabledNativeTools: tt.nativeTools}
+
+			llmClient, err := NewFromServiceConfig(service, botCfg, nil)
+			require.NoError(t, err)
+			defer llmClient.Shutdown()
+
+			stream, err := llmClient.ChatCompletion(
+				context.Background(),
+				llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "make a file"}}},
+			)
+			require.NoError(t, err)
+			for range stream.Stream { //nolint:revive // drain so the request completes
+			}
+
+			beta, _ := gotBeta.Load().(string)
+			if tt.wantBeta {
+				assert.Contains(t, beta, "files-api-2025-04-14",
+					"code-execution requests must opt into the Files API beta or results carry no file ids")
+			} else {
+				assert.NotContains(t, beta, "files-api-2025-04-14")
+			}
 		})
 	}
 }

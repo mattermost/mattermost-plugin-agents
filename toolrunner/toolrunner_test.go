@@ -312,10 +312,10 @@ func TestToolRunner_ServerToolActivityPersistsInToolTurn(t *testing.T) {
 	// it produced no ToolTurn (it was the final text response).
 	assert.Equal(t, 2, inner.callCount)
 
-	// Observed sandbox file ids must be registered on the context so the
-	// AttachSandboxFile tool can validate them at resolve time.
-	assert.True(t, request.Context.IsSandboxFileID("file_from_sandbox"))
-	assert.False(t, request.Context.IsSandboxFileID("file_never_seen"))
+	// Observed sandbox file ids must be registered on the context, in order,
+	// so the response flow can download and attach them to the reply. The
+	// snapshot is cumulative, so a repeated id must not be recorded twice.
+	assert.Equal(t, []string{"file_from_sandbox"}, request.Context.ConsumeSandboxFileIDs())
 }
 
 func TestToolRunner_MultipleToolRounds(t *testing.T) {

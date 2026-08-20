@@ -94,13 +94,15 @@ type turnAccumulator struct {
 	existingAnchorID string
 	isContinuation   bool
 
-	// Accumulated content
-	text          strings.Builder
-	reasoning     strings.Builder
-	reasoningData llm.ReasoningData
-	annotations   []llm.Annotation
-	toolCalls     []llm.ToolCall
-	serverTools   []llm.ServerToolUse
+	// sequence records text, reasoning and provider-executed tool activity in
+	// the order the provider streamed them, so the persisted turn renders in
+	// the order it happened rather than grouped by kind.
+	sequence    llm.TurnSequence
+	annotations []llm.Annotation
+	toolCalls   []llm.ToolCall
+	// serverTools is the latest cumulative activity snapshot, holding the
+	// payload for the server_tool segments recorded in sequence.
+	serverTools []llm.ServerToolUse
 
 	// Token usage
 	tokensIn  int64
@@ -114,41 +116,11 @@ type turnAccumulator struct {
 func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 	blocks := []conversation.ContentBlock{}
 
-	// 1. Thinking block (if reasoning completed)
-	if a.reasoningData.Text != "" {
-		blocks = append(blocks, conversation.ContentBlock{
-			Type:      conversation.BlockTypeThinking,
-			Text:      a.reasoningData.Text,
-			Signature: a.reasoningData.Signature,
-		})
-	} else if a.reasoning.Len() > 0 {
-		// Partial reasoning (error/cancel before ReasoningEnd)
-		blocks = append(blocks, conversation.ContentBlock{
-			Type: conversation.BlockTypeThinking,
-			Text: a.reasoning.String(),
-		})
-	}
+	// 1. Reasoning, response text and provider-executed tool activity, in the
+	// order the provider streamed them.
+	blocks = append(blocks, conversation.SequenceBlocks(a.sequence.Segments(), a.serverTools)...)
 
-	// 2. Server tool activity blocks (provider-executed tools such as
-	// Anthropic web search / web fetch / code execution). They precede the
-	// text block because the activity happens before the final answer.
-	for i := range a.serverTools {
-		serverTool := a.serverTools[i]
-		blocks = append(blocks, conversation.ContentBlock{
-			Type:       conversation.BlockTypeServerToolUse,
-			ServerTool: &serverTool,
-		})
-	}
-
-	// 3. Text block
-	if a.text.Len() > 0 {
-		blocks = append(blocks, conversation.ContentBlock{
-			Type: conversation.BlockTypeText,
-			Text: a.text.String(),
-		})
-	}
-
-	// 4. Annotations block (web search context)
+	// 2. Annotations block (web search context)
 	if len(a.annotations) > 0 {
 		resultsJSON, err := json.Marshal(a.annotations)
 		if err == nil {
@@ -162,7 +134,8 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 		}
 	}
 
-	// 5. Tool call blocks
+	// 3. Tool call blocks. Tool use ends an assistant turn, so these always
+	// come last within a round.
 	for _, tc := range a.toolCalls {
 		blocks = append(blocks, conversation.ContentBlock{
 			Type:             conversation.BlockTypeToolUse,
@@ -585,7 +558,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					post.Message = messageBuilder.String()
 					p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 					if acc != nil {
-						acc.text.WriteString(textChunk)
+						acc.sequence.AppendText(textChunk)
 					}
 				}
 			case llm.EventTypeFiles:
@@ -624,7 +597,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					post.Message = emptyText
 					// Mirror into the accumulator so the turn carries the fallback.
 					if acc != nil {
-						acc.text.WriteString(emptyText)
+						acc.sequence.AppendText(emptyText)
 					}
 					p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 				}
@@ -658,9 +631,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				// Mirror into the accumulator so the turn carries the error.
 				if acc != nil {
 					if separator != "" {
-						acc.text.WriteString(separator)
+						acc.sequence.AppendText(separator)
 					}
-					acc.text.WriteString(errorText)
+					acc.sequence.AppendText(errorText)
 				}
 
 				if err := p.mmClient.UpdatePost(post); err != nil {
@@ -676,7 +649,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					// Send reasoning event with accumulated text so far
 					p.sendPostStreamingReasoningEventWithBroadcast(post, reasoningBuffer.String(), "reasoning_summary", broadcast)
 					if acc != nil {
-						acc.reasoning.WriteString(reasoningChunk)
+						acc.sequence.AppendReasoning(reasoningChunk)
 					}
 				}
 			case llm.EventTypeReasoningEnd:
@@ -685,7 +658,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					p.sendPostStreamingReasoningEventWithBroadcast(post, reasoningData.Text, "reasoning_summary_done", broadcast)
 					reasoningBuffer.Reset()
 					if acc != nil {
-						acc.reasoningData = reasoningData
+						acc.sequence.FinishReasoning(reasoningData)
 					}
 				}
 			case llm.EventTypeToolCalls:
@@ -706,9 +679,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						// retain the calls so a rejected-approval turn
 						// keeps them.
 						if isResolvedToolCallsEvent(toolCalls) {
-							acc.text.Reset()
-							acc.reasoning.Reset()
-							acc.reasoningData = llm.ReasoningData{}
+							acc.sequence.Reset()
 							acc.annotations = nil
 							acc.toolCalls = nil
 							acc.serverTools = nil
@@ -733,8 +704,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 							post.Message = cleanedMsg
 							p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 							if acc != nil {
-								acc.text.Reset()
-								acc.text.WriteString(cleanedMsg)
+								acc.sequence.ReplaceText(cleanedMsg)
 							}
 						}
 
@@ -778,6 +748,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					}
 					if acc != nil {
 						acc.serverTools = serverTools
+						acc.sequence.RecordServerTools(serverTools)
 					}
 					serverToolsJSON, err := json.Marshal(serverTools)
 					if err != nil {

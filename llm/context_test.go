@@ -266,22 +266,26 @@ func TestContextCreatedFilesNilReceiver(t *testing.T) {
 func TestContextSandboxFileIDs(t *testing.T) {
 	c := &Context{}
 
-	assert.False(t, c.IsSandboxFileID("file_1"), "unknown ids are rejected")
-
+	// Observation order is the order the files are attached to the post, and
+	// server-tool snapshots are cumulative — so repeats must not duplicate.
 	c.AddSandboxFileIDs("file_1", "", "file_2")
-	assert.True(t, c.IsSandboxFileID("file_1"))
-	assert.True(t, c.IsSandboxFileID("file_2"))
-	assert.False(t, c.IsSandboxFileID(""), "empty ids are never registered")
-	assert.False(t, c.IsSandboxFileID("file_3"))
+	c.AddSandboxFileIDs("file_1", "file_3")
+	assert.Equal(t, []string{"file_1", "file_2", "file_3"}, c.ToolRuntime.SandboxFileIDs)
 
-	// Nil receivers are safe: recording is a no-op and lookups reject.
+	// Consuming makes the attach path idempotent across a repeated stream end.
+	assert.Equal(t, []string{"file_1", "file_2", "file_3"}, c.ConsumeSandboxFileIDs())
+	assert.Empty(t, c.ConsumeSandboxFileIDs())
+}
+
+func TestContextSandboxFileIDsNilReceiver(t *testing.T) {
 	var nilCtx *Context
 	nilCtx.AddSandboxFileIDs("file_1")
-	assert.False(t, nilCtx.IsSandboxFileID("file_1"))
+	assert.Nil(t, nilCtx.ConsumeSandboxFileIDs())
 
+	// A nil runtime must absorb the write rather than panic; the streaming
+	// layer records ids without knowing whether a runtime was allocated.
 	var nilRuntime *ToolRuntimeContext
-	nilRuntime.AddSandboxFileIDs("file_1")
-	assert.False(t, nilRuntime.IsSandboxFileID("file_1"))
+	assert.NotPanics(t, func() { nilRuntime.AddSandboxFileIDs("file_1") })
 }
 
 func TestContextMCPDynamicSearchLoadCallSuccessState(t *testing.T) {

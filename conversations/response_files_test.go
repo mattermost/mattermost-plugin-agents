@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -117,7 +118,7 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 			c := &Conversations{}
 			post := &model.Post{Id: "post-id", ChannelId: "channel-id", FileIds: tt.postFileIDs}
 
-			decorated := c.decorateStreamWithCreatedFiles(makeEventStream(tt.events...), post, tt.extraFileIDs, tt.contexts...)
+			decorated := c.decorateStreamWithCreatedFiles(context.Background(), nil, makeEventStream(tt.events...), post, tt.extraFileIDs, tt.contexts...)
 			events := drainTextStreamEvents(t, decorated)
 
 			assert.Equal(t, tt.wantEventTypes, eventTypes(events))
@@ -139,7 +140,7 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 
 	t.Run("nil stream returns nil", func(t *testing.T) {
 		c := &Conversations{}
-		assert.Nil(t, c.decorateStreamWithCreatedFiles(nil, &model.Post{}, nil))
+		assert.Nil(t, c.decorateStreamWithCreatedFiles(context.Background(), nil, nil, &model.Post{}, nil))
 	})
 }
 

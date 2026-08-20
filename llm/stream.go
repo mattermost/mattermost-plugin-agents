@@ -75,9 +75,9 @@ type ServerToolUse struct {
 	Output string `json:"output,omitempty"`
 	// ErrorCode is the provider error code when the invocation failed.
 	ErrorCode string `json:"error_code,omitempty"`
-	// FileIDs are provider-side ids of files this invocation created (e.g.
-	// Anthropic code-execution output files). They gate which files the
-	// AttachSandboxFile tool may download and attach.
+	// FileIDs are provider-side ids of files this invocation captured (e.g.
+	// files an Anthropic code-execution command left in $OUTPUT_DIR). The
+	// response flow downloads these and attaches them to the bot's reply.
 	FileIDs []string `json:"file_ids,omitempty"`
 }
 
