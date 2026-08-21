@@ -219,12 +219,18 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 		return c.handleDMs(ctx, bot, channel, postingUser, post)
 	}
 
-	// Per-channel auto-reply handles the no-mention fall-through. Channels with
-	// auto-reply configured never get the mention reminder: in threads mode the
-	// agent replies anyway, and in root_posts mode the channel already has an
-	// agent participating by default.
+	// Per-channel auto-reply handles the no-mention fall-through, and the two
+	// features work in tandem. When auto-reply declines for a normal reason
+	// (root_posts mode skipping a thread reply, missing license, stale bot),
+	// fall through to the reminder so the user still learns that @mentioning
+	// the agent works — it does in every one of those cases. Only a real
+	// failure returns without the reminder.
 	if setting := c.autoReplySettingForChannel(channel); setting != nil {
-		return c.handleAutoReply(ctx, setting, post, postingUser, channel)
+		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel)
+		if errors.Is(autoReplyErr, ErrNoResponse) {
+			c.maybeNotifyAgentMentionNeeded(post, channel)
+		}
+		return autoReplyErr
 	}
 
 	// Reply in a thread that did not @mention an agent: when the previous post

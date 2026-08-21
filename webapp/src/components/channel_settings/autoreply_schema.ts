@@ -69,8 +69,10 @@ export const shouldRenderChannelAutoReplyTab = (state: GlobalState, channel: Cha
     }
     const bots = botsFromState(state);
     if (!bots) {
-        // Cache cold or invalidated; the init warm-up and the lazy refetch in
-        // useBotlist self-heal it.
+        // Only cold before the init warm-up lands: websocket invalidations
+        // refetch in place instead of clearing, so the cache never returns to
+        // null once populated. The warm-up and useBotlist's lazy refetch fill
+        // it in.
         return false;
     }
     return filterBotsByChannelAccess(bots, channel.id).length > 0;

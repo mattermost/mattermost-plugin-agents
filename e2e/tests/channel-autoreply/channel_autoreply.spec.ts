@@ -143,8 +143,8 @@ test.describe('Per-channel agent auto-reply', () => {
         await mmPage.waitForReply();
 
         // Negative half: in root_posts mode a thread reply must NOT trigger another
-        // auto-reply. Phase 2 also skips the ephemeral @mention reminder in
-        // auto-reply channels, so there is nothing to assert in the UI here beyond
+        // auto-reply. The user gets the ephemeral @mention reminder instead, but
+        // ephemerals are not persisted, so the API-level assertion here stays
         // "no bot post".
         await waitOutSkewWindow(botReply);
         const sinceMs2 = Date.now();

@@ -27,7 +27,7 @@ import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis, getAIDirectChanne
 
 import {setOpenRHSAction} from './redux_actions';
 import PostEventListener from './websocket';
-import {BotsHandler, setupRedux} from './redux';
+import {setupRedux} from './redux';
 import UnreadsSummarize from './components/unreads_summarize';
 import {PostbackPost} from './components/postback_post';
 import {AgentMentionReminderPost} from './components/agent_mention_reminder_post';
@@ -224,17 +224,19 @@ export default class Plugin {
             );
         };
 
-        const invalidateRuntimeBotsCache = () => {
-            store.dispatch({
-                type: BotsHandler,
-                bots: null,
-            } as any);
+        // Refetch in place rather than clearing first: the previous list stays
+        // readable until fresh data replaces it. A null window would be visible
+        // to the channel-settings tab's synchronous shouldRender, making the
+        // "Agents" tab disappear and reappear on every config change. A failed
+        // refetch leaves the stale list, which is preferable to no list.
+        const refreshRuntimeBotsCache = () => {
+            fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
         };
 
-        registry.registerWebSocketEventHandler('config_changed', invalidateRuntimeBotsCache);
+        registry.registerWebSocketEventHandler('config_changed', refreshRuntimeBotsCache);
 
-        // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that invalidate so RHS dropdown refetches.
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', invalidateRuntimeBotsCache);
+        // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that refresh so RHS dropdown updates.
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', refreshRuntimeBotsCache);
 
         registry.registerPostTypeComponent('custom_llmbot', LLMBotPostWithWebsockets);
         registry.registerPostTypeComponent('custom_llm_postback', PostbackPost);

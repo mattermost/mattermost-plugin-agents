@@ -251,6 +251,11 @@ func TestPutChannelAutoReplyPermissionMatrix(t *testing.T) {
 	}
 }
 
+// TestPutChannelAutoReplyValidation covers the rejections the handler owns —
+// the mode enum and the request body — plus how it maps the auto-reply
+// service's failures onto status codes. Validating the requested setting
+// itself (bot_id present, known, and allowed in the channel) is the service's
+// job; autoreply.TestServiceSetValidation covers it against the real service.
 func TestPutChannelAutoReplyValidation(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -261,16 +266,6 @@ func TestPutChannelAutoReplyValidation(t *testing.T) {
 		{
 			name:           "unknown mode",
 			body:           fmt.Sprintf(`{"bot_id":%q,"mode":"banana"}`, testBotUserID),
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "root_posts without bot_id",
-			body:           `{"bot_id":"","mode":"root_posts"}`,
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "threads with unregistered bot",
-			body:           fmt.Sprintf(`{"bot_id":%q,"mode":"threads"}`, testNonexistentBot),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
@@ -334,8 +329,8 @@ func TestPutChannelAutoReplyValidation(t *testing.T) {
 // TestChannelAutoReplyIndependentOfDefaultBot pins that the auto-reply
 // endpoints have no default-agent dependency: a restricted default agent or an
 // instance with zero configured agents must not block reading or clearing
-// channel auto-reply settings. The PUT validates the *selected* bot (handler
-// pre-check plus autoreply service), never the default one.
+// channel auto-reply settings. The PUT hands the *selected* bot to the
+// auto-reply service for validation and never consults the default one.
 func TestChannelAutoReplyIndependentOfDefaultBot(t *testing.T) {
 	// "ai" is the configured default bot name in the test environment; this
 	// variant is restricted from every user and channel.

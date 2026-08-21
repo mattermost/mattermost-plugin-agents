@@ -58,8 +58,10 @@ func (a *API) handleGetChannelAutoReply(c *gin.Context) {
 // the channel-management permission matching the channel type; DM/GM channels
 // are rejected. Enabling (root_posts/threads) additionally requires a license;
 // mode "off" deletes the row and is never license-gated so an existing setting
-// stays clearable after a license downgrade. On success the new state is
-// published as a channel-scoped websocket event and echoed back.
+// stays clearable after a license downgrade. The requested setting itself is
+// validated by the auto-reply service, whose ErrValidation failures become
+// 400s. On success the new state is published as a channel-scoped websocket
+// event and echoed back.
 func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
@@ -114,16 +116,8 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 			c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 			return
 		}
-		if req.BotID == "" {
-			c.AbortWithError(http.StatusBadRequest, errors.New("bot_id is required"))
-			return
-		}
-		// Deterministic HTTP-level pre-check; the service re-validates
-		// (defense in depth).
-		if a.bots.GetBotByID(req.BotID) == nil {
-			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("unknown bot: %s", req.BotID))
-			return
-		}
+		// bot_id is validated by the auto-reply service (present, known, and
+		// allowed in this channel); its ErrValidation failures map to 400.
 		if _, err := a.autoReplyStore.Set(channel.Id, req.BotID, autoreply.Mode(req.Mode), userID); err != nil {
 			if errors.Is(err, autoreply.ErrValidation) {
 				c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid auto-reply setting: %w", err))

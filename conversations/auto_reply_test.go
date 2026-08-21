@@ -330,10 +330,18 @@ func TestAutoReplyTriggerMatrix(t *testing.T) {
 			expectedConvMessage: "@" + autoReplyBotUsername + " hello there",
 		},
 		{
-			name:        "root_posts ignores thread replies and suppresses the reminder",
+			name:        "root_posts ignores thread replies but still sends the reminder",
 			settingMode: autoreply.ModeRootPosts,
 			buildPost: func(env *autoReplyTestEnv) *model.Post {
 				return env.threadReply(autoReplyUserID, "thanks!", true)
+			},
+			expectReminder: true,
+		},
+		{
+			name:        "root_posts thread reply after a human post gets neither reply nor reminder",
+			settingMode: autoreply.ModeRootPosts,
+			buildPost: func(env *autoReplyTestEnv) *model.Post {
+				return env.threadReply(autoReplyUserID, "thanks!", false)
 			},
 		},
 		{
@@ -383,6 +391,17 @@ func TestAutoReplyTriggerMatrix(t *testing.T) {
 			settingMode: autoreply.ModeThreads,
 			buildPost: func(env *autoReplyTestEnv) *model.Post {
 				return env.threadReply(autoReplyUserID, "thanks!", false)
+			},
+			expectFired:         true,
+			expectedRootID:      autoReplyRootID,
+			expectedBotUserID:   autoReplyBotUserID,
+			expectedConvMessage: "@" + autoReplyBotUsername + " thanks!",
+		},
+		{
+			name:        "threads replying after an agent post fires without the reminder",
+			settingMode: autoreply.ModeThreads,
+			buildPost: func(env *autoReplyTestEnv) *model.Post {
+				return env.threadReply(autoReplyUserID, "thanks!", true)
 			},
 			expectFired:         true,
 			expectedRootID:      autoReplyRootID,
@@ -459,9 +478,10 @@ func TestAutoReplyTriggerMatrix(t *testing.T) {
 }
 
 // TestAutoReplyTriggerRechecks covers the trigger-time re-checks: every stale
-// or unlicensed condition must be a quiet no-op — no reply, no ephemeral, and
-// nothing logged at error level (MessageHasBeenPosted swallows ErrNoResponse
-// at debug level).
+// or unlicensed condition must decline quietly — no reply, no conversation, and
+// nothing logged at error level (MessageHasBeenPosted swallows ErrNoResponse at
+// debug level). Declining still falls through to the mention reminder, which
+// applies its own guards; @mentioning an agent works even unlicensed.
 func TestAutoReplyTriggerRechecks(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -479,6 +499,16 @@ func TestAutoReplyTriggerRechecks(t *testing.T) {
 			buildPost: func(env *autoReplyTestEnv) *model.Post {
 				return env.rootPost(autoReplyUserID, "hello there")
 			},
+		},
+		{
+			name:      "unlicensed server still reminds a thread reply after an agent post",
+			botConfig: autoReplyBotConfig(),
+			setting:   autoreply.Setting{ChannelID: autoReplyChannelID, BotID: autoReplyBotUserID, Mode: autoreply.ModeThreads},
+			license:   &model.License{},
+			buildPost: func(env *autoReplyTestEnv) *model.Post {
+				return env.threadReply(autoReplyUserID, "thanks!", true)
+			},
+			expectReminder: true,
 		},
 		{
 			name:      "setting referencing a deleted bot is a no-op",
