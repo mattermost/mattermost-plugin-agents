@@ -226,7 +226,14 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
             setSavedExpression(expression);
         } catch (e) {
             const message = e instanceof Error && e.message ? e.message : '';
-            setSaveError(message || intl.formatMessage({defaultMessage: 'Failed to save the access policy. Please try again.'}));
+            if (message) {
+                setSaveError(message);
+            } else if (typeof e === 'object' && e !== null && 'status_code' in e && e.status_code === 403) {
+                // Cloud/WAF eat the 403 JSON body, leaving ClientError.message empty.
+                setSaveError(intl.formatMessage({defaultMessage: 'You do not satisfy one or more conditions in this policy. Adjust the rules to include your attributes, or ask a system admin.'}));
+            } else {
+                setSaveError(intl.formatMessage({defaultMessage: 'Failed to save the access policy. Please try again.'}));
+            }
         } finally {
             setSaving(false);
         }
