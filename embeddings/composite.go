@@ -26,6 +26,14 @@ func NewCompositeSearch(store VectorStore, provider EmbeddingProvider, options c
 	}
 }
 
+func (c *CompositeSearch) checkSchema(ctx context.Context) error {
+	checker, ok := c.store.(SchemaChecker)
+	if !ok {
+		return nil
+	}
+	return checker.CheckSchema(ctx)
+}
+
 // Store chunks documents, generates embeddings, and stores them
 func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error {
 	// Apply chunking to each document
@@ -46,6 +54,10 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 	// Early return if no documents after chunking (all filtered or empty input)
 	if len(chunkedDocs) == 0 {
 		return nil
+	}
+
+	if err := c.checkSchema(ctx); err != nil {
+		return err
 	}
 
 	// Extract texts for embedding
@@ -71,6 +83,10 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 
 // Search performs a semantic search and merges results from chunks of the same document
 func (c *CompositeSearch) Search(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error) {
+	if err := c.checkSchema(ctx); err != nil {
+		return nil, err
+	}
+
 	// Generate embedding for the query
 	embedding, err := c.provider.CreateEmbedding(ctx, query)
 	if err != nil {

@@ -293,6 +293,7 @@ Bulk reindexing throughput can be tuned for large datasets:
 | **Reindex Batch Size** | 200 (max 1000) | Posts fetched and embedded per batch. Larger batches amortize request overhead; requests are split automatically to stay within provider per-request limits. Values above the maximum are clamped. |
 | **Reindex Index Strategy** | Maintain index during reindex | Controls how the vector similarity index is handled during a full reindex. `maintain` keeps the index up to date on every insert (default). `defer` drops the index up front, bulk-loads without index maintenance, and rebuilds the index once at the end — much faster for large databases, but semantic search is unavailable until the rebuild completes. |
 | **HNSW M** | 8 (range 2–100) | Graph connections per row in the HNSW vector index. Lower values use less RAM and are slightly less accurate. Changing M rebuilds the vector index; it does **not** re-embed posts. Existing indexes created before this setting stay at pgvector's default `m=16` until you run **Rebuild vector index**. |
+| **Vector precision** | Standard (`vector`) | Storage type for embedding values. Standard uses 4-byte `vector`; half precision uses 2-byte `halfvec` (pgvector 0.7+, including Amazon RDS). Half precision uses less RAM and disk. Changing this **drops the embeddings table** — run **Full Reindex**, not Resume and not Rebuild vector index. Default is standard so existing indexes keep working. |
 
 The defaults stay comfortably within OpenAI Tier 1 rate limits. On Azure OpenAI, throughput is capped by your deployment's tokens-per-minute quota — raise it to benefit from higher worker counts.
 
@@ -306,7 +307,7 @@ Notes on deferred reindex:
 
 - **Semantic search is unavailable** from reindex start until the final index build finishes (API returns HTTP 503). Live posts still index during the bulk load. During the final build (hours on large DBs), live indexing, deletions, and retention pause instead of blocking on CREATE INDEX — catch-up repairs new posts, the repair pass handles edits/deletions, and retention runs on its next schedule.
 - **Repair phase after the build.** Search returns once the index exists; the job then enters a short `repairing` phase to re-embed posts edited while live indexing was paused (catch-up sweeps new posts). If the job stops after the build but before repair finishes, the `repairing` marker stays durable — resume or reindex to finish. Search works in this phase; a few recent edits may be slightly stale until repair completes.
-- **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + graph)` bytes. Graph overhead shrinks with **HNSW M** (about `2 × m` integer links per layer; at the default `m=8` this is well under the older ~300-byte-per-row rule of thumb used at `m=16`). Example: ~1.4 KB/element at 256 dims with `m=8`, or ~28 GB for 20M posts. Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`.
+- **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + graph)` bytes for standard `vector`, or `rows × (2 × dimensions + graph)` for `halfvec`. Graph overhead shrinks with **HNSW M** (about `2 × m` integer links per layer; at the default `m=8` this is well under the older ~300-byte-per-row rule of thumb used at `m=16`). Example: ~1.4 KB/element at 256 dims with `m=8`, or ~28 GB for 20M posts. Half precision at 256 dimensions is **not** a 2× RAM cut — graph edges still use integer links, so only the vector payload shrinks. Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`. `halfvec` requires pgvector 0.7+ (Amazon RDS includes it on supported engine versions).
 - **Crash recovery.** Lifecycle state is durable. After a restart, **Check Index Health** shows the vector index state and search stays gated until you resume or start a full reindex (the plugin never rebuilds during activation). Canceling or failing mid-bulk-load likewise leaves the index dropped rather than rebuilding it over a partial corpus, so a resume continues defer-style. Any full or resumed reindex rebuilds a dropped index and finishes pending repair, even if strategy was changed back to `maintain`.
 - Strategy applies to full reindexes only. Catch-up never drops the index. Live indexing maintains the index except during the final build.
 
@@ -363,13 +364,13 @@ jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_to
 
 ### Post indexing
 
-Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, or **dimensions** requires a **Full Reindex** (do not use Resume for a dimension change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions change so new vectors match the configured width. Changing **HNSW M** requires **Rebuild vector index**, not Full Reindex — existing embeddings are reused and only the HNSW graph is rebuilt. After upgrading, existing indexes stay at `m=16` until you rebuild.
+Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, **dimensions**, or **vector precision** (`vector` vs `halfvec`) requires a **Full Reindex** (do not use Resume for a dimension or type change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions or vector precision change so new vectors match the configured column. Changing **HNSW M** requires **Rebuild vector index**, not Full Reindex — existing embeddings are reused and only the HNSW graph is rebuilt. After upgrading, existing indexes stay at `m=16` until you rebuild. Rebuild vector index cannot change the column type.
 
 1. Navigate to **System Console > Plugins > Agents > Embedding Search**
 2. Use the reindex controls to:
    
    - Monitor indexing progress during initial setup.
-   - Trigger a Full Reindex when changing embedding providers, models, or dimensions.
+   - Trigger a Full Reindex when changing embedding providers, models, dimensions, or vector precision.
    - Trigger Rebuild vector index when changing HNSW M (search is unavailable during the build).
    - Check indexing status.
 

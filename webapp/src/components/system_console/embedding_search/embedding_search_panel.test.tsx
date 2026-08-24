@@ -56,6 +56,7 @@ const enabledConfig = (providerType: string): EmbeddingSearchConfig => ({
     parameters: {},
     dimensions: 1536,
     hnswM: 8,
+    vectorElementType: 'vector',
     reindexIndexStrategy: REINDEX_INDEX_STRATEGY.maintain,
 });
 
@@ -76,6 +77,7 @@ const idleJobStatus = {
         stored_dimensions: 1536,
         stored_model_name: 'text-embedding-3-small',
         stored_hnsw_m: 8,
+        stored_vector_element_type: 'vector',
     },
     healthCheckLoading: false,
     modelCompatibility: {
@@ -85,6 +87,7 @@ const idleJobStatus = {
         stored_dimensions: 1536,
         stored_model_name: 'text-embedding-3-small',
         stored_hnsw_m: 8,
+        stored_vector_element_type: 'vector',
     },
     isJobStale: false,
     handleReindexClick: jest.fn(),
@@ -140,5 +143,29 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
 
         const rebuild = screen.getByRole('button', {name: 'Rebuild vector index'}) as HTMLButtonElement;
         expect(rebuild.disabled).toBe(false);
+    });
+
+    it('disables Rebuild vector index when vector precision differs', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_vector_element_type: 'halfvec',
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={enabledConfig('openai')}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        const rebuild = screen.getByRole('button', {name: 'Rebuild vector index'}) as HTMLButtonElement;
+        expect(rebuild.disabled).toBe(true);
+        expect(screen.getByText('Embedding Model Changed')).toBeTruthy();
+        expect(screen.getByText(/Search functionality is disabled until you run a full reindex/)).toBeTruthy();
     });
 });

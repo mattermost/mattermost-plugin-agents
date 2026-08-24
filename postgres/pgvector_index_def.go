@@ -8,28 +8,42 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 )
 
-// expectedVectorIndexUsing is the exact HNSW clause we create. Partial
-// (WHERE) and expression indexes must not match.
-const expectedVectorIndexUsing = "USING hnsw (embedding vector_l2_ops)"
+const (
+	vectorL2OpClass  = "vector_l2_ops"
+	halfvecL2OpClass = "halfvec_l2_ops"
+)
 
 // hnswMOptionRE finds m in a WITH clause. Tolerates quoted values (m='8').
 var hnswMOptionRE = regexp.MustCompile(`(?i)(?:^|[,(]\s*)m\s*=\s*'?(\d+)'?`)
 
 var vectorIndexWhereRE = regexp.MustCompile(`(?i)\sWHERE\s`)
 
+func vectorIndexOpClass(elementType string) string {
+	if elementType == embeddings.VectorElementTypeHalfvec {
+		return halfvecL2OpClass
+	}
+	return vectorL2OpClass
+}
+
+func expectedVectorIndexUsing(elementType string) string {
+	return "USING hnsw (embedding " + vectorIndexOpClass(elementType) + ")"
+}
+
 // createVectorIndexSQL builds CREATE INDEX for the HNSW ANN index.
 // Always emits WITH (m = N) so the catalog definition is explicit.
-func createVectorIndexSQL(m int) string {
+func createVectorIndexSQL(m int, elementType string) string {
 	return fmt.Sprintf(
 		"CREATE INDEX IF NOT EXISTS %s ON llm_posts_embeddings %s WITH (m = %d)",
-		vectorIndexName, expectedVectorIndexUsing, m,
+		vectorIndexName, expectedVectorIndexUsing(elementType), m,
 	)
 }
 
 func (pv *PGVector) createVectorIndexSQL() string {
-	return createVectorIndexSQL(pv.hnswM)
+	return createVectorIndexSQL(pv.hnswM, pv.elementType)
 }
 
 // parseHNSWMFromIndexDef extracts HNSW m from pg_get_indexdef output.
@@ -46,16 +60,17 @@ func parseHNSWMFromIndexDef(indexDef string) (int, bool) {
 }
 
 // vectorIndexDefinitionOK is true when the catalog def is a full-table HNSW
-// index on embedding with vector_l2_ops and the expected m. Partial indexes
-// and expression indexes cannot serve all searches.
-func vectorIndexDefinitionOK(indexDef string, wantM int) bool {
+// index on embedding with the expected opclass and m. Partial indexes and
+// expression indexes cannot serve all searches.
+func vectorIndexDefinitionOK(indexDef string, wantM int, elementType string) bool {
 	if !strings.Contains(indexDef, "llm_posts_embeddings") {
 		return false
 	}
 	if strings.Contains(indexDef, "USING hnsw ((") {
 		return false
 	}
-	usingIdx := strings.Index(indexDef, expectedVectorIndexUsing)
+	expectedUsing := expectedVectorIndexUsing(elementType)
+	usingIdx := strings.Index(indexDef, expectedUsing)
 	if usingIdx < 0 {
 		return false
 	}

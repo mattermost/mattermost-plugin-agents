@@ -8,6 +8,7 @@ describe('embeddingIdentityMismatchKind', () => {
         providerType: 'openai',
         dimensions: 1536,
         modelName: 'text-embedding-3-small',
+        vectorElementType: 'vector',
     };
 
     it.each([
@@ -32,6 +33,17 @@ describe('embeddingIdentityMismatchKind', () => {
             want: 'dimensions' as const,
         },
         {
+            name: 'vector element type change',
+            stored: {
+                stored_provider_type: 'openai',
+                stored_dimensions: 1536,
+                stored_model_name: 'text-embedding-3-small',
+                stored_vector_element_type: 'vector',
+            },
+            current: {...current, vectorElementType: 'halfvec'},
+            want: 'vectorElementType' as const,
+        },
+        {
             name: 'model name change',
             stored: {
                 stored_provider_type: 'openai',
@@ -47,6 +59,7 @@ describe('embeddingIdentityMismatchKind', () => {
                 stored_provider_type: 'openai',
                 stored_dimensions: 1536,
                 stored_model_name: 'text-embedding-3-small',
+                stored_vector_element_type: 'vector',
             },
             current,
             want: null,

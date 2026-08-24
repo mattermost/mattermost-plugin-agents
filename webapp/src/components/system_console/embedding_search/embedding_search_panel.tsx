@@ -13,7 +13,7 @@ import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
 import {IntItem} from '../number_items';
 
-import {EmbeddingSearchConfig, HNSW_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, ReindexIndexStrategy} from './types';
+import {EmbeddingSearchConfig, HNSW_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, ReindexIndexStrategy, VECTOR_ELEMENT_TYPE, normalizeVectorElementType} from './types';
 import {OpenAIProviderConfig, OpenAICompatibleProviderConfig} from './provider_configs';
 import {ChunkingOptionsConfig} from './chunking_options';
 import {ReindexSection} from './reindex_section';
@@ -109,6 +109,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
         providerType: value.embeddingProvider.type,
         dimensions: value.dimensions,
         modelName: currentModelName,
+        vectorElementType: normalizeVectorElementType(value.vectorElementType),
     });
     let localMismatchReason = '';
     switch (mismatchKind) {
@@ -128,6 +129,12 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
         localMismatchReason = intl.formatMessage(
             {defaultMessage: 'model changed: stored={stored}, current={current}'},
             {stored: modelCompatibility?.stored_model_name ?? '', current: currentModelName},
+        );
+        break;
+    case 'vectorElementType':
+        localMismatchReason = intl.formatMessage(
+            {defaultMessage: 'vector element type changed: stored={stored}, current={current}'},
+            {stored: modelCompatibility?.stored_vector_element_type ?? '', current: normalizeVectorElementType(value.vectorElementType)},
         );
         break;
     case null:
@@ -189,6 +196,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                 reindexBatchSize: REINDEX_DEFAULTS.batchSize,
                                 reindexIndexStrategy: REINDEX_INDEX_STRATEGY.maintain,
                                 hnswM: HNSW_DEFAULTS.m,
+                                vectorElementType: VECTOR_ELEMENT_TYPE.vector,
                             });
                         } else {
                             onChange({
@@ -289,6 +297,22 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                 max={HNSW_DEFAULTS.max}
                                 helptext={intl.formatMessage({defaultMessage: 'Graph connections per row. Lower uses less RAM and is slightly less accurate. Changing this rebuilds the vector index; it does not re-embed posts. Default 8.'})}
                             />
+                            <SelectionItem
+                                label={intl.formatMessage({defaultMessage: 'Vector precision'})}
+                                value={normalizeVectorElementType(value.vectorElementType)}
+                                onChange={(e) => onChange({
+                                    ...value,
+                                    vectorElementType: normalizeVectorElementType(e.target.value),
+                                })}
+                                helptext={intl.formatMessage({defaultMessage: 'Half precision uses less RAM and disk. Changing this drops the embeddings table; run a Full Reindex. Default is standard.'})}
+                            >
+                                <SelectionItemOption value={VECTOR_ELEMENT_TYPE.vector}>
+                                    {intl.formatMessage({defaultMessage: 'Standard (vector)'})}
+                                </SelectionItemOption>
+                                <SelectionItemOption value={VECTOR_ELEMENT_TYPE.halfvec}>
+                                    {intl.formatMessage({defaultMessage: 'Half precision (halfvec)'})}
+                                </SelectionItemOption>
+                            </SelectionItem>
                         </IndexStorageGroup>
 
                         <ChunkingOptionsConfig
