@@ -55,6 +55,12 @@ const (
 	AuditEventToolCallApproval   = "toolCallApproval"
 	AuditEventToolResultApproval = "toolResultApproval"
 
+	// Ask-another-user cancel: the initiator's decision to resolve an
+	// outstanding question without an answer. The target's answer endpoint
+	// (handleAskUserResponse) is deliberately NOT audited — the answer body
+	// is user content.
+	AuditEventAskUserCancel = "askUserCancel"
+
 	// MCP session grant: an external MCP client obtained a dedicated session
 	// holding API access as the user. Not a gin route — emitted directly by
 	// delegateToMCPHandler when a session is newly created, so it has no
@@ -115,5 +121,8 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		// Tool approval.
 		handlerFuncName(a.handleToolCall):   AuditEventToolCallApproval,
 		handlerFuncName(a.handleToolResult): AuditEventToolResultApproval,
+
+		// Ask-another-user cancel.
+		handlerFuncName(a.handleAskUserCancel): AuditEventAskUserCancel,
 	}
 }

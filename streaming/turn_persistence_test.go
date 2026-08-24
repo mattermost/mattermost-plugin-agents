@@ -1576,3 +1576,84 @@ func TestRedactToolCallsPreservesUserInteraction(t *testing.T) {
 	require.Equal(t, llm.UserInteractionSelect, redacted[0].UserInteraction)
 	require.True(t, redacted[0].WouldAutoExecute)
 }
+
+// TestBuildContentBlocksDeferredWaiting pins that a dispatched deferred call
+// persists with the waiting status and the deferred flag intact so the
+// webapp can render the waiting affordance after reload.
+func TestBuildContentBlocksDeferredWaiting(t *testing.T) {
+	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
+	acc.toolCalls = []llm.ToolCall{{
+		ID:             "ask-1",
+		Name:           "AskAnotherUser",
+		Arguments:      json.RawMessage(`{"username":"bob","question":"Q?"}`),
+		Status:         llm.ToolCallStatusWaiting,
+		DeferredResult: true,
+	}}
+
+	blocks := acc.buildContentBlocks()
+
+	require.Len(t, blocks, 1)
+	require.Equal(t, conversation.BlockTypeToolUse, blocks[0].Type)
+	require.Equal(t, conversation.StatusWaiting, blocks[0].Status)
+	require.True(t, blocks[0].DeferredResult)
+}
+
+// TestIsResolvedToolCallsEventWaiting pins that waiting is non-terminal:
+// waiting batches must be retained by the accumulator (and later persisted
+// by finalizeTurn) rather than treated as an executed round.
+func TestIsResolvedToolCallsEventWaiting(t *testing.T) {
+	tests := []struct {
+		name      string
+		toolCalls []llm.ToolCall
+		want      bool
+	}{
+		{
+			name:      "waiting alone is not resolved",
+			toolCalls: []llm.ToolCall{{ID: "tc1", Status: llm.ToolCallStatusWaiting}},
+			want:      false,
+		},
+		{
+			name: "waiting mixed with terminal statuses is not resolved",
+			toolCalls: []llm.ToolCall{
+				{ID: "tc1", Status: llm.ToolCallStatusWaiting},
+				{ID: "tc2", Status: llm.ToolCallStatusError},
+				{ID: "tc3", Status: llm.ToolCallStatusSuccess},
+			},
+			want: false,
+		},
+		{
+			name: "all terminal statuses is resolved",
+			toolCalls: []llm.ToolCall{
+				{ID: "tc1", Status: llm.ToolCallStatusError},
+				{ID: "tc2", Status: llm.ToolCallStatusAutoApproved},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isResolvedToolCallsEvent(tt.toolCalls))
+		})
+	}
+}
+
+// TestRedactToolCallsKeepsDeferredResult pins that the observer-facing
+// redacted copy keeps the deferred flag (name/status-level metadata, needed
+// for the generic waiting placeholder) while dropping payloads.
+func TestRedactToolCallsKeepsDeferredResult(t *testing.T) {
+	redacted := redactToolCalls([]llm.ToolCall{{
+		ID:             "ask-1",
+		Name:           "AskAnotherUser",
+		Arguments:      json.RawMessage(`{"username":"bob","question":"secret"}`),
+		Result:         `{"status":"answered"}`,
+		Status:         llm.ToolCallStatusWaiting,
+		DeferredResult: true,
+	}})
+
+	require.Len(t, redacted, 1)
+	require.Empty(t, redacted[0].Arguments)
+	require.Empty(t, redacted[0].Result)
+	require.True(t, redacted[0].DeferredResult)
+	require.Equal(t, llm.ToolCallStatusWaiting, redacted[0].Status)
+}

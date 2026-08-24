@@ -14,6 +14,7 @@ import {
     StatusError,
     StatusSuccess,
     StatusAutoApproved,
+    StatusWaiting,
     type ConversationResponse,
     type ContentBlock,
     type ServerToolUse,
@@ -39,6 +40,8 @@ export function statusStringToEnum(status: ConvToolCallStatus | undefined): Tool
         return ToolCallStatus.Success;
     case StatusAutoApproved:
         return ToolCallStatus.AutoApproved;
+    case StatusWaiting:
+        return ToolCallStatus.Waiting;
     default:
         return ToolCallStatus.Pending;
     }
@@ -106,6 +109,7 @@ function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, Cont
         status: statusStringToEnum(block.status),
         user_interaction: block.user_interaction ?? undefined, // eslint-disable-line no-undefined
         would_auto_execute: block.would_auto_execute ?? undefined, // eslint-disable-line no-undefined
+        deferred_result: block.deferred_result ?? undefined, // eslint-disable-line no-undefined
         decided: resultBlock?.decided_at != null,
     };
 }

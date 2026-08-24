@@ -20,6 +20,7 @@ export type PluginConfig = {
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
     enableChannelMentionToolCalling: boolean,
+    enableAskAnotherUser: boolean,
     allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,

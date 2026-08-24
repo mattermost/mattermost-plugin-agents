@@ -12,6 +12,7 @@ export type ToolConfigAIMockOptions = {
     toolConfigs?: ToolPolicyConfig[];
     customInstructions?: string;
     enableVectorIndex?: boolean;
+    enableAskAnotherUser?: boolean;
     defaultBotName?: string;
     botId?: string;
     botDisplayName?: string;
@@ -189,6 +190,7 @@ export async function RunToolConfigAIMockContainer(
         toolConfigs = [],
         customInstructions = '',
         enableVectorIndex = false,
+        enableAskAnotherUser = false,
         defaultBotName,
         botId = 'aimock-toolbot',
         botDisplayName = 'Aimock Tool Bot',
@@ -197,6 +199,7 @@ export async function RunToolConfigAIMockContainer(
     return RunSystemConsoleContainer({
         enableChannelMentionToolCalling: true,
         enableVectorIndex,
+        enableAskAnotherUser,
         defaultBotName,
         services: [{...AIMOCK_COMPATIBLE_SERVICE}],
         bots: [

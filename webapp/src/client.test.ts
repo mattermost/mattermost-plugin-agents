@@ -9,6 +9,8 @@ import type {ConversationResponse, Turn} from '@/types/conversation';
 import manifest from './manifest';
 
 import {
+    doAskUserCancel,
+    doAskUserResponse,
     doLoopInAgent,
     getConversation,
     getConversationContext,
@@ -43,7 +45,19 @@ jest.mock('@mattermost/client', () => {
                 return {...options, headers: {'X-Requested-With': 'XMLHttpRequest'}};
             }
         },
-        ClientError: class extends Error {},
+
+        // Mirrors the real ClientError just enough for callers that branch on
+        // status_code (e.g. the ask-user 409 handling).
+        ClientError: class extends Error {
+            status_code?: number;
+            url?: string;
+
+            constructor(baseUrl: string, data: {message: string; status_code?: number; url?: string}) {
+                super(data.message);
+                this.status_code = data.status_code;
+                this.url = data.url;
+            }
+        },
         mockSearchAllChannels,
         mockUpdateThreadReadForUser,
     };
@@ -68,6 +82,10 @@ const siteURL = 'http://localhost:8065';
 
 function okResponse(): Response {
     return {ok: true, status: 200, json: () => Promise.resolve({})} as unknown as Response;
+}
+
+function jsonResponse(body: unknown): Response {
+    return {ok: true, status: 200, json: () => Promise.resolve(body)} as unknown as Response;
 }
 
 // Mattermost IDs are 26 characters of lowercase letters and digits.
@@ -225,6 +243,84 @@ describe('doLoopInAgent', () => {
         await expect(doLoopInAgent(id, 'matty')).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('doAskUserResponse', () => {
+    test('posts the exact answer body to the ask_user_response route with the card bot in the query', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({status: 'answered'}));
+
+        await expect(doAskUserResponse(WELL_FORMED_ID, 'agentbot', {action: 'answer', selected: ['A'], free_form: ''})).
+            resolves.toEqual({status: 'answered'});
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/ask_user_response?botUsername=agentbot`);
+        expect(options).toEqual(expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({action: 'answer', selected: ['A'], free_form: ''}),
+        }));
+    });
+
+    test('percent-encodes the bot username in the query string', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({status: 'answered'}));
+
+        await doAskUserResponse(WELL_FORMED_ID, 'agent bot&x=1', {action: 'answer', selected: ['A'], free_form: ''});
+
+        const [url] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/ask_user_response?botUsername=agent%20bot%26x%3D1`);
+    });
+
+    test('serializes a decline action', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({status: 'declined'}));
+
+        await expect(doAskUserResponse(WELL_FORMED_ID, 'agentbot', {action: 'decline', selected: [], free_form: ''})).
+            resolves.toEqual({status: 'declined'});
+
+        const [, options] = mockFetch.mock.calls[0];
+        expect(options).toEqual(expect.objectContaining({
+            body: JSON.stringify({action: 'decline', selected: [], free_form: ''}),
+        }));
+    });
+
+    test('rejects with the response status code on a non-OK response', async () => {
+        mockFetch.mockResolvedValue({ok: false, status: 409} as unknown as Response);
+
+        await expect(doAskUserResponse(WELL_FORMED_ID, 'agentbot', {action: 'answer', selected: ['A'], free_form: ''})).
+            rejects.toMatchObject({status_code: 409});
+    });
+});
+
+describe('doAskUserCancel', () => {
+    test('posts the tool_use_id body to the ask_user_cancel route with the bot in the query', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({status: 'canceled'}));
+
+        await expect(doAskUserCancel(WELL_FORMED_ID, 'agentbot', {tool_use_id: 'toolu_123'})).
+            resolves.toEqual({status: 'canceled'});
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/ask_user_cancel?botUsername=agentbot`);
+        expect(options).toEqual(expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({tool_use_id: 'toolu_123'}),
+        }));
+    });
+
+    test('percent-encodes the bot username in the query string', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({status: 'canceled'}));
+
+        await doAskUserCancel(WELL_FORMED_ID, 'agent bot&x=1', {tool_use_id: 'toolu_123'});
+
+        const [url] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/ask_user_cancel?botUsername=agent%20bot%26x%3D1`);
+    });
+
+    test('rejects with the response status code on a non-OK response', async () => {
+        mockFetch.mockResolvedValue({ok: false, status: 409} as unknown as Response);
+
+        await expect(doAskUserCancel(WELL_FORMED_ID, 'agentbot', {tool_use_id: 'toolu_123'})).
+            rejects.toMatchObject({status_code: 409});
     });
 });
 

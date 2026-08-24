@@ -34,6 +34,7 @@ const (
 	StatusError        = "error"
 	StatusSuccess      = "success"
 	StatusAutoApproved = "auto_approved"
+	StatusWaiting      = "waiting"
 )
 
 // ContentBlock is a flat struct representing any content block type.
@@ -62,6 +63,9 @@ type ContentBlock struct {
 	// WouldAutoExecute marks any pending tool_use block that passed the
 	// auto-execution policy (see llm.ToolCall.WouldAutoExecute).
 	WouldAutoExecute bool `json:"would_auto_execute,omitempty"`
+
+	// DeferredResult is the persisted form of llm.ToolCall.DeferredResult.
+	DeferredResult bool `json:"deferred_result,omitempty"`
 
 	// DecidedAt (tool_result blocks) records when the share/keep-private
 	// decision was made — either by the user clicking Share or Keep Private

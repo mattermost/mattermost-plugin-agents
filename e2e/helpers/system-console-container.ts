@@ -14,6 +14,7 @@ export interface SystemConsolePluginConfig {
     enableVectorIndex?: boolean;
     enableTokenUsageLogging?: boolean;
     enableChannelMentionToolCalling?: boolean;
+    enableAskAnotherUser?: boolean;
     defaultBotName?: string;
     allowedUpstreamHostnames?: string;
     allowUnsafeLinks?: boolean;
@@ -104,6 +105,7 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
             enableVectorIndex: config.enableVectorIndex ?? false,
             enableTokenUsageLogging: config.enableTokenUsageLogging,
             enableChannelMentionToolCalling: config.enableChannelMentionToolCalling ?? false,
+            enableAskAnotherUser: config.enableAskAnotherUser ?? false,
             defaultBotName: config.defaultBotName,
             allowedUpstreamHostnames: config.allowedUpstreamHostnames,
             allowUnsafeLinks: config.allowUnsafeLinks,

@@ -8,6 +8,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/stretchr/testify/assert"
 )
@@ -113,6 +114,43 @@ func TestShouldAutoExecuteToolMetaToolDoesNotAuthorizeBusinessTool(t *testing.T)
 	c := &Conversations{toolPolicyChecker: nil}
 
 	assert.False(t, c.shouldAutoExecuteTool(nil, true)(llm.ToolCall{Name: "jira__get_issue"}))
+}
+
+// TestShouldAutoExecuteTool_DeferredToolFollowsPolicy pins that deferred-result
+// tools (AskAnotherUser) follow the normal policy matrix keyed on the
+// empty-string origin — they must NOT be exempted like UserInteraction tools,
+// because "auto-execute" for a deferred tool means dispatching the card, not
+// skipping a question.
+func TestShouldAutoExecuteTool_DeferredToolFollowsPolicy(t *testing.T) {
+	cases := []struct {
+		name    string
+		isDM    bool
+		policy  string
+		enabled bool
+		want    bool
+	}{
+		{name: "DM + auto_run_in_dm enabled -> dispatch without approval", isDM: true, policy: mcp.ToolPolicyAutoRunInDM, enabled: true, want: true},
+		{name: "channel + auto_run_in_dm -> approve (DM-only policy)", isDM: false, policy: mcp.ToolPolicyAutoRunInDM, enabled: true, want: false},
+		{name: "DM + disabled -> approve", isDM: true, policy: mcp.ToolPolicyAutoRunInDM, enabled: false, want: false},
+		{name: "DM + ask -> approve", isDM: true, policy: mcp.ToolPolicyAsk, enabled: true, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Conversations{
+				// Built-in tools carry the empty-string origin.
+				toolPolicyChecker: mapPolicyChecker{
+					"": {mmtools.AskAnotherUserToolName: {policy: tc.policy, enabled: tc.enabled}},
+				},
+			}
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+			llmCtx.Tools.AddTools([]llm.Tool{mmtools.NewAskAnotherUserTool()})
+
+			got := c.shouldAutoExecuteTool(llmCtx, tc.isDM)(llm.ToolCall{Name: mmtools.AskAnotherUserToolName})
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 // TestShouldAutoExecuteTool_AutoExecuteBuiltIn pins that auto-execute

@@ -106,6 +106,18 @@ Tool availability depends on your user permissions, provider connection status, 
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 
+### Answer a question an agent asks you
+
+When your system admin enables the experimental **Enable Agents to Ask Other Users** setting, an agent working on someone else's request can ask **you** a clarifying question. The question arrives as an interactive card in your direct message with the agent, showing the question, optional answer choices, and an optional free-form answer field.
+
+Because the question text is written by the AI model, the card visually separates it from trusted system information. The question and answer choices appear inside a highlighted region labeled **AI-generated content**; everything outside that region comes from Mattermost itself. Above the region, an attribution line tells you who is asking — "Asked on behalf of @username" when a person started the conversation, with their display name and job title when available, or an explicit note that the agent is running unattended when no person did. Below it, a disclosure line tells you who your answer will be shared with: the requester directly when the question started in a direct message, or the members of the originating channel (with the channel name and member count when known) when it started in a channel. If the originating channel is governed by an attribute-based access policy, the card says so. Select **View conversation** to open the conversation the question came from (you'll only see it if you have access to it).
+
+Choose an option and/or type an answer, then select **Answer** — your response is passed back to the agent and attributed to you in the requesting conversation. If you can't or don't want to answer, select **Decline**; the agent is told you declined and continues without your input. Only you can answer or decline your card. Once resolved, the card shows your answer (or that you declined) and can't be changed.
+
+The requester can also withdraw a question: if you started the conversation and a question you approved is still waiting, select **Cancel question** on the waiting tool card, and the agent continues without the answer. On the receiving side, a canceled card switches to "This question is no longer needed." and no response is expected. The same message appears if a response was already recorded — for example, you answered or declined from another device — and it means nothing more is needed from you.
+
+> **Note:** Answering isn't currently supported in the Mattermost mobile apps — the question appears as plain text there. Open Mattermost in a browser or the desktop app to respond.
+
 ### Ask agents to create files
 
 You can ask an agent to produce content as a file instead of pasting it into the chat. For example, ask for "the meeting notes as a markdown file" or "a Python script that parses this log, as a file". The agent creates the files and attaches them to its reply, so you can download or share them like any other Mattermost attachment.

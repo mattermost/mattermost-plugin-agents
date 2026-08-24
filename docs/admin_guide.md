@@ -282,6 +282,41 @@ To obtain Google Custom Search credentials:
 - Search results include clickable citations that link back to source websites
 - Domain denylisting applies to all providers and is enforced for _web page fetching only_. 
 
+### Ask another user (experimental)
+
+The built-in `AskAnotherUser` tool lets an agent send a clarifying question to another Mattermost user as an interactive direct-message card, on behalf of the person who asked the agent. The whole capability is gated by the experimental **Enable Agents to Ask Other Users** setting in the **AI Functions** panel of the plugin's System Console page, and is **off by default**.
+
+Consider the implications before enabling: the question text is written by the AI model, so users can receive AI-authored messages they never asked for; answers flow back into the originating conversation and may appear in channel-visible follow-up messages; and this expands the surface for prompt-injection and social-engineering attempts. Question cards mitigate this by naming the requester, disclosing where the answer will go, and visually separating AI-generated text from system text (see [asking another user](features/multiplayer_tool_calling.md#10-asking-another-user-the-target-as-a-second-actor) in the multiplayer reference for the full trust model).
+
+While the setting is off, the tool isn't offered to models at all, and the answer and cancel endpoints refuse requests. If you turn the setting off while a question is outstanding, the target can no longer answer and the initiator can no longer cancel — the conversation stays parked on the waiting tool call. To unstick it, either re-enable the setting so the outstanding question can be resolved, or have the initiator regenerate the conversation (which supersedes the waiting call).
+
+When the feature is on, the standard approval policies apply per the [built-in tool policies](#built-in-tool-policies) section; the toggle is the master switch, and off wins over any configured policy.
+
+### Built-in tool policies
+
+Built-in (non-MCP) tools — such as `AskAnotherUser` and the built-in web search tool — follow the same three approval policies as MCP tools (`ask`, `auto_run_in_dm`, `auto_run_everywhere`; see the [multiplayer tool calling](features/multiplayer_tool_calling.md) reference). Unconfigured built-in tools default to policy `ask`, which always requires the initiator's approval. `AskAnotherUser` ships with an explicit `ask` default and is additionally gated by the [Ask another user](#ask-another-user-experimental) master switch — its policy only matters while that setting is on.
+
+There is no System Console panel for built-in tool policies in this release. Configure them through the plugin's admin config API: `GET` the current configuration from `/plugins/mattermost-ai/admin/config`, add or edit the `mcp.builtInTools` array, and `PUT` the **full** configuration object back (the endpoint replaces the stored configuration; don't send a partial body). Example fragment of the configuration object:
+
+```json
+{
+  "mcp": {
+    "builtInTools": [
+      {"name": "AskAnotherUser", "policy": "auto_run_in_dm", "enabled": true}
+    ]
+  }
+}
+```
+
+Semantics:
+
+- `policy` accepts `ask`, `auto_run_in_dm`, and `auto_run_everywhere`; invalid values fall back to `ask`.
+- `enabled: false` prevents the tool from auto-running; combined with `ask`, the tool still shows the Accept/Reject card. This setting doesn't remove built-in tools from the Agent's catalog.
+- Entries here override the shipped defaults; built-in tools you don't list keep the default `ask` policy.
+- `AskAnotherUser` never runs from automated `activate_ai` bot flows regardless of policy (see [bot-triggered flows](features/multiplayer_tool_calling.md#9-bot-triggered-flows) in the multiplayer reference).
+
+For the question-card experience on the receiving end of `AskAnotherUser`, see [Answer a question an agent asks you](user_guide.md#answer-a-question-an-agent-asks-you) in the user guide.
+
 ### Embed search configuration
 
 To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search requires a license (see [license requirements](#license-requirements)) and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
@@ -568,7 +603,7 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 
 ## Integrations
 
-Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
+Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**, and the ability of agents to send question cards to other users is controlled by the experimental **Enable Agents to Ask Other Users** setting (see [Ask another user](#ask-another-user-experimental)).
 
 ### File creation by agents
 

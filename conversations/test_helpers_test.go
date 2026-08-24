@@ -162,6 +162,10 @@ func (c *fakeMMClient) GetChannel(channelID string) (*model.Channel, error) {
 	return nil, errors.New("channel not found")
 }
 
+func (c *fakeMMClient) GetChannelStats(string) (*model.ChannelStats, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (c *fakeMMClient) GetDirectChannel(string, string) (*model.Channel, error) {
 	return nil, errors.New("not implemented")
 }
@@ -268,10 +272,15 @@ func (p *testToolProvider) GetTools(_ *bots.Bot, _ *llm.Context) []llm.Tool {
 // testToolCallingConfig implements conversations.ConfigProvider for testing
 type testToolCallingConfig struct {
 	enableChannelMentionToolCalling bool
+	enableAskAnotherUser            bool
 }
 
 func (c *testToolCallingConfig) EnableChannelMentionToolCalling() bool {
 	return c.enableChannelMentionToolCalling
+}
+
+func (c *testToolCallingConfig) EnableAskAnotherUser() bool {
+	return c.enableAskAnotherUser
 }
 
 func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {

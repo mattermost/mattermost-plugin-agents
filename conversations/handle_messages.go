@@ -370,7 +370,9 @@ func (c *Conversations) handleMentionViaConversation(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
+	runner := toolrunner.New(bot.LLM(),
+		toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()),
+		toolrunner.WithDeferredDispatcher(c.newDeferredDispatcherForConversation(bot, convResult.Conversation, "")))
 	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
 	autoExec := c.shouldAutoExecuteTool(llmContext, false)
 	result, runErr := runner.Run(ctx, *completionRequest, func(tc llm.ToolCall) bool {

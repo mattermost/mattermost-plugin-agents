@@ -42,6 +42,13 @@ type Tool struct {
 	// the Resolver is only an error backstop. Empty for normal tools.
 	UserInteraction string
 
+	// DeferredResult marks a tool whose approval/auto-run performs a dispatch
+	// side effect (handled by the conversation layer) instead of producing a
+	// tool result synchronously; the result arrives later out-of-band and the
+	// call sits in ToolCallStatusWaiting until then. The Resolver is only an
+	// error backstop, like UserInteraction tools.
+	DeferredResult bool
+
 	// AutoExecute marks a built-in tool that runs without user approval, like
 	// the MCP dynamic-loading meta-tools. Reserve it for tools whose only side
 	// effect is scoped to the assistant's own response (e.g. CreateFile
@@ -243,6 +250,10 @@ const (
 	// This status is set by the stream wrapper and consumed by the streaming layer
 	// to skip the call-approval UI and proceed directly to result-sharing.
 	ToolCallStatusAutoApproved
+	// ToolCallStatusWaiting indicates a deferred-result tool call that was
+	// dispatched (e.g. a question card sent to another user) and is awaiting
+	// an out-of-band answer. Not a terminal status: no tool result exists yet.
+	ToolCallStatusWaiting
 )
 
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
@@ -264,6 +275,10 @@ type ToolCall struct {
 	// policy. The webapp must not show approval controls for it; the server
 	// re-checks the policy before executing it on resume.
 	WouldAutoExecute bool `json:"would_auto_execute,omitempty"`
+
+	// DeferredResult mirrors Tool.DeferredResult so the approval flow and the
+	// webapp can recognize deferred calls on pending/waiting blocks.
+	DeferredResult bool `json:"deferred_result,omitempty"`
 
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in tools. Used for auto-approval decisions.
@@ -463,6 +478,7 @@ func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) 
 	}
 	tc.Schema = tool.Schema
 	tc.UserInteraction = tool.UserInteraction
+	tc.DeferredResult = tool.DeferredResult
 	if tc.ServerOrigin == "" {
 		tc.ServerOrigin = lookup.ServerOrigin
 	}

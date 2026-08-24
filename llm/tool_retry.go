@@ -129,7 +129,7 @@ func trailingFailedToolCalls(toolCalls []ToolCall) (count int, allFailed bool, h
 			hasExecutedTool = true
 		case ToolCallStatusSuccess, ToolCallStatusAutoApproved:
 			return 0, false, true
-		case ToolCallStatusRejected, ToolCallStatusPending, ToolCallStatusAccepted:
+		case ToolCallStatusRejected, ToolCallStatusPending, ToolCallStatusAccepted, ToolCallStatusWaiting:
 			continue
 		default:
 			return 0, false, hasExecutedTool

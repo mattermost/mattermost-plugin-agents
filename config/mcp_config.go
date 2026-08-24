@@ -44,6 +44,10 @@ type MCPConfig struct {
 	PluginServers      []PluginServerConfig    `json:"plugin_servers,omitempty"`
 	EmbeddedServer     MCPEmbeddedServerConfig `json:"embeddedServer"`
 	IdleTimeoutMinutes int                     `json:"idleTimeoutMinutes"`
+	// BuiltInTools holds admin policy overrides for built-in (non-MCP) tools
+	// such as AskAnotherUser and WebSearch. Entries merge over
+	// mcp.SeedBuiltInToolConfigs; unlisted tools default to (ask, enabled).
+	BuiltInTools []MCPToolConfig `json:"builtInTools,omitempty"`
 }
 
 // MCPServerConfig contains the configuration for a single MCP server

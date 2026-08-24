@@ -61,6 +61,7 @@ type TestEnvironment struct {
 type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableChannelMentionToolCalling bool
+	enableAskAnotherUser            bool
 	mcpConfig                       mcp.Config
 }
 
@@ -82,6 +83,10 @@ func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConf
 
 func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
+}
+
+func (tc *testConfigImpl) EnableAskAnotherUser() bool {
+	return tc.enableAskAnotherUser
 }
 
 func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {

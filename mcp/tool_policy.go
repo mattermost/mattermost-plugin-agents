@@ -37,9 +37,22 @@ func ToolPolicyLookupName(sc *ServerConfig, toolName string) string {
 	return llm.BareMCPToolName(toolName)
 }
 
-// LookupToolPolicy resolves a tool's policy for embedded, remote, and plugin
-// origins. Unknown or disabled origins never auto-execute.
+// LookupToolPolicy resolves a tool's policy for built-in, embedded, remote,
+// and plugin origins. Unknown or disabled origins never auto-execute.
 func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool) {
+	// Built-in tools carry an empty origin. Admins configure them via
+	// cfg.BuiltInTools; unconfigured built-ins default to (ask, enabled) via
+	// the synthetic server's GetToolPolicy fallback. `ask` never auto-runs, so
+	// this preserves the previous fail-closed behavior for approval decisions.
+	if serverBaseURL == "" {
+		builtIn := &ServerConfig{
+			Name:        "Built-in",
+			Enabled:     true,
+			ToolConfigs: mergeSeedConfigs(cfg.BuiltInTools, SeedBuiltInToolConfigs()),
+		}
+		return builtIn.GetToolPolicy(toolName)
+	}
+
 	if serverBaseURL == EmbeddedClientKey {
 		// Backfill the vetted seed for embedded tools the admin hasn't stored a
 		// config for, so tools added after an install first saved its configs

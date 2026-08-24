@@ -405,6 +405,140 @@ func (a *API) handleToolResult(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// handleAskUserResponse processes the target user's answer to an
+// ask-another-user question card. Unlike handleToolCall it has no
+// EnableChannelMentionToolCalling gate (the card lives in a DM even when the
+// conversation is a channel thread) and no isConversationOwner check — the
+// authoritative target check happens in the conversations layer against the
+// card's ask_user_target_id prop.
+func (a *API) handleAskUserResponse(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	// F1 master switch (V2-C1): the experimental feature refuses answers
+	// while off, before the body is even read. A block left waiting stays
+	// waiting until the admin re-enables the toggle or the conversation is
+	// regenerated.
+	if !a.config.EnableAskAnotherUser() {
+		c.AbortWithError(http.StatusForbidden, errors.New("the AskAnotherUser feature is disabled"))
+		return
+	}
+
+	var data conversations.AskUserResponse
+	if err := c.ShouldBindJSON(&data); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	// Detach: the answer resumes the conversation with an async LLM follow-up
+	// stream that must outlive this request (see telemetry.DetachContext).
+	status, err := a.conversationsService.HandleAskUserResponse(telemetry.DetachContext(c.Request.Context()), userID, post, channel, data)
+	if err != nil {
+		c.AbortWithError(askUserResponseHTTPStatus(err), err)
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]string{"status": status})
+}
+
+// askUserResponseHTTPStatus maps HandleAskUserResponse errors to HTTP
+// statuses, mirroring toolApprovalHTTPStatus.
+func askUserResponseHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrInvalidAskAnswer):
+		return http.StatusBadRequest
+	case errors.Is(err, conversations.ErrNotAskTarget):
+		return http.StatusForbidden
+	case errors.Is(err, conversations.ErrAskConversationGone):
+		return http.StatusNotFound
+	case errors.Is(err, conversations.ErrAskNotPending):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// askUserCancelToolUseIDMaxLen bounds the cancel body's tool_use_id. It is a
+// provider-issued id, not a Mattermost id, so there is no isValidId check —
+// just a sanity cap (V2-C4).
+const askUserCancelToolUseIDMaxLen = 128
+
+// handleAskUserCancel lets the conversation initiator cancel an outstanding
+// ask-another-user question on their anchor post (V2-C4). Unlike
+// handleAskUserResponse it IS audited (a state-changing human decision, like
+// its tool_call/tool_result siblings) and initiator-gated; like the answer
+// endpoint it has no EnableChannelMentionToolCalling gate — cancel discloses
+// nothing and must be able to unstick channel conversations.
+func (a *API) handleAskUserCancel(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	// Enrich the audit record as soon as the objects are bound so the
+	// permission fail paths below still carry post and channel.
+	rec := auditRec(c)
+	audit.AddParam(rec, audit.KeyPostID, post.Id)
+	audit.AddParam(rec, audit.KeyChannelID, channel.Id)
+
+	// F1 master switch (V2-C1): cancel refuses while the feature is off,
+	// exactly like the answer endpoint.
+	if !a.config.EnableAskAnotherUser() {
+		c.AbortWithError(http.StatusForbidden, errors.New("the AskAnotherUser feature is disabled"))
+		return
+	}
+
+	if !a.isConversationOwner(post, userID) {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the conversation initiator can cancel the question"))
+		return
+	}
+
+	var data struct {
+		ToolUseID string `json:"tool_use_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&data); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+	if len(data.ToolUseID) > askUserCancelToolUseIDMaxLen {
+		c.AbortWithError(http.StatusBadRequest, errors.New("tool_use_id exceeds the maximum length"))
+		return
+	}
+
+	// Opaque block ID only — never question text or target identity.
+	audit.AddParam(rec, "tool_use_id", audit.TruncateIDs([]string{data.ToolUseID}))
+
+	// Detach: the cancel resumes the conversation with an async LLM
+	// follow-up stream that must outlive this request (see
+	// telemetry.DetachContext). DetachContext keeps only the trace span, so
+	// the audit record is re-attached: the service's KeyAgentID enrichment
+	// runs synchronously before the middleware's deferred emit (V2-C10).
+	ctx := audit.WithRecord(telemetry.DetachContext(c.Request.Context()), rec)
+	if err := a.conversationsService.HandleAskUserCancel(ctx, userID, post, channel, data.ToolUseID); err != nil {
+		c.AbortWithError(askUserCancelHTTPStatus(err), err)
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]string{"status": conversations.AskUserStatusCanceled})
+}
+
+// askUserCancelHTTPStatus maps HandleAskUserCancel errors to HTTP statuses,
+// mirroring askUserResponseHTTPStatus (V2-C4).
+func askUserCancelHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrPostMissingConversationID):
+		return http.StatusBadRequest
+	case errors.Is(err, conversations.ErrNotRequester):
+		return http.StatusForbidden
+	case errors.Is(err, conversations.ErrAskConversationGone):
+		return http.StatusNotFound
+	case errors.Is(err, conversations.ErrAskNotPending):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // isConversationOwner checks whether the given user is the owner of the
 // conversation associated with the post (via the conversation_id prop).
 //

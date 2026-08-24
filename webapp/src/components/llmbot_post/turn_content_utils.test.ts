@@ -62,6 +62,7 @@ describe('statusStringToEnum', () => {
         ['error', ToolCallStatus.Error],
         ['success', ToolCallStatus.Success],
         ['auto_approved', ToolCallStatus.AutoApproved],
+        ['waiting', ToolCallStatus.Waiting],
     ] as const)('maps %s to %i', (input, expected) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         expect(statusStringToEnum(input as any)).toBe(expected);
@@ -152,6 +153,22 @@ describe('extractToolCallsForPost', () => {
         expect(result[1].would_auto_execute).toBe(true);
         expect(result[1].decided).toBe(false);
         expect(result[2].decided).toBe(true);
+    });
+
+    test('maps a waiting deferred-result block onto ToolCall', () => {
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {type: 'tool_use', id: 'tc_w', name: 'AskAnotherUser', input: {username: 'bob'}, status: 'waiting', deferred_result: true},
+            ],
+        });
+        const conv = makeConversation([assistantTurn]);
+        const result = extractToolCallsForPost(conv, 'post_1');
+
+        expect(result).toHaveLength(1);
+        expect(result[0].status).toBe(ToolCallStatus.Waiting);
+        expect(result[0].deferred_result).toBe(true);
     });
 
     test('handles tool_use with null input (redacted)', () => {

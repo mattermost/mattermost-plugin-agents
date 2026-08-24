@@ -160,3 +160,76 @@ func TestComputePostApprovalState(t *testing.T) {
 		})
 	}
 }
+
+// TestComputePostApprovalStateWaiting pins that a waiting (deferred) tool_use
+// block counts as neither pending nor executed: alone it computes done so the
+// webapp shows no Accept/Reject controls, and it never forces a result stage.
+func TestComputePostApprovalStateWaiting(t *testing.T) {
+	tests := []struct {
+		name   string
+		postID string
+		turns  []store.Turn
+		want   string
+	}{
+		{
+			name:   "waiting-only turn returns done",
+			postID: "p1",
+			turns: []store.Turn{
+				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
+				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolUse, ID: "tc_wait", Name: "AskAnotherUser", Status: StatusWaiting, DeferredResult: true},
+				})},
+			},
+			want: ApprovalStageDone,
+		},
+		{
+			name:   "waiting plus pending returns call",
+			postID: "p1",
+			turns: []store.Turn{
+				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
+				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolUse, ID: "tc_wait", Name: "AskAnotherUser", Status: StatusWaiting, DeferredResult: true},
+					{Type: BlockTypeToolUse, ID: "tc_pending", Name: "x", Status: StatusPending},
+				})},
+			},
+			want: ApprovalStageCall,
+		},
+		{
+			name:   "waiting plus executed with undecided result returns result",
+			postID: "p1",
+			turns: []store.Turn{
+				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
+				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolUse, ID: "tc_wait", Name: "AskAnotherUser", Status: StatusWaiting, DeferredResult: true},
+					{Type: BlockTypeToolUse, ID: "tc_done", Name: "x", Status: StatusSuccess},
+				})},
+				{Role: "tool_result", Sequence: 3, Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolResult, ToolUseID: "tc_done", Status: StatusSuccess},
+				})},
+			},
+			want: ApprovalStageResult,
+		},
+		{
+			name:   "waiting plus executed with decided result returns done",
+			postID: "p1",
+			turns: []store.Turn{
+				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
+				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolUse, ID: "tc_wait", Name: "AskAnotherUser", Status: StatusWaiting, DeferredResult: true},
+					{Type: BlockTypeToolUse, ID: "tc_done", Name: "x", Status: StatusSuccess},
+				})},
+				{Role: "tool_result", Sequence: 3, Content: blockJSON(t, []ContentBlock{
+					{Type: BlockTypeToolResult, ToolUseID: "tc_done", Status: StatusSuccess, DecidedAt: Int64Ptr(1000)},
+				})},
+			},
+			want: ApprovalStageDone,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ComputePostApprovalState(tc.turns, tc.postID)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}

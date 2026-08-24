@@ -4,6 +4,62 @@
     "translation": "To respond to an agent you must @mention them."
   },
   {
+    "id": "agents.ask_user_card_canceled",
+    "translation": "This question is no longer needed."
+  },
+  {
+    "id": "agents.ask_user_fallback_attrib_bot",
+    "translation": "Asked by the %s agent running unattended (no human requester):"
+  },
+  {
+    "id": "agents.ask_user_fallback_attrib_unknown",
+    "translation": "Asked via the %s agent (requester identity unavailable):"
+  },
+  {
+    "id": "agents.ask_user_fallback_attrib_user",
+    "translation": "Asked on behalf of @%s:"
+  },
+  {
+    "id": "agents.ask_user_fallback_dest_channel",
+    "translation": "Your answer may be shared with the %[1]d members of ~%[2]s."
+  },
+  {
+    "id": "agents.ask_user_fallback_dest_channel_no_count",
+    "translation": "Your answer may be shared with the members of ~%s."
+  },
+  {
+    "id": "agents.ask_user_fallback_dest_channel_unknown",
+    "translation": "Your answer may be shared in the channel where the agent was asked."
+  },
+  {
+    "id": "agents.ask_user_fallback_dest_dm",
+    "translation": "Your answer will be shared with @%s."
+  },
+  {
+    "id": "agents.ask_user_fallback_dest_dm_agent",
+    "translation": "Your answer will be shared with the %s agent."
+  },
+  {
+    "id": "agents.ask_user_fallback_dest_dm_unknown",
+    "translation": "Your answer will be shared with the person who asked the agent."
+  },
+  {
+    "id": "agents.ask_user_fallback_dest_gm",
+    "translation": "Your answer may be shared with the %d members of a group message."
+  },
+  {
+    "id": "agents.ask_user_fallback_dest_gm_no_count",
+    "translation": "Your answer may be shared with the members of a group message."
+  },
+  {
+    "id": "agents.ask_user_fallback_hint",
+    "translation": "(Interactive answer card — open Mattermost in a browser or the desktop app to respond.)"
+  },
+  {
+    "id": "agents.ask_user_fallback_policy",
+    "translation": "Access to ~%s is restricted by an attribute-based access policy."
+  },
+  {
     "id": "agents.no_longer_access_error",
     "translation": "Sorry, you no longer have access to the original thread."
   },
