@@ -132,6 +132,7 @@ const defaultConfig: Config = {
         reindexIndexStrategy: REINDEX_INDEX_STRATEGY.maintain,
         hnswM: HNSW_DEFAULTS.m,
         vectorElementType: VECTOR_ELEMENT_TYPE.vector,
+        indexRetentionDays: 0,
     },
     mcp: {
         enabled: true,

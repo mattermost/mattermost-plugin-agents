@@ -583,7 +583,7 @@ func TestCompositeSearch_SchemaMismatchSkipsProvider(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &schemaCheckingStore{schemaErr: schemaErr}
 			provider := &stubEmbeddingProvider{}
-			cs := NewCompositeSearch(store, provider, opts, RecencyBiasSettings{})
+			cs := NewCompositeSearch(store, provider, opts)
 			tt.run(t, cs, store, provider)
 		})
 	}

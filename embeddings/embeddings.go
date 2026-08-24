@@ -6,6 +6,7 @@ package embeddings
 import (
 	"context"
 	"encoding/json"
+	"math"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 )
@@ -183,6 +184,7 @@ type EmbeddingSearchConfig struct {
 	ReindexWorkers       int              `json:"reindexWorkers,omitempty"`
 	ReindexBatchSize     int              `json:"reindexBatchSize,omitempty"`
 	ReindexIndexStrategy string           `json:"reindexIndexStrategy,omitempty"`
+	IndexRetentionDays   int              `json:"indexRetentionDays,omitempty"`
 }
 
 // GetReindexWorkers returns the configured reindex worker count, clamped to
@@ -218,6 +220,36 @@ func NormalizeVectorElementType(elementType string) string {
 // GetVectorElementType returns the configured embedding column type.
 func (c *EmbeddingSearchConfig) GetVectorElementType() string {
 	return NormalizeVectorElementType(c.VectorElementType)
+}
+
+// MillisPerDay is the Unix-millis length of a 24-hour day.
+const MillisPerDay int64 = 24 * 60 * 60 * 1000
+
+// GetIndexRetentionDays returns the configured retention window in days.
+// Negative values are treated as 0 (index all posts).
+func (c *EmbeddingSearchConfig) GetIndexRetentionDays() int {
+	if c.IndexRetentionDays < 0 {
+		return 0
+	}
+	return c.IndexRetentionDays
+}
+
+// IndexRetentionFloor is the inclusive CreateAt lower bound for indexing
+// writes. 0 days (all posts) returns 0, meaning no lower bound. The result is
+// never negative.
+func (c *EmbeddingSearchConfig) IndexRetentionFloor(nowMillis int64) int64 {
+	days := c.GetIndexRetentionDays()
+	if days == 0 {
+		return 0
+	}
+	if int64(days) > math.MaxInt64/MillisPerDay {
+		return 0
+	}
+	window := int64(days) * MillisPerDay
+	if nowMillis < window {
+		return 0
+	}
+	return nowMillis - window
 }
 
 // GetReindexBatchSize returns the configured reindex batch size, clamped to

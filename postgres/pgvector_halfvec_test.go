@@ -287,7 +287,7 @@ func TestCompositeSearchSkipsProviderOnTypeMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	provider := &countingEmbeddingProvider{inner: embeddings.NewMockEmbeddingProvider(3)}
-	search := embeddings.NewCompositeSearch(halfStore, provider, chunking.DefaultOptions(), embeddings.RecencyBiasSettings{})
+	search := embeddings.NewCompositeSearch(halfStore, provider, chunking.DefaultOptions())
 
 	err = search.Store(ctx, []embeddings.PostDocument{{
 		PostID: "post1", Content: "would be billed if embeddings ran",
